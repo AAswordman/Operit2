@@ -1574,7 +1574,7 @@ void main() {
       find.byKey(const ValueKey<String>('assistant-markdown-surface')),
       findsOneWidget,
     );
-    expect(find.byType(CompactToolDisplay), findsOneWidget);
+    expect(find.byType(ToolCallRow), findsOneWidget);
   });
 
   testWidgets(

@@ -95,7 +95,7 @@ class CanvasFontTextBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = SelectableText(
+    final content = Text(
       text,
       style: style.copyWith(color: textColor),
     );

@@ -21,10 +21,8 @@ import '../../../packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../ChatRuntimeScope.dart';
 import 'DetailsTagRenderer.dart';
 import 'DialogComponents.dart';
-import 'FileDiffDisplay.dart';
 import 'FontTagRenderer.dart';
 import 'ToolDisplayComponents.dart';
-import 'ToolResultDisplay.dart';
 import 'XmlCanvasBlockComponents.dart';
 
 class CustomXmlRenderer extends StatelessWidget {
@@ -139,19 +137,13 @@ class CustomXmlRenderer extends StatelessWidget {
         );
       case 'tool_result':
         final result = _extractToolResult(parsed, xmlContent);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            for (final fileDiff in result.fileDiffs)
-              FileDiffDisplay(diff: fileDiff),
-            if (result.fileDiffs.isEmpty)
-              ToolResultDisplay(
-                toolName: result.toolName,
-                result: result.resultContent,
-                isSuccess: result.isSuccess,
-                isStreaming: isStreaming,
-              ),
-          ],
+        return ToolCallRow(
+          presentation: ToolPresentation.fromResult(
+            result.toolName,
+            result.resultContent,
+            isSuccess: result.isSuccess,
+          ),
+          isStreaming: isStreaming,
         );
       case 'html':
         return StreamMarkdownRenderer(
@@ -551,13 +543,11 @@ class _ToolResultRenderState {
     required this.toolName,
     required this.isSuccess,
     required this.resultContent,
-    required this.fileDiffs,
   });
 
   final String toolName;
   final bool isSuccess;
   final String resultContent;
-  final List<FileDiff> fileDiffs;
 }
 
 /// Renders thinking content with the established chat disclosure design.
@@ -589,6 +579,7 @@ class _ThinkPanel extends StatefulWidget {
 
 class _ThinkPanelState extends State<_ThinkPanel> {
   late bool _expanded;
+  bool? _userOverride;
   late bool _bodyFullHeight;
   late final ScrollController _scrollController;
   bool _autoScrollEnabled = true;
@@ -606,20 +597,18 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     _scrollController = ScrollController();
   }
 
-  /// Syncs expansion state when streaming or caller defaults change.
+  /// Syncs expansion state when caller defaults change.
   @override
   void didUpdateWidget(covariant _ThinkPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.isStreaming != widget.isStreaming ||
-        oldWidget.initiallyExpanded != widget.initiallyExpanded) {
+    if (oldWidget.initiallyExpanded != widget.initiallyExpanded) {
       final targetExpanded = _targetExpandedFor(widget);
       if (targetExpanded && !_expanded) {
         _expandSession += 1;
       }
-      if (!targetExpanded && oldWidget.isStreaming && !widget.isStreaming) {
-        _bodyFullHeight = false;
+      if (_userOverride == null) {
+        _expanded = targetExpanded;
       }
-      _expanded = targetExpanded;
       if (_expanded) {
         _resetAutoScrollState();
       }
@@ -637,12 +626,9 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     super.dispose();
   }
 
-  /// Resolves the current expansion target from stream state and caller intent.
+  /// Resolves the current expansion target from caller intent.
   bool _targetExpandedFor(_ThinkPanel widget) {
-    if (widget.initiallyExpanded && !widget.isStreaming) {
-      return true;
-    }
-    if (widget.isStreaming) {
+    if (widget.initiallyExpanded) {
       return true;
     }
     return false;
@@ -652,6 +638,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
   void _handleHeaderTap() {
     setState(() {
       final nextExpanded = !_expanded;
+      _userOverride = nextExpanded;
       if (nextExpanded) {
         _expandSession += 1;
         _resetAutoScrollState();
@@ -695,7 +682,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     if (!_userHasInteractedWithScroll || !_scrollController.hasClients) {
       return;
     }
-    final position = _scrollController.position;
+    final position = _scrollController.positions.last;
     const threshold = 80.0;
     _autoScrollEnabled =
         position.pixels >= position.maxScrollExtent - threshold;
@@ -707,8 +694,11 @@ class _ThinkPanelState extends State<_ThinkPanel> {
       if (!mounted || !_scrollController.hasClients || !_autoScrollEnabled) {
         return;
       }
+      // AnimatedSwitcher can briefly keep the old and new body attached.
+      // Scroll the newest position instead of assuming a single attachment.
+      final target = _scrollController.positions.last;
       _isProgrammaticScroll = true;
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      target.jumpTo(target.maxScrollExtent);
       _isProgrammaticScroll = false;
     });
   }
@@ -719,9 +709,12 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     final theme = Theme.of(context);
     final color = theme.colorScheme.secondary;
     final contentText = widget.text.trim();
-    final titleColor = widget.textColor.withValues(alpha: 0.7);
+    if (contentText.isEmpty && !widget.isStreaming) {
+      return const SizedBox.shrink();
+    }
     final l10n = AppLocalizations.of(context)!;
     final thinkingTitle = l10n.thinkingProcess;
+    final previewText = _cleanThinkingPreview(contentText);
     final hasStreamingMarkdown =
         widget.isStreaming && widget.markdownEventStream != null;
     final shouldRenderBody =
@@ -735,7 +728,8 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         ? const NeverScrollableScrollPhysics()
         : null;
     const switchDuration = Duration(milliseconds: 220);
-    return Semantics(
+    return SelectionContainer.disabled(
+      child: Semantics(
       label: contentText.isEmpty
           ? thinkingTitle
           : '$thinkingTitle\n$contentText',
@@ -745,29 +739,56 @@ class _ThinkPanelState extends State<_ThinkPanel> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             MessagePressShieldRegion(
-              child: InkWell(
-                onTap: _handleHeaderTap,
-                borderRadius: BorderRadius.circular(6),
-                child: Padding(
-                  padding: EdgeInsets.zero,
-                  child: Row(
-                    children: <Widget>[
-                      AnimatedRotation(
-                        turns: _expanded ? 0.25 : 0,
-                        duration: const Duration(milliseconds: 300),
-                        child: Icon(
-                          Icons.keyboard_arrow_right,
-                          size: 20,
-                          color: titleColor,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _handleHeaderTap,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: <Widget>[
+                        Icon(
+                          Icons.psychology_outlined,
+                          size: 16,
+                          color: widget.isStreaming
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant.withValues(
+                                alpha: 0.8,
+                              ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      _ThinkingTitle(
-                        text: thinkingTitle,
-                        color: titleColor,
-                        streaming: widget.isStreaming,
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        _ThinkingTitle(
+                          text: thinkingTitle,
+                          color: widget.isStreaming
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant,
+                          streaming: widget.isStreaming,
+                        ),
+                        if (!_expanded && previewText.isNotEmpty) ...<Widget>[
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Text(
+                              '·',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.outlineVariant,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: _ThinkingPreviewTicker(
+                              text: previewText,
+                              isStreaming: widget.isStreaming,
+                              textColor: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -855,6 +876,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1011,6 +1033,118 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
         );
       },
       child: text,
+    );
+  }
+}
+
+String _cleanThinkingPreview(String text) {
+  if (text.isEmpty) return '';
+  final cleaned = text
+      .replaceAll(RegExp(r'```[\s\S]*?```'), ' [代码] ')
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll(RegExp(r'^[#*>\-\d.]+\s+', multiLine: true), '')
+      .replaceAll(RegExp(r'\r?\n'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (cleaned.length > 1000) {
+    return cleaned.substring(cleaned.length - 1000);
+  }
+  return cleaned;
+}
+
+class _ThinkingPreviewTicker extends StatefulWidget {
+  const _ThinkingPreviewTicker({
+    required this.text,
+    required this.isStreaming,
+    required this.textColor,
+  });
+
+  final String text;
+  final bool isStreaming;
+  final Color textColor;
+
+  @override
+  State<_ThinkingPreviewTicker> createState() => _ThinkingPreviewTickerState();
+}
+
+class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
+  late final ScrollController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ScrollController();
+    if (widget.isStreaming) {
+      _scrollToEnd();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ThinkingPreviewTicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text && widget.isStreaming) {
+      _scrollToEnd();
+    }
+  }
+
+  void _scrollToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients) return;
+      _controller.animateTo(
+        _controller.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ShaderMask(
+      shaderCallback: (Rect bounds) {
+        return LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: const <Color>[
+            Colors.white,
+            Colors.white,
+            Colors.transparent,
+          ],
+          stops: const <double>[0.0, 0.92, 1.0],
+        ).createShader(bounds);
+      },
+      blendMode: BlendMode.dstIn,
+      child: SingleChildScrollView(
+        controller: _controller,
+        scrollDirection: Axis.horizontal,
+        physics: const ClampingScrollPhysics(),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              widget.text,
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: widget.textColor,
+                letterSpacing: -0.2,
+              ),
+            ),
+            if (widget.isStreaming) ...<Widget>[
+              const SizedBox(width: 4),
+              const StreamingCursor(),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2028,11 +2162,9 @@ _ToolResultRenderState _extractToolResult(
       toolName: toolName.isEmpty ? 'Unknown tool' : toolName,
       isSuccess: false,
       resultContent: (errorMatch?.group(1) ?? resultContent).trim(),
-      fileDiffs: const <FileDiff>[],
     );
   }
 
-  final fileDiffs = _extractFileDiffs(resultContent);
   final withoutFileDiff = resultContent
       .replaceAll(
         RegExp(r'<file-diff[\s\S]*<\/file-diff>', caseSensitive: false),
@@ -2043,52 +2175,5 @@ _ToolResultRenderState _extractToolResult(
     toolName: toolName.isEmpty ? 'Unknown tool' : toolName,
     isSuccess: true,
     resultContent: withoutFileDiff,
-    fileDiffs: _isFileDiffTool(toolName) ? fileDiffs : const <FileDiff>[],
   );
-}
-
-bool _isFileDiffTool(String toolName) {
-  return toolName == 'apply_file' ||
-      toolName == 'create_file' ||
-      toolName == 'edit_file';
-}
-
-List<FileDiff> _extractFileDiffs(String resultContent) {
-  return RegExp(
-    r'<file-diff\b([^>]*)>([\s\S]*?)<\/file-diff>',
-    caseSensitive: false,
-  ).allMatches(resultContent).map((match) {
-    final attrs = match.group(1) ?? '';
-    final body = match.group(2) ?? '';
-    final path =
-        RegExp(
-          r'\bpath="([^"]*)"',
-          caseSensitive: false,
-        ).firstMatch(attrs)?.group(1) ??
-        '';
-    final details =
-        RegExp(
-          r'\bdetails="([^"]*)"',
-          caseSensitive: false,
-        ).firstMatch(attrs)?.group(1) ??
-        '';
-    final cdata = RegExp(
-      r'<!\[CDATA\[([\s\S]*?)\]\]>',
-      caseSensitive: false,
-    ).firstMatch(body)?.group(1);
-    return FileDiff(
-      path: path,
-      details: _decodeXmlText(details),
-      diffContent: _decodeXmlText((cdata ?? body).trim()),
-    );
-  }).toList();
-}
-
-String _decodeXmlText(String input) {
-  return input
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&apos;', "'");
 }
