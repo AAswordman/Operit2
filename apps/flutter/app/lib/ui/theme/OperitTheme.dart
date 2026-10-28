@@ -1260,7 +1260,13 @@ final Map<String, String> _loadedCustomFontFamilies = <String, String>{};
 
 const String _defaultFontFamily = 'Aptos';
 
-const List<String> _defaultFontFamilyFallback = <String>[
+// Resolve Chinese glyphs explicitly on iOS before other fallback families.
+List<String> get _defaultFontFamilyFallback =>
+    defaultTargetPlatform == TargetPlatform.iOS
+    ? const <String>['PingFang SC', ..._defaultFontFamilyFallbackBase]
+    : _defaultFontFamilyFallbackBase;
+
+const List<String> _defaultFontFamilyFallbackBase = <String>[
   'Calibri',
   'Segoe UI',
   'Microsoft YaHei UI',

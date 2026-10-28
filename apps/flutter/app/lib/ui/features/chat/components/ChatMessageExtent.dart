@@ -100,6 +100,13 @@ class RenderChatMessageExtentBox extends RenderProxyBox {
 
   ChatMessageExtent _extent;
 
+  /// Lets scrolling move a message without moving every paragraph node.
+  @override
+  void describeSemanticsConfiguration(SemanticsConfiguration config) {
+    super.describeSemanticsConfiguration(config);
+    config.isSemanticBoundary = true;
+  }
+
   /// Rebinds asynchronous layout notifications when the row identity changes.
   set extent(ChatMessageExtent value) {
     if (identical(value, _extent)) {
