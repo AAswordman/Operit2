@@ -69,7 +69,7 @@ pub(super) async fn connect(
 }
 pub(super) async fn listen(
     host: &HostManager,
-    mut source: PeerEndpoint,
+    source: PeerEndpoint,
     maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
