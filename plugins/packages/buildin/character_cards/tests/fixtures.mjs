@@ -129,6 +129,7 @@ export function installBrowserFixture(data) {
     async avatarImage() { return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII="; },
     async openEntity(mode, entity, id) { window.testCalls.push({ action: "openEntity", mode, entity, id }); },
     /** Models the host-selected destination independently from the suggested file name. */
+    async readImportFile() { window.testCalls.push({ action: "readImportFile" }); return { cancelled: true }; },
     async exportFile(name, content) { window.testCalls.push({ action: "exportFile", name, content }); return { cancelled: false, path: "/selected/" + name }; },
   };
 }

@@ -674,6 +674,28 @@ test("isolated UI import delegates untouched input and renders the declared snap
   await ui.context.close();
 });
 
+/** Exercises the memory import controls and picker cancellation in the embedded browser. */
+test("memory import selects a JSON file without a paste field and retains options when cancelled", async () => {
+  const ui = await page(390, 844);
+  try {
+    const graph = await openCharacterGraph(ui.page);
+    await graph.getByRole("button", { name: "更多操作", exact: true }).click();
+    await graph.getByRole("button", { name: "导入记忆 JSON", exact: true }).click();
+    const dialog = ui.page.getByRole("dialog", { name: "导入记忆 JSON", exact: true });
+    assert.equal(await dialog.locator("textarea").count(), 0);
+    await dialog.getByLabel("相同 UUID 记忆处理", { exact: true }).selectOption("CREATE_NEW");
+    await dialog.getByRole("button", { name: "选择 JSON 文件并导入", exact: true }).click();
+    await ui.page.waitForFunction(() => window.testCalls.some(call => call.action === "readImportFile"));
+    await dialog.locator(".busy-bar").waitFor({ state: "hidden" });
+    assert.equal(await dialog.count(), 1);
+    assert.equal(await dialog.getByLabel("相同 UUID 记忆处理", { exact: true }).inputValue(), "CREATE_NEW");
+    const calls = await ui.page.evaluate(() => window.testCalls);
+    assert.equal(calls.some(call => call.action === "importMemory"), false);
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await graph.waitFor();
+  } finally { await ui.context.close(); }
+});
+
 /** Verifies graph read failures never expose a guessed empty library or write controls. */
 test("failed graph read reports the host failure and prevents memory writes", async () => {
   const ui = await page();
@@ -886,6 +908,7 @@ async function registeredPage(t, plugin, routeId, presentation, documentUrl) {
       /** Delegates explicit cancellation without an identity mutation. */
       cancelScreen: () => window.invokeActualCharacterBridge("cancelScreen", []),
       /** Delegates requested export IO to the actual existing host method. */
+      readImportFile: () => window.invokeActualCharacterBridge("readImportFile", []),
       exportFile: (file, content) => window.invokeActualCharacterBridge("exportFile", [file, content]),
       avatarImage: uri => window.invokeActualCharacterBridge("avatarImage", [uri]),
       openEntity: async (mode, entity, id) => { const result = await window.invokeActualCharacterBridge("openEntity", [mode, entity, id]); window.__entityRequestSent = true; return result; },

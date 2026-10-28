@@ -12,6 +12,9 @@ export type WebResponses = Pick<RequestResults, "listBindableChats" | "writeChat
 export type WebAction = keyof WebResponses;
 export type WebRequest<A extends WebAction> = Extract<Request, { action: A }>;
 
+/** Distinguishes picker cancellation from the selected document contents. */
+export type ImportFileResult = { cancelled: true } | { cancelled: false; content: string };
+
 /** Declares the existing WebView interface registered by the package's Compose host. */
 export interface CharacterMemoryBridge {
   /** Reads the actual palette, route input and fresh aggregate in one startup response. */
@@ -26,6 +29,8 @@ export interface CharacterMemoryBridge {
   avatarImage(uri: string | null): Promise<string>;
   /** Opens the sole plugin-authored native entity surface. */
   openEntity(mode: "create" | "edit" | "preview", entity: EntityKind, id: string): Promise<void>;
+  /** Reads a JSON document selected through the host file picker. */
+  readImportFile(): Promise<ImportFileResult>;
   /** Saves JSON using the host file selector and returns its explicit cancellation result. */
   exportFile(name: string, content: string): Promise<ComposeFileSaveResult>;
 }

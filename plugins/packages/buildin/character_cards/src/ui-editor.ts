@@ -87,6 +87,17 @@ export function renderScreen(ctx: ComposeDslContext, definition: Definition, req
           managedLive.current = request; setManaged(request);
           return null;
         },
+        /** Reads the selected document through its host-provided VFS resource. */
+        readImportFile: async (...args: unknown[]) => {
+          webArguments(args, 0);
+          const selected = await ctx.openFilePicker({ picker: "document", allowMultiple: false, mimeTypes: ["application/json"] });
+          if (selected.cancelled) return { cancelled: true };
+          if (selected.files.length !== 1) throw new Error("请选择一个 JSON 文件");
+          const file = await Tools.Files.read(selected.files[0].path);
+          const content = file.content.replace(/^\uFEFF/, "");
+          if (content.trim() === "") throw new Error("所选 JSON 文件为空");
+          return { cancelled: false, content };
+        },
         /** Saves an export through the same host boundary used for file selection. */
         exportFile: async (...args: unknown[]) => {
           const [name, content] = webArguments(args, 2);

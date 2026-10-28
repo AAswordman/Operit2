@@ -22,7 +22,9 @@ export function createCharactersTransfersFeature(context: EditorContext) {
         else if (dialog.target === "group") state.snapshot = await request({ action: "importGroup", content: dialog.content });
         else {
           if (dialog.ownerKey === null) throw new Error("缺少导入记忆库标识");
-          const imported = await request({ action: "importMemory", ownerKey: dialog.ownerKey, content: dialog.content, strategy: dialog.strategy });
+          const file = await host().readImportFile();
+          if (file.cancelled) return;
+          const imported = await request({ action: "importMemory", ownerKey: dialog.ownerKey, content: file.content, strategy: dialog.strategy });
           const graph = owningGraph(dialog.ownerKey);
           graph.data = await request({ action: "graph", ownerKey: dialog.ownerKey });
           graph.searchIds = null; graph.query = ""; graph.appliedQuery = ""; graph.selected = null; graph.selectedEdge = null;

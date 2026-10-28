@@ -1586,6 +1586,17 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
             setManaged(request2);
             return null;
           },
+          /** Reads the selected document through its host-provided VFS resource. */
+          readImportFile: (...args) => __async(null, null, function* () {
+            webArguments(args, 0);
+            const selected = yield ctx.openFilePicker({ picker: "document", allowMultiple: false, mimeTypes: ["application/json"] });
+            if (selected.cancelled) return { cancelled: true };
+            if (selected.files.length !== 1) throw new Error("请选择一个 JSON 文件");
+            const file = yield Tools.Files.read(selected.files[0].path);
+            const content = file.content.replace(/^\uFEFF/, "");
+            if (content.trim() === "") throw new Error("所选 JSON 文件为空");
+            return { cancelled: false, content };
+          }),
           /** Saves an export through the same host boundary used for file selection. */
           exportFile: (...args) => __async(null, null, function* () {
             const [name, content] = webArguments(args, 2);

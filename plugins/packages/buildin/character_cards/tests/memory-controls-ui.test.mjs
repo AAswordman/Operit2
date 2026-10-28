@@ -45,6 +45,9 @@ async function controlsPage(t, width = 390, view = "memory") {
   await context.exposeFunction("exportRealMemoryFile", async (path, content) => {
     await harness.tools.Files.write(path, content, false); return { cancelled: false, path };
   });
+  await context.exposeFunction("readRealMemoryFile", async path => {
+    return { cancelled: false, content: (await harness.tools.Files.read(path)).content };
+  });
   await context.addInitScript(({ theme, view }) => {
     window.rejectMemoryAction = null;
     window.CharacterMemoryHost = {
@@ -58,6 +61,11 @@ async function controlsPage(t, width = 390, view = "memory") {
       },
       async avatarImage() { return null; },
       async openEntity() { throw new Error("No avatar picker configured for memory-controls test"); },
+      /** Supplies only the host selection; the service imports actual file contents. */
+      async readImportFile() {
+        if (window.importSource === undefined) return { cancelled: true };
+        return window.readRealMemoryFile(window.importSource);
+      },
       /** Separates the host user's destination and cancellation from plugin preview state. */
       async exportFile(name, content) {
         if (window.rejectExport === true) throw new Error("Host save denied");
@@ -449,8 +457,15 @@ test("graph canonical relationship editing and full memory backup import/export 
   await imported.getByLabel("相同 UUID 记忆处理", { exact: true }).selectOption("UPDATE");
   backup.space.memories[0].content = "Restored through actual UI import";
   backup.userMarkdown = "# Restored profile";
-  await imported.getByLabel("粘贴记忆 JSON", { exact: true }).fill(JSON.stringify(backup));
-  await imported.getByRole("button", { name: "导入", exact: true }).click();
+  assert.equal(await imported.locator("textarea").count(), 0);
+  await ui.page.evaluate(path => { window.importSource = path; }, path);
+  await ui.harness.tools.Files.write(path, "{", false);
+  await imported.getByRole("button", { name: "选择 JSON 文件并导入", exact: true }).click();
+  await imported.getByRole("alert").waitFor();
+  assert.equal(await imported.count(), 1);
+  assert.notEqual((await storedOwner(ui.harness)).memories[0].content, "Restored through actual UI import");
+  await ui.harness.tools.Files.write(path, JSON.stringify(backup), false);
+  await imported.getByRole("button", { name: "选择 JSON 文件并导入", exact: true }).click();
   await imported.waitFor({ state: "hidden" });
   assert.equal((await storedOwner(ui.harness)).memories[0].content, "Restored through actual UI import");
   assert.equal((await ui.runtime.web({ action: "readUser", ownerKey: CONTROLLED_OWNER })).content, "# Restored profile");
