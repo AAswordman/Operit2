@@ -439,7 +439,7 @@ export class DatabaseMemoryRepository {
   private async queryChunks(ownerKey: string, owner: Owner, memory: Memory, query: string, count: number, queryEmbedding: SourceEmbedding | null): Promise<{ total: number; chunks: DocumentChunk[] }> {
     const semantic = queryEmbedding !== null;
     const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
-    const rows = await this.memoryDatabase.query(`WITH query_vector AS MATERIALIZED (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
+    const rows = await this.memoryDatabase.query(`WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
       SELECT value,json_extract(value,'$.record.chunkIndex') AS position FROM plugin_objects
       WHERE collection='chunks' AND key>=?1 AND key<?2 AND json_extract(value,'$.record.memoryUuid')=?3
     ), scored AS (
