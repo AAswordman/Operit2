@@ -439,6 +439,29 @@ impl RuntimePackageManager {
         methodName: &str,
         payload: serde_json::Value,
     ) -> impl Future<Output = Result<serde_json::Value, String>> + 'static {
+        self.invokeToolPkgPublicApiWithDeadline(packageName, methodName, payload, None)
+    }
+
+    /// Calls a public API with an engine-enforced deadline covering synchronous and asynchronous script execution.
+    #[allow(non_snake_case)]
+    pub fn invokeToolPkgPublicApiWithTimeoutMillis(
+        &self,
+        packageName: &str,
+        methodName: &str,
+        payload: serde_json::Value,
+        timeoutMillis: u64,
+    ) -> impl Future<Output = Result<serde_json::Value, String>> + 'static {
+        self.invokeToolPkgPublicApiWithDeadline(packageName, methodName, payload, Some(timeoutMillis))
+    }
+
+    #[allow(non_snake_case)]
+    fn invokeToolPkgPublicApiWithDeadline(
+        &self,
+        packageName: &str,
+        methodName: &str,
+        payload: serde_json::Value,
+        timeoutMillis: Option<u64>,
+    ) -> impl Future<Output = Result<serde_json::Value, String>> + 'static {
         let startedAt = currentTimeMillis();
         let manager = self.toolPkgManager().clone();
         let reader = self.resourceReader();
@@ -463,8 +486,7 @@ impl RuntimePackageManager {
                 payload,
                 callerPackage: "host".to_string(),
             };
-            let serde_json::Value::Object(event) =
-                serde_json::to_value(event).map_err(|error| error.to_string())?
+            let serde_json::Value::Object(event) = serde_json::to_value(event).map_err(|error| error.to_string())?
             else {
                 return Err("ToolPkg public API event must serialize to an object".to_string());
             };
@@ -508,24 +530,45 @@ impl RuntimePackageManager {
                 );
             }
             let executeAt = currentTimeMillis();
-            let result = engine
-                .execute_script_function_async(
-                    script,
-                    declaration.function.clone(),
-                    params,
-                    BTreeMap::new(),
-                    None,
-                    true,
-                )
-                .await;
+            let result = match timeoutMillis {
+                Some(timeout) => {
+                    engine
+                        .execute_script_function_with_timeout_millis(
+                            &script,
+                            &declaration.function,
+                            &params,
+                            &BTreeMap::new(),
+                            None,
+                            true,
+                            timeout,
+                        )
+                        .await
+                }
+                None => {
+                    engine
+                        .execute_script_function_async(
+                            script,
+                            declaration.function.clone(),
+                            params,
+                            BTreeMap::new(),
+                            None,
+                            true,
+                        )
+                        .await
+                }
+            };
             let completedAt = currentTimeMillis();
             AppLogger::v_with_level(
                 "ToolPkgTiming",
                 &format!(
                     "kind=public_api package={} function={} api={} prepareMs={} executeMs={} totalMs={} success={}",
-                    runtime.packageName, declaration.function, apiName,
-                    executeAt.saturating_sub(startedAt), completedAt.saturating_sub(executeAt),
-                    completedAt.saturating_sub(startedAt), result.is_ok(),
+                    runtime.packageName,
+                    declaration.function,
+                    apiName,
+                    executeAt.saturating_sub(startedAt),
+                    completedAt.saturating_sub(executeAt),
+                    completedAt.saturating_sub(startedAt),
+                    result.is_ok(),
                 ),
                 operit_util::AppLogger::VERBOSE_LEVEL_3,
             );

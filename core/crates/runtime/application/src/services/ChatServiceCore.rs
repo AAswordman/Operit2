@@ -19,7 +19,7 @@ use crate::services::core::MessageProcessingDelegate::{
     ChatExecutionState, ChatTurnSubmission, MessageProcessingDelegate, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
-use crate::services::ProviderRuntimeSupportService::ChatConfigurationApi;
+use crate::services::ProviderRuntimeSupportService::{ChatConfigurationApi, MODEL_CONFIGURATION_OWNER};
 use crate::services::RuntimeHostInteractionService::{
     chatToolPermissionRequestsFlow, respondChatToolPermission,
     RuntimeHostInteractionToolPermissionRequest,
@@ -798,13 +798,7 @@ impl ChatServiceCore {
             .chatHistoryManager
             .beginChatExecution(&chatId)
             .map_err(|error| error.to_string())?;
-        let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
-        if api.extensionOwner() != resumeContext.extensionOwner {
-            return Err(
-                "Routed message configuration owner differs from the registered configuration owner"
-                    .to_string(),
-            );
-        }
+        let mut api = ChatConfigurationApi::ready(&service.tool_handler).await;
         let support = service.provider_runtime_context.support();
         let configuration = api
             .resolve(ChatConfigurationRequest {
@@ -1085,7 +1079,7 @@ impl ChatServiceCore {
             .enhancedAiService
             .as_ref()
             .ok_or_else(|| "Chat display requires an initialized plugin runtime".to_string())?;
-        let api=ChatConfigurationApi::ready(&service.tool_handler).await?;
+        let mut api=ChatConfigurationApi::ready(&service.tool_handler).await;
         let support=service.provider_runtime_context.support();
         let configuration=api.resolveDisplay(ChatConfigurationRequest {
             purpose: ChatConfigurationPurpose::Display,
@@ -1113,14 +1107,15 @@ impl ChatServiceCore {
         let service = self.enhancedAiService.as_ref().ok_or_else(|| {
             "Message configuration requires an initialized AI runtime".to_string()
         })?;
-        let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
+        let mut api = ChatConfigurationApi::ready(&service.tool_handler).await;
         let target = operit_model::PluginExtensionTarget::PluginExtensionTarget::Message {
             chatId: chatId.clone(),
             messageTimestamp,
             variantIndex,
         };
         let extensions = self.chatHistoryDelegate.chatHistoryManager.readPluginExtensions(&target).map_err(|error| error.to_string())?;
-        let participantId = extensions.get(api.extensionOwner())
+        let participantId = extensions.get(MODEL_CONFIGURATION_OWNER)
+            .or_else(|| extensions.get(api.extensionOwner()))
             .and_then(|identity| identity.get("participantId"))
             .and_then(serde_json::Value::as_str)
             .filter(|id| !id.trim().is_empty())
@@ -1164,7 +1159,9 @@ impl ChatServiceCore {
             )
             .await
             .map_err(|error| error.to_string())?;
-        if configuration.profile.id != participantId {
+        if configuration.profile.id != participantId
+            && configuration.extensionOwner != MODEL_CONFIGURATION_OWNER
+        {
             return Err(
                 "Resolved profile does not match the requested execution participant".to_string(),
             );

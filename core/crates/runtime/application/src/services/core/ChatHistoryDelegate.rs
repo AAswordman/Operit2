@@ -1409,7 +1409,7 @@ impl ChatHistoryDelegate {
             .chatHistoryManager
             .newChatDraft(title, BTreeMap::new(), workspaceId, parentChatId.clone())
             .map_err(|error| error.to_string())?;
-        let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
+        let mut api = ChatConfigurationApi::ready(&service.tool_handler).await;
         let hooks = ToolPkgChatLifecycleHookBridge::snapshot().await?;
         let hookDraft = ToolPkgChatCreationDraft {
             creationKind,
@@ -1660,7 +1660,7 @@ impl ChatHistoryDelegate {
         if !canDelete {
             return Err(format!("Chat is locked: {chatId}"));
         }
-        let api = ChatConfigurationApi::ready(&service.tool_handler).await?;
+        let api = ChatConfigurationApi::ready(&service.tool_handler).await;
         self.prepareChatForDestructiveMutation(chatId.clone());
         api.deleteConfiguration(&chatId).await?;
         let deleted = self

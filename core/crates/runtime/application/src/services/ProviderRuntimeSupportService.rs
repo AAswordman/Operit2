@@ -5,13 +5,11 @@ use serde_json::Value;
 
 use operit_model::FunctionType::FunctionType;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
-use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
-    ToolPkgAiProviderRegistration, decodeToolPkgHookResult,
-};
+use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgAiProviderRegistration, decodeToolPkgHookResult};
 use operit_providers::runtime_support::{
-    ChatConfigurationDisplayResult, ChatConfigurationPurpose, ChatConfigurationRequest,
-    ChatConfigurationResult, ChatDisplayIdentity, ChatDisplayParticipant, ChatParticipantProfile, ChatToolAccess, ProviderFunctionModelBinding, ProviderMessageTiming,
-    ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
+    ChatConfigurationDisplayResult, ChatConfigurationPurpose, ChatConfigurationRequest, ChatConfigurationResult,
+    ChatDisplayIdentity, ChatDisplayParticipant, ChatParticipantProfile, ChatToolAccess, ProviderFunctionModelBinding,
+    ProviderMessageTiming, ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
     ProviderRuntimeSupportFuture, ProviderToolPkgAiProviderRegistration,
 };
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -38,193 +36,240 @@ impl ProviderRuntimeSupportService {
 /// Identifies the built-in model conversation owner independently of optional plugins.
 pub const MODEL_CONFIGURATION_OWNER: &str = "host.chat.model";
 
-/// Holds the explicit model owner or one registered plugin owner on a ready immutable catalog.
+/// Optional plugin backend. Removing it switches every subsequent operation to native defaults.
+#[derive(Clone)]
+struct ChatConfigurationPlugin {
+    owner: String,
+    manager: RuntimePackageManager,
+}
+
+/// Resolves optional plugin configuration; native defaults remain independent of plugin availability.
 #[derive(Clone)]
 pub struct ChatConfigurationApi {
     toolHandler: AIToolHandler,
-    manager: RuntimePackageManager,
-    ownerPackage: String,
+    plugin: Option<ChatConfigurationPlugin>,
 }
 
 impl ChatConfigurationApi {
-    /// Selects ordinary model mode or the unique configuration plugin from one ready catalog.
-    pub async fn ready(toolHandler: &AIToolHandler) -> Result<Self, String> {
-        let manager =
-            RuntimePackageManager::readySnapshot(toolHandler.getOrCreatePackageManager()).await?;
-        let mut candidates = Vec::new();
-        for runtime in manager.getEnabledToolPkgContainerRuntimes() {
-            for declaration in &runtime.publicApis {
-                if declaration.id == "chat.configuration.resolve" {
-                    candidates.push(runtime.packageName.clone());
-                }
+    /// Loads the optional backend without making plugin readiness a prerequisite for chatting.
+    pub async fn ready(toolHandler: &AIToolHandler) -> Self {
+        let plugin = async {
+            let manager = RuntimePackageManager::readySnapshot(toolHandler.getOrCreatePackageManager()).await?;
+            let candidates = manager
+                .getEnabledToolPkgContainerRuntimes()
+                .into_iter()
+                .flat_map(|runtime| {
+                    runtime
+                        .publicApis
+                        .into_iter()
+                        .map(move |api| (runtime.packageName.clone(), api.id))
+                })
+                .filter(|(_, id)| id == "chat.configuration.resolve")
+                .map(|(owner, _)| owner)
+                .collect();
+            let owner = selectChatConfigurationOwner(candidates)?;
+            Ok::<_, String>((owner != MODEL_CONFIGURATION_OWNER).then_some(ChatConfigurationPlugin { owner, manager }))
+        }
+        .await;
+        let plugin = match plugin {
+            Ok(plugin) => plugin,
+            Err(error) => {
+                reportConfigurationFallback(&toolHandler.getContext(), "插件目录", &error);
+                None
+            }
+        };
+        Self {
+            toolHandler: toolHandler.clone(),
+            plugin,
+        }
+    }
+
+    pub fn extensionOwner(&self) -> &str {
+        self.plugin
+            .as_ref()
+            .map_or(MODEL_CONFIGURATION_OWNER, |plugin| &plugin.owner)
+    }
+
+    /// The only plugin resolution boundary: deadline, strict decoding, owner-attributed notification, then removal.
+    async fn pluginConfiguration<T>(
+        &mut self,
+        method: &str,
+        request: &ChatConfigurationRequest,
+        decode: fn(Value, &str) -> Result<T, String>,
+    ) -> Option<T> {
+        let plugin = self.plugin.as_ref()?;
+        let result = async {
+            let raw = plugin
+                .manager
+                .invokeToolPkgPublicApiWithTimeoutMillis(
+                    &plugin.owner,
+                    method,
+                    serde_json::to_value(request).map_err(|error| error.to_string())?,
+                    CONFIGURATION_TIMEOUT_MILLIS,
+                )
+                .await?;
+            decode(raw, &plugin.owner)
+        }
+        .await;
+        match result {
+            Ok(configuration) => Some(configuration),
+            Err(error) => {
+                self.disablePlugin(&error);
+                None
             }
         }
-        Ok(Self {
-            toolHandler: toolHandler.clone(),
-            ownerPackage: selectChatConfigurationOwner(candidates)?,
-            manager,
-        })
     }
 
-    /// Returns the authenticated catalog owner for Core record operations and execution validation.
-    pub fn extensionOwner(&self) -> &str {
-        &self.ownerPackage
+    fn disablePlugin(&mut self, error: &str) {
+        if let Some(plugin) = self.plugin.take() {
+            reportConfigurationFallback(&self.toolHandler.getContext(), &plugin.owner, error);
+        }
     }
 
-    /// Resolves generic presentation through the selected model or registered configuration mode.
+    /// Resolves presentation without allowing plugin failure to prevent opening a conversation.
     pub async fn resolveDisplay(
-        &self,
+        &mut self,
         request: ChatConfigurationRequest,
     ) -> Result<ChatConfigurationDisplayResult, String> {
         request.requirePurpose(ChatConfigurationPurpose::Display)?;
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            return self.modelDisplay(&request);
+        if let Some(configuration) = self
+            .pluginConfiguration("chat.configuration.resolve", &request, decodeDisplayConfigurationResult)
+            .await
+        {
+            return Ok(configuration);
         }
-        decodeDisplayConfigurationResult(
-            self.invokeRegisteredResolve(request).await?,
-            &self.ownerPackage,
-        )
+        self.modelDisplay(&request)
     }
 
-    /// Resolves an existing execution through its explicit model or plugin configuration mode.
-    pub async fn resolve(
-        &self,
-        request: ChatConfigurationRequest,
-    ) -> Result<ChatConfigurationResult, String> {
+    /// Resolves a send with the plugin, or uses the exact native path without plugin-owned selection data.
+    pub async fn resolve(&mut self, request: ChatConfigurationRequest) -> Result<ChatConfigurationResult, String> {
         request.requirePurpose(ChatConfigurationPurpose::Execution)?;
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            return self.modelExecution(request);
+        if request.participantId.as_deref() != Some("model:chat") {
+            if let Some(configuration) = self
+                .pluginConfiguration("chat.configuration.resolve", &request, decodeConfigurationResult)
+                .await
+            {
+                return Ok(configuration);
+            }
         }
-        self.invokeResolve(request).await
+        nativeModelExecution(self.modelProfile(&request)?)
     }
 
-    /// Resolves every currently bound participant for a conversation-wide context estimate.
+    /// A failed participant invalidates the whole plugin estimate; never mix native and plugin contexts.
     pub async fn resolveContextParticipants(
-        &self,
+        &mut self,
         mut request: ChatConfigurationRequest,
     ) -> Result<Vec<ChatConfigurationResult>, String> {
         request.requirePurpose(ChatConfigurationPurpose::Execution)?;
-        if request.participantId.is_some() {
+        if request.participantId.is_some() || self.plugin.is_none() {
             return Ok(vec![self.resolve(request).await?]);
         }
+        let original = request.clone();
         request.purpose = ChatConfigurationPurpose::Display;
         let display = self.resolveDisplay(request.clone()).await?;
-        if display.participants.is_empty() {
-            return Err("Conversation context requires a current bound participant".to_string());
-        }
         request.purpose = ChatConfigurationPurpose::Execution;
-        let mut configurations = Vec::with_capacity(display.participants.len());
+        let mut configurations = Vec::new();
         for participant in display.participants {
             request.participantId = Some(participant.id.clone());
             let configuration = self.resolve(request.clone()).await?;
+            if self.plugin.is_none() {
+                return Ok(vec![configuration]);
+            }
             if display.contextKey.as_ref() != Some(&configuration.contextKey)
                 || configuration.profile.id != participant.id
             {
-                return Err("Conversation binding changed during context estimation".to_string());
+                self.disablePlugin("Conversation binding changed during context estimation");
+                return Ok(vec![self.resolve(original).await?]);
             }
             configurations.push(configuration);
+        }
+        if configurations.is_empty() {
+            self.disablePlugin("Conversation has no participants");
+            return Ok(vec![self.resolve(original).await?]);
         }
         Ok(configurations)
     }
 
-    /// Resolves display data for a creation draft without requiring a nonexistent conversation or execution participant.
+    /// Resolves creation drafts through the same isolated boundary as existing conversations.
     pub async fn resolveDraft(
-        &self,
+        &mut self,
         mut request: ChatConfigurationRequest,
         chatExtension: Option<operit_providers::runtime_support::JsonObject>,
     ) -> Result<ChatConfigurationDisplayResult, String> {
         request.requirePurpose(ChatConfigurationPurpose::Display)?;
-        if let Some(chatId) = request.chatId.as_deref() {
+        if let Some(chatId) = &request.chatId {
             requireChatId(chatId)?;
         }
         request.chatExtension = chatExtension;
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            return self.modelDisplay(&request);
-        }
-        let value = self
-            .manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
+        if let Some(configuration) = self
+            .pluginConfiguration(
                 "chat.configuration.draft.resolve",
-                serde_json::to_value(request).map_err(|error| error.to_string())?,
+                &request,
+                decodeDisplayConfigurationResult,
             )
-            .await?;
-        decodeDisplayConfigurationResult(value, &self.ownerPackage)
+            .await
+        {
+            return Ok(configuration);
+        }
+        self.modelDisplay(&request)
     }
 
-    /// Publishes a prepared plugin binding only after the Core chat transaction succeeds.
     pub async fn commitDraft(&self, chatId: &str) -> Result<(), String> {
-        requireChatId(chatId)?;
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            return Ok(());
-        }
-        let value = self
-            .manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
-                "chat.configuration.draft.commit",
-                serde_json::json!({"chatId":chatId}),
-            )
-            .await?;
-        if value != serde_json::json!({"committed":true}) {
-            return Err("Plugin did not acknowledge draft commit".into());
-        }
-        Ok(())
+        self.updateBinding(chatId, "chat.configuration.draft.commit", "committed")
+            .await
     }
 
-    /// Discards an explicit prepared draft when an existing empty chat is reused.
     pub async fn abortDraft(&self, chatId: &str) -> Result<(), String> {
-        requireChatId(chatId)?;
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
-            return Ok(());
-        }
-        let value = self
-            .manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
-                "chat.configuration.draft.abort",
-                serde_json::json!({"chatId":chatId}),
-            )
-            .await?;
-        if value != serde_json::json!({"aborted":true}) {
-            return Err("Plugin did not acknowledge draft abort".into());
-        }
-        Ok(())
+        self.updateBinding(chatId, "chat.configuration.draft.abort", "aborted")
+            .await
     }
 
-    /// Requires the selected owner to release its state before the Core conversation can be deleted.
     pub async fn deleteConfiguration(&self, chatId: &str) -> Result<(), String> {
+        self.updateBinding(chatId, "chat.configuration.delete", "deleted").await
+    }
+
+    /// Mutations retain their transaction semantics; only resolution is allowed to degrade.
+    async fn updateBinding(&self, chatId: &str, method: &str, acknowledgement: &str) -> Result<(), String> {
         requireChatId(chatId)?;
-        if self.ownerPackage == MODEL_CONFIGURATION_OWNER {
+        let Some(plugin) = &self.plugin else {
             return Ok(());
-        }
-        let value = self.manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
-                "chat.configuration.delete",
-                serde_json::json!({"chatId":chatId}),
-            )
+        };
+        let value = plugin
+            .manager
+            .invokeToolPkgPublicApi(&plugin.owner, method, serde_json::json!({"chatId":chatId}))
             .await?;
-        if value != serde_json::json!({"deleted":true}) {
-            return Err("Plugin did not acknowledge configuration deletion".into());
+        if value != serde_json::json!({(acknowledgement):true}) {
+            return Err(format!("Plugin {} did not acknowledge {method}", plugin.owner));
         }
         Ok(())
     }
 
     /// Reads the exact configured model through the runtime's platform-neutral host-backed manager.
     fn modelProfile(&self, request: &ChatConfigurationRequest) -> Result<ChatParticipantProfile, String> {
-        let support = RuntimeProviderSupport { tool_handler: self.toolHandler.clone() };
+        let support = RuntimeProviderSupport {
+            tool_handler: self.toolHandler.clone(),
+        };
         let binding = &request.defaultModelBinding;
         let model = support.resolvedModelConfig(support.dataDir()?, &binding.providerId, &binding.modelId)?;
         if request.defaultTtsConfigId.trim().is_empty() {
             return Err("Model conversation speech configuration is empty".into());
         }
         Ok(ChatParticipantProfile {
-            id: "model:chat".into(), name: model.modelId,
+            id: "model:chat".into(),
+            name: model.modelId,
             avatarUri: Some(format!("provider-logo:{}", model.apiProviderTypeId)),
-            introPrompt: String::new(), userPreferencesText: String::new(), openingStatement: String::new(),
-            modelBinding: binding.clone(), ttsConfigId: request.defaultTtsConfigId.clone(),
-            toolAccess: ChatToolAccess { enabled: false, allowedBuiltinTools: vec![], allowedPackages: vec![], allowedSkills: vec![], allowedMcpServers: vec![] },
+            introPrompt: String::new(),
+            userPreferencesText: String::new(),
+            openingStatement: String::new(),
+            modelBinding: binding.clone(),
+            ttsConfigId: request.defaultTtsConfigId.clone(),
+            toolAccess: ChatToolAccess {
+                enabled: false,
+                allowedBuiltinTools: vec![],
+                allowedPackages: vec![],
+                allowedSkills: vec![],
+                allowedMcpServers: vec![],
+            },
             resources: vec![],
         })
     }
@@ -234,52 +279,56 @@ impl ChatConfigurationApi {
         let profile = self.modelProfile(request)?;
         let result = ChatConfigurationDisplayResult {
             contextKey: Some("model:chat".into()),
-            identity: Some(ChatDisplayIdentity { title: profile.name.clone(), avatarUri: profile.avatarUri.clone() }),
-            participants: vec![ChatDisplayParticipant { id: profile.id, name: profile.name, avatarUri: profile.avatarUri }],
-            initialMessages: vec![], extensionOwner: MODEL_CONFIGURATION_OWNER.into(),
+            identity: Some(ChatDisplayIdentity {
+                title: profile.name.clone(),
+                avatarUri: profile.avatarUri.clone(),
+            }),
+            participants: vec![ChatDisplayParticipant {
+                id: profile.id,
+                name: profile.name,
+                avatarUri: profile.avatarUri,
+            }],
+            initialMessages: vec![],
+            extensionOwner: MODEL_CONFIGURATION_OWNER.into(),
         };
         result.validate()?;
         Ok(result)
     }
+}
 
-    /// Resolves model execution from the current application model and voice defaults.
-    fn modelExecution(&self, request: ChatConfigurationRequest) -> Result<ChatConfigurationResult, String> {
-        let profile = self.modelProfile(&request)?;
-        if request.participantId.as_ref().is_some_and(|id| id != &profile.id) {
-            return Err("Model execution participant does not match the current model configuration".into());
-        }
-        let executionData = serde_json::json!({ "schemaVersion": 1, "contextKey": "model:chat", "profile": profile, "participants": [profile] })
+/// Builds the standalone native descriptor without any plugin identity, policy, prompt or resource data.
+fn nativeModelExecution(profile: ChatParticipantProfile) -> Result<ChatConfigurationResult, String> {
+    let executionData = serde_json::json!({ "schemaVersion": 1, "contextKey": "model:chat", "profile": profile, "participants": [profile] })
             .as_object().cloned().ok_or("Model execution data is not an object")?;
-        let result = ChatConfigurationResult { historyPolicy: operit_providers::runtime_support::ChatHistoryPolicy { isolateParticipants: false, labelUserMessages: false }, contextKey: "model:chat".into(), profile: profile.clone(), participants: vec![profile],
-            executionData, extensionOwner: MODEL_CONFIGURATION_OWNER.into() };
-        result.validate()?;
-        Ok(result)
-    }
+    let result = ChatConfigurationResult {
+        historyPolicy: operit_providers::runtime_support::ChatHistoryPolicy {
+            isolateParticipants: false,
+            labelUserMessages: false,
+        },
+        contextKey: "model:chat".into(),
+        profile: profile.clone(),
+        participants: vec![profile],
+        executionData,
+        extensionOwner: MODEL_CONFIGURATION_OWNER.into(),
+    };
+    result.validate()?;
+    Ok(result)
+}
 
-    /// Invokes the exact selected declaration and injects its authenticated owner after successful decoding.
-    async fn invokeResolve(
-        &self,
-        request: ChatConfigurationRequest,
-    ) -> Result<ChatConfigurationResult, String> {
-        request.requirePurpose(ChatConfigurationPurpose::Execution)?;
-        decodeConfigurationResult(
-            self.invokeRegisteredResolve(request).await?,
-            &self.ownerPackage,
-        )
-    }
+/// Bounds configuration scripts using the engine deadline, which also interrupts synchronous JavaScript.
+const CONFIGURATION_TIMEOUT_MILLIS: u64 = 10_000;
 
-    /// Invokes one immutable selected registration without choosing a second owner or reinterpreting its result.
-    async fn invokeRegisteredResolve(
-        &self,
-        request: ChatConfigurationRequest,
-    ) -> Result<Value, String> {
-        self.manager
-            .invokeToolPkgPublicApi(
-                &self.ownerPackage,
-                "chat.configuration.resolve",
-                serde_json::to_value(request).map_err(|error| error.to_string())?,
-            )
-            .await
+/// Reports plugin failure independently of the send result; a broken notification host cannot abort fallback.
+fn reportConfigurationFallback(context: &operit_host_api::HostManager::HostManager, owner: &str, error: &str) {
+    let message = format!("插件「{owner}」的聊天配置解析失败，已切换为默认聊天配置。错误：{error}");
+    operit_util::AppLogger::AppLogger::e("ChatConfigurationFallback", &message);
+    if let Some(host) = &context.toastHost {
+        if let Err(error) = host.toast(&message) {
+            operit_util::AppLogger::AppLogger::e(
+                "ChatConfigurationFallback",
+                &format!("插件错误提示显示失败：{error}"),
+            );
+        }
     }
 }
 
@@ -511,7 +560,7 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
                 Box::new(move || {
                     Box::pin(async move {
                         let result = async {
-                            let api = ChatConfigurationApi::ready(&tool_handler).await?;
+                            let mut api = ChatConfigurationApi::ready(&tool_handler).await;
                             api.resolve(request).await
                         }
                         .await;
@@ -698,6 +747,61 @@ mod chat_configuration_contract_tests {
         decodeConfigurationResult, decodeDisplayConfigurationResult, requireChatId,
         selectChatConfigurationOwner, validateNativeModelExecutionData, MODEL_CONFIGURATION_OWNER,
     };
+
+    use super::{nativeModelExecution, reportConfigurationFallback};
+    use operit_providers::runtime_support::ChatParticipantProfile;
+    use std::sync::{Arc, Mutex};
+
+    fn defaultProfile() -> ChatParticipantProfile {
+        serde_json::from_value(serde_json::json!({
+            "id":"model:chat", "name":"default-model", "avatarUri":null,
+            "introPrompt":"", "userPreferencesText":"", "openingStatement":"",
+            "modelBinding":{"providerId":"default-provider", "modelId":"default-model"}, "ttsConfigId":"default-voice",
+            "toolAccess":{"enabled":false, "allowedBuiltinTools":[], "allowedPackages":[], "allowedSkills":[], "allowedMcpServers":[]},
+            "resources":[]
+        })).unwrap()
+    }
+
+    /// Error notices identify both the responsible plugin and original failure.
+    #[test]
+    fn fallback_notification_identifies_plugin_and_original_error() {
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let sink = notices.clone();
+        let host = operit_host_api::HostManager::HostManager::new().withToastHost(Arc::new(move |message: &str| {
+            sink.lock().unwrap().push(message.to_string());
+            Ok(())
+        }));
+        reportConfigurationFallback(&host, "org.example.broken", "missing provider");
+        let notices = notices.lock().unwrap();
+        assert_eq!(notices.len(), 1);
+        for expected in ["org.example.broken", "missing provider", "已切换为默认聊天配置"] {
+            assert!(notices[0].contains(expected));
+        }
+    }
+
+    /// Failure to present a notice is logged, not rethrown into the send pipeline.
+    #[test]
+    fn notification_failure_does_not_block_native_execution() {
+        let host = operit_host_api::HostManager::HostManager::new().withToastHost(Arc::new(|_: &str| {
+            Err(operit_host_api::HostError::new("notification channel closed"))
+        }));
+        reportConfigurationFallback(&host, "broken", "missing provider");
+        let native = nativeModelExecution(defaultProfile()).unwrap();
+        validateNativeModelExecutionData(&native.executionData, Some("model:chat")).unwrap();
+    }
+
+    /// The default descriptor has the exact standalone identity, model, voice, history policy and empty plugin resources.
+    #[test]
+    fn native_fallback_has_no_plugin_configuration() {
+        let native = nativeModelExecution(defaultProfile()).unwrap();
+        assert_eq!(native.extensionOwner, MODEL_CONFIGURATION_OWNER);
+        assert_eq!(native.profile, defaultProfile());
+        assert_eq!(native.participants, vec![defaultProfile()]);
+        assert_eq!(native.contextKey, "model:chat");
+        assert!(!native.historyPolicy.isolateParticipants);
+        assert!(!native.historyPolicy.labelUserMessages);
+        validateNativeModelExecutionData(&native.executionData, Some("model:chat")).unwrap();
+    }
 
     /// Selects arbitrary uniquely registered owners without a built-in identity whitelist.
     #[test]
