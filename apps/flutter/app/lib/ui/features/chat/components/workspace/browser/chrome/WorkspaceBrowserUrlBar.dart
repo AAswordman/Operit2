@@ -17,6 +17,7 @@ class WorkspaceBrowserUrlBar extends StatefulWidget {
     required this.onForward,
     required this.onRefreshOrStop,
     required this.onOpenMenu,
+    this.onNewTab,
     this.menuButtonKey,
   });
 
@@ -28,6 +29,7 @@ class WorkspaceBrowserUrlBar extends StatefulWidget {
   final VoidCallback onForward;
   final VoidCallback onRefreshOrStop;
   final VoidCallback onOpenMenu;
+  final VoidCallback? onNewTab;
   final Key? menuButtonKey;
 
   @override
@@ -224,13 +226,20 @@ class _WorkspaceBrowserUrlBarState extends State<WorkspaceBrowserUrlBar> {
                             ),
                     ),
                   ),
-                  if (!_isEditing)
+                  if (!_isEditing) ...<Widget>[
+                    if (widget.onNewTab != null)
+                      _ToolbarIconButton(
+                        tooltip: '新建标签页',
+                        icon: Icons.add_rounded,
+                        onPressed: widget.onNewTab,
+                      ),
                     _ToolbarIconButton(
                       key: widget.menuButtonKey,
                       tooltip: l10n.menu,
                       icon: Icons.more_horiz,
                       onPressed: widget.onOpenMenu,
                     ),
+                  ],
                 ],
               ),
               if (tab.isLoading)

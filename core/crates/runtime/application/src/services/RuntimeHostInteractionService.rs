@@ -1335,16 +1335,19 @@ pub fn requestOwnerBrowserAutomation(
         .ok_or_else(|| "browser automation response payload is missing".to_string())
 }
 
-/// Requests a browser session command from the owner host and waits for a response.
-pub fn requestOwnerBrowserSession(
+/// Requests a browser session command from the owner host and waits without
+/// blocking the calling runtime worker.
+pub async fn requestOwnerBrowserSessionAsync(
     payload: RuntimeHostInteractionBrowserSessionPayload,
     timeout: Duration,
 ) -> Result<RuntimeHostInteractionBrowserSessionResponse, String> {
-    let response = runtimeHostInteractionBroker().request(
-        RuntimeHostInteractionTarget::OwnerHost,
-        RuntimeHostInteractionRequest::browserSession(payload),
-        timeout,
-    )?;
+    let response = runtimeHostInteractionBroker()
+        .requestAsync(
+            RuntimeHostInteractionTarget::OwnerHost,
+            RuntimeHostInteractionRequest::browserSession(payload),
+            timeout,
+        )
+        .await?;
     response
         .browserSession
         .ok_or_else(|| "browser session response payload is missing".to_string())
@@ -1746,7 +1749,16 @@ impl RuntimeHostInteractionBroker {
             .map_err(|error| error.message)?;
 
         loop {
-            let changed = self.asyncChanged.notified();
+            // Register the change waiter before scanning shared state, because
+            // notify_waiters only wakes waiters that are already registered; a
+            // response inserted between the scan and the select below would
+            // otherwise be missed until the timeout fires.
+            let mut changed = Box::pin(self.asyncChanged.notified());
+            std::future::poll_fn(|context| {
+                let _ = changed.as_mut().poll(context);
+                std::task::Poll::Ready(())
+            })
+            .await;
             {
                 let mut state = self
                     .state
@@ -1763,7 +1775,7 @@ impl RuntimeHostInteractionBroker {
             }
 
             tokio::select! {
-                _ = changed => {}
+                _ = changed.as_mut() => {}
                 timeout = &mut timeoutReceiver => {
                     timeout.map_err(|_| "host interaction timeout task was cancelled".to_string())?;
                     let mut state = self
@@ -1772,14 +1784,14 @@ impl RuntimeHostInteractionBroker {
                         .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
                     if let Some(response) = state.responses.remove(&requestId) {
                         state.pending.remove(&requestId);
-                                        self.notifyChanged();
+                        self.notifyChanged();
                         if let Some(error) = response.error.as_ref() {
                             return Err(error.clone());
                         }
                         return Ok(response);
                     }
                     state.pending.remove(&requestId);
-                                self.notifyChanged();
+                    self.notifyChanged();
                     return Err(format!("host interaction timed out: {requestId}"));
                 }
             }

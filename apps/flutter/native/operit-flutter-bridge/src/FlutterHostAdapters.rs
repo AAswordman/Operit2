@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerBrowserAutomation, requestOwnerBrowserSession, requestOwnerComposeFilePicker,
+    requestOwnerBrowserAutomation, requestOwnerBrowserSessionAsync, requestOwnerComposeFilePicker,
     requestOwnerComposeFileSave, requestOwnerComposeWebViewController, requestOwnerWebVisit,
     RuntimeHostInteractionBrowserAutomationPayload, RuntimeHostInteractionBrowserSessionPayload,
     RuntimeHostInteractionComposeFilePickerPayload,
@@ -15,6 +15,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use async_trait::async_trait;
 use operit_host_api::{
     BrowserAutomationRequest, BrowserAutomationResponse, FileSystemHost, HostError, HostResult,
 };
@@ -184,8 +185,9 @@ impl FlutterBrowserSessionBridge {
         Self {}
     }
 
-    /// Sends one browser session command to the owner app.
-    fn requestCommand(
+    /// Sends one browser session command to the owner app and waits without
+    /// blocking the calling runtime worker.
+    async fn requestCommand(
         &self,
         command: operit_host_api::BrowserSessionCommand,
     ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionCommandResult> {
@@ -194,10 +196,11 @@ impl FlutterBrowserSessionBridge {
                 "browser session command encode failed: {error}"
             ))
         })?;
-        let response = requestOwnerBrowserSession(
+        let response = requestOwnerBrowserSessionAsync(
             RuntimeHostInteractionBrowserSessionPayload { commandJson },
             Duration::from_secs(60),
         )
+        .await
         .map_err(operit_host_api::HostError::new)?;
         serde_json::from_str(&response.resultJson).map_err(|error| {
             operit_host_api::HostError::new(format!(
@@ -232,17 +235,18 @@ impl FlutterBrowserSessionBridge {
     }
 }
 
+#[async_trait(?Send)]
 impl operit_host_api::BrowserSessionHost for FlutterBrowserSessionBridge {
     /// Lists interactive browser sessions owned by the Flutter app.
-    fn listBrowserSessions(
+    async fn listBrowserSessions(
         &self,
     ) -> operit_host_api::HostResult<Vec<operit_host_api::BrowserSessionInfo>> {
-        let result = self.requestCommand(Self::command("list"))?;
+        let result = self.requestCommand(Self::command("list")).await?;
         Ok(result.sessions)
     }
 
     /// Creates an interactive browser session in the Flutter app.
-    fn createBrowserSession(
+    async fn createBrowserSession(
         &self,
         initialUrl: &str,
         userAgent: Option<&str>,
@@ -252,11 +256,11 @@ impl operit_host_api::BrowserSessionHost for FlutterBrowserSessionBridge {
         command.url = Some(initialUrl.to_string());
         command.userAgent = userAgent.map(str::to_string);
         command.headers = headers;
-        Self::requireSession(self.requestCommand(command)?, "create")
+        Self::requireSession(self.requestCommand(command).await?, "create")
     }
 
     /// Updates a browser session owned by the Flutter app.
-    fn updateBrowserSession(
+    async fn updateBrowserSession(
         &self,
         sessionId: &str,
         userAgent: Option<&str>,
@@ -266,25 +270,25 @@ impl operit_host_api::BrowserSessionHost for FlutterBrowserSessionBridge {
         command.sessionId = Some(sessionId.to_string());
         command.userAgent = userAgent.map(str::to_string);
         command.headers = headers;
-        Self::requireSession(self.requestCommand(command)?, "update")
+        Self::requireSession(self.requestCommand(command).await?, "update")
     }
 
     /// Submits a semantic browser command to the Flutter app.
-    fn submitBrowserCommand(
+    async fn submitBrowserCommand(
         &self,
         command: operit_host_api::BrowserSessionCommand,
     ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionCommandResult> {
-        self.requestCommand(command)
+        self.requestCommand(command).await
     }
 
     /// Reads a browser session snapshot from the Flutter app.
-    fn getBrowserSessionSnapshot(
+    async fn getBrowserSessionSnapshot(
         &self,
         sessionId: &str,
     ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionSnapshot> {
         let mut command = Self::command("snapshot");
         command.sessionId = Some(sessionId.to_string());
-        let result = self.requestCommand(command)?;
+        let result = self.requestCommand(command).await?;
         let session = Self::requireSession(result.clone(), "snapshot")?;
         Ok(operit_host_api::BrowserSessionSnapshot {
             session,
@@ -293,13 +297,13 @@ impl operit_host_api::BrowserSessionHost for FlutterBrowserSessionBridge {
     }
 
     /// Closes a browser session owned by the Flutter app.
-    fn closeBrowserSession(
+    async fn closeBrowserSession(
         &self,
         sessionId: &str,
     ) -> operit_host_api::HostResult<operit_host_api::BrowserSessionCommandResult> {
         let mut command = Self::command("close");
         command.sessionId = Some(sessionId.to_string());
-        self.requestCommand(command)
+        self.requestCommand(command).await
     }
 }
 

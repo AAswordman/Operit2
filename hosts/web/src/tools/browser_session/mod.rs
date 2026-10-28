@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
 use js_sys::JSON;
 use operit_host_api::{
     BrowserSessionCommand, BrowserSessionCommandResult, BrowserSessionHost, BrowserSessionInfo,
@@ -31,9 +32,10 @@ impl WebBrowserSessionHost {
     }
 }
 
+#[async_trait(?Send)]
 impl BrowserSessionHost for WebBrowserSessionHost {
     /// Lists all simulated browser sessions.
-    fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>> {
+    async fn listBrowserSessions(&self) -> HostResult<Vec<BrowserSessionInfo>> {
         BROWSER_SESSIONS.with(|sessions| {
             Ok(sessions
                 .borrow()
@@ -44,7 +46,7 @@ impl BrowserSessionHost for WebBrowserSessionHost {
     }
 
     /// Creates one simulated browser session.
-    fn createBrowserSession(
+    async fn createBrowserSession(
         &self,
         initialUrl: &str,
         userAgent: Option<&str>,
@@ -76,7 +78,7 @@ impl BrowserSessionHost for WebBrowserSessionHost {
     }
 
     /// Updates simulated session request metadata.
-    fn updateBrowserSession(
+    async fn updateBrowserSession(
         &self,
         sessionId: &str,
         userAgent: Option<&str>,
@@ -92,35 +94,37 @@ impl BrowserSessionHost for WebBrowserSessionHost {
     }
 
     /// Executes a supported browser simulator command.
-    fn submitBrowserCommand(
+    async fn submitBrowserCommand(
         &self,
         command: BrowserSessionCommand,
     ) -> HostResult<BrowserSessionCommandResult> {
         match command.action.as_str() {
             "list" => Ok(browserResult(
                 None,
-                self.listBrowserSessions()?,
+                self.listBrowserSessions().await?,
                 String::new(),
                 None,
             )),
             "create" => {
-                let session = self.createBrowserSession(
-                    command.url.as_deref().unwrap_or("about:blank"),
-                    command.userAgent.as_deref(),
-                    command.headers,
-                )?;
+                let session = self
+                    .createBrowserSession(
+                        command.url.as_deref().unwrap_or("about:blank"),
+                        command.userAgent.as_deref(),
+                        command.headers,
+                    )
+                    .await?;
                 Ok(browserResult(
                     Some(session),
-                    self.listBrowserSessions()?,
+                    self.listBrowserSessions().await?,
                     String::new(),
                     None,
                 ))
             }
             "close" => {
                 let sessionId = commandSessionId(&command)?;
-                self.closeBrowserSession(&sessionId)
+                self.closeBrowserSession(&sessionId).await
             }
-            "navigate" | "load" | "open" => self.navigate(command),
+            "navigate" | "load" | "open" => self.navigate(command).await,
             "reload" | "refresh" | "back" | "forward" | "interact" => {
                 let sessionId = commandSessionId(&command)?;
                 let session =
@@ -130,15 +134,15 @@ impl BrowserSessionHost for WebBrowserSessionHost {
                     })?;
                 Ok(browserResult(
                     Some(session),
-                    self.listBrowserSessions()?,
+                    self.listBrowserSessions().await?,
                     "{}".to_string(),
                     None,
                 ))
             }
-            "evaluate" | "execute_script" | "script" => self.evaluate(command),
+            "evaluate" | "execute_script" | "script" => self.evaluate(command).await,
             _ => Ok(browserResult(
                 None,
-                self.listBrowserSessions()?,
+                self.listBrowserSessions().await?,
                 String::new(),
                 Some(format!(
                     "browser simulator does not support action: {}",
@@ -149,7 +153,7 @@ impl BrowserSessionHost for WebBrowserSessionHost {
     }
 
     /// Returns the latest simulated browser session snapshot.
-    fn getBrowserSessionSnapshot(&self, sessionId: &str) -> HostResult<BrowserSessionSnapshot> {
+    async fn getBrowserSessionSnapshot(&self, sessionId: &str) -> HostResult<BrowserSessionSnapshot> {
         BROWSER_SESSIONS.with(|sessions| {
             let mut sessions = sessions.borrow_mut();
             let session = browserSession(&mut sessions, sessionId)?;
@@ -161,7 +165,10 @@ impl BrowserSessionHost for WebBrowserSessionHost {
     }
 
     /// Closes one simulated browser session.
-    fn closeBrowserSession(&self, sessionId: &str) -> HostResult<BrowserSessionCommandResult> {
+    async fn closeBrowserSession(
+        &self,
+        sessionId: &str,
+    ) -> HostResult<BrowserSessionCommandResult> {
         let session = BROWSER_SESSIONS.with(|sessions| -> HostResult<BrowserSessionInfo> {
             sessions
                 .borrow_mut()
@@ -171,7 +178,7 @@ impl BrowserSessionHost for WebBrowserSessionHost {
         })?;
         Ok(browserResult(
             Some(session),
-            self.listBrowserSessions()?,
+            self.listBrowserSessions().await?,
             String::new(),
             None,
         ))
@@ -180,7 +187,7 @@ impl BrowserSessionHost for WebBrowserSessionHost {
 
 impl WebBrowserSessionHost {
     /// Updates one session with a browser-navigable URL.
-    fn navigate(&self, command: BrowserSessionCommand) -> HostResult<BrowserSessionCommandResult> {
+    async fn navigate(&self, command: BrowserSessionCommand) -> HostResult<BrowserSessionCommandResult> {
         let sessionId = commandSessionId(&command)?;
         let url = command
             .url
@@ -199,14 +206,14 @@ impl WebBrowserSessionHost {
         })?;
         Ok(browserResult(
             Some(session),
-            self.listBrowserSessions()?,
+            self.listBrowserSessions().await?,
             "{}".to_string(),
             None,
         ))
     }
 
     /// Evaluates JavaScript in the current browser global scope.
-    fn evaluate(&self, command: BrowserSessionCommand) -> HostResult<BrowserSessionCommandResult> {
+    async fn evaluate(&self, command: BrowserSessionCommand) -> HostResult<BrowserSessionCommandResult> {
         let sessionId = commandSessionId(&command)?;
         let script = command
             .script
@@ -222,7 +229,7 @@ impl WebBrowserSessionHost {
         })?;
         Ok(browserResult(
             Some(session),
-            self.listBrowserSessions()?,
+            self.listBrowserSessions().await?,
             resultJson,
             None,
         ))
