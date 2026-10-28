@@ -70,6 +70,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-proxy-generation", action="store_true")
     parser.add_argument("--skip-signing", action="store_true")
     parser.add_argument("--dist-dir", type=Path, default=DIST_DIR)
+    # Builds against an engine compiled from the flutter-ohos checkout instead
+    # of the SDK's cached artifacts. All three flags are required together by
+    # the Flutter tool; see agent-artifacts/partial-repaint-plan.md in the fork.
+    parser.add_argument("--local-engine", help="Engine build dir name, e.g. android_release_arm64")
+    parser.add_argument("--local-engine-src-path", type=Path, help="Path to the engine src/ directory")
+    parser.add_argument("--local-engine-host", help="Host engine build dir name, e.g. host_debug_unopt")
     return parser.parse_args()
 
 
@@ -134,6 +140,21 @@ def main() -> int:
         command.extend(["--build-name", args.build_name])
     if args.build_number:
         command.extend(["--build-number", args.build_number])
+    if args.local_engine:
+        if not args.local_engine_src_path or not args.local_engine_host:
+            raise RuntimeError(
+                "--local-engine requires --local-engine-src-path and --local-engine-host"
+            )
+        command.extend(
+            [
+                "--local-engine-src-path",
+                str(args.local_engine_src_path),
+                "--local-engine",
+                args.local_engine,
+                "--local-engine-host",
+                args.local_engine_host,
+            ]
+        )
     run(command, cwd=FLUTTER_APP_DIR)
 
     apk_dir = FLUTTER_APP_DIR / "build" / "app" / "outputs" / "flutter-apk"
