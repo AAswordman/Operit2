@@ -1559,7 +1559,7 @@ void main() {
   for (final expanded in <bool>[true, false]) {
     for (final source in <String?>['chat-a', null]) {
       testWidgets(
-        '${expanded ? 'expanded' : 'collapsed'} native create forwards exact nullable source $source',
+        '${expanded ? 'expanded' : 'collapsed'} native create stays unbound without inheriting $source',
         (tester) async {
           final bridge = _registry();
           var activations = 0;
@@ -1583,8 +1583,9 @@ void main() {
           );
           expect(request.args, {
             'setAsCurrentChat': true,
-            'sourceChatId': source,
+            'sourceChatId': null,
             'parentChatId': null,
+            'workspaceId': null,
             'input': null,
           });
           expect(activations, 1);
@@ -1909,6 +1910,7 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   final List<core.ToolPkgUiRoute> routes;
   final List<core.ChatHistoryListItem> chats;
   final Map<String, String> preferences = {};
+  final Map<String, Object?> directoryPreferences = {};
   final List<CoreCallRequest> calls = [];
   final List<Map<String, Object?>> renderedStates = [];
   final Set<String> disabledOwners = {};
@@ -1934,6 +1936,23 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   }
 
   /// Implements only calls made by the production embedded sidebar and preferences.
+  List<Map<String, Object?>> _workspaceValues() {
+    final workspaces = <String, Map<String, Object?>>{};
+    for (final chat in chats) {
+      final id = chat.workspaceId;
+      final name = chat.workspaceName;
+      if (id == null || name == null) continue;
+      workspaces[id] = <String, Object?>{
+        'id': id,
+        'name': name,
+        'folders': <Object?>[],
+        'createdAt': 0,
+        'updatedAt': 0,
+      };
+    }
+    return workspaces.values.toList(growable: false);
+  }
+
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     calls.add(request);
@@ -1941,11 +1960,32 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
     Object? value;
     switch (request.methodName) {
       case 'getPreferences':
-        expect(args['fileName'], _preferenceFile);
-        value = <String, String>{
-          for (final key in (args['keys'] as List).cast<String>())
-            if (preferences[key] case final String stored) key: stored,
-        };
+        final fileName = args['fileName'];
+        if (fileName == _preferenceFile) {
+          value = <String, String>{
+            for (final key in (args['keys'] as List).cast<String>())
+              if (preferences[key] case final String stored) key: stored,
+          };
+        } else if (fileName == 'sidebar_dock.preferences.json') {
+          value = <String, Object?>{
+            for (final key in (args['keys'] as List).cast<String>())
+              if (directoryPreferences.containsKey(key))
+                key: directoryPreferences[key],
+          };
+        } else {
+          throw StateError('Unexpected preference file: $fileName');
+        }
+      case 'getPreference':
+        expect(args['fileName'], 'sidebar_dock.preferences.json');
+        value = directoryPreferences[args['key']];
+      case 'setPreference':
+        expect(args['fileName'], 'sidebar_dock.preferences.json');
+        directoryPreferences[args['key'] as String] = args['value'];
+        value = null;
+      case 'removePreference':
+        expect(args['fileName'], 'sidebar_dock.preferences.json');
+        directoryPreferences.remove(args['key']);
+        value = null;
       case 'setPreferences':
         expect(args['fileName'], _preferenceFile);
         commitPreferences({
@@ -1953,6 +1993,8 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
           ...(args['values'] as Map).cast<String, String>(),
         });
         value = null;
+      case 'listWorkspaces':
+        value = _workspaceValues();
       case 'getToolPkgPublicApiOwners':
         value = [
           {
@@ -2007,7 +2049,13 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
     if (request.propertyName == 'preferencesFlow') {
-      expect((request.args as Map)['fileName'], _preferenceFile);
+      final fileName = (request.args as Map)['fileName'];
+      if (fileName == 'sidebar_dock.preferences.json') {
+        return Stream<CoreEvent>.value(
+          _event(request, Map<String, Object?>.of(directoryPreferences)),
+        );
+      }
+      expect(fileName, _preferenceFile);
       late final StreamController<CoreEvent> controller;
       controller = StreamController<CoreEvent>(
         onListen: () => controller.add(
@@ -2017,6 +2065,9 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
       );
       _preferenceWatches[request] = controller;
       return controller.stream;
+    }
+    if (request.propertyName == 'allWorkspacesFlow') {
+      return Stream<CoreEvent>.value(_event(request, _workspaceValues()));
     }
     if (request.propertyName == 'chatHistoryListItemsFlow') {
       historyReads += 1;
