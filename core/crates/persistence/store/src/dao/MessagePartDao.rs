@@ -264,7 +264,6 @@ fn partKindLabel(kind: &MessagePartKind) -> &'static str {
         MessagePartKind::ToolCall => "tool_call",
         MessagePartKind::ToolResult => "tool_result",
         MessagePartKind::Status => "status",
-        MessagePartKind::InteractiveUi => "interactive_ui",
     }
 }
 
@@ -276,7 +275,6 @@ fn partKindFromLabel(value: &str) -> Result<MessagePartKind, SqliteStoreError> {
         "tool_call" => Ok(MessagePartKind::ToolCall),
         "tool_result" => Ok(MessagePartKind::ToolResult),
         "status" => Ok(MessagePartKind::Status),
-        "interactive_ui" => Ok(MessagePartKind::InteractiveUi),
         _ => Err(SqliteStoreError::Message(format!(
             "unknown message-part kind: {value}"
         ))),

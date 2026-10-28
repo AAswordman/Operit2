@@ -782,11 +782,6 @@ extension ChatMessagePresentation on core_proxy.ChatMessage {
             ..write('>')
             ..write(part.content)
             ..write('</status>');
-        case core_proxy.MessagePartKind.interactiveUi:
-          markup
-            ..write('<openui>')
-            ..write(part.content)
-            ..write('</openui>');
       }
     }
     return markup.toString();

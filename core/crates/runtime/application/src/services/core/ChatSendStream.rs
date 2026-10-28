@@ -75,7 +75,6 @@ impl ChatOutputObserver for ChatSendObservation {
                 MessagePartKind::ToolCall => ChatMessagePartKind::ToolCall,
                 MessagePartKind::ToolResult => ChatMessagePartKind::ToolResult,
                 MessagePartKind::Status => ChatMessagePartKind::Status,
-                MessagePartKind::InteractiveUi => ChatMessagePartKind::InteractiveUi,
             },
             content: part.content.clone(), toolCallId: JsNullable::from_option(part.toolCallId.clone()), toolName: JsNullable::from_option(part.toolName.clone()), attributes: part.attributes.clone(),
         }).collect::<Vec<_>>();

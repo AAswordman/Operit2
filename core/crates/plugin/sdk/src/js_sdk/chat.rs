@@ -306,8 +306,6 @@ pub enum ChatMessagePartKind {
     ToolResult,
     #[serde(rename = "status")]
     Status,
-    #[serde(rename = "interactive_ui")]
-    InteractiveUi,
 }
 
 /// Publishes atomic semantic snapshots followed by the actual finalized receipt.

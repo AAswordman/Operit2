@@ -228,7 +228,7 @@ export namespace Chat {
   /**
    * Identifies semantic content without requiring plugins to parse provider markup.
    */
-  export type MessagePartKind = "markdown" | "thinking" | "tool_call" | "tool_result" | "status" | "interactive_ui";
+  export type MessagePartKind = "markdown" | "thinking" | "tool_call" | "tool_result" | "status";
 
   /**
    * Publishes atomic semantic snapshots followed by the actual finalized receipt.

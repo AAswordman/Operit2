@@ -616,17 +616,16 @@ pub struct StreamMarkdownInlineLaTeXPlugin {
     state: PluginState,
     start_state: usize,
     end_state: usize,
-    pending: Vec<char>,
 }
 
 impl StreamMarkdownInlineLaTeXPlugin {
+    /// Creates a recognizer for dollar-delimited inline math.
     pub fn new(include_delimiters: bool) -> Self {
         let mut value = Self {
             include_delimiters,
             state: PluginState::Idle,
             start_state: 0,
             end_state: 0,
-            pending: Vec::new(),
         };
         value.reset();
         value
@@ -634,39 +633,32 @@ impl StreamMarkdownInlineLaTeXPlugin {
 }
 
 impl Default for StreamMarkdownInlineLaTeXPlugin {
+    /// Creates a recognizer that retains its delimiters.
     fn default() -> Self {
         Self::new(true)
     }
 }
 
 impl StreamPlugin for StreamMarkdownInlineLaTeXPlugin {
+    /// Returns the generic inline-math plugin identity.
     fn name(&self) -> &'static str {
         "StreamMarkdownInlineLaTeXPlugin"
     }
 
+    /// Returns the current delimiter recognition state.
     fn state(&self) -> PluginState {
         self.state
     }
 
+    /// Recognizes inline math solely from its dollar delimiters.
     fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
-        // Guard against OpenUI program text leaking into math mode through
-        // `$steps = 3` and similar state declarations.
         if self.start_state == 1 {
-            self.pending.push(c);
-            if is_open_ui_program_start(&self.pending) {
+            if c != '$' && c != '\n' {
+                self.state = PluginState::Processing;
+                self.start_state = 0;
+                self.end_state = 0;
+            } else {
                 self.reset();
-                return true;
-            }
-            if !is_open_ui_program_prefix(&self.pending) {
-                if c != '$' && c != '\n' {
-                    self.state = PluginState::Processing;
-                    self.start_state = 0;
-                    self.end_state = 0;
-                    self.pending.clear();
-                } else {
-                    self.reset();
-                }
-                return true;
             }
             return true;
         }
@@ -693,47 +685,21 @@ impl StreamPlugin for StreamMarkdownInlineLaTeXPlugin {
         true
     }
 
+    /// Resets the recognizer before one stream begins.
     fn init_plugin(&mut self) -> bool {
         self.reset();
         true
     }
 
+    /// Releases the stateless recognizer's lifecycle resources.
     fn destroy(&mut self) {}
 
+    /// Clears delimiter state for the next expression.
     fn reset(&mut self) {
         self.state = PluginState::Idle;
         self.start_state = 0;
         self.end_state = 0;
-        self.pending.clear();
     }
-}
-
-const OPEN_UI_PROGRAM_START: [&str; 2] = ["steps=", "root="];
-
-/// Returns whether buffered characters after `$` complete an OpenUI program start.
-fn is_open_ui_program_start(buffer: &[char]) -> bool {
-    let text = normalized_program_buffer(buffer);
-    OPEN_UI_PROGRAM_START
-        .iter()
-        .any(|marker| text.starts_with(marker))
-}
-
-/// Returns whether buffered characters after `$` can still become an OpenUI program start.
-fn is_open_ui_program_prefix(buffer: &[char]) -> bool {
-    let text = normalized_program_buffer(buffer);
-    OPEN_UI_PROGRAM_START.iter().any(|marker| {
-        marker
-            .starts_with(&text.as_str())
-    })
-}
-
-/// Lowercases a pending buffer and removes whitespace so `steps =` matches `steps=`.
-fn normalized_program_buffer(buffer: &[char]) -> String {
-    buffer
-        .iter()
-        .filter(|ch| !ch.is_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone)]
@@ -1326,22 +1292,12 @@ mod tests {
     use super::StreamMarkdownInlineLaTeXPlugin;
     use crate::stream::plugins::StreamPlugin::{PluginState, StreamPlugin};
 
-    /// Keeps genuine inline math working after the OpenUI guard.
+    /// Completes an ordinary inline math expression.
     #[test]
     fn ordinary_inline_latex_still_processes() {
         let mut plugin = StreamMarkdownInlineLaTeXPlugin::new(false);
         for c in "inline $a+b$ math".chars() {
             plugin.process_char(c, false);
-        }
-        assert_eq!(plugin.state(), PluginState::Idle);
-    }
-
-    /// `$steps=...` is an OpenUI state declaration, not inline math.
-    #[test]
-    fn open_ui_state_declaration_does_not_enter_math_mode() {
-        let mut plugin = StreamMarkdownInlineLaTeXPlugin::new(false);
-        for c in "$steps = 3\nroot = Card([])".chars() {
-            plugin.process_char(c, c == '\n');
         }
         assert_eq!(plugin.state(), PluginState::Idle);
     }

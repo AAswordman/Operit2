@@ -1054,10 +1054,6 @@ fn render_xml_block(
             }
         }
         Some("status") => render_status_xml(content, lines),
-        Some("openui") => lines.extend(render_plain_lines(
-            "[智能界面]",
-            Style::default().fg(theme::TEXT_SUBTLE),
-        )),
         Some("meta") => {}
         Some(name) => render_named_xml_body(name, content, lines),
         None => lines.extend(render_plain_lines(

@@ -13,12 +13,10 @@ class MarkdownLatexBlock extends StatelessWidget {
   final String content;
   final Color textColor;
 
+  /// Renders display math without interpreting application-specific languages.
   @override
   Widget build(BuildContext context) {
     final latexContent = extractLatexContent(content.trim());
-    if (looksLikeOpenUiProgram(latexContent)) {
-      return OpenUiProgramText(text: latexContent, textColor: textColor);
-    }
     return ExcludeSemantics(
       child: Container(
         width: double.infinity,
@@ -39,6 +37,7 @@ class MarkdownLatexBlock extends StatelessWidget {
   }
 }
 
+/// Removes the recognized outer math delimiter from one LaTeX expression.
 String extractLatexContent(String content) {
   if (content.startsWith(r'$$') && content.endsWith(r'$$')) {
     return content.substring(2, content.length - 2).trim();
@@ -55,64 +54,6 @@ String extractLatexContent(String content) {
   return content;
 }
 
-/// Heuristic guard for OpenUI program text accidentally captured as math.
-bool looksLikeOpenUiProgram(String content) {
-  final trimmed = content.trim();
-  if (trimmed.isEmpty) {
-    return false;
-  }
-  var programSignals = 0;
-  if (trimmed.contains('root=')) programSignals++;
-  if (trimmed.contains('Card(')) programSignals++;
-  if (trimmed.contains('@Set(')) programSignals++;
-  if (RegExp(r'^\$\w+\s*=', multiLine: true).hasMatch(trimmed)) {
-    programSignals++;
-  }
-  return programSignals >= 2;
-}
-
-class OpenUiProgramText extends StatelessWidget {
-  const OpenUiProgramText({
-    super.key,
-    required this.text,
-    required this.textColor,
-  });
-
-  final String text;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.35,
-        ),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
-        ),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Text(
-          text,
-          softWrap: false,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: textColor,
-            fontFamily: 'Consolas',
-            fontFamilyFallback: const <String>['Courier New', 'monospace'],
-            height: 1.4,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class MarkdownInlineLatex extends StatelessWidget {
   const MarkdownInlineLatex({
     super.key,
@@ -123,15 +64,10 @@ class MarkdownInlineLatex extends StatelessWidget {
   final String content;
   final Color textColor;
 
+  /// Renders inline math using the surrounding text style.
   @override
   Widget build(BuildContext context) {
     final latexContent = extractLatexContent(content.trim());
-    if (looksLikeOpenUiProgram(latexContent)) {
-      return Text(
-        latexContent,
-        style: DefaultTextStyle.of(context).style.copyWith(color: textColor),
-      );
-    }
     return ExcludeSemantics(
       child: Math.tex(
         latexContent,

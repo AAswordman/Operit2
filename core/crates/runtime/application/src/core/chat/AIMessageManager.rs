@@ -733,9 +733,6 @@ impl AIMessageManager {
                 MessagePartKind::Markdown | MessagePartKind::Thinking | MessagePartKind::Status => {
                     assistantMarkup.push_str(&Self::assistantMarkupForPart(part));
                 }
-                MessagePartKind::InteractiveUi => {
-                    assistantMarkup.push_str(&Self::assistantMarkupForPart(part));
-                }
                 MessagePartKind::ToolCall => {
                     if !assistantMarkup.trim().is_empty() {
                         turns.push(PromptTurn::new(
@@ -1249,7 +1246,6 @@ fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
                 (!condensed.trim().is_empty()).then_some(condensed)
             }
             MessagePartKind::Thinking => None,
-            MessagePartKind::InteractiveUi => Some("[智能界面]".to_string()),
             MessagePartKind::ToolCall => {
                 let tool_name = part
                     .toolName
