@@ -1899,6 +1899,25 @@ impl CoreNodeStateStore {
         self.typedEntriesMatching(Some(key)).map(|mut entries| entries.pop().map(|(_, record)| record))
     }
 
+    /// Checks encoded schema metadata without decoding unrelated application records.
+    fn encodedNodeSchemaIsCurrent(&self, bytes: &[u8]) -> Result<bool, PreferencesDataStoreError> {
+        #[derive(Deserialize)]
+        struct Header {
+            #[serde(default, rename = "__operit_preferences_schema_version")]
+            version: Option<Value>,
+        }
+        let header: Header = serde_json::from_slice(bytes)?;
+        self.nodeSchemaIsCurrent(header.version)
+    }
+
+    fn nodeSchemaIsCurrent(&self, version: Option<Value>) -> Result<bool, PreferencesDataStoreError> {
+        let mut probe = emptyPreferences();
+        if let Some(version) = version {
+            probe.set(&PreferencesDataStore::schemaVersionKey(), version);
+        }
+        self.inner.schemaIsCurrent(&probe)
+    }
+
     /// Reads selected records without initializing an absent node-local collection.
     fn typedEntriesMatching<T: serde::de::DeserializeOwned>(&self, only: Option<&str>) -> Result<Vec<(String, T)>, PreferencesDataStoreError> {
         let transaction = self.inner.sharedState.transaction.lock()
@@ -1908,17 +1927,7 @@ impl CoreNodeStateStore {
             self.inner.releaseNodeLocalCacheUnlocked();
             let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
             if !bytes.iter().all(u8::is_ascii_whitespace) {
-                #[derive(Deserialize)]
-                struct Header {
-                    #[serde(default, rename = "__operit_preferences_schema_version")]
-                    version: Option<Value>,
-                }
-                let header: Header = serde_json::from_slice(&bytes)?;
-                let mut probe = emptyPreferences();
-                if let Some(version) = header.version {
-                    probe.set(&PreferencesDataStore::schemaVersionKey(), version);
-                }
-                if self.inner.schemaIsCurrent(&probe)? {
+                if self.encodedNodeSchemaIsCurrent(&bytes)? {
                     return deserializeTypedNodeEntries(&bytes, only).map_err(Into::into);
                 }
             }
@@ -1943,15 +1952,7 @@ impl CoreNodeStateStore {
             if self.inner.storageHost.exists(&self.inner.storagePath)? {
                 let bytes = self.inner.storageHost.readBytes(&self.inner.storagePath)?;
                 if bytes.iter().all(u8::is_ascii_whitespace) { None } else {
-                    #[derive(Deserialize)]
-                    struct Header {
-                        #[serde(default, rename = "__operit_preferences_schema_version")]
-                        version: Option<Value>,
-                    }
-                    let header: Header = serde_json::from_slice(&bytes)?;
-                    let mut probe = emptyPreferences();
-                    if let Some(version) = header.version { probe.set(&PreferencesDataStore::schemaVersionKey(), version); }
-                    self.inner.schemaIsCurrent(&probe)?.then_some(bytes)
+                    self.encodedNodeSchemaIsCurrent(&bytes)?.then_some(bytes)
                 }
             } else { None }
         } else { None };
@@ -1993,9 +1994,7 @@ impl CoreNodeStateStore {
                 })();
                 match header {
                     Ok(header) => {
-                        let mut probe = emptyPreferences();
-                        if let Some(version) = header.version { probe.set(&PreferencesDataStore::schemaVersionKey(), version); }
-                        if self.inner.schemaIsCurrent(&probe)? && !header.replication {
+                        if self.nodeSchemaIsCurrent(header.version)? && !header.replication {
                             let mut decoder = serde_json::Deserializer::from_reader(NodePreferenceReader::new(
                                 self.inner.storageHost.as_ref(), &self.inner.storagePath));
                             serde::de::Deserializer::deserialize_map(&mut decoder, EncodedNodeEntryVisitor(&mut visit))?;
@@ -2042,11 +2041,9 @@ impl CoreNodeStateStore {
             let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
                 BTreeMap::new()
             } else { serde_json::from_slice(&bytes)? };
-            let mut probe = emptyPreferences();
-            if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
-                probe.set(&PreferencesDataStore::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
-            }
-            if self.inner.schemaIsCurrent(&probe)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
+            let version = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
+                .map(|version| serde_json::from_str(version.get())).transpose()?;
+            if self.nodeSchemaIsCurrent(version)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
                 let mut added = BTreeMap::new();
                 for &(key, value) in incoming {
                     if let Some(old) = entries.get(key) {
@@ -2110,11 +2107,9 @@ impl CoreNodeStateStore {
             let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
                 BTreeMap::new()
             } else { serde_json::from_slice(&bytes)? };
-            let mut probe = emptyPreferences();
-            if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
-                probe.set(&PreferencesDataStore::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
-            }
-            if self.inner.schemaIsCurrent(&probe)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
+            let version = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
+                .map(|version| serde_json::from_str(version.get())).transpose()?;
+            if self.nodeSchemaIsCurrent(version)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
                 let replacement = NodeEntryReplacement { entries: &entries, key, value };
                 let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
                 let encode = |output: &mut PreferencesJsonBuffer| {
