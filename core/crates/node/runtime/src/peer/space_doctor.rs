@@ -157,7 +157,7 @@ pub(crate) fn updateCounters(
 
 /// Decodes the command envelope of one control operation, if it still can be.
 fn commandSpaceId(operation: &SyncOperation) -> Result<String, String> {
-    NetworkControlCommandRecord::deserialize(&operation.payload)
+    NetworkControlCommandRecord::fromPayload(&operation.payload)
         .map(|record| record.spaceId)
         .map_err(|error| error.to_string())
 }

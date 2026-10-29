@@ -10,6 +10,7 @@ use operit_host_api::ServiceDiscovery::{
     ServiceAdvertisement, ServiceDiscoveryHost,
 };
 use operit_host_api::{HostError, HostResult};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
 
 const STORAGE_NAMESPACE: &str = "operit_link";
@@ -153,6 +154,30 @@ impl Esp32ServiceDiscoveryHost {
     }
 }
 impl ServiceDiscoveryHost for Esp32ServiceDiscoveryHost {
+    /// Read active interfaces directly; connection codes must not depend on
+    /// mDNS browsing, advertisement settings or a cached UI address.
+    fn localAddresses(&self) -> HostResult<Vec<IpAddr>> {
+        use esp_idf_svc::sys;
+        let mut addresses = Vec::new();
+        for key in [b"WIFI_STA_DEF\0".as_slice(), b"WIFI_AP_DEF\0".as_slice()] {
+            // Both netifs belong to the firmware's lifetime-held Wi-Fi driver.
+            let netif = unsafe { sys::esp_netif_get_handle_from_ifkey(key.as_ptr().cast()) };
+            if netif.is_null() || !unsafe { sys::esp_netif_is_netif_up(netif) } {
+                continue;
+            }
+            let mut info = sys::esp_netif_ip_info_t::default();
+            let result = unsafe { sys::esp_netif_get_ip_info(netif, &mut info) };
+            if result != sys::ESP_OK as i32 {
+                return Err(HostError::new(format!("Wi-Fi interface address: {result}")));
+            }
+            let address = Ipv4Addr::from(info.ip.addr.to_ne_bytes());
+            if !address.is_unspecified() && !addresses.contains(&IpAddr::V4(address)) {
+                addresses.push(IpAddr::V4(address));
+            }
+        }
+        Ok(addresses)
+    }
+
     fn supportsAdvertisement(&self) -> bool {
         true
     }

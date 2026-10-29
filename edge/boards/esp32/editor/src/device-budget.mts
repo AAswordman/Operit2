@@ -25,6 +25,11 @@ async function run(label: string, executable: string, args: string[],
   });
   if (code !== 0) throw new Error(`${label} failed (${code}); budget verification did not pass`);
 }
+await run('manufacturer SDK workspace tests', 'cargo', ['test', '--locked', '--manifest-path',
+  path.join(root, 'edge/sdk/Cargo.toml'), '--workspace', '--all-features']);
+await run('manufacturer SDK dependency boundaries', path.join(root, '.venv',
+  process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'),
+  ['-X', 'utf8', path.join(root, 'edge/tools/check-sdk-dependencies.py')]);
 await run(firmware ? 'firmware build and C/Wasm preview' : 'C/Wasm preview', process.execPath,
   [npmCli, 'run', firmware ? 'build:firmware' : 'build']);
 await run('TypeScript checks', process.execPath, [npmCli, 'run', 'check']);
@@ -41,11 +46,19 @@ await run('current bundled Core plugin assets', path.join(root, '.venv',
 await run('current Core CLI build', 'cargo', ['build', '--locked', '--manifest-path',
   path.join(root, 'apps/cli/Cargo.toml'), '--bin', 'operit2', '--target-dir', cliDirectory]);
 const integration = ['--test', '--experimental-strip-types', 'tests/integration/simulator-space.test.mjs'];
+// Every model/speech provider in these scenarios is a local fixture. Keep
+// process-wide download proxies out of their child runtimes; Cargo retains its
+// own proxy for any dependency checks performed by simulator startup.
+const integrationEnv: NodeJS.ProcessEnv = {
+  HTTP_PROXY: undefined, HTTPS_PROXY: undefined, ALL_PROXY: undefined,
+  http_proxy: undefined, https_proxy: undefined, all_proxy: undefined,
+  NO_PROXY: [env.NO_PROXY, '127.0.0.1', 'localhost', '::1'].filter(Boolean).join(','),
+};
 await run('isolated pairing, admission and restart', process.execPath, integration,
-  {OPERIT_SIM_TEST_ACCESS_ONLY: '1', OPERIT_SIM_TEST_CLI: cliExecutable});
+  {...integrationEnv, OPERIT_SIM_TEST_ACCESS_ONLY: '1', OPERIT_SIM_TEST_CLI: cliExecutable});
 await run('standalone chat, twelve extra turns and restart', process.execPath, integration,
-  {OPERIT_SIM_TEST_STANDALONE_ONLY: '1', OPERIT_SIM_TEST_MEMORY_STRESS: '1',
+  {...integrationEnv, OPERIT_SIM_TEST_STANDALONE_ONLY: '1', OPERIT_SIM_TEST_MEMORY_STRESS: '1',
     OPERIT_SIM_TEST_CLI: cliExecutable});
 await run('remote chat, admission storage failures and binary speech recovery', process.execPath, integration,
-  {OPERIT_SIM_TEST_CLI: cliExecutable});
+  {...integrationEnv, OPERIT_SIM_TEST_CLI: cliExecutable});
 console.log('\nDevice budget scenarios passed. These simulator budgets do not measure whole-board ESP-IDF/Wi-Fi/TLS/C memory.');

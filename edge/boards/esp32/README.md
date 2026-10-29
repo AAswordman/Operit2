@@ -7,7 +7,9 @@ bounded display text; ESP stores its own identity, pairing, Space control and na
 configuration. The device does not run tools or interpret tool result/status data.
 This document covers the ESP32-2432S028 implementation and firmware build.
 Tooling and acceptance commands are maintained in the
-[editor README](editor/README.md).
+[editor README](editor/README.md). Current SDK closeout results, firmware resource
+headroom and outstanding board acceptance are recorded in the
+[V1 closeout](../../docs/v1-closeout.md).
 
 The ESP32 advertises `_operit-edge._tcp` over mDNS. Use the Core application's
 device scan to discover it, start pairing, and enter the code displayed on the

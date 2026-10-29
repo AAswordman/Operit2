@@ -74,6 +74,14 @@ impl CoreNodeIdentityStore {
 
     /// Creates the stable identity only when the shared record has not been initialized.
     pub fn initialize(&self) -> Result<CoreNodeIdentity, String> {
+        // Read the typed record on the normal path. Presentation metadata can
+        // be deeply nested; identity checks do not need a generic JSON tree.
+        if let Ok(identity) = self.identity() { return Ok(identity); }
+        self.initializeMissing()
+    }
+
+    #[inline(never)]
+    fn initializeMissing(&self) -> Result<CoreNodeIdentity, String> {
         let store = self.dataStore();
         let mut preferences = store.data().map_err(|error| error.to_string())?;
         if let Some(encoded) = preferences.get(&stringPreferencesKey(CORE_NODE_IDENTITY_RECORD_KEY))

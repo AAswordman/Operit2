@@ -614,6 +614,7 @@ impl SyncOperationStore {
         Ok(())
     }
 
+    #[inline(never)]
     fn projectedControlOperations(
         store: &crate::PreferencesDataStore::CoreNodeStateStore,
     ) -> Result<Vec<SyncOperation>, String> {
@@ -636,6 +637,7 @@ impl SyncOperationStore {
     }
 
     /// Called by the durable endpoint/import write path, never by state reads.
+    #[inline(never)]
     pub(crate) fn replaceProjectedControlOperations(
         &self,
         store: &crate::PreferencesDataStore::CoreNodeStateStore,

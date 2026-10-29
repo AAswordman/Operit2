@@ -1930,6 +1930,17 @@ impl CoreNodeStateStore {
     pub fn withEncodedEntries<R>(
         &self, read: impl FnOnce(BTreeMap<String, &serde_json::value::RawValue>) -> R,
     ) -> Result<R, PreferencesDataStoreError> {
+        let bytes = self.encodedNodeEntriesBytes()?;
+        let mut entries = decodeNodeEntries(&bytes)?;
+        entries.remove(PREFERENCES_SCHEMA_VERSION_KEY_NAME);
+        entries.remove(PREFERENCES_REPLICATION_KEY);
+        Ok(read(entries))
+    }
+
+    // Release migration/schema/decoder frames before invoking arbitrary readers.
+    // This also keeps their code out of every generic callback instantiation.
+    #[inline(never)]
+    fn encodedNodeEntriesBytes(&self) -> Result<Vec<u8>, PreferencesDataStoreError> {
         let current = if !self.inner.storageHost.retainPreferencesCache() {
             let _transaction = self.inner.sharedState.transaction.lock()
                 .expect("PreferencesDataStore transaction mutex must not be poisoned");
@@ -1948,10 +1959,7 @@ impl CoreNodeStateStore {
                 serde_json::to_vec(&preferences.iterEntries().collect::<BTreeMap<_, _>>())?
             }
         };
-        let mut entries: BTreeMap<String, &serde_json::value::RawValue> = serde_json::from_slice(&bytes)?;
-        entries.remove(PREFERENCES_SCHEMA_VERSION_KEY_NAME);
-        entries.remove(PREFERENCES_REPLICATION_KEY);
-        Ok(read(entries))
+        Ok(bytes)
     }
 
     /// Visit one raw entry at a time through bounded Host range reads. The
@@ -2170,6 +2178,12 @@ impl CoreNodeStateStore {
             inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, false),
         }
     }
+}
+
+/// Decode the borrowed outer map before entering a reader's nested typed decoder.
+#[inline(never)]
+fn decodeNodeEntries(bytes: &[u8]) -> Result<BTreeMap<String, &serde_json::value::RawValue>, serde_json::Error> {
+    serde_json::from_slice(bytes)
 }
 
 fn nodeEntryFieldPresent<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<bool, D::Error> {
