@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Verify manufacturer dependency boundaries without building a full Core."""
+import itertools
 import pathlib
 import subprocess
 
 root = pathlib.Path(__file__).resolve().parents[2]
 manifest = root / "edge/sdk/Cargo.toml"
-for feature in ["", "space", "http-agent", "scene"]:
+features = ("space", "http-agent", "scene")
+combinations = [",".join(selected) for count in range(len(features) + 1)
+                for selected in itertools.combinations(features, count)]
+for feature in combinations:
     command = ["cargo", "tree", "--locked", "--manifest-path", str(manifest),
                "-p", "operit-edge-sdk", "-e", "normal,build", "--prefix", "none"]
     if feature:

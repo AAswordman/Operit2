@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import http from 'node:http';
 import {mkdtemp, mkdir, readFile, writeFile, rm, realpath} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {tmpdir, networkInterfaces} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
@@ -16,6 +16,11 @@ import {probeSpeech} from './speech-probe.mjs';
 
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Public v1 connection coordinates contain no pairing credential. The CLI still
+// completes the shared handshake using the code rendered by the device.
+const simulatorConnectionCode = (node, address) => 'operit://connect/v1/' + Buffer.from(JSON.stringify({
+  n: node, d: 'ESP32-2432S028-SIM', a: [`tcp://${address}`],
+})).toString('base64url');
 
 async function buildCli() {
   if (process.env.OPERIT_SIM_TEST_CLI) return path.resolve(process.env.OPERIT_SIM_TEST_CLI);
@@ -44,10 +49,16 @@ class CoreSession {
     });
     this.exit = new Promise(resolve => this.child.once('exit', (code, signal) => {
       this.closed = true;
-      this.waiter?.reject(Error(`Core session exited (${code ?? signal}): ${this.output}`));
+      this.waiter?.reject(Error(`Core session exited (${code ?? signal}) during ${JSON.stringify(this.lastCommand)}: ${this.output}`));
       this.waiter = null; resolve();
     }));
     this.child.once('error', error => { this.closed = true; this.waiter?.reject(error); });
+  }
+  async pairedName(nodeId) {
+    const peers = await this.command(['peers']);
+    const peer = peers.find(peer => peer.nodeId === nodeId);
+    assert(peer?.displayName, `paired device ${nodeId} must have a CLI display name`);
+    return peer.displayName;
   }
   next(timeout = 60000) {
     if (this.queue.length) return Promise.resolve(this.queue.shift());
@@ -65,6 +76,7 @@ class CoreSession {
   }
   async command(args) {
     assert(!this.closed);
+    this.lastCommand = args;
     this.child.stdin.write(JSON.stringify(args) + '\n');
     const value = await this.next();
     if (value?.error) throw Error(value.error);
@@ -100,7 +112,16 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       activeIdentityId: identity, identities: [{id: identity, name: 'Simulator workflow test', createdAt: Date.now()}],
     }));
     process.env.OPERIT_SIM_STATE_DIR = edgeDirectory;
-    process.env.OPERIT_SIM_BIND = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?'0.0.0.0:0':'127.0.0.1:0';
+    const coreInitiates = !process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY &&
+      !process.env.OPERIT_SIM_TEST_STANDALONE_ONLY && !process.env.OPERIT_SIM_TEST_ACCESS_ONLY;
+    // Public QR coordinates deliberately reject loopback. Exercise that API on
+    // a real local interface rather than weakening its address validation.
+    const lan = Object.values(networkInterfaces()).flat().find(address => address &&
+      address.family === 'IPv4' && !address.internal && !address.address.startsWith('169.254.') &&
+      !/^198\.(18|19)\./.test(address.address));
+    if (coreInitiates) assert(lan, 'Core-initiated QR pairing requires a reachable local IPv4 interface');
+    process.env.OPERIT_SIM_BIND = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
+      ? '0.0.0.0:0' : `${coreInitiates ? lan.address : '127.0.0.1'}:0`;
     process.env.OPERIT_SIM_DISCOVERY = process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY==='1'?'true':'false';
     const {simulatorRoute, stopSimulator} = await import('../../src/api/simulator-api.mts');
     // Only the model provider boundary is deterministic. Pairing, admission,
@@ -411,35 +432,36 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       assert(incoming?.canApprove);
       await post('/api/simulator/stop');await startEdge();
       await waitDevice('pending consent recovered after restart',d=>d.deviceSpace.pendingJoin);
-      await core.command(['space','approve',incoming.requestId,String(incoming.assignmentVersion)]);
+      assert.equal((await core.command(['space','approve',incoming.applicantName])).requestId, incoming.requestId);
       const joined=await waitDevice('silent approval refresh',d=>d.deviceSpace.status==='已加入设备空间'&&!d.deviceSpace.pendingJoin);
       assert(joined.paired);assert((await core.command(['space','show'])).members.includes(node),'Core membership confirms the Edge joined');
       // Exercise the reverse path too: Core forgets locally, Edge retains its
       // old outbound record, then a new rendered Edge code replaces it.
       await leave();
-      await core.command(['unpair',node]);
+      await core.command(['unpair',await core.pairedName(node)]);
       assert((await update()).device.paired,'Core unpair remains one-sided');
-      const renewed=await core.command(['pair-start',node,(await state()).device.address,'tcp']);
+      const renewed=await core.command(['pair',simulatorConnectionCode(node,(await state()).device.address)]);
+      assert.equal(renewed.awaitingConfirmation, true);
       await update();assert.notEqual(screen().page,'Pairing','incoming code does not steal the current page');
       await openSpace();await tap('space_pair_code');
       const freshCode=screen().nodes.find(n=>n.id==='pairing_code').text;
       assert.match(freshCode,/^\d{6}$/);
-      await core.command(['pair-finish',renewed.pairingId,freshCode]);
-      const reviewRequest=await core.command(['space','join',node]);
+      assert.equal((await core.command(['confirm',freshCode])).nodeId, node);
+      const reviewRequest=await core.command(['space','join',await core.pairedName(node)]);
       await waitDevice('Edge assigned approval',d=>d.spaceJoinRequestId===reviewRequest.requestId);
       await approve();
-      assert.equal((await core.command(['space','refresh',reviewRequest.requestId])).status,'joined');
+      assert.equal((await core.command(['space','refresh',reviewRequest.spaceName])).status,'joined');
       await leave();
-      const rejected=await core.command(['space','join',node]);
+      const rejected=await core.command(['space','join',await core.pairedName(node)]);
       await waitDevice('Edge rejection prompt',d=>d.spaceJoinRequestId===rejected.requestId);
       await update();await openReview();await tap('edge_space_reject');
-      assert.equal((await core.command(['space','refresh',rejected.requestId])).status,'rejected');
-      const restored=await core.command(['space','join',node]);
+      assert.equal((await core.command(['space','refresh',rejected.spaceName])).status,'rejected');
+      const restored=await core.command(['space','join',await core.pairedName(node)]);
       await waitDevice('incoming approval before restart',d=>d.spaceJoinRequestId===restored.requestId);
       await post('/api/simulator/stop');await startEdge();
       await waitDevice('incoming approval after restart',d=>d.spaceJoinRequestId===restored.requestId);
       await approve();
-      assert.equal((await core.command(['space','refresh',restored.requestId])).status,'joined');
+      assert.equal((await core.command(['space','refresh',restored.spaceName])).status,'joined');
       t.diagnostic('Real C UI covers mDNS, code retry, outgoing cancel, both approval directions, restart recovery and one-sided Core unpair with retained Edge pairing replacement');
       return;
     }
@@ -467,15 +489,19 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     const edgePortArgs={node_id:node,interface_info:{target:'edge.status',method:'read'},args:{}};
     await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]),
       'plugin port API must not pair, route to a guessed address, or grant access to an unadmitted node');
-    const pairing = await core.command(['pair-start', node, first.device.address, 'tcp']);
+    const pairing = await core.command(['pair', simulatorConnectionCode(node, first.device.address)]);
+    assert.equal(pairing.awaitingConfirmation, true);
     await update(); await openSpace(); await tap('space_pair_code');
     assert.equal(screen().page, 'Pairing');
     const code = screen().nodes.find(node => node.id === 'pairing_code')?.text;
     assert.match(code, /^\d{6}$/, 'read the pairing code from the actual rendered screen');
-    await core.command(['pair-finish', pairing.pairingId, code]);
+    assert.equal((await core.command(['confirm', code])).nodeId, node);
     assert.equal((await update()).device.paired, true);
     const credentials = await core.command(['peers']);
-    const request = await core.command(['space', 'join', node]);
+    const request = await core.command(['space', 'join', await core.pairedName(node)]).catch(async error => {
+      error.message += '; simulator: ' + JSON.stringify(await state()) + '; Core: ' + core.output;
+      throw error;
+    });
     assert.equal(request.status, 'pending');
     // Exercise storage faults through the real pairing/approval path.
     const pressureBefore = (await state()).device.storage;
@@ -496,7 +522,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     }
     await post('/api/simulator/storage-control', {otherNamespaceEntries: 213, failAfterMutations: -1});
     await approve();
-    assert.equal((await core.command(['space', 'refresh', request.requestId])).status, 'joined');
+    assert.equal((await core.command(['space', 'refresh', request.spaceName])).status, 'joined');
     t.diagnostic('NVS exhaustion and interrupted write surfaced through approval UI; retry admitted the same paired Core');
     const former = await core.command(['space', 'show']);
     assert(former.members.includes(node));
@@ -893,9 +919,9 @@ ${JSON.stringify(fixtureMetadata)}
     t.diagnostic('Long UTF-8 input crossed the 8 KiB frame boundary in 2 KiB chunks; Core provider and history retained the final marker exactly once');
     await leave();
     assert.deepEqual(await core.command(['space', 'show']), former, 'the same Core retains the previous Space');
-    const cancelled = await core.command(['space', 'join', node]);
+    const cancelled = await core.command(['space', 'join', await core.pairedName(node)]);
     await update(); await openReview(); assert.equal(screen().page, 'Space');
-    assert.equal((await core.command(['space', 'cancel', cancelled.requestId])).status, 'cancelled');
+    assert.equal((await core.command(['space', 'cancel', cancelled.spaceName])).status, 'cancelled');
     // Cancel won just before a tap on a still-visible approval prompt. A normal
     // decision error must NOT terminate the simulated device or its listener.
     actionError = ''; await tap('edge_space_approve');
@@ -903,53 +929,53 @@ ${JSON.stringify(fixtureMetadata)}
       `stale UI approval must return an ordinary error without killing the simulator: ${actionError}`);
     await waitDevice('cancelled review disappears after the shared review poll', device => device.spaceJoinPrompt === '');
     t.diagnostic('Core cancelled the same-Core rejoin; stale approval tap did not crash the simulator');
-    const second = await core.command(['space', 'join', node]);
+    const second = await core.command(['space', 'join', await core.pairedName(node)]);
     // Before the next UI poll the rendered button still belongs to the
     // CANCELLED request. It must not silently approve this new submission.
     actionError = ''; await tap('edge_space_approve');
     assert(actionError, 'a stale approval must not be retargeted to the next pending request');
-    assert.equal((await core.command(['space', 'refresh', second.requestId])).status, 'pending');
+    assert.equal((await core.command(['space', 'refresh', second.spaceName])).status, 'pending');
     t.diagnostic('a stale approval for cancelled A did not approve the newly submitted B');
     await update(); await openReview();
     await assert.rejects(post('/api/simulator/action', {action: 'edge_space_approve',
       requestId: review.requestId, assignmentVersion: review.assignmentVersion + 1}));
-    assert.equal((await core.command(['space', 'refresh', second.requestId])).status, 'pending', 'stale assignment cannot approve');
+    assert.equal((await core.command(['space', 'refresh', second.spaceName])).status, 'pending', 'stale assignment cannot approve');
     actionError = ''; await tap('edge_space_reject'); assert.equal(actionError, '');
-    assert.equal((await core.command(['space', 'refresh', second.requestId])).status, 'rejected');
-    const afterReject = await core.command(['space', 'join', node]);
+    assert.equal((await core.command(['space', 'refresh', second.spaceName])).status, 'rejected');
+    const afterReject = await core.command(['space', 'join', await core.pairedName(node)]);
     await approve();
-    assert.equal((await core.command(['space', 'refresh', afterReject.requestId])).status, 'joined');
+    assert.equal((await core.command(['space', 'refresh', afterReject.spaceName])).status, 'joined');
     t.diagnostic('same Core successfully rejoined after leaving and cancelling');
     await leave();
-    const pending = await core.command(['space', 'join', node]);
+    const pending = await core.command(['space', 'join', await core.pairedName(node)]);
     await update(); await openReview(); assert.equal(screen().page, 'Space');
     await core.stop(); await post('/api/simulator/stop');
     await startCore();
     const restarted = await startEdge(); assert.equal(Object.hasOwn(restarted, 'token'), false);
     await update(); await openReview(); assert.equal(screen().page, 'Space', 'approval prompt survives process restart');
-    assert.equal((await core.command(['space', 'cancel', pending.requestId])).status, 'cancelled');
+    assert.equal((await core.command(['space', 'cancel', pending.spaceName])).status, 'cancelled');
     await waitDevice('cancelled persisted review disappears', device => device.spaceJoinPrompt === '');
     await update(); assert.equal(screen().nodes.some(node => node.id === 'edge_space_approve'), false);
-    const third = await core.command(['space', 'join', node]);
+    const third = await core.command(['space', 'join', await core.pairedName(node)]);
     await approve();
-    assert.equal((await core.command(['space', 'refresh', third.requestId])).status, 'joined');
+    assert.equal((await core.command(['space', 'refresh', third.spaceName])).status, 'joined');
     t.diagnostic('both processes restarted; the persisted pending request was cancelled and a new application approved');
     await leave();
-    const offline = await core.command(['space', 'join', node]);
+    const offline = await core.command(['space', 'join', await core.pairedName(node)]);
     await update(); await post('/api/simulator/stop');
     // Offline cancellation must report non-delivery while persisting intent.
     // Restart both processes, then ordinary refresh must retry the cancellation.
-    await assert.rejects(core.command(['space', 'cancel', offline.requestId]));
+    await assert.rejects(core.command(['space', 'cancel', offline.spaceName]));
     const queued = (await core.command(['space', 'requests', 'outgoing'])).find(value => value.requestId === offline.requestId);
     assert.equal(queued.status, 'pending', 'offline cancellation must not fabricate a completed status');
     await core.stop(); await startCore(); await startEdge();
-    assert.equal((await core.command(['space', 'refresh', offline.requestId])).status, 'cancelled',
+    assert.equal((await core.command(['space', 'refresh', offline.spaceName])).status, 'cancelled',
       'ordinary refresh after both restarts must retry the persisted cancellation intent');
     await waitDevice('offline cancellation removes the review', device => device.spaceJoinPrompt === '');
     await update(); assert.equal(screen().nodes.some(value => value.id === 'edge_space_approve'), false);
-    const afterOfflineCancel = await core.command(['space', 'join', node]);
+    const afterOfflineCancel = await core.command(['space', 'join', await core.pairedName(node)]);
     await approve();
-    assert.equal((await core.command(['space', 'refresh', afterOfflineCancel.requestId])).status, 'joined');
+    assert.equal((await core.command(['space', 'refresh', afterOfflineCancel.spaceName])).status, 'joined');
     assert.deepEqual(await core.command(['peers']), credentials, 'pairing credentials must not be replaced');
     const edgeFiles = await (await fetch(base + '/api/simulator/storage')).json();
     assert(edgeFiles.some(file => file.startsWith('runtime/link_access/')), 'inspect the logical device records');
@@ -963,7 +989,7 @@ ${JSON.stringify(fixtureMetadata)}
     // the reviewer. Reuse TCP pairing and the ordinary Space approval records.
     if ((await state()).device.paired) {
       await leave();
-      await core.command(['unpair', node]);
+      await core.command(['unpair', await core.pairedName(node)]);
       await post('/api/simulator/action', {action:'edge_unpair'});
     }
     await core.command(['space','leave']);
@@ -984,7 +1010,7 @@ ${JSON.stringify(fixtureMetadata)}
     const incoming = (await core.command(['space','requests','incoming']))
       .find(value => value.requestId === submission.request.requestId);
     assert(incoming?.canApprove, 'the real Core has a pending approval for the simulator');
-    await core.command(['space','approve',incoming.requestId,String(incoming.assignmentVersion)]);
+    assert.equal((await core.command(['space','approve',incoming.applicantName])).requestId, incoming.requestId);
     const joined = await post('/api/simulator/core-access', {step:'refresh',requestId:incoming.requestId});
     assert.equal(joined.request.status, 'joined');
     assert.equal((await post('/api/simulator/core-access', {step:'request',nodeId:targetCore})).joined, true);

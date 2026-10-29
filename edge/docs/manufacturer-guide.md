@@ -33,7 +33,7 @@ Linux 机器人 [PB_SBC01_H3](../boards/pb_sbc01_h3/README.md) 选择运行完�
 
 ## 资源与构建边界
 
-SDK 默认无外部依赖；`space` 的正常依赖中不允许出现完整 Core、SQL、JavaScript、本地模型引擎或通用桌面 HTTP 客户端。`edge/tools/check-sdk-dependencies.py` 会检查默认和可选功能的依赖图。
+SDK 默认无外部依赖；`space` 的正常依赖中不允许出现完整 Core、SQL、JavaScript、本地模型引擎或通用桌面 HTTP 客户端。`edge/tools/check-sdk-dependencies.py` 会检查默认、各可选功能及所有功能组合的依赖图。
 
 ESP32 模拟器固定 256 KiB Rust 堆，主线程、异步任务、阻塞任务分别使用 16/24/20 KiB 逻辑栈和保护页。超过预算会真实失败。桌面操作系统、C/Wasm UI 和网络系统库拥有各自内存，这些数值不能代表整板 RAM 或闪存；修改固件后仍需 ESP-IDF 构建与硬件验收。
 

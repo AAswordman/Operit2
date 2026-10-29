@@ -345,23 +345,21 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterChangePass);
 
-    // Slow work must become visible even before its total inventory is known.
+    // A slow single-record exchange stays silent, including its completion.
     let reopenedFacade = RuntimeRemoteLinkService::newWithRouter(
         (*routers[1].localCore).clone(), routers[1].clone());
     let progress = reopenedFacade.spaceSyncProgressFlow();
-    access[0].updateDeviceSpacePolicy("sync.large.incremental".into(), "v1".into()).unwrap();
+    access[0].updateDeviceSpacePolicy("sync.small.incremental".into(), "v1".into()).unwrap();
     let (arrived, resume) = peers[1].pauseResponse("syncApplyOperations");
     let (result, ()) = tokio::join!(observer.synchronizeOnce(), async {
         arrived.await.unwrap();
         assert!(progress.value().is_empty(), "a new incremental exchange starts silently");
         tokio::time::sleep(Duration::from_millis(3_100)).await;
-        assert!(progress.value().iter().any(|item| item.status == crate::SpaceSyncProgress::SpaceSyncStatus::Syncing),
-            "a slow exchange must expose its progress instead of appearing idle");
+        assert!(progress.value().is_empty(), "slow small exchanges must stay silent");
         resume.send(()).unwrap();
     });
     result.unwrap();
-    assert!(progress.value().iter().any(|item| item.status == crate::SpaceSyncProgress::SpaceSyncStatus::Completed),
-        "visible work must expose its completion");
+    assert!(progress.value().is_empty(), "small completion must stay silent");
 }
 
 /// Verifies a failed pass arms the exponential backoff: the immediate retry is

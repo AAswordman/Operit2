@@ -845,10 +845,13 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             Ok(())
         }
         Some("sync") if args.len() == 1 => {
-            operit_node_runtime::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+            let synchronizer = operit_node_runtime::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
                 Arc::new(coreApplication.nodeRuntime()), coreApplication.nodeRouter(),
                 operit_store::CoreSpaceStore::CoreSpaceStore::new(coreApplication.nodeRuntime().runtimeStorageHost()),
-            ).synchronizeOnce().await?;
+            );
+            // Do not embed the full replication state machine in every CLI
+            // command and the enclosing interactive session's future.
+            Box::pin(synchronizer.synchronizeOnce()).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({"synchronized": true})); }
             else { println!("Space synchronization completed"); }
             Ok(())

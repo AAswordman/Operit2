@@ -585,27 +585,21 @@ impl Simulator {
     }
 
     /// Executes one editor command before its result enters the IPC serializer.
+    #[inline(never)]
     fn command<'a>(
         &'a mut self,
         request: &'a serde_json::Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'a>>
     {
+        if request["command"] == "action" { return self.action(request); }
         Box::pin(async move {
             let Self {
                 spaceService,
                 edgeNode,
                 sceneService,
                 speech,
-                nodeId,
-                address,
-                error,
-                lastAction,
-                chatRoute,
                 coreAccess,
-                deviceSpaceUi,
-                sessionId,
                 sendReceipt,
-                review,
                 ..
             } = self;
             let scheduler = self
@@ -644,128 +638,6 @@ impl Simulator {
                             .collect::<Vec<_>>(),
                     )
                     .map_err(|e| e.to_string())
-                }
-                // Decision/cleanup failures belong to this RPC, not to run(). In
-                // particular a stale approval tap after cancellation must not
-                // terminate the device or drop its authenticated TCP listener.
-                Some("action") => {
-                    async {
-                        let action = request["action"].as_str().unwrap_or("");
-                        *lastAction.lock().unwrap() = action.to_string();
-                        if deviceSpaceUi.action(action) {
-                            // The same bounded controller is used on actual firmware.
-                        } else if action == "edge_scene_exit" {
-                            sceneService.system_exit();
-                        } else if let Some(point) = action.strip_prefix("edge_scene_touch:") {
-                            let (x, y) = point.split_once(':').ok_or("Invalid scene point")?;
-                            if let Some(target) = sceneService.touch(
-                                x.parse().map_err(|_| "Invalid scene x")?,
-                                y.parse().map_err(|_| "Invalid scene y")?,
-                            ) {
-                                if matches!(target.as_str(), "pet" | "treat") {
-                                    sceneService.advance_target_frame(&target);
-                                }
-                            }
-                        } else if action == "edge_space_approve" || action == "edge_space_reject" {
-                            // Match firmware's captured pending request/version. A stale
-                            // screen must never approve a different, newer submission.
-                            let requestId = request["requestId"]
-                                .as_str()
-                                .filter(|id| !id.trim().is_empty())
-                                .ok_or_else(|| "Missing Space review requestId".to_string())?;
-                            let assignmentVersion =
-                                request["assignmentVersion"].as_u64().ok_or_else(|| {
-                                    "Missing Space review assignmentVersion".to_string()
-                                })?;
-                            let approve = action == "edge_space_approve";
-                            let space = spaceService.clone();
-                            let requestId = requestId.to_owned();
-                            let decided = onSpaceWorker(
-                                scheduler.clone(),
-                                "edge-space-decision",
-                                move || {
-                                    Box::pin(async move {
-                                        space
-                                            .decideDeviceSpaceJoin(
-                                                requestId,
-                                                assignmentVersion,
-                                                approve,
-                                            )
-                                            .await
-                                    })
-                                },
-                            )
-                            .await??;
-                            let mut review = review.lock().unwrap();
-                            if review.pending.as_ref().is_some_and(|pending| {
-                                pending.requestId == decided.requestId
-                                    && pending.assignmentVersion == decided.assignmentVersion
-                            }) {
-                                review.pending = None;
-                            }
-                        } else if action.starts_with("edge_plugins_")
-                            || action.starts_with("edge_plugin_")
-                        {
-                            edge_chat::pluginsAction(action)?;
-                        } else if action == "edge_pair" || action == "edge_unpair" {
-                            if action == "edge_unpair" {
-                                *coreAccess.lock().await = core_access::CoreAccess::default();
-                            }
-                            let result = async {
-                                if action == "edge_pair" {
-                                    let services =
-                                        edgeNode.nodeServices().map_err(|error| error.message)?;
-                                    services
-                                        .peers()
-                                        .startListening(&[PeerTransport::Tcp])
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                } else {
-                                    // Standalone simulator runs without a core runtime service.
-                                    // Unpair is intentionally idempotent in that mode.
-                                    if let Ok(services) = edgeNode.nodeServices() {
-                                        for peer in services
-                                            .peers()
-                                            .pairedPeers()
-                                            .map_err(|e| e.to_string())?
-                                        {
-                                            services
-                                                .peers()
-                                                .removePairedPeer(&peer.nodeId)
-                                                .await
-                                                .map_err(|e| e.to_string())?;
-                                        }
-                                    }
-                                    deviceSpaceUi.reset();
-                                    chatRoute.reset();
-                                }
-                                Ok::<_, String>(())
-                            }
-                            .await;
-                            result?;
-                        } else if action == "edge_space_leave" {
-                            let space = spaceService.clone();
-                            onSpaceWorker(scheduler.clone(), "edge-space-leave", move || {
-                                Box::pin(async move { space.leaveDeviceSpace() })
-                            })
-                            .await??;
-                            deviceSpaceUi.reset();
-                            *coreAccess.lock().await = core_access::CoreAccess::default();
-                            chatRoute.reset();
-                        } else if action == "edge_history_older" || action == "edge_history_newer" {
-                            edge_chat::moveHistory(action == "edge_history_older")?;
-                        } else if action == "edge_conversations_refresh" {
-                            edge_chat::conversationsAction()?;
-                        } else if action == "edge_new" {
-                            edge_chat::newChat()?;
-                        } else if let Some(chatId) = action.strip_prefix("edge_select:") {
-                            edge_chat::selectChat(chatId)?;
-                        } else {
-                            return Err("Unknown simulator action".to_string());
-                        }
-                        Ok::<_, String>(serde_json::json!({"ok": true, "action": action}))
-                    }
-                    .await
                 }
                 Some("speech") => async {
                     if let Some(id) = request["requestId"].as_str() {
@@ -831,4 +703,145 @@ impl Simulator {
             }
         })
     }
+    /// Keep UI actions on the main budget without unrelated speech/IPC poll frames.
+    #[inline(never)]
+    fn action<'a>(&'a mut self, request: &'a serde_json::Value)
+        -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + 'a>> {
+        Box::pin(async move {
+            let Self {
+                spaceService,
+                edgeNode,
+                sceneService,
+                lastAction,
+                chatRoute,
+                coreAccess,
+                deviceSpaceUi,
+                review,
+                ..
+            } = self;
+            let scheduler = self
+                .hostManager
+                .hostRuntimeTaskSchedulerHost
+                .as_ref()
+                .expect("Simulator Host scheduler must be installed")
+                .clone();
+            let services = edgeNode.nodeServices();
+
+            let action = request["action"].as_str().unwrap_or("");
+            *lastAction.lock().unwrap() = action.to_string();
+            if deviceSpaceUi.action(action) {
+                // The same bounded controller is used on actual firmware.
+            } else if action == "edge_scene_exit" {
+                sceneService.system_exit();
+            } else if let Some(point) = action.strip_prefix("edge_scene_touch:") {
+                let (x, y) = point.split_once(':').ok_or("Invalid scene point")?;
+                if let Some(target) = sceneService.touch(
+                    x.parse().map_err(|_| "Invalid scene x")?,
+                    y.parse().map_err(|_| "Invalid scene y")?,
+                ) {
+                    if matches!(target.as_str(), "pet" | "treat") {
+                        sceneService.advance_target_frame(&target);
+                    }
+                }
+            } else if action == "edge_space_approve" || action == "edge_space_reject" {
+                // Match firmware's captured pending request/version. A stale
+                // screen must never approve a different, newer submission.
+                let requestId = request["requestId"]
+                    .as_str()
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or_else(|| "Missing Space review requestId".to_string())?;
+                let assignmentVersion =
+                    request["assignmentVersion"].as_u64().ok_or_else(|| {
+                        "Missing Space review assignmentVersion".to_string()
+                    })?;
+                let approve = action == "edge_space_approve";
+                let space = spaceService.clone();
+                let requestId = requestId.to_owned();
+                let decided = onSpaceWorker(
+                    scheduler.clone(),
+                    "edge-space-decision",
+                    move || {
+                        Box::pin(async move {
+                            space
+                                .decideDeviceSpaceJoin(
+                                    requestId,
+                                    assignmentVersion,
+                                    approve,
+                                )
+                                .await
+                        })
+                    },
+                )
+                .await??;
+                let mut review = review.lock().unwrap();
+                if review.pending.as_ref().is_some_and(|pending| {
+                    pending.requestId == decided.requestId
+                        && pending.assignmentVersion == decided.assignmentVersion
+                }) {
+                    review.pending = None;
+                }
+            } else if action.starts_with("edge_plugins_")
+                || action.starts_with("edge_plugin_")
+            {
+                edge_chat::pluginsAction(action)?;
+            } else if action == "edge_pair" || action == "edge_unpair" {
+                if action == "edge_unpair" {
+                    *coreAccess.lock().await = core_access::CoreAccess::default();
+                }
+                let result = async {
+                    if action == "edge_pair" {
+                        let services =
+                            edgeNode.nodeServices().map_err(|error| error.message)?;
+                        services
+                            .peers()
+                            .startListening(&[PeerTransport::Tcp])
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    } else {
+                        // Standalone simulator runs without a core runtime service.
+                        // Unpair is intentionally idempotent in that mode.
+                        if let Ok(services) = edgeNode.nodeServices() {
+                            for peer in services
+                                .peers()
+                                .pairedPeers()
+                                .map_err(|e| e.to_string())?
+                            {
+                                services
+                                    .peers()
+                                    .removePairedPeer(&peer.nodeId)
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+                        deviceSpaceUi.reset();
+                        chatRoute.reset();
+                    }
+                    Ok::<_, String>(())
+                }
+                .await;
+                result?;
+            } else if action == "edge_space_leave" {
+                let space = spaceService.clone();
+                onSpaceWorker(scheduler.clone(), "edge-space-leave", move || {
+                    Box::pin(async move { space.leaveDeviceSpace() })
+                })
+                .await??;
+                deviceSpaceUi.reset();
+                *coreAccess.lock().await = core_access::CoreAccess::default();
+                chatRoute.reset();
+            } else if action == "edge_history_older" || action == "edge_history_newer" {
+                edge_chat::moveHistory(action == "edge_history_older")?;
+            } else if action == "edge_conversations_refresh" {
+                edge_chat::conversationsAction()?;
+            } else if action == "edge_new" {
+                edge_chat::newChat()?;
+            } else if let Some(chatId) = action.strip_prefix("edge_select:") {
+                edge_chat::selectChat(chatId)?;
+            } else {
+                return Err("Unknown simulator action".to_string());
+            }
+            Ok::<_, String>(serde_json::json!({"ok": true, "action": action}))
+        })
+    }
+
 }

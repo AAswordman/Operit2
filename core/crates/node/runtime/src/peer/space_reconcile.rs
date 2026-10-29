@@ -208,7 +208,7 @@ fn mergePeerOperations(service: &dyn NodeSpaceContext, peer: &str, spaceId: &str
     let mut applied = 0;
     for operation in operations {
         if operation.originDeviceId != peer || known.contains(&operation.opId) { continue; }
-        let record = NetworkControlCommandRecord::deserialize(&operation.payload)
+        let record = NetworkControlCommandRecord::fromPayload(&operation.payload)
             .map_err(|e| format!("Reconciliation offered a malformed control command: {e}"))?;
         if record.spaceId != spaceId {
             return Err("Reconciliation offered a command from another Space".into());
