@@ -22,7 +22,7 @@ import type {
   CharacterRepositoryOwner,
 } from "../canonical";
 import { RepositorySession } from "../repository";
-import { createInitialState, normalizeMemoryRecallSettings } from "./state";
+import { createInitialState, createMemorySpace, normalizeMemoryRecallSettings } from "./state";
 import {
   clone,
   equal,
@@ -194,7 +194,8 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
         Promise.resolve().then(() => directories.readToolCatalog()),
         this.readMetadata(),
       ]);
-      return { cards, groups, stores, tags, models, ttsConfigs, toolCatalog, ...metadata };
+      const memoryOwnerKeys = (await this.storage.memory.query("SELECT key FROM plugin_objects WHERE collection='owners' ORDER BY key")).map(row => String(row.key));
+      return { cards, groups, stores, tags, models, ttsConfigs, toolCatalog, memoryOwnerKeys, ...metadata };
     });
   }
 
@@ -342,7 +343,8 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
 
   /** Reads the selected owner's actual USER.md document. */
   readUser(ownerKey: string): Promise<UserDocument> {
-    return this.readOwnerMetadata(ownerKey, async (row) => {
+    return this.readOwnerMetadata(ownerKey, async (row, exists) => {
+      if (!exists) return { ownerKey, content: "" };
       const document = await Tools.Files.read(
         this.ownerDocumentPath(ownerKey, row),
       );
@@ -372,18 +374,18 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
   /** Reads one owner directly without loading memory bodies or holding a transaction across file IO. */
   private async readOwnerMetadata<T>(
     ownerKey: string,
-    action: (row: Record<string, Storage.Value>) => T | Promise<T>,
+    action: (row: Record<string, Storage.Value>, exists: boolean) => T | Promise<T>,
   ): Promise<T> {
     requireId(ownerKey, "memory owner");
     return this.readConsistent(async () => {
       const row = await this.storage.memory.get("owners", ownerKey);
-      if (row === null) throw new Error("Memory owner is missing: " + ownerKey);
-      assertObject(row.value, "memory owner metadata");
-      if (row.value.ownerKey !== ownerKey) throw new Error("Invalid memory owner identity");
+      const value = row === null ? storedValue(createMemorySpace(ownerKey)) : row.value;
+      assertObject(value, "memory owner metadata");
+      if (value.ownerKey !== ownerKey) throw new Error("Invalid memory owner identity");
       const separator = ownerKey.indexOf(":");
       const kind = ownerKey.slice(0, separator);
       if (kind !== "character" && kind !== "shared") throw new Error("Invalid memory owner: " + ownerKey);
-      return action(row.value);
+      return action(value, row !== null);
     });
   }
 

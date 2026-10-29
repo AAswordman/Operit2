@@ -1,12 +1,13 @@
 // ignore_for_file: file_names
 
-import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 import '../viewmodel/ChatViewModel.dart';
+import 'ChatScrollRailGeometry.dart';
 
 typedef LoadMessageLocatorEntries =
     Future<List<ChatMessageLocatorPreview>> Function(
@@ -79,21 +80,27 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
   List<ChatMessageLocatorPreview> _locatorEntries =
       const <ChatMessageLocatorPreview>[];
 
-  int? _hoveredTimestamp;
-  int? _hoveredTickIndex;
+  late List<ChatMessageLocatorPreview> _visibleEntries;
+  int? _hoveredEntryIndex;
+  int _locatorLoadGeneration = 0;
 
+  /// Loads history previews once instead of generating them on pointer motion.
   @override
   void initState() {
     super.initState();
+    _visibleEntries = _fallbackEntriesFromMessages();
     _loadLocatorEntries();
   }
 
+  /// Refreshes history geometry without retaining a preview from another chat.
   @override
   void didUpdateWidget(ChatScrollNavigator oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.viewportHeight != widget.viewportHeight) {
-      _hoveredTimestamp = null;
-      _hoveredTickIndex = null;
+      _hoveredEntryIndex = null;
+    }
+    if (!identical(oldWidget.messages, widget.messages)) {
+      _visibleEntries = _fallbackEntriesFromMessages();
     }
     final messagesChanged =
         oldWidget.messages.length != widget.messages.length ||
@@ -102,10 +109,15 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
         oldWidget.messages.lastOrNull?.timestamp !=
             widget.messages.lastOrNull?.timestamp;
     if (messagesChanged || oldWidget.currentChatId != widget.currentChatId) {
+      _hoveredEntryIndex = null;
+      if (oldWidget.currentChatId != widget.currentChatId) {
+        _locatorEntries = const <ChatMessageLocatorPreview>[];
+      }
       _loadLocatorEntries();
     }
   }
 
+  /// Builds an isolated paint-driven rail and a preview only for the selected row.
   @override
   Widget build(BuildContext context) {
     if (widget.messages.isEmpty ||
@@ -116,75 +128,75 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
 
     final entries = _getEntries();
     final activeTimestamp = _resolveActiveTimestamp();
+    final geometry = ChatScrollRailGeometry(
+      entryCount: entries.length,
+      viewportHeight: widget.viewportHeight,
+    );
+    final hoveredIndex = _hoveredEntryIndex;
 
-    return Stack(
-      children: <Widget>[
-        // The Pure Codex Tick Rail (Vertically Centered, No Container, No Border)
-        Positioned(
-          right: 8,
-          top: 0,
-          bottom: 0,
-          width: 24,
-          child: Center(
-            child: _CodexTicksColumn(
-              entries: entries,
-              activeTimestamp: activeTimestamp,
-              viewportHeight: widget.viewportHeight,
-              onHoverTick: (timestamp, index) {
-                setState(() {
-                  _hoveredTimestamp = timestamp;
-                  _hoveredTickIndex = index;
-                });
-              },
-              onTapTick: _handleJumpToMessage,
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final previewWidth = math.min(
+          210.0,
+          math.max(
+            0.0,
+            constraints.maxWidth - ChatScrollRailGeometry.interactionWidth - 24,
           ),
-        ),
-
-        // Hover preview tooltip (floats to the left of the hovered tick)
-        if (_hoveredTimestamp != null && _hoveredTickIndex != null)
-          Positioned(
-            right: 36,
-            top: _calculateTooltipTop(_hoveredTickIndex!, entries.length),
-            child: _CodexHoverTooltipCard(
-              entry: entries.firstWhere(
-                (e) => e.timestamp == _hoveredTimestamp,
-                orElse: () => _fallbackEntryFromTimestamp(_hoveredTimestamp!),
+        );
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: ChatScrollRailGeometry.interactionWidth,
+              child: _MessageTickRail(
+                entries: entries,
+                activeTimestamp: activeTimestamp,
+                geometry: geometry,
+                onHoverEntry: (index) {
+                  if (_hoveredEntryIndex == index) return;
+                  setState(() {
+                    _hoveredEntryIndex = index;
+                  });
+                },
+                onTapTick: _handleJumpToMessage,
               ),
             ),
-          ),
-
-        // Subtle Floating "Scroll to Bottom" circle button (only when not at bottom, horizontally centered)
-        if (!widget.autoScrollToBottom)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 16,
-            child: Center(
-              child: _ScrollToBottomCircleButton(
-                onTap: widget.onRequestScrollToBottom,
+            if (hoveredIndex != null &&
+                hoveredIndex < entries.length &&
+                previewWidth > 0)
+              Positioned(
+                right: ChatScrollRailGeometry.interactionWidth + 8,
+                top: (geometry.entryCenter(hoveredIndex) - 32).clamp(
+                  8.0,
+                  math.max(8.0, widget.viewportHeight - 112),
+                ),
+                child: IgnorePointer(
+                  child: SizedBox(
+                    width: previewWidth,
+                    child: _CodexHoverTooltipCard(entry: entries[hoveredIndex]),
+                  ),
+                ),
               ),
-            ),
-          ),
-      ],
+            if (!widget.autoScrollToBottom)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 16,
+                child: Center(
+                  child: _ScrollToBottomCircleButton(
+                    onTap: widget.onRequestScrollToBottom,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
-  double _calculateTooltipTop(int index, int count) {
-    if (count <= 0 || !widget.viewportHeight.isFinite) {
-      return 16.0;
-    }
-    final maxAvailableHeight = math.max(30.0, widget.viewportHeight - 100.0);
-    final step = count <= 25 ? 8.0 : (maxAvailableHeight / count).clamp(2.5, 8.0);
-    final columnHeight = step * count;
-    final startY = (widget.viewportHeight - columnHeight) / 2;
-    final tickY = startY + (index + 0.5) * step;
-
-    const minTop = 16.0;
-    final maxTop = math.max(minTop, widget.viewportHeight - 90.0);
-    return (tickY - 32.0).clamp(minTop, maxTop);
-  }
-
+  /// Finds the message nearest the viewport center without changing scrolling.
   int? _resolveActiveTimestamp() {
     final scroll = widget.scrollController;
     if (!scroll.hasClients ||
@@ -209,12 +221,12 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     return centeredAnchor?.timestamp ?? widget.messages.lastOrNull?.timestamp;
   }
 
+  /// Returns the current cached history preview collection.
   List<ChatMessageLocatorPreview> _getEntries() {
-    return _locatorEntries.isNotEmpty
-        ? _locatorEntries
-        : _fallbackEntriesFromMessages();
+    return _locatorEntries.isNotEmpty ? _locatorEntries : _visibleEntries;
   }
 
+  /// Projects the loaded transcript into locator previews once per message update.
   List<ChatMessageLocatorPreview> _fallbackEntriesFromMessages() {
     return widget.messages.indexed.map<ChatMessageLocatorPreview>((item) {
       final idx = item.$1;
@@ -232,24 +244,7 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     }).toList(growable: false);
   }
 
-  ChatMessageLocatorPreview _fallbackEntryFromTimestamp(int timestamp) {
-    final msg = widget.messages.firstWhere(
-      (m) => m.timestamp == timestamp,
-      orElse: () => widget.messages.last,
-    );
-    final idx = widget.messages.indexOf(msg);
-    final text = msg.displayText;
-    return ChatMessageLocatorPreview(
-      messageIndex: idx >= 0 ? idx : 0,
-      timestamp: msg.timestamp,
-      sender: msg.sender,
-      previewContent: text,
-      contentLength: text.length,
-      displayMode: 'NORMAL',
-      isFavorite: false,
-    );
-  }
-
+  /// Routes a confirmed tap to its visible row or its history timestamp.
   void _handleJumpToMessage(int timestamp) {
     final targetIndex = widget.messages.indexWhere(
       (m) => m.timestamp == timestamp,
@@ -261,7 +256,9 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     }
   }
 
+  /// Rejects stale preview loads after a chat or history window changes.
   Future<void> _loadLocatorEntries() async {
+    final generation = ++_locatorLoadGeneration;
     final chatId = widget.currentChatId;
     if (chatId == null || chatId.trim().isEmpty) {
       setState(() {
@@ -270,149 +267,339 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
       return;
     }
     final entries = await widget.loadLocatorEntries(chatId, '');
-    if (!mounted) {
+    if (!mounted || generation != _locatorLoadGeneration) {
       return;
     }
     setState(() {
       _locatorEntries = entries;
+      _hoveredEntryIndex = null;
     });
   }
 }
 
-class _CodexTicksColumn extends StatefulWidget {
-  const _CodexTicksColumn({
+class _MessageTickRail extends StatefulWidget {
+  /// Creates a paint-only rail with a separate, finger-sized gesture strip.
+  const _MessageTickRail({
     required this.entries,
     required this.activeTimestamp,
-    required this.viewportHeight,
-    required this.onHoverTick,
+    required this.geometry,
+    required this.onHoverEntry,
     required this.onTapTick,
   });
 
   final List<ChatMessageLocatorPreview> entries;
   final int? activeTimestamp;
-  final double viewportHeight;
-  final void Function(int? timestamp, int? index) onHoverTick;
+  final ChatScrollRailGeometry geometry;
+  final ValueChanged<int?> onHoverEntry;
   final ValueChanged<int> onTapTick;
 
+  /// Keeps pointer motion and animation outside the transcript widget tree.
   @override
-  State<_CodexTicksColumn> createState() => _CodexTicksColumnState();
+  State<_MessageTickRail> createState() => _MessageTickRailState();
 }
 
-class _CodexTicksColumnState extends State<_CodexTicksColumn> {
-  int? _lastDragTickIndex;
+class _MessageTickRailState extends State<_MessageTickRail>
+    with SingleTickerProviderStateMixin {
+  final _pointer = ValueNotifier<Offset>(Offset.zero);
+  late final AnimationController _proximity;
+  late final Listenable _paintSignal;
+  late List<_RailTick> _ticks;
+  late Map<int, int> _entryIndices;
+  int? _touchPointer;
+  int? _previewIndex;
+  double _targetProximity = 0;
+  bool _disableAnimations = false;
 
+  /// Allocates one animation and caches visual buckets for the whole history.
+  @override
+  void initState() {
+    super.initState();
+    _proximity = AnimationController(vsync: this);
+    _paintSignal = Listenable.merge(<Listenable>[_pointer, _proximity]);
+    _rebuildTicks();
+  }
+
+  /// Re-buckets only when history or viewport geometry actually changes.
+  @override
+  void didUpdateWidget(covariant _MessageTickRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.entries, widget.entries) ||
+        oldWidget.geometry.viewportHeight != widget.geometry.viewportHeight) {
+      _rebuildTicks();
+      _previewIndex = null;
+    }
+  }
+
+  /// Releases the single repaint animation and pointer notifier.
+  @override
+  void dispose() {
+    _proximity.dispose();
+    _pointer.dispose();
+    super.dispose();
+  }
+
+  /// Preserves active and favorite markers when many messages share one tick.
+  void _rebuildTicks() {
+    final geometry = widget.geometry;
+    _entryIndices = <int, int>{
+      for (final entry in widget.entries.indexed) entry.$2.timestamp: entry.$1,
+    };
+    _ticks = List<_RailTick>.generate(geometry.tickCount, (index) {
+      final start = geometry.bucketStart(index);
+      final end = geometry.bucketEnd(index);
+      var favorite = false;
+      for (var entry = start; entry < end; entry++) {
+        favorite |= widget.entries[entry].isFavorite;
+      }
+      return _RailTick(
+        start: start,
+        end: end,
+        isUser: widget.entries[(start + end - 1) ~/ 2].sender == 'user',
+        isFavorite: favorite,
+      );
+    }, growable: false);
+  }
+
+  /// Animates only horizontal growth; vertical motion follows the pointer directly.
+  void _animateProximity(double value) {
+    if (_disableAnimations || value == 1) {
+      _targetProximity = value;
+      if (_proximity.value != value || _proximity.isAnimating) {
+        _proximity.value = value;
+      }
+      return;
+    }
+    if ((_targetProximity - value).abs() < 0.005) return;
+    _targetProximity = value;
+    _proximity.animateTo(
+      value,
+      duration: Duration(milliseconds: value == 0 ? 160 : 70),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// Repaints on every motion but rebuilds the preview only when its row changes.
+  void _updatePointer(Offset position) {
+    final geometry = widget.geometry;
+    _pointer.value = position;
+    final insideHeight =
+        position.dy >= geometry.hitTop &&
+        position.dy <= geometry.hitTop + geometry.hitHeight;
+    _animateProximity(insideHeight ? geometry.proximityAt(position.dx) : 0);
+    final index = insideHeight &&
+            position.dx >= ChatScrollRailGeometry.interactionWidth -
+                ChatScrollRailGeometry.hitWidth &&
+            position.dx <= ChatScrollRailGeometry.interactionWidth
+        ? geometry.entryIndexAt(position.dy)
+        : null;
+    if (index != _previewIndex) {
+      _previewIndex = index;
+      widget.onHoverEntry(index);
+    }
+  }
+
+  /// Collapses the wave after leaving the rail without changing scroll position.
+  void _clearPointer() {
+    _animateProximity(0);
+    if (_previewIndex != null) {
+      _previewIndex = null;
+      widget.onHoverEntry(null);
+    }
+  }
+
+  /// Shows touch previews immediately, before a tap or drag wins its gesture arena.
+  void _handlePointerDown(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.mouse) {
+      if (_touchPointer != null) return;
+      _touchPointer = event.pointer;
+    }
+    _updatePointer(event.localPosition);
+  }
+
+  /// Scrubs previews without jumping through the transcript on drag updates.
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.kind != PointerDeviceKind.mouse && event.pointer != _touchPointer) {
+      return;
+    }
+    _updatePointer(event.localPosition);
+  }
+
+  /// Clears touch state on both release and cancellation without hiding mouse hover.
+  void _handlePointerEnd(PointerEvent event) {
+    if (event.pointer != _touchPointer) return;
+    _touchPointer = null;
+    _clearPointer();
+  }
+
+  /// Observes proximity without consuming transcript gestures outside the hit strip.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final count = widget.entries.length;
-    if (count == 0 || !widget.viewportHeight.isFinite) return const SizedBox.shrink();
-
-    // Natural adaptive row height:
-    // When few messages (e.g. 4), each item is 8px apart (32px total height).
-    // When many messages, clamp down to 2.5px min.
-    final maxAvailableHeight = math.max(30.0, widget.viewportHeight - 100.0);
-    final step = count <= 25
-        ? 8.0
-        : (maxAvailableHeight / count).clamp(2.5, 8.0);
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (details) {
-        final idx = (details.localPosition.dy / step).floor().clamp(0, count - 1);
-        widget.onTapTick(widget.entries[idx].timestamp);
+    _disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final geometry = widget.geometry;
+    final colors = Theme.of(context).colorScheme;
+    return MouseRegion(
+      opaque: false,
+      hitTestBehavior: HitTestBehavior.translucent,
+      onHover: (event) => _updatePointer(event.localPosition),
+      onExit: (_) {
+        if (_touchPointer == null) _clearPointer();
       },
-      onVerticalDragStart: (details) {
-        final idx = (details.localPosition.dy / step).floor().clamp(0, count - 1);
-        _lastDragTickIndex = idx;
-        widget.onTapTick(widget.entries[idx].timestamp);
-        widget.onHoverTick(widget.entries[idx].timestamp, idx);
-      },
-      onVerticalDragUpdate: (details) {
-        final idx = (details.localPosition.dy / step).floor().clamp(0, count - 1);
-        if (_lastDragTickIndex != idx) {
-          _lastDragTickIndex = idx;
-          widget.onTapTick(widget.entries[idx].timestamp);
-          widget.onHoverTick(widget.entries[idx].timestamp, idx);
-        }
-      },
-      onVerticalDragEnd: (_) {
-        _lastDragTickIndex = null;
-        widget.onHoverTick(null, null);
-      },
-      onVerticalDragCancel: () {
-        _lastDragTickIndex = null;
-        widget.onHoverTick(null, null);
-      },
-      child: MouseRegion(
-        onExit: (_) => widget.onHoverTick(null, null),
-        child: SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List<Widget>.generate(count, (index) {
-              final entry = widget.entries[index];
-              final isCurrent = entry.timestamp == widget.activeTimestamp;
-              final isUser = entry.sender == 'user';
-              final isFav = entry.isFavorite;
-
-              final dashWidth = isCurrent ? 15.0 : (isUser ? 10.0 : 6.5);
-              final dashHeight = isCurrent ? 2.8 : 1.8;
-              final dashColor = isCurrent
-                  ? theme.colorScheme.primary
-                  : (isUser
-                      ? theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55)
-                      : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.28));
-
-              return MouseRegion(
-                cursor: SystemMouseCursors.click,
-                onEnter: (_) {
-                  widget.onHoverTick(entry.timestamp, index);
-                },
-                child: SizedBox(
-                  height: step,
-                  width: 24,
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Container(
-                          width: dashWidth,
-                          height: dashHeight,
-                          decoration: BoxDecoration(
-                            color: dashColor,
-                            borderRadius: BorderRadius.circular(1.0),
-                          ),
-                        ),
-                        if (isFav) ...[
-                          const SizedBox(width: 2),
-                          Container(
-                            width: 2.2,
-                            height: 2.2,
-                            decoration: const BoxDecoration(
-                              color: Colors.amber,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ],
-                      ],
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerEnd,
+        onPointerCancel: _handlePointerEnd,
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            Positioned.fill(
+              child: IgnorePointer(
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    key: const ValueKey<String>('chat-scroll-rail-paint'),
+                    painter: _MessageTickPainter(
+                      ticks: _ticks,
+                      activeIndex: _entryIndices[widget.activeTimestamp],
+                      geometry: geometry,
+                      pointer: _pointer,
+                      proximity: _proximity,
+                      primary: colors.primary,
+                      foreground: colors.onSurfaceVariant,
+                      repaint: _paintSignal,
                     ),
                   ),
                 ),
-              );
-            }),
-          ),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              top: geometry.hitTop,
+              width: ChatScrollRailGeometry.hitWidth,
+              height: geometry.hitHeight,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                opaque: false,
+                child: GestureDetector(
+                  key: const ValueKey<String>('chat-scroll-rail-hit-target'),
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (details) {
+                    final index = geometry.entryIndexAt(
+                      details.localPosition.dy + geometry.hitTop,
+                    );
+                    widget.onTapTick(widget.entries[index].timestamp);
+                  },
+                  // This strip owns scrubbing; raw motion only updates the preview.
+                  onVerticalDragStart: (_) {},
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
+/// Describes one visual tick bucket without allocating a widget per message.
+class _RailTick {
+  /// Records the history interval and markers represented by a painted tick.
+  const _RailTick({
+    required this.start,
+    required this.end,
+    required this.isUser,
+    required this.isFavorite,
+  });
+
+  final int start;
+  final int end;
+  final bool isUser;
+  final bool isFavorite;
+
+  /// Tests whether the active or previewed message belongs to this visual bucket.
+  bool contains(int? index) => index != null && index >= start && index < end;
+}
+
+/// Draws the entire proximity wave in one bounded, independently repainted layer.
+class _MessageTickPainter extends CustomPainter {
+  /// Connects pointer and animation notifiers directly to painting, not rebuilding.
+  _MessageTickPainter({
+    required this.ticks,
+    required this.activeIndex,
+    required this.geometry,
+    required this.pointer,
+    required this.proximity,
+    required this.primary,
+    required this.foreground,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final List<_RailTick> ticks;
+  final int? activeIndex;
+  final ChatScrollRailGeometry geometry;
+  final ValueNotifier<Offset> pointer;
+  final Animation<double> proximity;
+  final Color primary;
+  final Color foreground;
+
+  /// Anchors tick ends while a capped bell-shaped wave extends them to the left.
+  @override
+  void paint(Canvas canvas, Size size) {
+    final position = pointer.value;
+    final strength = proximity.value;
+    final hoveredIndex =
+        strength > 0.01 ? geometry.entryIndexAt(position.dy) : null;
+    final right = size.width - ChatScrollRailGeometry.rightInset;
+    final line = Paint();
+    final favorite = Paint()..color = Colors.amber;
+    for (var index = 0; index < ticks.length; index++) {
+      final tick = ticks[index];
+      final current = tick.contains(activeIndex);
+      final hovered = tick.contains(hoveredIndex);
+      final y = geometry.tickCenter(index);
+      final restingWidth = current ? 15.0 : (tick.isUser ? 10.0 : 6.5);
+      final width = geometry.tickWidth(
+        restingWidth: restingWidth,
+        tickY: y,
+        pointerY: position.dy,
+        proximity: strength,
+      );
+      line.color = current || hovered
+          ? primary
+          : foreground.withValues(alpha: tick.isUser ? 0.55 : 0.28);
+      final thickness = current || hovered ? 2.8 : 1.8;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(right - width, y - thickness / 2, width, thickness),
+          Radius.circular(thickness / 2),
+        ),
+        line,
+      );
+      if (tick.isFavorite) canvas.drawCircle(Offset(right + 4, y), 1.2, favorite);
+    }
+  }
+
+  /// Lets the proximity observation area pass gestures through to the transcript.
+  @override
+  bool hitTest(Offset position) => false;
+
+  /// Repaints static state only when history, viewport, selection or theme changes.
+  @override
+  bool shouldRepaint(covariant _MessageTickPainter oldDelegate) =>
+      oldDelegate.ticks != ticks ||
+      oldDelegate.activeIndex != activeIndex ||
+      oldDelegate.geometry.viewportHeight != geometry.viewportHeight ||
+      oldDelegate.primary != primary ||
+      oldDelegate.foreground != foreground;
+}
+
 class _CodexHoverTooltipCard extends StatelessWidget {
+  /// Shows the selected message preview immediately on hover or touch.
   const _CodexHoverTooltipCard({required this.entry});
 
   final ChatMessageLocatorPreview entry;
 
+  /// Renders message identity and content without an extra navigation hint.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -423,7 +610,6 @@ class _CodexHoverTooltipCard extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Container(
-        width: 210,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.95),
@@ -455,30 +641,26 @@ class _CodexHoverTooltipCard extends StatelessWidget {
                       : theme.colorScheme.tertiary,
                 ),
                 const SizedBox(width: 4),
-                Text(
-                  isUser
-                      ? '提问 #${(entry.messageIndex ?? 0) + 1}'
-                      : senderLabel(context, entry.sender),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 10,
-                    color: isUser
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurfaceVariant,
+                Expanded(
+                  child: Text(
+                    isUser
+                        ? '${senderLabel(context, entry.sender)} #${(entry.messageIndex ?? 0) + 1}'
+                        : senderLabel(context, entry.sender),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 10,
+                      color: isUser
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 if (entry.isFavorite) ...[
                   const SizedBox(width: 4),
                   const Icon(Icons.star, size: 11, color: Colors.amber),
                 ],
-                const Spacer(),
-                Text(
-                  '点击跳转',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontSize: 9,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
               ],
             ),
             const SizedBox(height: 3),

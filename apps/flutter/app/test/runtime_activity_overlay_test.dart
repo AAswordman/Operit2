@@ -65,21 +65,29 @@ core.SpaceSyncProgress progress({
   core.SpaceSyncStage stage = core.SpaceSyncStage.records,
   int fileBytes = 0,
   int fileSize = 0,
+  int completedRecords = 1200,
+  int? totalRecords,
+  int pendingRecords = 0,
+  String? error,
+  String peer = 'tablet',
 }) {
   final now = DateTime.now().millisecondsSinceEpoch;
   return core.SpaceSyncProgress(
     spaceId: 'space',
-    peerNodeId: 'tablet',
+    peerNodeId: peer,
     startedAt: now - 10000,
     updatedAt: now,
     status: status,
     stage: stage,
     exchangedRecords: 1200,
+    completedRecords: completedRecords,
+    totalRecords: totalRecords,
+    pendingRecords: pendingRecords,
     transferredBytes: 2097152,
     fileBytes: fileBytes,
     fileSize: fileSize,
     retryAt: status == core.SpaceSyncStatus.waiting ? now + 2000 : null,
-    error: status == core.SpaceSyncStatus.waiting ? 'offline' : null,
+    error: error,
   );
 }
 
@@ -226,6 +234,73 @@ void main() {
     });
     expect(find.text('任意页面'), findsOneWidget);
   });
+
+  testWidgets('records show their overall total and a determinate percentage', (
+    tester,
+  ) async {
+    await mount(tester);
+    await emitSync(
+      tester,
+      progress(completedRecords: 500, totalRecords: 10000),
+    );
+    expect(find.text('500 / 10000 条 · 5%'), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
+      0.05,
+    );
+  });
+
+  testWidgets(
+    'compact progress aggregates every peer instead of using only the first',
+    (tester) async {
+      await mount(tester);
+      bridge.emit('spaceSyncProgressFlow', [
+        progress(completedRecords: 500, totalRecords: 1000).toJson(),
+        progress(
+          peer: 'desktop',
+          completedRecords: 100,
+          totalRecords: 3000,
+        ).toJson(),
+      ]);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('600 / 4000 条 · 15%'), findsOneWidget);
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator),
+            )
+            .value,
+        0.15,
+      );
+    },
+  );
+
+  testWidgets(
+    'failed records keep their real pending count and expose the error without hovering',
+    (tester) async {
+      await mount(tester);
+      await emitSync(
+        tester,
+        progress(
+          status: core.SpaceSyncStatus.waiting,
+          completedRecords: 9999,
+          totalRecords: 10000,
+          pendingRecords: 1,
+          error: 'plugin_storage: Invalid or duplicate remote key',
+        ),
+      );
+      expect(find.text('后台任务'), findsOneWidget);
+      expect(find.text('9999 / 10000 条 · 99% · 待应用 1 条'), findsOneWidget);
+      expect(
+        find.text('plugin_storage: Invalid or duplicate remote key'),
+        findsOneWidget,
+      );
+      expect(find.text('同步完成'), findsNothing);
+    },
+  );
 
   testWidgets('file bytes drive progress; record exchange is indeterminate', (
     tester,

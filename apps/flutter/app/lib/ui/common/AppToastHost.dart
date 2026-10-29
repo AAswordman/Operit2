@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../../core/host/AppToastController.dart';
 import 'OperitLogoMark.dart';
@@ -31,6 +32,7 @@ class _NoticeEntry {
 class _AppToastHostState extends State<AppToastHost> {
   final List<_NoticeEntry> _entries = <_NoticeEntry>[];
   final Map<int, Timer> _exitTimers = <int, Timer>{};
+  bool _syncScheduled = false;
 
   /// Starts mirroring the process-wide notice stack.
   @override
@@ -50,8 +52,22 @@ class _AppToastHostState extends State<AppToastHost> {
     super.dispose();
   }
 
-  /// Rebuilds after the controller stack changes.
+  /// Mirrors changes after build and disposal have released the widget tree.
   void _sync() {
+    if (!mounted || _syncScheduled) {
+      return;
+    }
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      _syncScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _syncScheduled = false;
+        if (mounted) {
+          _apply(rebuild: true);
+        }
+      });
+      return;
+    }
     _apply(rebuild: true);
   }
 

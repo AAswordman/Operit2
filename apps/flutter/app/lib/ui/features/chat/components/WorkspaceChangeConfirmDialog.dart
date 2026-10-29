@@ -18,6 +18,7 @@ class WorkspaceChangeConfirmDialog extends StatelessWidget {
   final List<WorkspaceFileChange> changes;
   final Future<void> Function() onConfirm;
 
+  /// Builds a bounded confirmation dialog with a scrollable file change list.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -39,7 +40,12 @@ class WorkspaceChangeConfirmDialog extends StatelessWidget {
     return AlertDialog(
       title: Text(title),
       content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 420),
+        // A tight width keeps AlertDialog's intrinsic sizing out of the lazy list.
+        constraints: const BoxConstraints(
+          minWidth: 520,
+          maxWidth: 520,
+          maxHeight: 420,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,

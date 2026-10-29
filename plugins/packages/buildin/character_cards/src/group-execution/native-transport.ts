@@ -1,3 +1,4 @@
+import { traceCharacterWork } from "../diagnostics";
 import type { MessageSendResultData } from "../../../../../types/results";
 import { readMessageAuthor } from "../chat-storage";
 import { assertBoolean, assertInteger } from "../validation";
@@ -99,7 +100,10 @@ export class NativeGroupTurnTransport implements GroupTurnTransport {
     const attempt: Attempt = { chatId: sequence.chatId, runtime: sequence.runtime, active: true };
     this.attempts.set(requestKey, attempt);
     try {
-      const actual = await Tools.Chat.sendMessage(request);
+      const actual = await traceCharacterWork("group.native.send", { chatId: sequence.chatId, submissionId: "kind" in input ? input.submission.submissionId : input.submissionId,
+        requestKey, runtime: sequence.runtime, kind: request.kind,
+        turn: request.kind === "submit" ? request.turn.kind : "continue" }, trace =>
+        trace.step("host.Chat.sendMessage", () => Tools.Chat.sendMessage(request)));
       const decision = decodeNativeGroupSendResult(actual, input, "kind" in input ? null : input.userMessageTimestamp);
       sequence.last = decision;
       if (decision.type === "committed") {

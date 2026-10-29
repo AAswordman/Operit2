@@ -37,5 +37,16 @@ CREATE TABLE sync_sql_chat_rows (
 
 
 
+CREATE TABLE sync_sql_deletions (
+    opId TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    tableName TEXT NOT NULL,
+    chatId TEXT NOT NULL,
+    messageTimestamp INTEGER,
+    variantIndex INTEGER,
+    PRIMARY KEY(opId, ordinal),
+    FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
+);
+
 ALTER TABLE chats ADD COLUMN characterCardName TEXT;
 ALTER TABLE chats ADD COLUMN characterGroupId TEXT;

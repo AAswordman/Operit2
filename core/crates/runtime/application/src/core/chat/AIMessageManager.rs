@@ -985,7 +985,7 @@ impl AIMessageManager {
         {
             attributes.push_str(&format!(" node_id=\"{}\"", escape(nodeId)));
         }
-        if toolPath.starts_with("/app/data/chat_attachments/") {
+        if toolPath.starts_with("/app/data/data/chat_attachments/") {
             attributes.push_str(&format!(" path=\"{}\"", escape(&toolPath)));
         }
         if attachment.fileSize > 0 {
@@ -1518,7 +1518,7 @@ mod tests {
     #[test]
     fn attachment_markup_keeps_the_source_node_and_portable_tool_path() {
         let mut attachment = AttachmentInfo::new(
-            "/device-b/runtime/chat_attachments/report.pdf".into(),
+            "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf".into(),
             "报价单\".pdf".into(),
             "application/pdf".into(),
             3,
@@ -1527,9 +1527,9 @@ mod tests {
         let tag =
             AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
         assert!(tag.contains("node_id=\"core-b\""));
-        assert!(tag.contains("path=\"/app/data/chat_attachments/report.pdf\""));
+        assert!(tag.contains("path=\"/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
         assert!(tag.contains("filename=\"报价单&quot;.pdf\""));
-        assert!(tag.contains("id=\"/app/data/chat_attachments/report.pdf\""));
+        assert!(tag.contains("id=\"/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
         assert!(!tag.contains("/device-b/"));
     }
 
@@ -1537,7 +1537,7 @@ mod tests {
     fn remote_media_never_reads_the_current_file_host() {
         for mimeType in ["image/png", "audio/mpeg", "video/mp4"] {
             let mut attachment = AttachmentInfo::new(
-                "/device-b/runtime/chat_attachments/media".into(),
+                "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/media".into(),
                 "media".into(),
                 mimeType.into(),
                 3,

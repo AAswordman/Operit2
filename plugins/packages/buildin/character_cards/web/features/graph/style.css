@@ -1,65 +1,83 @@
-/* Material graph workspace: app bar, search, filter chips, canvas FAB and inspector. */
-.dialog.graph-dialog{border-radius:28px;background:var(--surface);border:0}
+/* Compact Material surfaces shared by the graph dialog and mobile inspector. */
+.dialog.graph-dialog{border-radius:24px;background:var(--surface);border:0}
 .graph-dialog .dialog-layout{min-height:0}
-.graph-dialog .dialog-header{position:relative;z-index:2;min-height:80px;padding:12px 16px;gap:12px}
-.graph-dialog .icon-button{width:48px;height:48px;padding:12px;flex:none}
-.graph-dialog .icon-button .icon{width:24px;height:24px}
+.graph-dialog .dialog-header{position:relative;z-index:2;min-height:60px;padding:8px 12px;gap:8px}
+.graph-dialog .icon-button{width:32px;height:32px;padding:6px;flex:none}
+.graph-dialog .icon-button .icon{width:20px;height:20px}
 .graph-dialog .graph-heading{flex:1;min-width:0}
-.graph-dialog .graph-heading h2{font-size:22px;line-height:28px;font-weight:500;white-space:nowrap}
+.graph-dialog .graph-heading h2{font-size:18px;line-height:24px;font-weight:600;white-space:nowrap}
 .graph-dialog .graph-heading>span{display:block;margin-top:2px;color:var(--onSurfaceVariant);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .graph-overflow{position:relative;flex:none}
 .graph-overflow>summary{list-style:none;cursor:pointer}
 .graph-overflow>summary::-webkit-details-marker{display:none}
 .graph-overflow>summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .graph-overflow[open]>summary{background:var(--surfaceContainerHigh)}
-.graph-menu{position:absolute;right:0;top:calc(100% + 4px);width:220px;padding:8px 0;border-radius:12px;background:var(--surfaceContainerHigh);box-shadow:0 4px 8px #0003,0 8px 24px #0002}
-.graph-menu .button{display:flex;justify-content:flex-start;gap:12px;width:100%;min-height:48px;border-radius:0;padding:12px 16px;font-size:14px;font-weight:400;color:var(--onSurface)}
+.graph-menu{position:absolute;right:0;top:calc(100% + 4px);width:200px;padding:4px;border-radius:12px;background:var(--surfaceContainerHigh);box-shadow:0 4px 16px #0003}
+.graph-menu .button{display:flex;justify-content:flex-start;gap:8px;width:100%;min-height:36px;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:400;color:var(--onSurface)}
 .graph-menu .button .icon{color:var(--onSurfaceVariant)}
-.graph-menu hr{margin:8px 0;border:0;border-top:1px solid var(--outlineVariant)}
-.graph-dialog .graph-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:0 24px 16px;flex:none;border:0}
-.graph-dialog .graph-search{display:flex;align-items:center;gap:4px;width:100%;height:56px;padding:4px 8px;border-radius:28px;background:var(--surfaceContainerHigh)}
+.graph-menu hr{margin:4px 8px;border:0;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:0 16px 12px;flex:none;border:0}
+.graph-dialog .graph-search{display:flex;align-items:center;gap:4px;width:100%;height:40px;padding:4px;border-radius:12px;background:var(--surfaceContainerHigh)}
 .graph-search:focus-within{outline:2px solid var(--primary);outline-offset:2px}
-.graph-dialog .graph-search input{flex:1;min-width:0;width:100%;height:100%;padding:0 4px;border:0;outline:none;background:transparent;color:var(--onSurface);font-size:16px;appearance:none}
+.graph-dialog .graph-search input{flex:1;min-width:0;width:100%;height:100%;padding:0 4px;border:0;outline:none;background:transparent;color:var(--onSurface);font-size:14px;appearance:none}
 .graph-search input::placeholder{color:var(--onSurfaceVariant);opacity:1}
 .graph-search input::-webkit-search-cancel-button{display:none}
 .graph-search:has(input:placeholder-shown) [data-action="clear-search"]{visibility:hidden}
 .graph-filters{display:flex;align-items:center;gap:8px;min-width:0}
-.graph-folder{display:flex;align-items:center;position:relative;min-width:0;max-width:calc(100% - 96px);height:40px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant)}
-.graph-folder>.icon:first-child{position:absolute;left:12px;width:18px;height:18px;pointer-events:none}
-.graph-folder>.icon:last-child{position:absolute;right:10px;width:18px;height:18px;pointer-events:none}
-.graph-folder select{width:100%;min-width:0;max-width:260px;height:100%;padding:0 34px 0 38px;border:0;border-radius:8px;appearance:none;background:transparent;color:var(--onSurface);font-size:14px;text-overflow:ellipsis;cursor:pointer}
+.graph-folder{display:flex;align-items:center;position:relative;min-width:0;max-width:calc(100% - 80px);height:32px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant)}
+.graph-folder>.icon:first-child{position:absolute;left:10px;width:16px;height:16px;pointer-events:none}
+.graph-folder>.icon:last-child{position:absolute;right:8px;width:16px;height:16px;pointer-events:none}
+.graph-folder select{width:100%;min-width:0;max-width:260px;height:100%;padding:0 30px 0 32px;border:0;border-radius:8px;appearance:none;background:transparent;color:var(--onSurface);font-size:13px;text-overflow:ellipsis;cursor:pointer}
 .graph-folder select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .graph-folder select option{color:var(--onSurface);background:var(--surfaceContainerHigh)}
-.graph-dialog .graph-link-chip{flex:none;min-height:40px;gap:8px;padding:0 12px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant);font-size:14px;font-weight:500}
-.graph-dialog .graph-link-chip .icon{width:18px;height:18px}
+.graph-dialog .graph-link-chip{flex:none;min-height:32px;gap:6px;padding:0 10px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant);font-size:13px;font-weight:500}
+.graph-dialog .graph-link-chip .icon{width:16px;height:16px}
 .graph-dialog .graph-link-chip[aria-pressed="true"]{border-color:transparent;background:var(--primaryContainer);color:var(--onPrimaryContainer)}
 .graph-link-hint{color:var(--primary);font-size:12px;line-height:18px}
-.graph-dialog .graph-layout{gap:0;overflow:hidden;border-top:1px solid var(--outlineVariant)}
-.graph-dialog .graph-canvas{min-height:0;background-color:var(--surface);background-image:radial-gradient(color-mix(in srgb,var(--outlineVariant) 65%,transparent) 1px,transparent 1px);background-size:24px 24px}
+.graph-dialog .graph-layout{position:relative;gap:0;overflow:hidden;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-canvas{min-height:0;background-color:var(--surface);background-image:radial-gradient(color-mix(in srgb,var(--outlineVariant) 55%,transparent) .8px,transparent .8px);background-size:24px 24px}
 .graph-dialog .graph-canvas>svg{display:block}
-.graph-dialog .graph-tools{bottom:20px;left:20px;gap:0;padding:4px;border:0;border-radius:16px;background:var(--surfaceContainerHigh);box-shadow:0 2px 6px #0002}
-.graph-dialog .graph-fab{position:absolute;right:20px;bottom:20px;min-height:56px;padding:0 20px;gap:12px;border-radius:16px;background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:0 3px 6px #0003,0 6px 12px #0001;font-size:14px;font-weight:500}
-.graph-dialog .graph-fab .icon{width:24px;height:24px}
-.graph-dialog .graph-fab:hover{background:color-mix(in srgb,var(--onPrimaryContainer) 8%,var(--primaryContainer));box-shadow:0 4px 8px #0003,0 8px 16px #0001}
-.graph-dialog .graph-sidebar{width:304px;padding:16px 12px;overscroll-behavior:contain;background:var(--surfaceContainer)}
-.graph-dialog .graph-sidebar>h3{padding:0 12px;margin:0 0 12px;font-size:14px;line-height:24px;font-weight:500;color:var(--onSurfaceVariant)}
-.graph-dialog .memory-item{padding:12px;border-radius:12px;margin:0 0 4px;cursor:pointer}
-.graph-dialog .memory-item strong{font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.graph-dialog .graph-tools{bottom:12px;left:12px;gap:0;padding:2px;border:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent);border-radius:12px;background:var(--surfaceContainer);box-shadow:0 2px 4px #0001}
+.graph-dialog .graph-tools .icon-button{border-radius:8px}
+.graph-dialog .graph-fab{position:absolute;right:12px;bottom:12px;min-height:36px;padding:0 12px;gap:6px;border-radius:12px;background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:0 2px 4px #0002;font-size:13px;font-weight:600}
+.graph-dialog .graph-fab .icon{width:18px;height:18px}
+.graph-dialog .graph-fab:hover{background:color-mix(in srgb,var(--onPrimaryContainer) 8%,var(--primaryContainer))}
+.graph-dialog .graph-sidebar{display:flex;flex-direction:column;width:304px;padding:0;overflow:hidden;background:var(--surfaceContainer)}
+.graph-panel-header{display:flex;align-items:center;justify-content:space-between;flex:none;min-height:48px;padding:8px 16px;gap:8px}
+.graph-panel-header h3{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:600;color:var(--onSurface)}
+.graph-panel-header h3>.icon{width:18px;height:18px;color:var(--primary)}
+.graph-count{display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 6px;border-radius:6px;background:var(--surfaceContainerHighest);color:var(--onSurfaceVariant);font-size:11px;font-weight:500}
+.graph-panel-toggle{display:none}
+.graph-inspector{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:0 12px max(16px,env(safe-area-inset-bottom))}
+.graph-dialog .memory-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;margin:0 0 4px;cursor:pointer}
+.memory-item-icon{display:grid;place-items:center;width:32px;height:32px;flex:none;border-radius:10px;background:var(--surfaceContainerHigh);color:var(--onSurfaceVariant)}
+.memory-item-icon .icon{width:18px;height:18px}
+.memory-item-copy{flex:1;min-width:0}
+.graph-dialog .memory-item strong{font-size:13px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
 .graph-dialog .memory-item small{font-size:12px;line-height:18px;color:var(--onSurfaceVariant);opacity:1;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-.graph-dialog .memory-item.selected{box-shadow:none}
+.graph-dialog .memory-item.selected{background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:none}
+.graph-dialog .memory-item.selected .memory-item-icon{background:var(--primary);color:var(--onPrimary)}
 .graph-dialog .memory-item.selected small{color:var(--onPrimaryContainer)}
-.graph-dialog .graph-detail{padding:16px 12px}
+.graph-dialog .graph-detail{margin:0 0 12px;padding:14px;border:1px solid color-mix(in srgb,var(--outlineVariant) 60%,transparent);border-radius:16px;background:var(--surface)}
+.graph-detail-label{display:block;margin-bottom:6px;color:var(--primary);font-size:11px;font-weight:600;letter-spacing:.5px}
+.graph-dialog .graph-detail h3{margin:0 0 10px;font-size:15px;line-height:22px;font-weight:600;overflow-wrap:anywhere}
+.graph-detail .memory-metadata{display:flex;flex-wrap:wrap;gap:6px}
+.graph-detail .memory-metadata>span{padding:3px 6px;border-radius:6px;background:var(--surfaceContainer);font-size:11px}
+.graph-dialog .graph-detail pre{margin:12px 0;font-family:inherit;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto}
+.graph-detail .actions{padding-top:8px;border-top:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent)}
+.graph-detail .actions .icon{width:16px;height:16px}
 @media(max-width:840px){
   .graph-dialog .graph-layout{flex-direction:column}
-  .graph-dialog .graph-sidebar{width:100%;height:30%;min-height:120px;max-height:240px;padding:12px;border-left:0;border-top:1px solid var(--outlineVariant);border-radius:20px 20px 0 0}
-  .graph-dialog .graph-sidebar>h3{margin-bottom:8px}
+  .graph-dialog .graph-sidebar{width:100%;height:auto;flex:0 0 40%;min-height:0;border:0;border-radius:20px 20px 0 0;box-shadow:0 -2px 12px #0001}
+  .graph-dialog .graph-sidebar[data-expanded="true"]{position:absolute;inset:0;z-index:1;border-radius:0}
+  .graph-sidebar[data-expanded="true"] .graph-detail pre{max-height:none;overflow:visible}
+  .graph-layout:has(.graph-sidebar[data-expanded="true"]) .graph-canvas{visibility:hidden}
+  .graph-panel-toggle{display:inline-flex;gap:4px}
+  .graph-panel-toggle .icon{width:16px;height:16px}
 }
 @media(max-width:600px){
   .dialog.graph-dialog{width:100vw;height:100dvh;max-height:100dvh;max-width:none;margin:0;border-radius:0}
   .graph-dialog .dialog-layout{max-height:100dvh}
-  .graph-dialog .dialog-header{min-height:72px;padding:8px 12px;gap:8px}
-  .graph-dialog .graph-heading h2{font-size:20px;line-height:26px}
-  .graph-dialog .graph-toolbar{padding:0 16px 12px;gap:12px}
-  .graph-dialog .graph-tools{left:16px;bottom:16px}
-  .graph-dialog .graph-fab{right:16px;bottom:16px;padding:0 16px;gap:8px}
+  .graph-dialog .dialog-header{min-height:56px;padding:8px 12px;gap:8px}
+  .graph-dialog .graph-toolbar{padding:0 12px 10px}
 }

@@ -36,12 +36,32 @@ test("sidebar refresh observes a preference binding edit with unchanged Core cha
   assert.equal(updated.sections.find(section => section.id === "card:default").chats[0].id, "loading-1");
 });
 
-test("sidebar propagates preference failures and missing bound roles without substituting unbound state", async t => {
+test("sidebar propagates preference read failures", async t => {
   const h = await environment(t), request = context([summary(1)]), failure = new Error("SQL read failed");
   h.disk.failNext("storage.preferences.data", failure);
   await assert.rejects(h.plugin.sidebar(request), error => error === failure);
-  const chats = await h.disk.storage.dataStore.open({ path: h.disk.directory + "/chats.preferences.json" });
-  await chats.edit(preferences => preferences.set("binding_loading-1", { version: 1, selection: "card:missing" }));
-  await chats.close();
-  await assert.rejects(h.plugin.sidebar(request), /exactly one stored record/);
+});
+
+test("sidebar keeps chats with missing cards or groups in unbound without rewriting bindings", async t => {
+  const h = await environment(t), chats = [summary(1), summary(2), summary(3), summary(4)];
+  const store = await h.disk.storage.dataStore.open({ path: h.disk.directory + "/chats.preferences.json" });
+  await store.edit(preferences => {
+    preferences.set("binding_loading-1", { version: 1, selection: "card:missing" });
+    preferences.set("binding_loading-2", { version: 1, selection: "group:missing" });
+    preferences.set("binding_loading-3", { version: 1, selection: "card:default" });
+  });
+  for (const view of ["characters", "groups"]) {
+    const result = plain(await h.plugin.sidebar({ ...context(chats), input: { view } }));
+    if (view === "characters") {
+      assert.deepEqual(result.sections.find(section => section.id === "unbound").chats, [chats[0], chats[1], chats[3]]);
+      assert.deepEqual(result.sections.find(section => section.id === "card:default").chats, [chats[2]]);
+    } else {
+      const scope = result.scopes.find(scope => scope.id === "unbound");
+      assert.deepEqual(scope.ungrouped, [chats[0], chats[1], chats[3]]);
+    }
+  }
+  const stored = await store.data();
+  assert.equal(stored.get("binding_loading-1").selection, "card:missing");
+  assert.equal(stored.get("binding_loading-2").selection, "group:missing");
+  await store.close();
 });

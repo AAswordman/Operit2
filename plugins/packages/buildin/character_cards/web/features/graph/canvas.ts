@@ -78,5 +78,8 @@ export function updateGraphSurface(dialog: GraphDialog, dialogsRoot: HTMLElement
   const surface = dialogsRoot.querySelector<SVGSVGElement>("dialog:last-child [data-graph-surface]");
   const inspector = dialogsRoot.querySelector("dialog:last-child .graph-sidebar");
   if (surface !== null) { initializePositions(dialog); setGraphViewport(dialog, surface); surface.innerHTML = graphSvg(dialog); }
-  if (inspector !== null) inspector.innerHTML = graphInspector(dialog);
+  if (inspector !== null) {
+    inspector.setAttribute("data-expanded", String(dialog.inspectorExpanded));
+    inspector.innerHTML = graphInspector(dialog);
+  }
 }

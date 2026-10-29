@@ -1,15 +1,27 @@
 # 聊天附件的位置与生命周期
 
-普通文件、粘贴图片在实际导入节点的 `runtime/chat_attachments` 中持久保存，重启后
-仍可读取。该目录为 `CoreNode` 所有：设备本地持久化，不加入 Space 持久化文件同步，
-也不参与启动清理；`runtime/temp/clean_on_exit` 继续保留给截图、语音等工具临时产物，
-启动时照常清空。
+普通文件、粘贴图片按所属聊天保存在实际导入节点的
+`runtime/data/chat_attachments/<chatId>/<attachmentId>/<原文件名>` 中，重启后仍可读取。
+这里的 `runtime` 是当前身份的运行时根，不是跨身份共享目录。该目录为 `CoreNode`
+所有：设备本地持久化，不加入 Space 持久化文件同步，也不参与启动清理。
+
+上传阶段使用 `runtime/temp/clean_on_exit/chat_attachment_uploads/<uploadId>/<原文件名>`。
+长度校验通过且聊天仍为请求时选择的聊天后，Host 将文件移动到正式附件目录，不再额外
+复制文件。取消或登记失败时清理该上传目录；进程中断留下的上传由现有启动清理回收。
+普通文件、粘贴图片和插件提交的上传都必须归属于一个已存在的聊天。
+
+正式附件每个独占一个目录，保留原文件名；同名附件由独立 ID 隔离。清理时可以按
+聊天目录定位，也可以按附件目录定位，但必须先确认没有消息变体、聊天分支或待发队列
+继续引用。聊天分支会复用原消息中的附件地址，因此删除聊天、移除输入附件和发送后
+清空输入都不会直接递归删除正式附件。本次调整不加入引用回收器，也不迁移旧文件。
+`runtime/temp/clean_on_exit` 中的截图、语音等其他工具临时产物维持原有清理规则。
 
 - `AttachmentInfo.nodeId` 记录文件实际所在节点，在文件导入时读取本机已有身份；
   不在消息发送或接收时覆盖为当前执行节点，不新建节点身份。
 - 原 `filePath` 保留，供本机预览和直接媒体读取。发送给 AI 的附件标签携带
   `node_id`，并通过 `path` 提供附件目录的 VFS 地址
-  `/app/data/chat_attachments/<文件名>`。
+  `/app/data/data/chat_attachments/<chatId>/<attachmentId>/<原文件名>`。
+  VFS 的 `/app/data` 映射整个 Runtime 根，因此这里包含两层 `data`。
 - 文件位于另一节点时，不能通过当前节点的文件 Host 或媒体池读取。远端图片、音频、
   视频回退成带来源信息的附件标签，不因错误的本地媒体读取而中断发送。
 - AI 可以直接使用已内嵌内容；确需读取原文件时，先检查节点可达性，再使用
@@ -37,7 +49,7 @@
 - 聊天和快照共用 `SelectedFileInput` 的有界读取能力。每块最多 1 MiB，
   上传方等待当前块写入后再读取下一块；Android 元数据查询和读取均在后台线程执行。
 - 普通附件通过 `AttachmentTransferManager` 的 reverse stream 直接写入接收 Host 的
-  `RuntimeStorageWriteSession`。校验长度后提交，再登记 `AttachmentInfo`，不再通过
+  `RuntimeStorageWriteSession` 暂存。校验长度后提交，再附着到聊天并移动到正式目录，不再通过
   `transferred_file:` 或整文件 Base64/JSON 导入，也不额外复制一份归档。
 - 文件大小未知时按流实际接收的字节数校验；空文件同样提交为零字节文件。
 - 失败、取消或聊天切换时关闭输入并清理未附着的上传。只有成功提交的文件才可附着，

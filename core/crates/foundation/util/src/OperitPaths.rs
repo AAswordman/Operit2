@@ -125,8 +125,15 @@ pub fn cleanOnExitDir() -> Result<PathBuf, String> {
 }
 
 #[allow(non_snake_case)]
+/// Returns the persistent attachment collection for the active identity.
 pub fn chatAttachmentsDir() -> Result<PathBuf, String> {
     relativeDir(RUNTIME_CHAT_ATTACHMENTS_DIR_PATH)
+}
+
+/// Returns unregistered attachment uploads removed by startup cleanup.
+#[allow(non_snake_case)]
+pub fn chatAttachmentUploadsDir() -> Result<PathBuf, String> {
+    relativeDir(Layout::RUNTIME_CHAT_ATTACHMENT_UPLOADS_DIR_PATH)
 }
 
 #[allow(non_snake_case)]

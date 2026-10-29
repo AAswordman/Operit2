@@ -345,8 +345,7 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterChangePass);
 
-    // Delaying a small incremental exchange does not make it substantial.
-    // Both the delay and a real backlog are required for visible progress.
+    // Slow work must become visible even before its total inventory is known.
     let reopenedFacade = RuntimeRemoteLinkService::newWithRouter(
         (*routers[1].localCore).clone(), routers[1].clone());
     let progress = reopenedFacade.spaceSyncProgressFlow();
@@ -356,11 +355,13 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
         arrived.await.unwrap();
         assert!(progress.value().is_empty(), "a new incremental exchange starts silently");
         tokio::time::sleep(Duration::from_millis(3_100)).await;
-        assert!(progress.value().is_empty(), "a slow small exchange stays silent");
+        assert!(progress.value().iter().any(|item| item.status == crate::SpaceSyncProgress::SpaceSyncStatus::Syncing),
+            "a slow exchange must expose its progress instead of appearing idle");
         resume.send(()).unwrap();
     });
     result.unwrap();
-    assert!(progress.value().is_empty(), "small completion stays silent too");
+    assert!(progress.value().iter().any(|item| item.status == crate::SpaceSyncProgress::SpaceSyncStatus::Completed),
+        "visible work must expose its completion");
 }
 
 /// Verifies a failed pass arms the exponential backoff: the immediate retry is

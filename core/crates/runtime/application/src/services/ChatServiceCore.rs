@@ -1272,6 +1272,15 @@ impl ChatServiceCore {
             .enhancedAiService
             .as_ref()
             .ok_or("Chat deletion requires an initialized runtime")?;
+        if !self.chatHistoryDelegate.chatHistoryManager
+            .canDeleteChatHistory(chatId.clone())
+            .map_err(|error| error.to_string())?
+        {
+            return Err(format!("Chat is locked or does not exist: {chatId}"));
+        }
+        self.messageProcessingDelegate
+            .cancelMessageForDestructiveMutation(chatId.clone())
+            .await;
         let backupChatId = chatId.clone();
         let backupWorkspacePath = self
             .chatHistoryDelegate
@@ -1281,8 +1290,11 @@ impl ChatServiceCore {
             .and_then(|chat| self.chatHistoryDelegate.primaryWorkspacePathForChat(&chat));
         let deleted = self
             .chatHistoryDelegate
-            .deleteChatHistory(service, chatId)
+            .deleteChatHistory(service, chatId.clone())
             .await?;
+        self.pendingQueueStateFlow().update(|queues| {
+            queues.remove(&chatId);
+        });
         if deleted {
             if let Some(workspacePath) = backupWorkspacePath {
                 WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
@@ -1291,6 +1303,20 @@ impl ChatServiceCore {
         }
         self.syncTokenStatisticsForCurrentChat();
         Ok(deleted)
+    }
+
+    /// Stops deleted conversations without saving partial output or repeating plugin-owned deletion.
+    pub(crate) async fn applySynchronizedChatDeletion(&mut self, chatId: String) -> Result<(), String> {
+        self.chatHistoryDelegate.prepareChatForDestructiveMutation(chatId.clone());
+        self.messageProcessingDelegate
+            .cancelMessageForDestructiveMutation(chatId.clone())
+            .await;
+        self.pendingQueueStateFlow().update(|queues| {
+            queues.remove(&chatId);
+        });
+        self.chatHistoryDelegate.clearDeletedChatState(chatId)?;
+        self.syncTokenStatisticsForCurrentChat();
+        Ok(())
     }
 
     /// Deletes one message from an explicit chat by message timestamp.
@@ -2074,11 +2100,18 @@ impl ChatServiceCore {
                 .showToast("添加粘贴图片失败: 图片大小不一致".to_string());
             return;
         }
-        let tempFile = match createTempFileFromBytes(
+        let chatId = match self.attachmentChatId() {
+            Ok(value) => value,
+            Err(message) => {
+                self.messageProcessingDelegate.showToast(message);
+                return;
+            }
+        };
+        let tempFile = match createChatAttachmentFromBytes(
             self.fileSystemHost.as_ref(),
+            &chatId,
             &fileName,
             &decoded,
-            self.attachments.len(),
         ) {
             Ok(value) => value,
             Err(message) => {
@@ -2395,8 +2428,19 @@ impl ChatServiceCore {
         ))
     }
 
+    /// Requires a real chat before allocating any persistent attachment files.
+    #[allow(non_snake_case)]
+    fn attachmentChatId(&self) -> Result<String, String> {
+        let chatId = self.chatHistoryDelegate.currentChatIdFlow.value()
+            .ok_or("File attachments require a selected chat")?;
+        self.chatHistoryDelegate.requireChatExists(&chatId)?;
+        Ok(chatId)
+    }
+
+    /// Copies a selected file into its chat-owned attachment directory.
     #[allow(non_snake_case)]
     fn createAttachmentInfo(&self, filePath: &str) -> Result<AttachmentInfo, String> {
+        let chatId = self.attachmentChatId()?;
         let localPath = resolveAttachmentPath(filePath)?;
         let localPathText = localPath.to_string_lossy();
         let source = self
@@ -2417,7 +2461,7 @@ impl ChatServiceCore {
             .ok_or_else(|| format!("无法添加附件: {}", localPath.display()))?
             .to_string();
         let mimeType = getMimeTypeFromPath(&localPath).to_string();
-        let tempFile = createTempFileFromPath(self.fileSystemHost.as_ref(), &localPath, &fileName)?;
+        let tempFile = createChatAttachmentFromPath(self.fileSystemHost.as_ref(), &chatId, &localPath, &fileName)?;
         let fileSize = self
             .fileSystemHost
             .fileExists(&tempFile.to_string_lossy())
@@ -2434,7 +2478,7 @@ impl ChatServiceCore {
         })
     }
 
-    /// Registers a committed Host upload without reading or copying the file again.
+    /// Moves a committed Host upload into its selected chat without reading the file again.
     pub fn attachUploadedFile(
         &mut self,
         attachment: AttachmentInfo,
@@ -2443,14 +2487,10 @@ impl ChatServiceCore {
         if self.chatHistoryDelegate.currentChatIdFlow.value() != expectedChatId {
             return Err("Chat changed while uploading the attachment".to_string());
         }
+        let mut attachment = attachment;
         super::AttachmentTransferManager::validateAttachmentFileName(&attachment.fileName)?;
-        let directory = OperitPaths::chatAttachmentsDir()?;
-        let path = Path::new(&attachment.filePath);
-        if !path.starts_with(&directory)
-            || path
-                .components()
-                .any(|part| matches!(part, std::path::Component::ParentDir))
-            || attachment.nodeId != localAttachmentNodeId()
+        let chatId = self.attachmentChatId()?;
+        if attachment.nodeId != localAttachmentNodeId()
             || !attachment.content.is_empty()
         {
             return Err("Uploaded attachment does not belong to this runtime".to_string());
@@ -2464,6 +2504,9 @@ impl ChatServiceCore {
                 "Uploaded attachment is missing or has an unexpected byte length".to_string(),
             );
         }
+        super::AttachmentTransferManager::adoptUploadedAttachment(
+            self.fileSystemHost.as_ref(), &mut attachment, &chatId,
+        )?;
         if !self
             .attachments
             .iter()
@@ -3407,27 +3450,16 @@ fn fileUrlToPathBuf(url: &Url) -> Result<PathBuf, ()> {
 }
 
 #[allow(non_snake_case)]
-/// Copies an attachment into persistent chat-attachment storage through the supplied file-system host.
-fn createTempFileFromPath(
+/// Copies one original file into a dedicated chat-owned attachment directory.
+fn createChatAttachmentFromPath(
     fileSystemHost: &dyn FileSystemHost,
+    chatId: &str,
     sourcePath: &Path,
     fileName: &str,
 ) -> Result<PathBuf, String> {
-    let fileExtension = fileName
-        .rsplit_once('.')
-        .map(|(_, extension)| extension)
-        .filter(|extension| !extension.trim().is_empty())
-        .unwrap_or("jpg");
-    let externalDir = OperitPaths::chatAttachmentsDir()?;
-    let externalDirText = externalDir.to_string_lossy();
-    fileSystemHost
-        .makeDirectory(&externalDirText, true)
-        .map_err(|error| format!("无法创建附件目录: {}", error.message))?;
-    let noMediaFile = externalDir.join(".nomedia");
-    fileSystemHost
-        .writeFile(&noMediaFile.to_string_lossy(), "", false)
-        .map_err(|error| format!("无法创建附件媒体标记: {}", error.message))?;
-    let tempFile = externalDir.join(format!("img_{}.{}", currentTimeMillis(), fileExtension));
+    let tempFile = super::AttachmentTransferManager::prepareChatAttachmentPath(
+        fileSystemHost, chatId, &uuid::Uuid::new_v4().simple().to_string(), fileName,
+    )?;
     fileSystemHost
         .copyFile(
             &sourcePath.to_string_lossy(),
@@ -3438,40 +3470,23 @@ fn createTempFileFromPath(
     let copied = fileSystemHost
         .fileExists(&tempFile.to_string_lossy())
         .map_err(|error| format!("无法读取附件文件: {}", error.message))?;
-    if !copied.exists || copied.isDirectory || copied.size == 0 {
+    if !copied.exists || copied.isDirectory {
         return Err(format!("无法添加附件: {}", sourcePath.display()));
     }
     Ok(tempFile)
 }
 
-/// Writes pasted image bytes into persistent chat-attachment storage through the supplied file-system host.
+/// Stores pasted image bytes with their original name under the selected chat.
 #[allow(non_snake_case)]
-fn createTempFileFromBytes(
+fn createChatAttachmentFromBytes(
     fileSystemHost: &dyn FileSystemHost,
+    chatId: &str,
     fileName: &str,
     bytes: &[u8],
-    slot: usize,
 ) -> Result<PathBuf, String> {
-    let fileExtension = fileName
-        .rsplit_once('.')
-        .map(|(_, extension)| extension)
-        .filter(|extension| !extension.trim().is_empty())
-        .ok_or_else(|| format!("无法添加粘贴图片: {fileName}"))?;
-    let externalDir = OperitPaths::chatAttachmentsDir()?;
-    let externalDirText = externalDir.to_string_lossy();
-    fileSystemHost
-        .makeDirectory(&externalDirText, true)
-        .map_err(|error| format!("无法创建附件目录: {}", error.message))?;
-    let noMediaFile = externalDir.join(".nomedia");
-    fileSystemHost
-        .writeFile(&noMediaFile.to_string_lossy(), "", false)
-        .map_err(|error| format!("无法创建附件媒体标记: {}", error.message))?;
-    let tempFile = externalDir.join(format!(
-        "pasted_image_{}_{}.{}",
-        currentTimeMillis(),
-        slot,
-        fileExtension
-    ));
+    let tempFile = super::AttachmentTransferManager::prepareChatAttachmentPath(
+        fileSystemHost, chatId, &uuid::Uuid::new_v4().simple().to_string(), fileName,
+    )?;
     fileSystemHost
         .writeFileBytes(&tempFile.to_string_lossy(), bytes)
         .map_err(|error| format!("无法保存粘贴图片: {}", error.message))?;
@@ -3621,6 +3636,115 @@ fn authorizeChatImage(messages: &[ChatMessage], id: &str) -> Result<(), String> 
         return Err("Image is not referenced by this chat".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod chat_deletion_tests {
+    use super::*;
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_model::ChatEntity::ChatEntity;
+    use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+    use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+    use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+    use operit_store::db::AppDatabase::AppDatabase;
+    use operit_store::sync::SqlChatSyncStore::SqlChatSyncStore;
+    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+    use operit_util::stream::HotStream::mutable_shared_stream;
+    use crate::services::core::MessageProcessingDelegate::ChatRuntime;
+
+    /// Runs preference notifications while retaining unrelated plugin tasks for inspection.
+    #[derive(Default)]
+    struct DeletionScheduler(Mutex<Vec<operit_host_api::HostRuntimeAsyncTask>>);
+
+    impl operit_host_api::HostRuntimeTaskSchedulerHost for DeletionScheduler {
+        /// Supplies a deterministic clock.
+        fn monotonicTimeMillis(&self) -> operit_host_api::HostResult<u64> { Ok(0) }
+        /// Delivers committed preference notifications immediately.
+        fn scheduleHostRuntimeTask(&self, _: &str, task: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
+            task(); Ok(())
+        }
+        /// Retains plugin tasks without starting a JavaScript runtime.
+        fn scheduleHostRuntimeAsyncTask(&self, _: &str, task: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> {
+            self.0.lock().unwrap().push(task); Ok(())
+        }
+        /// Retains cooperative tasks under the same boundary.
+        fn scheduleHostRuntimeCooperativeAsyncTask(&self, name: &str, task: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> {
+            self.scheduleHostRuntimeAsyncTask(name, task)
+        }
+        /// Rejects timers outside this lifecycle test.
+        fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
+            panic!("chat deletion must not schedule timers")
+        }
+        /// Completes observer turns without delay.
+        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
+        /// Rejects timer futures outside this lifecycle test.
+        fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
+            panic!("chat deletion must not wait for timers")
+        }
+    }
+
+    /// Clears a deleted active conversation while leaving an unrelated live turn and queue untouched.
+    #[tokio::test]
+    async fn synchronized_chat_deletion_stops_stream_and_clears_local_state() {
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(DeletionScheduler::default()));
+        let root = std::env::temp_dir().join(format!("operit-chat-deletion-{}", uuid::Uuid::new_v4()));
+        let runtimeRoot = root.join("runtime");
+        let workspaceRoot = root.join("workspaces");
+        std::fs::create_dir_all(&runtimeRoot).unwrap();
+        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtimeRoot.clone(), workspaceRoot.clone()));
+        let host = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot.clone(), workspaceRoot.clone()));
+        setDefaultRuntimeStorageHost(host.clone());
+        setDefaultRuntimeSqliteHost(host);
+        let database = AppDatabase::getDatabase(RuntimeStorePaths::new(runtimeRoot, workspaceRoot)).unwrap();
+        for id in ["deleted-chat", "live-chat"] {
+            database.chatDao().insertChat(ChatEntity::new(id.into(), id.into(), 1)).unwrap();
+        }
+        let mut core = ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(PosixFileSystemHost::new()));
+        core.chatHistoryDelegate.openChatHistory("deleted-chat".into(), true).unwrap();
+        let deletedFlow = core.chatHistoryDelegate.chatMessageFlowForChat("deleted-chat".into());
+        core.chatHistoryDelegate.chatMessageFlowsByChatId.lock().unwrap()["deleted-chat"].set_value(vec![
+            ChatMessage::new_with_markdown_timestamp("ai".into(), "partial output".into(), 123)
+        ]);
+        let mut streams = Vec::new();
+        for id in ["deleted-chat", "live-chat"] {
+            let stream = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+            let mut runtime = ChatRuntime::new();
+            runtime.activeTurnId = 7;
+            runtime.isLoading = true;
+            runtime.responseStream = Some(stream.clone());
+            core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert(id.into(), runtime);
+            core.pendingQueueStateFlow().update(|queues| { queues.insert(id.into(), PendingChatQueueState::new()); });
+            core.chatHistoryDelegate.chatConfigurationsFlow.update(|configs| {
+                configs.insert(id.into(), operit_providers::runtime_support::ChatConfigurationDisplayResult {
+                    contextKey: None, identity: None, participants: vec![], initialMessages: vec![], extensionOwner: MODEL_CONFIGURATION_OWNER.into(),
+                });
+            });
+            streams.push(stream);
+        }
+        core.messageProcessingDelegate.refreshActiveStreamingChatIds();
+        assert_eq!(core.activeStreamingChatIds().len(), 2);
+        assert!(SqlChatSyncStore::default().unwrap().deleteChat("deleted-chat").unwrap());
+
+        core.applySynchronizedChatDeletion("deleted-chat".into()).await.unwrap();
+        core.applySynchronizedChatDeletion("deleted-chat".into()).await.unwrap();
+
+        assert_eq!(core.activeStreamingChatIds(), vec!["live-chat".to_string()]);
+        let runtimes = core.messageProcessingDelegate.chatRuntimes.lock().unwrap();
+        assert_eq!(runtimes["deleted-chat"].activeTurnId, 8);
+        assert!(runtimes["deleted-chat"].responseStream.is_none());
+        assert_eq!(runtimes["live-chat"].activeTurnId, 7);
+        assert!(streams[1].upstream.try_emit("still live".into()));
+        assert!(!streams[0].upstream.try_emit("must be closed".into()));
+        assert!(deletedFlow.value().is_empty());
+        assert!(core.chatHistoryDelegate.currentChatIdFlow.value().is_none());
+        assert!(core.chatHistoryDelegate.chatHistoryManager.currentChatIdFlow().unwrap().is_none());
+        assert!(!core.pendingQueueStateFlow().value().contains_key("deleted-chat"));
+        assert!(core.pendingQueueStateFlow().value().contains_key("live-chat"));
+        assert!(!core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("deleted-chat"));
+        assert!(core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("live-chat"));
+        assert!(core.chatHistoryDelegate.chatHistoryManager.loadChatHistory("deleted-chat".into()).unwrap().is_none());
+    }
 }
 
 #[cfg(test)]

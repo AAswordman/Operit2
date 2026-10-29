@@ -175,6 +175,31 @@ void main() {
       },
     );
 
+    testWidgets('$style: hiding avatars preserves the model label', (
+      tester,
+    ) async {
+      final model = _message(
+        role: '',
+        extensions: const {
+          'host.chat.identity': {
+            'title': 'org/model:latest',
+            'avatarUri': 'provider-logo:OPENAI',
+          },
+        },
+      );
+      final snapshot = ThemePreferenceSnapshot.fromJson({
+        ..._snapshot(style, false, false).toJson(),
+        'bubbleShowAvatar': false,
+      });
+      await _pumpMessage(tester, model, snapshot);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatAvatarImage), findsNothing);
+      expect(find.byType(ProviderIdentityLogo), findsNothing);
+      expect(find.textContaining(model.modelName), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
     testWidgets('$style: user messages do not show assistant metadata', (
       tester,
     ) async {
@@ -196,7 +221,8 @@ void main() {
 ThemePreferenceSnapshot _snapshot(String style, bool model, bool provider) {
   return ThemePreferenceSnapshot.fromJson({
     ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
-    'chatStyle': style == 'cursor' ? 'cursor' : 'bubble',
+    'userChatStyle': style == 'cursor' ? 'cursor' : 'bubble',
+    'aiChatStyle': style == 'cursor' ? 'cursor' : 'bubble',
     'bubbleWideLayoutEnabled': style == 'bubble-wide',
     'showRoleName': false,
     'showModelName': model,

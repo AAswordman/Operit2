@@ -176,6 +176,7 @@ impl SqlChatSyncStore {
         let params = chatInsertParams(&chat)?;
         let createdAt = currentTimeMillis()?;
         self.store.transaction(|transaction| {
+            requireLiveChatId(transaction, &draft.id)?;
             transaction.execute(chatInsertSql(), params)?;
             if let Some((sourceChatId, throughTimestamp)) = source {
                 if transaction.queryOne("SELECT id FROM chats WHERE id = ?1", sqliteParams![sourceChatId])?.is_none() {

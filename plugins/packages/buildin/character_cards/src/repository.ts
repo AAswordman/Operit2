@@ -73,23 +73,16 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
   async listCharacters(): Promise<Card[]> { return copy(this.state.cards); }
   /** Reads one complete stored character. */
   async getCharacter(id: string): Promise<Card> { return copy(get(this.state.cards, id, "character")); }
-  /** Removes memory owners whose backing entity no longer exists and returns their pruned owner keys.
-    * Orphan owners appear when a character or shared store is lost outside the removal path
-    * (for example a deleted-synced card); every scheduler transaction on such an owner throws,
-    * so the interval prunes them up front instead of failing forever. */
-  async pruneOrphanMemoryOwners(): Promise<string[]> {
-    const alive = (ownerKey: string): boolean => {
-      const parts = ownerKey.split(":");
-      if (parts.length !== 2) return false;
-      if (parts[0] === "character") return this.state.cards.some(card => card.id === parts[1]);
-      if (parts[0] === "shared") return this.state.stores.some(store => store.id === parts[1]);
-      return false;
-    };
-    const orphans = this.state.owners.filter(space => !alive(space.ownerKey)).map(space => space.ownerKey);
-    if (orphans.length === 0) return [];
-    this.state.owners = this.state.owners.filter(space => alive(space.ownerKey));
-    for (const ownerKey of orphans) this.documents.delete(ownerKey);
-    return orphans;
+  /** Initializes a missing library only after the user's explicit request. */
+  async createMemoryLibrary(ownerKey: string): Promise<void> {
+    const [kind, id, extra] = ownerKey.split(":");
+    if (extra !== undefined || (kind !== "character" && kind !== "shared")) throw new Error("Invalid memory owner namespace");
+    get(kind === "character" ? this.state.cards : this.state.stores, id, "memory owner");
+    if (await this.hasMemoryOwner(ownerKey)) return;
+    const space = createMemorySpace(ownerKey);
+    if ((await Tools.Files.exists(this.directory + "/" + space.userDocumentPath)).exists) {
+      this.state.owners.push(space);
+    } else this.addSpace(ownerKey);
   }
   /** Creates all character fields and its genuine initialized memory space. */
   async createCharacter(card: Card): Promise<Card> {
@@ -236,6 +229,7 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   async readUser(ownerKey: string): Promise<UserDocument> {
+    if (!(await this.hasMemoryOwner(ownerKey))) return { ownerKey, content: "" };
     const path = await this.readUserPath(ownerKey), document = this.documents.get(ownerKey);
     if (document !== undefined) return { ownerKey, content: document.content };
     const result = await Tools.Files.read(path); assertString(result.content, "USER.md content");
@@ -249,11 +243,15 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
   }
   /** Returns a genuine file path accepted by Tools.Files.read/write. */
   async readUserPath(ownerKey: string): Promise<string> { return this.directory + "/" + this.space(ownerKey).userDocumentPath; }
-  /** Lists only owners that genuinely exist in this plugin snapshot. */
-  async listMemoryOwnerKeys(): Promise<string[]> { return this.state.owners.map(
-    /** Preserves each actual initialized namespace. */
-    space => space.ownerKey,
-  ); }
+  /** Schedules initialized owners only after their independently synchronized configuration arrives. */
+  async listMemoryOwnerKeys(): Promise<string[]> {
+    const configured = new Set([
+      ...this.state.cards.map(card => "character:" + card.id),
+      ...this.state.stores.map(store => "shared:" + store.id),
+    ]);
+    // Missing configuration can be temporary during sync; only explicit deletion may remove memory.
+    return this.state.owners.filter(space => configured.has(space.ownerKey)).map(space => space.ownerKey);
+  }
   /** Creates one device-independent identity for a private persisted job or candidate. */
   async allocateRecordId(): Promise<string> { return uuid(); }
   /** Restores explicit complete character/tag backup records through this snapshot. */

@@ -2247,9 +2247,8 @@ impl MessageProcessingDelegate {
             snapshotPartStream
                 .resetToSnapshot(content)
                 .expect("streaming assistant snapshot must parse into message parts");
-            streamingMessage.parts = snapshotPartStream
-                .finish()
-                .expect("streaming assistant snapshot must finish into message parts");
+            // A persistence tick does not end the stream or require pending tags to close.
+            streamingMessage.parts = snapshotPartStream.parts().to_vec();
             persistChatHistoryDelegate
                 .lock()
                 .expect("worker chat history mutex poisoned")

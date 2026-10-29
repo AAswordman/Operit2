@@ -64,70 +64,88 @@
 .attachment-content{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:8px 0;user-select:text}
 @media(max-width:600px){.selection-toolbar{padding:8px 12px 0}.presentation-footer{padding:10px 12px}.picker-row{padding:12px 8px}}
 
-/* Material graph workspace: app bar, search, filter chips, canvas FAB and inspector. */
-.dialog.graph-dialog{border-radius:28px;background:var(--surface);border:0}
+/* Compact Material surfaces shared by the graph dialog and mobile inspector. */
+.dialog.graph-dialog{border-radius:24px;background:var(--surface);border:0}
 .graph-dialog .dialog-layout{min-height:0}
-.graph-dialog .dialog-header{position:relative;z-index:2;min-height:80px;padding:12px 16px;gap:12px}
-.graph-dialog .icon-button{width:48px;height:48px;padding:12px;flex:none}
-.graph-dialog .icon-button .icon{width:24px;height:24px}
+.graph-dialog .dialog-header{position:relative;z-index:2;min-height:60px;padding:8px 12px;gap:8px}
+.graph-dialog .icon-button{width:32px;height:32px;padding:6px;flex:none}
+.graph-dialog .icon-button .icon{width:20px;height:20px}
 .graph-dialog .graph-heading{flex:1;min-width:0}
-.graph-dialog .graph-heading h2{font-size:22px;line-height:28px;font-weight:500;white-space:nowrap}
+.graph-dialog .graph-heading h2{font-size:18px;line-height:24px;font-weight:600;white-space:nowrap}
 .graph-dialog .graph-heading>span{display:block;margin-top:2px;color:var(--onSurfaceVariant);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .graph-overflow{position:relative;flex:none}
 .graph-overflow>summary{list-style:none;cursor:pointer}
 .graph-overflow>summary::-webkit-details-marker{display:none}
 .graph-overflow>summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .graph-overflow[open]>summary{background:var(--surfaceContainerHigh)}
-.graph-menu{position:absolute;right:0;top:calc(100% + 4px);width:220px;padding:8px 0;border-radius:12px;background:var(--surfaceContainerHigh);box-shadow:0 4px 8px #0003,0 8px 24px #0002}
-.graph-menu .button{display:flex;justify-content:flex-start;gap:12px;width:100%;min-height:48px;border-radius:0;padding:12px 16px;font-size:14px;font-weight:400;color:var(--onSurface)}
+.graph-menu{position:absolute;right:0;top:calc(100% + 4px);width:200px;padding:4px;border-radius:12px;background:var(--surfaceContainerHigh);box-shadow:0 4px 16px #0003}
+.graph-menu .button{display:flex;justify-content:flex-start;gap:8px;width:100%;min-height:36px;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:400;color:var(--onSurface)}
 .graph-menu .button .icon{color:var(--onSurfaceVariant)}
-.graph-menu hr{margin:8px 0;border:0;border-top:1px solid var(--outlineVariant)}
-.graph-dialog .graph-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:0 24px 16px;flex:none;border:0}
-.graph-dialog .graph-search{display:flex;align-items:center;gap:4px;width:100%;height:56px;padding:4px 8px;border-radius:28px;background:var(--surfaceContainerHigh)}
+.graph-menu hr{margin:4px 8px;border:0;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:0 16px 12px;flex:none;border:0}
+.graph-dialog .graph-search{display:flex;align-items:center;gap:4px;width:100%;height:40px;padding:4px;border-radius:12px;background:var(--surfaceContainerHigh)}
 .graph-search:focus-within{outline:2px solid var(--primary);outline-offset:2px}
-.graph-dialog .graph-search input{flex:1;min-width:0;width:100%;height:100%;padding:0 4px;border:0;outline:none;background:transparent;color:var(--onSurface);font-size:16px;appearance:none}
+.graph-dialog .graph-search input{flex:1;min-width:0;width:100%;height:100%;padding:0 4px;border:0;outline:none;background:transparent;color:var(--onSurface);font-size:14px;appearance:none}
 .graph-search input::placeholder{color:var(--onSurfaceVariant);opacity:1}
 .graph-search input::-webkit-search-cancel-button{display:none}
 .graph-search:has(input:placeholder-shown) [data-action="clear-search"]{visibility:hidden}
 .graph-filters{display:flex;align-items:center;gap:8px;min-width:0}
-.graph-folder{display:flex;align-items:center;position:relative;min-width:0;max-width:calc(100% - 96px);height:40px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant)}
-.graph-folder>.icon:first-child{position:absolute;left:12px;width:18px;height:18px;pointer-events:none}
-.graph-folder>.icon:last-child{position:absolute;right:10px;width:18px;height:18px;pointer-events:none}
-.graph-folder select{width:100%;min-width:0;max-width:260px;height:100%;padding:0 34px 0 38px;border:0;border-radius:8px;appearance:none;background:transparent;color:var(--onSurface);font-size:14px;text-overflow:ellipsis;cursor:pointer}
+.graph-folder{display:flex;align-items:center;position:relative;min-width:0;max-width:calc(100% - 80px);height:32px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant)}
+.graph-folder>.icon:first-child{position:absolute;left:10px;width:16px;height:16px;pointer-events:none}
+.graph-folder>.icon:last-child{position:absolute;right:8px;width:16px;height:16px;pointer-events:none}
+.graph-folder select{width:100%;min-width:0;max-width:260px;height:100%;padding:0 30px 0 32px;border:0;border-radius:8px;appearance:none;background:transparent;color:var(--onSurface);font-size:13px;text-overflow:ellipsis;cursor:pointer}
 .graph-folder select:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .graph-folder select option{color:var(--onSurface);background:var(--surfaceContainerHigh)}
-.graph-dialog .graph-link-chip{flex:none;min-height:40px;gap:8px;padding:0 12px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant);font-size:14px;font-weight:500}
-.graph-dialog .graph-link-chip .icon{width:18px;height:18px}
+.graph-dialog .graph-link-chip{flex:none;min-height:32px;gap:6px;padding:0 10px;border:1px solid var(--outlineVariant);border-radius:8px;color:var(--onSurfaceVariant);font-size:13px;font-weight:500}
+.graph-dialog .graph-link-chip .icon{width:16px;height:16px}
 .graph-dialog .graph-link-chip[aria-pressed="true"]{border-color:transparent;background:var(--primaryContainer);color:var(--onPrimaryContainer)}
 .graph-link-hint{color:var(--primary);font-size:12px;line-height:18px}
-.graph-dialog .graph-layout{gap:0;overflow:hidden;border-top:1px solid var(--outlineVariant)}
-.graph-dialog .graph-canvas{min-height:0;background-color:var(--surface);background-image:radial-gradient(color-mix(in srgb,var(--outlineVariant) 65%,transparent) 1px,transparent 1px);background-size:24px 24px}
+.graph-dialog .graph-layout{position:relative;gap:0;overflow:hidden;border-top:1px solid var(--outlineVariant)}
+.graph-dialog .graph-canvas{min-height:0;background-color:var(--surface);background-image:radial-gradient(color-mix(in srgb,var(--outlineVariant) 55%,transparent) .8px,transparent .8px);background-size:24px 24px}
 .graph-dialog .graph-canvas>svg{display:block}
-.graph-dialog .graph-tools{bottom:20px;left:20px;gap:0;padding:4px;border:0;border-radius:16px;background:var(--surfaceContainerHigh);box-shadow:0 2px 6px #0002}
-.graph-dialog .graph-fab{position:absolute;right:20px;bottom:20px;min-height:56px;padding:0 20px;gap:12px;border-radius:16px;background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:0 3px 6px #0003,0 6px 12px #0001;font-size:14px;font-weight:500}
-.graph-dialog .graph-fab .icon{width:24px;height:24px}
-.graph-dialog .graph-fab:hover{background:color-mix(in srgb,var(--onPrimaryContainer) 8%,var(--primaryContainer));box-shadow:0 4px 8px #0003,0 8px 16px #0001}
-.graph-dialog .graph-sidebar{width:304px;padding:16px 12px;overscroll-behavior:contain;background:var(--surfaceContainer)}
-.graph-dialog .graph-sidebar>h3{padding:0 12px;margin:0 0 12px;font-size:14px;line-height:24px;font-weight:500;color:var(--onSurfaceVariant)}
-.graph-dialog .memory-item{padding:12px;border-radius:12px;margin:0 0 4px;cursor:pointer}
-.graph-dialog .memory-item strong{font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.graph-dialog .graph-tools{bottom:12px;left:12px;gap:0;padding:2px;border:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent);border-radius:12px;background:var(--surfaceContainer);box-shadow:0 2px 4px #0001}
+.graph-dialog .graph-tools .icon-button{border-radius:8px}
+.graph-dialog .graph-fab{position:absolute;right:12px;bottom:12px;min-height:36px;padding:0 12px;gap:6px;border-radius:12px;background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:0 2px 4px #0002;font-size:13px;font-weight:600}
+.graph-dialog .graph-fab .icon{width:18px;height:18px}
+.graph-dialog .graph-fab:hover{background:color-mix(in srgb,var(--onPrimaryContainer) 8%,var(--primaryContainer))}
+.graph-dialog .graph-sidebar{display:flex;flex-direction:column;width:304px;padding:0;overflow:hidden;background:var(--surfaceContainer)}
+.graph-panel-header{display:flex;align-items:center;justify-content:space-between;flex:none;min-height:48px;padding:8px 16px;gap:8px}
+.graph-panel-header h3{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:600;color:var(--onSurface)}
+.graph-panel-header h3>.icon{width:18px;height:18px;color:var(--primary)}
+.graph-count{display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 6px;border-radius:6px;background:var(--surfaceContainerHighest);color:var(--onSurfaceVariant);font-size:11px;font-weight:500}
+.graph-panel-toggle{display:none}
+.graph-inspector{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:0 12px max(16px,env(safe-area-inset-bottom))}
+.graph-dialog .memory-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;margin:0 0 4px;cursor:pointer}
+.memory-item-icon{display:grid;place-items:center;width:32px;height:32px;flex:none;border-radius:10px;background:var(--surfaceContainerHigh);color:var(--onSurfaceVariant)}
+.memory-item-icon .icon{width:18px;height:18px}
+.memory-item-copy{flex:1;min-width:0}
+.graph-dialog .memory-item strong{font-size:13px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
 .graph-dialog .memory-item small{font-size:12px;line-height:18px;color:var(--onSurfaceVariant);opacity:1;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-.graph-dialog .memory-item.selected{box-shadow:none}
+.graph-dialog .memory-item.selected{background:var(--primaryContainer);color:var(--onPrimaryContainer);box-shadow:none}
+.graph-dialog .memory-item.selected .memory-item-icon{background:var(--primary);color:var(--onPrimary)}
 .graph-dialog .memory-item.selected small{color:var(--onPrimaryContainer)}
-.graph-dialog .graph-detail{padding:16px 12px}
+.graph-dialog .graph-detail{margin:0 0 12px;padding:14px;border:1px solid color-mix(in srgb,var(--outlineVariant) 60%,transparent);border-radius:16px;background:var(--surface)}
+.graph-detail-label{display:block;margin-bottom:6px;color:var(--primary);font-size:11px;font-weight:600;letter-spacing:.5px}
+.graph-dialog .graph-detail h3{margin:0 0 10px;font-size:15px;line-height:22px;font-weight:600;overflow-wrap:anywhere}
+.graph-detail .memory-metadata{display:flex;flex-wrap:wrap;gap:6px}
+.graph-detail .memory-metadata>span{padding:3px 6px;border-radius:6px;background:var(--surfaceContainer);font-size:11px}
+.graph-dialog .graph-detail pre{margin:12px 0;font-family:inherit;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto}
+.graph-detail .actions{padding-top:8px;border-top:1px solid color-mix(in srgb,var(--outlineVariant) 50%,transparent)}
+.graph-detail .actions .icon{width:16px;height:16px}
 @media(max-width:840px){
   .graph-dialog .graph-layout{flex-direction:column}
-  .graph-dialog .graph-sidebar{width:100%;height:30%;min-height:120px;max-height:240px;padding:12px;border-left:0;border-top:1px solid var(--outlineVariant);border-radius:20px 20px 0 0}
-  .graph-dialog .graph-sidebar>h3{margin-bottom:8px}
+  .graph-dialog .graph-sidebar{width:100%;height:auto;flex:0 0 40%;min-height:0;border:0;border-radius:20px 20px 0 0;box-shadow:0 -2px 12px #0001}
+  .graph-dialog .graph-sidebar[data-expanded="true"]{position:absolute;inset:0;z-index:1;border-radius:0}
+  .graph-sidebar[data-expanded="true"] .graph-detail pre{max-height:none;overflow:visible}
+  .graph-layout:has(.graph-sidebar[data-expanded="true"]) .graph-canvas{visibility:hidden}
+  .graph-panel-toggle{display:inline-flex;gap:4px}
+  .graph-panel-toggle .icon{width:16px;height:16px}
 }
 @media(max-width:600px){
   .dialog.graph-dialog{width:100vw;height:100dvh;max-height:100dvh;max-width:none;margin:0;border-radius:0}
   .graph-dialog .dialog-layout{max-height:100dvh}
-  .graph-dialog .dialog-header{min-height:72px;padding:8px 12px;gap:8px}
-  .graph-dialog .graph-heading h2{font-size:20px;line-height:26px}
-  .graph-dialog .graph-toolbar{padding:0 16px 12px;gap:12px}
-  .graph-dialog .graph-tools{left:16px;bottom:16px}
-  .graph-dialog .graph-fab{right:16px;bottom:16px;padding:0 16px;gap:8px}
+  .graph-dialog .dialog-header{min-height:56px;padding:8px 12px;gap:8px}
+  .graph-dialog .graph-toolbar{padding:0 12px 10px}
 }
 </style></head><body><main id="app" aria-label="角色卡"><div class="loading" role="status">正在加载角色卡…</div></main><div id="dialogs"></div><div id="snackbar" role="status" aria-live="polite"></div><script>"use strict";
 (() => {
@@ -469,25 +487,26 @@
     return switchRow(title, description, key, checked, false).replace(`data-field="${key}"`, `data-action="toggle-memory-preference" data-key="${key}"`);
   }
   function memoryPageBody(snapshot, avatarSources) {
+    const owners = new Set(snapshot.memoryOwnerKeys);
+    function libraryActions(owner, name) {
+      const attrs = `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(name)}"`;
+      if (!owners.has(owner)) return button("create-memory-library", owner.startsWith("character:") ? "\u65B0\u5EFA\u89D2\u8272\u5361\u8BB0\u5FC6\u5E93" : "\u65B0\u5EFA\u5171\u4EAB\u8BB0\u5FC6\u5E93", "add", attrs, "small");
+      return iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", attrs) + iconButton("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", attrs) + iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", attrs);
+    }
     let stores = "";
     for (const store of snapshot.stores) {
       let count = 0;
       for (const card of snapshot.cards) if (card.memoryBindingMode === "SHARED" && card.sharedMemoryId === store.id) count++;
-      stores += `<div class="entity"><span class="avatar">${icon("hub")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(store.name)}</div><div class="badges"><span class="badge">${count} \u4E2A\u89D2\u8272\u7ED1\u5B9A</span></div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599", "profile", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("edit-store", "\u7F16\u8F91\u5171\u4EAB\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(store.id)}"`)}${iconButton("delete-store", "\u5220\u9664\u5171\u4EAB\u8BB0\u5FC6\u5E93", "trash", `data-id="${escapeHtml(store.id)}"`)}</div></div>`;
+      stores += `<div class="entity"><span class="avatar">${icon("hub")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(store.name)}</div><div class="badges"><span class="badge">${count} \u4E2A\u89D2\u8272\u7ED1\u5B9A</span></div></div><div class="entity-actions">${libraryActions("shared:" + store.id, store.name)}${iconButton("edit-store", "\u7F16\u8F91\u5171\u4EAB\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(store.id)}"`)}${iconButton("delete-store", "\u5220\u9664\u5171\u4EAB\u8BB0\u5FC6\u5E93", "trash", `data-id="${escapeHtml(store.id)}"`)}</div></div>`;
     }
     let characters = "";
     for (const card of snapshot.cards) {
       const active = isActive(snapshot.active, "card", card.id);
       const needsRebind = card.memoryBindingMode === "SHARED" && !snapshot.stores.some((store) => store.id === card.sharedMemoryId);
-      let actions;
-      if (needsRebind) {
-        actions = button("edit-card", "\u91CD\u65B0\u7ED1\u5B9A\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(card.id)}"`, "small");
-      } else {
-        const owner = ownerFor(card);
-        actions = iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`) + iconButton("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`) + iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(owner)}" data-name="${escapeHtml(card.name)}"`);
-      }
+      const missingLibrary = !needsRebind && !owners.has(ownerFor(card));
+      const actions = needsRebind ? button("edit-card", "\u91CD\u65B0\u7ED1\u5B9A\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(card.id)}"`, "small") : libraryActions(ownerFor(card), card.name);
       const source = avatarSources.get(card.avatarUri ?? "");
-      characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span>${needsRebind ? '<span class="badge">\u9700\u8981\u91CD\u65B0\u7ED1\u5B9A\u8BB0\u5FC6\u5E93</span>' : ""}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : ""}</div></div><div class="entity-actions">${actions}</div></article>`;
+      characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar" data-avatar-uri="${escapeHtml(card.avatarUri ?? "")}">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span>${missingLibrary ? '<span class="badge">\u5F53\u524D\u89D2\u8272\u65E0\u8BB0\u5FC6\u5E93</span>' : ""}${needsRebind ? '<span class="badge">\u9700\u8981\u91CD\u65B0\u7ED1\u5B9A\u8BB0\u5FC6\u5E93</span>' : ""}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : ""}</div></div><div class="entity-actions">${actions}</div></article>`;
     }
     return `<section class="section"><div class="section-head">${icon("tune")}<h2>\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E</h2></div>${globalSwitch("\u5411\u6A21\u578B\u63D0\u4F9B\u7528\u6237\u8D44\u6599", "\u804A\u5929\u6267\u884C\u65F6\u63D0\u4F9B\u7528\u6237\u8D44\u6599\uFF1B\u5173\u95ED\u4E0D\u4F1A\u5220\u9664 USER.md \u6216\u6539\u5199\u5386\u53F2\u8BB0\u5F55\u3002", "userDescriptionEnabled", snapshot.memoryPreferences.userDescriptionEnabled)}${globalSwitch("\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", "\u5141\u8BB8\u81EA\u52A8\u5019\u9009\u5165\u961F\u548C\u5B9A\u65F6\u63D0\u53D6\uFF1B\u5173\u95ED\u4E0D\u4F1A\u53D6\u6D88\u624B\u52A8\u5386\u53F2\u91CD\u5EFA\u3002", "autoUpdateEnabled", snapshot.memoryPreferences.autoUpdateEnabled)}</section><section class="section"><div class="section-head">${icon("hub")}<h2>\u5171\u4EAB\u8BB0\u5FC6\u5E93</h2>${button("create-store", "\u521B\u5EFA", "add", "", "small")}</div>${stores === "" ? '<div class="empty">\u5F53\u524D\u8FD8\u6CA1\u6709\u5171\u4EAB\u8BB0\u5FC6\u5E93\uFF0C\u521B\u5EFA\u540E\u53EF\u88AB\u591A\u4E2A\u89D2\u8272\u5361\u6302\u8F7D\u5171\u4EAB\u3002</div>' : stores}</section><section class="section"><div class="section-head">${icon("badge")}<h2>\u89D2\u8272\u8BB0\u5FC6\u5E93</h2></div>${characters}</section>`;
   }
@@ -758,7 +777,7 @@
   function createGraphActionsFeature(context) {
     const { topDialog, pushDialog, request, renderDialogs, updateGraphSurface: updateGraphSurface2, dialogsRoot } = context;
     async function openGraph(ownerKey, name) {
-      const dialog = pushDialog({ type: "graph", ownerKey, name, loading: true, data: null, selected: null, selectedEdge: null, linkMode: false, linkSource: null, viewport: null, layoutSignature: null, sizes: /* @__PURE__ */ new Map(), query: "", appliedQuery: "", searchIds: null, folder: "*", positions: /* @__PURE__ */ new Map(), camera: { x: 0, y: 0, scale: 1 } });
+      const dialog = pushDialog({ type: "graph", ownerKey, name, loading: true, data: null, selected: null, selectedEdge: null, linkMode: false, linkSource: null, viewport: null, layoutSignature: null, sizes: /* @__PURE__ */ new Map(), query: "", appliedQuery: "", searchIds: null, folder: "*", inspectorExpanded: false, positions: /* @__PURE__ */ new Map(), camera: { x: 0, y: 0, scale: 1 } });
       try {
         dialog.data = await request({ action: "graph", ownerKey });
         dialog.loading = false;
@@ -774,6 +793,12 @@
         case "owner-graph":
           await openGraph(dataValue(element, "owner"), dataValue(element, "name"));
           return;
+        case "toggle-graph-inspector": {
+          const graph = topDialog("graph");
+          graph.inspectorExpanded = !graph.inspectorExpanded;
+          updateGraphSurface2(graph);
+          return;
+        }
         case "refresh-graph": {
           const dialog = topDialog("graph");
           dialog.data = await request({ action: "graph", ownerKey: dialog.ownerKey });
@@ -811,6 +836,7 @@
           graph.selected = null;
           graph.selectedEdge = edge.id;
           updateGraphSurface2(graph);
+          dialogsRoot.querySelector("dialog:last-child .graph-inspector")?.scrollTo(0, 0);
           return;
         }
         case "select-memory":
@@ -832,6 +858,7 @@
             }
           }
           updateGraphSurface2(graph);
+          dialogsRoot.querySelector("dialog:last-child .graph-inspector")?.scrollTo(0, 0);
           if (action === "locate-memory") {
             const position = graphEntry(graph.positions, graph.selected), viewport = graphViewport(graph);
             const scale = Math.max(1, graph.camera.scale);
@@ -872,14 +899,14 @@
           throw new Error(`Unknown graph/actions action: ${action}`);
       }
     }
-    return { names: ["owner-graph", "refresh-graph", "search-graph", "clear-search", "select-edge", "select-memory", "locate-memory", "zoom-in", "zoom-out", "fit-graph", "export-graph", "import-graph"], handleAction, openGraph };
+    return { names: ["owner-graph", "toggle-graph-inspector", "refresh-graph", "search-graph", "clear-search", "select-edge", "select-memory", "locate-memory", "zoom-in", "zoom-out", "fit-graph", "export-graph", "import-graph"], handleAction, openGraph };
   }
 
   // web/features/graph/inspector.ts
   function graphInspector(dialog) {
     let list = "";
     const items = graphItems(dialog);
-    for (const item of items) list += `<button type="button" class="memory-item ${dialog.selected === item.uuid ? "selected" : ""}" data-action="locate-memory" data-id="${escapeHtml(item.uuid)}"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.content.slice(0, 70))}</small></button>`;
+    for (const item of items) list += `<button type="button" class="memory-item ${dialog.selected === item.uuid ? "selected" : ""}" data-action="locate-memory" data-id="${escapeHtml(item.uuid)}"><span class="memory-item-icon">${icon(dialog.selected === item.uuid ? "check" : "memory")}</span><span class="memory-item-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.content.slice(0, 70))}</small></span></button>`;
     const selected = selectedMemory(dialog);
     let detail = "";
     if (selected !== null) {
@@ -888,7 +915,7 @@
         if (edge.sourceId !== selected.uuid && edge.targetId !== selected.uuid) continue;
         relationships += `<div class="row"><span class="grow muted">${escapeHtml(edge.label === null ? "" : edge.label)} \xB7 ${edge.weight.toFixed(2)}</span>${iconButton("delete-link", "\u5220\u9664\u5173\u7CFB", "trash", `data-link="${escapeHtml(edge.id)}"`)}</div>`;
       }
-      detail = `<div class="graph-detail"><h3>${escapeHtml(selected.title)}</h3><div class="memory-metadata"><span>\u7C7B\u578B ${escapeHtml(selected.contentType)}</span><span>\u6765\u6E90 ${escapeHtml(selected.source)}</span><span>\u53EF\u4FE1\u5EA6 ${selected.credibility.toFixed(2)}</span><span>\u91CD\u8981\u6027 ${selected.importance.toFixed(2)}</span></div><pre>${escapeHtml(selected.content)}</pre><div class="actions">${button("edit-memory", "\u7F16\u8F91", "edit", "", "small")}${button("delete-memory", "\u5220\u9664", "trash", "", "small danger")}</div>${relationships}</div>`;
+      detail = `<div class="graph-detail"><span class="graph-detail-label">\u8BB0\u5FC6\u8BE6\u60C5</span><h3>${escapeHtml(selected.title)}</h3><div class="memory-metadata"><span>${escapeHtml(selected.contentType === "text/plain" ? "\u6587\u672C" : selected.contentType)}</span><span>${escapeHtml(selected.source === "manual" ? "\u624B\u52A8\u8BB0\u5F55" : selected.source)}</span><span>\u53EF\u4FE1\u5EA6 ${selected.credibility.toFixed(2)}</span><span>\u91CD\u8981\u6027 ${selected.importance.toFixed(2)}</span></div><pre>${escapeHtml(selected.content)}</pre><div class="actions">${button("edit-memory", "\u7F16\u8F91", "edit", "", "small tonal")}${button("delete-memory", "\u5220\u9664", "trash", "", "small danger")}</div>${relationships}</div>`;
     }
     if (dialog.selectedEdge !== null) {
       const edge = graphData(dialog).graph.edges.find(
@@ -898,10 +925,10 @@
       if (edge !== void 0) {
         const completeRecord = edge.label !== null && typeof edge.metadata.description === "string";
         const stage = completeRecord ? `<pre>${escapeHtml(edge.metadata.description)}</pre>` : "";
-        detail = `<div class="graph-detail"><h3>\u8BB0\u5FC6\u5173\u7CFB</h3><p>${escapeHtml(edge.label === null ? "" : edge.label)}</p><p>\u5F3A\u5EA6 ${edge.weight.toFixed(2)}</p>${stage}${button("edit-link", "\u7F16\u8F91\u5173\u7CFB", "edit", `data-link="${escapeHtml(edge.id)}"`, "small")}${button("delete-link", "\u5220\u9664\u5173\u7CFB", "trash", `data-link="${escapeHtml(edge.id)}"`, "danger")}</div>`;
+        detail = `<div class="graph-detail"><span class="graph-detail-label">\u5173\u7CFB\u8BE6\u60C5</span><h3>\u8BB0\u5FC6\u5173\u7CFB</h3><p>${escapeHtml(edge.label === null ? "" : edge.label)}</p><p>\u5F3A\u5EA6 ${edge.weight.toFixed(2)}</p>${stage}<div class="actions">${button("edit-link", "\u7F16\u8F91\u5173\u7CFB", "edit", `data-link="${escapeHtml(edge.id)}"`, "small tonal")}${button("delete-link", "\u5220\u9664\u5173\u7CFB", "trash", `data-link="${escapeHtml(edge.id)}"`, "small danger")}</div></div>`;
       }
     }
-    return `<h3>\u8BB0\u5FC6 \xB7 ${items.length}</h3>${list === "" ? '<div class="empty">\u6CA1\u6709\u5339\u914D\u7684\u8BB0\u5FC6</div>' : list}${detail}`;
+    return `<div class="graph-panel-header"><h3>${icon("memory")}\u8BB0\u5FC6\u5E93<span class="graph-count">${items.length}</span></h3>${button("toggle-graph-inspector", dialog.inspectorExpanded ? "\u6536\u8D77" : "\u5C55\u5F00", dialog.inspectorExpanded ? "down" : "up", `aria-expanded="${dialog.inspectorExpanded}"`, "small graph-panel-toggle")}</div><div class="graph-inspector">${detail}${list === "" ? '<div class="empty">\u6CA1\u6709\u5339\u914D\u7684\u8BB0\u5FC6</div>' : list}</div>`;
   }
 
   // web/features/graph/canvas.ts
@@ -982,7 +1009,10 @@
       setGraphViewport(dialog, surface);
       surface.innerHTML = graphSvg(dialog);
     }
-    if (inspector !== null) inspector.innerHTML = graphInspector(dialog);
+    if (inspector !== null) {
+      inspector.setAttribute("data-expanded", String(dialog.inspectorExpanded));
+      inspector.innerHTML = graphInspector(dialog);
+    }
   }
 
   // web/features/graph/gestures.ts
@@ -1478,6 +1508,12 @@
           toast("\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E\u5DF2\u4FDD\u5B58");
           return;
         }
+        case "create-memory-library": {
+          state.snapshot = await request({ action: "createMemoryLibrary", ownerKey: dataValue(element, "owner") });
+          renderMain();
+          toast("\u8BB0\u5FC6\u5E93\u5DF2\u521B\u5EFA");
+          return;
+        }
         case "create-store":
           pushDialog({ type: "store", create: true, store: { id: "", name: "" } });
           return;
@@ -1503,7 +1539,7 @@
           throw new Error(`Unknown memory/library-actions action: ${action}`);
       }
     }
-    return { names: ["toggle-memory-preference", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
+    return { names: ["create-memory-library", "toggle-memory-preference", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
   }
 
   // web/features/memory/link-actions.ts
@@ -1816,7 +1852,7 @@
       <div class="graph-search" role="search">${iconButton("search-graph", "\u641C\u7D22", "search")}<input type="search" aria-label="\u641C\u7D22\u8BB0\u5FC6" data-graph-search value="${escapeHtml(dialog.query)}" placeholder="\u641C\u7D22\u8BB0\u5FC6\u2026">${iconButton("clear-search", "\u6E05\u9664\u641C\u7D22", "close")}</div>
       <div class="graph-filters"><label class="graph-folder">${icon("folder")}<select data-graph-folder aria-label="\u6587\u4EF6\u5939">${folderOptions}</select>${icon("down")}</label>${button("create-link", "\u94FE\u63A5", "link", linkAttributes, "graph-link-chip")}</div>
       ${dialog.linkMode ? '<div class="graph-link-hint" role="status">\u9009\u62E9\u4E24\u6761\u8BB0\u5FC6\u4EE5\u5EFA\u7ACB\u94FE\u63A5</div>' : ""}
-    </div><div class="graph-layout"><div class="graph-canvas"><svg viewBox="-400 -260 800 520" data-graph-surface aria-label="\u8BB0\u5FC6\u56FE\u8C31\u753B\u5E03">${graphSvg(dialog)}</svg>${graphData(dialog).items.length === 0 ? '<div class="graph-empty"><span>\u6682\u65E0\u8BB0\u5FC6</span><span class="muted">\u521B\u5EFA\u8BB0\u5FC6\u540E\uFF0C\u53EF\u5728\u8FD9\u91CC\u67E5\u770B\u548C\u8FDE\u63A5\u8282\u70B9\u3002</span></div>' : ""}<div class="graph-tools" role="group" aria-label="\u753B\u5E03\u7F29\u653E">${iconButton("zoom-in", "\u653E\u5927", "add")}${iconButton("zoom-out", "\u7F29\u5C0F", "minus")}${iconButton("fit-graph", "\u9002\u5E94\u753B\u5E03", "expand")}</div>${button("create-memory", "\u521B\u5EFA\u8BB0\u5FC6", "add", "", "graph-fab")}</div><aside class="graph-sidebar" aria-label="\u8BB0\u5FC6\u5217\u8868\u4E0E\u8BE6\u60C5">${graphInspector(dialog)}</aside></div>`,
+    </div><div class="graph-layout"><div class="graph-canvas"><svg viewBox="-400 -260 800 520" data-graph-surface aria-label="\u8BB0\u5FC6\u56FE\u8C31\u753B\u5E03">${graphSvg(dialog)}</svg>${graphData(dialog).items.length === 0 ? '<div class="graph-empty"><span>\u6682\u65E0\u8BB0\u5FC6</span><span class="muted">\u521B\u5EFA\u8BB0\u5FC6\u540E\uFF0C\u53EF\u5728\u8FD9\u91CC\u67E5\u770B\u548C\u8FDE\u63A5\u8282\u70B9\u3002</span></div>' : ""}<div class="graph-tools" role="group" aria-label="\u753B\u5E03\u7F29\u653E">${iconButton("zoom-in", "\u653E\u5927", "add")}${iconButton("zoom-out", "\u7F29\u5C0F", "minus")}${iconButton("fit-graph", "\u9002\u5E94\u753B\u5E03", "expand")}</div>${button("create-memory", "\u521B\u5EFA\u8BB0\u5FC6", "add", "", "graph-fab")}</div><aside class="graph-sidebar" data-expanded="${dialog.inspectorExpanded}" aria-label="\u8BB0\u5FC6\u5217\u8868\u4E0E\u8BE6\u60C5">${graphInspector(dialog)}</aside></div>`,
       footer: ""
     };
   }

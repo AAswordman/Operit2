@@ -26,7 +26,7 @@ function assertCompleteSnapshot(snapshot, state) {
   assert.deepEqual(
     { ...actual, cards: byId(actual.cards), groups: byId(actual.groups), stores: byId(actual.stores), tags: byId(actual.tags) },
     { cards: byId(state.cards), groups: byId(state.groups), stores: byId(state.stores), tags: byId(state.tags), active: state.active,
-      memoryPreferences: state.memoryPreferences, models: directoryInput.models, ttsConfigs: directoryInput.ttsConfigs, toolCatalog: directoryInput.toolCatalog },
+      memoryOwnerKeys: state.owners.map(owner => owner.ownerKey), memoryPreferences: state.memoryPreferences, models: directoryInput.models, ttsConfigs: directoryInput.ttsConfigs, toolCatalog: directoryInput.toolCatalog },
   );
 }
 
@@ -73,7 +73,7 @@ test("registered service isolates a missing peer memory owner and refreshes exte
   assertNoMutations(disk);
   assert.equal((await plugin.api("character.update", { id: "default", changes: { name: "Healthy edit" } })).name, "Healthy edit");
   disk.clearCalls();
-  await assert.rejects(plugin.api("memory.settings.read", { ownerKey: "character:pending" }), /[Mm]issing.*memory|memory.*missing/i);
+  assert.equal((await plugin.api("memory.settings.read", { ownerKey: "character:pending" })).autoSaveIntervalMinutes, 5);
   assertNoMutations(disk);
   disk.storage.inspectPreferences("cards", values => { delete values.record_pending; });
   assert.deepEqual(plain(await plugin.api("character.list", {})).map(card => card.id), ["default"]);

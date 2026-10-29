@@ -507,17 +507,6 @@ impl JournalProjection<'_> {
             }
         }
     }
-
-    fn includes_decoded(&self, operation: &SyncOperation) -> bool {
-        match self {
-            Self::All => true,
-            Self::PreferenceDatasetHistory => operation.domain == "preferences",
-            Self::MergeMetadata => crate::PreferenceMerge::isMergeMetadata(operation),
-            Self::PreferenceDataset(path) => {
-                operation.payload.get("storagePath").and_then(Value::as_str) == Some(path)
-            }
-        }
-    }
 }
 
 struct JournalQuery<'a> {
@@ -1106,6 +1095,20 @@ impl SyncOperationStore {
         )
     }
 
+    /// Plans the normal bounded export and optionally inventories its compacted missing identities.
+    pub fn operationsSinceWithInventory<K: SyncOperationKnowledge>(
+        &self, clock: &K, domains: &[String], limit: usize, maxBytes: usize,
+        inventory: Option<&mut BTreeSet<String>>, retain: impl Fn(&SyncOperation) -> bool,
+    ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        if domains.is_empty() || domains.iter().any(|domain| domain == "preferences") {
+            self.publishPreferenceOutboxes()?;
+        }
+        self.readJournalWithInventory(clock, JournalQuery {
+            domains, projection: JournalProjection::All, export_floors: true,
+            limit, max_bytes: maxBytes, retain: Some(&retain),
+        }, inventory)
+    }
+
     /// Permission replay reads committed authority only. It must not publish
     /// unrelated preference outboxes while checking a pairing or routing a Call.
     /// Preserve the existing control export floors and compaction semantics.
@@ -1181,6 +1184,13 @@ impl SyncOperationStore {
         clock: &K,
         query: JournalQuery<'_>,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.readJournalWithInventory(clock, query, None)
+    }
+
+    /// Inventories filtered identities once; ordinary paging decodes only visited entities.
+    fn readJournalWithInventory<K: SyncOperationKnowledge>(
+        &self, clock: &K, query: JournalQuery<'_>, inventory: Option<&mut BTreeSet<String>>,
+    ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         if query.limit == 0 {
             return Ok(Vec::new());
         }
@@ -1218,16 +1228,18 @@ impl SyncOperationStore {
         for (device, index) in devices.iter().zip(&mut indexes) {
             self.loadOperationLogIndex(device, index)?;
         }
-        let mut sources = Vec::new();
-        if let Some(receive) = &receive {
-            for pending in receive.value.pending.values() {
-                let record = &pending.record;
+        let mut sources: Vec<(String, &JournalRecord)> = Vec::new();
+        if let Some(receive) = receive.as_mut() {
+            for pending in receive.value.pending.values_mut() {
+                let path = pending.path(&self.rootPath);
+                let record = &mut pending.record;
                 if !clock.containsSequence(&record.origin_device_id, record.sequence) {
-                    sources.push((pending.path(&self.rootPath), record));
+                    self.resolveJournalRoute(&path, record, &query)?;
+                    sources.push((path, record));
                 }
             }
         }
-        for (device, index) in devices.iter().zip(&indexes) {
+        for (device, index) in devices.iter().zip(&mut indexes) {
             let minimum = clock
                 .sequenceFor(device)
                 .max(export_floors.get(device).copied().unwrap_or(0));
@@ -1235,19 +1247,19 @@ impl SyncOperationStore {
                 .sequenceFor(&networkControlClockKey(device))
                 .max(minimum);
             let path = self.operationsPath(device);
-            for record in &index.records {
+            for record in &mut index.records {
                 let floor = if record.domain == NETWORK_CONTROL_SYNC_DOMAIN {
                     control_minimum
                 } else {
                     minimum
                 };
                 if record.sequence > floor && !clock.containsSequence(device, record.sequence) {
+                    self.resolveJournalRoute(&path, record, &query)?;
                     sources.push((path.clone(), record));
                 }
             }
         }
         let mut candidates = Vec::new();
-        let mut latest = BTreeMap::new();
         let mut seen = BTreeSet::new();
         for (path, record) in sources {
             if (!query.domains.is_empty() && !query.domains.contains(&record.domain))
@@ -1256,60 +1268,87 @@ impl SyncOperationStore {
             {
                 continue;
             }
-            let order = if record.route.encrypted || query.retain.is_some() {
-                let operation = self.readRecordAt(&path, record)?;
-                if !query.projection.includes_decoded(&operation)
-                    || query.retain.is_some_and(|retain| !retain(&operation))
-                {
-                    continue;
-                }
-                SyncOperationOrder::fromOperation(&operation)
-            } else {
-                record.order()?
-            };
-            if record.domain != "preferences"
-                && record.semantics == SyncOperationSemantics::EntityState
-            {
-                let key = (
-                    &record.origin_device_id,
-                    &record.domain,
-                    &record.entity_type,
-                    &record.entity_id,
-                );
-                latest
-                    .entry(key)
-                    .and_modify(|sequence: &mut i64| *sequence = (*sequence).max(record.sequence))
-                    .or_insert(record.sequence);
-            }
+            let order = record.order()?;
             candidates.push((path, record, order));
         }
-        candidates.retain(|(_, record, _)| {
-            record.domain == "preferences"
-                || record.semantics == SyncOperationSemantics::Transaction
-                || latest.get(&(
-                    &record.origin_device_id,
-                    &record.domain,
-                    &record.entity_type,
-                    &record.entity_id,
-                )) == Some(&record.sequence)
-        });
         candidates.sort_by(|left, right| left.2.cmp(&right.2));
+        let mut groups = BTreeMap::new();
+        for (index, (_, record, _)) in candidates.iter().enumerate() {
+            if record.domain != "preferences" && record.semantics == SyncOperationSemantics::EntityState {
+                groups.entry((&record.origin_device_id, &record.domain, &record.entity_type, &record.entity_id))
+                    .or_insert_with(Vec::new).push(index);
+            }
+        }
+        for group in groups.values_mut() {
+            group.sort_by_key(|index| std::cmp::Reverse(candidates[*index].1.sequence));
+        }
+        let mut selected = BTreeMap::new();
+        let mut inventory = inventory;
         let mut page = Vec::new();
         let mut bytes = 0usize;
-        for (path, record, _) in candidates {
-            let operation = self.readRecordAt(&path, record)?;
+        let mut pageFull = false;
+        for (index, (path, record, _)) in candidates.iter().enumerate() {
+            if pageFull && inventory.is_none() { break; }
+            let mut decoded = None;
+            let group = if record.domain != "preferences" && record.semantics == SyncOperationSemantics::EntityState {
+                groups.get(&(&record.origin_device_id, &record.domain, &record.entity_type, &record.entity_id))
+            } else { None };
+            if let Some(group) = group {
+                // Resolve only the entity being visited. Filtering newer revisions first
+                // preserves filter-before-compaction without opening unrelated entities.
+                if !selected.contains_key(&group[0]) {
+                    let mut winner = None;
+                    for candidate in group {
+                        let (path, record, _) = &candidates[*candidate];
+                        let keep = match query.retain {
+                            Some(retain) => {
+                                let operation = self.readRecordAt(path, record)?;
+                                let keep = retain(&operation);
+                                if *candidate == index { decoded = Some(operation); }
+                                keep
+                            }
+                            None => true,
+                        };
+                        if keep { winner = Some(*candidate); break; }
+                    }
+                    selected.insert(group[0], winner);
+                }
+                if selected[&group[0]] != Some(index) { continue; }
+            }
+            let operation = match decoded {
+                Some(operation) => operation,
+                None => self.readRecordAt(path, record)?,
+            };
+            if group.is_none() && query.retain.is_some_and(|retain| !retain(&operation)) { continue; }
+            if let Some(inventory) = inventory.as_deref_mut() { inventory.insert(record.op_id.clone()); }
+            if pageFull { continue; }
             let mut size = SerializedByteCount::default();
             serde_json::to_writer(&mut size, &operation)?;
             if !page.is_empty() && bytes.saturating_add(size.0) > query.max_bytes {
-                break;
+                pageFull = true;
+                continue;
             }
             bytes = bytes.saturating_add(size.0);
             page.push(operation);
             if page.len() == query.limit {
-                break;
+                pageFull = true;
             }
         }
         Ok(page)
+    }
+
+    /// Resolves only selected encrypted headers; later pages reuse the existing location index.
+    fn resolveJournalRoute(
+        &self, path: &str, record: &mut JournalRecord, query: &JournalQuery<'_>,
+    ) -> Result<(), SyncOperationStoreError> {
+        if record.route.encrypted && !record.route.resolved
+            && (query.domains.is_empty() || query.domains.contains(&record.domain))
+            && query.projection.includes(record)
+        {
+            let operation = self.readRecordAt(path, record)?;
+            record.resolve_route(&operation);
+        }
+        Ok(())
     }
 
     fn readJournalRecord(
@@ -1471,6 +1510,12 @@ impl SyncOperationStore {
                 )
             })
             .collect()
+    }
+
+    /// Reports durable unapplied identities without opening their payload files.
+    pub fn pendingOperationIds(&self) -> Result<Vec<String>, SyncOperationStoreError> {
+        let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
+        Ok(self.loadReceiveState(&mut cached)?.pending.keys().cloned().collect())
     }
 
     /// Counts work without opening any business record.

@@ -2,6 +2,7 @@
 export function fixture() {
   const base = { description: "", characterSetting: "你是一位可靠、温和的助手。", openingStatement: "你好，有什么可以帮你的？", otherContentChat: "", otherContentVoice: "", avatarUri: null, attachedTagIds: ["tag-persona"], advancedCustomPrompt: "", marks: "", chatModelBindingMode: "FOLLOW_GLOBAL", chatModelId: null, chatProviderId: null, ttsConfigId: null, themeConfigId: null, memoryBindingMode: "CHARACTER", sharedMemoryId: null, sharedMemoryMounts: [], toolAccessConfig: { enabled: false, allowedBuiltinTools: [], allowedPackages: [], allowedSkills: [], allowedMcpServers: [] }, createdAt: 1, updatedAt: 1 };
   const snapshot = {
+    memoryOwnerKeys: ["character:operit", "character:travel", "shared:shared-main"],
     memoryPreferences: { userDescriptionEnabled: true, autoUpdateEnabled: true },
     cards: [
       { ...base, id: "operit", name: "Operit", description: "默认角色卡" },

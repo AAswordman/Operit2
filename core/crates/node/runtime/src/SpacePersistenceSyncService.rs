@@ -7,7 +7,7 @@ use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore;
 use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSyncStore};
-use operit_store::SyncOperationStore::{subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation};
+use operit_store::SyncOperationStore::{subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation, SyncOperationKnowledge};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use operit_store::PreferencesDataStore::StateFlow;
@@ -794,6 +794,14 @@ impl SpacePersistenceSyncService {
     fn recordPendingWork(&self, targetNodeId: &str, stage: &str, report: &Value) {
         let pending = report.get("pending").and_then(Value::as_u64).unwrap_or(0);
         let errors = report.get("errors").and_then(Value::as_array);
+        let side = match stage {
+            "local receipt" | "local apply" => "local",
+            "remote receipt" | "remote apply" => "remote",
+            _ => stage,
+        };
+        self.state.progress.report(targetNodeId, side,
+            pendingOperationIds(report), if side == "local" || side == "remote" { pending } else { 0 },
+            errors.into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect());
         if pending > 0 || errors.is_some_and(|errors| !errors.is_empty()) {
             if let Ok(mut gates) = self.state.peerGates.lock() {
                 gates
@@ -837,15 +845,27 @@ impl SpacePersistenceSyncService {
                     Value::Null,
                 ),
             );
-            let localClock = localClock?;
+            let mut localClock = localClock?;
             validateDomainClock(&localClock, domains, "local")?;
-            let remoteClock = remoteClock?;
+            let mut remoteClock = remoteClock?;
             validateDomainClock(&remoteClock, domains, "remote")?;
             if let Ok(mut gates) = self.state.peerGates.lock() {
                 gates.entry(targetNodeId.to_owned()).or_default().pendingWork = false;
             }
             self.recordPendingWork(targetNodeId, "local receipt", &localClock);
             self.recordPendingWork(targetNodeId, "remote receipt", &remoteClock);
+            let sharedPending = if pages == 0 {
+                let local: operit_store::SyncOperationStore::SyncReceipt = serde_json::from_value(localClock.clone())
+                    .map_err(|error| error.to_string())?;
+                let remote: operit_store::SyncOperationStore::SyncReceipt = serde_json::from_value(remoteClock.clone())
+                    .map_err(|error| error.to_string())?;
+                pendingOperationIds(&localClock).union(&pendingOperationIds(&remoteClock))
+                    .filter(|id| id.rsplit_once(':').is_some_and(|(origin, sequence)| sequence.parse::<i64>().is_ok_and(|sequence|
+                        local.containsSequence(origin, sequence) && remote.containsSequence(origin, sequence))))
+                    .count()
+            } else { 0 };
+            localClock["includeProgress"] = json!(pages == 0);
+            remoteClock["includeProgress"] = json!(pages == 0);
             let mut pendingBlobs: Vec<RuntimeFileSyncReference> =
                 serde_json::from_value(localClock["pendingBlobs"].clone())
                     .map_err(|error| format!("invalid local pending blobs: {error}"))?;
@@ -892,6 +912,12 @@ impl SpacePersistenceSyncService {
             );
             let localOperations = localOperations?;
             let remoteOperations = remoteOperations?;
+            if pages == 0 {
+                let remaining = localOperations.get("remaining").and_then(Value::as_u64)
+                    .zip(remoteOperations.get("remaining").and_then(Value::as_u64))
+                    .map(|(local, remote)| local.saturating_add(remote));
+                self.state.progress.backlog(targetNodeId, remaining, sharedPending);
+            }
             if !self.storageReplicationAllowed(targetNodeId)? {
                 return Ok(false);
             }
@@ -1034,6 +1060,9 @@ impl SpacePersistenceSyncService {
                 return Err(errors.join("; "));
             }
             self.state.progress.records(targetNodeId, chunk.len());
+            self.state.progress.confirmRecords(targetNodeId, &chunk.iter()
+                .filter_map(|operation| operation.get("opId").and_then(Value::as_str).map(str::to_owned))
+                .collect::<Vec<_>>());
         }
         Ok(true)
     }
@@ -1528,6 +1557,12 @@ where
     decodeCoreResponse(response.result.map_err(|error| {
         format!("remote {targetNodeId} {targetPath}.{methodName}: {error}")
     })?)
+}
+
+/// Reads exact unapplied identities from the existing receipt and application reports.
+fn pendingOperationIds(report: &Value) -> BTreeSet<String> {
+    report.get("pendingOperationIds").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(Value::as_str).map(str::to_owned).collect()
 }
 
 /// Reports slow synchronization steps without logging business payloads or adding another dispatch path.

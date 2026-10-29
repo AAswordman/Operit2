@@ -1266,30 +1266,29 @@ impl ChatHistoryManager {
         Ok(self.chatDao.getChatById(&chatId)?.is_some())
     }
 
+    /// Checks one conversation's committed deletion fact through its indexed lifecycle key.
+    pub fn chatIsDeleted(&self, chatId: &str) -> ChatHistoryManagerResult<bool> {
+        Ok(self.syncStore.chatIsDeleted(chatId)?)
+    }
+
     /// Returns whether chat deletion is currently allowed.
     pub fn canDeleteChatHistory(&self, chatId: String) -> ChatHistoryManagerResult<bool> {
-        Ok(self
-            .chatDao
-            .getChatById(&chatId)?
-            .map(|chat| !chat.locked)
-            .unwrap_or(false))
+        match self.chatDao.getChatById(&chatId)? {
+            Some(chat) => Ok(!chat.locked),
+            None => Ok(self.syncStore.chatIsDeleted(&chatId)?),
+        }
     }
 
     /// Deletes a chat when deletion policy allows it.
     pub fn deleteChatHistory(&self, chatId: String) -> ChatHistoryManagerResult<bool> {
-        let chat = self.chatDao.getChatById(&chatId)?;
-        if chat.as_ref().map(|chat| chat.locked).unwrap_or(false) {
+        if !self.syncStore.deleteChat(&chatId)? {
             return Ok(false);
         }
-        self.chatDao.deleteChat(&chatId)?;
-        if chat.is_some() {
-            self.recordChatDeletion(&chatId)?;
-            self.deleteBinding(&chatId)?;
-        }
+        self.deleteBinding(&chatId)?;
         if self.currentChatIdFlow()?.as_deref() == Some(chatId.as_str()) {
             self.clearCurrentChatId()?;
         }
-        Ok(chat.is_some())
+        Ok(true)
     }
 
     /// Builds an unpersisted chat draft with explicit plugin namespace objects.
@@ -1845,11 +1844,6 @@ impl ChatHistoryManager {
 
     fn recordMessageSnapshot(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<()> {
         self.syncStore.recordMessageSnapshot(chatId, timestamp)?;
-        Ok(())
-    }
-
-    fn recordChatDeletion(&self, chatId: &str) -> ChatHistoryManagerResult<()> {
-        self.syncStore.recordChatDeletion(chatId)?;
         Ok(())
     }
 

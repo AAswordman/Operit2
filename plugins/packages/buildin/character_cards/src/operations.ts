@@ -37,6 +37,7 @@ export async function snapshot(host: CharacterRepository): Promise<Snapshot> {
     ttsConfigs,
     toolCatalog,
     memoryPreferences,
+    memoryOwnerKeys,
   ] = await Promise.all([
     host.listCharacters(),
     host.listGroups(),
@@ -47,8 +48,10 @@ export async function snapshot(host: CharacterRepository): Promise<Snapshot> {
     Promise.resolve().then(() => host.listTtsConfigs()),
     Promise.resolve().then(() => host.readToolCatalog()),
     host.readGlobalMemoryPreferences(),
+    host.listMemoryOwnerKeys(),
   ]);
   return {
+    memoryOwnerKeys,
     cards,
     groups,
     stores,
@@ -633,6 +636,9 @@ export async function dispatch(
         request.tagChanges,
         host,
       );
+      return snapshot(host);
+    case "createMemoryLibrary":
+      await host.createMemoryLibrary(request.ownerKey);
       return snapshot(host);
     case "deleteCharacter":
       await deleteCharacter(request.id, host);

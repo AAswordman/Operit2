@@ -235,6 +235,7 @@ export interface MemorySearchHit { memory: Memory; score: number; keywordScore: 
 export interface MemorySearchDebug { excludedBySnapshotCount: number; query: string; config: MemorySearchConfig; relevanceThreshold: number; memoriesInScopeCount: number; candidates: MemorySearchHit[] }
 
 export interface Snapshot {
+  memoryOwnerKeys: string[];
   memoryPreferences: GlobalMemoryPreferences;
   cards: Card[];
   groups: Group[];
@@ -249,6 +250,7 @@ export interface Snapshot {
 /** Keeps UI and registered domain commands on one finite, plugin-owned request contract. */
 export type Request =
   | { action: "snapshot" }
+  | { action: "createMemoryLibrary"; ownerKey: string }
   | { action: "readGlobalMemoryPreferences" }
   | { action: "readChatMemoryAutoSaveStatus"; chatId: string }
   | { action: "updateCurrentChatMemory"; chatId: string }
@@ -456,6 +458,7 @@ export interface UserDocumentWrite { ownerKey: string; path: string; content: st
 /** Maps every finite editor action to the exact result returned by its service branch. */
 export interface RequestResults {
   snapshot: Snapshot;
+  createMemoryLibrary: Snapshot;
   readGlobalMemoryPreferences: GlobalMemoryPreferences;
   readChatMemoryAutoSaveStatus: MemoryAutoSaveStatus;
   updateCurrentChatMemory: MemoryExtractionResult;

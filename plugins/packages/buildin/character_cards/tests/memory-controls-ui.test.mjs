@@ -545,3 +545,24 @@ test("real rebuild reports partial failure after continuing through the remainin
   assert.equal(await dialog.getByRole("button", { name: "开始重建", exact: true }).isEnabled(), true);
   assert.deepEqual(ui.errors, []);
 });
+
+test("missing character library stays nonblocking and offers explicit creation in memory settings", async t => {
+  const ui = await controlsPage(t);
+  const state = await ui.harness.readState(); state.owners = []; ui.harness.disk.replaceState(state);
+  ui.harness.disk.clearCalls();
+  await ui.page.reload();
+  await ui.card.getByText("当前角色无记忆库", { exact: true }).waitFor();
+  assert.equal(await ui.card.getByRole("button", { name: "记忆设置", exact: true }).count(), 0);
+  assert.equal((await ui.harness.readState()).owners.length, 0);
+  const resolved = await ui.runtime.api("chat.configuration.resolve", { purpose: "execution", chatId: CONTROLLED_CHAT_ID, chatExtension: { version: 1, selection: "card:default" }, participantId: null, promptFunctionType: "CHAT", defaultModelBinding: { providerId: "dashscope", modelId: "qwen-plus" }, defaultTtsConfigId: "tts-one" });
+  assert.equal(resolved.profile.userPreferencesText, "");
+  await ui.runtime.enqueueReplies(); await ui.runtime.interval();
+  assert.equal((await ui.harness.readState()).owners.length, 0);
+  assert.equal(ui.harness.disk.calls.some(call => call.method === "storage.commit"), false);
+  await ui.card.getByRole("button", { name: "新建角色卡记忆库", exact: true }).click();
+  await ui.card.getByRole("button", { name: "记忆设置", exact: true }).waitFor();
+  assert.equal(await ui.card.getByText("当前角色无记忆库", { exact: true }).count(), 0);
+  assert.equal((await ui.harness.readState()).owners.length, 1);
+  await ui.open();
+  assert.deepEqual(ui.errors, []);
+});

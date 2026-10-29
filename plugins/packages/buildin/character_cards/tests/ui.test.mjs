@@ -138,6 +138,12 @@ test("Material graph keeps the canvas prominent and secondary actions in overflo
       assert.ok(search.y > title.y + title.height);
       assert.ok(fab.x >= tools.x + tools.width + 8, `Canvas controls overlap at ${width}px`);
       assert.ok(fab.x + fab.width <= canvas.x + canvas.width);
+      assert.ok(fab.height <= 36, `Create button is oversized at ${width}px`);
+      assert.ok(search.height <= 40, `Search field is oversized at ${width}px`);
+      for (const control of await graph.locator(".icon-button").all()) {
+        const box = await control.boundingBox();
+        assert.ok(box.width <= 32 && box.height <= 32, `Icon control is oversized at ${width}px`);
+      }
       assert.ok(await graph.evaluate(
         /** Rejects horizontal overflow in the graph workspace. */
         element => element.scrollWidth <= element.clientWidth,
@@ -146,7 +152,12 @@ test("Material graph keeps the canvas prominent and secondary actions in overflo
       await ui.page.screenshot({ path: output + `memory-graph-material-${width}.png` });
     }
     await ui.page.setViewportSize({ width: 390, height: 844 });
+    await graph.locator('.memory-item[data-id="memory-one"]').click();
+    await graph.getByRole("button", { name: "展开", exact: true }).click();
+    await ui.page.screenshot({ path: output + "memory-graph-material-detail.png" });
     await applyDarkHostTheme(ui.page);
+    await ui.page.screenshot({ path: output + "memory-graph-material-detail-dark.png" });
+    await graph.getByRole("button", { name: "收起", exact: true }).click();
     await ui.page.screenshot({ path: output + "memory-graph-material-dark.png" });
     const more = graph.getByRole("button", { name: "更多操作", exact: true });
     await more.click();
@@ -177,6 +188,42 @@ test("Material graph keeps the canvas prominent and secondary actions in overflo
     assert.equal(await graph.isVisible(), true);
     assert.equal(await graph.getByRole("button", { name: "导出记忆 JSON", exact: true }).isVisible(), false);
   } finally { await ui.context.close(); }
+});
+
+/** Keeps mobile inspection usable with many memories, long content and a short viewport. */
+test("mobile graph inspector expands and keeps selected details ahead of the memory list", async () => {
+  const data = fixture();
+  data.graph.items[0].content = "需要完整查看的记忆内容。".repeat(150);
+  for (let index = 0; index < 24; index++) {
+    const item = { ...data.graph.items[1], id: "extra-" + index, uuid: "extra-" + index, title: "额外记忆 " + index };
+    data.graph.items.push(item);
+    data.graph.graph.nodes.push({ id: item.uuid, label: item.title, color: 0, metadata: {} });
+  }
+  for (const [width, height] of [[320, 568], [390, 844], [600, 700]]) {
+    const ui = await page(width, height, data, true);
+    try {
+      const graph = await openCharacterGraph(ui.page), panel = graph.getByLabel("记忆列表与详情", { exact: true });
+      await panel.getByRole("button", { name: "展开", exact: true }).click();
+      const layout = await graph.locator(".graph-layout").boundingBox(), expanded = await panel.boundingBox();
+      assert.ok(expanded.height >= layout.height - 2, `Expanded panel is cramped at ${width}×${height}`);
+      await panel.locator('[data-id="memory-one"]').click();
+      assert.equal(await panel.locator(".graph-detail h3").innerText(), "喜欢安静的旅行");
+      assert.equal(await panel.locator(".graph-inspector").evaluate(element => element.firstElementChild.classList.contains("graph-detail")), true);
+      await panel.getByRole("button", { name: "编辑", exact: true }).scrollIntoViewIfNeeded();
+      await ui.page.screenshot({ path: output + `memory-graph-inspector-${width}.png` });
+      await panel.getByRole("button", { name: "编辑", exact: true }).click();
+      const editor = ui.page.getByRole("dialog", { name: "编辑记忆", exact: true });
+      await editor.waitFor();
+      await editor.locator(".dialog-header").getByRole("button", { name: "关闭", exact: true }).click();
+      await panel.locator(".memory-item").last().click();
+      assert.equal(await panel.locator(".graph-detail h3").innerText(), "额外记忆 23");
+      assert.equal(await panel.locator(".graph-inspector").evaluate(element => element.scrollTop), 0);
+      await panel.getByRole("button", { name: "收起", exact: true }).click();
+      assert.ok((await panel.boundingBox()).height < layout.height / 2);
+      assert.ok((await graph.locator("[data-graph-surface]").boundingBox()).height > 0);
+      assert.equal(await graph.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+    } finally { await ui.context.close(); }
+  }
 });
 
 /** Verifies shared-bound memory operations retain the card's actual owner identity. */
@@ -447,11 +494,11 @@ test("graph wheel zoom preserves the cursor anchor and survives selection", asyn
       scale => document.querySelector("[data-graph-surface] > g").transform.baseVal.consolidate().matrix.a < scale, Math.max(1, after.scale),
     );
     const camera = await graphCamera(graph);
-    await graph.locator(".graph-sidebar").hover({ position: { x: 15, y: 15 } });
+    await graph.locator(".graph-inspector").hover({ position: { x: 15, y: 15 } });
     await ui.page.mouse.wheel(0, 240);
     await ui.page.waitForFunction(
       /** Requires ordinary inspector scrolling outside the graph's wheel scope. */
-      () => document.querySelector("dialog[open] .graph-sidebar").scrollTop > 0,
+      () => document.querySelector("dialog[open] .graph-inspector").scrollTop > 0,
     );
     assert.deepEqual(await graphCamera(graph), camera);
   } finally { await ui.context.close(); }

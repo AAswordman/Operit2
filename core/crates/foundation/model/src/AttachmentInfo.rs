@@ -27,13 +27,13 @@ impl AttachmentInfo {
     /// Keep the original host path for local previews and direct media processing.
     pub fn fileToolPath(&self) -> String {
         let normalized = self.filePath.replace('\\', "/");
-        if let Some((_, relative)) = normalized.rsplit_once("/chat_attachments/") {
+        if let Some((_, relative)) = normalized.rsplit_once("/data/chat_attachments/") {
             if !relative.is_empty()
                 && relative
                     .split('/')
                     .all(|part| !part.is_empty() && part != "." && part != "..")
             {
-                return format!("/app/data/chat_attachments/{relative}");
+                return format!("/app/data/data/chat_attachments/{relative}");
             }
         }
         self.filePath.clone()
@@ -85,19 +85,19 @@ mod tests {
     #[test]
     fn persistent_file_tool_paths_are_portable_without_changing_host_paths() {
         for path in [
-            "/device-b/runtime/chat_attachments/file.pdf",
-            r"C:\runtime\chat_attachments\file.pdf",
+            "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/file.pdf",
+            r"C:\runtime\data\chat_attachments\chat-a\attachment-a\file.pdf",
         ] {
             let attachment =
                 AttachmentInfo::new(path.into(), "file.pdf".into(), "application/pdf".into(), 3);
             assert_eq!(
                 attachment.fileToolPath(),
-                "/app/data/chat_attachments/file.pdf"
+                "/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf"
             );
             assert_eq!(attachment.filePath, path);
         }
         let attachment = AttachmentInfo::new(
-            "/chat_attachments/../file.pdf".into(),
+            "/runtime/data/chat_attachments/chat-a/../file.pdf".into(),
             "file.pdf".into(),
             "application/pdf".into(),
             3,

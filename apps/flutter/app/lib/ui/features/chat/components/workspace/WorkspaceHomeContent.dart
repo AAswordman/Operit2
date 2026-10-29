@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 
 import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
-import '../../../../theme/OperitGlassSurface.dart';
 import '../WorkspaceShell.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
@@ -65,6 +64,7 @@ class WorkspaceHomeContent extends StatefulWidget {
 }
 
 class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
+  /// Opens review through the owning workspace navigation callback.
   void _handleOpenDiff() {
     if (widget.onOpenDiff != null) {
       widget.onOpenDiff!();
@@ -73,7 +73,7 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
     }
   }
 
-  /// Builds the workspace home tab with modern hierarchy and unified tool actions.
+  /// Builds the compact overview with one owner for each workspace action.
   @override
   Widget build(BuildContext context) {
     final boundWorkspacePath = widget.workspacePath?.trim();
@@ -90,36 +90,22 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       children: <Widget>[
-        Container(
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.25),
+        Card.filled(
+          margin: EdgeInsets.zero,
+          color: colorScheme.surfaceContainerLow,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: _WorkspaceHeaderCard(
+              hasBoundWorkspace: hasBoundWorkspace,
+              title: hasBoundWorkspace ? title : '当前对话未绑定工作区',
+              workspaceUsage: widget.workspaceUsage,
+              onOpenFolder: widget.onOpenFolder,
+              onAddFolder: widget.onAddFolder,
+              onCreateWorkspace: widget.onCreateWorkspace,
+              onChooseExistingWorkspace: widget.onChooseExistingWorkspace,
+              onUnbindWorkspace: widget.onUnbindWorkspace,
             ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: _WorkspaceHeaderCard(
-            hasBoundWorkspace: hasBoundWorkspace,
-            title: hasBoundWorkspace ? title : '当前对话未绑定工作区',
-            workspaceUsage: widget.workspaceUsage,
-            terminalSessionCountListenable: widget.terminalSessionCountListenable,
-            browserSessionCountListenable: widget.browserSessionCountListenable,
-            terminalSessionsListenable: widget.terminalSessionsListenable,
-            onOpenFolder: widget.onOpenFolder,
-            onAddFolder: widget.onAddFolder,
-            onOpenTerminal: widget.onOpenTerminal,
-            onOpenTerminalSessions: widget.onOpenTerminalSessions,
-            onOpenBrowser: widget.onOpenBrowser,
-            onOpenBrowserSessions: widget.onOpenBrowserSessions,
-            onSelectTerminalSession: widget.onSelectTerminalSession,
-            onCloseTerminalSession: widget.onCloseTerminalSession,
-            onSelectBrowserTab: widget.onSelectBrowserTab,
-            onCloseBrowserSession: widget.onCloseBrowserSession,
-            onOpenDiff: _handleOpenDiff,
-            onCreateWorkspace: widget.onCreateWorkspace,
-            onChooseExistingWorkspace: widget.onChooseExistingWorkspace,
-            onUnbindWorkspace: widget.onUnbindWorkspace,
           ),
         ),
         if (hasBoundWorkspace) ...<Widget>[
@@ -134,7 +120,9 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
             browserSessionCountListenable: widget.browserSessionCountListenable,
             terminalSessionsListenable: widget.terminalSessionsListenable,
             onOpenTerminal: widget.onOpenTerminal,
+            onOpenTerminalSessions: widget.onOpenTerminalSessions,
             onOpenBrowser: widget.onOpenBrowser,
+            onOpenBrowserSessions: widget.onOpenBrowserSessions,
             onSelectTerminalSession: widget.onSelectTerminalSession,
             onCloseTerminalSession: widget.onCloseTerminalSession,
             onSelectBrowserTab: widget.onSelectBrowserTab,
@@ -144,7 +132,6 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
             const SizedBox(height: 12),
             _WorkspaceRootPathCard(
               workspacePath: boundWorkspacePath,
-              onAddFolder: widget.onAddFolder,
             ),
           ],
         ],
@@ -162,106 +149,110 @@ class _WorkspaceReviewHeroCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    const accentColor = Color(0xFFF59E0B);
+    final accentColor = colorScheme.primary;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+    return Card.outlined(
+      margin: EdgeInsets.zero,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-        ),
+        side: BorderSide(color: colorScheme.outlineVariant),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
-        children: <Widget>[
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: accentColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: accentColor.withValues(alpha: 0.3),
-              ),
-            ),
-            child: const Icon(
-              Icons.difference_outlined,
-              size: 20,
-              color: accentColor,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  '代码变更审查',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '查看工作区代码改动、行级对比与文件审查',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-                    fontSize: 11.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.tonal(
-            onPressed: onOpenDiff,
-            style: FilledButton.styleFrom(
-              backgroundColor: colorScheme.surfaceContainerHigh,
-              foregroundColor: colorScheme.onSurface,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(7),
-                side: BorderSide(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: <Widget>[
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: accentColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: accentColor.withValues(alpha: 0.3),
                 ),
               ),
+              child: Icon(
+                Icons.difference_outlined,
+                size: 20,
+                color: accentColor,
+              ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  '查看变更',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                    color: colorScheme.onSurface,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    '代码变更审查',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '查看工作区代码改动、行级对比与文件审查',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              onPressed: onOpenDiff,
+              style: FilledButton.styleFrom(
+                backgroundColor: colorScheme.surfaceContainerHigh,
+                foregroundColor: colorScheme.onSurface,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(7),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.4),
                   ),
                 ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.arrow_forward_rounded,
-                  size: 14,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    '查看变更',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 14,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
 class _WorkspaceWorkstationGrid extends StatelessWidget {
+  /// Keeps terminal and browser controls in their own compact cards.
   const _WorkspaceWorkstationGrid({
     required this.terminalSessionCountListenable,
     required this.browserSessionCountListenable,
     required this.terminalSessionsListenable,
     required this.onOpenTerminal,
+    required this.onOpenTerminalSessions,
     required this.onOpenBrowser,
+    required this.onOpenBrowserSessions,
     required this.onSelectTerminalSession,
     required this.onCloseTerminalSession,
     required this.onSelectBrowserTab,
@@ -273,12 +264,15 @@ class _WorkspaceWorkstationGrid extends StatelessWidget {
   final ValueListenable<List<WorkspaceTerminalSessionInfo>>?
   terminalSessionsListenable;
   final VoidCallback onOpenTerminal;
+  final VoidCallback onOpenTerminalSessions;
   final VoidCallback onOpenBrowser;
+  final VoidCallback onOpenBrowserSessions;
   final ValueChanged<WorkspaceTerminalSessionInfo>? onSelectTerminalSession;
   final ValueChanged<WorkspaceTerminalSessionInfo>? onCloseTerminalSession;
   final ValueChanged<WorkspaceBrowserTabState>? onSelectBrowserTab;
   final ValueChanged<String>? onCloseBrowserSession;
 
+  /// Stacks the original cards only when the available width requires it.
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -288,12 +282,14 @@ class _WorkspaceWorkstationGrid extends StatelessWidget {
           terminalCountListenable: terminalSessionCountListenable,
           sessionsListenable: terminalSessionsListenable,
           onOpenTerminal: onOpenTerminal,
+          onOpenTerminalSessions: onOpenTerminalSessions,
           onSelectSession: onSelectTerminalSession,
           onCloseSession: onCloseTerminalSession,
         );
         final browserCard = _BrowserWorkstationCard(
           browserCountListenable: browserSessionCountListenable,
           onOpenBrowser: onOpenBrowser,
+          onOpenBrowserSessions: onOpenBrowserSessions,
           onSelectBrowserTab: onSelectBrowserTab,
           onCloseBrowserSession: onCloseBrowserSession,
         );
@@ -322,10 +318,12 @@ class _WorkspaceWorkstationGrid extends StatelessWidget {
 }
 
 class _TerminalWorkstationCard extends StatelessWidget {
+  /// Creates the sole terminal status and session action surface.
   const _TerminalWorkstationCard({
     required this.terminalCountListenable,
     required this.sessionsListenable,
     required this.onOpenTerminal,
+    required this.onOpenTerminalSessions,
     required this.onSelectSession,
     required this.onCloseSession,
   });
@@ -333,416 +331,423 @@ class _TerminalWorkstationCard extends StatelessWidget {
   final ValueListenable<int> terminalCountListenable;
   final ValueListenable<List<WorkspaceTerminalSessionInfo>>? sessionsListenable;
   final VoidCallback onOpenTerminal;
+  final VoidCallback onOpenTerminalSessions;
   final ValueChanged<WorkspaceTerminalSessionInfo>? onSelectSession;
   final ValueChanged<WorkspaceTerminalSessionInfo>? onCloseSession;
 
+  /// Shows live sessions without a duplicate toolbar menu or idle badge.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    const accentColor = Color(0xFF10B981);
+    final accentColor = colorScheme.onSurfaceVariant;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+    return Card.filled(
+      margin: EdgeInsets.zero,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
-        ),
       ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  const Icon(
-                    Icons.terminal_rounded,
-                    size: 16,
-                    color: accentColor,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(Icons.terminal_rounded, size: 16, color: colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
                     '终端工件 (PTY)',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
-              ValueListenableBuilder<int>(
-                valueListenable: terminalCountListenable,
-                builder: (context, count, _) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: count > 0
-                          ? accentColor.withValues(alpha: 0.15)
-                          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: count > 0
-                            ? accentColor.withValues(alpha: 0.3)
-                            : colorScheme.outlineVariant.withValues(alpha: 0.2),
-                      ),
-                    ),
+                ),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<int>(
+                  valueListenable: terminalCountListenable,
+                  builder: (context, count, _) => count == 0
+                      ? const SizedBox.shrink()
+                      : Text(
+                          '$count 个运行中',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ListenableBuilder(
+              listenable: Listenable.merge(<Listenable>[
+                terminalCountListenable,
+                if (sessionsListenable != null) sessionsListenable!,
+              ]),
+              builder: (context, _) {
+                final sessions = sessionsListenable?.value ??
+                    const <WorkspaceTerminalSessionInfo>[];
+                if (sessions.isEmpty && terminalCountListenable.value == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Text(
-                      count > 0 ? '$count 个运行中' : '就绪',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: count > 0 ? accentColor : colorScheme.onSurfaceVariant,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
+                      '暂无运行中的终端会话',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                        fontSize: 11.5,
                       ),
                     ),
                   );
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ListenableBuilder(
-            listenable: sessionsListenable ??
-                ValueNotifier<List<WorkspaceTerminalSessionInfo>>(const []),
-            builder: (context, _) {
-              final sessions = sessionsListenable?.value ??
-                  const <WorkspaceTerminalSessionInfo>[];
-              if (sessions.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    '暂无运行中的终端会话',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
-                      fontSize: 11.5,
-                    ),
-                  ),
-                );
-              }
-              return Column(
-                children: <Widget>[
-                  for (final session in sessions.take(3))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                }
+                return Column(
+                  children: <Widget>[
+                    for (final session in sessions.take(3))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surface.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                            ),
                           ),
-                        ),
-                        child: Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: <Widget>[
-                                  Text(
-                                    session.title.isNotEmpty ? session.title : '终端会话',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurface,
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                  if (session.workingDir.isNotEmpty)
+                          child: Row(
+                            children: <Widget>[
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
                                     Text(
-                                      session.workingDir,
+                                      session.title.isNotEmpty ? session.title : '终端会话',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.labelSmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant,
-                                        fontSize: 9.5,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colorScheme.onSurface,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 11,
                                       ),
                                     ),
-                                ],
+                                    if (session.workingDir.isNotEmpty)
+                                      Text(
+                                        session.workingDir,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.labelSmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                          fontSize: 9.5,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 6),
-                            InkWell(
-                              onTap: () => onSelectSession?.call(session),
-                              borderRadius: BorderRadius.circular(4),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                child: Text(
-                                  '切换',
-                                  style: TextStyle(
-                                    color: accentColor,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
+                              const SizedBox(width: 6),
+                              InkWell(
+                                onTap: () => onSelectSession?.call(session),
+                                borderRadius: BorderRadius.circular(4),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                  child: Text(
+                                    '切换',
+                                    style: TextStyle(
+                                      color: accentColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (onCloseSession != null)
-                              InkWell(
-                                onTap: () => onCloseSession?.call(session),
-                                borderRadius: BorderRadius.circular(4),
-                                child: const Padding(
-                                  padding: EdgeInsets.all(2),
-                                  child: Icon(Icons.close_rounded, size: 13),
+                              if (onCloseSession != null)
+                                InkWell(
+                                  onTap: () => onCloseSession?.call(session),
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(2),
+                                    child: Icon(Icons.close_rounded, size: 13),
+                                  ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: onOpenTerminal,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: colorScheme.onSurface,
-                side: BorderSide(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                    if (sessions.length > 3 ||
+                        terminalCountListenable.value > sessions.length)
+                      Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: TextButton(
+                          onPressed: onOpenTerminalSessions,
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 28),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text(
+                            '管理全部',
+                            style: TextStyle(fontSize: 11.5),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: onOpenTerminal,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colorScheme.onSurface,
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(7),
+                  ),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(7),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    Icon(Icons.add_rounded, size: 14),
+                    SizedBox(width: 4),
+                    Text('新建终端会话', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                  ],
                 ),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Icon(Icons.add_rounded, size: 14),
-                  SizedBox(width: 4),
-                  Text('新建终端会话', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-                ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
 class _BrowserWorkstationCard extends StatelessWidget {
+  /// Creates the sole browser status and page action surface.
   const _BrowserWorkstationCard({
     required this.browserCountListenable,
     required this.onOpenBrowser,
+    required this.onOpenBrowserSessions,
     required this.onSelectBrowserTab,
     required this.onCloseBrowserSession,
   });
 
   final ValueListenable<int> browserCountListenable;
   final VoidCallback onOpenBrowser;
+  final VoidCallback onOpenBrowserSessions;
   final ValueChanged<WorkspaceBrowserTabState>? onSelectBrowserTab;
   final ValueChanged<String>? onCloseBrowserSession;
 
+  /// Shows live pages and exposes management when the preview is incomplete.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final accentColor = colorScheme.primary;
+    final accentColor = colorScheme.onSurfaceVariant;
     final browserStore = WorkspaceBrowserViewStore.instance;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+    return Card.filled(
+      margin: EdgeInsets.zero,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.25),
-        ),
       ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Icon(
-                    Icons.public_rounded,
-                    size: 16,
-                    color: accentColor,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(Icons.public_rounded, size: 16, color: colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
                     '浏览器工件 (WebView)',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
-              ValueListenableBuilder<int>(
-                valueListenable: browserCountListenable,
-                builder: (context, count, _) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: count > 0
-                          ? accentColor.withValues(alpha: 0.15)
-                          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: count > 0
-                            ? accentColor.withValues(alpha: 0.3)
-                            : colorScheme.outlineVariant.withValues(alpha: 0.2),
-                      ),
-                    ),
+                ),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<int>(
+                  valueListenable: browserCountListenable,
+                  builder: (context, count, _) => count == 0
+                      ? const SizedBox.shrink()
+                      : Text(
+                          '$count 个打开',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ListenableBuilder(
+              listenable: Listenable.merge(<Listenable>[
+                browserStore,
+                browserCountListenable,
+              ]),
+              builder: (context, _) {
+                final tabs = browserStore.tabs;
+                if (tabs.isEmpty && browserCountListenable.value == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Text(
-                      count > 0 ? '$count 个打开' : '就绪',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: count > 0 ? accentColor : colorScheme.onSurfaceVariant,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
+                      '暂无打开的浏览器页面',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                        fontSize: 11.5,
                       ),
                     ),
                   );
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ListenableBuilder(
-            listenable: browserStore,
-            builder: (context, _) {
-              final tabs = browserStore.tabs;
-              if (tabs.isEmpty) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    '暂无打开的浏览器页面',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
-                      fontSize: 11.5,
-                    ),
-                  ),
-                );
-              }
-              return Column(
-                children: <Widget>[
-                  for (final tab in tabs.take(3))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                }
+                return Column(
+                  children: <Widget>[
+                    for (final tab in tabs.take(3))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surface.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                            ),
                           ),
-                        ),
-                        child: Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: <Widget>[
-                                  Text(
-                                    tab.title.isNotEmpty ? tab.title : '浏览器页面',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurface,
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                  if (tab.url.isNotEmpty)
+                          child: Row(
+                            children: <Widget>[
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
                                     Text(
-                                      tab.url,
+                                      tab.title.isNotEmpty ? tab.title : '浏览器页面',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.labelSmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant,
-                                        fontSize: 9.5,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colorScheme.onSurface,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 11,
                                       ),
                                     ),
-                                ],
+                                    if (tab.url.isNotEmpty)
+                                      Text(
+                                        tab.url,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.labelSmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                          fontSize: 9.5,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 6),
-                            InkWell(
-                              onTap: () => onSelectBrowserTab?.call(tab),
-                              borderRadius: BorderRadius.circular(4),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                child: Text(
-                                  '切换',
-                                  style: TextStyle(
-                                    color: accentColor,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
+                              const SizedBox(width: 6),
+                              InkWell(
+                                onTap: () => onSelectBrowserTab?.call(tab),
+                                borderRadius: BorderRadius.circular(4),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                  child: Text(
+                                    '切换',
+                                    style: TextStyle(
+                                      color: accentColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (onCloseBrowserSession != null)
-                              InkWell(
-                                onTap: () => onCloseBrowserSession?.call(tab.id),
-                                borderRadius: BorderRadius.circular(4),
-                                child: const Padding(
-                                  padding: EdgeInsets.all(2),
-                                  child: Icon(Icons.close_rounded, size: 13),
+                              if (onCloseBrowserSession != null)
+                                InkWell(
+                                  onTap: () => onCloseBrowserSession?.call(tab.id),
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(2),
+                                    child: Icon(Icons.close_rounded, size: 13),
+                                  ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: onOpenBrowser,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: colorScheme.onSurface,
-                side: BorderSide(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                    if (tabs.length > 3 ||
+                        browserCountListenable.value > tabs.length)
+                      Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: TextButton(
+                          onPressed: onOpenBrowserSessions,
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 28),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text(
+                            '管理全部',
+                            style: TextStyle(fontSize: 11.5),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: onOpenBrowser,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colorScheme.onSurface,
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(7),
+                  ),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(7),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    Icon(Icons.add_rounded, size: 14),
+                    SizedBox(width: 4),
+                    Text('新建浏览器页面', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                  ],
                 ),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Icon(Icons.add_rounded, size: 14),
-                  SizedBox(width: 4),
-                  Text('新建浏览器页面', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-                ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
 class _WorkspaceRootPathCard extends StatelessWidget {
+  /// Displays the root path without repeating the folder menu's mount action.
   const _WorkspaceRootPathCard({
     required this.workspacePath,
-    required this.onAddFolder,
   });
 
   final String? workspacePath;
-  final VoidCallback onAddFolder;
 
+  /// Keeps the original compact path footer.
   @override
   Widget build(BuildContext context) {
     final path = workspacePath?.trim();
@@ -752,83 +757,50 @@ class _WorkspaceRootPathCard extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+    return Card.filled(
+      margin: EdgeInsets.zero,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.2),
-        ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Row(
-        children: <Widget>[
-          Icon(
-            Icons.folder_outlined,
-            size: 16,
-            color: colorScheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 11.5,
-                fontFamily: 'monospace',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              Icons.folder_outlined,
+              size: 16,
+              color: colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 11.5,
+                  fontFamily: 'monospace',
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          InkWell(
-            onTap: onAddFolder,
-            borderRadius: BorderRadius.circular(4),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(Icons.add_rounded, size: 13, color: colorScheme.primary),
-                  const SizedBox(width: 2),
-                  Text(
-                    '挂载新目录',
-                    style: TextStyle(
-                      color: colorScheme.primary,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+
+          ],
+        ),
       ),
     );
   }
 }
 
 class _WorkspaceHeaderCard extends StatelessWidget {
+  /// Creates the workspace selector without repeating workstation controls.
   const _WorkspaceHeaderCard({
     required this.hasBoundWorkspace,
     required this.title,
     required this.workspaceUsage,
-    required this.terminalSessionCountListenable,
-    required this.browserSessionCountListenable,
-    required this.terminalSessionsListenable,
     required this.onOpenFolder,
     required this.onAddFolder,
-    required this.onOpenTerminal,
-    required this.onOpenTerminalSessions,
-    required this.onOpenBrowser,
-    required this.onOpenBrowserSessions,
-    required this.onSelectTerminalSession,
-    required this.onCloseTerminalSession,
-    required this.onSelectBrowserTab,
-    required this.onCloseBrowserSession,
-    required this.onOpenDiff,
     required this.onCreateWorkspace,
     required this.onChooseExistingWorkspace,
     required this.onUnbindWorkspace,
@@ -837,25 +809,13 @@ class _WorkspaceHeaderCard extends StatelessWidget {
   final bool hasBoundWorkspace;
   final String title;
   final WorkspaceOverviewUsage workspaceUsage;
-  final ValueListenable<int> terminalSessionCountListenable;
-  final ValueListenable<int> browserSessionCountListenable;
-  final ValueListenable<List<WorkspaceTerminalSessionInfo>>?
-  terminalSessionsListenable;
   final ValueChanged<WorkspaceMountedFolder> onOpenFolder;
   final VoidCallback onAddFolder;
-  final VoidCallback onOpenTerminal;
-  final VoidCallback onOpenTerminalSessions;
-  final VoidCallback onOpenBrowser;
-  final VoidCallback onOpenBrowserSessions;
-  final ValueChanged<WorkspaceTerminalSessionInfo>? onSelectTerminalSession;
-  final ValueChanged<WorkspaceTerminalSessionInfo>? onCloseTerminalSession;
-  final ValueChanged<WorkspaceBrowserTabState>? onSelectBrowserTab;
-  final ValueChanged<String>? onCloseBrowserSession;
-  final VoidCallback onOpenDiff;
   final VoidCallback onCreateWorkspace;
   final VoidCallback onChooseExistingWorkspace;
   final VoidCallback onUnbindWorkspace;
 
+  /// Keeps workspace actions and contribution previews in the compact header.
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -867,23 +827,22 @@ class _WorkspaceHeaderCard extends StatelessWidget {
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
-            _WorkspaceFolderMenuAnchor(
-              title: title,
-              hasBoundWorkspace: hasBoundWorkspace,
-              folders: workspaceUsage.mountedFolders,
-              loading: workspaceUsage.mountedFoldersLoading,
-              errorMessage: workspaceUsage.mountedFoldersError,
-              onOpenFolder: onOpenFolder,
-              onAddFolder: onAddFolder,
-              onCreateWorkspace: onCreateWorkspace,
-              onChooseExistingWorkspace: onChooseExistingWorkspace,
-              onUnbindWorkspace: onUnbindWorkspace,
-            ),
-            if (hasBoundWorkspace)
+            if (hasBoundWorkspace) ...<Widget>[
+              _WorkspaceFolderMenuAnchor(
+                title: title,
+                folders: workspaceUsage.mountedFolders,
+                loading: workspaceUsage.mountedFoldersLoading,
+                errorMessage: workspaceUsage.mountedFoldersError,
+                onOpenFolder: onOpenFolder,
+                onAddFolder: onAddFolder,
+                onChooseExistingWorkspace: onChooseExistingWorkspace,
+                onUnbindWorkspace: onUnbindWorkspace,
+              ),
               _WorkspaceContributionAvatarStrip(
                 contributions: workspaceUsage.contributions,
               ),
-            if (!hasBoundWorkspace) ...<Widget>[
+            ] else ...<Widget>[
+              Text(title, style: Theme.of(context).textTheme.bodySmall),
               _WorkspaceCapsuleButton(
                 icon: Icons.add_rounded,
                 label: '创建工作区',
@@ -897,42 +856,12 @@ class _WorkspaceHeaderCard extends StatelessWidget {
                 onTap: onChooseExistingWorkspace,
               ),
             ],
-            ValueListenableBuilder<int>(
-              valueListenable: terminalSessionCountListenable,
-              builder: (context, terminalCount, _) {
-                return _TerminalMenuAnchor(
-                  terminalCount: terminalCount,
-                  terminalSessionsListenable: terminalSessionsListenable,
-                  onSelectTerminalSession: onSelectTerminalSession,
-                  onCloseTerminalSession: onCloseTerminalSession,
-                  onOpenTerminal: onOpenTerminal,
-                  onOpenTerminalSessions: onOpenTerminalSessions,
-                );
-              },
-            ),
-            ValueListenableBuilder<int>(
-              valueListenable: browserSessionCountListenable,
-              builder: (context, browserCount, _) {
-                return _BrowserMenuAnchor(
-                  browserCount: browserCount,
-                  onSelectBrowserTab: onSelectBrowserTab,
-                  onCloseBrowserSession: onCloseBrowserSession,
-                  onOpenBrowser: onOpenBrowser,
-                  onOpenBrowserSessions: onOpenBrowserSessions,
-                );
-              },
-            ),
-            _WorkspaceActionCapsule(
-              icon: Icons.difference_outlined,
-              accentColor: const Color(0xFFF59E0B),
-              label: '查看变更',
-              onTap: onOpenDiff,
-            ),
           ],
         ),
-        _WorkspaceContributionStateNotice(
-          contributions: workspaceUsage.contributions,
-        ),
+        if (hasBoundWorkspace)
+          _WorkspaceContributionStateNotice(
+            contributions: workspaceUsage.contributions,
+          ),
       ],
     );
   }
@@ -1017,90 +946,63 @@ class _WorkspaceFolderMenuItemTile extends StatelessWidget {
 }
 
 class _WorkspaceFolderMenuAnchor extends StatefulWidget {
+  /// Creates the sole menu for mounted folders and workspace management.
   const _WorkspaceFolderMenuAnchor({
     required this.title,
-    required this.hasBoundWorkspace,
     required this.folders,
     required this.loading,
     required this.errorMessage,
     required this.onOpenFolder,
     required this.onAddFolder,
-    required this.onCreateWorkspace,
     required this.onChooseExistingWorkspace,
-    this.onUnbindWorkspace,
+    required this.onUnbindWorkspace,
   });
 
   final String title;
-  final bool hasBoundWorkspace;
   final List<WorkspaceMountedFolder> folders;
   final bool loading;
   final String? errorMessage;
   final ValueChanged<WorkspaceMountedFolder> onOpenFolder;
   final VoidCallback onAddFolder;
-  final VoidCallback onCreateWorkspace;
   final VoidCallback onChooseExistingWorkspace;
-  final VoidCallback? onUnbindWorkspace;
+  final VoidCallback onUnbindWorkspace;
 
+  /// Owns the workspace menu controller.
   @override
   State<_WorkspaceFolderMenuAnchor> createState() =>
       _WorkspaceFolderMenuAnchorState();
 }
 
-class _WorkspaceFolderMenuAnchorState
-    extends State<_WorkspaceFolderMenuAnchor> {
+class _WorkspaceFolderMenuAnchorState extends State<_WorkspaceFolderMenuAnchor> {
   final MenuController _controller = MenuController();
   bool _isOpen = false;
 
+  /// Builds one compact menu for folder and binding actions.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final accentColor = colorScheme.primary;
-
+    final colorScheme = Theme.of(context).colorScheme;
     return MenuAnchor(
       controller: _controller,
       alignmentOffset: const Offset(0, 4),
       onOpen: () => setState(() => _isOpen = true),
       onClose: () => setState(() => _isOpen = false),
       style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(
-          colorScheme.surfaceContainerHigh,
-        ),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        elevation: const WidgetStatePropertyAll(8),
-        shadowColor: WidgetStatePropertyAll(
-          Colors.black.withValues(alpha: 0.45),
-        ),
+        backgroundColor: WidgetStatePropertyAll(colorScheme.surfaceContainerHigh),
         padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-            ),
-          ),
-        ),
       ),
-      builder: (context, controller, _) {
-        return _WorkspaceToolCapsule(
-          icon: widget.hasBoundWorkspace
-              ? Icons.work_outline_rounded
-              : Icons.work_off_outlined,
-          accentColor: widget.hasBoundWorkspace
-              ? accentColor
-              : colorScheme.onSurfaceVariant,
-          label: widget.title,
-          isExpanded: _isOpen,
-          hasActiveSessions: widget.hasBoundWorkspace,
-          onTap: () {
-            if (_controller.isOpen) {
-              _controller.close();
-            } else {
-              _controller.open();
-            }
-          },
-        );
-      },
+      builder: (context, controller, _) => _WorkspaceToolCapsule(
+        icon: Icons.work_outline_rounded,
+        accentColor: colorScheme.primary,
+        label: widget.title,
+        isExpanded: _isOpen,
+        onTap: () {
+          if (controller.isOpen) {
+            controller.close();
+          } else {
+            controller.open();
+          }
+        },
+      ),
       menuChildren: <Widget>[
         SizedBox(
           width: 270,
@@ -1108,134 +1010,26 @@ class _WorkspaceFolderMenuAnchorState
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              if (!widget.hasBoundWorkspace) ...<Widget>[
+              if (widget.loading)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('正在加载文件夹…'),
+                )
+              else if (widget.errorMessage != null)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.info_outline_rounded,
-                        size: 14,
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.7,
-                        ),
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        '当前对话未绑定工作区',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.75,
-                          ),
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    widget.errorMessage!,
+                    style: TextStyle(color: colorScheme.error),
                   ),
-                ),
-              ] else if (widget.loading) ...<Widget>[
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      const SizedBox.square(
-                        dimension: 13,
-                        child: CircularProgressIndicator(strokeWidth: 1.6),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '正在读取挂载文件夹...',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.75,
-                          ),
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else if (widget.errorMessage != null &&
-                  widget.errorMessage!.trim().isNotEmpty) ...<Widget>[
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.error_outline_rounded,
-                        size: 14,
-                        color: colorScheme.error,
-                      ),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          widget.errorMessage!.trim(),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.error,
-                            fontSize: 11.5,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else if (widget.folders.isEmpty) ...<Widget>[
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.folder_off_outlined,
-                        size: 14,
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.7,
-                        ),
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        '暂无挂载文件夹',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.75,
-                          ),
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else ...<Widget>[
+                )
+              else if (widget.folders.isNotEmpty)
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 220),
+                  constraints: const BoxConstraints(maxHeight: 240),
                   child: SingleChildScrollView(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-                          child: Text(
-                            '挂载文件夹 (${widget.folders.length})',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.8,
-                              ),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
                         for (final folder in widget.folders)
                           _WorkspaceFolderMenuItemTile(
                             folder: folder,
@@ -1248,69 +1042,39 @@ class _WorkspaceFolderMenuAnchorState
                     ),
                   ),
                 ),
-              ],
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: colorScheme.outlineVariant.withValues(alpha: 0.22),
-              ),
+              const Divider(height: 1),
               Padding(
-                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
-                    if (widget.hasBoundWorkspace) ...<Widget>[
-                      _CompactActionButton(
-                        icon: Icons.add_rounded,
-                        label: '挂载新文件夹',
-                        accentColor: accentColor,
-                        onTap: () {
-                          _controller.close();
-                          widget.onAddFolder();
-                        },
-                      ),
-                      const SizedBox(height: 5),
-                      _CompactActionButton(
-                        icon: Icons.folder_open_rounded,
-                        label: '切换工作区',
-                        accentColor: colorScheme.secondary,
-                        onTap: () {
-                          _controller.close();
-                          widget.onChooseExistingWorkspace();
-                        },
-                      ),
-                      if (widget.onUnbindWorkspace != null) ...<Widget>[
-                        const SizedBox(height: 5),
-                        _CompactActionButton(
-                          icon: Icons.link_off_rounded,
-                          label: '解除绑定工作区',
-                          accentColor: colorScheme.error,
-                          onTap: () {
-                            _controller.close();
-                            widget.onUnbindWorkspace!();
-                          },
-                        ),
-                      ],
-                    ] else ...<Widget>[
-                      _CompactActionButton(
-                        icon: Icons.add_rounded,
-                        label: '创建工作区',
-                        accentColor: accentColor,
-                        onTap: () {
-                          _controller.close();
-                          widget.onCreateWorkspace();
-                        },
-                      ),
-                      const SizedBox(height: 5),
-                      _CompactActionButton(
-                        icon: Icons.folder_open_rounded,
-                        label: '选择工作区',
-                        accentColor: colorScheme.secondary,
-                        onTap: () {
-                          _controller.close();
-                          widget.onChooseExistingWorkspace();
-                        },
-                      ),
-                    ],
+                    _CompactActionButton(
+                      icon: Icons.add_rounded,
+                      label: '挂载新文件夹',
+                      accentColor: colorScheme.onSurface,
+                      onTap: () {
+                        _controller.close();
+                        widget.onAddFolder();
+                      },
+                    ),
+                    _CompactActionButton(
+                      icon: Icons.folder_open_rounded,
+                      label: '切换工作区',
+                      accentColor: colorScheme.onSurface,
+                      onTap: () {
+                        _controller.close();
+                        widget.onChooseExistingWorkspace();
+                      },
+                    ),
+                    _CompactActionButton(
+                      icon: Icons.link_off_rounded,
+                      label: '解除绑定',
+                      accentColor: colorScheme.error,
+                      onTap: () {
+                        _controller.close();
+                        widget.onUnbindWorkspace();
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -1318,506 +1082,6 @@ class _WorkspaceFolderMenuAnchorState
           ),
         ),
       ],
-    );
-  }
-}
-
-class _TerminalMenuAnchor extends StatefulWidget {
-  const _TerminalMenuAnchor({
-    required this.terminalCount,
-    required this.terminalSessionsListenable,
-    required this.onSelectTerminalSession,
-    required this.onCloseTerminalSession,
-    required this.onOpenTerminal,
-    required this.onOpenTerminalSessions,
-  });
-
-  final int terminalCount;
-  final ValueListenable<List<WorkspaceTerminalSessionInfo>>?
-  terminalSessionsListenable;
-  final ValueChanged<WorkspaceTerminalSessionInfo>? onSelectTerminalSession;
-  final ValueChanged<WorkspaceTerminalSessionInfo>? onCloseTerminalSession;
-  final VoidCallback onOpenTerminal;
-  final VoidCallback onOpenTerminalSessions;
-
-  @override
-  State<_TerminalMenuAnchor> createState() => _TerminalMenuAnchorState();
-}
-
-class _TerminalMenuAnchorState extends State<_TerminalMenuAnchor> {
-  final MenuController _controller = MenuController();
-  bool _isOpen = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    const accentColor = Color(0xFF10B981);
-
-    return MenuAnchor(
-      controller: _controller,
-      alignmentOffset: const Offset(0, 4),
-      onOpen: () => setState(() => _isOpen = true),
-      onClose: () => setState(() => _isOpen = false),
-      style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(
-          colorScheme.surfaceContainerHigh,
-        ),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        elevation: const WidgetStatePropertyAll(8),
-        shadowColor: WidgetStatePropertyAll(
-          Colors.black.withValues(alpha: 0.45),
-        ),
-        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-            ),
-          ),
-        ),
-      ),
-      builder: (context, controller, _) {
-        return _WorkspaceToolCapsule(
-          icon: Icons.terminal_rounded,
-          accentColor: accentColor,
-          label: '${widget.terminalCount} 个终端',
-          isExpanded: _isOpen,
-          hasActiveSessions: widget.terminalCount > 0,
-          onTap: () {
-            if (_controller.isOpen) {
-              _controller.close();
-            } else {
-              _controller.open();
-            }
-          },
-        );
-      },
-      menuChildren: <Widget>[
-        SizedBox(
-          width: 250,
-          child: ListenableBuilder(
-            listenable: widget.terminalSessionsListenable ??
-                ValueNotifier<List<WorkspaceTerminalSessionInfo>>(const []),
-            builder: (context, _) {
-              final sessions = widget.terminalSessionsListenable?.value ??
-                  const <WorkspaceTerminalSessionInfo>[];
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (sessions.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          Icon(
-                            Icons.info_outline_rounded,
-                            size: 14,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.7,
-                            ),
-                          ),
-                          const SizedBox(width: 7),
-                          Text(
-                            '暂无运行中的终端',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.75,
-                              ),
-                              fontSize: 11.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-                              child: Row(
-                                children: <Widget>[
-                                  Text(
-                                    '运行中的终端 (${sessions.length})',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: colorScheme.onSurfaceVariant
-                                          .withValues(alpha: 0.8),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  InkWell(
-                                    borderRadius: BorderRadius.circular(4),
-                                    onTap: () {
-                                      _controller.close();
-                                      widget.onOpenTerminalSessions();
-                                    },
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 4,
-                                        vertical: 2,
-                                      ),
-                                      child: Text(
-                                        '管理全部',
-                                        style: theme.textTheme.labelSmall
-                                            ?.copyWith(
-                                              color: accentColor,
-                                              fontSize: 10.5,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            for (final session in sessions)
-                              _WorkspaceSessionItemTile(
-                                icon: Icons.terminal_rounded,
-                                iconColor: accentColor,
-                                title: session.title,
-                                subtitle: session.workingDir,
-                                closeTooltip: '结束终端进程',
-                                onTap: () {
-                                  _controller.close();
-                                  widget.onSelectTerminalSession?.call(session);
-                                },
-                                onClose: () =>
-                                    widget.onCloseTerminalSession?.call(session),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.22),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                    child: _CompactActionButton(
-                      icon: Icons.add_rounded,
-                      label: '新建终端',
-                      accentColor: accentColor,
-                      onTap: () {
-                        _controller.close();
-                        widget.onOpenTerminal();
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _BrowserMenuAnchor extends StatefulWidget {
-  const _BrowserMenuAnchor({
-    required this.browserCount,
-    required this.onSelectBrowserTab,
-    required this.onCloseBrowserSession,
-    required this.onOpenBrowser,
-    required this.onOpenBrowserSessions,
-  });
-
-  final int browserCount;
-  final ValueChanged<WorkspaceBrowserTabState>? onSelectBrowserTab;
-  final ValueChanged<String>? onCloseBrowserSession;
-  final VoidCallback onOpenBrowser;
-  final VoidCallback onOpenBrowserSessions;
-
-  @override
-  State<_BrowserMenuAnchor> createState() => _BrowserMenuAnchorState();
-}
-
-class _BrowserMenuAnchorState extends State<_BrowserMenuAnchor> {
-  final MenuController _controller = MenuController();
-  bool _isOpen = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final accentColor = colorScheme.primary;
-    final browserStore = WorkspaceBrowserViewStore.instance;
-
-    return MenuAnchor(
-      controller: _controller,
-      alignmentOffset: const Offset(0, 4),
-      onOpen: () => setState(() => _isOpen = true),
-      onClose: () => setState(() => _isOpen = false),
-      style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(
-          colorScheme.surfaceContainerHigh,
-        ),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        elevation: const WidgetStatePropertyAll(8),
-        shadowColor: WidgetStatePropertyAll(
-          Colors.black.withValues(alpha: 0.45),
-        ),
-        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-            ),
-          ),
-        ),
-      ),
-      builder: (context, controller, _) {
-        return _WorkspaceToolCapsule(
-          icon: Icons.public_rounded,
-          accentColor: accentColor,
-          label: '${widget.browserCount} 个浏览器',
-          isExpanded: _isOpen,
-          hasActiveSessions: widget.browserCount > 0,
-          onTap: () {
-            if (_controller.isOpen) {
-              _controller.close();
-            } else {
-              _controller.open();
-            }
-          },
-        );
-      },
-      menuChildren: <Widget>[
-        SizedBox(
-          width: 250,
-          child: ListenableBuilder(
-            listenable: browserStore,
-            builder: (context, _) {
-              final tabs = browserStore.tabs;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (tabs.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          Icon(
-                            Icons.info_outline_rounded,
-                            size: 14,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.7,
-                            ),
-                          ),
-                          const SizedBox(width: 7),
-                          Text(
-                            '暂无打开的浏览器页面',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.75,
-                              ),
-                              fontSize: 11.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-                              child: Row(
-                                children: <Widget>[
-                                  Text(
-                                    '运行中的浏览器 (${tabs.length})',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: colorScheme.onSurfaceVariant
-                                          .withValues(alpha: 0.8),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  InkWell(
-                                    borderRadius: BorderRadius.circular(4),
-                                    onTap: () {
-                                      _controller.close();
-                                      widget.onOpenBrowserSessions();
-                                    },
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 4,
-                                        vertical: 2,
-                                      ),
-                                      child: Text(
-                                        '管理全部',
-                                        style: theme.textTheme.labelSmall
-                                            ?.copyWith(
-                                              color: accentColor,
-                                              fontSize: 10.5,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            for (final tab in tabs)
-                              _WorkspaceSessionItemTile(
-                                icon: Icons.public_rounded,
-                                iconColor: accentColor,
-                                title: tab.title.isNotEmpty ? tab.title : '浏览器',
-                                subtitle: tab.siteHost.isNotEmpty
-                                    ? tab.siteHost
-                                    : tab.url,
-                                closeTooltip: '关闭浏览器页面',
-                                onTap: () {
-                                  _controller.close();
-                                  widget.onSelectBrowserTab?.call(tab);
-                                },
-                                onClose: () =>
-                                    widget.onCloseBrowserSession?.call(tab.id),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.22),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                    child: _CompactActionButton(
-                      icon: Icons.add_rounded,
-                      label: '新建浏览器',
-                      accentColor: accentColor,
-                      onTap: () {
-                        _controller.close();
-                        widget.onOpenBrowser();
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _WorkspaceSessionItemTile extends StatelessWidget {
-  const _WorkspaceSessionItemTile({
-    required this.icon,
-    required this.iconColor,
-    required this.title,
-    required this.subtitle,
-    required this.closeTooltip,
-    required this.onTap,
-    required this.onClose,
-  });
-
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String subtitle;
-  final String closeTooltip;
-  final VoidCallback onTap;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final trimmedSubtitle = subtitle.trim();
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: Row(
-            children: <Widget>[
-              Icon(icon, size: 14, color: iconColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurface,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
-                      ),
-                    ),
-                    if (trimmedSubtitle.isNotEmpty)
-                      Text(
-                        trimmedSubtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.7,
-                          ),
-                          fontSize: 10.5,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox.square(
-                dimension: 22,
-                child: IconButton(
-                  padding: EdgeInsets.zero,
-                  iconSize: 14,
-                  tooltip: closeTooltip,
-                  onPressed: onClose,
-                  icon: Icon(
-                    Icons.close_rounded,
-                    color: colorScheme.onSurfaceVariant.withValues(
-                      alpha: 0.75,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -1840,39 +1104,19 @@ class _CompactActionButton extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    return Material(
-      color: accentColor.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(6),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: Container(
-          height: 28,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: accentColor.withValues(alpha: 0.28),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, size: 13, color: accentColor),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 11.5,
-                ),
-              ),
-            ],
-          ),
-        ),
+    return TextButton.icon(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        foregroundColor: colorScheme.onSurface,
+        minimumSize: const Size(double.infinity, 28),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        textStyle: theme.textTheme.labelSmall?.copyWith(fontSize: 11.5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       ),
+      icon: Icon(icon, size: 13, color: accentColor),
+      label: Text(label),
     );
   }
 }
@@ -1937,16 +1181,12 @@ class _WorkspaceCapsuleButton extends StatelessWidget {
     );
   }
 }
-
-
-
 class _WorkspaceToolCapsule extends StatelessWidget {
   const _WorkspaceToolCapsule({
     required this.icon,
     required this.accentColor,
     required this.label,
     required this.isExpanded,
-    required this.hasActiveSessions,
     required this.onTap,
   });
 
@@ -1954,121 +1194,46 @@ class _WorkspaceToolCapsule extends StatelessWidget {
   final Color accentColor;
   final String label;
   final bool isExpanded;
-  final bool hasActiveSessions;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final activeBg = isExpanded
-        ? accentColor.withValues(alpha: 0.16)
-        : hasActiveSessions
-        ? accentColor.withValues(alpha: 0.10)
-        : colorScheme.surfaceContainerHighest.withValues(alpha: 0.40);
-    final activeBorder = isExpanded
-        ? accentColor.withValues(alpha: 0.45)
-        : colorScheme.outlineVariant.withValues(alpha: 0.24);
-
-    return Material(
-      color: activeBg,
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: activeBorder),
+    return TextButton(
+      style: TextButton.styleFrom(
+        foregroundColor: isExpanded ? colorScheme.primary : colorScheme.onSurface,
+        backgroundColor: isExpanded
+            ? colorScheme.primaryContainer
+            : colorScheme.surfaceContainerHigh,
+        minimumSize: const Size(0, 28),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        textStyle: theme.textTheme.labelMedium?.copyWith(fontSize: 11.5),
+      ),
+      onPressed: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 14, color: accentColor),
+          const SizedBox(width: 5),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 150),
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, size: 14, color: accentColor),
-              const SizedBox(width: 5),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 150),
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                    color: isExpanded ? accentColor : colorScheme.onSurface,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 3),
-              Icon(
-                isExpanded
-                    ? Icons.keyboard_arrow_up_rounded
-                    : Icons.keyboard_arrow_down_rounded,
-                size: 14,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-              ),
-            ],
+          const SizedBox(width: 3),
+          Icon(
+            isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+            size: 14,
+            color: colorScheme.onSurfaceVariant,
           ),
-        ),
+        ],
       ),
     );
   }
 }
-
-class _WorkspaceActionCapsule extends StatelessWidget {
-  const _WorkspaceActionCapsule({
-    required this.icon,
-    required this.accentColor,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final Color accentColor;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.40),
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.24),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, size: 14, color: accentColor),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 
 class _WorkspaceContributionAvatarStrip extends StatelessWidget {
   /// Creates the compact avatar strip for successfully loaded contribution usage.
@@ -2344,5 +1509,3 @@ class _WorkspaceInlineState extends StatelessWidget {
     );
   }
 }
-
-

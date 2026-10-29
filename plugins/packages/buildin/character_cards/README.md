@@ -382,3 +382,11 @@ SQLite 保存同步的源记录及其 embedding，检索不再在 SQL 中展开�
 ANN 是近似检索，文件夹、时间和排除条件传入 WASM 过滤器；候选预算有上限，避免文档大量分块时退化为全库精确扫描。
 词项和关系评分在 `src/memory-search.ts` 中实现，保留 RRF、权重模式、阈值和排除后的分页语义。
 索引当前保留在运行时内存中，冷启动会重建索引；WASM 保存／恢复能力已由独立示例验证，尚未接入记忆插件的磁盘检查点。
+
+## Runtime diagnostics
+
+`[character_cards]` prints short send checks/decisions, group takeover, native
+send starts and group completion. Normal storage, role validation and UI reads
+are silent. Completed operations taking at least one second report their duration.
+Failures include the await stage, short chat ID and task ID; the same error is
+printed once, without JSON payloads, message text or full stacks.

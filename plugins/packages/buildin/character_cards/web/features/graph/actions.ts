@@ -10,7 +10,7 @@ export function createGraphActionsFeature(context: EditorContext) {
 
   /** Opens a graph with data strictly scoped to the selected card's current binding. */
   async function openGraph(ownerKey: string, name: string): Promise<void> {
-    const dialog = pushDialog({ type: "graph", ownerKey, name, loading: true, data: null, selected: null, selectedEdge: null, linkMode: false, linkSource: null, viewport: null, layoutSignature: null, sizes: new Map(), query: "", appliedQuery: "", searchIds: null, folder: "*", positions: new Map(), camera: { x: 0, y: 0, scale: 1 } });
+    const dialog = pushDialog({ type: "graph", ownerKey, name, loading: true, data: null, selected: null, selectedEdge: null, linkMode: false, linkSource: null, viewport: null, layoutSignature: null, sizes: new Map(), query: "", appliedQuery: "", searchIds: null, folder: "*", inspectorExpanded: false, positions: new Map(), camera: { x: 0, y: 0, scale: 1 } });
     try { dialog.data = await request({ action: "graph", ownerKey }); dialog.loading = false; renderDialogs(); }
     catch (error) { dialog.loading = false; dialog.error = String(error); renderDialogs(); }
   }
@@ -19,6 +19,10 @@ export function createGraphActionsFeature(context: EditorContext) {
   async function handleAction(action: string, element: HTMLElement | SVGElement): Promise<void> {
     switch (action) {
       case "owner-graph": await openGraph(dataValue(element, "owner"), dataValue(element, "name")); return;
+
+      case "toggle-graph-inspector": {
+        const graph = topDialog("graph"); graph.inspectorExpanded = !graph.inspectorExpanded; updateGraphSurface(graph); return;
+      }
 
       case "refresh-graph": { const dialog = topDialog("graph"); dialog.data = await request({ action: "graph", ownerKey: dialog.ownerKey }); renderDialogs(); return; }
 
@@ -41,7 +45,8 @@ export function createGraphActionsFeature(context: EditorContext) {
           item => item.id === linkId,
         );
         if (edge === undefined) throw new Error("记忆关系不存在");
-        graph.selected = null; graph.selectedEdge = edge.id; updateGraphSurface(graph); return;
+        graph.selected = null; graph.selectedEdge = edge.id; updateGraphSurface(graph);
+        dialogsRoot.querySelector("dialog:last-child .graph-inspector")?.scrollTo(0, 0); return;
       }
 
       case "select-memory":
@@ -60,6 +65,7 @@ export function createGraphActionsFeature(context: EditorContext) {
           }
         }
         updateGraphSurface(graph);
+        dialogsRoot.querySelector("dialog:last-child .graph-inspector")?.scrollTo(0, 0);
         if (action === "locate-memory") {
           const position = graphEntry(graph.positions, graph.selected), viewport = graphViewport(graph);
           const scale = Math.max(1, graph.camera.scale);
@@ -89,5 +95,5 @@ export function createGraphActionsFeature(context: EditorContext) {
       default: throw new Error(`Unknown graph/actions action: ${action}`);
     }
   }
-  return { names: ["owner-graph", "refresh-graph", "search-graph", "clear-search", "select-edge", "select-memory", "locate-memory", "zoom-in", "zoom-out", "fit-graph", "export-graph", "import-graph"], handleAction, openGraph };
+  return { names: ["owner-graph", "toggle-graph-inspector", "refresh-graph", "search-graph", "clear-search", "select-edge", "select-memory", "locate-memory", "zoom-in", "zoom-out", "fit-graph", "export-graph", "import-graph"], handleAction, openGraph };
 }

@@ -25,7 +25,7 @@ struct FailingSession(Arc<AtomicUsize>);
 
 impl RuntimeStorageWriteHost for FailingWriteHost {
     fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        assert!(path.starts_with("runtime/chat_attachments/"));
+        assert!(path.starts_with("runtime/temp/clean_on_exit/chat_attachment_uploads/"));
         Ok(Box::new(FailingSession(self.0.clone())))
     }
 }
@@ -135,7 +135,7 @@ async fn streamed_attachment_worker() {
     assert_eq!(attachment.fileName, "大文件.apk");
     assert!(
         std::path::Path::new(&attachment.filePath)
-            .starts_with(root.join("runtime/chat_attachments"))
+            .starts_with(root.join("runtime/temp/clean_on_exit/chat_attachment_uploads"))
     );
     let mut file = std::fs::File::open(&attachment.filePath).unwrap();
     let mut buffer = [0u8; 31];
@@ -248,7 +248,7 @@ async fn streamed_attachment_worker() {
     assert_eq!(discarded.load(Ordering::SeqCst), 1);
 
     // Native write-session staging files must also have been removed on every failure.
-    let stagingLeftovers = std::fs::read_dir(root.join("runtime/chat_attachments"))
+    let stagingLeftovers = std::fs::read_dir(root.join("runtime/temp/clean_on_exit/chat_attachment_uploads"))
         .unwrap()
         .filter(|entry| {
             entry

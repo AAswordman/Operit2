@@ -151,6 +151,7 @@ export interface LinkRecord { id: string; sourceMemoryId: string; targetMemoryId
 export type ActivePromptRecord = { CharacterCard: { id: string } } | { CharacterGroup: { id: string } } | { Model: { id: "chat" } };
 /** Defines the editor's complete directory snapshot. */
 export interface SnapshotRecord {
+  memoryOwnerKeys: string[];
   cards: CharacterRecord[]; groups: GroupRecord[]; stores: StoreRecord[]; tags: TagRecord[];
   models: ModelSummaryRecord[]; ttsConfigs: TtsConfigRecord[]; toolCatalog: ToolCatalogRecord; active: ActivePromptRecord;
 }

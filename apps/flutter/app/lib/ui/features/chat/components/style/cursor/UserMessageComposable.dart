@@ -9,6 +9,7 @@ import '../../../../../theme/OperitTheme.dart';
 import '../../attachments/ChatMessageImageAttachments.dart';
 import '../bubble/BubbleSurface.dart';
 import '../../../viewmodel/ChatViewModel.dart';
+import 'CursorMessageLayout.dart';
 
 export '../../attachments/ChatMessageImageAttachments.dart'
     show AttachmentData, ChatMessageAttachments, ChatMessageImageAttachments;
@@ -49,49 +50,36 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
     final transparentSurface =
         themePreferenceSnapshot.transparentSurfaceEnabled;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
+    return CursorMessageLayout(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                if (parseResult.replyInfo != null)
-                  _ReplyInfoView(replyInfo: parseResult.replyInfo!),
-                if (parseResult.attachments.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: ChatMessageAttachments(
-                      attachments: parseResult.attachments,
-                      enableDialogs: true,
-                      isBubbleMode: false,
-                    ),
-                  ),
-                SizedBox(
-                  width: double.infinity,
-                  child: BubbleSurface(
-                    color: bubbleColor,
-                    borderRadius: bubbleBorderRadius,
-                    transparentSurface: transparentSurface,
-                    child: Padding(
-                      padding: contentPadding,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          SelectableText(
-                            parseResult.processedText,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: effectiveTextColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+          if (parseResult.replyInfo != null)
+            _ReplyInfoView(replyInfo: parseResult.replyInfo!),
+          if (parseResult.attachments.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: ChatMessageAttachments(
+                attachments: parseResult.attachments,
+                enableDialogs: true,
+                isBubbleMode: false,
+              ),
+            ),
+          SizedBox(
+            width: double.infinity,
+            child: BubbleSurface(
+              color: bubbleColor,
+              borderRadius: bubbleBorderRadius,
+              transparentSurface: transparentSurface,
+              child: Padding(
+                padding: contentPadding,
+                child: SelectableText(
+                  parseResult.processedText,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: effectiveTextColor,
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ],

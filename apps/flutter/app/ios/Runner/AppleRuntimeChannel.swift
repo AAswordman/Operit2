@@ -420,14 +420,9 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
   }
 
   /// Returns the default Apple runtime and workspace roots.
-  ///
-  /// The sandbox is reported through `/var/...`, whose ancestor `/var` is a system
-  /// symlink to `/private/var`. The native rescue boundary rejects symlinked
-  /// ancestors, so the host resolves the physical path before crossing the ABI.
   private func defaultStorageRoots() -> (runtime: URL, workspace: URL) {
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Operit2", isDirectory: true)
-      .resolvingSymlinksInPath
     return (
       base.appendingPathComponent("runtime", isDirectory: true),
       base.appendingPathComponent("workspaces", isDirectory: true)
@@ -506,17 +501,13 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
     else { return response }
     let pattern = #"^(.*?/Containers/Data/Application/)[0-9A-Fa-f-]{36}(/.*)$"#
     let regex = try NSRegularExpression(pattern: pattern)
-    // Resolve system aliases such as /var -> /private/var on both sides so
-    // records saved through either path form still compare equal after the
-    // container UUID changes.
-    let current = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath.path as NSString
+    let current = NSHomeDirectory() as NSString
     let currentWithSuffix = current.appendingPathComponent("Library") as NSString
     guard let currentMatch = regex.firstMatch(in: currentWithSuffix as String,
       range: NSRange(location: 0, length: currentWithSuffix.length)) else { return response }
     var changed = false
     for key in ["runtimeRoot", "workspaceRoot"] {
-      guard let storedPath = config[key] as? String else { continue }
-      let oldPath = URL(fileURLWithPath: storedPath).resolvingSymlinksInPath.path
+      guard let oldPath = config[key] as? String else { continue }
       let old = oldPath as NSString
       guard let match = regex.firstMatch(in: oldPath, range: NSRange(location: 0, length: old.length)),
             old.substring(with: match.range(at: 1)) == currentWithSuffix.substring(with: currentMatch.range(at: 1))

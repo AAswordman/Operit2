@@ -164,14 +164,12 @@ impl CoreNodeBindingStore {
         self.create(key, &self.localNodeId)
     }
 
-    /// Deletes one Binding by appending an authoritative entity-state tombstone.
+    /// Retires a key even when its Binding has not arrived, without requiring its execution node.
     pub fn delete(&self, key: &str) -> Result<(), String> {
         let _lock = coreNodeBindingMutationLock()
             .lock()
             .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
         validateBindingKey(key)?;
-        self.bindingRecord(key)?
-            .ok_or_else(|| format!("Binding does not exist: {key}"))?;
         self.appendBindingOperation(key, "delete", serde_json::Value::Null)?;
         self.removeCachedBinding(key)?;
         Ok(())

@@ -14,6 +14,7 @@ import '../../part/StructuredMessagePartRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
 import '../../part/ToolCallResultMergeRender.dart';
 import '../../../viewmodel/ChatViewModel.dart';
+import 'CursorMessageLayout.dart';
 
 class AiMessageComposable extends StatefulWidget {
   const AiMessageComposable({
@@ -137,42 +138,32 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
         },
         onPointerUp: (_) => _handlePointerEnd(),
         onPointerCancel: (_) => _handlePointerEnd(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
+        child: CursorMessageLayout(
+          verticalPadding: 2,
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left:
-                            (themePreferenceSnapshot.bubbleAiContentPaddingLeft -
-                                    12)
-                                .clamp(0, double.infinity)
-                                .toDouble(),
-                        right:
-                            (themePreferenceSnapshot
-                                        .bubbleAiContentPaddingRight -
-                                    12)
-                                .clamp(0, double.infinity)
-                                .toDouble(),
-                      ),
-                      child: messageBody,
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                      child: _CursorAiMessageHeader(
-                        message: widget.message,
-                        onTap: widget.onIdentityTap,
-                        snapshot: themePreferenceSnapshot,
-                        l10n: l10n,
-                        externalActive: _isMessageHovered || _isMessageTouched,
-                      ),
-                    ),
-                  ],
+              Padding(
+                padding: EdgeInsets.only(
+                  left:
+                      (themePreferenceSnapshot.bubbleAiContentPaddingLeft - 12)
+                          .clamp(0, double.infinity)
+                          .toDouble(),
+                  right:
+                      (themePreferenceSnapshot.bubbleAiContentPaddingRight - 12)
+                          .clamp(0, double.infinity)
+                          .toDouble(),
+                ),
+                child: messageBody,
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _CursorAiMessageHeader(
+                  message: widget.message,
+                  onTap: widget.onIdentityTap,
+                  snapshot: themePreferenceSnapshot,
+                  l10n: l10n,
+                  externalActive: _isMessageHovered || _isMessageTouched,
                 ),
               ),
             ],

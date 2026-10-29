@@ -3,7 +3,7 @@ import type { Storage } from "../../../../../types/storage";
 import type { DocumentChunk, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryJobState, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchDebug, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues } from "../model";
 import { uuid } from "../identity";
 import { assertMemory, assertMemoryValues, assertMemorySettings, assertNumber, assertSearchConfig, assertSearchOptions, assertString, normalizeNames, requireId, requireName } from "../validation";
-import { assertMemorySpace } from "./state";
+import { assertMemorySpace, createMemorySpace } from "./state";
 import { clone, equal, storedValue } from "./records";
 import { CharacterMemoryDatabase } from "./memory";
 import type { ObjectMutation } from "./memory";
@@ -42,9 +42,21 @@ export class DatabaseMemoryRepository {
   /** Retains only the storage capability; network work never owns a database transaction. */
   constructor(protected readonly memoryDatabase: CharacterMemoryDatabase) {}
 
-  /** Requires the persisted metadata for one exact owner. */
+  /** Keeps nullable reads separate from versioned writes to an existing library. */
+  private findOwner(ownerKey: string): Promise<Storage.Entry<Owner> | null> {
+    return this.memoryDatabase.get<Owner>("owners", requireId(ownerKey, "memory owner"));
+  }
+
+  async hasMemoryOwner(ownerKey: string): Promise<boolean> { return (await this.findOwner(ownerKey)) !== null; }
+
+  /** Missing libraries have default values in memory; reads never publish new records. */
+  private async readOwnerValue(ownerKey: string): Promise<Owner> {
+    return (await this.findOwner(ownerKey))?.value ?? createMemorySpace(ownerKey);
+  }
+
+  /** Requires persisted metadata and its exact version for a write. */
   protected async owner(ownerKey: string): Promise<Storage.Entry<Owner>> {
-    const entry = await this.memoryDatabase.get<Owner>("owners", requireId(ownerKey, "memory owner"));
+    const entry = await this.findOwner(ownerKey);
     if (entry === null) throw new Error("Missing memory owner: " + ownerKey);
     return entry;
   }
@@ -78,7 +90,7 @@ export class DatabaseMemoryRepository {
   }
 
   /** Reads settings from one owner record. */
-  async readMemorySettings(ownerKey: string): Promise<MemorySettings> { return (await this.owner(ownerKey)).value.settings; }
+  async readMemorySettings(ownerKey: string): Promise<MemorySettings> { return (await this.readOwnerValue(ownerKey)).settings; }
 
   /** Updates complete settings with the owner's exact version precondition. */
   async writeMemorySettings(ownerKey: string, settings: MemorySettings): Promise<void> {
@@ -98,7 +110,7 @@ export class DatabaseMemoryRepository {
   }
 
   /** Reads persisted search weights without reading memory bodies. */
-  async readMemorySearchConfig(ownerKey: string): Promise<MemorySearchConfig> { return (await this.owner(ownerKey)).value.searchConfig; }
+  async readMemorySearchConfig(ownerKey: string): Promise<MemorySearchConfig> { return (await this.readOwnerValue(ownerKey)).searchConfig; }
 
   /** Writes complete search configuration through optimistic concurrency. */
   async writeMemorySearchConfig(ownerKey: string, searchConfig: MemorySearchConfig): Promise<void> {
@@ -108,14 +120,18 @@ export class DatabaseMemoryRepository {
 
   /** Returns bounded ranked results produced by the database. */
   async searchMemories(options: MemorySearchOptions): Promise<Memory[]> {
-    assertSearchOptions(options); const owner = await this.owner(options.ownerKey);
+    assertSearchOptions(options);
+    const owner = await this.findOwner(options.ownerKey);
+    if (owner === null) return [];
     return (await searchMemoryDatabase(this.memoryDatabase, owner.value.settings, options, owner.value.searchConfig)).result.candidates.map(
       /** Returns the complete source records selected in the database. */ hit => hit.memory);
   }
 
   /** Returns one filtered page and its database-counted snapshot exclusions. */
   async searchMemoryPage(options: MemorySearchOptions): Promise<import("../api").DomainOutput<"memory.searchWithOptions">> {
-    assertSearchOptions(options); const owner = await this.owner(options.ownerKey);
+    assertSearchOptions(options);
+    const owner = await this.findOwner(options.ownerKey);
+    if (owner === null) return { ownerKey: options.ownerKey, items: [], documents: [], excludedBySnapshotCount: 0 };
     const { result, queryEmbedding } = await searchMemoryDatabase(this.memoryDatabase, owner.value.settings, options, owner.value.searchConfig);
     const items = result.candidates.map(/** Projects only selected source records. */ hit => hit.memory);
     const documents = await Promise.all(items.filter(/** Selects only returned document sources. */ memory => memory.isDocumentNode).map(
@@ -126,20 +142,22 @@ export class DatabaseMemoryRepository {
 
   /** Returns bounded score explanations from the same database query used by recall. */
   async searchMemoryDebug(options: MemorySearchOptions, config: MemorySearchConfig): Promise<MemorySearchDebug> {
-    assertSearchOptions(options); assertSearchConfig(config); const owner = await this.owner(options.ownerKey);
+    assertSearchOptions(options); assertSearchConfig(config);
+    const owner = await this.findOwner(options.ownerKey);
+    if (owner === null) return { query: options.query, config, relevanceThreshold: options.relevanceThreshold ?? 0, memoriesInScopeCount: 0, candidates: [], excludedBySnapshotCount: 0 };
     return (await searchMemoryDatabase(this.memoryDatabase, owner.value.settings, options, config, true)).result;
   }
 
   /** Lists an explicitly requested owner library without loading other owners. */
   async listMemories(ownerKey: string): Promise<Memory[]> {
-    await this.owner(ownerKey);
+    if (!(await this.hasMemoryOwner(ownerKey))) return [];
     const rows = await this.memoryDatabase.all<Envelope<Memory>>("memories", ownerKey);
     return rows.map(/** Projects original records for the library view or export. */ row => row.value.record);
   }
 
   /** Reads only the explicitly selected exact titles, including genuine duplicate clusters. */
   async readMemoriesByTitles(ownerKey: string, titles: string[]): Promise<Memory[]> {
-    await this.owner(ownerKey);
+    if (!(await this.hasMemoryOwner(ownerKey))) return [];
     const rows = await this.memoryDatabase.all<Envelope<Memory>>("memories", ownerKey, "json_extract(value,'$.record.title') IN (SELECT value FROM json_each(?))", [JSON.stringify(titles)]);
     return rows.map(/** Projects only selected source records. */ row => row.value.record);
   }
@@ -155,7 +173,7 @@ export class DatabaseMemoryRepository {
 
   /** Reads distinct folder paths in the database and expands their parent directories. */
   async listMemoryFolders(ownerKey: string): Promise<string[]> {
-    await this.owner(ownerKey);
+    if (!(await this.hasMemoryOwner(ownerKey))) return [];
     const rows = await this.memoryDatabase.query("SELECT DISTINCT json_extract(value,'$.record.folderPath') AS folder FROM plugin_objects WHERE collection='memories' AND key>=? AND key<?", [ownerKey + "/", ownerKey + "0"]);
     const folders = new Set<string>();
     for (const row of rows) {
@@ -258,7 +276,7 @@ export class DatabaseMemoryRepository {
 
   /** Lists explicit graph relationships for one owner. */
   async listMemoryLinks(ownerKey: string): Promise<MemoryLink[]> {
-    await this.owner(ownerKey);
+    if (!(await this.hasMemoryOwner(ownerKey))) return [];
     return (await this.memoryDatabase.all<Envelope<MemoryLink>>("links", ownerKey)).map(/** Projects complete graph relationships. */ row => row.value.record);
   }
 
@@ -290,7 +308,9 @@ export class DatabaseMemoryRepository {
 
   /** Reads job metadata and candidates independently of memory bodies and vectors. */
   async readMemoryJobState(ownerKey: string): Promise<MemoryJobState> {
-    const owner = await this.owner(ownerKey), candidates = await this.rows("candidates", ownerKey);
+    const owner = await this.findOwner(ownerKey);
+    if (owner === null) return createMemorySpace(ownerKey);
+    const candidates = await this.rows("candidates", ownerKey);
     const state: MemoryJobState = { ...owner.value, candidates: candidates.map(/** Projects job candidates without memory data. */ row => (row.value as unknown as Envelope<MemoryJobState["candidates"][number]>).record) };
     this.snapshots.set(state, clone([{ collection: "owners", key: ownerKey, value: storedValue(owner.value), version: owner.version }, ...candidates]));
     return state;
@@ -321,7 +341,8 @@ export class DatabaseMemoryRepository {
 
   /** Counts candidate states in SQLite without loading their payloads. */
   async readMemoryAutoSaveStatus(ownerKey: string): Promise<MemoryAutoSaveStatus> {
-    const owner = await this.owner(ownerKey);
+    const owner = await this.findOwner(ownerKey);
+    if (owner === null) return { ownerKey, pendingCandidates: 0, pendingChats: 0, processingCandidates: 0, failedCandidates: 0, nextRunAtMs: 0, minutesUntilNextRun: 0, lastError: "" };
     const rows = await this.memoryDatabase.query(`SELECT json_extract(value,'$.record.status') AS status,count(*) AS count,count(DISTINCT json_extract(value,'$.record.chatId')) AS chats
       FROM plugin_objects WHERE collection='candidates' AND key>=? AND key<? GROUP BY json_extract(value,'$.record.status')`, [ownerKey + "/", ownerKey + "0"]);
     let pendingCandidates = 0, pendingChats = 0, processingCandidates = 0, failedCandidates = 0;
@@ -337,7 +358,7 @@ export class DatabaseMemoryRepository {
   }
 
   /** Reads persisted rebuild progress without waiting for model requests. */
-  async readMemoryRebuildProgress(ownerKey: string): Promise<MemoryRebuildProgress> { return (await this.owner(ownerKey)).value.rebuildProgress; }
+  async readMemoryRebuildProgress(ownerKey: string): Promise<MemoryRebuildProgress> { return (await this.readOwnerValue(ownerKey)).rebuildProgress; }
 
   /** Cancels a running task through an exact owner-version update. */
   async cancelMemoryRebuild(ownerKey: string): Promise<void> {
@@ -368,7 +389,9 @@ export class DatabaseMemoryRepository {
 
   /** Reads full owner records only for explicit backups and bulk imports. */
   async readMemorySpace(ownerKey: string): Promise<MemorySpace> {
-    const owner = await this.owner(ownerKey), state: MemorySpace = { ...owner.value, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
+    const owner = await this.findOwner(ownerKey);
+    if (owner === null) return createMemorySpace(ownerKey);
+    const state: MemorySpace = { ...owner.value, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
     const before: Row[] = [{ collection: "owners", key: ownerKey, value: storedValue(owner.value), version: owner.version }];
     for (const collection of ["memories", "links", "chunks", "candidates"] as const) {
       const rows = await this.rows(collection, ownerKey); before.push(...rows);

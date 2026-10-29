@@ -3607,10 +3607,25 @@ var DatabaseMemoryRepository = class {
     this.memoryDatabase = memoryDatabase;
     this.snapshots = /* @__PURE__ */ new WeakMap();
   }
-  /** Requires the persisted metadata for one exact owner. */
+  /** Keeps nullable reads separate from versioned writes to an existing library. */
+  findOwner(ownerKey) {
+    return this.memoryDatabase.get("owners", requireId(ownerKey, "memory owner"));
+  }
+  hasMemoryOwner(ownerKey) {
+    return __async(this, null, function* () {
+      return (yield this.findOwner(ownerKey)) !== null;
+    });
+  }
+  /** Missing libraries have default values in memory; reads never publish new records. */
+  readOwnerValue(ownerKey) {
+    return __async(this, null, function* () {
+      return (yield this.findOwner(ownerKey))?.value ?? createMemorySpace(ownerKey);
+    });
+  }
+  /** Requires persisted metadata and its exact version for a write. */
   owner(ownerKey) {
     return __async(this, null, function* () {
-      const entry = yield this.memoryDatabase.get("owners", requireId(ownerKey, "memory owner"));
+      const entry = yield this.findOwner(ownerKey);
       if (entry === null) throw new Error("Missing memory owner: " + ownerKey);
       return entry;
     });
@@ -3652,7 +3667,7 @@ var DatabaseMemoryRepository = class {
   /** Reads settings from one owner record. */
   readMemorySettings(ownerKey) {
     return __async(this, null, function* () {
-      return (yield this.owner(ownerKey)).value.settings;
+      return (yield this.readOwnerValue(ownerKey)).settings;
     });
   }
   /** Updates complete settings with the owner's exact version precondition. */
@@ -3678,7 +3693,7 @@ var DatabaseMemoryRepository = class {
   /** Reads persisted search weights without reading memory bodies. */
   readMemorySearchConfig(ownerKey) {
     return __async(this, null, function* () {
-      return (yield this.owner(ownerKey)).value.searchConfig;
+      return (yield this.readOwnerValue(ownerKey)).searchConfig;
     });
   }
   /** Writes complete search configuration through optimistic concurrency. */
@@ -3693,7 +3708,8 @@ var DatabaseMemoryRepository = class {
   searchMemories(options) {
     return __async(this, null, function* () {
       assertSearchOptions(options);
-      const owner2 = yield this.owner(options.ownerKey);
+      const owner2 = yield this.findOwner(options.ownerKey);
+      if (owner2 === null) return [];
       return (yield searchMemoryDatabase(this.memoryDatabase, owner2.value.settings, options, owner2.value.searchConfig)).result.candidates.map(
         /** Returns the complete source records selected in the database. */
         (hit) => hit.memory
@@ -3704,7 +3720,8 @@ var DatabaseMemoryRepository = class {
   searchMemoryPage(options) {
     return __async(this, null, function* () {
       assertSearchOptions(options);
-      const owner2 = yield this.owner(options.ownerKey);
+      const owner2 = yield this.findOwner(options.ownerKey);
+      if (owner2 === null) return { ownerKey: options.ownerKey, items: [], documents: [], excludedBySnapshotCount: 0 };
       const { result: result2, queryEmbedding } = yield searchMemoryDatabase(this.memoryDatabase, owner2.value.settings, options, owner2.value.searchConfig);
       const items = result2.candidates.map(
         /** Projects only selected source records. */
@@ -3727,14 +3744,15 @@ var DatabaseMemoryRepository = class {
     return __async(this, null, function* () {
       assertSearchOptions(options);
       assertSearchConfig(config);
-      const owner2 = yield this.owner(options.ownerKey);
+      const owner2 = yield this.findOwner(options.ownerKey);
+      if (owner2 === null) return { query: options.query, config, relevanceThreshold: options.relevanceThreshold ?? 0, memoriesInScopeCount: 0, candidates: [], excludedBySnapshotCount: 0 };
       return (yield searchMemoryDatabase(this.memoryDatabase, owner2.value.settings, options, config, true)).result;
     });
   }
   /** Lists an explicitly requested owner library without loading other owners. */
   listMemories(ownerKey) {
     return __async(this, null, function* () {
-      yield this.owner(ownerKey);
+      if (!(yield this.hasMemoryOwner(ownerKey))) return [];
       const rows = yield this.memoryDatabase.all("memories", ownerKey);
       return rows.map(
         /** Projects original records for the library view or export. */
@@ -3745,7 +3763,7 @@ var DatabaseMemoryRepository = class {
   /** Reads only the explicitly selected exact titles, including genuine duplicate clusters. */
   readMemoriesByTitles(ownerKey, titles) {
     return __async(this, null, function* () {
-      yield this.owner(ownerKey);
+      if (!(yield this.hasMemoryOwner(ownerKey))) return [];
       const rows = yield this.memoryDatabase.all("memories", ownerKey, "json_extract(value,'$.record.title') IN (SELECT value FROM json_each(?))", [JSON.stringify(titles)]);
       return rows.map(
         /** Projects only selected source records. */
@@ -3767,7 +3785,7 @@ var DatabaseMemoryRepository = class {
   /** Reads distinct folder paths in the database and expands their parent directories. */
   listMemoryFolders(ownerKey) {
     return __async(this, null, function* () {
-      yield this.owner(ownerKey);
+      if (!(yield this.hasMemoryOwner(ownerKey))) return [];
       const rows = yield this.memoryDatabase.query("SELECT DISTINCT json_extract(value,'$.record.folderPath') AS folder FROM plugin_objects WHERE collection='memories' AND key>=? AND key<?", [ownerKey + "/", ownerKey + "0"]);
       const folders2 = /* @__PURE__ */ new Set();
       for (const row of rows) {
@@ -3943,7 +3961,7 @@ var DatabaseMemoryRepository = class {
   /** Lists explicit graph relationships for one owner. */
   listMemoryLinks(ownerKey) {
     return __async(this, null, function* () {
-      yield this.owner(ownerKey);
+      if (!(yield this.hasMemoryOwner(ownerKey))) return [];
       return (yield this.memoryDatabase.all("links", ownerKey)).map(
         /** Projects complete graph relationships. */
         (row) => row.value.record
@@ -3994,7 +4012,9 @@ var DatabaseMemoryRepository = class {
   /** Reads job metadata and candidates independently of memory bodies and vectors. */
   readMemoryJobState(ownerKey) {
     return __async(this, null, function* () {
-      const owner2 = yield this.owner(ownerKey), candidates = yield this.rows("candidates", ownerKey);
+      const owner2 = yield this.findOwner(ownerKey);
+      if (owner2 === null) return createMemorySpace(ownerKey);
+      const candidates = yield this.rows("candidates", ownerKey);
       const state = { ...owner2.value, candidates: candidates.map(
         /** Projects job candidates without memory data. */
         (row) => row.value.record
@@ -4036,7 +4056,8 @@ var DatabaseMemoryRepository = class {
   /** Counts candidate states in SQLite without loading their payloads. */
   readMemoryAutoSaveStatus(ownerKey) {
     return __async(this, null, function* () {
-      const owner2 = yield this.owner(ownerKey);
+      const owner2 = yield this.findOwner(ownerKey);
+      if (owner2 === null) return { ownerKey, pendingCandidates: 0, pendingChats: 0, processingCandidates: 0, failedCandidates: 0, nextRunAtMs: 0, minutesUntilNextRun: 0, lastError: "" };
       const rows = yield this.memoryDatabase.query(`SELECT json_extract(value,'$.record.status') AS status,count(*) AS count,count(DISTINCT json_extract(value,'$.record.chatId')) AS chats
       FROM plugin_objects WHERE collection='candidates' AND key>=? AND key<? GROUP BY json_extract(value,'$.record.status')`, [ownerKey + "/", ownerKey + "0"]);
       let pendingCandidates = 0, pendingChats = 0, processingCandidates = 0, failedCandidates = 0;
@@ -4065,7 +4086,7 @@ var DatabaseMemoryRepository = class {
   /** Reads persisted rebuild progress without waiting for model requests. */
   readMemoryRebuildProgress(ownerKey) {
     return __async(this, null, function* () {
-      return (yield this.owner(ownerKey)).value.rebuildProgress;
+      return (yield this.readOwnerValue(ownerKey)).rebuildProgress;
     });
   }
   /** Cancels a running task through an exact owner-version update. */
@@ -4107,7 +4128,9 @@ var DatabaseMemoryRepository = class {
   /** Reads full owner records only for explicit backups and bulk imports. */
   readMemorySpace(ownerKey) {
     return __async(this, null, function* () {
-      const owner2 = yield this.owner(ownerKey), state = { ...owner2.value, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
+      const owner2 = yield this.findOwner(ownerKey);
+      if (owner2 === null) return createMemorySpace(ownerKey);
+      const state = { ...owner2.value, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
       const before = [{ collection: "owners", key: ownerKey, value: storedValue(owner2.value), version: owner2.version }];
       for (const collection of ["memories", "links", "chunks", "candidates"]) {
         const rows = yield this.rows(collection, ownerKey);
@@ -4387,24 +4410,17 @@ var RepositorySession = class extends DatabaseMemoryRepository {
       return copy(get(this.state.cards, id2, "character"));
     });
   }
-  /** Removes memory owners whose backing entity no longer exists and returns their pruned owner keys.
-    * Orphan owners appear when a character or shared store is lost outside the removal path
-    * (for example a deleted-synced card); every scheduler transaction on such an owner throws,
-    * so the interval prunes them up front instead of failing forever. */
-  pruneOrphanMemoryOwners() {
+  /** Initializes a missing library only after the user's explicit request. */
+  createMemoryLibrary(ownerKey) {
     return __async(this, null, function* () {
-      const alive = (ownerKey) => {
-        const parts = ownerKey.split(":");
-        if (parts.length !== 2) return false;
-        if (parts[0] === "character") return this.state.cards.some((card) => card.id === parts[1]);
-        if (parts[0] === "shared") return this.state.stores.some((store) => store.id === parts[1]);
-        return false;
-      };
-      const orphans = this.state.owners.filter((space) => !alive(space.ownerKey)).map((space) => space.ownerKey);
-      if (orphans.length === 0) return [];
-      this.state.owners = this.state.owners.filter((space) => alive(space.ownerKey));
-      for (const ownerKey of orphans) this.documents.delete(ownerKey);
-      return orphans;
+      const [kind, id2, extra] = ownerKey.split(":");
+      if (extra !== void 0 || kind !== "character" && kind !== "shared") throw new Error("Invalid memory owner namespace");
+      get(kind === "character" ? this.state.cards : this.state.stores, id2, "memory owner");
+      if (yield this.hasMemoryOwner(ownerKey)) return;
+      const space = createMemorySpace(ownerKey);
+      if ((yield Tools.Files.exists(this.directory + "/" + space.userDocumentPath)).exists) {
+        this.state.owners.push(space);
+      } else this.addSpace(ownerKey);
     });
   }
   /** Creates all character fields and its genuine initialized memory space. */
@@ -4662,6 +4678,7 @@ var RepositorySession = class extends DatabaseMemoryRepository {
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   readUser(ownerKey) {
     return __async(this, null, function* () {
+      if (!(yield this.hasMemoryOwner(ownerKey))) return { ownerKey, content: "" };
       const path = yield this.readUserPath(ownerKey), document2 = this.documents.get(ownerKey);
       if (document2 !== void 0) return { ownerKey, content: document2.content };
       const result2 = yield Tools.Files.read(path);
@@ -4684,13 +4701,14 @@ var RepositorySession = class extends DatabaseMemoryRepository {
       return this.directory + "/" + this.space(ownerKey).userDocumentPath;
     });
   }
-  /** Lists only owners that genuinely exist in this plugin snapshot. */
+  /** Schedules initialized owners only after their independently synchronized configuration arrives. */
   listMemoryOwnerKeys() {
     return __async(this, null, function* () {
-      return this.state.owners.map(
-        /** Preserves each actual initialized namespace. */
-        (space) => space.ownerKey
-      );
+      const configured2 = /* @__PURE__ */ new Set([
+        ...this.state.cards.map((card) => "character:" + card.id),
+        ...this.state.stores.map((store) => "shared:" + store.id)
+      ]);
+      return this.state.owners.filter((space) => configured2.has(space.ownerKey)).map((space) => space.ownerKey);
     });
   }
   /** Creates one device-independent identity for a private persisted job or candidate. */
@@ -4890,7 +4908,8 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
         Promise.resolve().then(() => directories2.readToolCatalog()),
         this.readMetadata()
       ]);
-      return { cards, groups, stores, tags, models, ttsConfigs, toolCatalog, ...metadata };
+      const memoryOwnerKeys = (yield this.storage.memory.query("SELECT key FROM plugin_objects WHERE collection='owners' ORDER BY key")).map((row) => String(row.key));
+      return { cards, groups, stores, tags, models, ttsConfigs, toolCatalog, memoryOwnerKeys, ...metadata };
     }));
   }
   /** Reads complete character JSON documents. */
@@ -5037,7 +5056,8 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   }
   /** Reads the selected owner's actual USER.md document. */
   readUser(ownerKey) {
-    return this.readOwnerMetadata(ownerKey, (row) => __async(this, null, function* () {
+    return this.readOwnerMetadata(ownerKey, (row, exists) => __async(this, null, function* () {
+      if (!exists) return { ownerKey, content: "" };
       const document2 = yield Tools.Files.read(
         this.ownerDocumentPath(ownerKey, row)
       );
@@ -5065,13 +5085,13 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       requireId(ownerKey, "memory owner");
       return this.readConsistent(() => __async(this, null, function* () {
         const row = yield this.storage.memory.get("owners", ownerKey);
-        if (row === null) throw new Error("Memory owner is missing: " + ownerKey);
-        assertObject(row.value, "memory owner metadata");
-        if (row.value.ownerKey !== ownerKey) throw new Error("Invalid memory owner identity");
+        const value = row === null ? storedValue(createMemorySpace(ownerKey)) : row.value;
+        assertObject(value, "memory owner metadata");
+        if (value.ownerKey !== ownerKey) throw new Error("Invalid memory owner identity");
         const separator = ownerKey.indexOf(":");
         const kind = ownerKey.slice(0, separator);
         if (kind !== "character" && kind !== "shared") throw new Error("Invalid memory owner: " + ownerKey);
-        return action(row.value);
+        return action(value, row !== null);
       }));
     });
   }
@@ -5870,6 +5890,8 @@ function enqueueCandidate(input, repository2) {
       if (participants.length !== 1) throw new Error("A group selected-user candidate requires an explicit owner");
       owners.add(yield primaryOwner(participants[0], repository2));
     }
+    for (const ownerKey of owners) if (!(yield repository2.hasMemoryOwner(ownerKey))) owners.delete(ownerKey);
+    if (owners.size === 0) return { owners: [], candidateIds: [] };
     const result2 = { owners: [...owners], candidateIds: [] }, now = Date.now();
     const producerNodeId = yield memoryJobProducer();
     for (const ownerKey of owners) {
@@ -6129,12 +6151,8 @@ var MemoryJobRunner = class {
   /** Advances only tasks produced by this device while preserving independent owner failures. */
   runTick() {
     return __async(this, null, function* () {
-      yield this.owner.run(
-        /** Removes memory owners whose backing entity disappeared. */
-        (repository2) => repository2.pruneOrphanMemoryOwners()
-      );
       const keys = yield this.owner.run(
-        /** Enumerates initialized memory owners without loading their corpora. */
+        /** Skips owners awaiting role configuration without deleting their synchronized records. */
         (repository2) => repository2.listMemoryOwnerKeys()
       ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
       const failures = [], producerNodeId = yield memoryJobProducer();
@@ -6862,7 +6880,8 @@ function snapshot(host) {
       models,
       ttsConfigs,
       toolCatalog,
-      memoryPreferences
+      memoryPreferences,
+      memoryOwnerKeys
     ] = yield Promise.all([
       host.listCharacters(),
       host.listGroups(),
@@ -6872,9 +6891,11 @@ function snapshot(host) {
       Promise.resolve().then(() => host.listModels()),
       Promise.resolve().then(() => host.listTtsConfigs()),
       Promise.resolve().then(() => host.readToolCatalog()),
-      host.readGlobalMemoryPreferences()
+      host.readGlobalMemoryPreferences(),
+      host.listMemoryOwnerKeys()
     ]);
     return {
+      memoryOwnerKeys,
       cards,
       groups,
       stores,
@@ -7357,6 +7378,9 @@ function dispatch(request, host) {
           request.tagChanges,
           host
         );
+        return snapshot(host);
+      case "createMemoryLibrary":
+        yield host.createMemoryLibrary(request.ownerKey);
         return snapshot(host);
       case "deleteCharacter":
         yield deleteCharacter(request.id, host);
@@ -10580,6 +10604,71 @@ function registerToolPolicies() {
   ToolPkg.registerToolPromptComposeHook({ id: "participant-tool-visibility", function: toolPromptPolicy });
 }
 
+// src/diagnostics.ts
+var reportedErrors = /* @__PURE__ */ new WeakSet();
+function logCharacterStatus(message, fields4, elapsedMs) {
+  const chat = typeof fields4.chatId === "string" ? " chat=" + fields4.chatId.slice(0, 8) : "";
+  const task = typeof fields4.submissionId === "string" ? " task=" + fields4.submissionId : "";
+  const elapsed = elapsedMs === void 0 ? "" : " " + elapsedMs + "ms";
+  console.log("[character_cards] " + message + chat + task + elapsed);
+}
+function logCharacterFailure(message, fields4, error, elapsedMs) {
+  if (typeof error === "object" && error !== null) {
+    if (reportedErrors.has(error)) return;
+    reportedErrors.add(error);
+  }
+  const reason = typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error);
+  const chat = typeof fields4.chatId === "string" ? " chat=" + fields4.chatId.slice(0, 8) : "";
+  const task = typeof fields4.submissionId === "string" ? " task=" + fields4.submissionId : "";
+  const elapsed = elapsedMs === void 0 ? "" : " " + elapsedMs + "ms";
+  console.error("[character_cards] " + message + chat + task + elapsed + ": " + reason.replace(/\s+/g, " ").slice(0, 240));
+}
+var CharacterTrace = class {
+  constructor(operation, fields4) {
+    this.operation = operation;
+    this.startedAt = Date.now();
+    this.stage = "";
+    this.details = { ...fields4 };
+    if (operation === "group.input.submit") logCharacterStatus("\u68C0\u67E5\u53D1\u9001", this.details);
+    if (operation === "group.native.send") logCharacterStatus(fields4.turn === "record_only" ? "\u4FDD\u5B58\u7FA4\u804A\u6D88\u606F" : "\u8BF7\u6C42\u89D2\u8272\u56DE\u590D", this.details);
+  }
+  event(stage, fields4 = {}) {
+    Object.assign(this.details, fields4);
+    if (stage === "input.admission.wait") logCharacterStatus("\u7FA4\u804A\u63A5\u7BA1\uFF0C\u7B49\u5F85\u4FDD\u5B58", this.details);
+    if (stage !== "end") return;
+    const elapsedMs = Date.now() - this.startedAt;
+    if (this.operation === "group.input.submit") {
+      logCharacterStatus(this.details.reason === "existing_submission" ? "\u7FA4\u804A\u4EFB\u52A1\u672A\u7ED3\u675F\uFF0C\u963B\u6B62\u91CD\u590D\u63D0\u4EA4" : this.details.type ? "\u7FA4\u804A\u5DF2\u63A5\u7BA1" : "\u653E\u884C", this.details, elapsedMs);
+    } else if (elapsedMs >= 1e3) {
+      logCharacterStatus(this.operation + " \u5B8C\u6210", this.details, elapsedMs);
+    }
+  }
+  step(stage, work) {
+    return __async(this, null, function* () {
+      this.stage = stage;
+      const result2 = yield work();
+      this.stage = "";
+      return result2;
+    });
+  }
+  fail(error) {
+    logCharacterFailure(this.operation + (this.stage ? "/" + this.stage : "") + " \u5931\u8D25", this.details, error, Date.now() - this.startedAt);
+  }
+};
+function traceCharacterWork(operation, fields4, work) {
+  return __async(this, null, function* () {
+    const trace = new CharacterTrace(operation, fields4);
+    try {
+      const result2 = yield work(trace);
+      trace.event("end");
+      return result2;
+    } catch (error) {
+      trace.fail(error);
+      throw error;
+    }
+  });
+}
+
 // src/group-execution/planner.ts
 var GROUP_ROLE_RESPONSE_PLANNER_PROMPT = '\u4F60\u662F\u7FA4\u804A\u89D2\u8272\u53D1\u8A00\u89C4\u5212\u5668\u3002\u53EA\u8FD4\u56DE\u6709\u6548\u7684 JSON\u3002\n\u4EFB\u52A1\uFF1A\u89C4\u5212\u672C\u8F6E\u7684\u53D1\u8A00\u987A\u5E8F\u3002\u4F60\u53EF\u4EE5\u89C4\u5212\u591A\u8F6E\u5BF9\u8BDD\u3002\n\u8F93\u51FA\u683C\u5F0F\uFF1A\n{"rounds":[[{"id":"<\u6210\u5458ID>","speak":true}],[{"id":"<\u6210\u5458ID2>","speak":true}]]}\n\u89C4\u5219\uFF1A\n- \u6BCF\u4E00\u8F6E\uFF08round\uFF09\u662F\u4E00\u4E2A\u6570\u7EC4\uFF0C\u5305\u542B\u8BE5\u8F6E\u5E94\u8BE5\u53D1\u8A00\u7684\u6210\u5458\u3002\n- \u4F60\u53EF\u4EE5\u89C4\u5212\u591A\u8F6E\u5BF9\u8BDD\uFF0C\u8BA9\u6210\u5458\u4E4B\u95F4\u76F8\u4E92\u8BA8\u8BBA\u3002\n- \u5BF9\u4E8E\u7B80\u5355\u56DE\u5E94\uFF0C\u4F7F\u7528\u5355\u8F6E\uFF0C\u5305\u542B\u4E00\u4E2A\u6216\u591A\u4E2A\u6210\u5458\u3002\n- \u5BF9\u4E8E\u8BA8\u8BBA\u573A\u666F\uFF0C\u4F7F\u7528\u591A\u8F6E\uFF08\u4F8B\u5982\uFF1A\u6210\u5458A\u53D1\u8A00\uFF0C\u7136\u540E\u6210\u5458B\u56DE\u5E94\uFF0C\u7136\u540E\u6210\u5458A\u518D\u56DE\u590D\uFF09\u3002\n- \u4F60\u53EF\u4EE5\u7701\u7565\u6210\u5458\u6765\u8DF3\u8FC7\u4ED6\u4EEC\uFF0C\u6216\u8BBE\u7F6E speak=false\u3002\n- \u5982\u679C\u6CA1\u6709\u4EBA\u5E94\u8BE5\u56DE\u5E94\uFF0C\u8FD4\u56DE {"rounds":[[]]}\u3002\n- \u53EA\u4F7F\u7528\u63D0\u4F9B\u7684\u6210\u5458 ID\u3002\n- \u6700\u591A 5 \u8F6E\uFF0C\u907F\u514D\u8FC7\u5EA6\u6765\u56DE\u3002';
 function memberIds(participants) {
@@ -11146,7 +11235,14 @@ var NativeGroupTurnTransport = class {
       const attempt = { chatId: sequence.chatId, runtime: sequence.runtime, active: true };
       this.attempts.set(requestKey, attempt);
       try {
-        const actual = yield Tools.Chat.sendMessage(request);
+        const actual = yield traceCharacterWork("group.native.send", {
+          chatId: sequence.chatId,
+          submissionId: "kind" in input ? input.submission.submissionId : input.submissionId,
+          requestKey,
+          runtime: sequence.runtime,
+          kind: request.kind,
+          turn: request.kind === "submit" ? request.turn.kind : "continue"
+        }, (trace) => trace.step("host.Chat.sendMessage", () => Tools.Chat.sendMessage(request)));
         const decision = decodeNativeGroupSendResult(actual, input, "kind" in input ? null : input.userMessageTimestamp);
         sequence.last = decision;
         if (decision.type === "committed") {
@@ -11196,12 +11292,16 @@ function observe(execution, work) {
     (outcome) => {
       execution.status = "settled";
       execution.outcome = outcome;
+      logCharacterStatus("\u7FA4\u804A\u7ED3\u675F\uFF08" + outcome.status + "\uFF09", {
+        chatId: execution.input.chatId,
+        submissionId: execution.input.submissionId
+      });
     },
     /** Retains the original rejected error and exposes the background failure through the plugin log. */
     (failure2) => {
       execution.status = "failed";
       execution.failure = failure2;
-      console.error("Group input " + execution.input.submissionId + " failed: " + String(failure2));
+      logCharacterFailure("\u7FA4\u804A\u5931\u8D25", { chatId: execution.input.chatId, submissionId: execution.input.submissionId }, failure2);
     }
   );
 }
@@ -11211,31 +11311,50 @@ function onGroupInputSubmit(event) {
     const payload = event.eventPayload;
     if (payload.source === "Sequence") return null;
     const chatId = requireId(payload.chatId, "submitted chatId");
-    const binding = yield findChatBinding(chatId);
-    if (binding === null) return null;
-    if (parseChatSelection(binding.selection).kind !== "group") return null;
-    const service2 = yield getService();
-    const input = submission(payload, chatId, binding.selection);
-    const current = executions.get(chatId);
-    if (current !== void 0 && (current.status === "running" || current.outcome !== null && current.outcome.status === "cancelled")) {
-      return { action: "Block", clearInput: false, message: "An existing group submission must settle or resume before another input", metadata: { submissionId: current.input.submissionId } };
-    }
-    if (controller === null) controller = createGroupExecutionController(service2, new NativeGroupTurnTransport());
-    const work = controller.submit(input);
-    const execution = { input, status: "running", outcome: null, failure: null };
-    executions.set(chatId, execution);
-    observe(execution, work);
-    const admitted = yield controller.waitForInput(chatId, input.submissionId);
-    if (admitted.type === "consumed") return { action: "Consume", clearInput: true, metadata: admitted.metadata };
-    if (admitted.type === "blocked") return {
-      action: "Block",
-      clearInput: false,
-      message: admitted.message === null ? void 0 : admitted.message
-    };
-    if (admitted.type !== "committed" || admitted.receipt.userMessageTimestamp === null) {
-      return { action: "Block", clearInput: false, message: "Group input was not persisted" };
-    }
-    return { action: "Consume", clearInput: true, metadata: { submissionId: input.submissionId, chatId, selection: input.selection, runtime: input.runtime } };
+    return traceCharacterWork("group.input.submit", {
+      chatId,
+      source: payload.source ?? null,
+      runtime: payload.runtime,
+      textLength: payload.text?.length ?? 0,
+      attachmentCount: payload.attachmentCount ?? null
+    }, (trace) => __async(null, null, function* () {
+      const binding = yield trace.step("binding.read", () => findChatBinding(chatId));
+      if (binding === null) {
+        trace.event("allow", { reason: "unassociated" });
+        return null;
+      }
+      trace.event("binding.resolved", { selection: binding.selection });
+      if (parseChatSelection(binding.selection).kind !== "group") {
+        trace.event("allow", { reason: "not_group" });
+        return null;
+      }
+      const service2 = yield trace.step("service.ready", getService);
+      const input = submission(payload, chatId, binding.selection);
+      trace.event("submission.created", { submissionId: input.submissionId, selection: input.selection });
+      const current = executions.get(chatId);
+      if (current !== void 0 && (current.status === "running" || current.outcome !== null && current.outcome.status === "cancelled")) {
+        trace.event("block", { reason: "existing_submission", submissionId: current.input.submissionId, status: current.status });
+        return { action: "Block", clearInput: false, message: "An existing group submission must settle or resume before another input", metadata: { submissionId: current.input.submissionId } };
+      }
+      if (controller === null) controller = createGroupExecutionController(service2, new NativeGroupTurnTransport());
+      const work = controller.submit(input);
+      const execution = { input, status: "running", outcome: null, failure: null };
+      executions.set(chatId, execution);
+      observe(execution, work);
+      trace.event("input.admission.wait", { submissionId: input.submissionId });
+      const admitted = yield trace.step("input.admission", () => controller.waitForInput(chatId, input.submissionId));
+      trace.event("input.admission.result", { submissionId: input.submissionId, type: admitted.type });
+      if (admitted.type === "consumed") return { action: "Consume", clearInput: true, metadata: admitted.metadata };
+      if (admitted.type === "blocked") return {
+        action: "Block",
+        clearInput: false,
+        message: admitted.message === null ? void 0 : admitted.message
+      };
+      if (admitted.type !== "committed" || admitted.receipt.userMessageTimestamp === null) {
+        return { action: "Block", clearInput: false, message: "Group input was not persisted" };
+      }
+      return { action: "Consume", clearInput: true, metadata: { submissionId: input.submissionId, chatId, selection: input.selection, runtime: input.runtime } };
+    }));
   });
 }
 function decodeGroupExecutionRequest(payload) {
@@ -11264,10 +11383,16 @@ function groupExecutionRequest(payload) {
     const target = retained2(payload), execution = target.execution;
     if (target.action === "cancel") {
       if (execution.status !== "running") throw new Error("Only a running group submission can be cancelled");
-      yield target.controller.cancel(execution.input.chatId, execution.input.submissionId);
+      yield traceCharacterWork(
+        "group.cancel",
+        { chatId: execution.input.chatId, submissionId: execution.input.submissionId },
+        (trace) => trace.step("controller.cancel", () => target.controller.cancel(execution.input.chatId, execution.input.submissionId))
+      );
     } else if (target.action === "resume") {
       if (execution.status !== "settled" || execution.outcome === null || execution.outcome.status !== "cancelled") throw new Error("Only a settled cancelled group submission can resume");
+      const trace = new CharacterTrace("group.resume", { chatId: execution.input.chatId, submissionId: execution.input.submissionId });
       const work = target.controller.resume(execution.input.chatId, execution.input.submissionId);
+      trace.event("accepted");
       execution.status = "running";
       execution.outcome = null;
       execution.failure = null;
@@ -11412,19 +11537,18 @@ function characterSidebarSections(directory, selections, chats) {
   const selectionByChat = /* @__PURE__ */ new Map();
   for (const state of selections) {
     if (selectionByChat.has(state.chatId)) throw new Error("Duplicate sidebar selection state: " + state.chatId);
-    if (state.selection !== null) decodeSelection(state.selection, directory);
+    if (state.selection !== null) parseChatSelection(state.selection);
     selectionByChat.set(state.chatId, state);
   }
   const unbound = { id: "unbound", title: "\u672A\u7ED1\u5B9A\u89D2\u8272", avatarUri: null, kind: "unbound", selection: null, chats: [] };
   for (const chat of chats) {
     const state = selectionByChat.get(chat.id);
     if (state === void 0) throw new Error("Sidebar has no explicit namespace selection state for chat: " + chat.id);
-    if (state.selection === null || decodeSelection(state.selection, directory).entity === "model") {
+    const section = state.selection === null ? void 0 : bySelection.get(state.selection);
+    if (section === void 0) {
       unbound.chats.push(chat);
       continue;
     }
-    const section = bySelection.get(state.selection);
-    if (section === void 0) throw new Error("Plugin selection has no real category: " + state.selection);
     section.chats.push(chat);
   }
   if (unbound.chats.length !== 0) sections.push(unbound);
@@ -11465,9 +11589,6 @@ function readSidebarCatalog(value) {
   return __async(this, null, function* () {
     const current = parseCurrentSidebar(value), service2 = yield getService();
     const [directory, selections] = yield Promise.all([service2.sidebarDirectory(), readSidebarSelections(current.chatSidebar.chats)]);
-    for (const selection of selections) {
-      if (selection.selection !== null) requireChatSelection(selection.selection, directory.cards, directory.groups);
-    }
     const sections = characterSidebarSections(directory, selections, current.chatSidebar.chats);
     if (!sections.some(
       /** Ensures an explicit unbound grouping scope remains available for real empty group creation. */

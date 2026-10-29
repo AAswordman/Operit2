@@ -1426,6 +1426,28 @@ pub fn receipt(
     Ok((receipt, errors))
 }
 
+/// Inventories outgoing transactions without decoding database payloads or assuming contiguous sequences.
+pub fn operationIdsSince<K: SyncOperationKnowledge>(
+    host: Arc<dyn RuntimeSqliteHost>, clock: &K,
+) -> Result<(BTreeSet<String>, Vec<String>), SqliteStoreError> {
+    let mut ids = BTreeSet::new();
+    let mut errors = Vec::new();
+    for row in catalog(host.clone())?.queryRows("SELECT path FROM plugin_databases WHERE sync=1", Vec::new())? {
+        let path: String = row.get(0)?;
+        let result = (|| -> Result<(), SqliteStoreError> {
+            let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            for row in store.queryRows("SELECT origin,sequence FROM _operit_log WHERE outgoing=1", Vec::new())? {
+                let origin: String = row.get(0)?;
+                let sequence: i64 = row.get(1)?;
+                if !clock.containsSequence(&origin, sequence) { ids.insert(format!("{origin}:{sequence}")); }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result { errors.push(format!("inventory path={path}: {error}")); }
+    }
+    Ok((ids, errors))
+}
+
 /// Exports bounded record transactions directly from database outboxes without copying database bytes.
 pub fn operationsSince<K: SyncOperationKnowledge>(
     host: Arc<dyn RuntimeSqliteHost>,
@@ -2589,7 +2611,12 @@ fn mergePayload(
         let collection = MergeCollection::open(tx, payload.manifest.kind, &change.collection)?;
         rewriteMergeReferences(tx, &collection, descriptor, &mut change.value, &pending, preferenceReferences)?;
     }
-
+    // Every change in this transaction has the same version. After aliasing,
+    // the last mutation wins ties, including deletions; the source log stays untouched.
+    let mut seen = BTreeSet::new();
+    payload.changes.reverse();
+    payload.changes.retain(|change| seen.insert((change.collection.clone(), change.key.clone())));
+    payload.changes.reverse();
     Ok(())
 }
 

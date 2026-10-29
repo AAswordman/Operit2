@@ -2,6 +2,34 @@ use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_DEPARTURES_PATH, RUNTIME_S
 use super::*;
 use crate::NodeSpaceService::{space_departure, peerSpaceSnapshotForPeer};
 
+/// Exit delivery must not turn an approved but unfinished join into a migration attempt.
+#[tokio::test]
+async fn departure_delivery_does_not_apply_an_approved_space_merge() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, services, peers) = revocationMesh("exit-during-join", 2, &[(0, 1)]);
+    let target = routers[0].localNodeId();
+    let applicant = routers[1].localNodeId();
+    services[0].leaveDeviceSpace().unwrap();
+    services[1].leaveDeviceSpace().unwrap();
+    let source = services[1].deviceSpace().unwrap();
+    let request = services[1].requestDeviceSpaceJoin(target.clone()).await.unwrap();
+    services[0].decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true)
+        .await.unwrap();
+    let approved = services[0].deviceSpace().unwrap();
+    assert!(approved.members.contains(&applicant));
+    assert_ne!(approved.spaceId, source.spaceId);
+    assert!(!space_departure::pending(&services[0], &applicant).unwrap().is_empty());
+    peers[0].calls.lock().unwrap().clear();
+    space_departure::synchronize(&services[0]).await.unwrap();
+    assert_eq!(services[0].deviceSpace().unwrap(), approved);
+    assert_eq!(services[1].deviceSpace().unwrap(), source);
+    assert!(peers[0].calls.lock().unwrap().iter().any(|(_, method)| method == "observeSpaceSnapshot"));
+    assert_eq!(services[1].refreshDeviceSpaceJoin(request.requestId).await.unwrap().status,
+        SpaceJoinStatus::Joined);
+    assert_eq!(services[1].deviceSpace().unwrap().spaceId, approved.spaceId);
+}
+
 /// Exit authorization belongs to the device itself; relays carry the resulting
 /// control fact, and stale snapshots cannot restore departed membership.
 #[tokio::test]

@@ -817,6 +817,33 @@ mod tests {
         assert_eq!(parts[2].content, "After");
     }
 
+    /// Persistence snapshots keep unfinished semantic markup buffered until later chunks close it.
+    #[test]
+    fn streaming_snapshots_do_not_finalize_pending_semantic_tags() {
+        for markup in [
+            "<tool_KtEh name=\"read_file\"><param name=\"path\">a.txt</param></tool_KtEh>",
+            "<tool_result name=\"read_file\" status=\"success\"><content>payload</content></tool_result>",
+            "<status type=\"warning\">careful</status>",
+        ] {
+            let source = format!("Before{markup}");
+            let expected = MessagePartCodec::parseAssistantMarkup(&source).unwrap();
+            let mut live = AssistantMarkupStreamState::new();
+            for end in 0..=source.len() {
+                let content = &source[..end];
+                live.pushSnapshot(content).unwrap();
+                let mut snapshot = AssistantMarkupStreamState::new();
+                snapshot.resetToSnapshot(content).unwrap();
+                let persisted = snapshot.parts().to_vec();
+                assert_eq!(persisted, live.parts(), "{content}");
+                if end >= "Before<".len() && end < source.len() {
+                    assert_eq!(persisted.len(), 1, "{content}");
+                    assert_eq!(persisted[0].content, "Before");
+                }
+            }
+            assert_eq!(live.finish().unwrap(), expected);
+        }
+    }
+
     /// Malformed tool markup remains an error instead of becoming visible protocol payloads.
     #[test]
     fn rejects_incomplete_and_malformed_live_tool_markup() {

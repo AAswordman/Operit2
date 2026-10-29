@@ -475,14 +475,15 @@ test("controlled Chat/AI: alphabetically reordered plan snapshot keys still exec
   assert.equal(harness.modelCalls.length, 1);
 });
 
-/** Prunes memory owners whose backing entity vanished instead of failing every interval transaction on them. */
-test("controlled Chat/AI: interval prunes orphan memory owners and still serves the genuine owner", async t => {
+/** Delayed role configuration must never turn a scheduler read into a synchronized deletion. */
+test("controlled Chat/AI: interval preserves unresolved memory owners until their configuration arrives", async t => {
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime();
   await runtime.initialize(); await runtime.bind();
   const sources = await runtime.enqueueReplies(); await runtime.persistMessage(sources[0]);
-  /** Injects the exact production wound: an owner whose character record was lost outside the removal path. */
+  /** Delivers memory records before the corresponding remote character configuration. */
   const state = await harness.readState(), orphan = plain(loadModule("src/storage/state.ts").createMemorySpace("character:90a3122d-b374-4422-9589-44a9d7fc18a9"));
   orphan.settings.nextAutoSaveRunAtMs = 0; orphan.candidates.push({ id: "orphan-candidate", chatId: CONTROLLED_CHAT_ID, triggerMessageTimestamp: harness.message(1).timestamp, triggerVariantIndex: 0, createdAt: 1, updatedAt: 1, status: "pending", attemptCount: 0, lastError: "", sourceType: "reply_finalized_auto" });
+  const delayedCard = { ...plain(state.cards[0]), id: orphan.ownerKey.slice(10), name: "Delayed remote character" };
   state.owners.push(orphan); harness.disk.replaceState(state);
   const before = await harness.readState();
   assert.equal(before.owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), true);
@@ -493,12 +494,19 @@ test("controlled Chat/AI: interval prunes orphan memory owners and still serves 
   harness.assertOutputsConsumed();
 
   const after = await harness.readState();
-  assert.equal(after.owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), false);
+  assert.deepEqual(after.owners.find(space => space.ownerKey === orphan.ownerKey), orphan);
   const surviving = after.owners.filter(space => space.ownerKey === CONTROLLED_OWNER);
   assert.equal(surviving.length, 1); assert.ok(surviving[0].memories.some(memory => memory.title === "Surviving owner"));
-  /** A second interval runs cleanly without the orphan and keeps making progress for the genuine owner. */
+  /** Repeated ticks retain the exact pending records while other owners continue. */
   await runtime.interval();
-  assert.equal((await harness.readState()).owners.some(space => space.ownerKey === "character:90a3122d-b374-4422-9589-44a9d7fc18a9"), false);
+  const waiting = await harness.readState();
+  assert.deepEqual(waiting.owners.find(space => space.ownerKey === orphan.ownerKey), orphan);
+  /** Once configuration arrives, the same owner resumes normal task validation. */
+  waiting.cards.push(delayedCard); harness.disk.replaceState(waiting);
+  await runtime.interval();
+  const resumed = (await harness.readState()).owners.find(space => space.ownerKey === orphan.ownerKey);
+  assert.equal(resumed.candidates[0].status, "failed");
+  assert.match(resumed.candidates[0].lastError, /no producing device/);
 });
 
 
@@ -515,8 +523,6 @@ test("memory jobs isolate real owner failures without swallowing composite publi
       /** Exposes the actual scheduling boundary without replacing the runner's failure policy. */
       async run(callback) {
         return callback({
-          /** Keeps this fixture focused on initialized owners. */
-          async pruneOrphanMemoryOwners() { return 0; },
           /** Schedules the failing owner before a healthy independent owner. */
           async listMemoryOwnerKeys() { return ["first", "healthy"]; },
           /** Retains the original failure identity or reads a genuine idle job state. */

@@ -351,6 +351,9 @@ class ChatViewModel {
 
     try {
       checkCancellation();
+      if (expectedChatId == null || expectedChatId.trim().isEmpty) {
+        throw StateError('File attachments require a selected chat');
+      }
       uploadId = await transfer.beginAttachmentUpload(
         fileName: file.name,
         expectedByteLength: file.byteLength,
@@ -430,7 +433,7 @@ class ChatViewModel {
     final buffer = StringBuffer('<attachment ');
     const escape = HtmlEscape(HtmlEscapeMode.attribute);
     final normalized = attachment.filePath.replaceAll('\\', '/');
-    const marker = '/chat_attachments/';
+    const marker = '/data/chat_attachments/';
     final markerIndex = normalized.lastIndexOf(marker);
     String? toolPath;
     if (markerIndex >= 0) {
@@ -441,7 +444,7 @@ class ChatViewModel {
               .every(
                 (part) => part.isNotEmpty && part != '.' && part != '..',
               )) {
-        toolPath = '/app/data/chat_attachments/$relative';
+        toolPath = '/app/data/data/chat_attachments/$relative';
       }
     }
     buffer.write('id="${escape.convert(toolPath ?? attachment.filePath)}" ');

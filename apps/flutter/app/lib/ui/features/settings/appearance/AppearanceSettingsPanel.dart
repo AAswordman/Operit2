@@ -527,6 +527,39 @@ class AppearanceSettingsPanel extends StatelessWidget {
           ],
         ),
         _SectionCard(
+          title: l10n.settingsAppearanceAvatarSection,
+          icon: Icons.account_circle_outlined,
+          children: <Widget>[
+            SettingsSwitchRow(
+              icon: Icons.visibility_outlined,
+              title: l10n.settingsAppearanceShowAvatars,
+              value: snapshot.bubbleShowAvatar,
+              onChanged: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(bubbleShowAvatar: value),
+                );
+              },
+            ),
+            if (snapshot.bubbleShowAvatar) ...<Widget>[
+              const SizedBox(height: 8),
+              _AppearanceFieldBlock(
+                label: l10n.settingsAppearanceAvatarShape,
+                badge: _avatarShapeLabel(l10n, snapshot.avatarShape),
+                child: _AvatarShapeSelector(
+                  value: _avatarShapeFromSnapshot(snapshot.avatarShape),
+                  onChanged: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        avatarShape: _avatarShapeValue(value),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+        _SectionCard(
           title: l10n.settingsAppearanceMessageColors,
           icon: Icons.format_color_fill_outlined,
           action: SettingsInfoBadge(
@@ -744,39 +777,6 @@ class AppearanceSettingsPanel extends StatelessWidget {
         showInputPreview: true,
       ),
       children: <Widget>[
-        _SectionCard(
-          title: l10n.settingsAppearanceAvatarSection,
-          icon: Icons.account_circle_outlined,
-          children: <Widget>[
-            SettingsSwitchRow(
-              icon: Icons.visibility_outlined,
-              title: l10n.settingsAppearanceShowAvatars,
-              value: snapshot.bubbleShowAvatar,
-              onChanged: (value) {
-                unawaited(
-                  themeController.saveThemeSettings(bubbleShowAvatar: value),
-                );
-              },
-            ),
-            if (snapshot.bubbleShowAvatar) ...<Widget>[
-              const SizedBox(height: 8),
-              _AppearanceFieldBlock(
-                label: l10n.settingsAppearanceAvatarShape,
-                badge: _avatarShapeLabel(l10n, snapshot.avatarShape),
-                child: _AvatarShapeSelector(
-                  value: _avatarShapeFromSnapshot(snapshot.avatarShape),
-                  onChanged: (value) {
-                    unawaited(
-                      themeController.saveThemeSettings(
-                        avatarShape: _avatarShapeValue(value),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ],
-        ),
         _SectionCard(
           title: l10n.settingsAppearanceInputSection,
           icon: Icons.keyboard_outlined,
