@@ -2189,6 +2189,10 @@ class _AiSetupAgreementPage extends StatelessWidget {
       fontWeight: FontWeight.w800,
       letterSpacing: 0,
     );
+    final boldBodyStyle = bodyStyle?.copyWith(fontWeight: FontWeight.w700);
+
+    final l10n = AppLocalizations.of(context)!;
+    final isEnglish = l10n.localeName.startsWith('en');
 
     return Align(
       alignment: Alignment.topCenter,
@@ -2200,15 +2204,21 @@ class _AiSetupAgreementPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                const _SetupSectionHeader(
+                _SetupSectionHeader(
                   icon: Icons.description_outlined,
-                  eyebrow: '用户协议',
-                  title: '用户协议与隐私政策',
-                  description: '请阅读本协议。确认同意后，才能继续完成设备设置。',
+                  eyebrow: isEnglish ? 'User Agreement' : '用户协议',
+                  title: isEnglish
+                      ? 'User Agreement and Privacy Policy'
+                      : '用户协议与隐私政策',
+                  description: isEnglish
+                      ? 'Please read this agreement. Confirming agreement is required to continue device setup.'
+                      : '请阅读本协议。确认同意后，才能继续完成设备设置。',
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '版本：${OnboardingStartupRouteStrategy._currentAgreementVersion}',
+                  isEnglish
+                      ? 'Version: ${OnboardingStartupRouteStrategy._currentAgreementVersion}'
+                      : '版本：${OnboardingStartupRouteStrategy._currentAgreementVersion}',
                   style: textTheme.labelMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     letterSpacing: 0,
@@ -2217,7 +2227,9 @@ class _AiSetupAgreementPage extends StatelessWidget {
                 if (waitSeconds > 0) ...<Widget>[
                   const SizedBox(height: 8),
                   Text(
-                    '阅读确认将在 $waitSeconds 秒后开放。',
+                    isEnglish
+                        ? 'Confirmation will be available in $waitSeconds seconds.'
+                        : '阅读确认将在 $waitSeconds 秒后开放。',
                     style: textTheme.labelMedium?.copyWith(
                       color: colorScheme.primary,
                       letterSpacing: 0,
@@ -2236,72 +2248,17 @@ class _AiSetupAgreementPage extends StatelessWidget {
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text('人话版协议（非法律版本）', style: headingStyle),
-                      const SizedBox(height: 10),
-                      Text(
-                        'Operit 是在您的设备上运行的开源客户端。我们不运营模型推理服务、不托管聊天记录，也不向您提供共享 API Key。您配置云模型、语音、搜索、绘图、MCP 或其他网络功能时，数据会直接发送给相应服务商，并受其条款和隐私政策约束；本地模型在设备内推理。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '应用可能使用文件、终端、自动化、系统授权、Root、ADB 和扩展等能力。请在执行前核对内容、备份重要数据并谨慎授予权限。因您的操作、配置、第三方服务或第三方扩展造成的设备、数据、账号或其他损失，应由实际操作人依适用法律处理。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '市场中的插件、脚本、Skill、工具包和其他第三方内容，其著作权及责任归作者或权利人所有。展示或安装不代表 Operit 对其作出保证、背书或取得权利。',
-                        style: bodyStyle,
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 22),
-                        child: Divider(),
-                      ),
-                      Text('严谨版法律协议', style: headingStyle),
-                      const SizedBox(height: 12),
-                      Text(
-                        '1. 适用范围与协议版本\n本协议适用于 Operit 官方发布的客户端及其可选在线功能。使用本应用即表示您已阅读并同意当前版本。应用会记录您确认的版本；协议发生实质更新时，将要求重新确认。开源代码许可由仓库根目录 LICENSE 所载 GNU AGPL-3.0 规定，本协议不排除或缩减适用法律及开源许可证赋予您的权利。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        '2. 产品定位与第三方服务\nOperit 不提供大语言模型推理、共享 API Key、聊天请求中转或聊天记录云端托管。您自行选择、配置和启用第三方服务，并自行判断服务商、模型、端点和扩展的安全性、合法性与适用性，妥善保管凭据。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        '3. 数据处理与隐私\n聊天记录、角色卡、记忆、模型配置和 API Key 通常保存在设备的应用数据中。您主动导出、备份、上传文件、使用第三方网络功能或向外部 HTTP 服务提交请求时，相关数据将依您的操作被复制、传输或披露。市场、公告、更新检查、GitHub 登录和发布等功能会访问 Operit、GitHub 或相关第三方资源。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        '4. 对外部署与运营责任\n外部 HTTP 服务、机器人、自动回复及类似能力由您选择启用。您将其开放给他人或公众使用时，应作为实际部署或运营者负责访问控制、用户授权、内容安全、数据保护、未成年人保护、必要提示和其他适用义务。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        '5. 合法使用与内容责任\n您应遵守适用法律法规、第三方服务规则及平台规则，不得利用本应用、扩展或配置实施违法活动、侵害他人权益、未经授权访问系统或数据，或传播违法有害内容。AI 输出可能包含错误、遗漏或偏差，不构成医疗、法律、金融或其他专业建议。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        '6. 软件按现状提供\n在适用法律允许的范围内，本软件按“现状”和“可用”状态提供。贡献者不对软件或第三方服务的持续可用性、准确性、安全性、适销性、特定用途适用性或不侵权作出明示或默示保证。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        '7. 协议更新与联系\n我们可能因功能、法律或安全要求更新本协议，并在应用内提供当前版本。对用户权益有实质影响的更新，将通过提高协议版本并要求重新确认的方式生效。您可通过项目仓库、应用内反馈入口或公开联系渠道提出问题和意见。',
-                        style: bodyStyle,
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        '人话版仅为便于理解；若与中文严谨版不一致，以中文严谨版为准。',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
+                    children: isEnglish
+                        ? _buildEnglishAgreementBody(
+                            bodyStyle,
+                            headingStyle,
+                            boldBodyStyle,
+                          )
+                        : _buildChineseAgreementBody(
+                            bodyStyle,
+                            headingStyle,
+                            boldBodyStyle,
+                          ),
                   ),
                 ),
               ],
@@ -2310,6 +2267,156 @@ class _AiSetupAgreementPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildChineseAgreementBody(
+    TextStyle? bodyStyle,
+    TextStyle? headingStyle,
+    TextStyle? boldBodyStyle,
+  ) {
+    return <Widget>[
+      Text('人话版协议（非法律版本）', style: headingStyle),
+      const SizedBox(height: 10),
+      Text(
+        '和你一样，我们看到一长串用户协议的时候也会感觉头大，所以我们把中文严谨版协议压缩成这份相对来说更便于理解的版本。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        '若这份"人话版协议"与中文严谨版不一致，以中文严谨版为准。',
+        style: boldBodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'Operit 2 是在您的设备上运行的开源客户端。我们不运营模型推理服务、不托管聊天记录，也不向您提供共享 API Key。您配置云模型、语音、搜索、绘图、MCP 或其他网络功能时，数据会直接发送给相应服务商，并受其条款和隐私政策约束；本地模型在设备内推理。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        '应用可能使用文件、终端、自动化、系统授权、Root、ADB 和扩展等能力。请在执行前核对内容、备份重要数据并谨慎授予权限。因您的操作、配置、第三方服务或第三方扩展造成的设备、数据、账号或其他损失，应由实际操作人依适用法律处理。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        '市场中的插件、脚本、Skill、工具包和其他第三方内容，其著作权及责任归作者或权利人所有。展示或安装不代表 Operit 2 对其作出保证、背书或取得权利。',
+        style: bodyStyle,
+      ),
+      const Padding(
+        padding: EdgeInsets.symmetric(vertical: 22),
+        child: Divider(),
+      ),
+      Text('严谨版法律协议', style: headingStyle),
+      const SizedBox(height: 12),
+      Text(
+        '1. 适用范围与协议版本\n本协议适用于 Operit 2 官方发布的客户端及其可选在线功能。使用本应用即表示您已阅读并同意当前版本。应用会记录您确认的版本；协议发生实质更新时，将要求重新确认。开源代码许可由仓库根目录 LICENSE 所载 GNU AGPL-3.0 规定，本协议不排除或缩减适用法律及开源许可证赋予您的权利。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '2. 产品定位与第三方服务\nOperit 2 不提供大语言模型推理、共享 API Key、聊天请求中转或聊天记录云端托管。您自行选择、配置和启用第三方服务，并自行判断服务商、模型、端点和扩展的安全性、合法性与适用性，妥善保管凭据。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '3. 数据处理与隐私\n聊天记录、角色卡、记忆、模型配置和 API Key 通常保存在设备的应用数据中。您主动导出、备份、上传文件、使用第三方网络功能或向外部 HTTP 服务提交请求时，相关数据将依您的操作被复制、传输或披露。市场、公告、更新检查、GitHub 登录和发布等功能会访问 Operit 2、GitHub 或相关第三方资源。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '4. 对外部署与运营责任\n外部 HTTP 服务、机器人、自动回复及类似能力由您选择启用。您将其开放给他人或公众使用时，应作为实际部署或运营者负责访问控制、用户授权、内容安全、数据保护、未成年人保护、必要提示和其他适用义务。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '5. 合法使用与内容责任\n您应遵守适用法律法规、第三方服务规则及平台规则，不得利用本应用、扩展或配置实施违法活动、侵害他人权益、未经授权访问系统或数据，或传播违法有害内容。AI 输出可能包含错误、遗漏或偏差，不构成医疗、法律、金融或其他专业建议。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '6. 软件按现状提供\n在适用法律允许的范围内，本软件按“现状”和“可用”状态提供。贡献者不对软件或第三方服务的持续可用性、准确性、安全性、适销性、特定用途适用性或不侵权作出明示或默示保证。',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '7. 协议更新与联系\n我们可能因功能、法律或安全要求更新本协议，并在应用内提供当前版本。对用户权益有实质影响的更新，将通过提高协议版本并要求重新确认的方式生效。您可通过项目仓库、应用内反馈入口或公开联系渠道提出问题和意见。',
+        style: bodyStyle,
+      ),
+    ];
+  }
+
+  List<Widget> _buildEnglishAgreementBody(
+    TextStyle? bodyStyle,
+    TextStyle? headingStyle,
+    TextStyle? boldBodyStyle,
+  ) {
+    return <Widget>[
+      Text('Plain-Language Version (Non-Legal)', style: headingStyle),
+      const SizedBox(height: 10),
+      Text(
+        'Just like you, we also feel overwhelmed when we see a long user agreement. So we\'ve condensed the official Chinese agreement into this easier-to-understand version.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'If there is any inconsistency between this "plain-language version" and the official Chinese version, the official Chinese version shall prevail.',
+        style: boldBodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'Operit 2 is an open-source client that runs on your device. We do not operate model inference services, host chat records, or provide shared API keys. When you configure cloud models, voice, search, drawing, MCP, or other network features, your data is sent directly to the respective service providers and is governed by their terms and privacy policies; local models run inference on your device.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'The app may use file, terminal, automation, system authorization, Root, ADB, and extension capabilities. Please verify content before execution, back up important data, and grant permissions cautiously. Any damage to devices, data, accounts, or other losses caused by your actions, configurations, third-party services, or third-party extensions shall be handled by the actual operator in accordance with applicable law.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'Plugins, scripts, Skills, tool packages, and other third-party content in the marketplace have their copyrights and responsibilities held by their respective authors or rights holders. Displaying or installing them does not imply that Operit 2 warrants, endorses, or acquires rights to them.',
+        style: bodyStyle,
+      ),
+      const Padding(
+        padding: EdgeInsets.symmetric(vertical: 22),
+        child: Divider(),
+      ),
+      Text('Official Legal Agreement', style: headingStyle),
+      const SizedBox(height: 12),
+      Text(
+        '1. Scope and Agreement Version\nThis agreement applies to the officially released Operit 2 client and its optional online features. Using this application constitutes your acknowledgment and agreement to the current version. The application records the version you confirmed; substantive updates to the agreement will require re-confirmation. The open-source license is governed by the GNU AGPL-3.0 as set forth in the LICENSE file at the repository root. This agreement does not exclude or diminish rights granted to you by applicable law and the open-source license.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '2. Product Positioning and Third-Party Services\nOperit 2 does not provide large language model inference, shared API keys, chat request relay, or cloud hosting of chat records. You choose, configure, and enable third-party services at your own discretion, and you are responsible for assessing the security, legality, and suitability of service providers, models, endpoints, and extensions, and for safeguarding your credentials.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '3. Data Processing and Privacy\nChat records, character cards, memory, model configurations, and API keys are typically stored in the application\'s data on your device. When you actively export, back up, upload files, use third-party network features, or submit requests to external HTTP services, relevant data may be copied, transmitted, or disclosed as a result of your actions. Marketplace, announcements, update checks, GitHub login, and release features may access Operit 2, GitHub, or related third-party resources.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '4. External Deployment and Operational Responsibility\nExternal HTTP services, bots, auto-replies, and similar capabilities are enabled at your discretion. When you make them available to others or the public, you act as the actual deployer or operator and are responsible for access control, user authorization, content safety, data protection, minor protection, necessary notices, and other applicable obligations.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '5. Lawful Use and Content Responsibility\nYou shall comply with applicable laws, regulations, third-party service rules, and platform rules. You must not use this application, extensions, or configurations to conduct illegal activities, infringe on others\' rights, gain unauthorized access to systems or data, or disseminate illegal or harmful content. AI output may contain errors, omissions, or biases and does not constitute medical, legal, financial, or other professional advice.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '6. Software Provided As-Is\nTo the extent permitted by applicable law, this software is provided on an "as is" and "as available" basis. Contributors make no express or implied warranties regarding the continued availability, accuracy, security, merchantability, fitness for a particular purpose, or non-infringement of the software or third-party services.',
+        style: bodyStyle,
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '7. Agreement Updates and Contact\nWe may update this agreement for functional, legal, or security reasons and provide the current version within the application. Updates with substantive impact on user rights will take effect by incrementing the agreement version and requiring re-confirmation. You may raise questions or feedback through the project repository, in-app feedback channels, or public contact channels.',
+        style: bodyStyle,
+      ),
+    ];
   }
 }
 
@@ -3439,3 +3546,4 @@ String _requirementButtonLabel(_OnboardingRequirement requirement) {
   }
   return '去授权';
 }
+
