@@ -23,7 +23,7 @@ data class AndroidRuntimePaths(
 )
 
 object AndroidRuntimeAssets {
-    private val packagedAbis = setOf("arm64-v8a")
+    private const val runtimeAssetsDirectory = "android-runtime"
     private const val perUserRange = 100000
     private const val TAG = "OperitRuntimeAssets"
 
@@ -34,7 +34,10 @@ object AndroidRuntimeAssets {
         workspaceRoot: File,
     ): AndroidRuntimePaths {
         val startedAtMillis = System.currentTimeMillis()
-        val abi = selectPackagedAbi()
+        // Gradle stages runtime assets for the requested ABIs only, so this listing
+        // is the authoritative set of ABIs this APK can actually run.
+        val packagedAbis = context.assets.list(runtimeAssetsDirectory)?.toSet() ?: emptySet()
+        val abi = selectPackagedAbi(Build.SUPPORTED_ABIS.toList(), packagedAbis)
         val runtimeDir = File(context.filesDir, "android-runtime/$abi")
         val rootfsDir = File(runtimeDir, "rootfs")
         val nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir)
@@ -61,7 +64,7 @@ object AndroidRuntimeAssets {
 
         val packagedSha = readAssetText(
             context,
-            "android-runtime/$abi/rootfs.tar.gz.bin.sha256",
+            "$runtimeAssetsDirectory/$abi/rootfs.tar.gz.bin.sha256",
         ).trim().substringBefore(' ')
 
         val installedShaFile = File(runtimeDir, "rootfs.installed.sha256")
@@ -72,7 +75,7 @@ object AndroidRuntimeAssets {
 
         if (!rootfsDir.isDirectory || installedSha != packagedSha) {
             Log.i(TAG, "runtime rootfs install start")
-            copyAsset(context, "android-runtime/$abi/rootfs.tar.gz.bin", rootfsArchive)
+            copyAsset(context, "$runtimeAssetsDirectory/$abi/rootfs.tar.gz.bin", rootfsArchive)
             Log.i(TAG, "runtime rootfs copy done elapsedMs=" + (System.currentTimeMillis() - startedAtMillis))
             rootfsDir.deleteRecursively()
             rootfsDir.mkdirs()
@@ -138,10 +141,20 @@ object AndroidRuntimeAssets {
         )
     }
 
-    private fun selectPackagedAbi(): String {
-        val abi = Build.SUPPORTED_ABIS.firstOrNull { packagedAbis.contains(it) }
+    /**
+     * Selects the most preferred device ABI whose runtime assets are packaged in
+     * this APK. Device ABI lists can contain secondary ABIs (for example the arm64
+     * translation ABI reported on x86_64 devices) that this build ships no assets
+     * for, so only ABIs present in the packaged listing are eligible.
+     */
+    internal fun selectPackagedAbi(
+        supportedAbis: List<String>,
+        packagedAbis: Set<String>,
+    ): String {
+        val abi = supportedAbis.firstOrNull { packagedAbis.contains(it) }
         require(abi != null) {
-            "Unsupported Android ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}"
+            "Unsupported Android ABI: ${supportedAbis.joinToString(", ")} " +
+                "(packaged runtime assets: ${packagedAbis.sorted().joinToString(", ")})"
         }
         return abi
     }
