@@ -130,7 +130,7 @@
              engines ignore it. -->
         <meta-data
             android:name="io.flutter.embedding.android.ImpellerBackend"
-            android:value="opengles" />
+            android:value="vulkan" />
         <meta-data
             android:name="io.flutter.embedding.android.EnablePartialRepaint"
             android:value="true" />
