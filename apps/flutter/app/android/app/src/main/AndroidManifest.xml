@@ -125,12 +125,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        <!-- Experiment: enables Impeller Vulkan partial repaint. The flag is
-             only read by the patched engine in the flutter-ohos fork; stock
-             engines ignore it. -->
-        <meta-data
-            android:name="io.flutter.embedding.android.ImpellerBackend"
-            android:value="vulkan" />
+        <!-- Experiment: enables Impeller partial repaint (Vulkan and OpenGLES
+             backends). The backend is autoselected with its normal fallback
+             chain. The flag is only read by the patched engine in the
+             flutter-ohos fork; stock engines ignore it. -->
         <meta-data
             android:name="io.flutter.embedding.android.EnablePartialRepaint"
             android:value="true" />
