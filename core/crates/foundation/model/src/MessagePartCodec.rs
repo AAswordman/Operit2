@@ -289,7 +289,7 @@ impl AssistantMarkupStreamState {
         &self.parts
     }
 
-    /// Validates the completed response without copying its semantic parts.
+    /// Finalizes semantic parts while retaining unfinished thinking content.
     pub fn complete(&mut self) -> Result<(), String> {
         self.consumePending(true)
     }
@@ -313,7 +313,11 @@ impl AssistantMarkupStreamState {
                     continue;
                 }
                 if isFinal {
-                    return Err("assistant thinking tag is incomplete".into());
+                    let content = std::mem::take(&mut self.pending);
+                    self.appendThinkingContent(&content);
+                    self.activeThinkingOpenTag = None;
+                    self.activeThinkingCloseTag = None;
+                    return Ok(());
                 }
                 let retainedLength =
                     asciiCaseInsensitiveSuffixPrefixLength(&self.pending, &closeTag);
@@ -592,7 +596,6 @@ mod tests {
             "前文<tool name=\"read_file\">unfinished",
             "text<tool>missing name</tool>end",
             "text<tool_result name=\"read_file\">missing payload</tool_result>end",
-            "text<think>unfinished reasoning",
             "text<tool_NtfY",
             "text<unknown/>end",
             "",
@@ -762,12 +765,48 @@ mod tests {
         assert_eq!(parts[0].content, "");
     }
 
-    /// Live semantic markup errors remain errors instead of becoming visible protocol payloads.
+    /// Unfinished thinking remains persistable without a closing tag or lost source bytes.
     #[test]
-    fn rejects_incomplete_and_malformed_live_semantic_markup() {
+    fn preserves_unfinished_thinking_content() {
+        for opening in ["think", "thinking", "THINK"] {
+            for content in ["", "partial reasoning", "reasoning</thi", "reasoning</TH"] {
+                let source = format!("Before<{opening}>{content}");
+                let parts = MessagePartCodec::parseAssistantMarkup(&source)
+                    .expect("unfinished thinking must remain persistable");
+                assert_eq!(parts.len(), 2);
+                assert_eq!(parts[0].content, "Before");
+                assert_eq!(parts[1].kind, MessagePartKind::Thinking);
+                assert_eq!(parts[1].content, content);
+                assert_eq!(MessagePartCodec::parseAssistantMarkupForImport(&source), parts);
+            }
+        }
+    }
+
+    /// Persisting an unfinished snapshot must not interrupt the live thinking stream.
+    #[test]
+    fn persists_thinking_snapshots_before_stream_completion() {
+        let mut state = AssistantMarkupStreamState::new();
+        state.push("Before<think>partial reasoning</thi").unwrap();
+
+        let mut snapshot = AssistantMarkupStreamState::new();
+        snapshot.resetToSnapshot(&state.source).unwrap();
+        let parts = snapshot.finish().expect("unfinished snapshot must finish");
+        assert_eq!(parts[1].kind, MessagePartKind::Thinking);
+        assert_eq!(parts[1].content, "partial reasoning</thi");
+        assert_eq!(snapshot.finish().unwrap(), parts);
+
+        state.push("nk>After").unwrap();
+        let parts = state.finish().unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[1].content, "partial reasoning");
+        assert_eq!(parts[2].content, "After");
+    }
+
+    /// Malformed tool markup remains an error instead of becoming visible protocol payloads.
+    #[test]
+    fn rejects_incomplete_and_malformed_live_tool_markup() {
         for content in [
             "Before<tool_G543 name=\"read_file\"><param name=\"path\">a.txt</param>",
-            "Before<think>partial reasoning</thi",
             "Before<tool name=\"search\"><param name=\"various_search</param></tool>After",
             "Before<tool_result name=\"search\" status=\"success\">PRIVATE-RESULT</tool_result>",
         ] { assert!(MessagePartCodec::parseAssistantMarkup(content).is_err(), "{content}"); }
