@@ -52,11 +52,16 @@ public final class OperitKeepAlivePlugin: NSObject, FlutterPlugin, NSWindowDeleg
                 "detail": "The main engine remains behind its menu-bar item; active leases disable App Nap."]
     }
 
-    /// Installs a visible return path before intercepting the main window's close button.
+    /// Reuses native residency after a Dart hot restart without replacing the window delegate.
     private func initialize(_ arguments: [String: Any]) throws {
-        guard !initialized, let window = view?.window else {
+        if initialized {
+            // The new Dart controller starts its work revisions over; native leases remain valid.
+            workRevision = -1
+            return
+        }
+        guard let window = view?.window else {
             throw NSError(domain: "operit_keep_alive", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Main keep-alive window is unavailable or already initialized"])
+                          userInfo: [NSLocalizedDescriptionKey: "Main keep-alive window is unavailable"])
         }
         title = try string(arguments, "applicationName")
         quitMessage = try string(arguments, "quitMessage")

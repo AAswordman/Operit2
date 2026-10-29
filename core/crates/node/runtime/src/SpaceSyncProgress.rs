@@ -182,8 +182,7 @@ impl SyncProgressTracker {
                 session.progress.peerNodeId == peer
                     && session.progress.status != SpaceSyncStatus::Completed
             }) {
-                session.visible |= session.progress.hasSubstantialWork()
-                    || currentTimeMillis() - session.progress.startedAt >= LARGE_SYNC_DELAY_MS;
+                session.visible |= session.progress.hasSubstantialWork();
             }
         });
     }
@@ -201,7 +200,8 @@ impl SyncProgressTracker {
             }) {
                 change(session);
                 // A pass can cross the volume threshold after its delay fired.
-                session.visible |= currentTimeMillis() - session.progress.startedAt >= LARGE_SYNC_DELAY_MS
+                session.visible |= (session.progress.hasSubstantialWork()
+                    && currentTimeMillis() - session.progress.startedAt >= LARGE_SYNC_DELAY_MS)
                     || session.progress.error.is_some();
             }
         });
@@ -379,23 +379,70 @@ mod tests {
     }
 
     #[test]
-    fn slow_work_reveals_even_while_the_total_is_being_counted() {
+    fn slow_small_exchanges_emit_no_progress_events() {
         let progress = SyncProgressTracker::default();
+        let flow = progress.flow();
+        let events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = events.clone();
+        flow.subscribe(move |_| {
+            observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
         progress.begin("peer", "space");
         progress.update(|sessions| sessions[0].progress.startedAt -= LARGE_SYNC_DELAY_MS + 1);
         progress.reveal("peer");
+        assert!(flow.value().is_empty(), "slow inventory checks must stay hidden");
+        progress.backlog("peer", Some(2), 0);
         progress.records("peer", 2);
         progress.beginFile("peer", 6);
         progress.fileOffset("peer", 6, true);
+        progress.finish("peer", false, None, None);
+        assert!(flow.value().is_empty());
+        assert_eq!(events.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn large_inventory_waits_for_delay_before_revealing() {
+        let progress = SyncProgressTracker::default();
+        progress.begin("peer", "space");
+        progress.backlog("peer", Some(LARGE_SYNC_RECORDS), 0);
+        assert!(progress.flow().value().is_empty());
+        progress.update(|sessions| sessions[0].progress.startedAt -= LARGE_SYNC_DELAY_MS + 1);
+        progress.reveal("peer");
         assert_eq!(progress.flow().value().len(), 1);
         progress.finish("peer", false, None, None);
         assert_eq!(progress.flow().value()[0].status, SpaceSyncStatus::Completed);
+    }
 
-        progress.begin("peer", "space");
-        progress.update(|sessions| sessions.last_mut().unwrap().progress.startedAt -= LARGE_SYNC_DELAY_MS + 1);
-        progress.reveal("peer");
-        progress.records("peer", 256);
-        assert_eq!(progress.flow().value().len(), 2);
+    #[test]
+    fn volume_crossing_after_the_delay_reveals_progress() {
+        for volume in ["records", "file", "traffic"] {
+            let progress = SyncProgressTracker::default();
+            progress.begin("peer", "space");
+            progress.update(|sessions| sessions[0].progress.startedAt -= LARGE_SYNC_DELAY_MS + 1);
+            progress.reveal("peer");
+            assert!(progress.flow().value().is_empty());
+            match volume {
+                "records" => {
+                    progress.records("peer", (LARGE_SYNC_RECORDS - 1) as usize);
+                    assert!(progress.flow().value().is_empty());
+                    progress.records("peer", 1);
+                }
+                "file" => {
+                    progress.beginFile("peer", LARGE_SYNC_BYTES - 1);
+                    assert!(progress.flow().value().is_empty());
+                    progress.beginFile("peer", LARGE_SYNC_BYTES);
+                }
+                "traffic" => {
+                    progress.beginFile("peer", LARGE_SYNC_BYTES / 2);
+                    progress.fileOffset("peer", LARGE_SYNC_BYTES / 2, true);
+                    progress.beginFile("peer", LARGE_SYNC_BYTES / 2);
+                    assert!(progress.flow().value().is_empty());
+                    progress.fileOffset("peer", LARGE_SYNC_BYTES / 2, true);
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(progress.flow().value().len(), 1, "{volume}");
+        }
     }
 
     #[test]

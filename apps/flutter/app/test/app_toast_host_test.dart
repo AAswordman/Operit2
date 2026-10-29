@@ -71,6 +71,38 @@ void main() {
     );
   }
 
+  testWidgets('dismissing a notice during child disposal waits for the frame', (
+    tester,
+  ) async {
+    final controller = AppToastController.instance;
+    final notice = controller.show('Chat notice');
+    final showChild = ValueNotifier<bool>(true);
+    addTearDown(showChild.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppToastHost(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: showChild,
+            builder: (context, visible, child) => visible
+                ? _DismissNoticeOnDispose(noticeId: notice)
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
+    await _pumpNotice(tester);
+    expect(find.text('Chat notice'), findsOneWidget);
+
+    showChild.value = false;
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(controller.notices.value, isEmpty);
+    await _pumpNotice(tester);
+    expect(find.text('Chat notice'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('shows a host notice at the top-right of the window', (
     tester,
   ) async {
@@ -197,4 +229,26 @@ void _expectTopRightNotice(WidgetTester tester, String text) {
   expect(rect.right, lessThanOrEqualTo(window.width));
   expect(rect.right, greaterThan(window.width - 360));
   expect(rect.top, lessThan(120));
+}
+
+/// Matches the chat bridge dismissing its active notice when it is unmounted.
+class _DismissNoticeOnDispose extends StatefulWidget {
+  const _DismissNoticeOnDispose({required this.noticeId});
+
+  final int noticeId;
+
+  @override
+  State<_DismissNoticeOnDispose> createState() =>
+      _DismissNoticeOnDisposeState();
+}
+
+class _DismissNoticeOnDisposeState extends State<_DismissNoticeOnDispose> {
+  @override
+  void dispose() {
+    AppToastController.instance.dismiss(widget.noticeId);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

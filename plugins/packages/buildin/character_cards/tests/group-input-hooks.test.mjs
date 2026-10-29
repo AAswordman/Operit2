@@ -24,8 +24,10 @@ function event(change = {}) {
 
 /** Opens the real main registrations and file service with explicitly controlled Chat/AI ABI inputs. */
 async function environment(t) {
-  const failures = [], timers = { created: 0, cleared: 0 };
+  const failures = [], diagnostics = [], timers = { created: 0, cleared: 0 };
   const runtime = await selectorEnvironment(t, {}, { console: { ...console,
+    /** Captures production lifecycle logs for pending and failed native admission boundaries. */
+    log(message) { diagnostics.push(message); },
     /** Records actual asynchronous plugin failures without implementing another error handler. */
     error(message) { failures.push(message); },
   },
@@ -34,7 +36,7 @@ async function environment(t) {
     clearTimeout(id) { timers.cleared += 1; clearTimeout(id); },
   });
   assert.equal(runtime.chatInputHooks.length, 1); assert.equal(runtime.chatInputHooks[0].function, runtime.main.onGroupInputSubmit);
-  return { ...runtime, failures, timers,
+  return { ...runtime, failures, diagnostics, timers,
     /** Invokes only the actually registered exported submission hook. */
     submit(input = event()) { return runtime.chatInputHooks[0].function(input); },
   };
@@ -79,7 +81,11 @@ test("registered group input leaves unassociated, card, and native sequence inpu
   assert.equal(await runtime.submit({ eventName: "text_changed", eventPayload: {} }), null);
   assert.equal(await runtime.submit(event({ source: "Sequence" })), null);
   assert.equal(runtime.calls.length, 0); assert.equal(runtime.disk.calls.length, 0);
+  runtime.diagnostics.length = 0;
   assert.equal(await runtime.submit(), null);
+  assert.equal(runtime.diagnostics.length, 2);
+  assert.match(runtime.diagnostics[0], /检查发送/);
+  assert.match(runtime.diagnostics[1], /放行/);
   await runtime.seedBinding("selector-chat", { version: 1, selection: "card:outside-group" });
   runtime.disk.clearCalls();
   assert.equal(await runtime.submit(), null);
@@ -268,7 +274,17 @@ test("registered group input awaits persistence and preserves the composer on st
     decision => { returned = true; return decision; },
   );
   await started.promise; assert.equal(returned, false); assert.equal(plans, 0);
+  const waiting = runtime.diagnostics.filter(line => line.includes("保存群聊消息"));
+  assert.equal(waiting.length, 1, "pending native persistence should have one compact start line");
+  assert.match(waiting[0], /chat=selector task=group-input-1/);
+  assert.ok(runtime.diagnostics.length <= 3, "pending admission should not dump nested await traces");
+  assert.equal(runtime.diagnostics.some(line => line.includes("Actual group input")), false);
   const failure = new Error("Original native input persistence failure"); pending.reject(failure);
   await assert.rejects(submitting, error => error === failure);
   assert.equal(returned, false); assert.equal(plans, 0);
+  assert.equal(runtime.failures.length, 1, "the same rejection must only be logged once");
+  assert.match(runtime.failures[0], /group.native.send\/host.Chat.sendMessage/);
+  assert.match(runtime.failures[0], /Original native input persistence failure/);
+  assert.equal(runtime.failures[0].includes("\n"), false);
+  assert.ok(runtime.failures[0].length < 400);
 });

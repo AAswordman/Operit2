@@ -17,6 +17,10 @@ export function createMemoryLibraryActionsFeature(context: EditorContext) {
         snapshot().memoryPreferences = await request({ action: "writeGlobalMemoryPreference", key, value: !snapshot().memoryPreferences[key] });
         toast("全局记忆设置已保存"); return;
       }
+      case "create-memory-library": {
+        state.snapshot = await request({ action: "createMemoryLibrary", ownerKey: dataValue(element, "owner") });
+        renderMain(); toast("记忆库已创建"); return;
+      }
       case "create-store": pushDialog({ type: "store", create: true, store: { id: "", name: "" } }); return;
 
       case "edit-store": {
@@ -34,5 +38,5 @@ export function createMemoryLibraryActionsFeature(context: EditorContext) {
       default: throw new Error(`Unknown memory/library-actions action: ${action}`);
     }
   }
-  return { names: ["toggle-memory-preference", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
+  return { names: ["create-memory-library", "toggle-memory-preference", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
 }

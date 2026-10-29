@@ -1,3 +1,4 @@
+import { CharacterTrace, traceCharacterWork, logCharacterStatus, logCharacterFailure } from "../diagnostics";
 import type { ToolPkg as ToolPkgTypes } from "../../../../../types/index";
 import { findChatBinding } from "../chat-storage";
 import { parseChatSelection } from "../chat-bindings";
@@ -41,9 +42,11 @@ function submission(payload: ToolPkgTypes.ChatInputEventPayload, chatId: string,
 function observe(execution: InputExecution, work: Promise<GroupExecutionOutcome>): void {
   void work.then(
     /** Publishes only the controller's validated result and precise native message locators. */
-    outcome => { execution.status = "settled"; execution.outcome = outcome; },
+    outcome => { execution.status = "settled"; execution.outcome = outcome;
+      logCharacterStatus("群聊结束（" + outcome.status + "）", { chatId: execution.input.chatId,
+        submissionId: execution.input.submissionId }); },
     /** Retains the original rejected error and exposes the background failure through the plugin log. */
-    failure => { execution.status = "failed"; execution.failure = failure; console.error("Group input " + execution.input.submissionId + " failed: " + String(failure)); },
+    failure => { execution.status = "failed"; execution.failure = failure; logCharacterFailure("群聊失败", { chatId: execution.input.chatId, submissionId: execution.input.submissionId }, failure); },
   );
 }
 
@@ -54,29 +57,37 @@ export async function onGroupInputSubmit(event: ToolPkgTypes.ChatInputHookEvent)
   // Native plugin sends already carry an explicit turn; this hook never recursively replans those sends.
   if (payload.source === "Sequence") return null;
   const chatId = requireId(payload.chatId, "submitted chatId");
-  const binding = await findChatBinding(chatId);
-  // An unassociated chat is outside this plugin's ownership, not an unsuccessful group lookup.
-  if (binding === null) return null;
-  if (parseChatSelection(binding.selection).kind !== "group") return null;
-  const service = await getService();
-  const input = submission(payload, chatId, binding.selection);
-  const current = executions.get(chatId);
-  if (current !== undefined && (current.status === "running" || (current.outcome !== null && current.outcome.status === "cancelled"))) {
-    return { action: "Block", clearInput: false, message: "An existing group submission must settle or resume before another input", metadata: { submissionId: current.input.submissionId } };
-  }
-  if (controller === null) controller = createGroupExecutionController(service, new NativeGroupTurnTransport());
-  const work = controller.submit(input);
-  const execution: InputExecution = { input, status: "running", outcome: null, failure: null };
-  executions.set(chatId, execution);
-  observe(execution, work);
-  const admitted = await controller.waitForInput(chatId, input.submissionId);
-  if (admitted.type === "consumed") return { action: "Consume", clearInput: true, metadata: admitted.metadata };
-  if (admitted.type === "blocked") return { action: "Block", clearInput: false,
-    message: admitted.message === null ? undefined : admitted.message };
-  if (admitted.type !== "committed" || admitted.receipt.userMessageTimestamp === null) {
-    return { action: "Block", clearInput: false, message: "Group input was not persisted" };
-  }
-  return { action: "Consume", clearInput: true, metadata: { submissionId: input.submissionId, chatId, selection: input.selection, runtime: input.runtime } };
+  return traceCharacterWork("group.input.submit", { chatId, source: payload.source ?? null,
+    runtime: payload.runtime, textLength: payload.text?.length ?? 0, attachmentCount: payload.attachmentCount ?? null }, async trace => {
+    const binding = await trace.step("binding.read", () => findChatBinding(chatId));
+    // An unassociated chat is outside this plugin's ownership, not an unsuccessful group lookup.
+    if (binding === null) { trace.event("allow", { reason: "unassociated" }); return null; }
+    trace.event("binding.resolved", { selection: binding.selection });
+    if (parseChatSelection(binding.selection).kind !== "group") { trace.event("allow", { reason: "not_group" }); return null; }
+    const service = await trace.step("service.ready", getService);
+    const input = submission(payload, chatId, binding.selection);
+    trace.event("submission.created", { submissionId: input.submissionId, selection: input.selection });
+    const current = executions.get(chatId);
+    if (current !== undefined && (current.status === "running" || (current.outcome !== null && current.outcome.status === "cancelled"))) {
+      trace.event("block", { reason: "existing_submission", submissionId: current.input.submissionId, status: current.status });
+      return { action: "Block", clearInput: false, message: "An existing group submission must settle or resume before another input", metadata: { submissionId: current.input.submissionId } };
+    }
+    if (controller === null) controller = createGroupExecutionController(service, new NativeGroupTurnTransport());
+    const work = controller.submit(input);
+    const execution: InputExecution = { input, status: "running", outcome: null, failure: null };
+    executions.set(chatId, execution);
+    observe(execution, work);
+    trace.event("input.admission.wait", { submissionId: input.submissionId });
+    const admitted = await trace.step("input.admission", () => controller!.waitForInput(chatId, input.submissionId));
+    trace.event("input.admission.result", { submissionId: input.submissionId, type: admitted.type });
+    if (admitted.type === "consumed") return { action: "Consume", clearInput: true, metadata: admitted.metadata };
+    if (admitted.type === "blocked") return { action: "Block", clearInput: false,
+      message: admitted.message === null ? undefined : admitted.message };
+    if (admitted.type !== "committed" || admitted.receipt.userMessageTimestamp === null) {
+      return { action: "Block", clearInput: false, message: "Group input was not persisted" };
+    }
+    return { action: "Consume", clearInput: true, metadata: { submissionId: input.submissionId, chatId, selection: input.selection, runtime: input.runtime } };
+  });
 }
 
 /** Defines exact-submission controls and a separate read-only discovery operation. */
@@ -117,10 +128,13 @@ async function groupExecutionRequest(payload: GroupExecutionRequest): Promise<To
   const target = retained(payload), execution = target.execution;
   if (target.action === "cancel") {
     if (execution.status !== "running") throw new Error("Only a running group submission can be cancelled");
-    await target.controller.cancel(execution.input.chatId, execution.input.submissionId);
+    await traceCharacterWork("group.cancel", { chatId: execution.input.chatId, submissionId: execution.input.submissionId },
+      trace => trace.step("controller.cancel", () => target.controller.cancel(execution.input.chatId, execution.input.submissionId)));
   } else if (target.action === "resume") {
     if (execution.status !== "settled" || execution.outcome === null || execution.outcome.status !== "cancelled") throw new Error("Only a settled cancelled group submission can resume");
+    const trace = new CharacterTrace("group.resume", { chatId: execution.input.chatId, submissionId: execution.input.submissionId });
     const work = target.controller.resume(execution.input.chatId, execution.input.submissionId);
+    trace.event("accepted");
     execution.status = "running"; execution.outcome = null; execution.failure = null;
     observe(execution, work);
   }

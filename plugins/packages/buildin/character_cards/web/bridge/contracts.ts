@@ -8,7 +8,7 @@ import type { GraphCamera, NodeSize, Point } from "../features/graph/layout";
 import type { ComposeFileSaveResult } from "../../../../../types/compose-dsl";
 
 /** Describes actual service results used by this finite editor bridge. */
-export type WebResponses = Pick<RequestResults, "listBindableChats" | "writeChatBinding" | "snapshot" | "writeGlobalMemoryPreference" | "searchMemoryDebug" | "readMemoryLink" | "exportMemory" | "importMemory" | "activate" | "saveStore" | "deleteStore" | "readUser" | "writeUser" | "graph" | "searchMemory" | "listMemories" | "listMemoryFolders" | "saveMemory" | "deleteMemory" | "createLink" | "deleteLink" | "updateLink" | "readMemorySettings" | "readMemorySearchConfig" | "writeMemorySettings" | "writeMemorySearchConfig" | "writeMemoryOwnerSettings" | "readMemoryAutoSaveStatus" | "listMemoryChats" | "pruneMissingChatBindings" | "startMemoryRebuild" | "readMemoryRebuildProgress" | "cancelMemoryRebuild" | "rebuildMemoryEmbeddings" | "updateChatMemory" | "autoCategorizeMemory" | "retryFailedCandidates" | "clearFailedCandidates" | "importCharacter" | "importGroup">;
+export type WebResponses = Pick<RequestResults, "listBindableChats" | "writeChatBinding" | "snapshot" | "createMemoryLibrary" | "writeGlobalMemoryPreference" | "searchMemoryDebug" | "readMemoryLink" | "exportMemory" | "importMemory" | "activate" | "saveStore" | "deleteStore" | "readUser" | "writeUser" | "graph" | "searchMemory" | "listMemories" | "listMemoryFolders" | "saveMemory" | "deleteMemory" | "createLink" | "deleteLink" | "updateLink" | "readMemorySettings" | "readMemorySearchConfig" | "writeMemorySettings" | "writeMemorySearchConfig" | "writeMemoryOwnerSettings" | "readMemoryAutoSaveStatus" | "listMemoryChats" | "pruneMissingChatBindings" | "startMemoryRebuild" | "readMemoryRebuildProgress" | "cancelMemoryRebuild" | "rebuildMemoryEmbeddings" | "updateChatMemory" | "autoCategorizeMemory" | "retryFailedCandidates" | "clearFailedCandidates" | "importCharacter" | "importGroup">;
 export type WebAction = keyof WebResponses;
 export type WebRequest<A extends WebAction> = Extract<Request, { action: A }>;
 
@@ -73,7 +73,7 @@ export interface GraphDialog extends DialogState {
   selected: string | null; selectedEdge: MemoryGraphResult["graph"]["edges"][number]["id"] | null; linkMode: boolean; linkSource: string | null;
   viewport: { width: number; height: number } | null; layoutSignature: string | null;
   sizes: Map<string, NodeSize>; positions: Map<string, Point>; camera: GraphCamera;
-  query: string; appliedQuery: string; searchIds: Set<string> | null; folder: string;
+  query: string; appliedQuery: string; searchIds: Set<string> | null; folder: string; inspectorExpanded: boolean;
 }
 export interface ChatBindingDialog extends DialogState {
   type: "chat-binding"; cardId: string; query: string; filter: "all" | "unbound";

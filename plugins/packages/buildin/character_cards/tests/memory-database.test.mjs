@@ -250,3 +250,39 @@ test("ANN filtering finds scoped memories beyond an unfiltered candidate page", 
   const page = await env.repository.run(session => session.searchMemoryPage(options("travel", { folderPath: "inside" })));
   assert.equal(page.items.length, 1); assert.equal(page.items[0].id, "inside");
 });
+
+test("missing libraries read as empty without writing owner records, files or sync mutations", async t => {
+  const env = await environment(t), state = env.disk.readState();
+  state.owners = []; env.disk.replaceState(state); env.disk.clearCalls();
+  const before = env.disk.stateBytes();
+  assert.equal((await env.repository.readUser(ownerKey)).content, "");
+  assert.equal((await env.repository.readMemorySettings(ownerKey)).autoSaveIntervalMinutes, 5);
+  await env.repository.run(async session => {
+    assert.equal(await session.hasMemoryOwner(ownerKey), false);
+    assert.equal((await session.readUser(ownerKey)).content, "");
+    assert.deepEqual(plain(await session.listMemories(ownerKey)), []);
+    assert.deepEqual(plain(await session.listMemoryLinks(ownerKey)), []);
+    assert.deepEqual(plain(await session.listMemoryFolders(ownerKey)), []);
+    assert.deepEqual(plain(await session.readMemoryGraph(ownerKey)), { nodes: [], edges: [] });
+    assert.deepEqual(plain(await session.searchMemories(options())), []);
+    assert.deepEqual(plain(await session.searchMemoryPage(options())), { ownerKey, items: [], documents: [], excludedBySnapshotCount: 0 });
+    assert.equal((await session.readMemoryAutoSaveStatus(ownerKey)).pendingCandidates, 0);
+    assert.equal((await session.readMemoryRebuildProgress(ownerKey)).status, "idle");
+  });
+  assert.deepEqual(env.disk.stateBytes(), before);
+  assert.equal(env.disk.calls.some(call => call.method === "storage.commit"), false);
+  assert.equal(env.requests.length, 0);
+});
+
+test("explicit library creation preserves existing USER.md and is idempotent", async t => {
+  const env = await environment(t);
+  await env.repository.run(session => session.writeUser(ownerKey, "# Existing profile\nKeep this content."));
+  const state = env.disk.readState(); state.owners = []; env.disk.replaceState(state);
+  await env.repository.run(session => session.createMemoryLibrary(ownerKey));
+  assert.equal(env.disk.readState().owners.length, 1);
+  assert.equal((await env.repository.readUser(ownerKey)).content, "# Existing profile\nKeep this content.");
+  env.disk.clearCalls();
+  await env.repository.run(session => session.createMemoryLibrary(ownerKey));
+  assert.equal(env.disk.calls.some(call => call.method === "storage.commit"), false);
+  await assert.rejects(env.repository.run(session => session.createMemoryLibrary("character:missing")), /does not identify exactly one record/);
+});

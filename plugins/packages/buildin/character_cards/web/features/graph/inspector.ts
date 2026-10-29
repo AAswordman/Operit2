@@ -1,11 +1,11 @@
 import type { GraphDialog } from "../../bridge/contracts";
-import { button, escapeHtml, iconButton } from "../../shared/ui/html";
+import { button, escapeHtml, icon, iconButton } from "../../shared/ui/html";
 import { graphData, graphItems, selectedMemory } from "./data";
 /** Builds the graph inspector from loaded memory records and typed relationship endpoints. */
 export function graphInspector(dialog: GraphDialog): string {
   let list = "";
   const items = graphItems(dialog);
-  for (const item of items) list += `<button type="button" class="memory-item ${dialog.selected === item.uuid ? "selected" : ""}" data-action="locate-memory" data-id="${escapeHtml(item.uuid)}"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.content.slice(0, 70))}</small></button>`;
+  for (const item of items) list += `<button type="button" class="memory-item ${dialog.selected === item.uuid ? "selected" : ""}" data-action="locate-memory" data-id="${escapeHtml(item.uuid)}"><span class="memory-item-icon">${icon(dialog.selected === item.uuid ? "check" : "memory")}</span><span class="memory-item-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.content.slice(0, 70))}</small></span></button>`;
   const selected = selectedMemory(dialog);
   let detail = "";
   if (selected !== null) {
@@ -14,7 +14,7 @@ export function graphInspector(dialog: GraphDialog): string {
       if (edge.sourceId !== selected.uuid && edge.targetId !== selected.uuid) continue;
       relationships += `<div class="row"><span class="grow muted">${escapeHtml(edge.label === null ? "" : edge.label)} · ${edge.weight.toFixed(2)}</span>${iconButton("delete-link", "删除关系", "trash", `data-link="${escapeHtml(edge.id)}"`)}</div>`;
     }
-    detail = `<div class="graph-detail"><h3>${escapeHtml(selected.title)}</h3><div class="memory-metadata"><span>类型 ${escapeHtml(selected.contentType)}</span><span>来源 ${escapeHtml(selected.source)}</span><span>可信度 ${selected.credibility.toFixed(2)}</span><span>重要性 ${selected.importance.toFixed(2)}</span></div><pre>${escapeHtml(selected.content)}</pre><div class="actions">${button("edit-memory", "编辑", "edit", "", "small")}${button("delete-memory", "删除", "trash", "", "small danger")}</div>${relationships}</div>`;
+    detail = `<div class="graph-detail"><span class="graph-detail-label">记忆详情</span><h3>${escapeHtml(selected.title)}</h3><div class="memory-metadata"><span>${escapeHtml(selected.contentType === "text/plain" ? "文本" : selected.contentType)}</span><span>${escapeHtml(selected.source === "manual" ? "手动记录" : selected.source)}</span><span>可信度 ${selected.credibility.toFixed(2)}</span><span>重要性 ${selected.importance.toFixed(2)}</span></div><pre>${escapeHtml(selected.content)}</pre><div class="actions">${button("edit-memory", "编辑", "edit", "", "small tonal")}${button("delete-memory", "删除", "trash", "", "small danger")}</div>${relationships}</div>`;
   }
   if (dialog.selectedEdge !== null) {
     const edge = graphData(dialog).graph.edges.find(
@@ -24,8 +24,8 @@ export function graphInspector(dialog: GraphDialog): string {
     if (edge !== undefined) {
       const completeRecord = edge.label !== null && typeof edge.metadata.description === "string";
       const stage = completeRecord ? `<pre>${escapeHtml(edge.metadata.description)}</pre>` : "";
-      detail = `<div class="graph-detail"><h3>记忆关系</h3><p>${escapeHtml(edge.label === null ? "" : edge.label)}</p><p>强度 ${edge.weight.toFixed(2)}</p>${stage}${button("edit-link", "编辑关系", "edit", `data-link="${escapeHtml(edge.id)}"`, "small")}${button("delete-link", "删除关系", "trash", `data-link="${escapeHtml(edge.id)}"`, "danger")}</div>`;
+      detail = `<div class="graph-detail"><span class="graph-detail-label">关系详情</span><h3>记忆关系</h3><p>${escapeHtml(edge.label === null ? "" : edge.label)}</p><p>强度 ${edge.weight.toFixed(2)}</p>${stage}<div class="actions">${button("edit-link", "编辑关系", "edit", `data-link="${escapeHtml(edge.id)}"`, "small tonal")}${button("delete-link", "删除关系", "trash", `data-link="${escapeHtml(edge.id)}"`, "small danger")}</div></div>`;
     }
   }
-  return `<h3>记忆 · ${items.length}</h3>${list === "" ? '<div class="empty">没有匹配的记忆</div>' : list}${detail}`;
+  return `<div class="graph-panel-header"><h3>${icon("memory")}记忆库<span class="graph-count">${items.length}</span></h3>${button("toggle-graph-inspector", dialog.inspectorExpanded ? "收起" : "展开", dialog.inspectorExpanded ? "down" : "up", `aria-expanded="${dialog.inspectorExpanded}"`, "small graph-panel-toggle")}</div><div class="graph-inspector">${detail}${list === "" ? '<div class="empty">没有匹配的记忆</div>' : list}</div>`;
 }

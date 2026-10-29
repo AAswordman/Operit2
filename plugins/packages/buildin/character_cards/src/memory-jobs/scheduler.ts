@@ -83,6 +83,8 @@ export async function enqueueCandidate(input: CandidateRequest, repository: Char
     if (participants.length !== 1) throw new Error("A group selected-user candidate requires an explicit owner");
     owners.add(await primaryOwner(participants[0], repository));
   }
+  for (const ownerKey of owners) if (!(await repository.hasMemoryOwner(ownerKey))) owners.delete(ownerKey);
+  if (owners.size === 0) return { owners: [], candidateIds: [] };
   const result: CandidateResult = { owners: [...owners], candidateIds: [] }, now = Date.now();
   const producerNodeId = await memoryJobProducer();
   for (const ownerKey of owners) {
@@ -313,12 +315,8 @@ export class MemoryJobRunner {
 
   /** Advances only tasks produced by this device while preserving independent owner failures. */
   private async runTick(): Promise<MemoryJobReport> {
-    await this.owner.run(
-      /** Removes memory owners whose backing entity disappeared. */
-      repository => repository.pruneOrphanMemoryOwners(),
-    );
     const keys = await this.owner.run(
-      /** Enumerates initialized memory owners without loading their corpora. */
+      /** Skips owners awaiting role configuration without deleting their synchronized records. */
       repository => repository.listMemoryOwnerKeys(),
     ), report = { owners: keys.length, rebuildWindows: 0, candidateBatches: 0 };
     const failures: Array<{ ownerKey: string; error: unknown }> = [], producerNodeId = await memoryJobProducer();
