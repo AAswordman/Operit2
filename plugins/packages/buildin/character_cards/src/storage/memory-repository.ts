@@ -9,6 +9,7 @@ import { CharacterMemoryDatabase } from "./memory";
 import type { ObjectMutation } from "./memory";
 import { embedTexts, embeddingSpace } from "../memory-jobs/embeddings";
 import type { SourceEmbedding } from "../memory-jobs/embeddings";
+import { searchDocumentChunks } from "../search/chunks";
 import { prepareMemoryQuery, searchMemoryDatabase } from "../memory-search";
 
 type Owner = Omit<MemorySpace, "memories" | "links" | "chunks" | "candidates" | "embeddings">;
@@ -34,7 +35,7 @@ function put(collection: string, recordKey: string, value: object, version: stri
 /** Builds one guarded deletion from its original database snapshot. */
 function remove(row: Row): ObjectMutation { return { op: "delete", collection: row.collection, key: row.key, expectedVersion: row.version }; }
 
-/** Implements memory operations on synchronized database records without a retained corpus. */
+/** Implements memory operations on synchronized database records using synchronized source records and derived owner-local search indexes. */
 export class DatabaseMemoryRepository {
   private readonly snapshots = new WeakMap<object, Row[]>();
 
@@ -437,23 +438,9 @@ export class DatabaseMemoryRepository {
 
   /** Ranks document chunks with the query vector already prepared for this operation. */
   private async queryChunks(ownerKey: string, owner: Owner, memory: Memory, query: string, count: number, queryEmbedding: SourceEmbedding | null): Promise<{ total: number; chunks: DocumentChunk[] }> {
-    const semantic = queryEmbedding !== null;
-    const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
-    const rows = await this.memoryDatabase.query(`WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
-      SELECT value,json_extract(value,'$.record.chunkIndex') AS position FROM plugin_objects
-      WHERE collection='chunks' AND key>=?1 AND key<?2 AND json_extract(value,'$.record.memoryUuid')=?3
-    ), scored AS (
-      SELECT *,CASE WHEN ?4='*' THEN 1 ELSE
-        CASE WHEN lower(json_extract(value,'$.record.content')) GLOB '*'||lower(?4)||'*' THEN ?7 ELSE 0 END +
-        CASE WHEN ?8>0 THEN ?8*(SELECT sum(q.value*v.value) FROM json_each(chunks.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) ELSE 0 END END AS score
-      FROM chunks
-    ), page AS (SELECT * FROM scored WHERE score>0 ORDER BY score DESC,position LIMIT ?9), stats AS (
-      SELECT count(*) AS total,sum(CASE WHEN ?8>0 AND (json_extract(value,'$.embedding.text') IS NOT json_extract(value,'$.record.content') OR json_extract(value,'$.embedding.space') IS NOT ?5 OR json_array_length(value,'$.embedding.vector') IS NOT json_array_length(?6)) THEN 1 ELSE 0 END) AS invalid FROM chunks
-    ) SELECT json_extract(page.value,'$.record') AS record,stats.total,stats.invalid FROM stats LEFT JOIN page ON 1 ORDER BY page.score DESC,page.position`,
-      [ownerKey + "/", ownerKey + "0", memory.uuid, query.trim() === "*" ? "*" : query, space, JSON.stringify(vector), owner.searchConfig.keywordWeight, semantic ? owner.searchConfig.vectorWeight : 0, count]);
-    if (rows[0].invalid !== null && Number(rows[0].invalid) !== 0) throw new Error("Document vector index requires an explicit rebuild");
-    return { total: Number(rows[0].total), chunks: rows.filter(/** Omits the aggregate-only empty page row. */ row => row.record !== null).map(/** Decodes only the selected source chunks. */ row => JSON.parse(String(row.record)) as DocumentChunk) };
+    return searchDocumentChunks(this.memoryDatabase, ownerKey, memory, query, count, owner.searchConfig, queryEmbedding);
   }
+
   /** Imports complete document-aware records, relationships, settings and USER text in this operation. */
   async importMemorySpace(ownerKey: string, imported: MemorySpace, strategy: "SKIP" | "UPDATE" | "CREATE_NEW"): Promise<MemoryImportResult> {
     assertMemorySpace(imported);

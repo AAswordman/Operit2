@@ -28,6 +28,7 @@ enum HostBinding {
         profile: bool,
     },
     Asynchronous(HostJavaScriptAsyncJsonCallback),
+    Binary(operit_host_api::HostJavaScriptBinaryCallback),
     Constructor {
         prefix: String,
         cache: Arc<HostJavaScriptCodeCache>,
@@ -192,6 +193,10 @@ impl Drop for NativeHostJavaScriptRuntime {
 }
 
 impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
+    fn registerHostJavaScriptBinaryFunction(&mut self, name: &str, callback: operit_host_api::HostJavaScriptBinaryCallback) -> HostResult<()> {
+        self.register(name, HostBinding::Binary(callback))
+    }
+
     /// Shares trusted compiled code while keeping each bootstrap's globals in its own context.
     fn evaluateHostJavaScriptBootstrap(&mut self, source: &'static str) -> HostResult<()> {
         let bootstrap = self.bootstrap.clone();
@@ -475,6 +480,23 @@ fn dispatch<'s>(
             }
             let result = callback(values)?;
             javascript_values::to_js(scope, &result)
+        }
+        HostBinding::Binary(callback) => {
+            let values = bindings.intrinsics.arguments_from_js(scope,
+                (0..arguments.length()).map(|index| arguments.get(index)))?;
+            let values = values.into_iter().map(HostJavaScriptValue::into_json).collect::<HostResult<Vec<_>>>()?;
+            let (metadata, bytes) = callback(values)?;
+            let metadata = javascript_values::to_js(scope, &metadata)?;
+            let length = bytes.len();
+            let store = v8::ArrayBuffer::new_backing_store_from_vec(bytes).make_shared();
+            let buffer = v8::ArrayBuffer::with_backing_store(scope, &store);
+            let bytes = v8::Uint8Array::new(scope, buffer, 0, length).ok_or_else(engine_error)?;
+            let object = v8::Object::new(scope);
+            let metadata_key = text(scope, "metadata")?;
+            let bytes_key = text(scope, "bytes")?;
+            object.set(scope, metadata_key.into(), metadata);
+            object.set(scope, bytes_key.into(), bytes.into());
+            Ok(object.into())
         }
         HostBinding::Asynchronous(callback) => {
             if bindings.promises.borrow().len() >= MAX_PENDING_PROMISES {

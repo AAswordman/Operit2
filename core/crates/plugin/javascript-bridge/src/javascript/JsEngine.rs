@@ -1946,6 +1946,18 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
         }
 
+        self.runtime.registerHostJavaScriptBinaryFunction(
+            "__operitNativeLoadToolPkgWasm",
+            Arc::new(|arguments| {
+                let [package, module] = exactHostJavaScriptJsonArguments("__operitNativeLoadToolPkgWasm", arguments)?;
+                let package = hostJavaScriptStringArgument(package)?;
+                let module = hostJavaScriptStringArgument(module)?;
+                let loaded = currentExecutionHost().and_then(|host| host.load_toolpkg_wasm(&package, &module))
+                    .map_err(HostError::new)?;
+                Ok((serde_json::json!({"exports": loaded.exports}), loaded.bytes))
+            }),
+        ).map_err(|error| error.to_string())?;
+
         let detachedWake = self.backgroundWake.clone();
         self.runtime.registerHostJavaScriptFunction(
             "__operitNativeNotifyDetachedCall",

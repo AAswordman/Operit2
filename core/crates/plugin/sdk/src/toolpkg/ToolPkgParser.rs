@@ -1090,7 +1090,7 @@ impl ToolPkgArchiveParser {
             if abi.is_empty() {
                 return Err(format!("wasm_modules[{index}].abi is required"));
             }
-            if abi != "scalar" {
+            if abi != "scalar" && abi != "memory" {
                 return Err(format!("wasm_modules[{index}].abi is unsupported: {abi}"));
             }
             let mut exportNames = BTreeSet::new();

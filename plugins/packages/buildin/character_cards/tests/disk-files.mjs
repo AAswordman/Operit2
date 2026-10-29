@@ -2,7 +2,8 @@ import { createStorageHost } from "./storage-host.mjs";
 import { loadModule } from "./runtime.mjs";
 import { mkdtemp, mkdir, readFile, writeFile, rename, stat, rm, readdir, copyFile } from "node:fs/promises";
 import path from "node:path";
-import { writeFileSync } from "node:fs";
+import vm from "node:vm";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 /** Creates real disk IO for the existing Files API; it implements no plugin records or persistence policy. */
@@ -154,11 +155,23 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
     await writeFile(profile, "");
     calls.length = 0;
   }
+  const wasmContext = vm.createContext({ Uint8Array, WebAssembly, console,
+    __operitNativeLoadToolPkgWasm(_target, moduleId) {
+      attempted("wasm.load", [moduleId]);
+      const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+      const module = manifest.wasm_modules.find(module => module.id === moduleId);
+      if (!module) throw new Error("Undeclared WASM module");
+      return { bytes: new Uint8Array(readFileSync(new URL("../" + module.path, import.meta.url))), metadata: { exports: module.exports } };
+    },
+  });
+  vm.runInContext(readFileSync(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/ToolPkgWasmApi.js", import.meta.url), "utf8"), wasmContext);
+  const wasm = wasmContext.__operitCreateToolPkgWasmApi(() => "com.operit.character_cards", false);
   return {
     directory, calls, files, storage,
     globals: {
       Tools: tools,
       ToolPkg: {
+        wasm,
         /** Returns the test plugin's persistent Space data namespace. */
         getSpaceDataDir() { return directory.replaceAll("\\", "/"); },
         /** Implements only the existing authenticated config-directory IO binding, not provider or storage services. */
@@ -170,7 +183,7 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
     },
     /** Injects one negative IO event on the Nth call of a method; no successful domain operation is implemented by the harness. */
     failNext(method, failure, occurrence = 1) {
-      if (!Object.hasOwn(methods, method) && !["storage.commit", "storage.open", "storage.list", "storage.get", "storage.transaction", "storage.query", "storage.execute", "storage.getMany", "storage.preferences.open", "storage.preferences.edit", "storage.preferences.data"].includes(method)) throw new Error("Cannot fail an unsupported disk method: " + method);
+      if (!Object.hasOwn(methods, method) && !["storage.changes", "storage.commit", "storage.open", "storage.list", "storage.get", "storage.transaction", "storage.query", "storage.execute", "storage.getMany", "storage.preferences.open", "storage.preferences.edit", "storage.preferences.data"].includes(method)) throw new Error("Cannot fail an unsupported disk method: " + method);
       if (faults.has(method)) throw new Error("A disk failure is already scheduled for " + method);
       if (!Number.isInteger(occurrence) || occurrence < 1) throw new Error("Disk failure occurrence must be a positive integer");
       faults.set(method, { failure, remaining: occurrence });

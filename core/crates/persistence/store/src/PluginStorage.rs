@@ -41,6 +41,21 @@ CREATE TABLE IF NOT EXISTS _operit_versions (collection TEXT NOT NULL, key TEXT 
 CREATE TABLE IF NOT EXISTS _operit_merge_map (collection TEXT NOT NULL, origin TEXT NOT NULL, remote_key TEXT NOT NULL, canonical_key TEXT NOT NULL, PRIMARY KEY(collection,origin,remote_key));
 CREATE TABLE IF NOT EXISTS _operit_merge_names (collection TEXT NOT NULL, key TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(collection,key));
 "#;
+const OBJECT_CHANGE_SCHEMA: &[&str] = &[
+    r#"CREATE TABLE IF NOT EXISTS _operit_changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, collection TEXT NOT NULL, key TEXT NOT NULL)"#,
+    r#"CREATE TRIGGER IF NOT EXISTS _operit_changes_insert AFTER INSERT ON _operit_values BEGIN
+  INSERT INTO _operit_changes(collection,key) VALUES(NEW.collection,NEW.key);
+END;"#,
+    r#"CREATE TRIGGER IF NOT EXISTS _operit_changes_update AFTER UPDATE OF value,collection,key ON _operit_values BEGIN
+  INSERT INTO _operit_changes(collection,key) VALUES(NEW.collection,NEW.key);
+END;"#,
+    r#"CREATE TRIGGER IF NOT EXISTS _operit_changes_delete AFTER DELETE ON _operit_values BEGIN
+  INSERT INTO _operit_changes(collection,key) VALUES(OLD.collection,OLD.key);
+END;"#,
+    r#"CREATE TRIGGER IF NOT EXISTS _operit_changes_trim AFTER INSERT ON _operit_changes WHEN NEW.revision % 1024 = 0 BEGIN
+  DELETE FROM _operit_changes WHERE revision <= NEW.revision - 65536;
+END;"#,
+];
 const CATALOG_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS plugin_databases (path TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL, sync INTEGER NOT NULL, merge TEXT);
 "#;
@@ -481,6 +496,7 @@ fn openDatabase(
         }
         let existing = !tables.is_empty();
         for sql in DATABASE_SCHEMA.split(';').filter(|sql| !sql.trim().is_empty()) { tx.execute(sql, Vec::new())?; }
+        if manifest.kind == StorageKind::Objects { for sql in OBJECT_CHANGE_SCHEMA { tx.execute(sql, Vec::new())?; } }
         let manifestColumns = tx.queryRows("PRAGMA table_info(_operit_manifest)", Vec::new())?;
         if !manifestColumns.iter().any(|row| row.get::<_, String>(1).ok().as_deref() == Some("merge")) {
             tx.execute("ALTER TABLE _operit_manifest ADD COLUMN merge TEXT", Vec::new())?;
@@ -926,6 +942,7 @@ impl PluginStorageSession {
             | StorageRequest::DefineTable { handle, .. }
             | StorageRequest::Get { handle, .. }
             | StorageRequest::GetMany { handle, .. }
+            | StorageRequest::Changes { handle, .. }
             | StorageRequest::List { handle, .. }
             | StorageRequest::Commit { handle, .. } => handle,
             StorageRequest::Open { .. } | StorageRequest::OpenPreferences { .. } => unreachable!(),
@@ -1024,6 +1041,7 @@ impl PluginStorageSession {
                     version: row.get::<_, String>(2)?,
                 })).collect::<Result<Vec<_>, SqliteStoreError>>().map(StorageResponse::List)
             }
+            StorageRequest::Changes {after,limit,..} => objectChanges(&database, tx, after, limit).map(StorageResponse::Changes),
             StorageRequest::Commit {mutations,guards,..} => {
                 if guards.len() > 1000 { return Err(failure("Object commit exceeds 1000 record guards")); }
                 for guard in guards {
@@ -1179,6 +1197,35 @@ fn redirectAliasedMutations(
         mutation.value = value;
     }
     Ok(mutations)
+}
+
+/// Reads journal identities and their current records in one snapshot; no vector JSON is examined on idle polls.
+fn objectChanges(database: &Database, tx: &mut SqliteTransaction<'_>, after: Option<String>, limit: u32) -> Result<StorageChangePage, SqliteStoreError> {
+    if database.kind != StorageKind::Objects { return Err(failure("Changes require an object database")); }
+    if limit == 0 || limit > 1000 { return Err(failure("Change page limit must be between 1 and 1000")); }
+    let bounds = tx.queryOne("SELECT COALESCE((SELECT revision FROM _operit_changes ORDER BY revision LIMIT 1),0),COALESCE((SELECT revision FROM _operit_changes ORDER BY revision DESC LIMIT 1),0)", Vec::new())?.ok_or_else(|| failure("Missing change journal bounds"))?;
+    let oldest = bounds.get::<_, i64>(0)?;
+    let head = bounds.get::<_, i64>(1)?;
+    let cursor = |revision| format!("{}#{revision}", database.origin);
+    let Some(after) = after else { return Ok(StorageChangePage { cursor: cursor(head), reset: false, has_more: false, changes: Vec::new() }); };
+    let (origin, position) = after.rsplit_once('#').ok_or_else(|| failure("Invalid object change cursor"))?;
+    let position = position.parse::<i64>().map_err(|_| failure("Invalid object change cursor"))?;
+    if position < 0 { return Err(failure("Invalid object change cursor")); }
+    if origin != database.origin || position > head || (oldest > 0 && position < oldest - 1) {
+        return Ok(StorageChangePage { cursor: cursor(head), reset: true, has_more: false, changes: Vec::new() });
+    }
+    let rows = tx.queryRows("SELECT revision,collection,key FROM _operit_changes WHERE revision>?1 ORDER BY revision LIMIT ?2", vec![SqliteValue::Integer(position), SqliteValue::Integer(limit.into())])?;
+    let mut last = position;
+    let mut identities = BTreeMap::new();
+    for row in rows {
+        last = row.get(0)?;
+        identities.insert((row.get::<_, String>(1)?, row.get::<_, String>(2)?), ());
+    }
+    let changes = identities.into_keys().map(|(collection,key)| {
+        let entry = readValue(tx, &collection, &key)?;
+        Ok(StorageObjectChange { collection, key, entry })
+    }).collect::<Result<Vec<_>, SqliteStoreError>>()?;
+    Ok(StorageChangePage { cursor: cursor(last), reset: false, has_more: last < head, changes })
 }
 
 /// Checks all versions and stages all key mutations inside one transaction.

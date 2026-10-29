@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { StorageMergeDescriptor, StoragePreferencesMergeDescriptor, StorageRecordGuard, StorageRequest, StorageTable } from "./storage.generated";
+import type { StorageChangePage, StorageMergeDescriptor, StoragePreferencesMergeDescriptor, StorageRecordGuard, StorageRequest, StorageTable } from "./storage.generated";
 
 /**
  * Dispatches the exact wire contract through the authenticated host.
@@ -194,6 +194,10 @@ export namespace Storage {
    * Owns an object database with exact-key collection subscriptions.
    */
   export interface ObjectDatabase extends Handle {
+    /**
+     * Captures the current head with null, or reads committed changes after an opaque cursor.
+     */
+    changes(after: string | null, limit?: number): Promise<StorageChangePage>;
     /**
      * Queries the read-only plugin_objects view through the shared SQLite host.
      */

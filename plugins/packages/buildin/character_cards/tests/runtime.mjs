@@ -25,7 +25,7 @@ export function loadModule(relative, globals = {}) {
     /** Rejects every invocation of the removed CLI or lossy summary-tool bridge. */
     get(_target, property) { throw new Error(`Forbidden production Tools access: ${String(property)}`); },
   });
-  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, console, TextEncoder, TextDecoder, setTimeout, clearTimeout, Tools: forbidden, ...globals }, { filename: file });
+  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, console, Uint8Array, Float32Array, Float64Array, BigUint64Array, ArrayBuffer, DataView, WebAssembly, TextEncoder, TextDecoder, setTimeout, clearTimeout, Tools: forbidden, ...globals }, { filename: file });
   return module.exports;
 }
 

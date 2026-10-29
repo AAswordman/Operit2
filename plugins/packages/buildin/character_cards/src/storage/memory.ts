@@ -2,6 +2,8 @@ import type { Storage } from "../../../../../types/storage";
 import merge from "./memory-merge.json";
 import type { StorageRecordGuard, StorageMergeDescriptor } from "../../../../../types/storage.generated";
 
+import { closeMemoryIndexes } from "../search/state";
+
 export const characterMerge = merge as StorageMergeDescriptor;
 export type ObjectMutation = Storage.ObjectMutation;
 const HOST_READ_PAGE_LIMIT = 100;
@@ -19,7 +21,7 @@ export class CharacterMemoryDatabase {
   }
 
   /** Closes the retained memory database handle. */
-  close(): Promise<void> { return this.database.close(); }
+  async close(): Promise<void> { await closeMemoryIndexes(this); return this.database.close(); }
 
   /** Reads explicit backup or migration pages without hiding storage failures. */
   async read<T = Storage.Value>(collection: string): Promise<Storage.ListedEntry<T>[]> {
@@ -34,7 +36,10 @@ export class CharacterMemoryDatabase {
     }
   }
 
-  /** Executes database-side filtering, ranking and bounded projections. */
+  /** Reads the local change journal; synchronized replays and other handles are included. */
+  changes(after: string | null, limit = 100) { return this.database.changes(after, limit); }
+
+  /** Executes simple database filtering and bounded projections. */
   query(sql: string, params: Storage.SqlValue[] = []): Promise<Record<string, Storage.SqlValue>[]> {
     return this.database.query(sql, params);
   }

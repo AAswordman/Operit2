@@ -8,6 +8,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
     };
     r#"
     __OPERIT_TOOLPKG_MODULE_EXPORTS__
+    __OPERIT_TOOLPKG_WASM_API__
     (function() {
         var root = typeof globalThis !== 'undefined'
             ? globalThis
@@ -471,83 +472,6 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return path;
         }
 
-        function normalizeToolPkgWasmValueType(valueType) {
-            var normalizedType = String(valueType || '').trim().toLowerCase();
-            if (
-                normalizedType !== 'i32' &&
-                normalizedType !== 'i64' &&
-                normalizedType !== 'f32' &&
-                normalizedType !== 'f64'
-            ) {
-                throw new Error('ToolPkg.wasm arg type is invalid: ' + normalizedType);
-            }
-            return normalizedType;
-        }
-
-        function normalizeToolPkgWasmArgs(args) {
-            if (args == null) {
-                return [];
-            }
-            if (!Array.isArray(args)) {
-                throw new Error('ToolPkg.wasm args must be an array');
-            }
-            var normalizedArgs = [];
-            for (var i = 0; i < args.length; i += 1) {
-                var arg = args[i];
-                if (!arg || typeof arg !== 'object' || Array.isArray(arg)) {
-                    throw new Error('ToolPkg.wasm arg ' + i + ' must be an object');
-                }
-                var valueType = normalizeToolPkgWasmValueType(arg.type);
-                if (!Object.prototype.hasOwnProperty.call(arg, 'value')) {
-                    throw new Error('ToolPkg.wasm arg ' + i + ' value is required');
-                }
-                var value = arg.value;
-                if (valueType === 'i32' && typeof value !== 'number') {
-                    throw new Error('ToolPkg.wasm arg ' + i + ' i32 value must be a number');
-                }
-                if (valueType === 'i64' && typeof value !== 'number' && typeof value !== 'string') {
-                    throw new Error('ToolPkg.wasm arg ' + i + ' i64 value must be a number or string');
-                }
-                if (
-                    (valueType === 'f32' || valueType === 'f64') &&
-                    typeof value !== 'number' &&
-                    typeof value !== 'string'
-                ) {
-                    throw new Error('ToolPkg.wasm arg ' + i + ' float value must be a number or string');
-                }
-                normalizedArgs.push({ type: valueType, value: value });
-            }
-            return normalizedArgs;
-        }
-
-        /** Calls a WASM export using structured scalar arguments and an owned host Promise. */
-
-        function callToolPkgWasm(moduleId, exportName, args) {
-            if (registrationOnly) {
-                throw new Error('ToolPkg.wasm.call is unavailable during ToolPkg registration');
-            }
-            var normalizedModuleId = String(moduleId || '').trim();
-            if (!normalizedModuleId) {
-                return Promise.reject(new Error('ToolPkg.wasm module id is required'));
-            }
-            var normalizedExportName = String(exportName || '').trim();
-            if (!normalizedExportName) {
-                return Promise.reject(new Error('ToolPkg.wasm export name is required'));
-            }
-            var normalizedArgs;
-            try {
-                normalizedArgs = normalizeToolPkgWasmArgs(args);
-            } catch (error) {
-                return Promise.reject(error);
-            }
-            var target = resolveCurrentToolPkgTarget();
-            if (!target) {
-                return Promise.reject(new Error('package/toolpkg runtime target is empty'));
-            }
-            return __operitInvokeHostAsync(__operitNativeCallToolPkgWasm,
-                [target, normalizedModuleId, normalizedExportName, normalizedArgs]);
-        }
-
         function requireToolPkgApiRuntime() {
             var runtime = root.__operitToolPkgApi;
             if (!runtime || typeof runtime !== 'object') {
@@ -663,9 +587,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             getConfigDir: getToolPkgConfigDir,
             getLocalDataDir: getToolPkgLocalDataDir,
             getSpaceDataDir: getToolPkgSpaceDataDir,
-            wasm: {
-                call: callToolPkgWasm
-            },
+            wasm: root.__operitCreateToolPkgWasmApi(resolveCurrentToolPkgTarget, registrationOnly),
             registerAiProvider: function(definition) {
                 capture.aiProviders.push(normalizeSpec(normalizeAiProviderDefinition(definition, 'registerAiProvider')));
             },
@@ -676,6 +598,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
     })();
     "#
     .replace("__OPERIT_TOOLPKG_MODULE_EXPORTS__", include_str!("ModuleExports.js"))
+    .replace("__OPERIT_TOOLPKG_WASM_API__", include_str!("ToolPkgWasmApi.js"))
     .replace("__OPERIT_TOOLPKG_REGISTRATION_ONLY__", registrationOnly)
 }
 

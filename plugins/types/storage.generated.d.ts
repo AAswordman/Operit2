@@ -96,7 +96,7 @@ export interface StorageRecordWatchState {
 /**
  * Dispatches storage operations only through an authenticated engine-owned handle.
  */
-export type StorageRequest = { op: "open"; path: string; kind: StorageKind; merge: StorageMergeDescriptor | null; } | { op: "open_preferences"; path: string; merge: StoragePreferencesMergeDescriptor | null; } | { op: "preferences_data"; handle: string; } | { op: "preferences_begin_edit"; handle: string; } | { op: "preferences_finish_edit"; handle: string; token: string; edits: StoragePreferenceEdit[]; schemaVersion: number; } | { op: "preferences_cancel_edit"; handle: string; token: string; } | { op: "close"; handle: string; } | { op: "query"; handle: string; statement: StorageStatement; } | { op: "execute"; handle: string; statement: StorageStatement; } | { op: "transaction"; handle: string; statements: StorageStatement[]; whenAbsent: StorageRecordIdentity | null; } | { op: "define_table"; handle: string; table: StorageTable; } | { op: "get"; handle: string; collection: string; key: string; } | { op: "get_many"; handle: string; collection: string; keys: string[]; } | { op: "list"; handle: string; collection: string; after: string | null; limit: number; } | { op: "commit"; handle: string; mutations: StorageMutation[]; guards: StorageRecordGuard[]; };
+export type StorageRequest = { op: "open"; path: string; kind: StorageKind; merge: StorageMergeDescriptor | null; } | { op: "open_preferences"; path: string; merge: StoragePreferencesMergeDescriptor | null; } | { op: "preferences_data"; handle: string; } | { op: "preferences_begin_edit"; handle: string; } | { op: "preferences_finish_edit"; handle: string; token: string; edits: StoragePreferenceEdit[]; schemaVersion: number; } | { op: "preferences_cancel_edit"; handle: string; token: string; } | { op: "close"; handle: string; } | { op: "query"; handle: string; statement: StorageStatement; } | { op: "execute"; handle: string; statement: StorageStatement; } | { op: "transaction"; handle: string; statements: StorageStatement[]; whenAbsent: StorageRecordIdentity | null; } | { op: "define_table"; handle: string; table: StorageTable; } | { op: "get"; handle: string; collection: string; key: string; } | { op: "get_many"; handle: string; collection: string; keys: string[]; } | { op: "list"; handle: string; collection: string; after: string | null; limit: number; } | { op: "changes"; handle: string; after: string | null; limit: number; } | { op: "commit"; handle: string; mutations: StorageMutation[]; guards: StorageRecordGuard[]; };
 
 /**
  * Identifies one successfully opened database session.
@@ -177,6 +177,25 @@ export interface StorageMergeDescriptor {
 export interface StorageSqlRow {
   columns: string[];
   values: StorageSqlValue[];
+}
+
+/**
+ * Carries the current value (or deletion) for one changed object identity.
+ */
+export interface StorageObjectChange {
+  collection: string;
+  key: string;
+  entry: StorageValueEntry | null;
+}
+
+/**
+ * Pages a bounded local change journal, including synchronization and conflict-merge writes.
+ */
+export interface StorageChangePage {
+  cursor: string;
+  reset: boolean;
+  hasMore: boolean;
+  changes: StorageObjectChange[];
 }
 
 /**
@@ -294,4 +313,4 @@ export interface StoragePreferencesEdit {
  * Returns each storage operation's concrete business result.
  * Serialization preserves the database API payload; tool results add their own operation discriminator.
  */
-export type StorageResponse = StorageOpenResult | StoragePreferencesSnapshot | StoragePreferencesEdit | StoragePreferencesSnapshot | null | null | StorageSqlRow[] | StorageSqlExecutionResult[] | StorageSqlExecutionResult[] | StorageTableDefinitionResult | StorageValueEntry | null | (StorageValueEntry | null)[] | StorageKeyValueEntry[] | StorageCommitResult;
+export type StorageResponse = StorageOpenResult | StoragePreferencesSnapshot | StoragePreferencesEdit | StoragePreferencesSnapshot | null | null | StorageSqlRow[] | StorageSqlExecutionResult[] | StorageSqlExecutionResult[] | StorageTableDefinitionResult | StorageValueEntry | null | (StorageValueEntry | null)[] | StorageKeyValueEntry[] | StorageCommitResult | StorageChangePage;

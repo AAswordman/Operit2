@@ -4553,6 +4553,11 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Loads a declared module while preserving enabled-container ownership checks.
+    pub fn loadToolPkgWasmModule(&self, target: &str, moduleId: &str) -> Result<operit_plugin_sdk::javascript::JsToolPkgWasmModule, String> {
+        ToolPkgPackageService::new(self).loadToolPkgWasmModule(target, moduleId, true)
+    }
+
     /// Calls one declared ToolPkg WASM export.
     pub fn callToolPkgWasm(
         &self,

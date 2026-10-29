@@ -33,5 +33,6 @@ export function readSdkScript(file, functionName = null) {
   if (offset < 0) throw new Error('Unknown SDK script builder: ' + functionName);
   const start = source.indexOf('r#"', offset), end = source.indexOf('"#', start + 3);
   if (start < 0 || end < 0) throw new Error('SDK script has no literal source: ' + file);
-  return source.slice(start + 3, end).replace('__OPERIT_TOOLPKG_MODULE_EXPORTS__', () => composeSource('../ModuleExports.js'));
+  return source.slice(start + 3, end).replace('__OPERIT_TOOLPKG_MODULE_EXPORTS__', () => composeSource('../ModuleExports.js'))
+    .replace('__OPERIT_TOOLPKG_WASM_API__', () => composeSource('../ToolPkgWasmApi.js'));
 }

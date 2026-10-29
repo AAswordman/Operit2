@@ -1468,6 +1468,12 @@ impl JsExecutionHost for AIToolHandler {
         crate::tools::ToolJsRuntime::materializeToolPkgResource(self, request)
     }
 
+    /// Loads a module once; compilation and instance lifetime belong to the JavaScript realm.
+    fn load_toolpkg_wasm(&self, target: &str, module_id: &str) -> Result<operit_plugin_sdk::javascript::JsToolPkgWasmModule, String> {
+        self.getOrCreatePackageManager().lock().expect("package manager mutex poisoned")
+            .loadToolPkgWasmModule(target, module_id)
+    }
+
     /// Calls one ToolPkg WASM export through the active package manager.
     fn call_toolpkg_wasm(
         &self,

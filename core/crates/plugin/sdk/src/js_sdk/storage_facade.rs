@@ -191,6 +191,9 @@ pub struct StorageObjectDatabase {
     pub handle: StorageHandle,
 }
 pub trait StorageObjectDatabaseMethods: Send + Sync {
+    /// Captures the current head with null, or reads committed changes after an opaque cursor.
+    fn changes(&self, after: super::JsNullable<String>, limit: Option<u32>) -> JsFuture<super::storage::StorageChangePage>;
+
     /// Queries the read-only plugin_objects view through the shared SQLite host.
     fn query(
         &self,

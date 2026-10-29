@@ -96,6 +96,27 @@ await import(workerData);
       });
       assert.deepEqual(result, { text, values: [null, false, 42], nested: { enabled: true } });
     });
+    await t.test('loads binary WASM through the production worker transport and retains instance memory', async () => {
+      const bytes = new Uint8Array(await readFile(new URL('tools/tests/fixtures/wasm/memory.wasm', root)));
+      const source = await readFile(new URL('core/crates/plugin/sdk/src/toolpkg/ToolPkgWasmApi.js', root), 'utf8');
+      call(runtime, { operation: 'binding', name: '__operitNativeLoadToolPkgWasm', factory: 'syncBinding' });
+      let reads = 0;
+      const callback = (name, args) => {
+        assert.equal(name, '__operitNativeLoadToolPkgWasm'); assert.deepEqual(args, ['memory.fixture', 'state']); reads++;
+        return { metadata: { exports: ['next', 'sum'] }, bytes };
+      };
+      call(runtime, { operation: 'evaluateVoid', name: 'wasm.js', source: source + `
+        globalThis.wasmResult=null;globalThis.wasmFailure=null;
+        globalThis.api=__operitCreateToolPkgWasmApi(()=>"memory.fixture",false);
+        api.open("state").then(instance=>{
+          const vector=new Float32Array([1.25,2.5,4]);instance.writeMemory(4096,new Uint8Array(vector.buffer));
+          globalThis.wasmResult=[instance.call("next"),instance.call("next"),instance.call("sum",[{type:"i32",value:4096},{type:"i32",value:3}])];
+          instance.close();
+        }).catch(error=>{globalThis.wasmFailure=String(error);});
+      ` }, callback);
+      assert.equal(call(runtime, { operation: 'evaluateString', name: 'wasm-result.js', source: 'JSON.stringify({result:wasmResult,error:wasmFailure})' }), '{"result":[1,2,7.75],"error":null}');
+      assert.equal(reads, 1);
+    });
     await t.test('drains native Promise continuations before releasing command ownership', () => {
       const requests = [];
       call(runtime, { operation: 'binding', name: 'hostAsync', factory: 'binding' });

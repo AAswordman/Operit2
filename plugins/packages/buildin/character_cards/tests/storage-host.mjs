@@ -15,6 +15,10 @@ export function createStorageHost(directory, attempted) {
     const sql = new DatabaseSync(target); handles.add(sql);
     sql.exec("CREATE TABLE IF NOT EXISTS records(collection TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,version TEXT NOT NULL,PRIMARY KEY(collection,key));CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY AUTOINCREMENT)");
     sql.exec("CREATE VIEW IF NOT EXISTS plugin_objects AS SELECT collection,key,value,version FROM records");
+    sql.exec(`CREATE TABLE IF NOT EXISTS changes(revision INTEGER PRIMARY KEY AUTOINCREMENT,collection TEXT NOT NULL,key TEXT NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS record_insert AFTER INSERT ON records BEGIN INSERT INTO changes(collection,key) VALUES(NEW.collection,NEW.key); END;
+      CREATE TRIGGER IF NOT EXISTS record_update AFTER UPDATE ON records BEGIN INSERT INTO changes(collection,key) VALUES(NEW.collection,NEW.key); END;
+      CREATE TRIGGER IF NOT EXISTS record_delete AFTER DELETE ON records BEGIN INSERT INTO changes(collection,key) VALUES(OLD.collection,OLD.key); END;`);
     /** Reads one existing object and its exact version without treating stored null as absence. */
     function get(collection, key) {
       const row = sql.prepare("SELECT value,version FROM records WHERE collection=? AND key=?").get(collection, key);
@@ -46,6 +50,21 @@ export function createStorageHost(directory, attempted) {
     }
     return {
       path: options.path,
+      async changes(after, limit = 100) {
+        attempted("storage.changes", [after, limit]);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Change page limit");
+        sql.exec("BEGIN");
+        try {
+          const head = sql.prepare("SELECT COALESCE((SELECT revision FROM changes ORDER BY revision DESC LIMIT 1),0) AS revision").get().revision;
+          const prefix = target + "#", position = after === null ? head : Number(after.slice(after.lastIndexOf("#") + 1));
+          const reset = after !== null && (!after.startsWith(prefix) || position > head || !Number.isSafeInteger(position) || position < 0);
+          const rows = reset || after === null ? [] : sql.prepare("SELECT revision,collection,key FROM changes WHERE revision>? ORDER BY revision LIMIT ?").all(position, limit);
+          const last = rows.length ? rows.at(-1).revision : reset ? head : position;
+          const identities = new Map(rows.map(row => [row.collection + "\0" + row.key, row]));
+          const result = { cursor: prefix + last, reset, hasMore: !reset && last < head, changes: [...identities.values()].map(row => ({ collection: row.collection, key: row.key, entry: get(row.collection, row.key) })) };
+          sql.exec("COMMIT"); return result;
+        } catch (error) { sql.exec("ROLLBACK"); throw error; }
+      },
       /** Executes the production read-only object SQL contract in real SQLite. */
       async query(statement, params = []) { attempted("storage.query", [statement, structuredClone(params)]); return sql.prepare(statement).all(...params); },
       /** Exposes one named generic collection with primary-key pagination and atomic writes. */
@@ -148,6 +167,21 @@ export function createStorageHost(directory, attempted) {
     }
     const handle = {
       path: options.path,
+      async changes(after, limit = 100) {
+        attempted("storage.changes", [after, limit]);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Change page limit");
+        sql.exec("BEGIN");
+        try {
+          const head = sql.prepare("SELECT COALESCE((SELECT revision FROM changes ORDER BY revision DESC LIMIT 1),0) AS revision").get().revision;
+          const prefix = target + "#", position = after === null ? head : Number(after.slice(after.lastIndexOf("#") + 1));
+          const reset = after !== null && (!after.startsWith(prefix) || position > head || !Number.isSafeInteger(position) || position < 0);
+          const rows = reset || after === null ? [] : sql.prepare("SELECT revision,collection,key FROM changes WHERE revision>? ORDER BY revision LIMIT ?").all(position, limit);
+          const last = rows.length ? rows.at(-1).revision : reset ? head : position;
+          const identities = new Map(rows.map(row => [row.collection + "\0" + row.key, row]));
+          const result = { cursor: prefix + last, reset, hasMore: !reset && last < head, changes: [...identities.values()].map(row => ({ collection: row.collection, key: row.key, entry: get(row.collection, row.key) })) };
+          sql.exec("COMMIT"); return result;
+        } catch (error) { sql.exec("ROLLBACK"); throw error; }
+      },
       /** Declares one schema before this handle starts reading or editing. */
       withSchema(version, migrate) { if (started || declaration !== null) throw new Error("Preference schema must be declared before operations"); declaration = { version, migrate }; return handle; },
       /** Returns one complete immutable snapshot after declared schema upgrades. */
@@ -173,6 +207,21 @@ export function createStorageHost(directory, attempted) {
         function params(values = []) { return values.map(value => Object.prototype.toString.call(value) === "[object Uint8Array]" ? Buffer.from(value) : value); }
         return {
           path: options.path,
+      async changes(after, limit = 100) {
+        attempted("storage.changes", [after, limit]);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Change page limit");
+        sql.exec("BEGIN");
+        try {
+          const head = sql.prepare("SELECT COALESCE((SELECT revision FROM changes ORDER BY revision DESC LIMIT 1),0) AS revision").get().revision;
+          const prefix = target + "#", position = after === null ? head : Number(after.slice(after.lastIndexOf("#") + 1));
+          const reset = after !== null && (!after.startsWith(prefix) || position > head || !Number.isSafeInteger(position) || position < 0);
+          const rows = reset || after === null ? [] : sql.prepare("SELECT revision,collection,key FROM changes WHERE revision>? ORDER BY revision LIMIT ?").all(position, limit);
+          const last = rows.length ? rows.at(-1).revision : reset ? head : position;
+          const identities = new Map(rows.map(row => [row.collection + "\0" + row.key, row]));
+          const result = { cursor: prefix + last, reset, hasMore: !reset && last < head, changes: [...identities.values()].map(row => ({ collection: row.collection, key: row.key, entry: get(row.collection, row.key) })) };
+          sql.exec("COMMIT"); return result;
+        } catch (error) { sql.exec("ROLLBACK"); throw error; }
+      },
           /** Declares exactly the supplied scalar columns and primary identity. */
           async defineTable(table) {
             sql.exec('CREATE TABLE IF NOT EXISTS "' + table.name + '" (' + table.columns.map(column => '"' + column.name + '" ' + column.affinity.toUpperCase() + (column.nullable ? "" : " NOT NULL") + (column.name === table.primaryKey ? " PRIMARY KEY" : "")).join(",") + ")");

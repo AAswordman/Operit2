@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "api_version": "2.0.0",
+  "toolpkg_id": "com.operit.examples.usearch_demo",
+  "version": "0.1.0",
+  "author": [
+    "Operit"
+  ],
+  "main": "main.js",
+  "display_name": {
+    "zh": "USearch WASM 向量索引验证",
+    "en": "USearch WASM index exercise"
+  },
+  "description": {
+    "zh": "通过宿主的持久 WASM 实例验证真实近邻索引、二进制批处理和保存恢复。",
+    "en": "Exercises real ANN search, binary batches and snapshot restore through persistent host WASM instances."
+  },
+  "wasm_modules": [
+    {
+      "id": "usearch",
+      "path": "modules/usearch.wasm",
+      "source_language": "cpp",
+      "abi": "memory",
+      "exports": [
+        "_initialize",
+        "malloc",
+        "free",
+        "index_error",
+        "index_create",
+        "index_add_batch",
+        "index_search",
+        "index_size",
+        "index_remove",
+        "index_save_size",
+        "index_save",
+        "index_load",
+        "index_destroy",
+        "index_search_filtered",
+        "index_score_keys"
+      ]
+    }
+  ]
+}

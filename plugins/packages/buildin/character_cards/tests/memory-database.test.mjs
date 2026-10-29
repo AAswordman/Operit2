@@ -61,7 +61,8 @@ test("database vectors belong to source records; queries generate one vector and
   assert.deepEqual(env.records(), before); assert.equal(env.records("embeddings").length, 0);
   assert.equal(env.disk.calls.some(call => call.method === "storage.commit"), false);
   assert.equal(env.disk.calls.some(call => call.method === "storage.list" && call.args[0] !== "owners"), false);
-  assert.equal(env.disk.calls.some(call => call.method === "storage.query" && /LIMIT \?15/u.test(call.args[0])), true);
+  assert.equal(env.disk.calls.some(call => call.method === "wasm.load"), true);
+  assert.equal(env.disk.calls.some(call => call.method === "storage.query" && /WITH |json_each|row_number/iu.test(call.args[0])), false);
 });
 
 /** Proves independent readers cannot create duplicate logical vectors. */
@@ -191,4 +192,61 @@ test("a multi-document retrieval embeds its query once", async t => {
   }
   assert.deepEqual(env.requests.map(request => request.input), [["travel"]]);
   assert.equal(env.disk.calls.some(call => call.method === "storage.commit"), false);
+});
+
+/** Warm searches perform indexed change polls and bounded hydration, without reading the corpus. */
+test("warm ANN queries reuse WASM and never issue corpus or ranking SQL", async t => {
+  const env = await environment(t); await env.enable();
+  const memory = await env.repository.run(session => session.createMemory(ownerKey, values("A", "north trip")));
+  await env.repository.run(session => session.searchMemoryPage(options()));
+  env.disk.clearCalls();
+  for (let iteration = 0; iteration < 4; iteration++) {
+    const page = await env.repository.run(session => session.searchMemoryPage(options()));
+    assert.equal(page.items[0].id, memory.id);
+  }
+  assert.equal(env.disk.calls.filter(call => call.method === "storage.changes").length, 4);
+  assert.equal(env.disk.calls.some(call => call.method === "wasm.load" || call.method === "storage.query"), false);
+  const reads = env.disk.calls.filter(call => call.method === "storage.getMany");
+  assert.equal(reads.length, 4);
+  assert.ok(reads.every(call => call.args[0] === "memories" && call.args[1].length === 1));
+});
+
+/** A retained ANN/text index must follow another repository's writes and removals. */
+test("warm derived indexes track external writers updates and deletions", async t => {
+  const env = await environment(t); await env.enable();
+  const memory = await env.repository.run(session => session.createMemory(ownerKey, values("A", "north trip")));
+  assert.equal((await env.repository.run(session => session.searchMemoryPage(options()))).items[0].id, memory.id);
+  const writer = await env.reopen();
+  await writer.run(session => session.updateMemory(ownerKey, memory.id, values("A", "unrelated")));
+  assert.equal((await env.repository.run(session => session.searchMemoryPage(options()))).items.length, 0);
+  const second = await writer.run(session => session.createMemory(ownerKey, values("B", "north trip")));
+  assert.equal((await env.repository.run(session => session.searchMemoryPage(options()))).items[0].id, second.id);
+  await writer.run(session => session.deleteMemory(ownerKey, second.id));
+  assert.equal((await env.repository.run(session => session.searchMemoryPage(options()))).items.length, 0);
+  assert.equal(env.disk.calls.filter(call => call.method === "wasm.load").length, 1);
+});
+
+/** Reconciliation may update content without replacing its originating storage version. */
+test("warm indexes reject stale vectors even when an external reconciliation retains the source version", async t => {
+  const env = await environment(t); await env.enable();
+  await env.repository.run(session => session.createMemory(ownerKey, values("A", "north trip")));
+  await env.repository.run(session => session.searchMemoryPage(options()));
+  env.disk.storage.inspect(sql => sql.prepare("UPDATE records SET value=json_set(value,'$.record.content',?) WHERE collection='memories'").run("changed source"));
+  await assert.rejects(env.repository.run(session => session.searchMemoryPage(options())), /rebuild memory embeddings/u);
+});
+
+/** Folder constraints must participate in native ANN search, including a rare scoped neighbor. */
+test("ANN filtering finds scoped memories beyond an unfiltered candidate page", async t => {
+  const env = await environment(t); await env.enable();
+  const first = await env.repository.run(session => session.createMemory(ownerKey, values("seed", "north trip")));
+  await env.repository.run(async session => {
+    const space = await session.readMemorySpace(ownerKey);
+    space.memories = Array.from({ length: 320 }, (_, index) => ({ ...first, id: "outside-" + index, uuid: "outside-" + index, title: "outside-" + index, folderPath: "outside" }));
+    space.memories.push({ ...first, id: "inside", uuid: "inside", title: "inside", content: "less similar", folderPath: "inside" });
+    await session.writeMemorySpace(ownerKey, space);
+  });
+  env.provider(async texts => texts.map(text => text === "less similar" ? [0.8, 0.6] : [1, 0]));
+  await env.repository.run(session => session.rebuildMemoryEmbeddings(ownerKey));
+  const page = await env.repository.run(session => session.searchMemoryPage(options("travel", { folderPath: "inside" })));
+  assert.equal(page.items.length, 1); assert.equal(page.items[0].id, "inside");
 });

@@ -1312,6 +1312,521 @@ function rebuildMemoryEmbeddings(ownerKey, repository2) {
   return repository2.rebuildMemoryEmbeddings(ownerKey);
 }
 
+// src/search/usearch.ts
+var VectorIndex = class _VectorIndex {
+  constructor(wasm, pointer, dimensions) {
+    this.wasm = wasm;
+    this.pointer = pointer;
+    this.dimensions = dimensions;
+    this.closed = false;
+  }
+  static open(dimensions) {
+    return __async(this, null, function* () {
+      let instance;
+      instance = yield ToolPkg.wasm.open("usearch", {
+        env: { emscripten_notify_memory_growth() {
+        } },
+        wasi_snapshot_preview1: {
+          clock_time_get(_clock, _precision, pointer) {
+            new DataView(instance.memory().buffer).setBigUint64(pointer, BigInt(Date.now()) * 1000000n, true);
+            return 0;
+          },
+          fd_close() {
+            return 8;
+          }
+        }
+      });
+      instance.call("_initialize");
+      const result2 = new _VectorIndex(instance, 0, dimensions);
+      try {
+        return new _VectorIndex(instance, result2.checked("index_create", dimensions, 128), dimensions);
+      } catch (error) {
+        instance.close();
+        throw error;
+      }
+    });
+  }
+  call(name, ...args) {
+    if (this.closed) throw new Error("Vector index is closed");
+    return Number(this.wasm.call(name, args.map((value) => typeof value === "bigint" ? { type: "i64", value: value.toString() } : { type: "i32", value })));
+  }
+  checked(name, ...args) {
+    const result2 = this.call(name, ...args), pointer = this.call("index_error");
+    if (pointer) {
+      const memory = this.wasm.memory();
+      let message = "";
+      for (let index = pointer; index < memory.length && memory[index] && index < pointer + 4096; index++) message += String.fromCharCode(memory[index]);
+      throw new Error("USearch: " + message);
+    }
+    return result2;
+  }
+  /** Allocations are tracked before the next allocation, so a partial failure cannot leak. */
+  buffers(arrays, lengths, run) {
+    const allocated = [];
+    try {
+      for (const length of [...arrays.map((array3) => array3.byteLength), ...lengths]) {
+        const pointer = this.call("malloc", Math.max(8, length));
+        if (!pointer) throw new Error("USearch allocation failed");
+        allocated.push(pointer);
+      }
+      arrays.forEach((array3, index) => this.wasm.writeMemory(allocated[index], new Uint8Array(array3.buffer, array3.byteOffset, array3.byteLength)));
+      return run(allocated);
+    } finally {
+      for (const pointer of allocated.reverse()) this.call("free", pointer);
+    }
+  }
+  add(key2, vector) {
+    if (vector.length !== this.dimensions || vector.some((component) => !Number.isFinite(component))) throw new Error("Invalid vector dimensions/components");
+    this.buffers([new BigUint64Array([key2]), new Float32Array(vector)], [], ([keys, vectors]) => {
+      if (this.checked("index_add_batch", this.pointer, keys, vectors, 1, this.dimensions) !== 1) throw new Error("Incomplete vector insertion");
+    });
+  }
+  remove(key2) {
+    this.checked("index_remove", this.pointer, key2);
+  }
+  search(vector, count, allowed, excluded = []) {
+    if (vector.length !== this.dimensions) throw new Error("Query vector dimensions changed");
+    const sorted = (keys) => new BigUint64Array([...keys].sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
+    return this.buffers([new Float32Array(vector), sorted(allowed ?? []), sorted(excluded)], [count * 8, count * 4], ([query, allow, exclude, keys, distances]) => {
+      const found = this.checked("index_search_filtered", this.pointer, query, count, keys, distances, allow, allowed?.length ?? 0, exclude, excluded.length, allowed === void 0 ? 0 : 1);
+      const labels = new BigUint64Array(this.wasm.readMemory(keys, found * 8).buffer);
+      const values = new Float32Array(this.wasm.readMemory(distances, found * 4).buffer);
+      return Array.from(labels, (key2, index) => ({ key: key2, similarity: Math.max(-1, Math.min(1, 1 - values[index] / 2)) }));
+    });
+  }
+  score(vector, keys) {
+    if (keys.length === 0) return [];
+    return this.buffers([new Float32Array(vector), new BigUint64Array(keys)], [keys.length * 8], ([query, labels, scores]) => {
+      if (this.checked("index_score_keys", this.pointer, query, labels, keys.length, this.dimensions, scores) !== keys.length) throw new Error("Missing indexed source vector");
+      return Array.from(new Float64Array(this.wasm.readMemory(scores, keys.length * 8).buffer), (value) => Math.max(-1, Math.min(1, value)));
+    });
+  }
+  close() {
+    if (!this.closed) {
+      this.call("index_destroy", this.pointer);
+      this.wasm.close();
+      this.closed = true;
+    }
+  }
+};
+
+// src/search/text-index.ts
+var TextIndex = class {
+  constructor() {
+    this.text = /* @__PURE__ */ new Map();
+    this.postings = /* @__PURE__ */ new Map();
+  }
+  grams(value, width) {
+    const result2 = /* @__PURE__ */ new Set();
+    for (let offset = 0; offset <= value.length - width; offset++) result2.add(value.slice(offset, offset + width));
+    return result2;
+  }
+  remove(id2) {
+    const old = this.text.get(id2);
+    if (old === void 0) return;
+    for (let width = 1; width <= 3; width++) for (const gram of this.grams(old, width)) {
+      const posting = this.postings.get(gram);
+      posting.delete(id2);
+      if (posting.size === 0) this.postings.delete(gram);
+    }
+    this.text.delete(id2);
+  }
+  put(id2, value) {
+    this.remove(id2);
+    value = value.toLowerCase();
+    this.text.set(id2, value);
+    for (let width = 1; width <= 3; width++) for (const gram of this.grams(value, width)) {
+      let posting = this.postings.get(gram);
+      if (posting === void 0) {
+        posting = /* @__PURE__ */ new Set();
+        this.postings.set(gram, posting);
+      }
+      posting.add(id2);
+    }
+  }
+  search(term) {
+    if (term === "") return [];
+    if (term.includes("*")) {
+      const parts = term.split("*").filter(Boolean);
+      const candidates = parts.length ? parts.map((part) => this.search(part)).sort((a, b) => a.length - b.length)[0] : [...this.text.keys()];
+      const pattern = new RegExp(parts.length ? term.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\0]*") : "", "u");
+      return candidates.filter((id2) => pattern.test(this.text.get(id2)));
+    }
+    const postings = [...this.grams(term, Math.min(3, term.length))].map((gram) => this.postings.get(gram));
+    if (postings.some((posting) => posting === void 0)) return [];
+    const ordered = postings.sort((a, b) => a.size - b.size);
+    return [...ordered[0]].filter((id2) => ordered.every((posting) => posting.has(id2)) && this.text.get(id2).includes(term));
+  }
+};
+var TitleIndex = class {
+  constructor() {
+    this.root = { children: /* @__PURE__ */ new Map(), ids: /* @__PURE__ */ new Set() };
+  }
+  put(id2, title) {
+    let node = this.root;
+    for (const character of title.toLowerCase()) {
+      let child = node.children.get(character);
+      if (!child) {
+        child = { children: /* @__PURE__ */ new Map(), ids: /* @__PURE__ */ new Set() };
+        node.children.set(character, child);
+      }
+      node = child;
+    }
+    node.ids.add(id2);
+  }
+  remove(id2, title) {
+    let node = this.root;
+    const path = [];
+    for (const character of title.toLowerCase()) {
+      path.push([node, character]);
+      const child = node.children.get(character);
+      if (!child) return;
+      node = child;
+    }
+    node.ids.delete(id2);
+    for (const [parent, character] of path.reverse()) {
+      const child = parent.children.get(character);
+      if (child.ids.size || child.children.size) break;
+      parent.children.delete(character);
+    }
+  }
+  search(query) {
+    const characters = [...query.toLowerCase()], result2 = /* @__PURE__ */ new Set();
+    for (let start = 0; start < characters.length; start++) {
+      let node = this.root;
+      for (let index = start; index < characters.length; index++) {
+        const child = node.children.get(characters[index]);
+        if (!child) break;
+        node = child;
+        for (const id2 of node.ids) result2.add(id2);
+      }
+    }
+    return result2;
+  }
+};
+
+// src/search/state.ts
+var compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+var groupKey = (embedding) => JSON.stringify([embedding.space, embedding.vector.length]);
+function addTo(map, key2, value) {
+  let values = map.get(key2);
+  if (!values) {
+    values = /* @__PURE__ */ new Set();
+    map.set(key2, values);
+  }
+  values.add(value);
+}
+function removeFrom(map, key2, value) {
+  const values = map.get(key2);
+  if (values) {
+    values.delete(value);
+    if (!values.size) map.delete(key2);
+  }
+}
+function folders(memory) {
+  if (memory.folderPath === null) return [];
+  const parts = memory.folderPath.split("/");
+  return parts.map((_part, index) => parts.slice(0, index + 1).join("/"));
+}
+var MemoryIndex = class {
+  constructor(database, ownerKey) {
+    this.database = database;
+    this.ownerKey = ownerKey;
+    this.memories = /* @__PURE__ */ new Map();
+    this.chunks = /* @__PURE__ */ new Map();
+    this.links = /* @__PURE__ */ new Map();
+    this.adjacency = /* @__PURE__ */ new Map();
+    this.parents = /* @__PURE__ */ new Map();
+    this.all = /* @__PURE__ */ new Set();
+    this.text = new TextIndex();
+    this.tags = new TextIndex();
+    this.titles = new TitleIndex();
+    this.sources = /* @__PURE__ */ new Map();
+    this.units = /* @__PURE__ */ new Map();
+    this.chunkIds = /* @__PURE__ */ new Map();
+    this.folderIds = /* @__PURE__ */ new Map();
+    this.dates = [];
+    this.groups = /* @__PURE__ */ new Map();
+    this.invalid = /* @__PURE__ */ new Map();
+    this.nextLabel = 1n;
+    this.cursor = null;
+    this.initialized = false;
+  }
+  close() {
+    for (const group of this.groups.values()) group.index.close();
+    this.groups.clear();
+  }
+  /** Captures the journal before initial paging, then catches writes made during the build. */
+  refresh() {
+    return __async(this, null, function* () {
+      if (!this.initialized) {
+        this.cursor = (yield this.database.changes(null)).cursor;
+        for (const collection of ["memories", "chunks", "links"]) {
+          let after = "";
+          for (; ; ) {
+            const rows = yield this.database.select(collection, this.ownerKey, "1", [], 100, after);
+            for (const row of rows) yield this.apply(collection, row.key, row);
+            if (rows.length < 100) break;
+            after = rows[rows.length - 1].key;
+          }
+        }
+        this.initialized = true;
+      }
+      for (; ; ) {
+        const page = yield this.database.changes(this.cursor);
+        if (page.reset) return false;
+        for (const change of page.changes) if (change.key.startsWith(this.ownerKey + "/")) {
+          yield this.apply(change.collection, change.key, change.entry);
+        }
+        this.cursor = page.cursor;
+        if (!page.hasMore) return true;
+      }
+    });
+  }
+  datePosition(time, id2) {
+    let low = 0, high = this.dates.length;
+    while (low < high) {
+      const middle = low + high >>> 1, item = this.dates[middle];
+      if (item.time < time || item.time === time && compare(item.id, id2) < 0) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+  removeSource(identity3) {
+    const old = this.sources.get(identity3);
+    if (!old) return;
+    this.text.remove(identity3);
+    removeFrom(this.units, old.parent, identity3);
+    if (old.group !== null) {
+      const group = this.groups.get(old.group);
+      group.index.remove(old.label);
+      group.sources.delete(old.label);
+      const count = group.parents.get(old.parent) - 1;
+      if (count) group.parents.set(old.parent, count);
+      else group.parents.delete(old.parent);
+    } else {
+      const count = this.invalid.get(old.parent) - 1;
+      if (count) this.invalid.set(old.parent, count);
+      else this.invalid.delete(old.parent);
+    }
+    this.sources.delete(identity3);
+  }
+  apply(collection, key2, entry) {
+    return __async(this, null, function* () {
+      if (collection !== "memories" && collection !== "chunks" && collection !== "links") return;
+      const id2 = key2.slice(this.ownerKey.length + 1), identity3 = collection + "/" + id2;
+      if (collection === "links") {
+        const old = this.links.get(id2);
+        if (old) {
+          removeFrom(this.adjacency, old.sourceMemoryId, id2);
+          removeFrom(this.adjacency, old.targetMemoryId, id2);
+          this.links.delete(id2);
+        }
+        if (entry) {
+          const link2 = entry.value.record;
+          this.links.set(id2, link2);
+          addTo(this.adjacency, link2.sourceMemoryId, id2);
+          addTo(this.adjacency, link2.targetMemoryId, id2);
+        }
+        return;
+      }
+      this.removeSource(identity3);
+      if (collection === "memories") {
+        const old = this.memories.get(id2);
+        if (old) {
+          this.tags.remove(id2);
+          this.titles.remove(id2, old.title);
+          this.parents.delete(old.uuid);
+          this.memories.delete(id2);
+          this.all.delete(id2);
+          for (const folder2 of folders(old)) removeFrom(this.folderIds, folder2, id2);
+          const offset = this.datePosition(old.createdAt, id2);
+          if (this.dates[offset]?.id === id2) this.dates.splice(offset, 1);
+        }
+      } else {
+        const old = this.chunks.get(id2);
+        if (old) {
+          removeFrom(this.chunkIds, old.memoryUuid, id2);
+          this.chunks.delete(id2);
+        }
+      }
+      if (!entry) return;
+      const record2 = entry.value.record;
+      const parent = collection === "memories" ? record2.uuid : record2.memoryUuid;
+      if (collection === "memories") {
+        const memory = record2;
+        this.memories.set(id2, memory);
+        this.parents.set(parent, id2);
+        if (memory.title === ".folder_placeholder") return;
+        this.all.add(id2);
+        for (const folder2 of folders(memory)) addTo(this.folderIds, folder2, id2);
+        this.dates.splice(this.datePosition(memory.createdAt, id2), 0, { time: memory.createdAt, id: id2 });
+        this.tags.put(id2, memory.tags.map((tag) => tag.name).join("\0"));
+        this.titles.put(id2, memory.title);
+        this.text.put(identity3, memory.title + "\0" + memory.content);
+      } else {
+        this.chunks.set(id2, record2);
+        addTo(this.chunkIds, parent, id2);
+        this.text.put(identity3, record2.content);
+      }
+      const expected = collection === "memories" && record2.isDocumentNode ? record2.title : record2.content;
+      const embedding = entry.value.embedding;
+      const valid = embedding != null && embedding.text === expected && embedding.vector.length > 0 && embedding.vector.every(Number.isFinite);
+      const source = { identity: identity3, parent, label: this.nextLabel++, group: valid ? groupKey(embedding) : null, collection, id: id2, version: entry.version };
+      if (valid) {
+        let group = this.groups.get(source.group);
+        if (!group) {
+          group = { index: yield VectorIndex.open(embedding.vector.length), sources: /* @__PURE__ */ new Map(), parents: /* @__PURE__ */ new Map() };
+          this.groups.set(source.group, group);
+        }
+        group.index.add(source.label, embedding.vector);
+        group.sources.set(source.label, source);
+        group.parents.set(parent, (group.parents.get(parent) ?? 0) + 1);
+      } else this.invalid.set(parent, (this.invalid.get(parent) ?? 0) + 1);
+      this.sources.set(identity3, source);
+      addTo(this.units, parent, identity3);
+    });
+  }
+  scope(options) {
+    let ids = this.all, restricted = false;
+    if (options.folderPath !== null) {
+      ids = this.folderIds.get(options.folderPath) ?? /* @__PURE__ */ new Set();
+      restricted = true;
+    }
+    if (options.createdAtStartMs !== null || options.createdAtEndMs !== null) {
+      const start = options.createdAtStartMs === null ? 0 : this.datePosition(options.createdAtStartMs, "");
+      const end = options.createdAtEndMs === null ? this.dates.length : this.datePosition(options.createdAtEndMs + 1, "");
+      ids = new Set(this.dates.slice(start, end).filter((item) => ids.has(item.id)).map((item) => item.id));
+      restricted = true;
+    }
+    return { ids, restricted };
+  }
+  parentId(source) {
+    return this.parents.get(source.parent);
+  }
+  matching(terms, scope, keywordsEnabled = true, tagsEnabled = true) {
+    const keywords = /* @__PURE__ */ new Map(), tags = /* @__PURE__ */ new Map();
+    for (const term of terms) {
+      const parents = /* @__PURE__ */ new Set();
+      if (keywordsEnabled) for (const identity3 of this.text.search(term)) {
+        const source = this.sources.get(identity3);
+        if (!source) continue;
+        const id2 = this.parentId(source);
+        if (id2 !== void 0 && scope.ids.has(id2)) parents.add(id2);
+      }
+      for (const id2 of parents) keywords.set(id2, (keywords.get(id2) ?? 0) + 1);
+      if (tagsEnabled) {
+        for (const id2 of this.tags.search(term)) if (scope.ids.has(id2)) tags.set(id2, (tags.get(id2) ?? 0) + 1);
+      }
+    }
+    return { keywords, tags };
+  }
+  validate(query, scope, parent) {
+    const relevant = (uuid2) => parent === void 0 ? scope.ids.has(this.parents.get(uuid2) ?? "") : uuid2 === parent;
+    for (const uuid2 of this.invalid.keys()) if (relevant(uuid2)) throw new Error("Memory vector index is incomplete or stale; rebuild memory embeddings");
+    const expected = groupKey(query);
+    for (const [name, group] of this.groups) if (name !== expected) {
+      for (const uuid2 of group.parents.keys()) if (relevant(uuid2)) throw new Error("Memory vector provider dimensions changed; rebuild memory embeddings");
+    }
+  }
+  semantic(query, scope, count, excluded, parent) {
+    const result2 = /* @__PURE__ */ new Map(), group = this.groups.get(groupKey(query));
+    if (!group) return result2;
+    let allowed;
+    if (scope.restricted || parent !== void 0) {
+      allowed = [];
+      const uuids = parent === void 0 ? [...scope.ids].map((id2) => this.memories.get(id2).uuid) : [parent];
+      for (const uuid2 of uuids) for (const identity3 of this.units.get(uuid2) ?? []) {
+        const source = this.sources.get(identity3);
+        if (source.group === groupKey(query) && (parent === void 0 || source.collection === "chunks")) allowed.push(source.label);
+      }
+    }
+    const excludedLabels = [];
+    for (const id2 of excluded) {
+      const uuid2 = this.memories.get(id2)?.uuid;
+      if (uuid2 === void 0) continue;
+      for (const identity3 of this.units.get(uuid2) ?? []) {
+        const source = this.sources.get(identity3);
+        if (source.group === groupKey(query)) excludedLabels.push(source.label);
+      }
+    }
+    const maximum = Math.min(group.sources.size, Math.max(512, count * 16));
+    let budget = Math.min(maximum, Math.max(128, count * 4));
+    for (; ; ) {
+      const hits = group.index.search(query.vector, Math.max(1, budget), allowed, excludedLabels);
+      for (const hit of hits) {
+        const source = group.sources.get(hit.key);
+        const id2 = parent === void 0 ? this.parentId(source) : source.id;
+        if (id2 !== void 0 && (parent !== void 0 || scope.ids.has(id2))) result2.set(id2, Math.max(result2.get(id2) ?? -Infinity, hit.similarity));
+      }
+      if (result2.size >= count || hits.length < budget || budget === maximum) break;
+      budget = Math.min(maximum, budget * 2);
+    }
+    return result2;
+  }
+  scoreCandidates(query, ids, scores, chunks = false) {
+    const group = this.groups.get(groupKey(query));
+    if (!group) return;
+    const labels = [], parents = [];
+    for (const id2 of ids) {
+      const identities2 = chunks ? ["chunks/" + id2] : this.units.get(this.memories.get(id2).uuid) ?? [];
+      for (const identity3 of identities2) {
+        const source = this.sources.get(identity3);
+        if (source?.group === groupKey(query)) {
+          labels.push(source.label);
+          parents.push(id2);
+        }
+      }
+    }
+    const exact = group.index.score(query.vector, labels);
+    for (const id2 of new Set(parents)) scores.delete(id2);
+    exact.forEach((score3, index) => scores.set(parents[index], Math.max(scores.get(parents[index]) ?? -Infinity, score3)));
+  }
+};
+var retained = /* @__PURE__ */ new WeakMap();
+function withMemoryIndex(database, ownerKey, run) {
+  let state = retained.get(database);
+  if (!state) {
+    state = { tail: Promise.resolve(), owners: /* @__PURE__ */ new Map() };
+    retained.set(database, state);
+  }
+  const current = state;
+  const operation = current.tail.catch(() => {
+  }).then(() => __async(null, null, function* () {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let index = current.owners.get(ownerKey);
+      if (!index) {
+        index = new MemoryIndex(database, ownerKey);
+        current.owners.set(ownerKey, index);
+      }
+      let ready;
+      try {
+        ready = yield index.refresh();
+      } catch (error) {
+        index.close();
+        current.owners.delete(ownerKey);
+        throw error;
+      }
+      if (ready) return run(index);
+      index.close();
+      current.owners.delete(ownerKey);
+    }
+    throw new Error("Memory change journal reset repeatedly during index construction");
+  }));
+  current.tail = operation;
+  return operation;
+}
+function closeMemoryIndexes(database) {
+  return __async(this, null, function* () {
+    const state = retained.get(database);
+    if (!state) return;
+    yield state.tail.catch(() => {
+    });
+    for (const index of state.owners.values()) index.close();
+    retained.delete(database);
+  });
+}
+
 // src/memory-search.ts
 var MEMORY_SEARCH_THRESHOLD = 0.025;
 function lexicalTerms(query) {
@@ -1327,168 +1842,111 @@ function lexicalTerms(query) {
   }
   return [...terms].slice(0, 32);
 }
-function parameters(options) {
-  return [
-    options.ownerKey + "/",
-    options.ownerKey + "0",
-    options.folderPath,
-    options.createdAtStartMs,
-    options.createdAtEndMs,
-    options.query,
-    JSON.stringify(lexicalTerms(options.query))
-  ];
-}
-var rankedQuery = `
-WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?9)), scoped AS (
-  SELECT key,value,json_extract(value,'$.record.id') AS id,
-    json_extract(value,'$.record.importance') AS importance,
-    json_extract(value,'$.record.updatedAt') AS updatedAt
-  FROM plugin_objects
-  WHERE collection='memories' AND key>=?1 AND key<?2
-    AND json_extract(value,'$.record.title')<>'.folder_placeholder'
-    AND (?3 IS NULL OR json_extract(value,'$.record.folderPath')=?3 OR
-      substr(json_extract(value,'$.record.folderPath'),1,length(?3)+1)=?3||'/')
-    AND (?4 IS NULL OR json_extract(value,'$.record.createdAt')>=?4)
-    AND (?5 IS NULL OR json_extract(value,'$.record.createdAt')<=?5)
-), units AS (
-  SELECT id,value FROM scoped
-  UNION ALL
-  SELECT m.id,c.value FROM plugin_objects c JOIN scoped m
-    ON json_extract(c.value,'$.record.memoryUuid')=json_extract(m.value,'$.record.uuid')
-  WHERE c.collection='chunks' AND c.key>=?1 AND c.key<?2
-), lexical AS (
-  SELECT m.*,
-    (SELECT count(*) FROM json_each(?7) t WHERE
-      lower(json_extract(m.value,'$.record.title')) GLOB '*'||t.value||'*'
-      OR EXISTS (SELECT 1 FROM units u WHERE u.id=m.id AND
-        lower(json_extract(u.value,'$.record.content')) GLOB '*'||t.value||'*')) AS keywords,
-    (SELECT count(*) FROM json_each(?7) t WHERE EXISTS (
-      SELECT 1 FROM json_each(m.value,'$.record.tags') tag
-      WHERE lower(json_extract(tag.value,'$.name')) GLOB '*'||t.value||'*')) AS tags
-  FROM scoped m
-), keyword_ranks AS (
-  SELECT id,?10*importance*(1+0.6*keywords/max(1,json_array_length(?7)))/(60.0+row_number() OVER (ORDER BY keywords DESC,importance DESC,updatedAt DESC,id)) AS score
-  FROM lexical WHERE keywords>0
-), tag_ranks AS (
-  SELECT id,?11*importance*(1+0.6*tags/max(1,json_array_length(?7)))/(60.0+row_number() OVER (ORDER BY tags DESC,importance DESC,updatedAt DESC,id)) AS score
-  FROM lexical WHERE tags>0
-), similarities AS (
-  SELECT u.id,max((SELECT sum(q.value*v.value) FROM json_each(u.value,'$.embedding.vector') v
-    JOIN query_vector q ON q.dimension=v.key)) AS similarity
-  FROM units u WHERE ?12>0 AND json_extract(u.value,'$.embedding.space')=?8
-    AND json_array_length(u.value,'$.embedding.vector')=json_array_length(?9)
-  GROUP BY u.id
-), semantic AS (
-  SELECT id,?12*max(-1.0,min(1.0,similarity)) AS score FROM similarities
-), base AS (
-  SELECT m.*,coalesce(k.score,0)+CASE WHEN instr(lower(?6),lower(json_extract(m.value,'$.record.title')))>0 THEN ?10*m.importance/61.0 ELSE 0 END AS keywordScore,coalesce(t.score,0) AS tagScore,
-    coalesce(s.score,0) AS vectorScore,
-    coalesce(k.score,0)+coalesce(t.score,0)+coalesce(s.score,0)+CASE WHEN instr(lower(?6),lower(json_extract(m.value,'$.record.title')))>0 THEN ?10*m.importance/61.0 ELSE 0 END AS baseScore
-  FROM scoped m LEFT JOIN keyword_ranks k USING(id) LEFT JOIN tag_ranks t USING(id) LEFT JOIN semantic s USING(id)
-), seeds AS (
-  SELECT id,baseScore FROM base WHERE baseScore>0 ORDER BY baseScore DESC,id LIMIT 10
-), edges AS (
-  SELECT target.id,sum((seed.baseScore*json_extract(l.value,'$.record.weight')+0.03)*?13) AS score
-  FROM plugin_objects l JOIN seeds seed ON
-    json_extract(l.value,'$.record.sourceMemoryId')=seed.id OR json_extract(l.value,'$.record.targetMemoryId')=seed.id
-  JOIN scoped target ON target.id=CASE WHEN json_extract(l.value,'$.record.sourceMemoryId')=seed.id
-    THEN json_extract(l.value,'$.record.targetMemoryId') ELSE json_extract(l.value,'$.record.sourceMemoryId') END
-  WHERE l.collection='links' AND l.key>=?1 AND l.key<?2 AND ?13>0 GROUP BY target.id
-), scored AS (
-  SELECT b.*,coalesce(e.score,0) AS edgeScore,baseScore+coalesce(e.score,0) AS score FROM base b LEFT JOIN edges e USING(id)
-), page AS (
-  SELECT * FROM scored WHERE (?17=1 OR (score>0 AND score>=?14)) AND id NOT IN (SELECT value FROM json_each(?16)) ORDER BY score DESC,id LIMIT ?15
-), stats AS (
-  SELECT (SELECT count(*) FROM scoped) AS total,
-    (SELECT count(*) FROM scored WHERE score>0 AND score>=?14 AND id IN (SELECT value FROM json_each(?16))) AS excluded,
-    (SELECT count(*) FROM units WHERE ?12>0 AND (
-      json_extract(value,'$.embedding.text') IS NOT CASE WHEN json_extract(value,'$.record.isDocumentNode')=1 THEN json_extract(value,'$.record.title') ELSE json_extract(value,'$.record.content') END OR
-      json_extract(value,'$.embedding.space') IS NOT ?8 OR
-      json_array_length(value,'$.embedding.vector') IS NOT json_array_length(?9))) AS invalid
-)
-SELECT json_extract(page.value,'$.record') AS record,page.keywordScore,page.tagScore,page.vectorScore,page.edgeScore,page.score,stats.total,stats.invalid,stats.excluded
-FROM stats LEFT JOIN page ON 1 ORDER BY page.score DESC,page.id`;
 function prepareMemoryQuery(settings2, query, config) {
   return __async(this, null, function* () {
     return query.trim() !== "*" && settings2.cloudEmbeddingEnabled && config.vectorWeight > 0 ? (yield embedTexts([query], settings2))[0] : null;
   });
 }
+var compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+function rank(index, counts, weight, termCount) {
+  if (weight === 0) return /* @__PURE__ */ new Map();
+  const ids = [...counts.keys()].sort((a, b) => {
+    const first = index.memories.get(a), second = index.memories.get(b);
+    return counts.get(b) - counts.get(a) || second.importance - first.importance || second.updatedAt - first.updatedAt || compareId(a, b);
+  });
+  return new Map(ids.map((id2, offset) => [id2, weight * index.memories.get(id2).importance * (1 + 0.6 * counts.get(id2) / Math.max(1, termCount)) / (61 + offset)]));
+}
+function ranked(index, scope, options, config, query, debug) {
+  const excluded = new Set(options.excludeIds ?? []), limit2 = options.limit ?? 100;
+  if (options.query.trim() === "*") return {
+    excluded: [...excluded].filter((id2) => scope.ids.has(id2)).length,
+    hits: [...scope.ids].filter((id2) => !excluded.has(id2)).sort(compareId).slice(0, limit2).map((id2) => ({ memory: index.memories.get(id2), score: 1, keywordScore: 0, tagScore: 0, vectorScore: 0, edgeScore: 0, passedThreshold: true }))
+  };
+  const terms = lexicalTerms(options.query), matched = index.matching(terms, scope, config.keywordWeight > 0, config.tagWeight > 0);
+  const lexicalBoost = config.scoreMode === "KEYWORD_FIRST" ? 1.3 : config.scoreMode === "SEMANTIC_FIRST" ? 0.8 : 1;
+  const keywordWeight = config.keywordWeight * lexicalBoost, tagWeight = config.tagWeight * lexicalBoost;
+  const vectorWeight = config.vectorWeight * (config.scoreMode === "SEMANTIC_FIRST" ? 1.3 : config.scoreMode === "KEYWORD_FIRST" ? 0.8 : 1);
+  const edgeWeight = config.edgeWeight * (config.scoreMode === "KEYWORD_FIRST" ? 0.9 : config.scoreMode === "SEMANTIC_FIRST" ? 1.1 : 1);
+  const keywords = rank(index, matched.keywords, keywordWeight, terms.length), tags = rank(index, matched.tags, tagWeight, terms.length);
+  if (keywordWeight > 0) {
+    for (const id2 of index.titles.search(options.query)) if (scope.ids.has(id2)) keywords.set(id2, (keywords.get(id2) ?? 0) + keywordWeight * index.memories.get(id2).importance / 61);
+  }
+  const lexical = /* @__PURE__ */ new Set([...keywords.keys(), ...tags.keys()]);
+  let semantic = /* @__PURE__ */ new Map();
+  if (query !== null) {
+    index.validate(query, scope);
+    semantic = index.semantic(query, scope, Math.max(10, limit2), excluded);
+    const candidates = [...lexical].sort((a, b) => (keywords.get(b) ?? 0) + (tags.get(b) ?? 0) - (keywords.get(a) ?? 0) - (tags.get(a) ?? 0));
+    index.scoreCandidates(query, [...new Set([...candidates.slice(0, Math.max(256, limit2 * 4)), ...excluded].filter((id2) => scope.ids.has(id2)))], semantic);
+  }
+  const ids = debug ? new Set(scope.ids) : /* @__PURE__ */ new Set([...lexical, ...semantic.keys()]);
+  const hits = /* @__PURE__ */ new Map();
+  const hit = (id2) => {
+    let item = hits.get(id2);
+    if (!item) {
+      const keywordScore = keywords.get(id2) ?? 0, tagScore = tags.get(id2) ?? 0, vectorScore = (semantic.get(id2) ?? 0) * vectorWeight;
+      item = { memory: index.memories.get(id2), keywordScore, tagScore, vectorScore, edgeScore: 0, score: keywordScore + tagScore + vectorScore, passedThreshold: false };
+      hits.set(id2, item);
+    }
+    return item;
+  };
+  for (const id2 of ids) hit(id2);
+  const seeds = [...hits.values()].filter((item) => item.score > 0).sort((a, b) => b.score - a.score || compareId(a.memory.id, b.memory.id)).slice(0, 10);
+  if (edgeWeight > 0) {
+    const targets = /* @__PURE__ */ new Set();
+    for (const seed of seeds) for (const linkId of index.adjacency.get(seed.memory.id) ?? []) {
+      const link2 = index.links.get(linkId), id2 = link2.sourceMemoryId === seed.memory.id ? link2.targetMemoryId : link2.sourceMemoryId;
+      if (scope.ids.has(id2)) targets.add(id2);
+    }
+    if (query !== null) index.scoreCandidates(query, [...targets], semantic);
+    for (const id2 of targets) {
+      const item = hit(id2);
+      item.vectorScore = (semantic.get(id2) ?? 0) * vectorWeight;
+      item.score = item.keywordScore + item.tagScore + item.vectorScore;
+    }
+    const seedScores = seeds.map((seed) => ({ id: seed.memory.id, score: seed.keywordScore + seed.tagScore + seed.vectorScore }));
+    for (const seed of seedScores) for (const linkId of index.adjacency.get(seed.id) ?? []) {
+      const link2 = index.links.get(linkId), id2 = link2.sourceMemoryId === seed.id ? link2.targetMemoryId : link2.sourceMemoryId;
+      if (!scope.ids.has(id2)) continue;
+      hit(id2).edgeScore += (seed.score * link2.weight + 0.03) * edgeWeight;
+    }
+  }
+  let excludedCount = 0;
+  for (const item of hits.values()) {
+    item.score += item.edgeScore;
+    item.passedThreshold = item.score > 0 && item.score >= options.relevanceThreshold;
+    if (excluded.has(item.memory.id) && item.passedThreshold) excludedCount++;
+  }
+  return { excluded: excludedCount, hits: [...hits.values()].filter((item) => !excluded.has(item.memory.id) && (debug || item.passedThreshold)).sort((a, b) => b.score - a.score || compareId(a.memory.id, b.memory.id)).slice(0, limit2) };
+}
 function searchMemoryDatabase(database, settings2, options, config, debug = false) {
   return __async(this, null, function* () {
-    const limit2 = options.limit ?? 100;
+    const limit2 = options.limit ?? 100, wildcard = options.query.trim() === "*";
     if (!Number.isInteger(limit2) || limit2 < 1 || limit2 > 1e3) throw new Error("Memory search limit must be between 1 and 1000");
-    const params = parameters(options);
-    if (options.query.trim() === "*") {
-      const rows2 = yield database.query(
-        `WITH scoped AS (
-      SELECT value,json_extract(value,'$.record.id') AS id FROM plugin_objects WHERE collection='memories' AND key>=?1 AND key<?2
-      AND (?3 IS NULL OR json_extract(value,'$.record.folderPath')=?3 OR substr(json_extract(value,'$.record.folderPath'),1,length(?3)+1)=?3||'/')
-      AND (?4 IS NULL OR json_extract(value,'$.record.createdAt')>=?4) AND (?5 IS NULL OR json_extract(value,'$.record.createdAt')<=?5)
-      AND json_extract(value,'$.record.title')<>'.folder_placeholder'
-    ), page AS (SELECT * FROM scoped WHERE id NOT IN (SELECT value FROM json_each(?6)) ORDER BY id LIMIT ?7), stats AS (
-      SELECT count(*) AS total,sum(CASE WHEN id IN (SELECT value FROM json_each(?6)) THEN 1 ELSE 0 END) AS excluded FROM scoped
-    ) SELECT json_extract(page.value,'$.record') AS record,stats.total,stats.excluded FROM stats LEFT JOIN page ON 1 ORDER BY page.id`,
-        [...params.slice(0, 5), JSON.stringify(options.excludeIds ?? []), limit2]
-      );
-      return { queryEmbedding: null, result: {
-        excludedBySnapshotCount: Number(rows2[0].excluded),
-        query: options.query,
-        config,
-        relevanceThreshold: options.relevanceThreshold,
-        memoriesInScopeCount: Number(rows2[0].total),
-        candidates: rows2.filter(
-          /** Omits an empty listing page. */
-          (row) => row.record !== null
-        ).map(
-          /** Returns complete explicitly listed records. */
-          (row) => ({ memory: JSON.parse(String(row.record)), score: 1, keywordScore: 0, tagScore: 0, vectorScore: 0, edgeScore: 0, passedThreshold: true })
-        )
-      } };
+    if (!wildcard) {
+      if (options.query.trim() === "") throw new Error("Memory search query must not be blank");
+      const vectorWeight = settings2.cloudEmbeddingEnabled ? config.vectorWeight : 0;
+      if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) throw new Error("Memory search query has no searchable tokens");
+      if (config.keywordWeight + config.tagWeight + vectorWeight + config.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
     }
-    if (options.query.trim() === "") throw new Error("Memory search query must not be blank");
-    const vectorWeight = settings2.cloudEmbeddingEnabled ? config.vectorWeight : 0;
-    if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) throw new Error("Memory search query has no searchable tokens");
-    if (config.keywordWeight + config.tagWeight + vectorWeight + config.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
     const queryEmbedding = yield prepareMemoryQuery(settings2, options.query, config);
-    const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
-    const keywordBoost = config.scoreMode === "KEYWORD_FIRST" ? 1.3 : config.scoreMode === "SEMANTIC_FIRST" ? 0.8 : 1;
-    const vectorBoost = config.scoreMode === "SEMANTIC_FIRST" ? 1.3 : config.scoreMode === "KEYWORD_FIRST" ? 0.8 : 1;
-    params.push(
-      space,
-      JSON.stringify(vector),
-      config.keywordWeight * keywordBoost,
-      config.tagWeight * keywordBoost,
-      vectorWeight * vectorBoost,
-      config.edgeWeight * (config.scoreMode === "KEYWORD_FIRST" ? 0.9 : config.scoreMode === "SEMANTIC_FIRST" ? 1.1 : 1),
-      options.relevanceThreshold,
-      limit2,
-      JSON.stringify(options.excludeIds ?? []),
-      debug ? 1 : 0
-    );
-    const rows = yield database.query(rankedQuery, params);
-    if (Number(rows[0].invalid) !== 0) throw new Error("Memory vector index is incomplete or its provider dimensions changed; rebuild memory embeddings");
-    return { queryEmbedding, result: {
-      excludedBySnapshotCount: Number(rows[0].excluded),
-      query: options.query,
-      config,
-      relevanceThreshold: options.relevanceThreshold,
-      memoriesInScopeCount: Number(rows[0].total),
-      candidates: rows.filter(
-        /** Omits the aggregate-only row for an empty result page. */
-        (row) => row.record !== null
-      ).map(
-        /** Decodes bounded hits after all database filtering and ranking. */
-        (row) => ({
-          memory: JSON.parse(String(row.record)),
-          score: Number(row.score),
-          keywordScore: Number(row.keywordScore),
-          tagScore: Number(row.tagScore),
-          vectorScore: Number(row.vectorScore),
-          edgeScore: Number(row.edgeScore),
-          passedThreshold: Number(row.score) > 0 && Number(row.score) >= options.relevanceThreshold
-        })
-      )
-    } };
+    return withMemoryIndex(database, options.ownerKey, (index) => __async(null, null, function* () {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const scope = index.scope(options), page = ranked(index, scope, options, config, queryEmbedding, debug);
+        if (page.hits.length) {
+          const entries = yield database.getMany("memories", page.hits.map((item) => options.ownerKey + "/" + item.memory.id));
+          if (entries.some((entry, offset) => entry === null || entry.version !== index.sources.get("memories/" + page.hits[offset].memory.id)?.version)) {
+            if (!(yield index.refresh())) throw new Error("Memory index changed during retrieval; retry the query");
+            continue;
+          }
+          page.hits.forEach((item, offset) => {
+            item.memory = entries[offset].value.record;
+          });
+        }
+        return { queryEmbedding, result: { excludedBySnapshotCount: page.excluded, query: options.query, config, relevanceThreshold: options.relevanceThreshold, memoriesInScopeCount: scope.ids.size, candidates: page.hits } };
+      }
+      throw new Error("Memory records changed repeatedly during retrieval");
+    }));
   });
 }
 
@@ -2391,8 +2849,8 @@ function prepareVersionOne(storage, metadata, directory) {
         ]);
       }
     }
-    const retained2 = new Set(before.map((row) => JSON.stringify([row.collection, row.key])));
-    for (const row of rows) if (!retained2.has(JSON.stringify([row.collection, row.key])))
+    const retained3 = new Set(before.map((row) => JSON.stringify([row.collection, row.key])));
+    for (const row of rows) if (!retained3.has(JSON.stringify([row.collection, row.key])))
       changes2.push([{ op: "delete", collection: row.collection, key: row.key, expectedValue: row.value }]);
     for (const [key2, originalValue] of (yield storage.chats.data()).entries()) {
       const collection = key2.startsWith("binding_") ? "chat_bindings" : key2.startsWith("draft_") ? "chat_drafts" : null;
@@ -2796,7 +3254,10 @@ var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
   }
   /** Closes the retained memory database handle. */
   close() {
-    return this.database.close();
+    return __async(this, null, function* () {
+      yield closeMemoryIndexes(this);
+      return this.database.close();
+    });
   }
   /** Reads explicit backup or migration pages without hiding storage failures. */
   read(collection) {
@@ -2812,7 +3273,11 @@ var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
       }
     });
   }
-  /** Executes database-side filtering, ranking and bounded projections. */
+  /** Reads the local change journal; synchronized replays and other handles are included. */
+  changes(after, limit2 = 100) {
+    return this.database.changes(after, limit2);
+  }
+  /** Executes simple database filtering and bounded projections. */
   query(sql, params = []) {
     return this.database.query(sql, params);
   }
@@ -3086,6 +3551,31 @@ var CharacterChatStore = class {
   }
 };
 
+// src/search/chunks.ts
+function searchDocumentChunks(database, ownerKey, memory, query, count, config, embedding) {
+  return withMemoryIndex(database, ownerKey, (index) => __async(null, null, function* () {
+    const ids = index.chunkIds.get(memory.uuid) ?? /* @__PURE__ */ new Set(), scores = /* @__PURE__ */ new Map();
+    const wildcard = query.trim() === "*";
+    if (wildcard) for (const id2 of ids) scores.set(id2, 1);
+    else {
+      if (config.keywordWeight > 0) for (const term of lexicalTerms(query)) for (const identity3 of index.text.search(term)) {
+        if (identity3.startsWith("chunks/") && ids.has(identity3.slice(7))) scores.set(identity3.slice(7), config.keywordWeight);
+      }
+      if (embedding !== null) {
+        const scope = { ids: /* @__PURE__ */ new Set([memory.id]), restricted: true };
+        index.validate(embedding, scope, memory.uuid);
+        const semantic = index.semantic(embedding, scope, count, /* @__PURE__ */ new Set(), memory.uuid);
+        index.scoreCandidates(embedding, [...scores.keys()].slice(0, Math.max(256, count * 4)), semantic, true);
+        for (const [id2, similarity] of semantic) scores.set(id2, (scores.get(id2) ?? 0) + config.vectorWeight * similarity);
+      }
+    }
+    const selected = [...scores.keys()].filter((id2) => scores.get(id2) > 0).sort((a, b) => scores.get(b) - scores.get(a) || index.chunks.get(a).chunkIndex - index.chunks.get(b).chunkIndex).slice(0, count);
+    const entries = selected.length ? yield database.getMany("chunks", selected.map((id2) => ownerKey + "/" + id2)) : [];
+    if (entries.some((entry, offset) => entry === null || entry.version !== index.sources.get("chunks/" + selected[offset])?.version)) throw new Error("Document changed during retrieval; retry the query");
+    return { total: ids.size, chunks: entries.map((entry) => entry.value.record) };
+  }));
+}
+
 // src/storage/memory-repository.ts
 function key(ownerKey, id2) {
   return requireId(ownerKey, "owner key") + "/" + requireId(id2, "record id");
@@ -3279,16 +3769,16 @@ var DatabaseMemoryRepository = class {
     return __async(this, null, function* () {
       yield this.owner(ownerKey);
       const rows = yield this.memoryDatabase.query("SELECT DISTINCT json_extract(value,'$.record.folderPath') AS folder FROM plugin_objects WHERE collection='memories' AND key>=? AND key<?", [ownerKey + "/", ownerKey + "0"]);
-      const folders = /* @__PURE__ */ new Set();
+      const folders2 = /* @__PURE__ */ new Set();
       for (const row of rows) {
         if (row.folder === null) {
-          folders.add("");
+          folders2.add("");
           continue;
         }
         const parts = String(row.folder).split("/");
-        for (let length = 1; length <= parts.length; length += 1) folders.add(parts.slice(0, length).join("/"));
+        for (let length = 1; length <= parts.length; length += 1) folders2.add(parts.slice(0, length).join("/"));
       }
-      return [...folders].sort();
+      return [...folders2].sort();
     });
   }
   /** Creates an intentional new non-document memory. */
@@ -3716,30 +4206,7 @@ var DatabaseMemoryRepository = class {
   /** Ranks document chunks with the query vector already prepared for this operation. */
   queryChunks(ownerKey, owner2, memory, query, count, queryEmbedding) {
     return __async(this, null, function* () {
-      const semantic = queryEmbedding !== null;
-      const space = queryEmbedding === null ? "" : queryEmbedding.space, vector = queryEmbedding === null ? [] : queryEmbedding.vector;
-      const rows = yield this.memoryDatabase.query(
-        `WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?6)), chunks AS (
-      SELECT value,json_extract(value,'$.record.chunkIndex') AS position FROM plugin_objects
-      WHERE collection='chunks' AND key>=?1 AND key<?2 AND json_extract(value,'$.record.memoryUuid')=?3
-    ), scored AS (
-      SELECT *,CASE WHEN ?4='*' THEN 1 ELSE
-        CASE WHEN lower(json_extract(value,'$.record.content')) GLOB '*'||lower(?4)||'*' THEN ?7 ELSE 0 END +
-        CASE WHEN ?8>0 THEN ?8*(SELECT sum(q.value*v.value) FROM json_each(chunks.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) ELSE 0 END END AS score
-      FROM chunks
-    ), page AS (SELECT * FROM scored WHERE score>0 ORDER BY score DESC,position LIMIT ?9), stats AS (
-      SELECT count(*) AS total,sum(CASE WHEN ?8>0 AND (json_extract(value,'$.embedding.text') IS NOT json_extract(value,'$.record.content') OR json_extract(value,'$.embedding.space') IS NOT ?5 OR json_array_length(value,'$.embedding.vector') IS NOT json_array_length(?6)) THEN 1 ELSE 0 END) AS invalid FROM chunks
-    ) SELECT json_extract(page.value,'$.record') AS record,stats.total,stats.invalid FROM stats LEFT JOIN page ON 1 ORDER BY page.score DESC,page.position`,
-        [ownerKey + "/", ownerKey + "0", memory.uuid, query.trim() === "*" ? "*" : query, space, JSON.stringify(vector), owner2.searchConfig.keywordWeight, semantic ? owner2.searchConfig.vectorWeight : 0, count]
-      );
-      if (rows[0].invalid !== null && Number(rows[0].invalid) !== 0) throw new Error("Document vector index requires an explicit rebuild");
-      return { total: Number(rows[0].total), chunks: rows.filter(
-        /** Omits the aggregate-only empty page row. */
-        (row) => row.record !== null
-      ).map(
-        /** Decodes only the selected source chunks. */
-        (row) => JSON.parse(String(row.record))
-      ) };
+      return searchDocumentChunks(this.memoryDatabase, ownerKey, memory, query, count, owner2.searchConfig, queryEmbedding);
     });
   }
   /** Imports complete document-aware records, relationships, settings and USER text in this operation. */
@@ -4381,7 +4848,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
         /** Selects explicitly removed owner namespaces. */
         (owner2) => !state.owners.some(
           /** Matches retained owner identities. */
-          (retained2) => retained2.ownerKey === owner2.ownerKey
+          (retained3) => retained3.ownerKey === owner2.ownerKey
         )
       ).map(
         /** Resolves the removed owner's document directory. */
@@ -5090,7 +5557,7 @@ function memoryByTitle(memories, title) {
   if (matches.length !== 1) throw new Error("Memory title does not identify exactly one record: " + title);
   return matches[0];
 }
-function extractionPrompt(candidates, memories, folders, settings2, profile) {
+function extractionPrompt(candidates, memories, folders2, settings2, profile) {
   const existing = candidates.length === 0 ? "\u6CA1\u6709\u5DF2\u6709\u8BB0\u5FC6\u3002" : "\u5DF2\u6709\u8BB0\u5FC6\uFF08\u4EC5\u662F\u68C0\u7D22\u7EBF\u7D22\uFF0C\u4E0D\u662F\u4E8B\u5B9E\u8BC1\u636E\uFF09\uFF1A\n" + candidates.map(
     /** Preserves the title and a bounded real-record content sample. */
     (memory) => "- " + JSON.stringify(memory.title) + ": " + [...memory.content.replace(/\n/g, " ")].slice(0, 150).join("")
@@ -5115,7 +5582,7 @@ function extractionPrompt(candidates, memories, folders, settings2, profile) {
   const fields4 = [
     ["$duplicatesPromptPart", duplicates],
     ["$existingMemoriesPrompt", existing],
-    ["$existingFoldersPrompt", "\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders.join(", ")],
+    ["$existingFoldersPrompt", "\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders2.join(", ")],
     ["$profileOptionalKey", enabled ? "\u3001profile_markdown" : ""],
     ["$profileMarkdownSchemaLine", enabled ? "- profile_markdown\uFF1A\u5B8C\u6574\u66FF\u6362 Markdown\uFF0C\u672A\u66F4\u65B0\u65F6\u4E3A null\u3002" : ""],
     ["$profileUpdateInstruction", profileInstruction],
@@ -5270,7 +5737,7 @@ function extractMessages(ownerKey, messages, repository2) {
     const profile = settings2.profileAutoUpdateEnabled && !settings2.profileAutoUpdateLocked ? (yield repository2.readUser(ownerKey)).content : "";
     const query = buildCandidateSearchQuery(history);
     const candidates = yield repository2.searchMemories({ ownerKey, query, folderPath: null, relevanceThreshold: MEMORY_SEARCH_THRESHOLD, createdAtStartMs: null, createdAtEndMs: null });
-    const folders = yield repository2.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), candidates, folders, settings2, profile);
+    const folders2 = yield repository2.listMemoryFolders(ownerKey), prompt = extractionPrompt(candidates.slice(0, 15), candidates, folders2, settings2, profile);
     const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: prompt }, { kind: "USER", content: "\u5BF9\u8BDD\u8BB0\u5F55\uFF1A\n" + history.map(
       /** Retains the real user and assistant sequence in the selected extraction window. */
       (message) => message.sender + ": " + message.content
@@ -5297,14 +5764,14 @@ function autoCategorizeMemory(ownerKey, repository2) {
     const memories = (yield repository2.listMemories(ownerKey)).filter(
       /** Selects only records genuinely stored in the root folder. */
       (memory) => memory.folderPath === null || memory.folderPath === ""
-    ), folders = yield repository2.listMemoryFolders(ownerKey);
+    ), folders2 = yield repository2.listMemoryFolders(ownerKey);
     let changed = 0;
     for (let index = 0; index < memories.length; index += 10) {
       const batch = memories.slice(index, index + 10), digest = batch.map(
         /** Supplies real titles and a bounded full-record content preview. */
         (memory) => "- title: " + memory.title + ", content: " + [...memory.content].slice(0, 100).join("")
       ).join("\n");
-      const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: "\u4F60\u662F\u77E5\u8BC6\u5206\u7C7B\u4E13\u5BB6\u3002\u6839\u636E\u8BB0\u5FC6\u5185\u5BB9\uFF0C\u4E3A\u6BCF\u6761\u8BB0\u5FC6\u5206\u914D\u5408\u9002\u7684\u6587\u4EF6\u5939\u8DEF\u5F84\u3002\n\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders.join(", ") + '\n\u4F18\u5148\u4F7F\u7528\u5DF2\u6709\u6587\u4EF6\u5939\uFF0C\u5FC5\u8981\u65F6\u521B\u5EFA\u65B0\u6587\u4EF6\u5939\u3002\u4EC5\u8FD4\u56DE\u4E25\u683C JSON \u6570\u7EC4 [{"title":"\u8BB0\u5FC6\u6807\u9898","folder":"\u6587\u4EF6\u5939\u8DEF\u5F84"}]\u3002\n\u8BB0\u5FC6\u5217\u8868\uFF1A\n' + digest }, { kind: "USER", content: "\u8BF7\u4E3A\u8FD9\u4E9B\u8BB0\u5FC6\u5206\u7C7B\u3002" }], recordTokenUsage: true, enableThinking: false });
+      const response = yield Tools.Chat.call({ functionType: "MEMORY", turns: [{ kind: "SYSTEM", content: "\u4F60\u662F\u77E5\u8BC6\u5206\u7C7B\u4E13\u5BB6\u3002\u6839\u636E\u8BB0\u5FC6\u5185\u5BB9\uFF0C\u4E3A\u6BCF\u6761\u8BB0\u5FC6\u5206\u914D\u5408\u9002\u7684\u6587\u4EF6\u5939\u8DEF\u5F84\u3002\n\u5DF2\u6709\u6587\u4EF6\u5939\uFF1A" + folders2.join(", ") + '\n\u4F18\u5148\u4F7F\u7528\u5DF2\u6709\u6587\u4EF6\u5939\uFF0C\u5FC5\u8981\u65F6\u521B\u5EFA\u65B0\u6587\u4EF6\u5939\u3002\u4EC5\u8FD4\u56DE\u4E25\u683C JSON \u6570\u7EC4 [{"title":"\u8BB0\u5FC6\u6807\u9898","folder":"\u6587\u4EF6\u5939\u8DEF\u5F84"}]\u3002\n\u8BB0\u5FC6\u5217\u8868\uFF1A\n' + digest }, { kind: "USER", content: "\u8BF7\u4E3A\u8FD9\u4E9B\u8BB0\u5FC6\u5206\u7C7B\u3002" }], recordTokenUsage: true, enableThinking: false });
       const rows = parseModelJson(response.text);
       if (!Array.isArray(rows) || rows.length !== batch.length) throw new Error("Categorization must return exactly one folder for each supplied memory");
       const seen = /* @__PURE__ */ new Set();
@@ -10783,7 +11250,7 @@ function decodeGroupExecutionRequest(payload) {
   if (action !== "status" && action !== "cancel" && action !== "resume") throw new Error("Unknown group execution action");
   return { chatId, submissionId, action };
 }
-function retained(payload) {
+function retained2(payload) {
   const execution = executions.get(payload.chatId);
   if (execution === void 0 || execution.input.submissionId !== payload.submissionId || controller === null) throw new Error("Group execution has no matching retained submission");
   return { execution, action: payload.action, controller };
@@ -10794,7 +11261,7 @@ function groupExecutionRequest(payload) {
       const execution2 = executions.get(payload.chatId);
       return execution2 === void 0 ? null : jsonValue(executionStatus(execution2));
     }
-    const target = retained(payload), execution = target.execution;
+    const target = retained2(payload), execution = target.execution;
     if (target.action === "cancel") {
       if (execution.status !== "running") throw new Error("Only a running group submission can be cancelled");
       yield target.controller.cancel(execution.input.chatId, execution.input.submissionId);

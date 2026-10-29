@@ -218,6 +218,8 @@ pub(super) fn newTestJsEngineState(
 #[derive(Clone, Default)]
 struct TestPluginConfigExecutionHost {
     storage: Option<StorageTestFixture>,
+    wasmModules: Arc<Mutex<BTreeMap<String, (Vec<u8>, Vec<String>)>>>,
+    wasmModuleReads: Arc<AtomicUsize>,
     routedPluginCalls: Arc<Mutex<Vec<Value>>>,
     gatedToolCalls: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<JsToolCallResult>>>>,
     blockingToolCalls: Arc<Mutex<Vec<std::sync::mpsc::Sender<JsToolCallResult>>>>,
@@ -554,6 +556,13 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         _request: JsToolPkgResourceRequest,
     ) -> Result<String, String> {
         panic!("ToolPkg resources are not part of the plugin config test")
+    }
+
+    fn load_toolpkg_wasm(&self, target: &str, module_id: &str) -> Result<operit_plugin_sdk::javascript::JsToolPkgWasmModule, String> {
+        self.wasmModuleReads.fetch_add(1, Ordering::Relaxed);
+        let (bytes, exports) = self.wasmModules.lock().unwrap().get(&format!("{target}/{module_id}"))
+            .cloned().ok_or_else(|| "Undeclared test WASM module".to_string())?;
+        Ok(operit_plugin_sdk::javascript::JsToolPkgWasmModule { bytes, exports })
     }
 
     /// Rejects unexpected ToolPkg WASM calls.
@@ -5590,4 +5599,80 @@ fn registration_environment_uses_the_native_owner_and_scope() {
                 scope
             }));
     }
+}
+
+/// Runs persistent state and binary memory against the actual embedded V8 host.
+#[tokio::test(flavor = "current_thread")]
+async fn wasm_instances_retain_state_and_transfer_binary_memory() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    host.wasmModules.lock().unwrap().insert("test.package/state".into(), (
+        include_bytes!("../../../../../../../tools/tests/fixtures/wasm/memory.wasm").to_vec(),
+        ["next", "echo_i64", "sum", "grow"].map(str::to_string).to_vec(),
+    ));
+    let engine = newTestJsEngine(host.clone());
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), serde_json::json!("test.package"));
+    let script = r#"
+        exports.probe = async function() {
+            const next = await ToolPkg.wasm.call('state', 'next');
+            const a = await ToolPkg.wasm.open('state'), b = await ToolPkg.wasm.open('state');
+            const isolated = [a.call('next'), b.call('next'), a.call('next')];
+            const vector = new Float32Array([1.25, 2.5, 4]);
+            a.writeMemory(4096, new Uint8Array(vector.buffer));
+            const sum = a.call('sum', [{type:'i32',value:4096},{type:'i32',value:3}]);
+            const bytes = a.readMemory(4096, 12);
+            const integer = a.call('echo_i64', [{type:'i64',value:'9007199254740993'}]);
+            let bounds = false, unsafeInteger = false, undeclared = false, closed = false;
+            try { a.readMemory(-1, 1); } catch (e) { bounds = /out of bounds/.test(e.message); }
+            try { a.call('echo_i64', [{type:'i64',value:9007199254740992}]); } catch (e) { unsafeInteger = /safe integers/.test(e.message); }
+            try { a.call('not_declared'); } catch (e) { undeclared = /not declared/.test(e.message); }
+            const old = a.memory(), length = old.byteLength;
+            a.call('grow', [{type:'i32',value:1}]);
+            const grew = a.memory().byteLength === length + 65536 && old.byteLength === 0;
+            a.close(); b.close();
+            try { a.readMemory(0, 1); } catch (e) { closed = /closed/.test(e.message); }
+            return {next,isolated,sum,integer,bounds,unsafeInteger,undeclared,closed,grew,bytes:Array.from(bytes)};
+        };
+    "#;
+    for expected in [1, 2] {
+        let output = expect_js_output(engine.execute_script_function(script, "probe", &params, &BTreeMap::new(), None, true, None).await, "persistent WASM");
+        let result: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(result["next"], expected);
+        assert_eq!(result["isolated"], serde_json::json!([1, 1, 2]));
+        assert_eq!(result["sum"], 7.75);
+        assert_eq!(result["integer"], "9007199254740993");
+        for flag in ["bounds", "unsafeInteger", "undeclared", "closed", "grew"] { assert_eq!(result[flag], true, "{flag}: {result}"); }
+    }
+    assert_eq!(host.wasmModuleReads.load(Ordering::Relaxed), 1);
+    engine.destroy();
+}
+
+/// Loads the shipped third-party index into the native V8 realm, including SIMD and host imports.
+#[tokio::test(flavor = "current_thread")]
+async fn wasm_usearch_indexes_searches_deletes_and_restores_real_vectors() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let manifest: Value = serde_json::from_str(include_str!("../../../../../../../plugins/packages/examples/toolpkg_usearch_demo/manifest.json")).unwrap();
+    let exports = manifest["wasm_modules"][0]["exports"].as_array().unwrap().iter().map(|name| name.as_str().unwrap().to_string()).collect();
+    host.wasmModules.lock().unwrap().insert("test.package/usearch".into(), (
+        include_bytes!("../../../../../../../plugins/packages/examples/toolpkg_usearch_demo/modules/usearch.wasm").to_vec(), exports,
+    ));
+    let engine = newTestJsEngine(host.clone());
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), serde_json::json!("test.package"));
+    for (parameter, variable, default) in [("count", "OPERIT_USEARCH_COUNT", 2000), ("dimensions", "OPERIT_USEARCH_DIMENSIONS", 128), ("queries", "OPERIT_USEARCH_QUERIES", 20)] {
+        let value = std::env::var(variable).ok().map(|value| value.parse::<u32>().unwrap()).unwrap_or(default);
+        params.insert(parameter.into(), serde_json::json!(value));
+    }
+    let script = include_str!("../../../../../../../plugins/packages/examples/toolpkg_usearch_demo/main.js");
+    let output = expect_js_output(engine.execute_script_function(script, "run", &params, &BTreeMap::new(), None, true, None).await, "real USearch WASM");
+    let result: Value = serde_json::from_str(&output).unwrap();
+    println!("USEARCH_NATIVE_V8 {result}");
+    assert_eq!(result["restored"], true);
+    assert_eq!(result["deletionVerified"], true);
+    assert_eq!(result["firstKey"], "9007199254740993");
+    if result["count"] == 2000 && result["dimensions"] == 128 {
+        assert!(result["recallAt10"].as_f64().unwrap() >= 0.8, "{result}");
+    }
+    assert_eq!(host.wasmModuleReads.load(Ordering::Relaxed), 1);
+    engine.destroy();
 }

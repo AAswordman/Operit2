@@ -1528,3 +1528,72 @@ fn object_record_guards_are_checked_before_source_publication() {
     assert_eq!(f.get(&handle,"owner"),current);
     f.dispose();
 }
+
+/// Changes are snapshot pages shared across handles; rejected transactions publish no identities.
+#[test]
+fn object_change_pages_include_other_handles_deletions_and_rollback() {
+    let f = Fixture::new("first");
+    let reader = f.open("objects");
+    let writer = f.open("objects");
+    let initial = f.call(json!({"op":"changes","handle":reader,"after":null,"limit":2})).unwrap();
+    assert_eq!(initial["changes"], json!([]));
+    f.call(json!({"op":"commit","handle":writer,"mutations":[put("a",json!({"vector":[1,0]})),put("b",json!(null))]})).unwrap();
+    let mut cursor = initial["cursor"].clone();
+    let mut found = std::collections::BTreeMap::new();
+    loop {
+        let page = f.call(json!({"op":"changes","handle":reader,"after":cursor,"limit":2})).unwrap();
+        assert_eq!(page["reset"], false);
+        for change in page["changes"].as_array().unwrap() { found.insert(change["key"].as_str().unwrap().to_string(), change["entry"].clone()); }
+        cursor = page["cursor"].clone();
+        if page["hasMore"] == false { break; }
+    }
+    assert_eq!(found["a"]["value"], json!({"vector":[1,0]}));
+    assert!(found["b"].is_object());
+    assert!(found["b"]["value"].is_null());
+    assert!(f.call(json!({"op":"commit","handle":writer,"mutations":[put("rolled-back",json!(1)),{"collection":"keys","key":"a","value":2,"deleted":false,"checkVersion":true,"expectedVersion":"obsolete"}]})).is_err());
+    assert_eq!(f.call(json!({"op":"changes","handle":reader,"after":cursor,"limit":10})).unwrap()["changes"],json!([]));
+    f.call(json!({"op":"commit","handle":writer,"mutations":[{"collection":"keys","key":"a","value":null,"deleted":true,"checkVersion":false}]})).unwrap();
+    let deleted = f.call(json!({"op":"changes","handle":reader,"after":cursor,"limit":10})).unwrap();
+    assert_eq!(deleted["changes"],json!([{"collection":"keys","key":"a","entry":null}]));
+    assert!(f.call(json!({"op":"changes","handle":reader,"after":null,"limit":0})).is_err());
+    assert!(f.call(json!({"op":"changes","handle":reader,"after":"broken","limit":10})).is_err());
+    f.dispose();
+}
+
+/// An already-open reader sees synchronized transactions and synthetic merge writes.
+#[test]
+fn object_change_pages_include_sync_and_merged_identities() {
+    let first = Fixture::new("first");
+    let source = open_object_merge_fixture(&first);
+    seed_object_card(&first, &source, "card-a", "same", "identical");
+    let second = Fixture::new("second");
+    let reader = open_object_merge_fixture(&second);
+    seed_object_card(&second, &reader, "card-z", "same", "identical");
+    let before = second.call(json!({"op":"changes","handle":reader,"after":null,"limit":1000})).unwrap();
+    second.replay(&first.export());
+    let page = second.call(json!({"op":"changes","handle":reader,"after":before["cursor"],"limit":1000})).unwrap();
+    assert_eq!(page["reset"],false);
+    let changes = page["changes"].as_array().unwrap();
+    assert!(changes.iter().any(|change| change["key"] == "card-a" && change["entry"].is_object()));
+    assert!(changes.iter().any(|change| change["key"] == "card-z" && change["entry"].is_null()));
+    first.dispose(); second.dispose();
+}
+
+/// A recreated database and a consumer falling behind bounded retention require a fresh snapshot.
+#[test]
+fn object_change_pages_reset_for_foreign_and_trimmed_cursors() {
+    use operit_host_api::RuntimeSqliteHost;
+    let f = Fixture::new("first");
+    let handle = f.open("objects");
+    let initial = f.call(json!({"op":"changes","handle":handle,"after":null,"limit":10})).unwrap();
+    let foreign = f.call(json!({"op":"changes","handle":handle,"after":"foreign#0","limit":10})).unwrap();
+    assert_eq!(foreign["reset"],true);
+    // Feed a real transaction through the production triggers without 66k bridge round trips.
+    let mut connection = f.host.openSqliteDatabase(&f.path).unwrap();
+    connection.executeBatch("BEGIN; WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<66560) INSERT INTO _operit_changes(collection,key) SELECT 'keys',CAST(i AS TEXT) FROM n; COMMIT;").unwrap();
+    drop(connection);
+    let page = f.call(json!({"op":"changes","handle":handle,"after":initial["cursor"],"limit":10})).unwrap();
+    assert_eq!(page["reset"],true);
+    assert_eq!(page["changes"],json!([]));
+    f.dispose();
+}

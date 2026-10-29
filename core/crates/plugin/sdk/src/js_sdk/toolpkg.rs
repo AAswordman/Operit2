@@ -1,7 +1,7 @@
 //! ToolPkg data contracts, hooks, host events, UI contributions, IPC, and AI provider registration.
 use super::compose_dsl::*;
 use super::core::*;
-use super::{JsDate, JsFuture, JsNullable, JsOptional};
+use super::{JsDate, JsFuture, JsNullable, JsOptional, JsObject, JsUint8Array};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -2993,12 +2993,35 @@ pub trait ToolPkgIpcApiMethods: Send + Sync {
         options: Option<ToolPkgIpcCallOptions>,
     ) -> JsFuture<TResult>;
 }
+/// Owns a persistent WASM instance in the current JavaScript realm.
+pub struct ToolPkgWasmInstance;
+
+pub trait ToolPkgWasmInstanceMethods: Send + Sync {
+    /// Calls a declared export without crossing the host bridge; i64 results use decimal strings.
+    fn call(&self, exportName: String, args: Option<Vec<ToolPkgWasmArg>>) -> ToolPkgWasmScalarValue;
+    /// Returns a live byte view; obtain a fresh view after growing WASM memory.
+    fn memory(&self, memoryName: Option<String>) -> JsUint8Array;
+    /// Copies a bounded memory range into an independent byte array.
+    fn readMemory(&self, offset: f64, length: f64, memoryName: Option<String>) -> JsUint8Array;
+    /// Copies a byte batch into bounded linear memory.
+    fn writeMemory(&self, offset: f64, bytes: JsUint8Array, memoryName: Option<String>);
+    /// Releases this handle; later calls fail explicitly.
+    fn close(&self);
+}
+
 /// Represents the WASM API exposed on a ToolPkg registry.
 pub struct ToolPkgWasmApi;
 
 /// Calls scalar ToolPkg WASM exports declared by the current package manifest.
 pub trait ToolPkgWasmApiMethods: Send + Sync {
-    /// Calls one WASM export and resolves with its scalar result.
+    /// Reads declared module bytes for a library's own WASM loader.
+    fn read(&self, moduleId: String) -> JsFuture<JsUint8Array>;
+    /// Creates an independent instance using a realm-cached compiled module and optional JS imports.
+    fn open(&self, moduleId: String, imports: Option<JsObject>) -> JsFuture<ToolPkgWasmInstance>;
+    /// Evicts module bytes and the default scalar instance; explicit instances remain owned by their callers.
+    fn unload(&self, moduleId: String);
+
+    /// Calls a declared export on the module's persistent default instance.
     fn call(
         &self,
         moduleId: String,

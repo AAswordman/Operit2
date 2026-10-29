@@ -771,87 +771,9 @@ fn assembleRuntimeBootstrapScript() -> String {
                         ? __operitText(params.moduleSpec.screen)
                         : ''
                 ));
-                function normalizeToolPkgWasmValueType(valueType) {{
-                    var normalizedType = __operitText(valueType).trim().toLowerCase();
-                    if (
-                        normalizedType !== 'i32' &&
-                        normalizedType !== 'i64' &&
-                        normalizedType !== 'f32' &&
-                        normalizedType !== 'f64'
-                    ) {{
-                        throw new Error('ToolPkg.wasm arg type is invalid: ' + normalizedType);
-                    }}
-                    return normalizedType;
-                }}
-
-                function normalizeToolPkgWasmArgs(args) {{
-                    if (args == null) {{
-                        return [];
-                    }}
-                    if (!Array.isArray(args)) {{
-                        throw new Error('ToolPkg.wasm args must be an array');
-                    }}
-                    var normalizedArgs = [];
-                    for (var i = 0; i < args.length; i += 1) {{
-                        var arg = args[i];
-                        if (!arg || typeof arg !== 'object' || Array.isArray(arg)) {{
-                            throw new Error('ToolPkg.wasm arg ' + i + ' must be an object');
-                        }}
-                        var valueType = normalizeToolPkgWasmValueType(arg.type);
-                        if (!Object.prototype.hasOwnProperty.call(arg, 'value')) {{
-                            throw new Error('ToolPkg.wasm arg ' + i + ' value is required');
-                        }}
-                        var value = arg.value;
-                        if (valueType === 'i32' && typeof value !== 'number') {{
-                            throw new Error('ToolPkg.wasm arg ' + i + ' i32 value must be a number');
-                        }}
-                        if (valueType === 'i64' && typeof value !== 'number' && typeof value !== 'string') {{
-                            throw new Error('ToolPkg.wasm arg ' + i + ' i64 value must be a number or string');
-                        }}
-                        if (
-                            (valueType === 'f32' || valueType === 'f64') &&
-                            typeof value !== 'number' &&
-                            typeof value !== 'string'
-                        ) {{
-                            throw new Error('ToolPkg.wasm arg ' + i + ' float value must be a number or string');
-                        }}
-                        normalizedArgs.push({{ type: valueType, value: value }});
-                    }}
-                    return normalizedArgs;
-                }}
-
                 function ensureToolPkgWasmApi() {{
-                    var toolPkgApi = globalThis.ToolPkg && typeof globalThis.ToolPkg === 'object'
-                        ? globalThis.ToolPkg
-                        : {{}};
-                    if (globalThis.ToolPkg !== toolPkgApi) {{
-                        globalThis.ToolPkg = toolPkgApi;
-                    }}
-                    var wasmApi = toolPkgApi.wasm && typeof toolPkgApi.wasm === 'object'
-                        ? toolPkgApi.wasm
-                        : {{}};
-                    wasmApi.call = function(moduleId, exportName, args) {{
-                        var normalizedModuleId = __operitText(moduleId).trim();
-                        if (normalizedModuleId.length === 0) {{
-                            return Promise.reject(new Error('ToolPkg.wasm module id is required'));
-                        }}
-                        var normalizedExportName = __operitText(exportName).trim();
-                        if (normalizedExportName.length === 0) {{
-                            return Promise.reject(new Error('ToolPkg.wasm export name is required'));
-                        }}
-                        var normalizedArgs;
-                        try {{
-                            normalizedArgs = normalizeToolPkgWasmArgs(args);
-                        }} catch (error) {{
-                            return Promise.reject(error);
-                        }}
-                        if (!packageTarget) {{
-                            return Promise.reject(new Error('ToolPkg.wasm package target is required'));
-                        }}
-                        return __operitInvokeHostAsync(__operitNativeCallToolPkgWasm,
-                            [packageTarget, normalizedModuleId, normalizedExportName, normalizedArgs]);
-                    }};
-                    toolPkgApi.wasm = wasmApi;
+                    var toolPkgApi = globalThis.ToolPkg;
+                    toolPkgApi.wasm = globalThis.__operitCreateToolPkgWasmApi(function() {{ return packageTarget; }}, false);
                 }}
 
                 __operitInstallToolPkgRouteApi();

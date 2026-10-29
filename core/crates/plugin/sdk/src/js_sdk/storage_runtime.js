@@ -64,6 +64,7 @@ function __operitStorageRequest(request) {
             case 'get': return result.entry;
             case 'get_many': return result.entries;
             case 'list': return result.entries;
+            case 'changes': return result.page;
             case 'commit': return { version: result.version };
             default: throw new Error('Unknown Storage tool result operation');
         }
@@ -269,6 +270,8 @@ async function __operitStorageOpen(kind, options) {
     if (kind === "objects") {
         return Object.assign(base, {
             collection:collection,
+            /** Reads all committed object changes, including writes by other engines and sync replay. */
+            changes(after, limit = 100) { return request("changes", {after: after, limit: limit}); },
             /** Publishes changes across collections in one atomic versioned transaction. */
             commit(changes, guards = []) {
                 if(!Array.isArray(changes)) throw new Error("Object commit requires mutations");

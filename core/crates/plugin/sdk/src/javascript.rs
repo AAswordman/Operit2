@@ -121,6 +121,13 @@ pub struct JsToolPkgWasmArg {
     pub value: Value,
 }
 
+/// Owns one declared module and its permitted public exports.
+#[derive(Clone)]
+pub struct JsToolPkgWasmModule {
+    pub bytes: Vec<u8>,
+    pub exports: Vec<String>,
+}
+
 /// Describes one ToolPkg WASM export call requested by JavaScript.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct JsToolPkgWasmRequest {
@@ -285,6 +292,11 @@ pub trait JsExecutionHost: Send + Sync {
         &self,
         request: JsToolPkgResourceRequest,
     ) -> Result<String, String>;
+
+    /// Loads a declared module for execution in the owning JavaScript realm.
+    fn load_toolpkg_wasm(&self, _package_target: &str, _module_id: &str) -> Result<JsToolPkgWasmModule, String> {
+        Err("ToolPkg WASM module loading is unavailable".to_string())
+    }
 
     /// Calls one scalar ToolPkg WASM export.
     fn call_toolpkg_wasm(

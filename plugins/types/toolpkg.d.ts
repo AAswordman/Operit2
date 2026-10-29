@@ -3910,11 +3910,49 @@ export namespace ToolPkg {
   }
 
   /**
+   * Owns a persistent WASM instance in the current JavaScript realm.
+   */
+  export interface WasmInstance {
+    /**
+     * Calls a declared export without crossing the host bridge; i64 results use decimal strings.
+     */
+    call(exportName: string, args?: WasmArg[]): WasmScalarValue;
+    /**
+     * Returns a live byte view; obtain a fresh view after growing WASM memory.
+     */
+    memory(memoryName?: string): Uint8Array;
+    /**
+     * Copies a bounded memory range into an independent byte array.
+     */
+    readMemory(offset: number, length: number, memoryName?: string): Uint8Array;
+    /**
+     * Copies a byte batch into bounded linear memory.
+     */
+    writeMemory(offset: number, bytes: Uint8Array, memoryName?: string): void;
+    /**
+     * Releases this handle; later calls fail explicitly.
+     */
+    close(): void;
+  }
+
+  /**
    * Represents the WASM API exposed on a ToolPkg registry.
    */
   export interface WasmApi {
     /**
-     * Calls one WASM export and resolves with its scalar result.
+     * Reads declared module bytes for a library's own WASM loader.
+     */
+    read(moduleId: string): Promise<Uint8Array>;
+    /**
+     * Creates an independent instance using a realm-cached compiled module and optional JS imports.
+     */
+    open(moduleId: string, imports?: object): Promise<WasmInstance>;
+    /**
+     * Evicts module bytes and the default scalar instance; explicit instances remain owned by their callers.
+     */
+    unload(moduleId: string): void;
+    /**
+     * Calls a declared export on the module's persistent default instance.
      */
     call(moduleId: string, exportName: string, args?: WasmArg[]): Promise<WasmScalarValue>;
   }

@@ -144,6 +144,12 @@ test("single Core production archive exactly matches the packaged plugin and its
   const manifest = JSON.parse(Buffer.from(entries["manifest.json"]).toString("utf8"));
   assert.equal(manifest.public_api, "src/api.ts"); assert.ok(Object.hasOwn(entries, manifest.public_api));
   assert.deepEqual(manifest.subpackages, [{ id: "character_memory", entry: "dist/tools.js" }]);
+  assert.equal(manifest.wasm_modules.length, 1);
+  assert.equal(manifest.wasm_modules[0].id, "usearch");
+  assert.equal(digest(entries[manifest.wasm_modules[0].path]), digest(await readFile(path.join(root, manifest.wasm_modules[0].path))));
+  for (const file of ["vendor/usearch/index.cpp", "vendor/usearch/build.py", "vendor/usearch/LICENSE-USEARCH", "vendor/usearch/LICENSE-EMSCRIPTEN"]) {
+    assert.ok(Object.hasOwn(entries, file), "Archive omitted the memory-owned WASM source or license: " + file);
+  }
   for (const file of [...await sourcePaths("src"), ...await sourcePaths("web"), ...await sourcePaths("scripts")]) {
     assert.ok(Object.hasOwn(entries, file), "Production archive omitted module: " + file);
     assert.equal(digest(entries[file]), digest(await readFile(path.join(root, file))), "Production archive has stale module: " + file);

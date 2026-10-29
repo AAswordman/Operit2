@@ -31,5 +31,30 @@
       "path": "resources/operit-avatar.png",
       "mime": "image/png"
     }
+  ],
+  "wasm_modules": [
+    {
+      "id": "usearch",
+      "path": "resources/usearch.wasm",
+      "source_language": "cpp",
+      "abi": "memory",
+      "exports": [
+        "_initialize",
+        "malloc",
+        "free",
+        "index_error",
+        "index_create",
+        "index_add_batch",
+        "index_search",
+        "index_size",
+        "index_remove",
+        "index_save_size",
+        "index_save",
+        "index_load",
+        "index_destroy",
+        "index_search_filtered",
+        "index_score_keys"
+      ]
+    }
   ]
 }

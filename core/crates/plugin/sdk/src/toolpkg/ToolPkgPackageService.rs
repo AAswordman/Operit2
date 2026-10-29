@@ -1095,37 +1095,41 @@ impl<'a> ToolPkgPackageService<'a> {
         None
     }
 
+    /// Reads one declared export for the legacy scalar host ABI.
+    #[allow(non_snake_case)]
+    pub fn readToolPkgWasmModuleBytes(&self, target: &str, moduleId: &str, exportName: &str, preferEnabledContainer: bool) -> Result<Vec<u8>, String> {
+        let module = self.loadToolPkgWasmModule(target, moduleId, preferEnabledContainer)?;
+        if !module.exports.iter().any(|name| name == exportName.trim()) {
+            return Err(format!("ToolPkg WASM export '{exportName}' is not declared by module '{moduleId}'"));
+        }
+        Ok(module.bytes)
+    }
+
     /// Reads bytes for one declared ToolPkg WASM module export.
     #[allow(non_snake_case)]
-    pub fn readToolPkgWasmModuleBytes(
+    pub fn loadToolPkgWasmModule(
         &self,
         packageNameOrSubpackageId: &str,
         moduleId: &str,
-        exportName: &str,
         preferEnabledContainer: bool,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<crate::javascript::JsToolPkgWasmModule, String> {
         self.packageManager.ensureInitialized();
         let target = self
             .packageManager
             .normalizePackageName(packageNameOrSubpackageId);
         let moduleId = moduleId.trim();
-        let exportName = exportName.trim();
         if target.is_empty() {
             return Err("ToolPkg WASM package target is required".to_string());
         }
         if moduleId.is_empty() {
             return Err("ToolPkg WASM module id is required".to_string());
         }
-        if exportName.is_empty() {
-            return Err("ToolPkg WASM export name is required".to_string());
-        }
 
         let toolPkgContainers = self.packageManager.toolPkgContainersInternal();
         if let Some(containerRuntime) = toolPkgContainers.get(&target) {
-            return self.readToolPkgWasmModuleBytesFromContainer(
+            return self.loadToolPkgWasmModuleFromContainer(
                 containerRuntime,
                 moduleId,
-                exportName,
             );
         }
 
@@ -1141,10 +1145,9 @@ impl<'a> ToolPkgPackageService<'a> {
                         directSubpackageRuntime.containerPackageName
                     )
                 })?;
-            return self.readToolPkgWasmModuleBytesFromContainer(
+            return self.loadToolPkgWasmModuleFromContainer(
                 containerRuntime,
                 moduleId,
-                exportName,
             );
         }
 
@@ -1175,17 +1178,16 @@ impl<'a> ToolPkgPackageService<'a> {
         let containerRuntime = toolPkgContainers
             .get(containerName)
             .ok_or_else(|| format!("ToolPkg container not found: {containerName}"))?;
-        self.readToolPkgWasmModuleBytesFromContainer(containerRuntime, moduleId, exportName)
+        self.loadToolPkgWasmModuleFromContainer(containerRuntime, moduleId)
     }
 
     /// Reads bytes for one declared WASM module from a concrete container.
     #[allow(non_snake_case)]
-    fn readToolPkgWasmModuleBytesFromContainer(
+    fn loadToolPkgWasmModuleFromContainer(
         &self,
         runtime: &ToolPkgContainerRuntime,
         moduleId: &str,
-        exportName: &str,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<crate::javascript::JsToolPkgWasmModule, String> {
         let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
         if !enabledSet.contains(&runtime.packageName) {
             return Err(format!(
@@ -1198,14 +1200,10 @@ impl<'a> ToolPkgPackageService<'a> {
             .iter()
             .find(|module| module.id.eq_ignore_ascii_case(moduleId))
             .ok_or_else(|| format!("ToolPkg WASM module not found: {moduleId}"))?;
-        if !module.exports.iter().any(|name| name == exportName) {
-            return Err(format!(
-                "ToolPkg WASM export '{exportName}' is not declared by module '{moduleId}'"
-            ));
-        }
-        self.packageManager
+        let bytes = self.packageManager
             .readToolPkgResourceBytes(runtime, &module.path)
-            .ok_or_else(|| format!("ToolPkg WASM module bytes not found: {}", module.path))
+            .ok_or_else(|| format!("ToolPkg WASM module bytes not found: {}", module.path))?;
+        Ok(crate::javascript::JsToolPkgWasmModule { bytes, exports: module.exports.clone() })
     }
 }
 

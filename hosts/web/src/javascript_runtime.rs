@@ -47,6 +47,7 @@ static NEXT_JAVASCRIPT_STATE_ID: AtomicU64 = AtomicU64::new(1);
 enum WebJavaScriptBinding {
     Synchronous(HostJavaScriptCallback),
     Asynchronous(HostJavaScriptAsyncJsonCallback),
+    Binary(operit_host_api::HostJavaScriptBinaryCallback),
 }
 
 #[derive(Default)]
@@ -142,6 +143,16 @@ impl WebHostJavaScriptRuntime {
                     JsValue::from_str(&format!("JavaScript host binding is unavailable: {name}"))
                 })?;
                 let value = match binding {
+                    WebJavaScriptBinding::Binary(callback) => {
+                        let arguments = arguments.into_iter().map(HostJavaScriptValue::into_json)
+                            .collect::<HostResult<Vec<_>>>().map_err(|error| JsValue::from_str(&error.to_string()))?;
+                        let (metadata, bytes) = callback(arguments).map_err(|error| JsValue::from_str(&error.to_string()))?;
+                        let result = Object::new();
+                        let metadata = structuredValue(&metadata).map_err(|error| JsValue::from_str(&error.to_string()))?;
+                        Reflect::set(&result, &JsValue::from_str("metadata"), &metadata)?;
+                        Reflect::set(&result, &JsValue::from_str("bytes"), &js_sys::Uint8Array::from(bytes.as_slice()))?;
+                        return Ok(result.into());
+                    }
                     WebJavaScriptBinding::Synchronous(callback) => callback(arguments),
                     WebJavaScriptBinding::Asynchronous(callback) => {
                         let arguments = arguments.into_iter().map(HostJavaScriptValue::into_json).collect::<HostResult<Vec<_>>>()
@@ -189,6 +200,12 @@ impl Drop for WebHostJavaScriptRuntime {
 }
 
 impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
+    fn registerHostJavaScriptBinaryFunction(&mut self, name: &str, callback: operit_host_api::HostJavaScriptBinaryCallback) -> HostResult<()> {
+        self.execute(serde_json::json!({"operation":"binding","name":name,"factory":"syncBinding"}))?;
+        self.bindings.borrow_mut().insert(name.to_string(), WebJavaScriptBinding::Binary(callback));
+        Ok(())
+    }
+
     /// Executes the shared bootstrap source in this browser runtime's independent realm.
     fn evaluateHostJavaScriptBootstrap(&mut self, source: &'static str) -> HostResult<()> {
         self.evaluateHostJavaScriptVoid("operit.bootstrap.js", source)

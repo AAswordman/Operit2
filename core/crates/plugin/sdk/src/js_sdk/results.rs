@@ -877,6 +877,8 @@ pub enum StorageRequestResultData {
     List {
         entries: Vec<StorageKeyValueEntry>,
     },
+    #[serde(rename = "changes")]
+    Changes { page: operit_host_api::PluginStorage::StorageChangePage },
     #[serde(rename = "commit")]
     Commit {
         version: String,
@@ -908,6 +910,7 @@ impl From<StorageResponse> for StorageRequestResultData {
                 entries: entries.into_iter().map(JsNullable::from_option).collect(),
             },
             StorageResponse::List(entries) => Self::List { entries },
+            StorageResponse::Changes(page) => Self::Changes { page },
             StorageResponse::Commit(result) => Self::Commit {
                 version: result.version,
             },

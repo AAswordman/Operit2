@@ -370,3 +370,15 @@ configuration preferences and the memory database have separate transaction boun
 Backups export source records without the retired text cache; importing with embeddings
 enabled recomputes vectors. Synchronization carries existing vectors with their source
 row. Opening migrated libraries deletes retired cache rows without loading their payloads.
+
+### 记忆检索索引
+
+SQLite 保存同步的源记录及其 embedding，检索不再在 SQL 中展开向量 JSON、计算点积或执行多层排名 CTE。
+插件第一次读取某个 owner 时，以主键范围分页建立词项索引、标题索引、文件夹和时间索引、关系邻接表，以及 USearch WASM 近邻索引。
+运行中的后续查询读取本地变更游标，只更新发生变化的源；普通查询只对候选进行合分，最后按 key 读取结果页。
+文档块复用同一索引和分词规则。检索仅生成当前 query 的临时向量，源 embedding 的缺失、过期或维数变化仍要求显式重建。
+
+`vendor/usearch` 是本插件拥有的依赖及构建入口，与 `plugins/sdk` 的外部 IPC 客户端无关。
+ANN 是近似检索，文件夹、时间和排除条件传入 WASM 过滤器；候选预算有上限，避免文档大量分块时退化为全库精确扫描。
+词项和关系评分在 `src/memory-search.ts` 中实现，保留 RRF、权重模式、阈值和排除后的分页语义。
+索引当前保留在运行时内存中，冷启动会重建索引；WASM 保存／恢复能力已由独立示例验证，尚未接入记忆插件的磁盘检查点。
