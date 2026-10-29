@@ -129,6 +129,9 @@
              only read by the patched engine in the flutter-ohos fork; stock
              engines ignore it. -->
         <meta-data
+            android:name="io.flutter.embedding.android.ImpellerBackend"
+            android:value="opengles" />
+        <meta-data
             android:name="io.flutter.embedding.android.EnablePartialRepaint"
             android:value="true" />
     </application>
