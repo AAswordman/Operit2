@@ -1022,14 +1022,11 @@ impl OperitApplication {
         }
         let mut unique = BTreeMap::new();
         for operation in operations {
-            if let Some(existing) = unique.insert(operation.opId.clone(), operation.clone()) {
-                if existing != operation {
-                    return Err(format!(
-                        "Conflicting immutable operation {}",
-                        operation.opId
-                    ));
-                }
+            if let Some(existing) = unique.get(&operation.opId) {
+                if !operit_store::SyncOperationStore::incomingSyncOperationWins(existing, &operation)
+                    .map_err(|error| error.to_string())? { continue; }
             }
+            unique.insert(operation.opId.clone(), operation);
         }
         let mut operations = unique.into_values().collect::<Vec<_>>();
         operations.sort_by(|left, right| {

@@ -3210,6 +3210,24 @@ impl PreferencesDataStore {
         Self::readSchemaVersion(&self.data()?)
     }
 
+    /// Resolves the owner's replay version without publishing a migrated or absent snapshot.
+    pub(crate) fn syncSchemaVersion(&self) -> Result<u32, PreferencesDataStoreError> {
+        let _transaction = self.lockTransaction();
+        self.loadUnlocked()?;
+        let preferences = self.loadedPreferences().expect("dataset loaded");
+        let storedVersion = Self::readSchemaVersion(&preferences)?;
+        let Some(schema) = &self.schema else {
+            return Ok(storedVersion);
+        };
+        if storedVersion > schema.currentVersion {
+            return Err(PreferencesDataStoreError::SchemaVersionTooNew {
+                actual: storedVersion,
+                expected: schema.currentVersion,
+            });
+        }
+        Ok(schema.currentVersion)
+    }
+
     /// Reports whether the owner's schema and initial replication are durably committed.
     pub fn isSyncPrepared(&self) -> Result<bool, PreferencesDataStoreError> {
         let preferences = self.data()?;

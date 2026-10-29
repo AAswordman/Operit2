@@ -1609,7 +1609,7 @@ fn control_acknowledgements_and_sparse_receipts_share_export_filtering() {
 fn conflicting_received_operation_does_not_commit_other_batch_entries() {
     let host = Arc::new(MemoryStorageHost::default());
     let store = SyncOperationStore::new(host, "conflicting-receive");
-    let first = operation(
+    let mut first = operation(
         1,
         "message",
         "first",
@@ -1617,6 +1617,7 @@ fn conflicting_received_operation_does_not_commit_other_batch_entries() {
         SyncOperationSemantics::EntityState,
         json!(1),
     );
+    first.domain = "binding".into();
     let second = operation(
         2,
         "message",
@@ -1738,12 +1739,13 @@ fn retained_preferences_advance_past_retired_history_with_count_and_byte_limits(
     }
 }
 
-/// Completed SQL-owned operations retain content verification independently of their pending payloads.
+/// Non-chat operations retain immutable content verification after completion and restart.
 #[test]
 fn completed_receipt_rejects_changed_original_payload_after_restart() {
     let host = Arc::new(MemoryStorageHost::default());
     let store = SyncOperationStore::new(host.clone(), "receipt-content");
-    let original = operation(1, "message", "id", "upsert", SyncOperationSemantics::Transaction, json!({"content":"original"}));
+    let mut original = operation(1, "message", "id", "upsert", SyncOperationSemantics::Transaction, json!({"content":"original"}));
+    original.domain = "binding".into();
     store.receiveOperations(&[original.clone()]).unwrap();
     store.completeOperations(&[original.clone()]).unwrap();
     let restarted = SyncOperationStore::new(Arc::new((*host).clone()), "receipt-content");
@@ -1751,6 +1753,105 @@ fn completed_receipt_rejects_changed_original_payload_after_restart() {
     let mut changed = original; changed.payload = json!({"content":"changed"});
     assert!(restarted.receiveOperations(&[changed]).is_err());
     assert!(restarted.pendingOperations().unwrap().is_empty());
+}
+
+/// Revisions converge on version, then timestamp, independently of delivery order.
+#[test]
+fn chat_revision_delivery_keeps_newest_in_both_orders() {
+    let old = operation(1, "message", "id", "upsert", SyncOperationSemantics::EntityState, json!("old"));
+    let mut later = old.clone(); later.createdAt += 10; later.payload = json!("later");
+    let mut migrated = old.clone(); migrated.schemaVersion += 1; migrated.payload = json!("migrated");
+    for incoming in [vec![old.clone(), later.clone(), migrated.clone()], vec![migrated.clone(), later.clone(), old.clone()]] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = SyncOperationStore::new(host, "chat-revisions");
+        store.receiveOperations(&incoming).unwrap();
+        assert_eq!(store.pendingOperations().unwrap(), vec![migrated.clone()]);
+    }
+}
+
+/// Completed identities may receive an updated SQL snapshot without reopening older revisions.
+#[test]
+fn chat_revision_after_completion_survives_restart_and_rejects_late_old_data() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host.clone(), "completed-chat-revision");
+    let old = operation(1, "message", "id", "upsert", SyncOperationSemantics::EntityState, json!("old"));
+    let mut new = old.clone(); new.createdAt += 1; new.payload = json!("new");
+    store.receiveOperations(&[old.clone()]).unwrap();
+    store.completeOperations(&[old.clone()]).unwrap();
+    store.receiveOperations(&[new.clone()]).unwrap();
+    assert_eq!(store.pendingOperations().unwrap(), vec![new.clone()]);
+    store.completeOperations(&[new]).unwrap();
+    let reopened = SyncOperationStore::new(Arc::new((*host).clone()), "completed-chat-revision");
+    reopened.receiveOperations(&[old]).unwrap();
+    assert!(reopened.pendingOperations().unwrap().is_empty());
+}
+
+/// Legacy fingerprint-only receipts are reconciled by the SQL owner rather than aborting receipt.
+#[test]
+fn chat_revision_reconciles_legacy_fingerprint_only_receipt() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host.clone(), "legacy-chat-revision");
+    let old = operation(1, "message", "id", "upsert", SyncOperationSemantics::EntityState, json!("old"));
+    store.receiveOperations(&[old.clone()]).unwrap();
+    store.completeOperations(&[old.clone()]).unwrap();
+    let path = "legacy-chat-revision/receive_state.json";
+    let mut ledger: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
+    ledger.as_object_mut().unwrap().remove("chatRevisions");
+    host.writeBytes(path, &serde_json::to_vec(&ledger).unwrap()).unwrap();
+    let reopened = SyncOperationStore::new(Arc::new((*host).clone()), "legacy-chat-revision");
+    let mut new = old; new.schemaVersion += 1; new.payload = json!("migrated");
+    reopened.receiveOperations(&[new.clone()]).unwrap();
+    assert_eq!(reopened.pendingOperations().unwrap(), vec![new]);
+}
+
+/// Failed revision publication preserves both the old ledger and its exact pending payload.
+#[test]
+fn chat_revision_replacement_is_atomic_and_old_completion_cannot_remove_new_work() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host.clone(), "atomic-chat-revision");
+    let old = operation(1, "message", "id", "upsert", SyncOperationSemantics::EntityState, json!("old"));
+    let mut new = old.clone(); new.createdAt += 1; new.payload = json!("new");
+    store.receiveOperations(&[old.clone()]).unwrap();
+    let before = host.readBytes("atomic-chat-revision/receive_state.json").unwrap();
+    host.failAtomic.store(1, Ordering::SeqCst);
+    assert!(store.receiveOperations(&[new.clone()]).is_err());
+    assert_eq!(host.readBytes("atomic-chat-revision/receive_state.json").unwrap(), before);
+    assert_eq!(store.pendingOperations().unwrap(), vec![old.clone()]);
+    host.failAtomic.store(0, Ordering::SeqCst);
+    let reopened = SyncOperationStore::new(Arc::new((*host).clone()), "atomic-chat-revision");
+    assert_eq!(reopened.pendingOperations().unwrap(), vec![old.clone()]);
+    reopened.receiveOperations(&[new.clone()]).unwrap();
+    reopened.completeOperations(&[old]).unwrap();
+    assert_eq!(reopened.pendingOperations().unwrap(), vec![new.clone()]);
+    let restarted = SyncOperationStore::new(Arc::new((*host).clone()), "atomic-chat-revision");
+    assert_eq!(restarted.pendingOperations().unwrap(), vec![new.clone()]);
+    restarted.completeOperations(&[new]).unwrap();
+    assert!(restarted.pendingOperations().unwrap().is_empty());
+}
+
+/// A revised pending record must be forwarded instead of its archived older encoding.
+#[test]
+fn chat_revision_pending_export_supersedes_archived_old_payload() {
+    let store = SyncOperationStore::new(Arc::new(MemoryStorageHost::default()), "chat-revision-export");
+    let old = operation(1, "message", "id", "upsert", SyncOperationSemantics::EntityState, json!("old"));
+    store.appendOperation(&old).unwrap();
+    let mut new = old; new.schemaVersion += 1; new.payload = json!("new");
+    store.receiveOperations(&[new.clone()]).unwrap();
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &["chat".into()], 10).unwrap(), vec![new]);
+}
+
+/// Equal-version equal-time collisions choose the same content on every replica.
+#[test]
+fn chat_revision_equal_time_tie_break_is_stable() {
+    let first = operation(1, "message", "id", "upsert", SyncOperationSemantics::EntityState, json!("one"));
+    let mut second = first.clone(); second.payload = json!("two");
+    assert_ne!(incomingSyncOperationWins(&first, &second).unwrap(), incomingSyncOperationWins(&second, &first).unwrap());
+    let winner = if incomingSyncOperationWins(&first, &second).unwrap() { second.clone() } else { first.clone() };
+    for operations in [vec![first.clone(), second.clone()], vec![second, first]] {
+        let store = SyncOperationStore::new(Arc::new(MemoryStorageHost::default()), "tie-chat-revision");
+        store.receiveOperations(&operations).unwrap();
+        assert_eq!(store.pendingOperations().unwrap(), vec![winner.clone()]);
+    }
 }
 
 /// A retry after an interrupted append must remain a separate readable journal record.

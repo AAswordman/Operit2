@@ -65,6 +65,13 @@ internal class AndroidRootCommandRouter(private val backend: AndroidRootCommandB
         timeoutMillis: Long,
     ): AndroidRootAccessStatus = probe(settings, AndroidCommandDeadline(timeoutMillis))
 
+    /** Verifies the direct su executable needed to own a persistent native PTY. */
+    @Synchronized
+    fun terminalSuArguments(settings: AndroidRootExecutionSettings, timeoutMillis: Long): List<String>? {
+        val status = probe(settings.copy(mode = AndroidRootExecutionMode.ForceExec), AndroidCommandDeadline(timeoutMillis))
+        return if (status.granted) requireNotNull(selectedSuArguments).toList() else null
+    }
+
     @Synchronized
     fun execute(
         target: AndroidPrivilegedCommandTarget,

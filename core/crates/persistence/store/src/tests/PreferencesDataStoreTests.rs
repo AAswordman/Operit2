@@ -473,6 +473,80 @@ fn schema_first_record_write_never_publishes_an_empty_record() {
     }
 }
 
+/// A fresh peer must publish each imported Space file with its record already present.
+#[test]
+fn space_preference_sync_publishes_only_complete_records() {
+    use crate::CoreSpaceStore::CoreSpaceStore;
+    use crate::PreferenceMerge::{applyIndependentOperations, PreferenceMergeSchema};
+    for directory in ["members", "device_profiles", "device_presence", "topology"] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let path = format!("runtime/space/{directory}/peer.preferences.json");
+        let snapshots = host.observeWrites(&path);
+        let record = json!({"nodeId":"peer", "updatedAt":1});
+        let mut operation = nativePreferenceOperation(&path, vec![("record", record.clone())], 1);
+        operation.payload["schemaVersion"] = json!(3);
+        let schema = PreferenceMergeSchema {
+            stores: vec![CoreSpaceStore::preferenceSyncStore(&path).unwrap()],
+        };
+        let outcomes = applyIndependentOperations(host.clone(), &schema, &[], &[operation], |_, _| true);
+        assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()));
+        let snapshots = snapshots.try_iter().collect::<Vec<_>>();
+        assert_eq!(snapshots.len(), 1, "{path} must have one complete publication");
+        let persisted: Value = serde_json::from_slice(&snapshots[0]).unwrap();
+        assert_eq!(persisted["record"], record);
+        assert_eq!(persisted[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 3);
+    }
+}
+
+/// Version checks must not recreate an exited peer's deleted files as empty records.
+#[test]
+fn space_preference_sync_rejected_versions_leave_no_placeholder() {
+    use crate::CoreSpaceStore::CoreSpaceStore;
+    use crate::PreferenceMerge::{applyIndependentOperations, PreferenceMergeSchema};
+    for directory in ["members", "device_profiles", "device_presence", "topology"] {
+        for version in [None, Some(2), Some(4)] {
+            let host = Arc::new(MemoryStorageHost::default());
+            let path = format!("runtime/space/{directory}/peer.preferences.json");
+            let snapshots = host.observeWrites(&path);
+            let mut operation = nativePreferenceOperation(&path, vec![("record", json!({"nodeId":"peer"}))], 1);
+            match version {
+                Some(version) => { operation.payload["schemaVersion"] = json!(version); }
+                None => { operation.payload.as_object_mut().unwrap().remove("schemaVersion"); }
+            }
+            let schema = PreferenceMergeSchema {
+                stores: vec![CoreSpaceStore::preferenceSyncStore(&path).unwrap()],
+            };
+            let outcomes = applyIndependentOperations(host.clone(), &schema, &[], &[operation], |_, _| true);
+            assert_eq!(outcomes.len(), 1);
+            assert_eq!(outcomes[0].skipped, version != Some(4));
+            assert_eq!(outcomes[0].result.is_ok(), version != Some(4));
+            assert!(!host.exists(&path).unwrap(), "version {version:?} recreated {path}");
+            assert_eq!(snapshots.try_iter().count(), 0);
+        }
+    }
+}
+
+/// Failed incoming replay must not commit the schema before the business record.
+#[test]
+fn space_preference_sync_failed_replay_leaves_no_placeholder() {
+    use crate::PreferenceMerge::{applyIndependentOperations, PreferenceMergeSchema, PreferenceMergeStore};
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/space/members/peer.preferences.json";
+    let schema = PreferenceMergeSchema {
+        stores: vec![PreferenceMergeStore::values(
+            path, false,
+            |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(3, |_, _| Ok(())),
+            |_| Err(PreferencesDataStoreError::Message("injected record decode failure".into())),
+        )],
+    };
+    let mut operation = nativePreferenceOperation(path, vec![("record", json!({"nodeId":"peer"}))], 1);
+    operation.payload["schemaVersion"] = json!(3);
+    let outcomes = applyIndependentOperations(host.clone(), &schema, &[], &[operation], |_, _| true);
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].result.as_ref().unwrap_err().contains("injected record decode failure"));
+    assert!(!host.exists(path).unwrap());
+}
+
 /// A schema change still commits when the business edit is a no-op, without exporting an operation.
 #[test]
 fn schema_upgrade_with_unchanged_record_still_commits_once() {

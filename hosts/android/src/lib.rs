@@ -32,6 +32,9 @@ mod secret_store;
 mod service_discovery;
 mod system_operation;
 mod terminal;
+mod terminal_privilege;
+#[cfg(target_os = "android")]
+pub use terminal::androidPrivilegedPtyOperation;
 mod tts_playback;
 mod tts_synthesis;
 mod web_visit;

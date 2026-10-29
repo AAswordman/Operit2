@@ -1,4 +1,4 @@
-//! Durable replay intent is a metadata ledger referencing individual immutable records.
+//! Durable replay intent references exact records, including independently committed SQL revisions.
 //! Legacy inline payloads are streamed out before publishing the new ledger.
 use operit_host_api::RuntimeStorageHost;
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
@@ -10,11 +10,24 @@ use std::fmt;
 use std::io::{BufRead, BufReader};
 
 use crate::SyncOperationJournal::{JournalReader, JournalRecord, JOURNAL_READ_BYTES};
-use crate::SyncOperationStore::{SyncOperation, SyncOperationStoreError, SyncReceipt};
+use crate::SyncOperationStore::{ChatOperationRevision, SyncOperation, SyncOperationStoreError, SyncReceipt};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct PendingRecord {
     pub(crate) record: JournalRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revision: Option<String>,
+}
+
+impl PendingRecord {
+    /// Keeps a replacement separate from the file referenced by the previously committed ledger.
+    pub(crate) fn path(&self, root: &str) -> String {
+        let key = match &self.revision {
+            Some(revision) => format!("{}:{revision}", self.record.op_id),
+            None => self.record.op_id.clone(),
+        };
+        pending_path(root, &key)
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -24,6 +37,8 @@ pub(crate) struct ReceiveState {
     pub(crate) receipt: SyncReceipt,
     pub(crate) pending: BTreeMap<String, PendingRecord>,
     pub(crate) fingerprints: BTreeMap<String, String>,
+    #[serde(rename = "chatRevisions")]
+    pub(crate) chat_revisions: BTreeMap<String, ChatOperationRevision>,
 }
 
 impl Default for ReceiveState {
@@ -33,6 +48,7 @@ impl Default for ReceiveState {
             receipt: SyncReceipt::default(),
             pending: BTreeMap::new(),
             fingerprints: BTreeMap::new(),
+            chat_revisions: BTreeMap::new(),
         }
     }
 }
@@ -45,11 +61,16 @@ pub(crate) fn persist_pending(
     host: &dyn RuntimeStorageHost,
     root: &str,
     operation: &SyncOperation,
+    replacement: bool,
 ) -> Result<PendingRecord, SyncOperationStoreError> {
     let bytes = serde_json::to_vec(operation)?;
     let record = JournalRecord::parse(&bytes, 0)?;
-    host.writeBytesAtomically(&pending_path(root, &operation.opId), &bytes)?;
-    Ok(PendingRecord { record })
+    let pending = PendingRecord {
+        record,
+        revision: replacement.then(|| format!("{:x}", Sha256::digest(&bytes))),
+    };
+    host.writeBytesAtomically(&pending.path(root), &bytes)?;
+    Ok(pending)
 }
 
 struct StateSeed<'a> {
@@ -94,7 +115,7 @@ impl<'de> DeserializeSeed<'de> for PendingSeed<'_> {
                                     raw.get().as_bytes(),
                                 )
                                 .map_err(serde::de::Error::custom)?;
-                            let entry = PendingRecord { record };
+                            let entry = PendingRecord { record, revision: None };
                             *self.0.migrated = true;
                             entry
                         }
@@ -134,6 +155,7 @@ impl<'de> DeserializeSeed<'de> for StateSeed<'_> {
                         "formatVersion" => version = Some(map.next_value::<u32>()?),
                         "receipt" => state.receipt = map.next_value()?,
                         "fingerprints" => state.fingerprints = map.next_value()?,
+                        "chatRevisions" => state.chat_revisions = map.next_value()?,
                         "pending" => {
                             state.pending = map.next_value_seed(PendingSeed {
                                 host: self.0.host,
@@ -212,8 +234,8 @@ pub(crate) fn load_receive_state(
     // This private namespace contains only content owned by this ledger.
     let referenced = state
         .pending
-        .keys()
-        .map(|id| pending_path(root, id))
+        .values()
+        .map(|pending| pending.path(root))
         .collect::<BTreeSet<_>>();
     for entry in host.list(&format!("{root}/pending/"))? {
         if entry.isDirectory || referenced.contains(&entry.path) {

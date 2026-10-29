@@ -19,7 +19,7 @@ test('Root authorization combines explicit consent with a fresh identity check',
   const authorization = source(android + 'AndroidPrivilegeAuthorization.kt');
   const check = section(authorization, 'fun isRootAuthorized(', 'fun rootExecutionSettings(');
   assert.match(check, /getBoolean\(ROOT_AUTHORIZED_KEY, false\)/);
-  assert.match(check, /if \(!approved\) return false/);
+  assert.match(check, /if \(!hasRootConsent\(context\)\) return false/);
   assert.match(check, /AndroidRootShell\.checkAccess\(rootExecutionSettings\(context\), 10_000L\)\.granted/);
   const config = section(authorization, 'fun configureRootExecution(', '/** Consent');
   assert.match(config, /settings\.suArguments\(\)/);

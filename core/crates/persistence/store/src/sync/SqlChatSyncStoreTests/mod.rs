@@ -489,6 +489,88 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
     }
 }
 
+/// Replacing a SQL operation updates both business rows and subsequent exports, never just receipts.
+#[test]
+fn same_id_chat_revision_keeps_newer_payload_and_export() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, store) = openTestStore("same-id-revision");
+    let old = upsertOperation(1, "old");
+    let mut new = upsertOperation(1, "new");
+    new.createdAt += 1;
+    store.applyOperation(&old).unwrap();
+    store.applyOperation(&new).unwrap();
+    store.applyOperation(&old).unwrap();
+    assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, "new");
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()], 10).unwrap(), vec![new]);
+    assert_eq!(sqlOperationCount(&database), 1);
+    AppDatabase::closeDatabase();
+}
+
+/// An upgraded format supersedes the same-ID archived format even at the original timestamp.
+#[test]
+fn same_id_chat_revision_replaces_migrated_schema_and_ignores_old_schema() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, store) = openTestStore("same-id-schema-revision");
+    let old = upsertOperation(1, "old");
+    store.applyOperation(&old).unwrap();
+    database.store().execute("UPDATE sync_sql_operations SET schemaVersion = 7", sqliteParams![]).unwrap();
+    let new = upsertOperation(1, "migrated");
+    store.applyOperation(&new).unwrap();
+    let mut old_format = old; old_format.schemaVersion = 7;
+    store.applyOperation(&old_format).unwrap();
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()], 10).unwrap(), vec![new]);
+    AppDatabase::closeDatabase();
+}
+
+/// A corrected old operation cannot undo an entity already superseded by a later source sequence.
+#[test]
+fn same_id_chat_revision_cannot_restore_a_compacted_older_entity() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, store) = openTestStore("same-id-compacted-revision");
+    let old = upsertOperation(1, "old");
+    let latest = upsertOperation(2, "latest");
+    store.applyOperation(&old).unwrap();
+    store.applyOperation(&latest).unwrap();
+    let mut revised = old; revised.createdAt += 10;
+    store.applyOperation(&revised).unwrap();
+    assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, "latest");
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()], 10).unwrap(), vec![latest]);
+    AppDatabase::closeDatabase();
+}
+
+/// Correcting a historical transaction preserves mutations applied after its original position.
+#[test]
+fn same_id_chat_revision_replays_later_transactions_without_reverting_them() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, store) = openTestStore("same-id-transaction-revision");
+    let mut old = upsertOperation(1, "old");
+    old.semantics = SyncOperationSemantics::Transaction;
+    let latest = upsertOperation(2, "latest");
+    store.applyOperation(&old).unwrap();
+    store.applyOperation(&latest).unwrap();
+    let mut revision = old; revision.createdAt += 10; revision.payload["partRows"][0]["content"] = serde_json::json!("corrected old");
+    store.applyOperation(&revision).unwrap();
+    assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, "latest");
+    assert_eq!(sqlOperationCount(&database), 2);
+    AppDatabase::closeDatabase();
+}
+
+/// Invalid replacements roll back the prior operation and business state in the same transaction.
+#[test]
+fn same_id_chat_revision_failed_replacement_preserves_previous_state() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_paths, database, store) = openTestStore("same-id-invalid-revision");
+    let old = upsertOperation(1, "old");
+    store.applyOperation(&old).unwrap();
+    let mut invalid = upsertOperation(1, "invalid");
+    invalid.createdAt += 1;
+    invalid.payload["partRows"] = serde_json::json!([]);
+    assert!(store.applyOperation(&invalid).is_err());
+    assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, "old");
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()], 10).unwrap(), vec![old]);
+    AppDatabase::closeDatabase();
+}
+
 /// Verifies that applying a remote chat operation updates observers of the chats table.
 #[test]
 fn remote_chat_operation_invalidates_chat_history_flow() {

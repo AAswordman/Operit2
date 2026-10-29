@@ -476,10 +476,10 @@ impl PreferenceStores<'_> {
         Ok(store)
     }
 
-    /// Reads the owner's current version without caching schema state across commits.
+    /// Checks the replay version without creating a file or committing schema-only state.
     fn version(&mut self, path: &str, encrypted: bool) -> Result<u32, String> {
         self.open(path, encrypted)?
-            .schemaVersion()
+            .syncSchemaVersion()
             .map_err(|error| error.to_string())
     }
 }
@@ -611,7 +611,7 @@ where
         },
     };
     let store = stores.open(path, encrypted)?;
-    let version = store.schemaVersion().map_err(|error| error.to_string())?;
+    let version = store.syncSchemaVersion().map_err(|error| error.to_string())?;
     store.materializeSyncedDataset(version, incoming,
         |preferences, originals, replay| {
         // A committed dataset only needs declarations and alias decisions for reference projection.

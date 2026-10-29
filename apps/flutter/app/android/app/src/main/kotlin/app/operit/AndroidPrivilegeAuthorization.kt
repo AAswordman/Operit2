@@ -40,12 +40,15 @@ object AndroidPrivilegeAuthorization {
 
     /** Requires explicit consent AND a fresh Root identity check. Call off the UI thread. */
     fun isRootAuthorized(context: Context): Boolean {
-        val approved = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-            .getBoolean(ROOT_AUTHORIZED_KEY, false)
         // Merely opening onboarding must not trigger a Root manager's authorization dialog.
-        if (!approved) return false
+        if (!hasRootConsent(context)) return false
         return AndroidRootShell.checkAccess(rootExecutionSettings(context), 10_000L).granted
     }
+
+    /** Reads consent without starting any su process or authorization prompt. */
+    fun hasRootConsent(context: Context): Boolean =
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .getBoolean(ROOT_AUTHORIZED_KEY, false)
 
     fun rootExecutionSettings(context: Context): AndroidRootExecutionSettings {
         val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)

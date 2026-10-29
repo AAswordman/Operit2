@@ -3,7 +3,7 @@ use std::env;
 use std::ffi::CString;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -63,9 +63,10 @@ struct AndroidPtySession {
     sessionName: String,
     terminalType: String,
     workingDir: String,
-    pid: AndroidPid,
+    pid: AndroidPtyProcess,
     masterFd: RawFd,
     writer: Arc<Mutex<RawFd>>,
+    readerStop: Arc<AtomicBool>,
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
@@ -74,6 +75,13 @@ struct AndroidPtySession {
 }
 
 type AndroidPtyCommandOutput = Arc<(Mutex<VecDeque<u8>>, Condvar)>;
+
+/// Keeps remote process ownership distinct from local child PIDs.
+#[derive(Clone, Copy, Debug)]
+enum AndroidPtyProcess {
+    Local(AndroidPid),
+    Shizuku(i32),
+}
 
 #[derive(Debug)]
 struct AndroidPtyCursor {
@@ -84,19 +92,18 @@ struct AndroidPtyCursor {
 type AndroidPtyCursorState = Arc<Mutex<AndroidPtyCursor>>;
 
 impl Drop for AndroidPtySession {
+    /// Stops the reader before releasing its separately owned write handle.
     fn drop(&mut self) {
+        self.readerStop.store(true, Ordering::Release);
         #[cfg(target_os = "android")]
         unsafe {
-            libc::kill(self.pid, libc::SIGHUP);
-            libc::kill(self.pid, libc::SIGKILL);
-            let fd = match self.writer.lock() {
-                Ok(mut writerFd) => {
-                    let value = *writerFd;
-                    *writerFd = -1;
-                    value
-                }
-                Err(_) => self.masterFd,
-            };
+            terminateAndroidPtyProcess(self.pid);
+            let mut writerFd = self
+                .writer
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let fd = *writerFd;
+            *writerFd = -1;
             if fd >= 0 {
                 libc::close(fd);
             }
@@ -160,7 +167,7 @@ impl AndroidTerminalHost {
         let session = state.ptySessions.get(sessionId).ok_or_else(|| {
             HostError::new(format!("Android PTY session does not exist: {sessionId}"))
         })?;
-        setPtyWindowSize(session.masterFd, rows, cols)
+        resizeAndroidPtyProcess(session.pid, session.masterFd, rows, cols)
     }
 
     pub fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
@@ -597,59 +604,74 @@ fn createAndroidPtySession(
         "createAndroidPtySession start name={sessionName} type={terminalType} workingDir={workingDir} size={rows}x{cols}"
     ));
     let command = buildAndroidPtyCommand(&terminalType, &workingDir)?;
-    let (pid, masterFd) = forkPtyExecve(&command, rows, cols)?;
+    let (pid, readerFd, masterFd) = startAndroidPtyProcess(&command, rows, cols)?;
     androidLogInfo(&format!(
-        "createAndroidPtySession forked pid={pid} masterFd={masterFd} name={sessionName}"
+        "createAndroidPtySession forked pid={pid:?} masterFd={masterFd} name={sessionName}"
     ));
     let writer = Arc::new(Mutex::new(masterFd));
+    let readerStop = Arc::new(AtomicBool::new(false));
     let output = Arc::new(Mutex::new(VecDeque::new()));
     let commandOutput: AndroidPtyCommandOutput =
         Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: AndroidPtyCursorState =
         Arc::new(Mutex::new(AndroidPtyCursor { row: 1, col: 1 }));
-    if let Err(error) = scheduleAndroidPtyReader(
+    let session = AndroidPtySession {
+        sessionName,
+        terminalType,
+        workingDir: command.workingDir.unwrap_or(workingDir),
+        pid,
         masterFd,
+        writer: writer.clone(),
+        readerStop: readerStop.clone(),
+        output: output.clone(),
+        commandOutput: commandOutput.clone(),
+        screenOutput: screenOutput.clone(),
+        commandRunning: false,
+        exitCode: None,
+    };
+    scheduleAndroidPtyReader(
+        readerFd,
+        readerStop,
         writer.clone(),
         output.clone(),
         commandOutput.clone(),
         screenOutput.clone(),
         cursorState,
-    ) {
-        closeAndroidPtyProcess(pid, masterFd);
-        return Err(error);
-    }
+    )?;
     if let Err(error) =
         waitForInitialAndroidPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
     {
         androidLogError(&format!(
-            "createAndroidPtySession initial prompt failed pid={pid} masterFd={masterFd} name={sessionName}: {error}"
+            "createAndroidPtySession initial prompt failed pid={pid:?} masterFd={masterFd} name={}: {error}", session.sessionName
         ));
-        closeAndroidPtyProcess(pid, masterFd);
         return Err(error);
     }
     clearAndroidPtyCommandOutput(&commandOutput)?;
     androidLogInfo(&format!(
-        "createAndroidPtySession ready pid={pid} masterFd={masterFd} name={sessionName}"
+        "createAndroidPtySession ready pid={pid:?} masterFd={masterFd} name={}",
+        session.sessionName
     ));
-    Ok(AndroidPtySession {
-        sessionName,
-        terminalType,
-        workingDir,
-        pid,
-        masterFd,
-        writer,
-        output,
-        commandOutput,
-        screenOutput,
-        commandRunning: false,
-        exitCode: None,
-    })
+    Ok(session)
+}
+
+/// Gives the reader task exclusive descriptor ownership even if scheduling fails.
+struct AndroidPtyReaderFd(RawFd);
+
+impl Drop for AndroidPtyReaderFd {
+    /// Releases the read handle only after the reader has stopped using it.
+    fn drop(&mut self) {
+        #[cfg(target_os = "android")]
+        unsafe {
+            libc::close(self.0);
+        }
+    }
 }
 
 /// Schedules the PTY reader on bounded Host service capacity.
 fn scheduleAndroidPtyReader(
     masterFd: RawFd,
+    stopped: Arc<AtomicBool>,
     writer: Arc<Mutex<RawFd>>,
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput,
@@ -657,22 +679,26 @@ fn scheduleAndroidPtyReader(
     cursorState: AndroidPtyCursorState,
 ) -> HostResult<()> {
     androidLogInfo(&format!("Android PTY reader thread start fd={masterFd}"));
-    operit_host_native_common::scheduleNativeServiceTask("android-pty-reader", move || loop {
-        match readPtyFd(masterFd) {
-            Ok(data) if data.is_empty() => thread::sleep(Duration::from_millis(20)),
-            Ok(data) => {
-                processAndroidPtyTerminalQueries(&writer, &cursorState, &data);
-                let commandChunk = stripAndroidPtyDeviceStatusReports(&data);
-                let visibleChunk = stripAndroidPtyPromptMarkers(&commandChunk);
-                appendAndroidPtyOutput(&output, &visibleChunk);
-                appendAndroidPtyOutput(&screenOutput, &visibleChunk);
-                appendAndroidPtyCommandOutput(&commandOutput, &commandChunk);
-            }
-            Err(error) => {
-                androidLogError(&format!(
-                    "Android PTY reader thread exit fd={masterFd}: {error}"
-                ));
-                break;
+    let descriptor = AndroidPtyReaderFd(masterFd);
+    operit_host_native_common::scheduleNativeServiceTask("android-pty-reader", move || {
+        let descriptor = descriptor;
+        while !stopped.load(Ordering::Acquire) {
+            match readPtyFd(descriptor.0) {
+                Ok(data) if data.is_empty() => thread::sleep(Duration::from_millis(20)),
+                Ok(data) => {
+                    processAndroidPtyTerminalQueries(&writer, &cursorState, &data);
+                    let commandChunk = stripAndroidPtyDeviceStatusReports(&data);
+                    let visibleChunk = stripAndroidPtyPromptMarkers(&commandChunk);
+                    appendAndroidPtyOutput(&output, &visibleChunk);
+                    appendAndroidPtyOutput(&screenOutput, &visibleChunk);
+                    appendAndroidPtyCommandOutput(&commandOutput, &commandChunk);
+                }
+                Err(error) => {
+                    androidLogError(&format!(
+                        "Android PTY reader thread exit fd={masterFd}: {error}"
+                    ));
+                    break;
+                }
             }
         }
     })
@@ -1323,26 +1349,10 @@ fn parseAndroidExitCode(exitCodeText: &str) -> HostResult<i32> {
 }
 
 fn writeAndroidPtyBytes(writer: &Arc<Mutex<RawFd>>, data: &[u8]) -> HostResult<usize> {
-    let fd = *writer
+    let fd = writer
         .lock()
         .map_err(|_| HostError::new("android pty writer mutex poisoned"))?;
-    writePtyFd(fd, data)
-}
-
-fn closeAndroidPtyProcess(pid: AndroidPid, fd: RawFd) {
-    #[cfg(target_os = "android")]
-    unsafe {
-        libc::kill(pid, libc::SIGHUP);
-        libc::kill(pid, libc::SIGKILL);
-        if fd >= 0 {
-            libc::close(fd);
-        }
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (pid, fd);
-    }
+    writePtyFd(*fd, data)
 }
 
 fn applyAndroidPtyTerminalInput(
@@ -1550,6 +1560,8 @@ struct AndroidPtyCommand {
     argv: Vec<CString>,
     envp: Vec<CString>,
     cwd: CString,
+    shizuku: bool,
+    workingDir: Option<String>,
 }
 
 /// Builds the PTY startup command for an Android terminal type.
@@ -1618,11 +1630,14 @@ fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand>
         argv,
         envp,
         cwd: cstringPath(&internalRoot)?,
+        shizuku: false,
+        workingDir: None,
     })
 }
 
 /// Builds the PTY startup command for Android system shell.
 fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
+    let transport = crate::terminal_privilege::privileges()?.select()?;
     let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
     let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
@@ -1630,32 +1645,97 @@ fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand
 
     std::fs::create_dir_all(&tmpDir)?;
 
-    let workDir = nonBlank(workingDir, "working_directory")?;
     let systemPath = env::var("PATH")
         .map_err(|error| HostError::new(format!("Android terminal PATH is required: {error}")))?;
+    buildAndroidSystemShellCommand(
+        transport,
+        workingDir,
+        &runtimeDir,
+        &internalRoot,
+        &tmpDir,
+        &nativeLibraryDir,
+        &systemPath,
+    )
+}
+
+/// Builds the selected persistent shell with literal argv and transport-specific paths.
+fn buildAndroidSystemShellCommand(
+    transport: crate::terminal_privilege::ShellTransport,
+    workingDir: &str,
+    runtimeDir: &Path,
+    internalRoot: &Path,
+    tmpDir: &Path,
+    nativeLibraryDir: &Path,
+    systemPath: &str,
+) -> HostResult<AndroidPtyCommand> {
+    use crate::terminal_privilege::ShellTransport;
+
+    let mut workDir = nonBlank(workingDir, "working_directory")?;
+    // The ADB shell UID cannot enter the app's private default directory.
+    if transport == ShellTransport::Shizuku && Path::new(&workDir) == internalRoot {
+        workDir = "/sdcard".to_string();
+    }
     let ldLibraryPath = format!(
         "{}:{}",
         nativeLibraryDir.to_string_lossy(),
         runtimeDir.to_string_lossy()
     );
-    let commandText = r#"cd "$OPERIT_WORKING_DIR" && while true; do __operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status"; IFS= read -r __operit_command || exit 0; eval "$__operit_command"; done"#;
+    let commandText = r#"while true; do __operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status"; IFS= read -r __operit_command || exit 0; eval "$__operit_command"; done"#;
     let shell = Path::new("/system/bin/sh");
-    let argv = vec![cstringPath(shell)?, cstring("-c")?, cstring(commandText)?];
-    let envp = vec![
-        cstring(&format!(
-            "PATH={}:{}",
-            runtimeDir.to_string_lossy(),
-            systemPath
-        ))?,
-        cstring(&format!("HOME={}", internalRoot.to_string_lossy()))?,
-        cstring(&format!("LD_LIBRARY_PATH={ldLibraryPath}"))?,
-        cstring(&format!("TMPDIR={}", tmpDir.to_string_lossy()))?,
-        cstring(&format!("OPERIT_WORKING_DIR={workDir}"))?,
-        cstring("TERM=xterm-256color")?,
-        cstring("LANG=en_US.UTF-8")?,
-    ];
+    let environment = if transport == ShellTransport::Shizuku {
+        vec![
+            "PATH=/system/bin:/system/xbin".to_string(),
+            "HOME=/sdcard".to_string(),
+            "TMPDIR=/data/local/tmp".to_string(),
+            "TERM=xterm-256color".to_string(),
+            "LANG=en_US.UTF-8".to_string(),
+        ]
+    } else {
+        vec![
+            format!("PATH={}:{}", runtimeDir.to_string_lossy(), systemPath),
+            format!("HOME={}", internalRoot.to_string_lossy()),
+            format!("LD_LIBRARY_PATH={ldLibraryPath}"),
+            format!("TMPDIR={}", tmpDir.to_string_lossy()),
+            "TERM=xterm-256color".to_string(),
+            "LANG=en_US.UTF-8".to_string(),
+        ]
+    };
+    let exports = environment
+        .iter()
+        .map(|value| format!("export {}", quoteAndroidShellArgument(value)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let guard = if matches!(transport, ShellTransport::Root(_)) {
+        "[ \"$(/system/bin/id -u)\" = 0 ] || exit 126; "
+    } else {
+        ""
+    };
+    let script = format!(
+        "{guard}{exports}; cd {} || exit; {commandText}",
+        quoteAndroidShellArgument(&workDir)
+    );
+    let argv = match &transport {
+        ShellTransport::Root(arguments) => {
+            let mut argv = vec![
+                cstringPath(shell)?,
+                cstring("-c")?,
+                cstring("exec \"$@\"")?,
+                cstring("operit-root-shell")?,
+            ];
+            for argument in arguments {
+                argv.push(cstring(argument)?);
+            }
+            argv.extend([cstring("-c")?, cstring(&script)?]);
+            argv
+        }
+        _ => vec![cstringPath(shell)?, cstring("-c")?, cstring(&script)?],
+    };
+    let envp = environment
+        .iter()
+        .map(|value| cstring(value))
+        .collect::<HostResult<Vec<_>>>()?;
     androidLogInfo(&format!(
-        "buildAndroidPtyCommand type=shell workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} nativeLibraryDir={}",
+        "buildAndroidPtyCommand type=shell transport={transport:?} workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} nativeLibraryDir={}",
         runtimeDir.to_string_lossy(),
         internalRoot.to_string_lossy(),
         tmpDir.to_string_lossy(),
@@ -1665,8 +1745,19 @@ fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand
         executable: cstringPath(shell)?,
         argv,
         envp,
-        cwd: cstringPath(&internalRoot)?,
+        cwd: if transport == ShellTransport::Shizuku {
+            cstring("/")?
+        } else {
+            cstringPath(&internalRoot)?
+        },
+        shizuku: transport == ShellTransport::Shizuku,
+        workingDir: Some(workDir),
     })
+}
+
+/// Quotes literal environment values and paths without interpreting shell expressions.
+fn quoteAndroidShellArgument(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn androidPtyPromptCommand() -> String {
@@ -1732,6 +1823,102 @@ fn cstringPath(path: &Path) -> HostResult<CString> {
         .map_err(|error| HostError::new(error.to_string()))
 }
 
+/// Starts a local child or a remote Shizuku PTY exactly once.
+fn startAndroidPtyProcess(
+    command: &AndroidPtyCommand,
+    rows: u16,
+    cols: u16,
+) -> HostResult<(AndroidPtyProcess, RawFd, RawFd)> {
+    if command.shizuku {
+        let request = serde_json::json!({
+            "operation": "start", "argv": command.argv.iter().map(|s| s.to_string_lossy()).collect::<Vec<_>>(),
+            "env": command.envp.iter().map(|s| s.to_string_lossy()).collect::<Vec<_>>(),
+            "cwd": command.cwd.to_string_lossy(), "rows": rows, "cols": cols,
+        });
+        let response = crate::terminal_privilege::call(request)?;
+        let pid = requiredPtyInteger(&response, "pid")?;
+        let reader = requiredPtyInteger(&response, "readFd")?;
+        let writer = requiredPtyInteger(&response, "writeFd")?;
+        return Ok((AndroidPtyProcess::Shizuku(pid), reader, writer));
+    }
+    let (pid, fd) = forkPtyExecve(command, rows, cols)?;
+    #[cfg(target_os = "android")]
+    {
+        let writer = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+        if writer < 0 {
+            terminateAndroidPtyProcess(AndroidPtyProcess::Local(pid));
+            unsafe {
+                libc::close(fd);
+            }
+            return Err(HostError::new("Could not duplicate Android PTY writer"));
+        }
+        Ok((AndroidPtyProcess::Local(pid), fd, writer))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (pid, fd);
+        unreachable!("forkPtyExecve rejects non-Android hosts")
+    }
+}
+
+/// Rejects malformed process handles before they reach POSIX or Binder operations.
+fn requiredPtyInteger(value: &serde_json::Value, key: &str) -> HostResult<i32> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .filter(|v| *v >= 0)
+        .ok_or_else(|| HostError::new(format!("Invalid Android PTY {key}")))
+}
+
+/// Stops a session through the same security context that created it.
+fn terminateAndroidPtyProcess(process: AndroidPtyProcess) {
+    match process {
+        AndroidPtyProcess::Shizuku(pid) => {
+            if let Err(error) = crate::terminal_privilege::call(
+                serde_json::json!({"operation": "close", "pid": pid}),
+            ) {
+                androidLogError(&format!("Shizuku terminal close failed: {error}"));
+            }
+        }
+        AndroidPtyProcess::Local(pid) => {
+            #[cfg(target_os = "android")]
+            unsafe {
+                let mut status = 0;
+                // A reaped PID can already belong to an unrelated process.
+                if libc::waitpid(pid, &mut status, libc::WNOHANG) != 0 {
+                    return;
+                }
+                libc::kill(pid, libc::SIGHUP);
+                libc::kill(pid, libc::SIGKILL);
+                while libc::waitpid(pid, &mut status, 0) < 0
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+                {
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = pid;
+        }
+    }
+}
+
+/// Resizes the remote controlling PTY rather than assuming a local child.
+fn resizeAndroidPtyProcess(
+    process: AndroidPtyProcess,
+    fd: RawFd,
+    rows: u16,
+    cols: u16,
+) -> HostResult<()> {
+    match process {
+        AndroidPtyProcess::Local(_) => setPtyWindowSize(fd, rows, cols),
+        AndroidPtyProcess::Shizuku(pid) => crate::terminal_privilege::call(
+            serde_json::json!({"operation": "resize", "pid": pid, "rows": rows, "cols": cols}),
+        )
+        .map(|_| ()),
+    }
+}
+
+/// Forks the PTY child in the current process's Android security context.
 fn forkPtyExecve(
     command: &AndroidPtyCommand,
     rows: u16,
@@ -1792,6 +1979,13 @@ fn forkPtyExecve(
                 libc::_exit(1);
             }
         }
+        if unsafe { libc::fcntl(masterFd, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+            terminateAndroidPtyProcess(AndroidPtyProcess::Local(pid));
+            unsafe {
+                libc::close(masterFd);
+            }
+            return Err(HostError::new("Could not mark Android PTY close-on-exec"));
+        }
         Ok((pid, masterFd))
     }
 }
@@ -1833,20 +2027,31 @@ fn readPtyFd(fd: RawFd) -> HostResult<Vec<u8>> {
 
     #[cfg(target_os = "android")]
     {
-        let mut available: libc::c_int = 0;
-        let ioctlResult = unsafe { libc::ioctl(fd, libc::FIONREAD, &mut available) };
-        if ioctlResult != 0 {
-            androidLogError(&format!("ioctl FIONREAD failed fd={fd}"));
-            return Err(HostError::new("ioctl FIONREAD failed for Android PTY"));
+        let mut descriptor = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut descriptor, 1, 20) };
+        if ready < 0 {
+            if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                return Ok(Vec::new());
+            }
+            return Err(HostError::new("poll failed for Android PTY"));
         }
-        if available <= 0 {
+        if ready == 0 {
             return Ok(Vec::new());
         }
-        let mut output = vec![0u8; available as usize];
+        let mut output = vec![0u8; 64 * 1024];
         let count = unsafe { libc::read(fd, output.as_mut_ptr().cast(), output.len()) };
         if count < 0 {
-            androidLogError(&format!("read failed fd={fd} available={available}"));
+            if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                return Ok(Vec::new());
+            }
             return Err(HostError::new("read failed for Android PTY"));
+        }
+        if count == 0 {
+            return Err(HostError::new("Android PTY reached EOF"));
         }
         output.truncate(count as usize);
         Ok(output)
@@ -1901,7 +2106,25 @@ fn setPtyWindowSize(fd: RawFd, rows: u16, cols: u16) -> HostResult<()> {
     }
 }
 
-fn pollPidExitCode(pid: AndroidPid) -> HostResult<Option<i32>> {
+/// Polls locally owned children or the Shizuku-owned remote process.
+fn pollPidExitCode(process: AndroidPtyProcess) -> HostResult<Option<i32>> {
+    let pid = match process {
+        AndroidPtyProcess::Shizuku(pid) => {
+            let response = crate::terminal_privilege::call(
+                serde_json::json!({"operation": "poll", "pid": pid}),
+            )?;
+            return match response.get("exitCode") {
+                Some(serde_json::Value::Null) => Ok(None),
+                Some(value) => value
+                    .as_i64()
+                    .and_then(|v| i32::try_from(v).ok())
+                    .map(Some)
+                    .ok_or_else(|| HostError::new("Invalid Shizuku terminal exit code")),
+                None => Err(HostError::new("Missing Shizuku terminal exit code")),
+            };
+        }
+        AndroidPtyProcess::Local(pid) => pid,
+    };
     #[cfg(not(target_os = "android"))]
     {
         let _ = pid;
@@ -1931,9 +2154,166 @@ fn pollPidExitCode(pid: AndroidPid) -> HostResult<Option<i32>> {
     }
 }
 
+/// Provides PTY primitives to the privileged Binder service without invoking the app runtime.
+#[cfg(target_os = "android")]
+pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
+    use serde_json::{json, Value};
+    let request: Value =
+        serde_json::from_str(request).map_err(|e| HostError::new(e.to_string()))?;
+    if request.get("operation").and_then(Value::as_str) != Some("start")
+        && requiredPtyInteger(&request, "pid")? == 0
+    {
+        return Err(HostError::new("Android PTY PID must be positive"));
+    }
+    let response = match request.get("operation").and_then(Value::as_str) {
+        Some("start") => {
+            let strings = |key: &str| -> HostResult<Vec<CString>> {
+                request
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| HostError::new(format!("Missing PTY {key}")))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .ok_or_else(|| HostError::new("Invalid PTY argument"))
+                            .and_then(cstring)
+                    })
+                    .collect()
+            };
+            let argv = strings("argv")?;
+            let executable = argv
+                .first()
+                .ok_or_else(|| HostError::new("Empty PTY argv"))?
+                .clone();
+            let cwd = request
+                .get("cwd")
+                .and_then(Value::as_str)
+                .ok_or_else(|| HostError::new("Missing PTY cwd"))?;
+            let command = AndroidPtyCommand {
+                executable,
+                argv,
+                envp: strings("env")?,
+                cwd: cstring(cwd)?,
+                shizuku: false,
+                workingDir: None,
+            };
+            let rows = u16::try_from(requiredPtyInteger(&request, "rows")?)
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let cols = u16::try_from(requiredPtyInteger(&request, "cols")?)
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let (pid, fd) = forkPtyExecve(&command, rows, cols)?;
+            json!({"pid": pid, "fd": fd})
+        }
+        Some("poll") => {
+            json!({"exitCode": pollPidExitCode(AndroidPtyProcess::Local(requiredPtyInteger(&request, "pid")?))?})
+        }
+        Some("close") => {
+            terminateAndroidPtyProcess(AndroidPtyProcess::Local(requiredPtyInteger(
+                &request, "pid",
+            )?));
+            json!({})
+        }
+        Some("resize") => {
+            let rows = u16::try_from(requiredPtyInteger(&request, "rows")?)
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let cols = u16::try_from(requiredPtyInteger(&request, "cols")?)
+                .map_err(|e| HostError::new(e.to_string()))?;
+            setPtyWindowSize(requiredPtyInteger(&request, "fd")?, rows, cols)?;
+            json!({})
+        }
+        _ => return Err(HostError::new("Unsupported privileged PTY operation")),
+    };
+    Ok(response.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds production shell argv without requiring an Android runtime or device.
+    fn system_shell(
+        transport: crate::terminal_privilege::ShellTransport,
+        directory: &str,
+    ) -> AndroidPtyCommand {
+        buildAndroidSystemShellCommand(
+            transport,
+            directory,
+            Path::new("/private/runtime"),
+            Path::new("/private/app"),
+            Path::new("/private/tmp"),
+            Path::new("/private/lib"),
+            "/system/bin",
+        )
+        .unwrap()
+    }
+
+    /// A Root session launches su once and verifies its identity before accepting commands.
+    #[test]
+    fn root_system_shell_uses_verified_su_and_persistent_prompt() {
+        let command = system_shell(
+            crate::terminal_privilege::ShellTransport::Root(vec![
+                "/custom path/su".into(),
+                "--flag".into(),
+            ]),
+            "/private/app",
+        );
+        let argv = command
+            .argv
+            .iter()
+            .map(|s| s.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &argv[..7],
+            &[
+                "/system/bin/sh",
+                "-c",
+                "exec \"$@\"",
+                "operit-root-shell",
+                "/custom path/su",
+                "--flag",
+                "-c"
+            ]
+        );
+        assert!(argv[7].starts_with("[ \"$(/system/bin/id -u)\" = 0 ] || exit 126;"));
+        assert!(argv[7].contains("eval \"$__operit_command\""));
+        assert!(argv[7].contains("OperitPrompt="));
+        assert!(!command.shizuku);
+    }
+
+    /// Shizuku must not inherit private app paths that the ADB shell UID cannot access.
+    #[test]
+    fn shizuku_system_shell_has_accessible_environment_and_default_directory() {
+        let command = system_shell(
+            crate::terminal_privilege::ShellTransport::Shizuku,
+            "/private/app",
+        );
+        assert!(command.shizuku);
+        assert_eq!(command.cwd.to_str().unwrap(), "/");
+        assert_eq!(command.workingDir.as_deref(), Some("/sdcard"));
+        for value in command.envp {
+            assert!(!value.to_str().unwrap().contains("/private/"));
+        }
+        let explicit = system_shell(
+            crate::terminal_privilege::ShellTransport::Shizuku,
+            "/sdcard/custom",
+        );
+        assert_eq!(explicit.workingDir.as_deref(), Some("/sdcard/custom"));
+    }
+
+    /// Literal paths cannot inject commands and the app shell keeps its original private directory.
+    #[test]
+    fn app_system_shell_preserves_directory_and_quotes_literals() {
+        let directory = "/private/app/a'b; touch bad";
+        let command = system_shell(crate::terminal_privilege::ShellTransport::App, directory);
+        assert!(!command.shizuku);
+        assert_eq!(command.workingDir.as_deref(), Some(directory));
+        assert!(command.argv[2]
+            .to_str()
+            .unwrap()
+            .contains("cd '/private/app/a'\\''b; touch bad' || exit;"));
+        assert_eq!(command.argv[0].to_str().unwrap(), "/system/bin/sh");
+        assert_eq!(quoteAndroidShellArgument("$(id)"), "'$(id)'");
+    }
 
     /// Resolves proot guest paths without invoking the Android host VFS mapper.
     #[test]

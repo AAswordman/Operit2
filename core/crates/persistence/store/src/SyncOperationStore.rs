@@ -5,7 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::io::{BufReader, Write};
-use crate::SyncReceiveJournal::{ReceiveState, load_receive_state, pending_path, persist_pending};
+use crate::SyncReceiveJournal::{ReceiveState, load_receive_state, persist_pending};
+#[cfg(test)]
+use crate::SyncReceiveJournal::pending_path;
 use crate::SyncOperationJournal::{JournalIndex, JournalLines, JournalReader, JournalRecord, JOURNAL_READ_BYTES};
 
 use operit_host_api::RuntimeStorageHost;
@@ -237,6 +239,49 @@ pub struct SyncOperation {
     pub payload: Value,
     pub createdAt: i64,
     pub schemaVersion: i32,
+}
+
+/// Orders revisions of one SQL chat operation; equal versions and times converge by content hash.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) struct ChatOperationRevision {
+    schema_version: i32,
+    created_at: i64,
+    fingerprint: String,
+    entity_type: String,
+    entity_id: String,
+}
+
+impl ChatOperationRevision {
+    /// Captures the migrated format, author timestamp and deterministic content identity.
+    pub(crate) fn of(operation: &SyncOperation) -> Result<Self, SyncOperationStoreError> {
+        use sha2::{Digest, Sha256};
+        Ok(Self {
+            schema_version: operation.schemaVersion,
+            created_at: operation.createdAt,
+            fingerprint: format!("{:x}", Sha256::digest(serde_json::to_vec(operation)?)),
+            entity_type: operation.entityType.clone(),
+            entity_id: operation.entityId.clone(),
+        })
+    }
+}
+
+/// Selects the newer SQL chat revision without relaxing immutable identities in other domains.
+pub fn incomingSyncOperationWins(
+    existing: &SyncOperation,
+    incoming: &SyncOperation,
+) -> Result<bool, SyncOperationStoreError> {
+    if existing == incoming { return Ok(false); }
+    if existing.domain != "chat" || incoming.domain != "chat"
+        || existing.opId != incoming.opId
+        || existing.originDeviceId != incoming.originDeviceId
+        || existing.sequence != incoming.sequence
+        || existing.entityType != incoming.entityType
+        || existing.entityId != incoming.entityId {
+        return Err(SyncOperationStoreError::Message(format!(
+            "Conflicting immutable operation {}", incoming.opId
+        )));
+    }
+    Ok(ChatOperationRevision::of(incoming)? > ChatOperationRevision::of(existing)?)
 }
 
 /// One corrupt operation-log line found while reading an origin journal.
@@ -584,7 +629,7 @@ impl SyncOperationStore {
                 .filter(|pending| pending.record.domain == NETWORK_CONTROL_SYNC_DOMAIN)
                 .map(|pending| {
                     self.readRecordAt(
-                        &pending_path(&self.rootPath, &pending.record.op_id),
+                        &pending.path(&self.rootPath),
                         &pending.record,
                     )
                 })
@@ -1174,6 +1219,14 @@ impl SyncOperationStore {
             self.loadOperationLogIndex(device, index)?;
         }
         let mut sources = Vec::new();
+        if let Some(receive) = &receive {
+            for pending in receive.value.pending.values() {
+                let record = &pending.record;
+                if !clock.containsSequence(&record.origin_device_id, record.sequence) {
+                    sources.push((pending.path(&self.rootPath), record));
+                }
+            }
+        }
         for (device, index) in devices.iter().zip(&indexes) {
             let minimum = clock
                 .sequenceFor(device)
@@ -1190,14 +1243,6 @@ impl SyncOperationStore {
                 };
                 if record.sequence > floor && !clock.containsSequence(device, record.sequence) {
                     sources.push((path.clone(), record));
-                }
-            }
-        }
-        if let Some(receive) = &receive {
-            for pending in receive.value.pending.values() {
-                let record = &pending.record;
-                if !clock.containsSequence(&record.origin_device_id, record.sequence) {
-                    sources.push((pending_path(&self.rootPath, &record.op_id), record));
                 }
             }
         }
@@ -1309,7 +1354,7 @@ impl SyncOperationStore {
         lockSyncState(&self.sharedState.application, "sync application")
     }
 
-    /// Persists originals and exact receipt membership before acknowledging delivery.
+    /// Receives exact identities and queues newer SQL chat revisions for owner-level reconciliation.
     pub fn receiveOperations(
         &self,
         operations: &[SyncOperation],
@@ -1321,6 +1366,7 @@ impl SyncOperationStore {
         let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
         let mut state = self.loadReceiveState(&mut cached)?.clone();
         let mut changed = false;
+        let mut staged = BTreeMap::<String, SyncOperation>::new();
         for operation in operations {
             if operation.originDeviceId.is_empty()
                 || operation.originDeviceId.len() > 256
@@ -1331,62 +1377,72 @@ impl SyncOperationStore {
                     "Invalid received operation identity".into(),
                 ));
             }
-            use sha2::{Digest, Sha256};
-            let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(operation)?));
-            if let Some(previous) = state.fingerprints.get(&operation.opId) {
-                if previous != &fingerprint {
+            let pending = match state.pending.get(&operation.opId) {
+                Some(pending) => Some(self.readRecordAt(&pending.path(&self.rootPath), &pending.record)?),
+                None => None,
+            };
+            if let Some(existing) = staged.get(&operation.opId).or(pending.as_ref()) {
+                if !incomingSyncOperationWins(existing, operation)? { continue; }
+            }
+            let revision = ChatOperationRevision::of(operation)?;
+            if let Some(previous) = state.chat_revisions.get(&operation.opId) {
+                if operation.domain != "chat" || previous.entity_type != operation.entityType
+                    || previous.entity_id != operation.entityId {
                     return Err(SyncOperationStoreError::Message(format!(
-                        "Conflicting immutable operation {}",
-                        operation.opId
+                        "Conflicting immutable operation {}", operation.opId
                     )));
                 }
-            } else {
-                state
-                    .fingerprints
-                    .insert(operation.opId.clone(), fingerprint);
-                changed = true;
+                if *previous >= revision { continue; }
             }
-            if let Some(existing) = state.pending.get(&operation.opId) {
-                if self.readRecordAt(
-                    &pending_path(&self.rootPath, &operation.opId),
-                    &existing.record,
-                )? != *operation
-                {
-                    return Err(SyncOperationStoreError::Message(format!(
-                        "Conflicting immutable operation {}",
-                        operation.opId
-                    )));
-                }
+            let fingerprintChanged = state.fingerprints.get(&operation.opId)
+                .is_some_and(|previous| previous != &revision.fingerprint);
+            if fingerprintChanged && operation.domain != "chat" {
+                return Err(SyncOperationStoreError::Message(format!(
+                    "Conflicting immutable operation {}", operation.opId
+                )));
+            }
+            let journaled = match self.journalOperation(operation)? {
+                Some(existing) => !incomingSyncOperationWins(&existing, operation)?,
+                None => false,
+            };
+            if !fingerprintChanged
+                && state.receipt.containsSequence(&operation.originDeviceId, operation.sequence)
+                && (state.fingerprints.contains_key(&operation.opId) || journaled) {
                 continue;
             }
-            let journaled = self.containsIdenticalOperation(operation)?;
-            if state
-                .receipt
-                .containsSequence(&operation.originDeviceId, operation.sequence)
-            {
-                continue;
+            // Legacy receipts retain only a fingerprint. Replaying a changed SQL record lets
+            // its owner compare against the migrated database instead of rejecting the page.
+            if !journaled { staged.insert(operation.opId.clone(), operation.clone()); }
+            state.fingerprints.insert(operation.opId.clone(), revision.fingerprint.clone());
+            if operation.domain == "chat" {
+                state.chat_revisions.insert(operation.opId.clone(), revision);
             }
-            if !journaled {
-                state.pending.insert(
-                    operation.opId.clone(),
-                    persist_pending(
-                        self.storageHost.as_ref(),
-                        &self.rootPath,
-                        &self.encodeOperationPayload(operation)?,
-                    )?,
-                );
-            }
-            state
-                .receipt
-                .observe(&operation.originDeviceId, operation.sequence);
+            state.receipt.observe(&operation.originDeviceId, operation.sequence);
             changed = true;
         }
         if changed {
+            let mut replacedPaths = Vec::new();
+            for operation in staged.values() {
+                let pending = persist_pending(
+                    self.storageHost.as_ref(), &self.rootPath,
+                    &self.encodeOperationPayload(operation)?,
+                    state.pending.contains_key(&operation.opId),
+                )?;
+                if let Some(previous) = state.pending.get(&operation.opId) {
+                    if previous.path(&self.rootPath) != pending.path(&self.rootPath) {
+                        replacedPaths.push(previous.path(&self.rootPath));
+                    }
+                }
+                state.pending.insert(operation.opId.clone(), pending);
+            }
             self.writeJson(&self.receiveStatePath(), &state)?;
             cached.value = state;
             if let Some(write) = &controlWrite {
                 write.update(|model| model.receive(operations.iter()
                     .filter(|operation| cached.value.pending.contains_key(&operation.opId))))?;
+            }
+            for path in replacedPaths {
+                self.storageHost.delete(&path, false)?;
             }
         }
         drop(cached);
@@ -1410,7 +1466,7 @@ impl SyncOperationStore {
             .into_iter()
             .map(|pending| {
                 self.readRecordAt(
-                    &pending_path(&self.rootPath, &pending.record.op_id),
+                    &pending.path(&self.rootPath),
                     &pending.record,
                 )
             })
@@ -1433,7 +1489,7 @@ impl SyncOperationStore {
         for pending in self.loadReceiveState(&mut cached)?.pending.values() {
             if domains.is_empty() || domains.contains(&pending.record.domain.as_str()) {
                 let operation = self.readRecordAt(
-                    &pending_path(&self.rootPath, &pending.record.op_id),
+                    &pending.path(&self.rootPath),
                     &pending.record,
                 )?;
                 visit(&operation);
@@ -1463,10 +1519,16 @@ impl SyncOperationStore {
         )?;
         let mut cached = lockSyncState(&self.sharedState.receiveState, "receive state")?;
         let mut state = self.loadReceiveState(&mut cached)?.clone();
-        let mut changed = false;
+        let mut completed = Vec::new();
         for operation in operations {
-            changed |= state.pending.remove(&operation.opId).is_some();
+            if let Some(pending) = state.pending.get(&operation.opId) {
+                if self.readRecordAt(&pending.path(&self.rootPath), &pending.record)? == *operation {
+                    completed.push(pending.path(&self.rootPath));
+                    state.pending.remove(&operation.opId);
+                }
+            }
         }
+        let changed = !completed.is_empty();
         if changed {
             self.writeJson(&self.receiveStatePath(), &state)?;
             cached.value = state;
@@ -1475,8 +1537,7 @@ impl SyncOperationStore {
             }
         }
         if changed {
-            for operation in operations {
-                let path = pending_path(&self.rootPath, &operation.opId);
+            for path in completed {
                 if self.storageHost.exists(&path)? {
                     self.storageHost.delete(&path, false)?;
                 }
@@ -1509,11 +1570,7 @@ impl SyncOperationStore {
         &self,
         operation: &SyncOperation,
     ) -> Result<bool, SyncOperationStoreError> {
-        let log = self.operationLog(&operation.originDeviceId)?;
-        let mut log = lockSyncState(&log, "operation log")?;
-        self.loadOperationLogIndex(&operation.originDeviceId, &mut log)?;
-        let Some(position) = log.sequences.get(&operation.sequence) else { return Ok(false); };
-        let existing = self.readJournalRecord(&operation.originDeviceId, &log.records[*position])?;
+        let Some(existing) = self.journalOperation(operation)? else { return Ok(false); };
         if existing != *operation {
             return Err(SyncOperationStoreError::Message(format!(
                 "Conflicting immutable operation {}",
@@ -1521,6 +1578,16 @@ impl SyncOperationStore {
             )));
         }
         Ok(true)
+    }
+
+    /// Reads the archived content for an exact origin sequence before resolving a delivery.
+    fn journalOperation(&self, operation: &SyncOperation) -> Result<Option<SyncOperation>, SyncOperationStoreError> {
+        let log = self.operationLog(&operation.originDeviceId)?;
+        let mut log = lockSyncState(&log, "operation log")?;
+        self.loadOperationLogIndex(&operation.originDeviceId, &mut log)?;
+        log.sequences.get(&operation.sequence).map(|position|
+            self.readJournalRecord(&operation.originDeviceId, &log.records[*position])
+        ).transpose()
     }
 
     /// Locates durable receipts and replay intents beside the operation journal.

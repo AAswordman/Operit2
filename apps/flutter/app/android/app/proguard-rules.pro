@@ -9,6 +9,11 @@
     *;
 }
 
+# Shizuku instantiates this Binder service by its component class name.
+-keep class app.operit.AndroidTerminalUserService {
+    *;
+}
+
 # Sherpa ONNX JNI resolves binding classes, constructors, fields, and methods by exact JVM names.
 -keep class com.k2fsa.sherpa.onnx.** {
     *;

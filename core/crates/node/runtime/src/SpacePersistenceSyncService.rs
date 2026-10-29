@@ -1616,17 +1616,20 @@ fn syncOperationOrder(value: &Value) -> Result<SyncOperationOrder, String> {
 
 /// Merges two operation pages into their deterministic application order.
 fn mergeSyncOperations(left: Value, right: Value) -> Result<Vec<Value>, String> {
-    let mut byId = BTreeMap::new();
+    let mut byId = BTreeMap::<String, (SyncOperationOrder, Value)>::new();
     for operation in syncOperations(left)?
         .into_iter()
         .chain(syncOperations(right)?)
     {
         let key = syncOperationOrder(&operation)?;
         if let Some((_, existing)) = byId.get(&key.opId) {
-            if existing != &operation {
-                return Err(format!("conflicting synchronization operation identity: {}", key.opId));
-            }
-            continue;
+            if existing == &operation { continue; }
+            let existing = serde_json::from_value::<SyncOperation>(existing.clone())
+                .map_err(|error| format!("invalid sync operation {}: {error}", key.opId))?;
+            let incoming = serde_json::from_value::<SyncOperation>(operation.clone())
+                .map_err(|error| format!("invalid sync operation {}: {error}", key.opId))?;
+            if !operit_store::SyncOperationStore::incomingSyncOperationWins(&existing, &incoming)
+                .map_err(|error| error.to_string())? { continue; }
         }
         byId.insert(key.opId.clone(), (key, operation));
     }
@@ -1845,6 +1848,26 @@ mod page_budget_tests {
             .iter()
             .map(|value| value["opId"].as_str().unwrap_or_default().to_string())
             .collect()
+    }
+
+    /// Resolves same-ID SQL revisions identically regardless of which peer supplied each page.
+    #[test]
+    fn merge_pages_keeps_newest_chat_revision_in_both_orders() {
+        let old = json!({
+            "opId":"device:1", "originDeviceId":"device", "sequence":1,
+            "domain":"chat", "entityType":"message", "entityId":"chat:1",
+            "operation":"upsert", "semantics":"entity_state",
+            "payload":{"text":"old"}, "createdAt":1, "schemaVersion":7,
+        });
+        let mut new = old.clone();
+        new["schemaVersion"] = json!(8);
+        new["payload"] = json!({"text":"new"});
+        for (left, right) in [(old.clone(), new.clone()), (new.clone(), old.clone())] {
+            assert_eq!(mergeSyncOperations(json!([left]), json!([right])).unwrap(), vec![new.clone()]);
+        }
+        let mut control = old.clone(); control["domain"] = json!("network_control");
+        let mut conflict = control.clone(); conflict["payload"] = json!({"permission":"admin"});
+        assert!(mergeSyncOperations(json!([control]), json!([conflict])).is_err());
     }
 
     #[test]

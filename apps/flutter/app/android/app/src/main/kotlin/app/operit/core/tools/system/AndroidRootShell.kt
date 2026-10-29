@@ -18,6 +18,10 @@ object AndroidRootShell {
         timeoutMillis: Long = 30_000L,
     ): AndroidRootAccessStatus = router.checkAccess(settings, timeoutMillis)
 
+    /** Returns verified su argv for a native PTY, not a line-oriented libsu job. */
+    fun terminalSuArguments(settings: AndroidRootExecutionSettings, timeoutMillis: Long): List<String>? =
+        router.terminalSuArguments(settings, timeoutMillis)
+
     fun execute(
         target: AndroidPrivilegedCommandTarget,
         command: String,

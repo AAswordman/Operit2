@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::sqliteParams;
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SqliteStore::{
-    SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteTransaction,
+    SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteTransaction, SqliteValue,
 };
 use crate::SyncOperationStore::{
-    compactSyncOperations, publishSyncMutation, SyncClock, SyncOperation, SyncOperationSemantics,
+    compactSyncOperations, incomingSyncOperationWins, publishSyncMutation, SyncClock, SyncOperation, SyncOperationSemantics,
     SyncOperationStore, SyncOperationStoreError, SyncOperationKnowledge, SyncReceipt,
 };
 use serde::{Deserialize, Serialize};
@@ -432,7 +432,9 @@ impl SqlChatSyncStore {
         let mut operations = compactSyncOperations(operations);
         operations.truncate(limit);
         for operation in &mut operations {
-            operation.payload = serde_json::to_value(readPayload(&self.store, &operation.opId)?)?;
+            operation.payload = serde_json::to_value(readPayload(
+                &mut |sql, params| self.store.queryRows(sql, params), &operation.opId,
+            )?)?;
         }
         Ok(operations)
     }
@@ -458,18 +460,41 @@ impl SqlChatSyncStore {
         operation: &SyncOperation,
         ignoreNewerEntityState: bool,
     ) -> Result<(), SqlChatSyncStoreError> {
-        let payload = decodePayload(operation)?;
         let didApply = self.store.transaction(|transaction| {
-            if operationExists(transaction, &operation.opId)? {
-                observeOperation(transaction, operation)?;
-                return Ok(false);
+            let mut replaced = None;
+            if let Some(row) = transaction.queryOne(
+                "SELECT * FROM sync_sql_operations WHERE opId = ?1", sqliteParams![operation.opId],
+            )? {
+                let mut existing = mapOperationMetadata(&row)?;
+                existing.payload = serde_json::to_value(readPayload(
+                    &mut |sql, params| transaction.queryRows(sql, params), &operation.opId,
+                )?).map_err(|error| SqliteStoreError::Message(error.to_string()))?;
+                if !incomingSyncOperationWins(&existing, operation)
+                    .map_err(|error| SqliteStoreError::Message(error.to_string()))? {
+                    observeOperation(transaction, operation)?;
+                    return Ok(false);
+                }
+                replaced = Some(existing);
+                transaction.execute("DELETE FROM sync_sql_operations WHERE opId = ?1", sqliteParams![operation.opId])?;
             }
             if !ignoreNewerEntityState && hasNewerMergedEntityState(transaction, operation)? {
                 observeOperation(transaction, operation)?;
                 return Ok(false);
             }
+            let payload = decodePayload(operation)
+                .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
+            let later = match replaced {
+                Some(existing) => laterChatOperations(transaction, &existing, &payload)?,
+                None => Vec::new(),
+            };
             applyPayload(transaction, operation, &payload)?;
             insertOperation(transaction, operation, &payload)?;
+            for laterOperation in later {
+                let laterPayload = readPayload(
+                    &mut |sql, params| transaction.queryRows(sql, params), &laterOperation.opId,
+                )?;
+                applyPayload(transaction, &laterOperation, &laterPayload)?;
+            }
             observeOperation(transaction, operation)?;
             Ok(true)
         })?;
@@ -708,19 +733,22 @@ fn mapOperationMetadata(row: &SqliteRow) -> Result<SyncOperation, SqliteStoreErr
     })
 }
 
-fn readPayload(store: &SqliteStore, opId: &str) -> Result<ChatSyncPayload, SqliteStoreError> {
+type ChatPayloadQuery<'a> = dyn FnMut(&str, Vec<SqliteValue>) -> Result<Vec<SqliteRow>, SqliteStoreError> + 'a;
+
+/// Reads one complete operation through the same query path inside or outside a transaction.
+fn readPayload(query: &mut ChatPayloadQuery<'_>, opId: &str) -> Result<ChatSyncPayload, SqliteStoreError> {
     Ok(ChatSyncPayload {
-        chatRows: readChatRows(store, opId)?,
-        messageRows: readMessageRows(store, opId)?,
-        partRows: readPartRows(store, opId)?,
-        variantRows: readVariantRows(store, opId)?,
-        deletions: readDeletions(store, opId)?,
+        chatRows: readChatRows(query, opId)?,
+        messageRows: readMessageRows(query, opId)?,
+        partRows: readPartRows(query, opId)?,
+        variantRows: readVariantRows(query, opId)?,
+        deletions: readDeletions(query, opId)?,
     })
 }
 
 /// Reads complete chat sync records including independently persisted extension maps.
-fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-    store.queryRows("SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\" FROM sync_sql_chat_rows WHERE opId = ?1 ORDER BY id", sqliteParams![opId])?
+fn readChatRows(query: &mut ChatPayloadQuery<'_>, opId: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
+    query("SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\" FROM sync_sql_chat_rows WHERE opId = ?1 ORDER BY id", sqliteParams![opId])?
         .into_iter().map(|row| Ok(ChatEntity {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -741,10 +769,10 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
 
 /// Reads complete message sync records including independently persisted extension maps.
 fn readMessageRows(
-    store: &SqliteStore,
+    query: &mut ChatPayloadQuery<'_>,
     opId: &str,
 ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-    store.queryRows("SELECT chatId, sender, timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions FROM sync_sql_message_rows WHERE opId = ?1 ORDER BY chatId, timestamp", sqliteParams![opId])?
+    query("SELECT chatId, sender, timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions FROM sync_sql_message_rows WHERE opId = ?1 ORDER BY chatId, timestamp", sqliteParams![opId])?
         .into_iter().map(|row| Ok(MessageEntity {
                 messageId: 0,
                 chatId: row.get(0)?,
@@ -771,10 +799,10 @@ fn readMessageRows(
 
 /// Reads complete variant sync records including independently persisted extension maps.
 fn readVariantRows(
-    store: &SqliteStore,
+    query: &mut ChatPayloadQuery<'_>,
     opId: &str,
 ) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
-    store.queryRows("SELECT chatId, messageTimestamp, variantIndex, roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions FROM sync_sql_message_variant_rows WHERE opId = ?1 ORDER BY chatId, messageTimestamp, variantIndex", sqliteParams![opId])?
+    query("SELECT chatId, messageTimestamp, variantIndex, roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions FROM sync_sql_message_variant_rows WHERE opId = ?1 ORDER BY chatId, messageTimestamp, variantIndex", sqliteParams![opId])?
         .into_iter().map(|row| Ok(MessageVariantEntity {
                 variantId: 0,
                 chatId: row.get(0)?,
@@ -796,11 +824,10 @@ fn readVariantRows(
 
 /// Reads structured part rows stored for one pending sync operation.
 fn readPartRows(
-    store: &SqliteStore,
+    query: &mut ChatPayloadQuery<'_>,
     opId: &str,
 ) -> Result<Vec<MessagePartEntity>, SqliteStoreError> {
-    store
-        .queryRows(
+    query(
             r#"
             SELECT chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
                 toolCallId, toolName, attributesJson
@@ -834,12 +861,12 @@ fn readPartRows(
         .collect()
 }
 
+/// Reads the ordered deletion effects from the selected SQL operation.
 fn readDeletions(
-    store: &SqliteStore,
+    query: &mut ChatPayloadQuery<'_>,
     opId: &str,
 ) -> Result<Vec<ChatSyncDeletion>, SqliteStoreError> {
-    store
-        .queryRows(
+    query(
             r#"
             SELECT tableName, chatId, messageTimestamp, variantIndex
             FROM sync_sql_deletions
@@ -1023,6 +1050,55 @@ fn insertVariantSyncRow(
     Ok(())
 }
 
+/// Restores subsequent chat mutations after correcting an already applied historical operation.
+fn laterChatOperations(
+    transaction: &mut SqliteTransaction<'_>,
+    replaced: &SyncOperation,
+    payload: &ChatSyncPayload,
+) -> Result<Vec<SyncOperation>, SqliteStoreError> {
+    let chats = payload.chatRows.iter().map(|row| &row.id)
+        .chain(payload.messageRows.iter().map(|row| &row.chatId))
+        .chain(payload.partRows.iter().map(|row| &row.chatId))
+        .chain(payload.variantRows.iter().map(|row| &row.chatId))
+        .chain(payload.deletions.iter().map(|row| &row.chatId))
+        .collect::<BTreeSet<_>>();
+    let mut later = BTreeMap::new();
+    for chatId in chats {
+        for row in transaction.queryRows(
+            r#"SELECT DISTINCT o.* FROM sync_sql_operations o
+            WHERE o.opId <> ?1 AND o.domain = 'chat'
+              AND ((o.originDeviceId = ?2 AND o.sequence > ?3)
+                OR (o.originDeviceId <> ?2 AND (o.createdAt, o.originDeviceId, o.sequence) > (?4, ?2, ?3)))
+              AND o.opId IN (
+                SELECT opId FROM sync_sql_chat_rows WHERE id = ?5
+                UNION SELECT opId FROM sync_sql_message_rows WHERE chatId = ?5
+                UNION SELECT opId FROM sync_sql_message_part_rows WHERE chatId = ?5
+                UNION SELECT opId FROM sync_sql_message_variant_rows WHERE chatId = ?5
+                UNION SELECT opId FROM sync_sql_deletions WHERE chatId = ?5)"#,
+            sqliteParams![replaced.opId, replaced.originDeviceId, replaced.sequence, replaced.createdAt, chatId],
+        )? {
+            let operation = mapOperationMetadata(&row)?;
+            later.insert(operation.opId.clone(), operation);
+        }
+    }
+    let mut origins = BTreeMap::<String, BTreeMap<i64, SyncOperation>>::new();
+    for operation in later.into_values() {
+        origins.entry(operation.originDeviceId.clone()).or_default().insert(operation.sequence, operation);
+    }
+    let mut ordered = Vec::new();
+    while !origins.is_empty() {
+        let origin = origins.iter().min_by_key(|(_, operations)| {
+            let operation = operations.first_key_value().expect("nonempty origin").1;
+            (operation.createdAt, &operation.originDeviceId)
+        }).expect("pending origins").0.clone();
+        let operations = origins.get_mut(&origin).expect("selected origin");
+        ordered.push(operations.pop_first().expect("nonempty origin").1);
+        if operations.is_empty() { origins.remove(&origin); }
+    }
+    Ok(ordered)
+}
+
+/// Applies one complete chat payload within the caller's SQL transaction.
 fn applyPayload(
     transaction: &mut SqliteTransaction<'_>,
     operation: &SyncOperation,
@@ -1247,18 +1323,6 @@ fn messagePartKindFromLabel(value: &str) -> Result<MessagePartKind, SqliteStoreE
             "unknown message-part kind: {value}"
         ))),
     }
-}
-
-fn operationExists(
-    transaction: &mut SqliteTransaction<'_>,
-    opId: &str,
-) -> Result<bool, SqliteStoreError> {
-    Ok(transaction
-        .queryOne(
-            "SELECT 1 FROM sync_sql_operations WHERE opId = ?1 LIMIT 1",
-            sqliteParams![opId],
-        )?
-        .is_some())
 }
 
 /// Reports whether a newer replaceable state for this entity is already stored.

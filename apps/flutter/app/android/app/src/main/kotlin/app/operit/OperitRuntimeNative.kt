@@ -1,6 +1,8 @@
 package app.operit
 
 object OperitRuntimeNative {
+    /** Runs PTY primitives inside the Shizuku user service's security context. */
+    @JvmStatic external fun privilegedPtyOperation(request: String): String
     /** Submits synchronous Java work to the native Host blocking scheduler. */
     @JvmStatic external fun scheduleRuntimeTask(task: Runnable)
     /** Reserves all native service workers required by one blocking pipeline. */
