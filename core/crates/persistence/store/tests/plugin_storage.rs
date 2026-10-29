@@ -621,6 +621,12 @@ fn bootstrap_excludes_only_preexisting_local_operations() {
     b.replay(&a.export());
     assert_eq!(b.export().len(), 1);
     assert_eq!(b.export()[0].opId, a.export()[0].opId);
+    let (ids, errors) = PluginStorage::operationIdsSince(b.host.clone(), &SyncClock::empty()).unwrap();
+    assert!(errors.is_empty());
+    assert_eq!(ids, std::collections::BTreeSet::from([a.export()[0].opId.clone()]));
+    let mut receipt = operit_store::SyncOperationStore::SyncReceipt::default();
+    receipt.observe(&a.export()[0].originDeviceId, a.export()[0].sequence);
+    assert!(PluginStorage::operationIdsSince(b.host.clone(), &receipt).unwrap().0.is_empty());
     PluginStorage::prepareSpaceJoin(b.host.clone()).unwrap();
     assert_eq!(b.export().len(), 1);
     a.dispose();
@@ -1218,6 +1224,109 @@ fn seed_aliased_owner(fixture: &Fixture, handle: &str, oldId: &str, newId: &str)
     PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &std::collections::BTreeMap::from([
         (format!("runtime/config/preferences/cards.preferences.json\u{001f}{oldId}"), newId.to_string()),
     ])).unwrap();
+}
+
+/// Opens the same identity-mapped records in either plugin storage representation.
+fn open_alias_conflict_fixture(fixture: &Fixture, kind: &str, merge: bool) -> String {
+    let mut request = json!({"op":"open","path":fixture.path,"kind":kind});
+    if merge {
+        request["merge"] = json!({"version":3,"maxEntities":1,"maxReferences":1,"entities":[{
+            "collection":"records","identityColumn":"id","nameColumn":null,"ignoredColumns":[],
+            "keyEncoding":"slash_root","matchMode":"identity","childCollections":[],"references":[],
+            "keyReferences":[{"prefix":"","target":{"kind":"preference","path":"runtime/config/preferences/cards.preferences.json"}}]
+        }]});
+    }
+    let handle = fixture.call(request).unwrap()["handle"].as_str().unwrap().to_owned();
+    if kind == "sqlite" {
+        fixture.call(json!({"op":"define_table","handle":handle,"table":{
+            "name":"records","primaryKey":"id","columns":[
+                {"name":"id","affinity":"text","nullable":false},
+                {"name":"content","affinity":"text","nullable":false}
+            ]
+        }})).unwrap();
+    }
+    handle
+}
+
+/// Publishes ordered writes or deletions through the real plugin transaction API.
+fn commit_alias_records(fixture: &Fixture, handle: &str, kind: &str, records: &[(&str, Option<&str>)]) {
+    if kind == "objects" {
+        let mutations = records.iter().map(|(key, content)| match content {
+            Some(content) => put_in("records", key, json!({"id":key,"content":content})),
+            None => json!({"collection":"records","key":key,"value":null,"deleted":true,"checkVersion":false}),
+        }).collect::<Vec<_>>();
+        fixture.call(json!({"op":"commit","handle":handle,"mutations":mutations})).unwrap();
+    } else {
+        let statements = records.iter().map(|(key, content)| match content {
+            Some(content) => json!({"sql":"INSERT INTO records VALUES(?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content",
+                "params":[{"kind":"text","value":key},{"kind":"text","value":content}]}),
+            None => json!({"sql":"DELETE FROM records WHERE id=?","params":[{"kind":"text","value":key}]}),
+        }).collect::<Vec<_>>();
+        fixture.call(json!({"op":"transaction","handle":handle,"statements":statements})).unwrap();
+    }
+}
+
+/// Resolves same-version alias collisions deterministically while retaining immutable source transactions.
+#[test]
+fn remote_alias_collisions_use_last_mutation_and_keep_original_history() {
+    for kind in ["objects", "sqlite"] {
+        for canonical in ["a", "z"] {
+            for deleted in [false, true] {
+                let source = Fixture::new("alias-source");
+                let sourceHandle = open_alias_conflict_fixture(&source, kind, false);
+                commit_alias_records(&source, &sourceHandle, kind, &[("a", Some("seed-a")), ("z", Some("seed-z"))]);
+                let older = source.export().pop().unwrap();
+                commit_alias_records(&source, &sourceHandle, kind, &[("a", Some("first")), ("z", if deleted { None } else { Some("last") })]);
+                let incoming = source.export().pop().unwrap();
+                assert_eq!(incoming.payload["changes"].as_array().unwrap().len(), 2);
+
+                let target = Fixture::new("alias-target");
+                let targetHandle = open_alias_conflict_fixture(&target, kind, true);
+                let retired = if canonical == "a" { "z" } else { "a" };
+                let aliases = std::collections::BTreeMap::from([(
+                    format!("runtime/config/preferences/cards.preferences.json\u{001f}{retired}"), canonical.to_owned()
+                )]);
+                let mut malformed = incoming.clone();
+                malformed.payload["changes"][1] = malformed.payload["changes"][0].clone();
+                assert!(PluginStorage::applyOperation(target.host.clone(), target.host.clone(), &malformed, &aliases).is_err(),
+                    "duplicate keys in the source transaction must still be rejected before aliasing");
+                malformed.payload["changes"][1]["key"] = json!("");
+                assert!(PluginStorage::applyOperation(target.host.clone(), target.host.clone(), &malformed, &aliases).is_err(),
+                    "invalid source keys must not be hidden by collision resolution");
+                PluginStorage::applyOperation(target.host.clone(), target.host.clone(), &incoming, &aliases).unwrap();
+                PluginStorage::applyOperation(target.host.clone(), target.host.clone(), &older, &aliases).unwrap();
+                PluginStorage::applyOperation(target.host.clone(), target.host.clone(), &incoming, &aliases).unwrap();
+                if kind == "objects" {
+                    let row = target.call(json!({"op":"get","handle":targetHandle,"collection":"records","key":canonical})).unwrap();
+                    if deleted { assert!(row.is_null()); }
+                    else { assert_eq!(row["value"], json!({"id":canonical,"content":"last"})); }
+                    assert!(target.call(json!({"op":"get","handle":targetHandle,"collection":"records","key":retired})).unwrap().is_null());
+                } else {
+                    let rows = target.call(json!({"op":"query","handle":targetHandle,"statement":{"sql":"SELECT id,content FROM records","params":[]}})).unwrap();
+                    assert_eq!(rows.as_array().unwrap().len(), if deleted { 0 } else { 1 });
+                    if !deleted {
+                        assert_eq!(rows[0]["values"], json!([{"kind":"text","value":canonical},{"kind":"text","value":"last"}]));
+                    }
+                }
+                assert_eq!(target.export().into_iter().find(|op| op.opId == incoming.opId).unwrap(), incoming);
+
+                // A newer local write must survive a not-yet-seen older remote transaction.
+                commit_alias_records(&target, &targetHandle, kind, &[(canonical, Some("newer-local"))]);
+                let fresh = Fixture::new("alias-older");
+                let freshHandle = open_alias_conflict_fixture(&fresh, kind, false);
+                commit_alias_records(&fresh, &freshHandle, kind, &[("a", Some("stale-a")), ("z", Some("stale-z"))]);
+                let mut stale = fresh.export().pop().unwrap();
+                stale.createdAt = incoming.createdAt.saturating_sub(1);
+                PluginStorage::applyOperation(target.host.clone(), target.host.clone(), &stale, &aliases).unwrap();
+                if kind == "objects" {
+                    assert_eq!(target.call(json!({"op":"get","handle":targetHandle,"collection":"records","key":canonical})).unwrap()["value"]["content"], "newer-local");
+                } else {
+                    assert_eq!(target.call(json!({"op":"query","handle":targetHandle,"statement":{"sql":"SELECT content FROM records","params":[]}})).unwrap()[0]["values"][0], json!({"kind":"text","value":"newer-local"}));
+                }
+                fresh.dispose(); source.dispose(); target.dispose();
+            }
+        }
+    }
 }
 
 /// Redirects a live writer's pre-merge identities onto the canonical rows so a

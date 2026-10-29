@@ -253,8 +253,16 @@ impl SqlChatSyncStore {
         self.localClock()
     }
 
-    /// Records deletion of one chat row.
-    pub fn recordChatDeletion(&self, chatId: &str) -> Result<(), SqlChatSyncStoreError> {
+    /// Reads the durable lifecycle tombstone independently of routing or current membership.
+    pub fn chatIsDeleted(&self, chatId: &str) -> Result<bool, SqlChatSyncStoreError> {
+        Ok(self.store.queryOne(
+            "SELECT 1 FROM sync_sql_deletions WHERE tableName=?1 AND chatId=?2 LIMIT 1",
+            sqliteParams![DELETE_CHAT, chatId],
+        )?.is_some())
+    }
+
+    /// Atomically deletes an unlocked chat and journals its terminal lifecycle, including safe retries.
+    pub fn deleteChat(&self, chatId: &str) -> Result<bool, SqlChatSyncStoreError> {
         let payload = ChatSyncPayload {
             deletions: vec![ChatSyncDeletion {
                 tableName: DELETE_CHAT.to_string(),
@@ -264,15 +272,35 @@ impl SqlChatSyncStore {
             }],
             ..ChatSyncPayload::default()
         };
-        self.appendLocalOperation(
-            "chat",
-            chatId,
-            "delete",
-            SyncOperationSemantics::Transaction,
-            payload,
-        )?;
-        self.store.notifyInvalidated()?;
-        Ok(())
+        let createdAt = currentTimeMillis()?;
+        let deleted = self.store.transaction(|transaction| {
+            let chat = transaction.queryOne("SELECT locked FROM chats WHERE id=?1", sqliteParams![chatId])?;
+            if chat.as_ref().map(|row| row.get::<_, bool>(0)).transpose()?.unwrap_or(false) {
+                return Ok(false);
+            }
+            if chatDeletedInTransaction(transaction, chatId)? {
+                return Ok(true);
+            }
+            if chat.is_none() { return Ok(false); }
+            applyDeletion(transaction, &payload.deletions[0])?;
+            let sequence = sequenceFor(transaction, &self.originDeviceId)? + 1;
+            let operation = SyncOperation {
+                opId: format!("{}:{sequence}", self.originDeviceId),
+                originDeviceId: self.originDeviceId.clone(), sequence,
+                domain: CHAT_SYNC_DOMAIN.into(), entityType: "chat".into(), entityId: chatId.into(),
+                operation: "delete".into(), semantics: SyncOperationSemantics::Transaction,
+                payload: serde_json::to_value(&payload).map_err(|error| SqliteStoreError::Message(error.to_string()))?,
+                createdAt, schemaVersion: CHAT_SYNC_OPERATION_SCHEMA_VERSION,
+            };
+            insertOperation(transaction, &operation, &payload)?;
+            observeOperation(transaction, &operation)?;
+            Ok(true)
+        })?;
+        if deleted {
+            self.store.notifyInvalidated()?;
+            publishSyncMutation();
+        }
+        Ok(deleted)
     }
 
     /// Deletes one message and its variants together with their sync deletion record.
@@ -376,6 +404,34 @@ impl SqlChatSyncStore {
         Ok(receipt)
     }
 
+    /// Inventories retained SQL records using metadata and the same export floors as normal paging.
+    pub fn operationIdsSince<K: SyncOperationKnowledge>(
+        &self, clock: &K, domains: &[String],
+    ) -> Result<BTreeSet<String>, SqlChatSyncStoreError> {
+        if !domains.is_empty() && !domains.iter().any(|domain| domain == CHAT_SYNC_DOMAIN) {
+            return Ok(BTreeSet::new());
+        }
+        let mut floors = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        for row in self.store.queryRows(
+            "SELECT opId,originDeviceId,sequence FROM sync_sql_operations WHERE domain=?1",
+            sqliteParams![CHAT_SYNC_DOMAIN],
+        )? {
+            let origin: String = row.get(1)?;
+            let sequence: i64 = row.get(2)?;
+            let floor = match floors.get(&origin) {
+                Some(floor) => *floor,
+                None => {
+                    let floor = self.syncOperationStore.exportFloorFor(&origin)?;
+                    floors.insert(origin.clone(), floor);
+                    floor
+                }
+            };
+            if sequence > floor && !clock.containsSequence(&origin, sequence) { ids.insert(row.get(0)?); }
+        }
+        Ok(ids)
+    }
+
     /// Lists compacted SQL chat operations newer than the supplied clock.
     pub fn operationsSince<K: SyncOperationKnowledge>(
         &self,
@@ -474,6 +530,14 @@ impl SqlChatSyncStore {
                     observeOperation(transaction, operation)?;
                     return Ok(false);
                 }
+                let previous: ChatSyncPayload = serde_json::from_value(existing.payload.clone())
+                    .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
+                let incoming = decodePayload(operation).map_err(|error| SqliteStoreError::Message(error.to_string()))?;
+                for deletion in previous.deletions.iter().filter(|row| row.tableName == DELETE_CHAT) {
+                    if !incoming.deletions.iter().any(|row| row.tableName == DELETE_CHAT && row.chatId == deletion.chatId) {
+                        return Err(SqliteStoreError::Message("An operation revision cannot retract a chat deletion".into()));
+                    }
+                }
                 replaced = Some(existing);
                 transaction.execute("DELETE FROM sync_sql_operations WHERE opId = ?1", sqliteParams![operation.opId])?;
             }
@@ -545,6 +609,7 @@ impl SqlChatSyncStore {
         let createdAt = currentTimeMillis()?;
         let result = self.store.transaction(|transaction| {
             let (result, payload) = action(transaction)?;
+            for chatId in payloadChatIds(&payload) { requireLiveChatId(transaction, chatId)?; }
             let sequence = sequenceFor(transaction, &self.originDeviceId)? + 1;
             let operation = SyncOperation {
                 opId: format!("{}:{sequence}", self.originDeviceId),
@@ -893,6 +958,10 @@ fn insertOperation(
     operation: &SyncOperation,
     payload: &ChatSyncPayload,
 ) -> Result<(), SqliteStoreError> {
+    if payload.deletions.iter().any(|row| row.tableName == DELETE_CHAT)
+        && operation.semantics != SyncOperationSemantics::Transaction {
+        return Err(SqliteStoreError::Message("Chat deletion must be a retained transaction".into()));
+    }
     let revisions = payload
         .partRows
         .iter()
@@ -1107,16 +1176,46 @@ fn applyPayload(
     for deletion in &payload.deletions {
         applyDeletion(transaction, deletion)?;
     }
-    for chat in &payload.chatRows {
+    let mut deleted = BTreeSet::new();
+    for chatId in payloadChatIds(payload) {
+        if chatDeletedInTransaction(transaction, chatId)? { deleted.insert(chatId.to_owned()); }
+    }
+    deleted.extend(payload.deletions.iter().filter(|row| row.tableName == DELETE_CHAT).map(|row| row.chatId.clone()));
+    for chat in payload.chatRows.iter().filter(|row| !deleted.contains(&row.id)) {
         upsertChat(transaction, chat)?;
     }
-    for message in &payload.messageRows {
+    for message in payload.messageRows.iter().filter(|row| !deleted.contains(&row.chatId)) {
         upsertMessage(transaction, message)?;
     }
-    for variant in &payload.variantRows {
+    for variant in payload.variantRows.iter().filter(|row| !deleted.contains(&row.chatId)) {
         upsertVariant(transaction, variant)?;
     }
-    replacePartRows(transaction, &payload.partRows)?;
+    let parts = payload.partRows.iter().filter(|row| !deleted.contains(&row.chatId)).cloned().collect::<Vec<_>>();
+    replacePartRows(transaction, &parts)?;
+    Ok(())
+}
+
+/// Enumerates affected conversation lifecycles without decoding unrelated history.
+fn payloadChatIds(payload: &ChatSyncPayload) -> BTreeSet<&str> {
+    payload.chatRows.iter().map(|row| row.id.as_str())
+        .chain(payload.messageRows.iter().map(|row| row.chatId.as_str()))
+        .chain(payload.variantRows.iter().map(|row| row.chatId.as_str()))
+        .chain(payload.partRows.iter().map(|row| row.chatId.as_str())).collect()
+}
+
+/// Tests committed deletion facts rather than treating missing rows as deleted conversations.
+fn chatDeletedInTransaction(transaction: &mut SqliteTransaction<'_>, chatId: &str) -> Result<bool, SqliteStoreError> {
+    Ok(transaction.queryOne(
+        "SELECT 1 FROM sync_sql_deletions WHERE tableName=?1 AND chatId=?2 LIMIT 1",
+        sqliteParams![DELETE_CHAT, chatId],
+    )?.is_some())
+}
+
+/// Rejects local recreation of a retired conversation ID within its write transaction.
+fn requireLiveChatId(transaction: &mut SqliteTransaction<'_>, chatId: &str) -> Result<(), SqliteStoreError> {
+    if chatDeletedInTransaction(transaction, chatId)? {
+        return Err(SqliteStoreError::Message(format!("Chat has been deleted: {chatId}")));
+    }
     Ok(())
 }
 
@@ -1221,6 +1320,7 @@ fn upsertChat(
     transaction: &mut SqliteTransaction<'_>,
     chat: &ChatEntity,
 ) -> Result<(), SqliteStoreError> {
+    requireLiveChatId(transaction, &chat.id)?;
     transaction.execute("INSERT INTO chats (id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) ON CONFLICT(id) DO UPDATE SET title = excluded.title, createdAt = excluded.createdAt, updatedAt = excluded.updatedAt, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, currentWindowSize = excluded.currentWindowSize, displayOrder = excluded.displayOrder, workspaceId = excluded.workspaceId, parentChatId = excluded.parentChatId, locked = excluded.locked, pinned = excluded.pinned, pluginExtensions = excluded.pluginExtensions, \"group\" = excluded.\"group\"", sqliteParams![chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?, chat.group])?;
     Ok(())
 }

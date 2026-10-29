@@ -4166,6 +4166,21 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceSyncRecords => '正在交换数据记录';
 
   @override
+  String deviceSpaceSyncRecordProgress(int completed, int total, int percent) {
+    return '$completed / $total 条 · $percent%';
+  }
+
+  @override
+  String deviceSpaceSyncPendingCount(int count) {
+    return '待应用 $count 条';
+  }
+
+  @override
+  String deviceSpaceSyncCounting(int count) {
+    return '正在统计总量 · 已处理 $count 条';
+  }
+
+  @override
   String get deviceSpaceSyncFiles => '正在传输并校验文件';
 
   @override

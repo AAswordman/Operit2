@@ -4,7 +4,7 @@ use std::sync::Arc;
 use operit_host_native_storage::NativeRuntimeStorageHost;
 use operit_model::PluginExtensionTarget::PluginExtensionTarget;
 use operit_runtime::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
-use operit_store::db::AppDatabase::AppDatabase;
+use operit_store::db::AppDatabase::{AppDatabase, DATABASE_VERSION};
 use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -70,7 +70,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
         preferenceBytes
     );
     let database = AppDatabase::getDatabase(paths.clone()).unwrap();
-    assert_eq!(database.store().getUserVersion().unwrap(), 28);
+    assert_eq!(database.store().getUserVersion().unwrap(), DATABASE_VERSION);
     let history = delegate
         .chatHistoryManager
         .loadChatHistory("v27-chat".to_string())

@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 28;
+pub const DATABASE_VERSION: i32 = 29;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -137,6 +137,7 @@ impl AppDatabase {
             25 => MIGRATION_25_26(self)?,
             26 => MIGRATION_26_27(self)?,
             27 => MIGRATION_27_28(self)?,
+            28 => MIGRATION_28_29(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -1293,6 +1294,8 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             PRIMARY KEY(opId, ordinal),
             FOREIGN KEY(opId) REFERENCES sync_sql_operations(opId) ON DELETE CASCADE
         );
+        CREATE INDEX IF NOT EXISTS index_sync_sql_deletions_chat_lifecycle
+            ON sync_sql_deletions(tableName, chatId);
         "#,
     )
 }
@@ -1326,6 +1329,16 @@ fn migration27To28Statements() -> &'static [&'static str] {
         "UPDATE sync_sql_operations SET schemaVersion = 7 WHERE domain = 'chat' AND schemaVersion = 6",
         "PRAGMA user_version = 28",
     ]
+}
+
+/// Enforces terminal chat lifecycles from existing deletion facts without rewriting source operations.
+fn MIGRATION_28_29(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    database.store.transaction(|transaction| {
+        transaction.execute("CREATE INDEX IF NOT EXISTS index_sync_sql_deletions_chat_lifecycle\n            ON sync_sql_deletions(tableName, chatId)", Vec::new())?;
+        transaction.execute("DELETE FROM chats WHERE id IN (SELECT chatId FROM sync_sql_deletions WHERE tableName='chats')", Vec::new())?;
+        transaction.execute("PRAGMA user_version = 29", Vec::new())?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

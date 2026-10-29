@@ -440,12 +440,12 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
                 service.spaceStore().importDeviceProfiles(snapshot.deviceProfiles)?;
                 return Ok(local);
             }
-            if !snapshot.space.members.iter().any(|node| node == &service.localNodeId()) {
-                // Independent paired Spaces do not merge without a target-side admission.
+            if !snapshot.space.members.iter().any(|node| node == &service.localNodeId())
+                || !local.members.iter().any(|node| node == peerNodeId) {
+                // Independent paired Spaces exchange receipts but cannot migrate each other.
+                // The applicant adopts its approved target in the join lifecycle; only an
+                // existing source member may propagate that migration to its other members.
                 return Ok(local);
-            }
-            if !local.members.iter().any(|node| node == peerNodeId) {
-                return Err("Space migration must arrive through an existing source Space member".into());
             }
             service.networkControlStore().validateSpaceAdmission(&snapshot.space.spaceId,
                 &local.spaceId, &local.members.iter().cloned().collect(), &snapshot.controlOperations)?;

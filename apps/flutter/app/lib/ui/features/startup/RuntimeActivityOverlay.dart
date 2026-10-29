@@ -120,6 +120,10 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
     _syncSubscription = service.spaceSyncProgressFlow().listen((progress) {
       if (!_isCurrentSubscription(generation)) return;
       setState(() {
+        if (progress.any((item) => item.error != null) &&
+            !_sync.any((item) => item.error != null)) {
+          _expanded = true;
+        }
         _sync = progress;
         _scheduleCompletion();
       });
@@ -203,24 +207,85 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
           : waiting
           ? l10n.runtimeActivityWaiting
           : l10n.runtimeActivitySyncing,
-      compactDetail: file && !completed
+      compactDetail: item.totalRecords == null && file && !completed
           ? '${_bytes(item.fileBytes)} / ${_bytes(item.fileSize)}'
-          : null,
-      detail: file && !completed
-          ? l10n.deviceSpaceSyncCurrentFile(
-              _bytes(item.fileBytes),
-              _bytes(item.fileSize),
-            )
-          : l10n.deviceSpaceSyncTransferred(
-              item.exchangedRecords,
-              _bytes(item.transferredBytes),
+          : _recordProgress(
+              item.completedRecords,
+              item.totalRecords,
+              item.pendingRecords,
+              l10n,
             ),
+      detail: _recordProgress(
+        item.completedRecords,
+        item.totalRecords,
+        item.pendingRecords,
+        l10n,
+      ),
       value: completed
           ? 1
+          : item.totalRecords != null && item.totalRecords! > 0
+          ? (item.completedRecords / item.totalRecords!).clamp(0.0, 1.0)
           : file && !waiting
           ? (item.fileBytes / item.fileSize).clamp(0.0, 1.0)
           : null,
       paused: waiting || completed,
+    );
+  }
+
+  /// Shows confirmed unique records against the real inventory, never against a page size.
+  String _recordProgress(
+    int completed,
+    int? total,
+    int pending,
+    AppLocalizations l10n,
+  ) {
+    final records = total == null
+        ? l10n.deviceSpaceSyncCounting(completed)
+        : l10n.deviceSpaceSyncRecordProgress(
+            completed,
+            total,
+            total == 0 ? 0 : (100 * completed / total).floor().clamp(0, 100),
+          );
+    return pending > 0
+        ? '$records · ${l10n.deviceSpaceSyncPendingCount(pending)}'
+        : records;
+  }
+
+  /// Aggregates all peers instead of presenting the first peer as the whole synchronization.
+  _Activity _syncSummary(
+    List<core.SpaceSyncProgress> items,
+    AppLocalizations l10n,
+  ) {
+    if (items.length == 1) return _syncActivity(items.single, l10n);
+    final completed = items.every(
+      (item) => item.status == core.SpaceSyncStatus.completed,
+    );
+    final waiting =
+        items.every((item) => item.status != core.SpaceSyncStatus.syncing) &&
+        !completed;
+    final processed = items.fold(0, (sum, item) => sum + item.completedRecords);
+    final total = items.every((item) => item.totalRecords != null)
+        ? items.fold(0, (sum, item) => sum + item.totalRecords!)
+        : null;
+    final pending = items.fold(0, (sum, item) => sum + item.pendingRecords);
+    return _Activity(
+      icon: completed
+          ? Icons.check_rounded
+          : waiting
+          ? Icons.pause_rounded
+          : Icons.sync_rounded,
+      title: completed
+          ? l10n.runtimeActivitySyncCompleted
+          : waiting
+          ? l10n.runtimeActivityWaiting
+          : l10n.runtimeActivitySyncing,
+      detail: _recordProgress(processed, total, pending, l10n),
+      value: completed
+          ? 1
+          : total != null && total > 0
+          ? (processed / total).clamp(0.0, 1.0)
+          : null,
+      paused: completed || waiting,
     );
   }
 
@@ -255,7 +320,7 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
             value: packages.progress.clamp(0.0, 1.0),
           );
     final primary = sync.isNotEmpty
-        ? _syncActivity(sync.first, l10n)
+        ? _syncSummary(sync, l10n)
         : packageActivity!;
     final count = sync.length + (packages == null ? 0 : 1);
     return Positioned.fill(
@@ -356,20 +421,29 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
                                             ),
                                             if (item.status !=
                                                 core.SpaceSyncStatus.completed)
-                                              Tooltip(
-                                                message: item.error ?? '',
-                                                child: Text(
-                                                  _stage(item, l10n),
-                                                  style: Theme.of(
-                                                    context,
-                                                  ).textTheme.bodySmall,
-                                                ),
+                                              Text(
+                                                _stage(item, l10n),
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.bodySmall,
+                                              ),
+                                            if (item.error != null)
+                                              SelectableText(
+                                                item.error!,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall
+                                                    ?.copyWith(
+                                                      color: Theme.of(
+                                                        context,
+                                                      ).colorScheme.error,
+                                                    ),
                                               ),
                                             if (item.fileSize > 0)
                                               Text(
-                                                l10n.deviceSpaceSyncTransferred(
-                                                  item.exchangedRecords,
-                                                  _bytes(item.transferredBytes),
+                                                l10n.deviceSpaceSyncCurrentFile(
+                                                  _bytes(item.fileBytes),
+                                                  _bytes(item.fileSize),
                                                 ),
                                                 style: Theme.of(
                                                   context,

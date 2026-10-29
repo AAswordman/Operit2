@@ -103,6 +103,8 @@ impl<'a> JournalLines<'a> {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct PayloadRoute {
     pub(crate) encrypted: bool,
+    #[serde(skip)]
+    pub(crate) resolved: bool,
     pub(crate) storage_path: Option<String>,
     pub(crate) merge_metadata: bool,
     contract_version: Option<u64>,
@@ -254,13 +256,15 @@ impl<'de> DeserializeSeed<'de> for MergeEntries {
 impl PayloadRoute {
     fn parse(raw: &RawValue) -> Self {
         let fields = serde_json::from_str::<RouteFields<'_>>(raw.get()).unwrap_or_default();
+        let encrypted = string_field(fields.format).as_deref() == Some(ENCRYPTED_FORMAT);
         let merge_entries = fields.entries.is_some_and(|entries| {
             MergeEntries
                 .deserialize(&mut serde_json::Deserializer::from_str(entries.get()))
                 .unwrap_or(false)
         });
         Self {
-            encrypted: string_field(fields.format).as_deref() == Some(ENCRYPTED_FORMAT),
+            encrypted,
+            resolved: !encrypted,
             storage_path: string_field(fields.storage_path),
             merge_metadata: string_field(fields.key).as_deref()
                 == Some(PLUGIN_MERGE_DECLARATION_KEY)
@@ -278,6 +282,7 @@ impl PayloadRoute {
     fn from_operation(operation: &SyncOperation, encrypted: bool) -> Self {
         Self {
             encrypted,
+            resolved: operation.payload.get("format").and_then(|value| value.as_str()) != Some(ENCRYPTED_FORMAT),
             storage_path: operation
                 .payload
                 .get("storagePath")
@@ -334,6 +339,11 @@ pub(crate) struct JournalRecord {
 }
 
 impl JournalRecord {
+    /// Resolves encrypted routing once while retaining no decrypted business values.
+    pub(crate) fn resolve_route(&mut self, operation: &SyncOperation) {
+        self.route = PayloadRoute::from_operation(operation, self.route.encrypted);
+    }
+
     pub(crate) fn parse(bytes: &[u8], offset: u64) -> Result<Self, serde_json::Error> {
         let fields: RecordFields<'_> = serde_json::from_slice(bytes)?;
         // Validate in the enclosing operation so payload recursion has exactly
@@ -374,7 +384,7 @@ impl JournalRecord {
     }
 
     pub(crate) fn preference_path_matches(&self, path: &str) -> bool {
-        if self.route.encrypted {
+        if self.route.encrypted && !self.route.resolved {
             serde_json::from_str::<Vec<serde_json::Value>>(&self.entity_id)
                 .is_ok_and(|identity| identity.first().and_then(|v| v.as_str()) == Some(path))
         } else {
@@ -384,7 +394,7 @@ impl JournalRecord {
 
     pub(crate) fn is_merge_candidate(&self) -> bool {
         self.domain == "preferences"
-            && (self.route.encrypted || self.operation == "alias" || self.route.merge_metadata)
+            && ((self.route.encrypted && !self.route.resolved) || self.operation == "alias" || self.route.merge_metadata)
     }
 }
 

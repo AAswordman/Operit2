@@ -264,10 +264,9 @@ fn domain_filtered_reads_do_not_publish_unrelated_preference_outboxes() {
             assert_eq!(read(&domains), vec![policy.clone()]);
             let reads = storage.readCount.load(Ordering::SeqCst);
             for _ in 0..5 { assert_eq!(read(&domains), vec![policy.clone()]); }
-            // Budgeted queries open the selected record once for the retain
-            // predicate and once for the output page; neither opens preferences.
+            // Filtering and output share one decoded record; neither opens preferences.
             assert_eq!(storage.readCount.load(Ordering::SeqCst) - reads,
-                5 * if budgeted { 2 } else { 1 },
+                5,
                 "warm policy queries must not load an unrelated encryption key");
         }
     }
@@ -646,6 +645,74 @@ fn repeated_domain_queries_do_not_rescan_large_history() {
     assert_eq!(storage.readCount.load(Ordering::SeqCst) - reads, 100);
     assert_eq!(storage.rangeBytes.load(Ordering::SeqCst) - bytes,
         100 * (serde_json::to_vec(&policy).unwrap().len() + 1));
+}
+
+/// Paging reads each retained payload once instead of rescanning the remaining business history.
+#[test]
+fn filtered_pages_read_payload_bytes_linearly() {
+    for (domain, semantics, encrypted) in [
+        ("preferences", SyncOperationSemantics::EntityState, false),
+        ("preferences", SyncOperationSemantics::EntityState, true),
+        ("chat", SyncOperationSemantics::EntityState, false),
+        ("plugin_storage", SyncOperationSemantics::Transaction, false),
+    ] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = SyncOperationStore::new(host.clone(), "linear-export");
+        let operations = (1..=512).map(|sequence| {
+            let mut entry = operation(sequence, "entry", &format!("entry-{sequence}"), "set",
+                semantics, json!({"storagePath":"runtime/data/probe.json","content":"x".repeat(4096),"encrypted":encrypted}));
+            entry.domain = domain.into();
+            if encrypted {
+                entry.payload["contractVersion"] = json!(1);
+                entry.payload["logicalTime"] = json!(sequence);
+                entry.createdAt = 10_000 - sequence;
+            }
+            entry
+        }).collect::<Vec<_>>();
+        store.appendOperations(&operations).unwrap();
+        drop(store);
+        let store = SyncOperationStore::new(host.clone(), "linear-export");
+        store.receipt().unwrap();
+        let bytes = host.rangeBytes.load(Ordering::SeqCst);
+        let mut receipt = SyncReceipt::default();
+        for (index, expected) in operations.chunks(16).enumerate() {
+            let mut inventory = BTreeSet::new();
+            let page = store.operationsSinceWithInventory(&receipt, &[domain.into()], 16, usize::MAX,
+                (index == 0).then_some(&mut inventory), |entry| entry.payload["content"].is_string()).unwrap();
+            if index == 0 { assert_eq!(inventory.len(), operations.len()); }
+            assert_eq!(page, expected);
+            for entry in page { receipt.observe(&entry.originDeviceId, entry.sequence); }
+        }
+        let readBytes = host.rangeBytes.load(Ordering::SeqCst) - bytes;
+        let journalBytes = host.files.lock().unwrap().iter().filter(|(path, _)| path.ends_with(".jsonl"))
+            .map(|(_, bytes)| bytes.len()).sum::<usize>();
+        // The first inventory scans once; encrypted headers resolve once after reopening.
+        let allowance = if encrypted { 3 } else { 2 };
+        assert!(readBytes <= journalBytes * allowance,
+            "{domain} encrypted={encrypted}: read {readBytes} bytes for a {journalBytes}-byte journal");
+        eprintln!("{domain} encrypted={encrypted}: payload reads={readBytes} journal={journalBytes}");
+    }
+}
+
+/// Resolves filtered revisions only for entities reached by the current page.
+#[test]
+fn filtered_compaction_does_not_open_later_entities() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(host.clone(), "lazy-compaction");
+    let operations = (1..=192).map(|sequence| operation(sequence, "message",
+        &format!("message-{}", (sequence - 1) / 3), "upsert", SyncOperationSemantics::EntityState,
+        json!({"export":sequence % 3 != 0,"content":"x".repeat(4096)}))).collect::<Vec<_>>();
+    store.appendOperations(&operations).unwrap();
+    let bytes = host.rangeBytes.load(Ordering::SeqCst);
+    let page = store.operationsSinceWithBudget(&SyncClock::empty(), &[], 8, usize::MAX,
+        |entry| entry.payload["export"] == true).unwrap();
+    assert_eq!(sequences(&page), vec![2, 5, 8, 11, 14, 17, 20, 23]);
+    let readBytes = host.rangeBytes.load(Ordering::SeqCst) - bytes;
+    assert!(readBytes < 32 * 5000, "small page opened later entity payloads: {readBytes} bytes");
+    let mut inventory = BTreeSet::new();
+    assert_eq!(store.operationsSinceWithInventory(&SyncClock::empty(), &[], 8, usize::MAX,
+        Some(&mut inventory), |entry| entry.payload["export"] == true).unwrap(), page);
+    assert_eq!(inventory.len(), 64);
 }
 
 /// Verifies a synchronization clock includes every required origin sequence.
@@ -2070,6 +2137,11 @@ fn relay_pages_compact_archived_and_pending_records_together() {
     let other = operation(3, "message", "other", "upsert", SyncOperationSemantics::EntityState, json!(3));
     store.appendOperation(&first).unwrap();
     store.receiveOperations(&[newer.clone(), other]).unwrap();
+    let mut inventory = BTreeSet::new();
+    let page = store.operationsSinceWithInventory(&SyncClock::empty(), &[], 1, 1024, Some(&mut inventory), |_| true).unwrap();
+    assert_eq!(page, vec![newer.clone()]);
+    assert_eq!(inventory.len(), 2, "total must include later pages but exclude compacted old states");
+    assert!(!inventory.contains(&first.opId));
     assert_eq!(store.operationsSinceWithBudget(&SyncClock::empty(), &[], 1, 1024, |_|true).unwrap(), vec![newer.clone()]);
     // A caller's retention rule still runs before state compaction.
     assert_eq!(store.operationsSinceWithBudget(&SyncClock::empty(), &[], 1, 1024, |op|op.sequence != 2).unwrap(), vec![first]);

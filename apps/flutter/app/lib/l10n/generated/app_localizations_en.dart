@@ -4338,6 +4338,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceSpaceSyncRecords => 'Exchanging records';
 
   @override
+  String deviceSpaceSyncRecordProgress(int completed, int total, int percent) {
+    return '$completed / $total records · $percent%';
+  }
+
+  @override
+  String deviceSpaceSyncPendingCount(int count) {
+    return '$count records pending application';
+  }
+
+  @override
+  String deviceSpaceSyncCounting(int count) {
+    return 'Counting total · $count records processed';
+  }
+
+  @override
   String get deviceSpaceSyncFiles => 'Transferring and verifying files';
 
   @override

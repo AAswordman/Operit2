@@ -203,6 +203,36 @@ fn missing_workspace_chat_deletion_preserves_lock_policy_and_removes_history() {
     assert!(manager.workspaceStore.getAll().unwrap().is_empty());
 }
 
+/// Missing routing metadata cannot veto offline deletion or its idempotent cleanup retry.
+#[test]
+fn chat_deletion_without_binding_is_durable_and_cannot_be_routed_back() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, database, _) = workspaceMetadataFixture("delete-without-binding");
+    assert!(!manager.bindingStore.contains(CHAT_ID).unwrap());
+    manager.setCurrentChatId(CHAT_ID.into()).unwrap();
+    assert!(manager.deleteChatHistory(CHAT_ID.into()).unwrap());
+    assert!(manager.syncStore.chatIsDeleted(CHAT_ID).unwrap());
+    assert!(manager.canDeleteChatHistory(CHAT_ID.into()).unwrap());
+    assert!(manager.deleteChatHistory(CHAT_ID.into()).unwrap());
+    assert_eq!(manager.currentChatIdFlow().unwrap(), None);
+    assert!(database.chatDao().getChatById(CHAT_ID).unwrap().is_none());
+
+    // A delayed route change may arrive independently; it must not recreate SQL history.
+    let mut route = manager.bindingStore.createLocal("late-route-template").unwrap().operation;
+    route.originDeviceId = "late-route-source".into();
+    route.sequence = 1;
+    route.opId = "late-route-source:1".into();
+    route.entityId = CHAT_ID.into();
+    route.payload["key"] = serde_json::json!(CHAT_ID);
+    route.createdAt += 100_000;
+    manager.bindingStore.applyBootstrapOperation(&route).unwrap();
+    assert!(manager.bindingStore.contains(CHAT_ID).unwrap());
+    assert!(manager.ensureRoutedChat(CHAT_ID.into()).is_err());
+    assert!(database.chatDao().getChatById(CHAT_ID).unwrap().is_none());
+    assert!(manager.deleteChatHistory(CHAT_ID.into()).unwrap());
+    assert!(!manager.bindingStore.contains(CHAT_ID).unwrap());
+}
+
 /// Creates one original reply and ordered variants with colliding part identities.
 fn variantFixture(name: &str, alternateCount: i32) -> Arc<AppDatabase> {
     let (_, database, _) = openTestStore(name);

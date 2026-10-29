@@ -131,9 +131,31 @@ fn schemaDefinitions(store: &SqliteStore) -> BTreeMap<String, Vec<SqliteRow>> {
     definitions
 }
 
+/// Removes legacy resurrected rows atomically while retaining deletion history and unrelated chats.
+#[test]
+fn version28_terminal_chat_migration_rolls_back_and_preserves_source_history() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database) = version27Database("database-v28-terminal-chat");
+    MIGRATION_27_28(&database).unwrap();
+    database.store.executeBatch("INSERT INTO sync_sql_deletions(opId,ordinal,tableName,chatId) VALUES('v27:1',1,'chats','v27-chat'); INSERT INTO chats(id,title,createdAt,updatedAt) VALUES('live-chat','Keep this',1,1); CREATE TRIGGER reject_lifecycle_migration BEFORE DELETE ON chats BEGIN SELECT RAISE(ABORT,'injected lifecycle failure'); END;").unwrap();
+    let before = tableRows(&database.store);
+    assert!(MIGRATION_28_29(&database).is_err());
+    assert_eq!(database.store.getUserVersion().unwrap(), 28);
+    assert_eq!(tableRows(&database.store), before);
+    assert!(database.store.queryOne("SELECT 1 FROM sqlite_master WHERE name='index_sync_sql_deletions_chat_lifecycle'", Vec::new()).unwrap().is_none());
+    database.store.executeBatch("DROP TRIGGER reject_lifecycle_migration").unwrap();
+    MIGRATION_28_29(&database).unwrap();
+    assert_eq!(database.store.getUserVersion().unwrap(), DATABASE_VERSION);
+    assert!(database.chatDao().getChatById("v27-chat").unwrap().is_none());
+    assert!(database.messageDao().getMessagesForChat("v27-chat").unwrap().is_empty());
+    assert!(database.chatDao().getChatById("live-chat").unwrap().is_some());
+    assert_eq!(database.store.queryScalar::<i64>("SELECT COUNT(*) FROM sync_sql_deletions WHERE opId='v27:1'", Vec::new()).unwrap(), 2);
+    assert!(database.store.queryRows("PRAGMA foreign_key_check", Vec::new()).unwrap().is_empty());
+}
+
 /// Proves that opening the actual AppDatabase upgrades all complete records and preserves preferences and file reopen behavior.
 #[test]
-fn opening_version27_atomically_upgrades_records_and_reopens_version28() {
+fn opening_version27_atomically_upgrades_records_and_reopens_current_version() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
     let (paths, old) = version27Database("database-v27-v28");
     let before = tableRows(&old.store);
@@ -155,13 +177,13 @@ fn opening_version27_atomically_upgrades_records_and_reopens_version28() {
     AppDatabase::closeDatabase();
     drop(old);
     let database = AppDatabase::getDatabase(paths.clone()).unwrap();
-    assert_eq!(database.store.getUserVersion().unwrap(), 28);
+    assert_eq!(database.store.getUserVersion().unwrap(), DATABASE_VERSION);
     assert_eq!(tableRows(&database.store), expected);
     assert_eq!(
         database
             .store
             .queryRows(
-                "SELECT name,tbl_name,sql FROM sqlite_master WHERE type='index' ORDER BY name",
+                "SELECT name,tbl_name,sql FROM sqlite_master WHERE type='index' AND name<>'index_sync_sql_deletions_chat_lifecycle' ORDER BY name",
                 Vec::new()
             )
             .unwrap(),
@@ -287,7 +309,7 @@ fn opening_version27_atomically_upgrades_records_and_reopens_version28() {
     AppDatabase::closeDatabase();
     drop(database);
     let reopened = AppDatabase::getDatabase(paths).unwrap();
-    assert_eq!(reopened.store.getUserVersion().unwrap(), 28);
+    assert_eq!(reopened.store.getUserVersion().unwrap(), DATABASE_VERSION);
     assert_eq!(tableRows(&reopened.store), expected);
     assert_eq!(schemaDefinitions(&reopened.store), schema);
 }
@@ -349,16 +371,18 @@ fn migration_failure_at_every_boundary_preserves_version27_schema_and_all_record
     }
 }
 
-/// Requires identical columns, defaults, foreign keys and indexes for newly created and migrated version-28 databases.
+/// Requires identical columns, defaults, foreign keys and indexes for fresh and migrated current databases.
 #[test]
-fn fresh_and_migrated_version28_have_identical_schema() {
+fn fresh_and_migrated_current_version_have_identical_schema() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
     let (_, database) = version27Database("database-v28-schema-parity");
     database.openWithMigrations().unwrap();
     let upgraded = schemaDefinitions(&database.store);
     database.dropAllTables().unwrap();
     database.createAllTables().unwrap();
-    database.store.setUserVersion(28).unwrap();
-    assert_eq!(schemaDefinitions(&database.store), upgraded);
+    database.store.setUserVersion(DATABASE_VERSION).unwrap();
+    let fresh = schemaDefinitions(&database.store);
+    assert_eq!(fresh.keys().collect::<Vec<_>>(), upgraded.keys().collect::<Vec<_>>());
+    for (key, expected) in upgraded { assert_eq!(fresh[&key], expected, "schema entry: {key}"); }
 }
 

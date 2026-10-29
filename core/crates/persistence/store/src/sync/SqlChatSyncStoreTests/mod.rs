@@ -489,6 +489,103 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
     }
 }
 
+/// Rejoining replicas converge on deletion despite old snapshots, in-flight replies and repeated delivery.
+#[test]
+fn chat_deletion_survives_rejoin_and_late_writes_on_three_replicas() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_aPaths, aDatabase, a) = openTestStore("delete-rejoin-a");
+    insertChatMessage(&aDatabase, "deleted-chat", 100, "original");
+    a.recordChatSnapshot("deleted-chat").unwrap();
+    let initial = a.operationsSince(&SyncClock::empty(), &[], 100).unwrap();
+    let (_bPaths, bDatabase, b) = openTestStore("delete-rejoin-b");
+    for operation in &initial { b.applyOperation(operation).unwrap(); }
+
+    // B keeps executing while A is disconnected and deletes its own copy.
+    assert!(a.deleteChat("deleted-chat").unwrap());
+    let count = sqlOperationCount(&aDatabase);
+    assert!(a.deleteChat("deleted-chat").unwrap());
+    assert_eq!(sqlOperationCount(&aDatabase), count, "retry must reuse the durable deletion fact");
+    let deletion = a.operationsSince(&SyncClock::empty(), &[], 100).unwrap().into_iter().find(|op| op.operation == "delete").unwrap();
+    insertChatMessage(&bDatabase, "deleted-chat", 200, "late remote reply");
+    b.recordMessageSnapshot("deleted-chat", 200).unwrap();
+    let late = b.operationsSince(&SyncClock::empty(), &[], 100).unwrap().into_iter().find(|op| op.originDeviceId == b.originDeviceId).unwrap();
+
+    let (cPaths, cDatabase, c) = openTestStore("delete-rejoin-c");
+    let mut branch = chat("independent-branch");
+    branch.parentChatId = Some("deleted-chat".into());
+    cDatabase.chatDao().insertChat(branch).unwrap();
+    for store in [&a, &b, &c] {
+        store.applyOperation(&deletion).unwrap();
+        store.applyOperation(&late).unwrap();
+        for operation in &initial { store.applyBootstrapOperation(operation).unwrap(); }
+        store.applyOperation(&late).unwrap();
+        store.applyOperation(&deletion).unwrap();
+        assert!(store.chatIsDeleted("deleted-chat").unwrap());
+        assert!(store.receipt().unwrap().containsSequence(&late.originDeviceId, late.sequence));
+    }
+    for database in [&aDatabase, &bDatabase, &cDatabase] {
+        assert!(database.chatDao().getChatById("deleted-chat").unwrap().is_none());
+        assert!(database.messageDao().getMessagesForChat("deleted-chat").unwrap().is_empty());
+        assert_eq!(database.store().queryScalar::<i64>("SELECT COUNT(*) FROM message_parts WHERE chatId='deleted-chat'", Vec::new()).unwrap(), 0);
+    }
+    assert!(cDatabase.chatDao().getChatById("independent-branch").unwrap().is_some());
+    let mut mixed = upsertOperation(500, "unrelated message");
+    let mut mixedPayload: ChatSyncPayload = serde_json::from_value(mixed.payload).unwrap();
+    mixedPayload.chatRows.push(chat("deleted-chat"));
+    mixedPayload.messageRows.push(message("deleted-chat", 300, "must stay deleted"));
+    mixedPayload.partRows.push(messagePart("deleted-chat", 300, "must stay deleted"));
+    mixed.payload = serde_json::to_value(mixedPayload).unwrap();
+    c.applyOperation(&mixed).unwrap();
+    assert!(cDatabase.chatDao().getChatById("deleted-chat").unwrap().is_none());
+    assert_eq!(cDatabase.messageDao().getMessagesForChat("chat-remote").unwrap().len(), 1);
+    assert!(c.receipt().unwrap().containsSequence(&mixed.originDeviceId, mixed.sequence));
+    let draft = chat("deleted-chat").toChatHistory(Vec::new());
+    assert!(c.commitChatDraft(&draft, None).is_err());
+    assert!(c.commitImportedChatRecords(chat("deleted-chat"), Vec::new(), Vec::new(), Vec::new()).is_err());
+    assert_eq!(c.operationsSince(&SyncClock::empty(), &[], 100).unwrap().into_iter().find(|op| op.opId == late.opId).unwrap(), late,
+        "ignored materializations must still relay their original operation");
+    AppDatabase::closeDatabase();
+    let reopened = AppDatabase::getDatabase(cPaths.clone()).unwrap();
+    let reopenedSync = SqlChatSyncStore::new(cPaths, &reopened).unwrap();
+    assert!(reopenedSync.chatIsDeleted("deleted-chat").unwrap());
+    reopenedSync.applyOperation(&late).unwrap();
+    assert!(reopened.chatDao().getChatById("deleted-chat").unwrap().is_none());
+}
+
+/// A failed journal insert rolls back the chat, its children and its deletion marker together.
+#[test]
+fn chat_deletion_is_atomic_and_respects_the_local_lock() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database, store) = openTestStore("delete-atomic");
+    insertChatMessage(&database, "atomic-chat", 100, "must survive rollback");
+    database.store().executeBatch("CREATE TRIGGER reject_chat_delete BEFORE INSERT ON sync_sql_operations WHEN NEW.operation='delete' BEGIN SELECT RAISE(ABORT,'injected journal failure'); END;").unwrap();
+    assert!(store.deleteChat("atomic-chat").is_err());
+    assert!(database.chatDao().getChatById("atomic-chat").unwrap().is_some());
+    assert_eq!(database.messageDao().getMessagesForChat("atomic-chat").unwrap().len(), 1);
+    assert!(!store.chatIsDeleted("atomic-chat").unwrap());
+    database.store().executeBatch("DROP TRIGGER reject_chat_delete; UPDATE chats SET locked=1 WHERE id='atomic-chat';").unwrap();
+    assert!(!store.deleteChat("atomic-chat").unwrap());
+    assert!(!store.chatIsDeleted("atomic-chat").unwrap());
+    database.store().executeBatch("UPDATE chats SET locked=0 WHERE id='atomic-chat';").unwrap();
+    assert!(store.deleteChat("atomic-chat").unwrap());
+    assert!(store.chatIsDeleted("atomic-chat").unwrap());
+}
+
+/// Same-ID content corrections cannot erase the terminal lifecycle of an already deleted chat.
+#[test]
+fn chat_deletion_cannot_be_retracted_by_an_operation_revision() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database, store) = openTestStore("delete-revision");
+    database.chatDao().insertChat(chat("deleted-chat")).unwrap();
+    assert!(store.deleteChat("deleted-chat").unwrap());
+    let mut revision = store.operationsSince(&SyncClock::empty(), &[], 100).unwrap().pop().unwrap();
+    revision.payload = serde_json::to_value(ChatSyncPayload { chatRows: vec![chat("deleted-chat")], ..Default::default() }).unwrap();
+    revision.createdAt += 100;
+    assert!(store.applyOperation(&revision).is_err());
+    assert!(store.chatIsDeleted("deleted-chat").unwrap());
+    assert!(database.chatDao().getChatById("deleted-chat").unwrap().is_none());
+}
+
 /// Replacing a SQL operation updates both business rows and subsequent exports, never just receipts.
 #[test]
 fn same_id_chat_revision_keeps_newer_payload_and_export() {
@@ -503,6 +600,11 @@ fn same_id_chat_revision_keeps_newer_payload_and_export() {
     assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, "new");
     assert_eq!(store.operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()], 10).unwrap(), vec![new]);
     assert_eq!(sqlOperationCount(&database), 1);
+    let ids = store.operationIdsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()]).unwrap();
+    assert_eq!(ids, BTreeSet::from([old.opId.clone()]));
+    let mut receipt = SyncReceipt::default();
+    receipt.observe(&old.originDeviceId, old.sequence);
+    assert!(store.operationIdsSince(&receipt, &[CHAT_SYNC_DOMAIN.into()]).unwrap().is_empty());
     AppDatabase::closeDatabase();
 }
 

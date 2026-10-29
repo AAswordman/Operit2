@@ -7706,6 +7706,24 @@ abstract class AppLocalizations {
   /// **'Exchanging records'**
   String get deviceSpaceSyncRecords;
 
+  /// No description provided for @deviceSpaceSyncRecordProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'{completed} / {total} records · {percent}%'**
+  String deviceSpaceSyncRecordProgress(int completed, int total, int percent);
+
+  /// No description provided for @deviceSpaceSyncPendingCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} records pending application'**
+  String deviceSpaceSyncPendingCount(int count);
+
+  /// No description provided for @deviceSpaceSyncCounting.
+  ///
+  /// In en, this message translates to:
+  /// **'Counting total · {count} records processed'**
+  String deviceSpaceSyncCounting(int count);
+
   /// No description provided for @deviceSpaceSyncFiles.
   ///
   /// In en, this message translates to:

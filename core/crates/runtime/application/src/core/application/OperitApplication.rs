@@ -868,6 +868,7 @@ impl OperitApplication {
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
         result["pending"] = serde_json::json!(pending);
+        result["pendingOperationIds"] = serde_json::json!(store.pendingOperationIds().map_err(|error| error.to_string())?);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
             .map_err(|error| error.to_string())?;
         result["errors"] = serde_json::json!(errors);
@@ -949,6 +950,7 @@ impl OperitApplication {
         domains: Vec<String>,
         limit: usize,
     ) -> Result<serde_json::Value, String> {
+        let includeProgress = clock.get("includeProgress").and_then(serde_json::Value::as_bool) == Some(true);
         let receipt: SyncReceipt = serde_json::from_value(clock).map_err(|error| error.to_string())?;
         receipt.validate()?;
         let storage = self.hostManager.runtimeStorageHost.clone()
@@ -959,12 +961,15 @@ impl OperitApplication {
         }
         let store = self.runtimeSyncOperationStore()?;
         let mut operations = Vec::new();
+        let mut inventory = std::collections::BTreeSet::new();
+        let mut progressErrors = Vec::new();
         let mut failedDomains = std::collections::BTreeSet::new();
-        match store.operationsSinceWithBudget(
+        match store.operationsSinceWithInventory(
             &receipt,
             &domains,
             limit,
             DEFAULT_SYNC_PAGE_BYTES,
+            includeProgress.then_some(&mut inventory),
             |operation| !isRetiredCharacterOperation(operation),
         ) {
             Ok(page) => operations.extend(page),
@@ -982,6 +987,12 @@ impl OperitApplication {
         match SqlChatSyncStore::default()
             .map_err(|error| error.to_string())
             .and_then(|store| {
+                if includeProgress {
+                    match store.operationIdsSince(&receipt, &domains) {
+                        Ok(ids) => inventory.extend(ids),
+                        Err(error) => progressErrors.push(format!("chat inventory: {error}")),
+                    }
+                }
                 store
                     .operationsSince(&receipt, &domains, limit)
                     .map_err(|error| error.to_string())
@@ -998,6 +1009,15 @@ impl OperitApplication {
                 .any(|domain| domain == PLUGIN_STORAGE_SYNC_DOMAIN)
         {
             match self.pluginSqliteHost().and_then(|host| {
+                if includeProgress {
+                    match PluginStorage::operationIdsSince(host.clone(), &receipt) {
+                        Ok((ids, inventoryErrors)) => {
+                            inventory.extend(ids);
+                            progressErrors.extend(inventoryErrors);
+                        }
+                        Err(error) => progressErrors.push(format!("plugin_storage inventory: {error}")),
+                    }
+                }
                 PluginStorage::exportWithBudget(
                     host,
                     &receipt,
@@ -1039,9 +1059,9 @@ impl OperitApplication {
         operations = compactSyncOperations(operations);
         operations.truncate(limit);
         let operations = boundSyncOperationPage(operations, DEFAULT_SYNC_PAGE_BYTES);
-        Ok(
-            serde_json::json!({ "operations": operations, "errors": errors, "failedDomains": failedDomains }),
-        )
+        let remaining = (includeProgress && errors.is_empty() && progressErrors.is_empty()).then_some(inventory.len());
+        Ok(serde_json::json!({ "operations": operations, "remaining": remaining, "progressErrors": progressErrors,
+            "errors": errors, "failedDomains": failedDomains }))
     }
 
     /// Durably receives originals and materializes independent owners without acknowledging failed application.
@@ -1245,7 +1265,8 @@ impl OperitApplication {
             );
         }
         Ok(
-            serde_json::json!({ "received": operations.len(), "applied": applied.len(), "skipped": skippedCount, "pending": remaining, "errors": errors }),
+            serde_json::json!({ "received": operations.len(), "applied": applied.len(), "skipped": skippedCount, "pending": remaining,
+                "pendingOperationIds": store.pendingOperationIds().map_err(|error| error.to_string())?, "errors": errors }),
         )
     }
 
@@ -1276,6 +1297,22 @@ impl OperitApplication {
         if chatIds.is_empty() {
             return Ok(());
         }
+        let store = SqlChatSyncStore::default().map_err(|error| error.to_string())?;
+        let mut deletedChatIds = Vec::new();
+        let mut liveChatIds = Vec::new();
+        for chatId in chatIds {
+            if store.chatIsDeleted(chatId).map_err(|error| error.to_string())? {
+                deletedChatIds.push(chatId.clone());
+            } else {
+                liveChatIds.push(chatId.clone());
+            }
+        }
+        if !deletedChatIds.is_empty() {
+            self.dispatchSynchronizedChatDeletions(deletedChatIds)?;
+        }
+        if liveChatIds.is_empty() {
+            return Ok(());
+        }
         let mut holder = self.chatRuntimeHolder.try_lock().map_err(|_| {
             "chat runtime holder is busy during synchronized chat refresh".to_string()
         })?;
@@ -1290,7 +1327,7 @@ impl OperitApplication {
                     activeChatIds.join(",")
                 ),
             );
-            for chatId in chatIds {
+            for chatId in &liveChatIds {
                 let flowSnapshot = core
                     .chatHistoryDelegate
                     .chatMessageFlowsByChatId
@@ -1362,6 +1399,29 @@ impl OperitApplication {
         );
         Ok(())
     }
+
+    /// Applies committed chat deletions once the shared runtime is available, including active streams.
+    fn dispatchSynchronizedChatDeletions(&self, chatIds: Vec<String>) -> Result<(), String> {
+        let scheduler = self.hostManager.hostRuntimeTaskSchedulerHost.clone().ok_or_else(|| {
+            "runtime task scheduler host must be configured for synchronized chat deletion".to_string()
+        })?;
+        let holder = self.chatRuntimeHolder.clone();
+        scheduler.scheduleHostRuntimeAsyncTask("operit-chat-sync-deletion", Box::new(move || {
+            Box::pin(async move {
+                let mut holder = holder.lock().await;
+                for core in holder.cores.values_mut() {
+                    for chatId in &chatIds {
+                        if let Err(error) = core.applySynchronizedChatDeletion(chatId.clone()).await {
+                            AppLogger::e("CoreSyncTrace", &format!(
+                                "sync_apply.chat_deletion_cleanup chatId={chatId}: {error}"
+                            ));
+                        }
+                    }
+                }
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>
+        })).map_err(|error| error.to_string())
+    }
+
     /// Reports whether one complete verified synchronization blob exists locally.
     #[allow(non_snake_case)]
     pub fn syncBlobExists(&self, contentHash: String, size: i64) -> Result<bool, String> {
