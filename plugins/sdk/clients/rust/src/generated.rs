@@ -4,6 +4,28 @@ use operit_link::{CoreEventStream, CoreLinkError, CoreLinkPushSession, CoreValue
 use operit_plugin_sdk_ipc::PluginSdkClient;
 use crate::{decode_messagepack_value, OperitPluginSdkTypedEventStream};
 
+/// Generated SDK model for `operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolDisplayDeclaration {
+    #[serde(rename = "label")]
+    pub label: std::collections::BTreeMap<String, String>,
+    #[serde(rename = "icon")]
+    pub icon: String,
+    #[serde(rename = "targetParameter")]
+    pub target_parameter: Option<String>,
+    #[serde(rename = "resultRenderer")]
+    pub result_renderer: SdkToolResultRenderer,
+}
+
+/// Generated SDK enum for `operit_plugin_sdk::js_sdk::tool_display::ToolResultRenderer`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SdkToolResultRenderer {
+    Directory,
+    FileDiff,
+    Text,
+}
+
 /// Generated SDK model for `operit_plugin_sdk::package::EnvVar`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SdkEnvVar {
@@ -27,6 +49,8 @@ pub struct SdkLocalizedText {
 /// Generated SDK model for `operit_plugin_sdk::package::PackageTool`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SdkPackageTool {
+    #[serde(rename = "display")]
+    pub display: Option<SdkToolDisplayDeclaration>,
     #[serde(rename = "name")]
     pub name: String,
     #[serde(rename = "description")]

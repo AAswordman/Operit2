@@ -102,6 +102,8 @@ pub struct ToolPackageState {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 /// Executable tool declaration inside a package manifest.
 pub struct PackageTool {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::js_sdk::tool_display::ToolDisplayDeclaration>,
     pub name: String,
     pub description: LocalizedText,
     pub parameters: Vec<PackageToolParameter>,

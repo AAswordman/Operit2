@@ -33,6 +33,7 @@ pub mod storage;
 pub mod storage_facade;
 pub mod system;
 pub mod tool_types;
+pub mod tool_display;
 pub mod toolpkg;
 pub mod ui;
 

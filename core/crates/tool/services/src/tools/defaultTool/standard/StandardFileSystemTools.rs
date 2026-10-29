@@ -1693,7 +1693,14 @@ impl StandardFileSystemTools {
     /// Creates a new file from structured tool parameters.
     pub async fn createFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let newContent = parameterValue(tool, "new");
+        let newContent = {
+            let value = parameterValue(tool, "new");
+            if value.trim().is_empty() {
+                parameterValue(tool, "content")
+            } else {
+                value
+            }
+        };
         let mut results = self
             .applyFile(&AITool {
                 name: "apply_file".to_string(),

@@ -2325,5 +2325,20 @@
   "peerQrCameraPermission": "Camera access is required. Allow it in system settings, or import a QR image.",
   "peerQrDevice": "Connect device",
   "peerQrScanAgain": "Scan another code",
-  "peerQrMethodsHint": "Can’t find the device? Connect with a QR code."
+  "peerQrMethodsHint": "Can’t find the device? Connect with a QR code.",
+  "toolParametersLabel": "Parameters",
+  "toolResultLabel": "Result",
+  "toolGroupThinkingCount": "{count} thinking",
+  "toolGroupCallCount": "{count, plural, one{{count} call} other{{count} calls}}",
+  "toolGroupSearchCount": "{count} search",
+  "toolEditedFileCount": "{count, plural, one{Edited {count} file} other{Edited {count} files}}",
+  "toolViewChanges": "View changes",
+  "toolViewFileDiff": "View diff for {fileName}",
+  "@toolEditedFileCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolViewFileDiff": {"placeholders": {"fileName": {"type": "String"}}},
+  "toolGroupCompleted": "Completed",
+  "toolGroupExecuting": "Executing",
+  "@toolGroupThinkingCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolGroupCallCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}}
 }

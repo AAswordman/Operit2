@@ -124,14 +124,25 @@ impl MessagePartCodec {
             .ok_or_else(|| "tool result is missing its name attribute".to_string())?;
         let status = attr_value(raw, "status")
             .ok_or_else(|| "tool result is missing its status attribute".to_string())?;
-        Ok(MessagePart::toolResult(
+        let mut part = MessagePart::toolResult(
             partId,
             sequence,
             attr_value(raw, "call_id"),
             toolName,
             status,
             payload,
-        ))
+        );
+        for name in ["display", "result_data"] {
+            if let Some(value) = attr_value(raw, name) {
+                let decoded = value.replace("&quot;", "\"")
+                    .replace("&apos;", "'")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&");
+                part.attributes.insert(name.to_string(), decoded);
+            }
+        }
+        Ok(part)
     }
 
     /// Extracts the content body for a complete XML-like tag.
@@ -204,7 +215,11 @@ impl MessagePartCodec {
             markup.push_str(&Self::escapeAttribute(callId));
             markup.push('\"');
         }
-        Self::appendAttributes(markup, &part.attributes);
+        let providerAttributes = part.attributes.iter()
+            .filter(|(name, _)| !matches!(name.as_str(), "display" | "result_data"))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        Self::appendAttributes(markup, &providerAttributes);
         markup.push_str("><content>");
         markup.push_str(&part.content);
         markup.push_str("</content></tool_result>");

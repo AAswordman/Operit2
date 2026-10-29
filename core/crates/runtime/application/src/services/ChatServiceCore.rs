@@ -1071,7 +1071,10 @@ impl ChatServiceCore {
 
     /// Splits markdown content into stable render events for the client.
     pub fn splitMarkdownContent(&self, content: String) -> Vec<MarkdownStreamEvent> {
-        MarkdownRenderEventStream::fromContent(content)
+        let mut events = MarkdownRenderEventStream::fromContent(content);
+        let handler = self.runtimeToolHandler();
+        for event in &mut events { handler.decorateToolDisplayEvent(event); }
+        events
     }
 
     /// Observes committed XML render hook changes so existing message nodes can re-render.
@@ -1270,13 +1273,21 @@ impl ChatServiceCore {
             .as_ref()
             .ok_or("Chat deletion requires an initialized runtime")?;
         let backupChatId = chatId.clone();
+        let backupWorkspacePath = self
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .loadChatHistory(chatId.clone())
+            .map_err(|error| error.to_string())?
+            .and_then(|chat| self.chatHistoryDelegate.primaryWorkspacePathForChat(&chat));
         let deleted = self
             .chatHistoryDelegate
             .deleteChatHistory(service, chatId)
             .await?;
         if deleted {
-            WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
-                .deleteChatState(Some(backupChatId));
+            if let Some(workspacePath) = backupWorkspacePath {
+                WorkspaceBackupManager::getInstance(self.runtimeToolHandler().getContext())
+                    .deleteChatState(workspacePath, Some(backupChatId));
+            }
         }
         self.syncTokenStatisticsForCurrentChat();
         Ok(deleted)

@@ -48,6 +48,7 @@ uuid.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
 rusqlite.workspace = true
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 

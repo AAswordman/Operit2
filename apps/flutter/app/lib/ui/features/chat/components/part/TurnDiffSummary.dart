@@ -11,6 +11,8 @@ import '../WorkspaceShell.dart';
 import '../workspace/WorkspaceDiffContent.dart';
 import '../workspace/WorkspaceDiffReview.dart';
 import 'FileDiffDisplay.dart';
+import 'ToolDisplayComponents.dart'
+    show fileDiffsForResult, decodeToolMetadata, toolDisplayFromAttributes;
 
 /// Collects the file diffs applied by one completed assistant turn.
 WorkspaceDiffReview reviewForMessage(ChatUiMessage message) {
@@ -20,11 +22,11 @@ WorkspaceDiffReview reviewForMessage(ChatUiMessage message) {
     if (part.kind != core_proxy.MessagePartKind.toolResult) {
       continue;
     }
-    final toolName = part.toolName ?? '';
-    if (!isFileDiffTool(toolName)) {
-      continue;
-    }
-    for (final diff in extractFileDiffs(part.content)) {
+    for (final diff in fileDiffsForResult(
+      part.content,
+      decodeToolMetadata(part.attributes['result_data']),
+      display: toolDisplayFromAttributes(part.attributes),
+    )) {
       final previous = merged[diff.path];
       if (previous == null) {
         order.add(diff.path);
@@ -63,11 +65,11 @@ WorkspaceDiffReview reviewForMessages(Iterable<ChatUiMessage> messages) {
       if (part.kind != core_proxy.MessagePartKind.toolResult) {
         continue;
       }
-      final toolName = part.toolName ?? '';
-      if (!isFileDiffTool(toolName)) {
-        continue;
-      }
-      for (final diff in extractFileDiffs(part.content)) {
+      for (final diff in fileDiffsForResult(
+        part.content,
+        decodeToolMetadata(part.attributes['result_data']),
+        display: toolDisplayFromAttributes(part.attributes),
+      )) {
         final previous = merged[diff.path];
         if (previous == null) {
           order.add(diff.path);
@@ -161,7 +163,6 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    final isZh = Localizations.localeOf(context).languageCode == 'zh';
     final review = widget.review;
 
     final cardBorderColor = colorScheme.outline.withValues(alpha: 0.25);
@@ -172,10 +173,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
       child: OperitGlassSurface(
         color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: cardBorderColor,
-          width: 0.8,
-        ),
+        border: Border.all(color: cardBorderColor, width: 0.8),
         layer: OperitGlassSurfaceLayer.card,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -191,7 +189,10 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                   bottom: Radius.circular(_filesExpanded ? 0 : 10),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
                   child: Row(
                     children: <Widget>[
                       // Left icon container
@@ -210,9 +211,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                       const SizedBox(width: 8),
                       // Title
                       Text(
-                        isZh
-                            ? '已编辑 ${review.files.length} 个文件'
-                            : 'Edited ${review.files.length} file${review.files.length > 1 ? "s" : ""}',
+                        l10n.toolEditedFileCount(review.files.length),
                         style: theme.textTheme.labelMedium?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: colorScheme.onSurface,
@@ -235,8 +234,8 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                           style: const TextStyle(fontSize: 11.5),
                         ),
                         style: TextButton.styleFrom(
-                          foregroundColor:
-                              colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                          foregroundColor: colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.8),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
                             vertical: 4,
@@ -261,10 +260,14 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                               vertical: 3.5,
                             ),
                             decoration: BoxDecoration(
-                              color: colorScheme.primary.withValues(alpha: 0.12),
+                              color: colorScheme.primary.withValues(
+                                alpha: 0.12,
+                              ),
                               borderRadius: BorderRadius.circular(16),
                               border: Border.all(
-                                color: colorScheme.primary.withValues(alpha: 0.35),
+                                color: colorScheme.primary.withValues(
+                                  alpha: 0.35,
+                                ),
                                 width: 0.8,
                               ),
                             ),
@@ -272,7 +275,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
                                 Text(
-                                  isZh ? '查看变更' : 'View Changes',
+                                  l10n.toolViewChanges,
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w500,
@@ -347,12 +350,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: <Widget>[
                                     for (final file in review.files)
-                                      _buildFileRow(
-                                        context,
-                                        file,
-                                        colorScheme,
-                                        isZh,
-                                      ),
+                                      _buildFileRow(context, file, colorScheme),
                                   ],
                                 ),
                               ),
@@ -373,7 +371,6 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
     BuildContext context,
     WorkspaceDiffFile file,
     ColorScheme colorScheme,
-    bool isZh,
   ) {
     return Material(
       color: Colors.transparent,
@@ -381,9 +378,9 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
         onTap: () => _openSingleFileDiff(file),
         borderRadius: BorderRadius.circular(6),
         child: Tooltip(
-          message: isZh
-              ? '查看 ${file.fileName} 的变更'
-              : 'View diff for ${file.fileName}',
+          message: AppLocalizations.of(
+            context,
+          )!.toolViewFileDiff(file.fileName),
           waitDuration: const Duration(milliseconds: 400),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -426,10 +423,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                 ),
                 const SizedBox(width: 8),
                 // File diff line count stats
-                _StatLine(
-                  additions: file.additions,
-                  deletions: file.deletions,
-                ),
+                _StatLine(additions: file.additions, deletions: file.deletions),
                 const SizedBox(width: 2),
                 Icon(
                   Icons.chevron_right_rounded,

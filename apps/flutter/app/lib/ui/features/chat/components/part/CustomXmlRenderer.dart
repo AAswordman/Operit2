@@ -32,6 +32,7 @@ class CustomXmlRenderer extends StatelessWidget {
     required this.isStreaming,
     required this.textColor,
     this.xmlStream,
+    this.xmlAttributes,
     this.xmlMarkdownEventStream,
     this.showThinkingProcess = true,
     this.initialThinkingExpanded = false,
@@ -43,6 +44,7 @@ class CustomXmlRenderer extends StatelessWidget {
   final bool isStreaming;
   final Color textColor;
   final Stream<String>? xmlStream;
+  final Map<String, String>? xmlAttributes;
   final Stream<Object>? xmlMarkdownEventStream;
   final bool showThinkingProcess;
   final bool initialThinkingExpanded;
@@ -52,7 +54,7 @@ class CustomXmlRenderer extends StatelessWidget {
   /// Builds the rendered XML message content.
   @override
   Widget build(BuildContext context) {
-    final parsed = _ParsedXml.from(xmlContent);
+    final parsed = _ParsedXml.from(xmlContent, attributes: xmlAttributes);
     if (_shouldHideGeminiThoughtSignatureMeta(xmlContent, parsed.tagName)) {
       return const SizedBox.shrink();
     }
@@ -142,6 +144,8 @@ class CustomXmlRenderer extends StatelessWidget {
             result.toolName,
             result.resultContent,
             isSuccess: result.isSuccess,
+            display: toolDisplayFromAttributes(parsed.attributes),
+            resultData: decodeToolMetadata(parsed.attributes['result_data']),
           ),
           isStreaming: isStreaming,
         );
@@ -477,44 +481,21 @@ class _ToolRequestRenderer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rawToolName = parsed.attr('name') ?? 'Unknown tool';
-    final params = _extractParamsFromTool(xmlContent);
     final paramText = _extractContentFromXml(
       xmlContent,
       tagName: 'tool',
     ).trim();
-    final displayToolName = _resolveToolDisplayNameForRender(
-      rawToolName,
-      params,
-    );
     final isClosed = _isXmlFullyClosed(xmlContent);
     final initialTokenEstimate = _estimateTokenCount(paramText);
 
     Widget renderWithEstimate(int paramTokenEstimate) {
-      if (displayToolName == 'apply_file' ||
-          displayToolName == 'create_file' ||
-          displayToolName == 'edit_file') {
-        if (isClosed) {
-          return CompactToolDisplay(
-            toolName: rawToolName,
-            params: paramText,
-            textColor: textColor,
-            isStreaming: isStreaming,
-          );
-        }
-        return DetailedToolDisplay(
-          toolName: rawToolName,
-          params: paramText,
-          textColor: textColor,
-          isStreaming: isStreaming,
-        );
-      }
-
       if (!isClosed && paramTokenEstimate > _toolParamTokenThreshold) {
         return DetailedToolDisplay(
           toolName: rawToolName,
           params: paramText,
           textColor: textColor,
           isStreaming: isStreaming,
+          display: toolDisplayFromAttributes(parsed.attributes),
         );
       }
 
@@ -523,6 +504,7 @@ class _ToolRequestRenderer extends StatelessWidget {
         params: paramText,
         textColor: textColor,
         isStreaming: isStreaming,
+        display: toolDisplayFromAttributes(parsed.attributes),
       );
     }
 
@@ -730,153 +712,158 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     const switchDuration = Duration(milliseconds: 220);
     return SelectionContainer.disabled(
       child: Semantics(
-      label: contentText.isEmpty
-          ? thinkingTitle
-          : '$thinkingTitle\n$contentText',
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 2),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            MessagePressShieldRegion(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: _handleHeaderTap,
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: <Widget>[
-                        Icon(
-                          Icons.psychology_outlined,
-                          size: 16,
-                          color: widget.isStreaming
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.8,
+        label: contentText.isEmpty
+            ? thinkingTitle
+            : '$thinkingTitle\n$contentText',
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              MessagePressShieldRegion(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: _handleHeaderTap,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: <Widget>[
+                          Icon(
+                            Icons.psychology_outlined,
+                            size: 16,
+                            color: widget.isStreaming
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant.withValues(
+                                    alpha: 0.8,
+                                  ),
+                          ),
+                          const SizedBox(width: 6),
+                          _ThinkingTitle(
+                            text: thinkingTitle,
+                            color: widget.isStreaming
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                            streaming: widget.isStreaming,
+                          ),
+                          if (!_expanded && previewText.isNotEmpty) ...<Widget>[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
                               ),
-                        ),
-                        const SizedBox(width: 6),
-                        _ThinkingTitle(
-                          text: thinkingTitle,
-                          color: widget.isStreaming
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onSurfaceVariant,
-                          streaming: widget.isStreaming,
-                        ),
-                        if (!_expanded && previewText.isNotEmpty) ...<Widget>[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            child: Text(
-                              '·',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: theme.colorScheme.outlineVariant,
+                              child: Text(
+                                '·',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: theme.colorScheme.outlineVariant,
+                                ),
                               ),
                             ),
-                          ),
-                          Expanded(
-                            child: _ThinkingPreviewTicker(
-                              text: previewText,
-                              isStreaming: widget.isStreaming,
-                              textColor: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.7),
+                            Expanded(
+                              child: _ThinkingPreviewTicker(
+                                text: previewText,
+                                isStreaming: widget.isStreaming,
+                                textColor: theme.colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.7),
+                              ),
                             ),
-                          ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            AnimatedSwitcher(
-              duration: switchDuration,
-              reverseDuration: switchDuration,
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeOutCubic,
-              transitionBuilder: (child, animation) {
-                return SizeTransition(
-                  sizeFactor: animation,
-                  axisAlignment: -1.0,
-                  child: FadeTransition(opacity: animation, child: child),
-                );
-              },
-              child: shouldRenderBody
-                  ? Padding(
-                      key: ValueKey<int>(_expandSession),
-                      padding: const EdgeInsets.only(top: 2, bottom: 4),
-                      child: Stack(
-                        children: <Widget>[
-                          PositionedDirectional(
-                            start: 10,
-                            top: 0,
-                            bottom: 0,
-                            child: Container(
-                              width: 1,
-                              decoration: BoxDecoration(
-                                color: color.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(999),
+              AnimatedSwitcher(
+                duration: switchDuration,
+                reverseDuration: switchDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeOutCubic,
+                transitionBuilder: (child, animation) {
+                  return SizeTransition(
+                    sizeFactor: animation,
+                    axisAlignment: -1.0,
+                    child: FadeTransition(opacity: animation, child: child),
+                  );
+                },
+                child: shouldRenderBody
+                    ? Padding(
+                        key: ValueKey<int>(_expandSession),
+                        padding: const EdgeInsets.only(top: 2, bottom: 4),
+                        child: Stack(
+                          children: <Widget>[
+                            PositionedDirectional(
+                              start: 10,
+                              top: 0,
+                              bottom: 0,
+                              child: Container(
+                                width: 1,
+                                decoration: BoxDecoration(
+                                  color: color.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
                               ),
                             ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsetsDirectional.only(
-                              start: 24,
-                            ),
-                            child: MessagePressShieldRegion(
-                              child: GestureDetector(
-                                key: const ValueKey<String>(
-                                  'thinking-body-toggle',
-                                ),
-                                behavior: HitTestBehavior.translucent,
-                                onTap: _handleBodyTap,
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: AnimatedSize(
-                                    alignment: Alignment.topCenter,
-                                    duration: const Duration(milliseconds: 240),
-                                    curve: Curves.easeOutCubic,
-                                    child: ConstrainedBox(
-                                      constraints: bodyConstraints,
-                                      child:
-                                          NotificationListener<
-                                            ScrollNotification
-                                          >(
-                                            onNotification:
-                                                _handleScrollNotification,
-                                            child: SingleChildScrollView(
-                                              controller: _scrollController,
-                                              physics: bodyScrollPhysics,
-                                              child: _ThinkMarkdownBody(
-                                                contentText: contentText,
-                                                contentStream:
-                                                    hasStreamingMarkdown
-                                                    ? widget.markdownEventStream
-                                                    : null,
-                                                textColor: widget.textColor,
-                                                splitMarkdownContent:
-                                                    widget.splitMarkdownContent,
+                            Padding(
+                              padding: const EdgeInsetsDirectional.only(
+                                start: 24,
+                              ),
+                              child: MessagePressShieldRegion(
+                                child: GestureDetector(
+                                  key: const ValueKey<String>(
+                                    'thinking-body-toggle',
+                                  ),
+                                  behavior: HitTestBehavior.translucent,
+                                  onTap: _handleBodyTap,
+                                  child: SizedBox(
+                                    width: double.infinity,
+                                    child: AnimatedSize(
+                                      alignment: Alignment.topCenter,
+                                      duration: const Duration(
+                                        milliseconds: 240,
+                                      ),
+                                      curve: Curves.easeOutCubic,
+                                      child: ConstrainedBox(
+                                        constraints: bodyConstraints,
+                                        child:
+                                            NotificationListener<
+                                              ScrollNotification
+                                            >(
+                                              onNotification:
+                                                  _handleScrollNotification,
+                                              child: SingleChildScrollView(
+                                                controller: _scrollController,
+                                                physics: bodyScrollPhysics,
+                                                child: _ThinkMarkdownBody(
+                                                  contentText: contentText,
+                                                  contentStream:
+                                                      hasStreamingMarkdown
+                                                      ? widget
+                                                            .markdownEventStream
+                                                      : null,
+                                                  textColor: widget.textColor,
+                                                  splitMarkdownContent: widget
+                                                      .splitMarkdownContent,
+                                                ),
                                               ),
                                             ),
-                                          ),
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : const SizedBox.shrink(key: ValueKey<String>('empty')),
-            ),
-          ],
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(key: ValueKey<String>('empty')),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -1111,11 +1098,7 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
         return LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
-          colors: const <Color>[
-            Colors.white,
-            Colors.white,
-            Colors.transparent,
-          ],
+          colors: const <Color>[Colors.white, Colors.white, Colors.transparent],
           stops: const <double>[0.0, 0.92, 1.0],
         ).createShader(bounds);
       },
@@ -1894,7 +1877,7 @@ class _ParsedXml {
     required this.body,
   });
 
-  factory _ParsedXml.from(String xml) {
+  factory _ParsedXml.from(String xml, {Map<String, String>? attributes}) {
     xml = sanitizeUtf16(xml);
     final open = RegExp(
       r'^<([a-zA-Z_][\w:-]*)\b([^>]*)>',
@@ -1905,14 +1888,15 @@ class _ParsedXml {
     }
     final rawTagName = open.group(1)!;
     final tagName = ChatMarkupRegex.normalizeToolLikeTagName(rawTagName)!;
-    final attributes = _parseAttributes(open.group(2) ?? '');
+    final parsedAttributes =
+        attributes ?? _parseAttributes(open.group(2) ?? '');
     final closeTag = '</${rawTagName.toLowerCase()}>';
     final lowerXml = xml.toLowerCase();
     final closeIndex = lowerXml.lastIndexOf(closeTag);
     final bodyEnd = closeIndex > open.end ? closeIndex : xml.length;
     return _ParsedXml(
       tagName: tagName,
-      attributes: attributes,
+      attributes: parsedAttributes,
       body: xml.substring(open.end, bodyEnd).trim(),
     );
   }
@@ -2010,31 +1994,6 @@ String _extractContentFromXml(String content, {String? tagName}) {
       ? endIndex
       : content.length;
   return content.substring(openMatch.end, contentEndExclusive).trim();
-}
-
-Map<String, String> _extractParamsFromTool(String content) {
-  final params = <String, String>{};
-  final pattern = RegExp(
-    r'''<param\b[^>]*name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/param>''',
-    caseSensitive: false,
-  );
-  for (final match in pattern.allMatches(content)) {
-    params[match.group(1)!] = match.group(2)!.trim();
-  }
-  return params;
-}
-
-String _resolveToolDisplayNameForRender(
-  String toolName,
-  Map<String, String> params,
-) {
-  if (toolName != 'package_proxy' && toolName != 'proxy') {
-    return toolName;
-  }
-  final targetToolName = params['tool_name'] == null
-      ? ''
-      : normalizeEscapedTextForDisplay(params['tool_name']!).trim();
-  return targetToolName.isNotEmpty ? targetToolName : toolName;
 }
 
 int _estimateTokenCount(String text) {
@@ -2150,7 +2109,7 @@ _ToolResultRenderState _extractToolResult(
     r'<content\b[^>]*>([\s\S]*?)<\/content>',
     caseSensitive: false,
   ).firstMatch(xmlContent);
-  final resultContent = (contentMatch?.group(1) ?? '').trim();
+  final resultContent = (contentMatch?.group(1) ?? parsed.body).trim();
   final isSuccess = status == 'success';
 
   if (!isSuccess) {
@@ -2165,15 +2124,9 @@ _ToolResultRenderState _extractToolResult(
     );
   }
 
-  final withoutFileDiff = resultContent
-      .replaceAll(
-        RegExp(r'<file-diff[\s\S]*<\/file-diff>', caseSensitive: false),
-        '',
-      )
-      .trim();
   return _ToolResultRenderState(
     toolName: toolName.isEmpty ? 'Unknown tool' : toolName,
     isSuccess: true,
-    resultContent: withoutFileDiff,
+    resultContent: resultContent,
   );
 }

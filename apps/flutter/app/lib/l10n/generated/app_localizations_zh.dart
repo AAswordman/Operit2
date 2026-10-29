@@ -4291,4 +4291,44 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get peerQrMethodsHint => '发现不到设备？也可以使用连接码。';
+
+  @override
+  String get toolParametersLabel => '参数';
+
+  @override
+  String get toolResultLabel => '执行结果';
+
+  @override
+  String toolGroupThinkingCount(int count) {
+    return '$count 次思考';
+  }
+
+  @override
+  String toolGroupCallCount(int count) {
+    return '$count 次调用';
+  }
+
+  @override
+  String toolGroupSearchCount(int count) {
+    return '$count 次搜索';
+  }
+
+  @override
+  String toolEditedFileCount(int count) {
+    return '已编辑 $count 个文件';
+  }
+
+  @override
+  String get toolViewChanges => '查看变更';
+
+  @override
+  String toolViewFileDiff(String fileName) {
+    return '查看 $fileName 的变更';
+  }
+
+  @override
+  String get toolGroupCompleted => '已完成';
+
+  @override
+  String get toolGroupExecuting => '正在执行';
 }

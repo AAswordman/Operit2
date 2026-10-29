@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -193,9 +195,7 @@ void main() {
     });
 
     test('matches a call without any result yet', () {
-      final nodes = <MarkdownNodeStable>[
-        _xml('<tool name="read_file" />'),
-      ];
+      final nodes = <MarkdownNodeStable>[_xml('<tool name="read_file" />')];
 
       final match = mergeRender.match(
         nodes: nodes,
@@ -322,7 +322,10 @@ void main() {
       );
 
       expect(resolvePendingToolName(<MarkdownNodeStable>[call]), 'proxy');
-      expect(resolvePendingToolName(<MarkdownNodeStable>[call, result]), isNull);
+      expect(
+        resolvePendingToolName(<MarkdownNodeStable>[call, result]),
+        isNull,
+      );
     });
   });
 
@@ -404,9 +407,7 @@ void main() {
       expect(find.text('Grep'), findsOneWidget);
     });
 
-    testWidgets('renders an edit diff inline without dialog', (
-      tester,
-    ) async {
+    testWidgets('renders an edit diff inline without dialog', (tester) async {
       final nodes = <MarkdownNodeStable>[
         _xml(
           '<tool name="edit_file"><param name="path">lib/a.dart</param></tool>',
@@ -442,15 +443,15 @@ void main() {
         ),
       );
 
-      expect(find.text('Edit'), findsOneWidget);
+      expect(find.text('Edit'), findsWidgets);
       expect(find.byType(SvgPicture), findsOneWidget);
-      expect(find.text('lib/a.dart'), findsOneWidget);
+      expect(find.text('lib/a.dart'), findsWidgets);
       expect(find.byType(FileDiffDisplay), findsOneWidget);
       expect(find.text('fresh line'), findsOneWidget);
       expect(find.textContaining('Successfully applied'), findsNothing);
       expect(find.textContaining('<file-diff'), findsNothing);
 
-      await tester.tap(find.text('Edit'));
+      await tester.tap(find.text('Edit').first);
       await tester.pumpAndSettle();
 
       expect(find.byType(FileDiffDisplay), findsNothing);
@@ -714,6 +715,38 @@ MarkdownNodeStable _xml(String content) {
     ).allMatches(openingText))
       match.group(1)!: match.group(2)!,
   };
+  final declaredDisplays = <String, Map<String, dynamic>>{
+    'read_file': {
+      'label': {'en': 'Read', 'zh': '读取'},
+      'icon': 'file',
+      'targetParameter': 'path',
+    },
+    'grep_code': {
+      'label': {'en': 'Grep', 'zh': '搜索'},
+      'icon': 'search',
+      'targetParameter': 'pattern',
+    },
+    'edit_file': {
+      'label': {'en': 'Edit', 'zh': '编辑'},
+      'resultRenderer': 'fileDiff',
+      'icon': 'edit',
+      'targetParameter': 'path',
+    },
+    'super_admin:bash': {
+      'label': {'en': 'Terminal', 'zh': '终端'},
+      'icon': 'terminal',
+      'targetParameter': 'command',
+    },
+    'execute_in_terminal_session': {
+      'label': {'en': 'Terminal', 'zh': '终端'},
+      'icon': 'terminal',
+      'targetParameter': 'command',
+    },
+  };
+  final declaredDisplay = declaredDisplays[attributes['name']];
+  if (declaredDisplay != null) {
+    attributes['display'] = jsonEncode(declaredDisplay);
+  }
   final openingEnd = opening?.end ?? 0;
   final selfClosing = trimmed.endsWith('/>');
   final closingStart = tagName == null

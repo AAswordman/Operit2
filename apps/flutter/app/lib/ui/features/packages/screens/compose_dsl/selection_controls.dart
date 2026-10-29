@@ -9,6 +9,7 @@ extension _ComposeSelectionControls on _ComposeProgramExecutorState {
     final options = _optionList(props['options']);
     final selected = _string(props['value']);
     final actionId = _actionId(props['onValueChange']);
+    final enabled = _enabled() && actionId != null;
     if (type == 'SegmentedControl') {
       return Wrap(
         spacing: 8,
@@ -17,7 +18,7 @@ extension _ComposeSelectionControls on _ComposeProgramExecutorState {
             ChoiceChip(
               label: Text(options[index].label),
               selected: options[index].value == selected,
-              onSelected: _enabled() && actionId != null
+              onSelected: enabled
                   ? (_) => _invokeAction(
                       props['onValueChange'],
                       options[index].value,
@@ -31,6 +32,7 @@ extension _ComposeSelectionControls on _ComposeProgramExecutorState {
     return InputDecorator(
       decoration: InputDecoration(labelText: label.isEmpty ? null : label),
       child: DropdownMenu<String>(
+        enabled: enabled,
         initialSelection: options.any((option) => option.value == selected)
             ? selected
             : null,
@@ -39,12 +41,12 @@ extension _ComposeSelectionControls on _ComposeProgramExecutorState {
           for (final option in options)
             DropdownMenuEntry(value: option.value, label: option.label),
         ],
-        onSelected: _enabled() && actionId == null
-            ? null
-            : (value) {
+        onSelected: enabled
+            ? (value) {
                 if (value == null) return;
-                _invokeAction(props['onValueChange'], value);
-              },
+                _invokeAction(actionId, value);
+              }
+            : null,
       ),
     );
   }

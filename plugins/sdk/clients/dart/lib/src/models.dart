@@ -2,6 +2,59 @@
 
 import 'dart:typed_data';
 
+/// Generated SDK model for Rust type `operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration`.
+class ToolDisplayDeclaration {
+  const ToolDisplayDeclaration({
+    required this.label,
+    required this.icon,
+    required this.target_parameter,
+    required this.result_renderer,
+  });
+
+  /// Decodes `operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration` from a MessagePack value map.
+  factory ToolDisplayDeclaration.fromMessagePackValue(Map<String, Object?> value) => ToolDisplayDeclaration(
+    label: (value['label'] as Map).map((key, item) => MapEntry(key as String, item as String)),
+    icon: value['icon'] as String,
+    target_parameter: value['targetParameter'] == null ? null : value['targetParameter'] as String,
+    result_renderer: ToolResultRenderer.fromMessagePackValue(value['resultRenderer'] as Map<String, Object?>),
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'label': label.map((key, item) => MapEntry(key, item)),
+    'icon': icon,
+    'targetParameter': target_parameter == null ? null : target_parameter!,
+    'resultRenderer': result_renderer.toMessagePackValue(),
+  };
+
+  final Map<String, String> label;
+  final String icon;
+  final String? target_parameter;
+  final ToolResultRenderer result_renderer;
+}
+
+enum ToolResultRenderer {
+  Directory,
+  FileDiff,
+  Text,
+  ;
+
+  /// Decodes `operit_plugin_sdk::js_sdk::tool_display::ToolResultRenderer` from its MessagePack scalar value.
+  factory ToolResultRenderer.fromMessagePackValue(Object? value) => switch (value) {
+    'directory' => ToolResultRenderer.Directory,
+    'fileDiff' => ToolResultRenderer.FileDiff,
+    'text' => ToolResultRenderer.Text,
+    _ => throw ArgumentError('Unknown ToolResultRenderer: $value'),
+  };
+
+  /// Encodes this enum into a MessagePack scalar value.
+  String toMessagePackValue() => switch (this) {
+    ToolResultRenderer.Directory => 'directory',
+    ToolResultRenderer.FileDiff => 'fileDiff',
+    ToolResultRenderer.Text => 'text',
+  };
+}
+
 /// Generated SDK model for Rust type `operit_plugin_sdk::package::EnvVar`.
 class EnvVar {
   const EnvVar({
@@ -55,6 +108,7 @@ class LocalizedText {
 /// Generated SDK model for Rust type `operit_plugin_sdk::package::PackageTool`.
 class PackageTool {
   const PackageTool({
+    required this.display,
     required this.name,
     required this.description,
     required this.parameters,
@@ -64,6 +118,7 @@ class PackageTool {
 
   /// Decodes `operit_plugin_sdk::package::PackageTool` from a MessagePack value map.
   factory PackageTool.fromMessagePackValue(Map<String, Object?> value) => PackageTool(
+    display: value['display'] == null ? null : ToolDisplayDeclaration.fromMessagePackValue(value['display'] as Map<String, Object?>),
     name: value['name'] as String,
     description: LocalizedText.fromMessagePackValue(value['description'] as Map<String, Object?>),
     parameters: (value['parameters'] as List<Object?>).map((item) => PackageToolParameter.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
@@ -73,6 +128,7 @@ class PackageTool {
 
   /// Encodes this model into a MessagePack-compatible value map.
   Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'display': display == null ? null : display!.toMessagePackValue(),
     'name': name,
     'description': description.toMessagePackValue(),
     'parameters': parameters.map((item) => item.toMessagePackValue()).toList(growable: false),
@@ -80,6 +136,7 @@ class PackageTool {
     'advice': advice,
   };
 
+  final ToolDisplayDeclaration? display;
   final String name;
   final LocalizedText description;
   final List<PackageToolParameter> parameters;

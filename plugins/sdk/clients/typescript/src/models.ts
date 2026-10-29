@@ -1,5 +1,38 @@
 // GENERATED FILE. Source: operit-proxy-scan.
 
+export interface ToolDisplayDeclaration {
+  readonly label: Record<string, string>;
+  readonly icon: string;
+  readonly target_parameter: string | null;
+  readonly result_renderer: ToolResultRenderer;
+}
+
+export function decodeToolDisplayDeclaration(value: unknown): ToolDisplayDeclaration {
+  const input = value as Record<string, unknown>;
+  return {
+    label: input['label'] as Record<string, string>,
+    icon: input['icon'] as string,
+    target_parameter: input['targetParameter'] == null ? null : input['targetParameter'] as string | null,
+    result_renderer: decodeToolResultRenderer(input['resultRenderer']) as ToolResultRenderer,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeToolDisplayDeclaration(value: ToolDisplayDeclaration): Record<string, unknown> {
+  return {
+    'label': Object.fromEntries(Object.entries(value.label).map(([key, item]) => [key, item])),
+    'icon': value.icon,
+    'targetParameter': value.target_parameter === null ? null : value.target_parameter,
+    'resultRenderer': encodeToolResultRenderer(value.result_renderer),
+  };
+}
+
+export type ToolResultRenderer = 'directory' | 'fileDiff' | 'text';
+export function decodeToolResultRenderer(value: unknown): ToolResultRenderer { return value as ToolResultRenderer; }
+
+/** Encodes the declared Link enum scalar. */
+export function encodeToolResultRenderer(value: ToolResultRenderer): string { return value; }
+
 export interface EnvVar {
   readonly name: string;
   readonly description: LocalizedText;
@@ -46,6 +79,7 @@ export function encodeLocalizedText(value: LocalizedText): Record<string, unknow
 }
 
 export interface PackageTool {
+  readonly display: ToolDisplayDeclaration | null;
   readonly name: string;
   readonly description: LocalizedText;
   readonly parameters: Array<PackageToolParameter>;
@@ -56,6 +90,7 @@ export interface PackageTool {
 export function decodePackageTool(value: unknown): PackageTool {
   const input = value as Record<string, unknown>;
   return {
+    display: input['display'] == null ? null : decodeToolDisplayDeclaration(input['display']) as ToolDisplayDeclaration | null,
     name: input['name'] as string,
     description: decodeLocalizedText(input['description']) as LocalizedText,
     parameters: (input['parameters'] as unknown[]).map((item) => decodePackageToolParameter(item)) as Array<PackageToolParameter>,
@@ -67,6 +102,7 @@ export function decodePackageTool(value: unknown): PackageTool {
 /** Encodes a typed SDK model into its Link argument representation. */
 export function encodePackageTool(value: PackageTool): Record<string, unknown> {
   return {
+    'display': value.display === null ? null : encodeToolDisplayDeclaration(value.display),
     'name': value.name,
     'description': encodeLocalizedText(value.description),
     'parameters': value.parameters.map(item => encodePackageToolParameter(item)),

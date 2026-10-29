@@ -65,9 +65,10 @@ pub const AUTO_READ_PREVIEW_MAX: usize = 48;
 pub fn coreResponseStreamSource(
     stream: SharedAiResponseStream,
     streamKey: String,
+    toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
 ) -> Arc<CoreStreamSource> {
     Arc::new(CoreStreamSource::new(move |request| {
-        openCoreResponseStream(stream.clone(), streamKey.clone(), request)
+        openCoreResponseStream(stream.clone(), streamKey.clone(), request, toolHandler.clone())
     }))
 }
 
@@ -76,6 +77,7 @@ fn openCoreResponseStream(
     stream: SharedAiResponseStream,
     streamKey: String,
     request: CoreWatchRequest,
+    toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
 ) -> Result<CoreEventStream, CoreLinkError> {
     let (sender, receiver) = CoreEventStream::channel();
     AppLogger::trace(
@@ -92,7 +94,7 @@ fn openCoreResponseStream(
         .scheduleHostRuntimeAsyncTask(
             "core-runtime-text-markdown",
             Box::new(move || {
-                Box::pin(collectCoreResponseStream(stream, streamKey, request, sender))
+                Box::pin(collectCoreResponseStream(stream, streamKey, request, sender, toolHandler))
             }),
         )
         .map_err(|error| CoreLinkError::internal(error.to_string()))?;
@@ -105,9 +107,11 @@ async fn collectCoreResponseStream(
     streamKey: String,
     request: CoreWatchRequest,
     sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+    toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
 ) {
     let mut markdownStream = MarkdownRenderEventStream::new(streamKey.clone());
-    for event in markdownStream.beginSnapshot("") {
+    for mut event in markdownStream.beginSnapshot("") {
+        if let Some(handler) = &toolHandler { handler.decorateToolDisplayEvent(&mut event); }
         sendCoreTextEvent(&sender, &request.requestId, request.target.clone(), &request.propertyName,
             CoreEventKind::Changed, operit_link::toCoreValue(event).expect("MarkdownStreamEvent must serialize"));
     }
@@ -116,7 +120,8 @@ async fn collectCoreResponseStream(
         ResponseStreamItem::Chunk(chunk) => {
             let _ = textRevisions.append(&chunk);
             let events = markdownStream.pushChunk(&chunk);
-            for event in events {
+            for mut event in events {
+                if let Some(handler) = &toolHandler { handler.decorateToolDisplayEvent(&mut event); }
                 sendCoreTextEvent(
                     &sender,
                     &request.requestId,
@@ -186,7 +191,8 @@ async fn collectCoreResponseStream(
             request.requestId.0, streamKey
         ),
     );
-    for event in markdownStream.finish() {
+    for mut event in markdownStream.finish() {
+        if let Some(handler) = &toolHandler { handler.decorateToolDisplayEvent(&mut event); }
         let kind = if event.isRootCompletion() {
             CoreEventKind::Completed
         } else {
@@ -2087,7 +2093,7 @@ impl MessageProcessingDelegate {
             })?;
         AIMessageManager::applyConfigurationIdentity(&mut aiMessage, &configuration);
         let streamKey = format!("chat-message-stream:{}:{}", chatId, aiMessage.timestamp);
-        let segmentSource = coreResponseStreamSource(sharedResponseStream.clone(), streamKey);
+        let segmentSource = coreResponseStreamSource(sharedResponseStream.clone(), streamKey, Some(request.enhancedAiService.tool_handler.clone()));
         aiMessage.contentStream = Some(CoreStream::fromSourceWithId(
             format!("chat-message-stream:{}:{}", chatId, aiMessage.timestamp),
             segmentSource,
@@ -3174,6 +3180,7 @@ mod tests {
             "response".to_string(),
             request.clone(),
             sender,
+            None,
         );
         tokio::pin!(first);
         assert!(first.as_mut().now_or_never().is_none());
@@ -3189,6 +3196,7 @@ mod tests {
             "response".to_string(),
             request,
             sender,
+            None,
         );
         tokio::pin!(second);
         assert!(second.as_mut().now_or_never().is_none());
@@ -3233,7 +3241,7 @@ mod tests {
             args: CoreValue::emptyMap(),
         };
         let (sender, mut receiver) = CoreEventStream::channel();
-        super::collectCoreResponseStream(producer, "response".to_string(), request, sender).await;
+        super::collectCoreResponseStream(producer, "response".to_string(), request, sender, None).await;
         let mut terminal = 0;
         let mut nested_completed = 0;
         let mut text = String::new();

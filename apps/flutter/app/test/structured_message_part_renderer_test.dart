@@ -1,6 +1,7 @@
 import 'support/markdown_event_fixture.dart';
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -151,8 +152,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ToolCallRow), findsOneWidget);
-    expect(find.text('Read'), findsOneWidget);
-    expect(find.text('README.md'), findsOneWidget);
+    expect(find.text('read_file'), findsOneWidget);
+    await tester.tap(find.text('read_file'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('path: README.md'), findsOneWidget);
   });
 
   testWidgets('preserves structured tool-result error and file-diff rendering', (
@@ -177,20 +180,65 @@ void main() {
               '<file-diff path="lib/main.dart" details="updated">+line</file-diff>',
           toolCallId: 'call-2',
           toolName: 'apply_file',
-          attributes: <String, String>{'status': 'SUCCESS'},
+          attributes: <String, String>{
+            'status': 'SUCCESS',
+            'display': '{"label":{"en":"Edit"},"resultRenderer":"fileDiff"}',
+          },
         ),
       ], nodeGrouper: const NoopMarkdownNodeGrouper()),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Read'));
+    await tester.tap(find.text('read_file'));
     await tester.pumpAndSettle();
 
     expect(find.text('permission denied'), findsOneWidget);
     expect(find.byType(FileDiffDisplay), findsOneWidget);
-    expect(find.text('lib/main.dart'), findsOneWidget);
+    expect(
+      tester.widget<FileDiffDisplay>(find.byType(FileDiffDisplay)).diff.path,
+      'lib/main.dart',
+    );
     expect(find.textContaining('line'), findsWidgets);
   });
+
+  testWidgets(
+    'replays persisted display and typed results without a tool registry',
+    (tester) async {
+      await tester.pumpWidget(
+        _messagePartApp([
+          MessagePart(
+            partId: 'persisted-result',
+            sequence: 0,
+            kind: MessagePartKind.toolResult,
+            content: 'remote prose',
+            toolCallId: 'call-42',
+            toolName: 'example:z42',
+            attributes: {
+              'status': 'success',
+              'display': jsonEncode({
+                'label': {'en': 'Inspect & verify'},
+                'icon': 'folder',
+                'resultRenderer': 'directory',
+              }),
+              'result_data': jsonEncode({
+                '__type': 'DirectoryListingData',
+                'path': '/remote/workspace',
+                'entries': [
+                  {'name': 'kept.txt', 'isDirectory': false, 'size': 12},
+                ],
+              }),
+            },
+          ),
+        ], nodeGrouper: const NoopMarkdownNodeGrouper()),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Inspect & verify'), findsOneWidget);
+      await tester.tap(find.text('Inspect & verify'));
+      await tester.pumpAndSettle();
+      expect(find.text('kept.txt'), findsOneWidget);
+      expect(find.text('/remote/workspace'), findsOneWidget);
+    },
+  );
 
   testWidgets('groups persisted thinking and one tool call like live XML', (
     tester,
@@ -223,7 +271,10 @@ void main() {
             content: '03:08 AM',
             toolCallId: 'call-1',
             toolName: 'daily_life:get_current_time',
-            attributes: <String, String>{'status': 'SUCCESS'},
+            attributes: <String, String>{
+              'status': 'SUCCESS',
+              'display': '{"label":{"en":"Edit"},"resultRenderer":"fileDiff"}',
+            },
           ),
           MessagePart(
             partId: 'thinking-2',
@@ -277,7 +328,10 @@ void main() {
             content: 'first result',
             toolCallId: 'call-1',
             toolName: 'read_file',
-            attributes: <String, String>{'status': 'SUCCESS'},
+            attributes: <String, String>{
+              'status': 'SUCCESS',
+              'display': '{"label":{"en":"Edit"},"resultRenderer":"fileDiff"}',
+            },
           ),
           MessagePart(
             partId: 'markdown-1',
@@ -313,7 +367,10 @@ void main() {
             content: 'second result',
             toolCallId: 'call-2',
             toolName: 'grep_code',
-            attributes: <String, String>{'status': 'SUCCESS'},
+            attributes: <String, String>{
+              'status': 'SUCCESS',
+              'display': '{"label":{"en":"Edit"},"resultRenderer":"fileDiff"}',
+            },
           ),
           MessagePart(
             partId: 'markdown-2',
@@ -332,14 +389,8 @@ void main() {
     await tester.pumpAndSettle();
 
     final groupHeaders = find.text('已完成 · 1 次思考 · 1 次调用');
-    final markdownA = find.text(
-      'Persisted intermediate A',
-      findRichText: true,
-    );
-    final markdownB = find.text(
-      'Persisted intermediate B',
-      findRichText: true,
-    );
+    final markdownA = find.text('Persisted intermediate A', findRichText: true);
+    final markdownB = find.text('Persisted intermediate B', findRichText: true);
     expect(groupHeaders, findsNWidgets(2));
     expect(markdownA, findsOneWidget);
     expect(markdownB, findsOneWidget);

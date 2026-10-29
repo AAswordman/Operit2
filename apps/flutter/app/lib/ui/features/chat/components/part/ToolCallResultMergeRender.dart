@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
-import '../../../../common/markdown/StreamMarkdownRenderer.dart';
-import 'FileDiffDisplay.dart';
 import 'ToolDisplayComponents.dart';
 
 /// Merges ordered tool calls with any results that have arrived so far.
@@ -101,6 +99,12 @@ class ToolCallResultMergeRender extends MarkdownNodeMergeRender {
             ),
             toolName: calls[index].node.toolName,
             callId: calls[index].node.callId,
+            display:
+                calls[index].node.display ??
+                (index < results.length ? results[index].node.display : null),
+            resultData: index < results.length
+                ? results[index].node.resultData
+                : null,
             parameterMarkup: calls[index].node.parameterMarkup,
             resultText: index < results.length
                 ? results[index].node.resultText
@@ -111,7 +115,8 @@ class ToolCallResultMergeRender extends MarkdownNodeMergeRender {
             textColor: textColor,
             isStreaming:
                 index >= results.length ||
-                nodes[results[index].index].isStreaming,
+                (nodes[results[index].index].isStreaming &&
+                    nodes[results[index].index].xmlIsClosed != true),
           ),
       ],
     );
@@ -129,6 +134,8 @@ class _ToolMergeNode {
     required this.resultText,
     required this.isSuccess,
     this.callId,
+    this.display,
+    this.resultData,
   });
 
   final _ToolMergeNodeKind kind;
@@ -138,6 +145,8 @@ class _ToolMergeNode {
   final String resultText;
   final bool isSuccess;
   final String? callId;
+  final ToolDisplayDeclaration? display;
+  final Map<String, dynamic>? resultData;
 }
 
 class _IndexedToolMergeNode {
@@ -158,10 +167,14 @@ class MergedToolCallResultRow extends StatelessWidget {
     required this.textColor,
     required this.isStreaming,
     this.callId,
+    this.display,
+    this.resultData,
   });
 
   final String toolName;
   final String? callId;
+  final ToolDisplayDeclaration? display;
+  final Map<String, dynamic>? resultData;
   final String parameterMarkup;
   final String resultText;
   final bool? isSuccess;
@@ -177,6 +190,8 @@ class MergedToolCallResultRow extends StatelessWidget {
         callId: callId,
         result: resultText,
         isSuccess: isSuccess,
+        display: display,
+        resultData: resultData,
       ),
       isStreaming: isStreaming,
     );
@@ -230,6 +245,7 @@ _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
       toolName: toolName,
       callId: callId,
       matchToolName: matchToolName,
+      display: toolDisplayFromAttributes(node.xmlAttributes),
       parameterMarkup: _parameterMarkup(node.xmlChildren),
       resultText: '',
       isSuccess: false,
@@ -242,6 +258,8 @@ _ToolMergeNode? _parseToolMergeNode(MarkdownNodeStable node) {
     callId: callId,
     matchToolName: toolName,
     parameterMarkup: '',
+    display: toolDisplayFromAttributes(node.xmlAttributes),
+    resultData: decodeToolMetadata(node.xmlAttributes?['result_data']),
     resultText: _resultText(node),
     isSuccess: status == null || status.isEmpty || status == 'success',
   );
@@ -281,10 +299,10 @@ String _parameterMarkup(List<MarkdownXmlChildStable> children) {
 }
 
 String _resultText(MarkdownNodeStable node) {
-  if (node.xmlChildren.isEmpty) {
-    return node.xmlBody?.trim() ?? '';
+  for (final child in node.xmlChildren) {
+    if (child.tagName == 'content') return child.body.trim();
   }
-  return node.xmlChildren.map((child) => child.body).join().trim();
+  return node.xmlBody?.trim() ?? '';
 }
 
 String _escapeXmlAttribute(String value) {

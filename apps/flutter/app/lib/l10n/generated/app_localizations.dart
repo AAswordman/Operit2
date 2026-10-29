@@ -7951,6 +7951,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Can’t find the device? Connect with a QR code.'**
   String get peerQrMethodsHint;
+
+  /// No description provided for @toolParametersLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Parameters'**
+  String get toolParametersLabel;
+
+  /// No description provided for @toolResultLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Result'**
+  String get toolResultLabel;
+
+  /// No description provided for @toolGroupThinkingCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} thinking'**
+  String toolGroupThinkingCount(int count);
+
+  /// No description provided for @toolGroupCallCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} call} other{{count} calls}}'**
+  String toolGroupCallCount(int count);
+
+  /// No description provided for @toolGroupSearchCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} search'**
+  String toolGroupSearchCount(int count);
+
+  /// No description provided for @toolEditedFileCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{Edited {count} file} other{Edited {count} files}}'**
+  String toolEditedFileCount(int count);
+
+  /// No description provided for @toolViewChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'View changes'**
+  String get toolViewChanges;
+
+  /// No description provided for @toolViewFileDiff.
+  ///
+  /// In en, this message translates to:
+  /// **'View diff for {fileName}'**
+  String toolViewFileDiff(String fileName);
+
+  /// No description provided for @toolGroupCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get toolGroupCompleted;
+
+  /// No description provided for @toolGroupExecuting.
+  ///
+  /// In en, this message translates to:
+  /// **'Executing'**
+  String get toolGroupExecuting;
 }
 
 class _AppLocalizationsDelegate

@@ -2318,5 +2318,20 @@
   "peerQrCameraPermission": "需要相机权限才能扫码。请在系统设置中允许相机访问，也可导入图片。",
   "peerQrDevice": "连接设备",
   "peerQrScanAgain": "重新扫码",
-  "peerQrMethodsHint": "发现不到设备？也可以使用连接码。"
+  "peerQrMethodsHint": "发现不到设备？也可以使用连接码。",
+  "toolParametersLabel": "参数",
+  "toolResultLabel": "执行结果",
+  "toolGroupThinkingCount": "{count} 次思考",
+  "toolGroupCallCount": "{count} 次调用",
+  "toolGroupSearchCount": "{count} 次搜索",
+  "toolEditedFileCount": "已编辑 {count} 个文件",
+  "toolViewChanges": "查看变更",
+  "toolViewFileDiff": "查看 {fileName} 的变更",
+  "@toolEditedFileCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolViewFileDiff": {"placeholders": {"fileName": {"type": "String"}}},
+  "toolGroupCompleted": "已完成",
+  "toolGroupExecuting": "正在执行",
+  "@toolGroupThinkingCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolGroupCallCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}}
 }

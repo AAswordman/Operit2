@@ -14,9 +14,8 @@ use operit_tools::tools::AIToolHook::AIToolHook;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::AITool;
 
-/// VFS view of `runtime/workspace_backups`; snapshots stay on this CoreNode and
-/// never inside the user's workspace.
-const RUNTIME_BACKUP_ROOT: &str = "/app/data/workspace_backups";
+/// Snapshot data belongs to the workspace and is excluded from its own captures.
+const BACKUP_DIR_NAME: &str = ".operit/backups";
 const OBJECTS_DIR_NAME: &str = "objects";
 const STATE_FILE_NAME: &str = "state.json";
 
@@ -161,7 +160,7 @@ impl WorkspaceBackupManager {
         chatId: Option<String>,
     ) -> Option<Vec<WorkspaceFileChange>> {
         let vfs = self.vfs();
-        let snapshot = self.loadTurnSnapshot(&vfs, chatId.as_deref());
+        let snapshot = self.loadTurnSnapshot(&vfs, &workspacePath, chatId.as_deref());
         let turnTimestamp = snapshot
             .as_ref()
             .map(|snapshot| snapshot.turnTimestamp)
@@ -188,7 +187,7 @@ impl WorkspaceBackupManager {
         chatId: Option<String>,
     ) -> WorkspaceRewindOutcome {
         let vfs = self.vfs();
-        let snapshot = self.loadTurnSnapshot(&vfs, chatId.as_deref());
+        let snapshot = self.loadTurnSnapshot(&vfs, &workspacePath, chatId.as_deref());
         let turnTimestamp = snapshot
             .as_ref()
             .map(|snapshot| snapshot.turnTimestamp)
@@ -207,7 +206,7 @@ impl WorkspaceBackupManager {
             return WorkspaceRewindOutcome::Unavailable;
         }
 
-        let objectsDir = self.objectsDir(chatId.as_deref());
+        let objectsDir = self.objectsDir(&workspacePath, chatId.as_deref());
         let mut filesToWrite = Vec::new();
         let mut filesToDelete = Vec::new();
         for (path, entry) in &snapshot.files {
@@ -251,9 +250,9 @@ impl WorkspaceBackupManager {
 
     /// Drops all retained snapshot data owned by one chat.
     #[allow(non_snake_case)]
-    pub fn deleteChatState(&self, chatId: Option<String>) {
+    pub fn deleteChatState(&self, workspacePath: String, chatId: Option<String>) {
         let vfs = self.vfs();
-        let _ = vfs.deleteFile(&self.chatBackupDir(chatId.as_deref()), true);
+        let _ = vfs.deleteFile(&self.chatBackupDir(&workspacePath, chatId.as_deref()), true);
     }
 
     fn vfs(&self) -> VisualFileSystem {
@@ -277,24 +276,28 @@ impl WorkspaceBackupManager {
         )
     }
 
-    fn chatBackupDir(&self, chatId: Option<&str>) -> String {
-        joinPath(RUNTIME_BACKUP_ROOT, &normalizeChatScope(chatId))
+    fn chatBackupDir(&self, workspacePath: &str, chatId: Option<&str>) -> String {
+        joinPath(
+            &joinPath(workspacePath, BACKUP_DIR_NAME),
+            &normalizeChatScope(chatId),
+        )
     }
 
-    fn objectsDir(&self, chatId: Option<&str>) -> String {
-        joinPath(&self.chatBackupDir(chatId), OBJECTS_DIR_NAME)
+    fn objectsDir(&self, workspacePath: &str, chatId: Option<&str>) -> String {
+        joinPath(&self.chatBackupDir(workspacePath, chatId), OBJECTS_DIR_NAME)
     }
 
-    fn statePath(&self, chatId: Option<&str>) -> String {
-        joinPath(&self.chatBackupDir(chatId), STATE_FILE_NAME)
+    fn statePath(&self, workspacePath: &str, chatId: Option<&str>) -> String {
+        joinPath(&self.chatBackupDir(workspacePath, chatId), STATE_FILE_NAME)
     }
 
     fn loadTurnSnapshot(
         &self,
         vfs: &VisualFileSystem,
+        workspacePath: &str,
         chatId: Option<&str>,
     ) -> Option<WorkspaceTurnSnapshot> {
-        let content = vfs.readFile(&self.statePath(chatId)).ok()?;
+        let content = vfs.readFile(&self.statePath(workspacePath, chatId)).ok()?;
         if content.trim().is_empty() {
             return None;
         }
@@ -307,10 +310,14 @@ impl WorkspaceBackupManager {
         chatId: Option<&str>,
         snapshot: &WorkspaceTurnSnapshot,
     ) {
-        ensureDirectory(vfs, &self.chatBackupDir(chatId));
+        ensureDirectory(vfs, &self.chatBackupDir(&snapshot.workspacePath, chatId));
         let content =
             serde_json::to_string(snapshot).expect("WorkspaceTurnSnapshot must serialize");
-        let _ = vfs.writeFile(&self.statePath(chatId), &content, false);
+        let _ = vfs.writeFile(
+            &self.statePath(&snapshot.workspacePath, chatId),
+            &content,
+            false,
+        );
     }
 
     /// Starts a new editing turn and discards the previous turn's snapshot.
@@ -325,7 +332,7 @@ impl WorkspaceBackupManager {
         if !workspaceInfo.exists || !workspaceInfo.isDirectory {
             return None;
         }
-        let objectsDir = self.objectsDir(chatId);
+        let objectsDir = self.objectsDir(workspacePath, chatId);
         let _ = vfs.deleteFile(&objectsDir, true);
         ensureDirectory(vfs, &objectsDir);
         self.saveTurnSnapshot(
@@ -351,7 +358,7 @@ impl WorkspaceBackupManager {
         beforeFiles: &BTreeMap<String, Capture>,
         affectedPaths: &BTreeSet<String>,
     ) {
-        let objectsDir = self.objectsDir(chatId);
+        let objectsDir = self.objectsDir(workspacePath, chatId);
         let mut afterFiles = BTreeMap::new();
         for path in affectedPaths {
             self.capturePath(
@@ -509,7 +516,7 @@ impl WorkspaceBackupManager {
         chatId: Option<&str>,
         snapshot: &WorkspaceTurnSnapshot,
     ) -> Vec<WorkspaceFileChange> {
-        let objectsDir = self.objectsDir(chatId);
+        let objectsDir = self.objectsDir(&snapshot.workspacePath, chatId);
         let mut changes = Vec::new();
         for (path, entry) in &snapshot.files {
             match (&entry.before, &entry.after) {
@@ -655,7 +662,9 @@ impl AIToolHook for WorkspaceToolHookSession {
         }
 
         let vfs = self.manager.vfs();
-        let objectsDir = self.manager.objectsDir(self.chatScopeId.as_deref());
+        let objectsDir = self
+            .manager
+            .objectsDir(&self.workspacePath, self.chatScopeId.as_deref());
         let gitignoreRules = state.gitignoreRules.clone();
         for path in affectedPaths {
             // A path first touched later in the same turn must keep its original
@@ -954,6 +963,159 @@ fn isTextBasedFileName(fileName: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_tools::ToolExecutionManager::ToolParameter;
+
+    struct BackupFixture {
+        root: std::path::PathBuf,
+        manager: WorkspaceBackupManager,
+    }
+
+    impl BackupFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("operit-workspace-backup-{}", uuid::Uuid::new_v4()));
+            let runtime = root.join("runtime");
+            let workspaces = root.join("workspaces");
+            std::fs::create_dir_all(&runtime).unwrap();
+            std::fs::create_dir_all(&workspaces).unwrap();
+            let context = HostManager {
+                fileSystemHost: Some(Arc::new(PosixFileSystemHost::new())),
+                runtimeStorageHost: Some(Arc::new(NativeRuntimeStorageHost::new(
+                    runtime, workspaces,
+                ))),
+                ..HostManager::default()
+            };
+            Self {
+                root,
+                manager: WorkspaceBackupManager::new(context),
+            }
+        }
+
+        fn edit(&self, workspace: &str, chat: &str, path: &str, timestamp: i64, content: &str) {
+            let session = self.manager.createWorkspaceToolHookSession(
+                workspace.to_string(),
+                timestamp,
+                Some(chat.to_string()),
+            );
+            session.onToolExecutionStarted(&AITool {
+                name: "edit_file".to_string(),
+                parameters: vec![ToolParameter {
+                    name: "path".to_string(),
+                    value: path.to_string(),
+                }],
+            });
+            self.manager.vfs().writeFile(path, content, false).unwrap();
+            session.close();
+        }
+    }
+
+    impl Drop for BackupFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn snapshots_live_in_operit_and_restore_without_capturing_workspace_metadata() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/app/workspaces/project";
+        vfs.makeDirectory(&joinPath(workspace, ".operit"), true)
+            .unwrap();
+        let file = joinPath(workspace, "main.rs");
+        vfs.writeFile(&file, "before\n", false).unwrap();
+        vfs.writeFile(&joinPath(workspace, ".operit/config.json"), "{}", false)
+            .unwrap();
+        let session =
+            manager.createWorkspaceToolHookSession(workspace.into(), 100, Some("chat-a".into()));
+        // Capturing a whole directory must exclude its configuration and backup objects.
+        session.onToolExecutionStarted(&AITool {
+            name: "delete_file".into(),
+            parameters: vec![ToolParameter {
+                name: "path".into(),
+                value: workspace.into(),
+            }],
+        });
+        vfs.writeFile(&file, "after\n", false).unwrap();
+        session.close();
+
+        let backup = fixture
+            .root
+            .join("workspaces/project/.operit/backups/chat-a");
+        assert!(backup.join("state.json").is_file());
+        assert!(backup.join("objects").is_dir());
+        assert!(!fixture.root.join("runtime/workspace_backups").exists());
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+            .unwrap();
+        assert_eq!(
+            snapshot
+                .files
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["main.rs"]
+        );
+        assert_eq!(
+            manager
+                .previewChangesForMessage(workspace.into(), 100, Some("chat-a".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager.restoreWorkspaceForMessage(workspace.into(), 100, Some("chat-a".into())),
+            WorkspaceRewindOutcome::Restored
+        );
+        assert_eq!(vfs.readFile(&file).unwrap(), "before\n");
+        assert_eq!(
+            vfs.readFile(&joinPath(workspace, ".operit/config.json"))
+                .unwrap(),
+            "{}"
+        );
+    }
+
+    #[test]
+    fn deleting_chat_backups_is_scoped_to_its_workspace_and_preserves_other_operit_data() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        for workspace in ["/app/workspaces/first", "/app/workspaces/second"] {
+            vfs.makeDirectory(&joinPath(workspace, ".operit"), true)
+                .unwrap();
+            vfs.writeFile(&joinPath(workspace, ".operit/config.json"), "{}", false)
+                .unwrap();
+            let file = joinPath(workspace, "main.rs");
+            vfs.writeFile(&file, "original", false).unwrap();
+            fixture.edit(workspace, "chat-a", &file, 100, "edited");
+        }
+        let first = "/app/workspaces/first";
+        let other = joinPath(first, "other.rs");
+        vfs.writeFile(&other, "original", false).unwrap();
+        fixture.edit(first, "chat-b", &other, 200, "edited");
+
+        manager.deleteChatState(first.into(), Some("chat-a".into()));
+
+        assert!(
+            !vfs.fileExists(&manager.chatBackupDir(first, Some("chat-a")))
+                .unwrap()
+                .exists
+        );
+        assert!(manager
+            .loadTurnSnapshot(&vfs, "/app/workspaces/second", Some("chat-a"))
+            .is_some());
+        assert!(manager
+            .loadTurnSnapshot(&vfs, first, Some("chat-b"))
+            .is_some());
+        assert_eq!(
+            vfs.readFile(&joinPath(first, ".operit/config.json"))
+                .unwrap(),
+            "{}"
+        );
+    }
 
     fn present(hash: &str) -> Capture {
         Capture::Present(hash.to_string())

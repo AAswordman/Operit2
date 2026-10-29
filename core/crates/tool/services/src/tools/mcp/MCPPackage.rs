@@ -91,6 +91,7 @@ impl MCPPackage {
                     })
                     .collect::<Vec<_>>();
                 PackageTool {
+                    display: None,
                     name: mcpTool.name.clone(),
                     description: LocalizedText {
                         values: std::collections::HashMap::from([(

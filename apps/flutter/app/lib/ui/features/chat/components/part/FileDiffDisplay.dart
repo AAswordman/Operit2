@@ -198,13 +198,6 @@ class FileDiffDisplay extends StatelessWidget {
   );
 }
 
-bool isFileDiffTool(String toolName) {
-  return toolName == 'apply_file' ||
-      toolName == 'create_file' ||
-      toolName == 'edit_file' ||
-      toolName == 'write_file';
-}
-
 List<FileDiff> extractFileDiffs(String resultContent) {
   return RegExp(
     r'<file-diff\b([^>]*)>([\s\S]*?)<\/file-diff>',

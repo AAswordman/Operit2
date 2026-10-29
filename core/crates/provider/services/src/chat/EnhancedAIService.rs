@@ -2962,6 +2962,7 @@ impl EnhancedAIService {
         let ToolExecutionBatch {
             results: allToolResults,
             message: toolResultMessage,
+            displayMessage,
             routeChangeIntent,
         } =
             ToolExecutionManager::executeInvocations(
@@ -3002,7 +3003,7 @@ impl EnhancedAIService {
             return Ok(None);
         }
 
-        let content = format!("\n{toolResultMessage}\n");
+        let content = format!("\n{displayMessage}\n");
         context.streamBuffer.push_str(&content);
         context.roundManager.appendContent(&content);
         collector.emit_chunk(content);

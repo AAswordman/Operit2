@@ -4479,4 +4479,56 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get peerQrMethodsHint =>
       'Can’t find the device? Connect with a QR code.';
+
+  @override
+  String get toolParametersLabel => 'Parameters';
+
+  @override
+  String get toolResultLabel => 'Result';
+
+  @override
+  String toolGroupThinkingCount(int count) {
+    return '$count thinking';
+  }
+
+  @override
+  String toolGroupCallCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count calls',
+      one: '$count call',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String toolGroupSearchCount(int count) {
+    return '$count search';
+  }
+
+  @override
+  String toolEditedFileCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Edited $count files',
+      one: 'Edited $count file',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get toolViewChanges => 'View changes';
+
+  @override
+  String toolViewFileDiff(String fileName) {
+    return 'View diff for $fileName';
+  }
+
+  @override
+  String get toolGroupCompleted => 'Completed';
+
+  @override
+  String get toolGroupExecuting => 'Executing';
 }

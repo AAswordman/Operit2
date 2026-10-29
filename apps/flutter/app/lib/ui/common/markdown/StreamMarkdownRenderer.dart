@@ -557,6 +557,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
       required bool isStreaming,
       required Color textColor,
       Stream<String>? xmlStream,
+      Map<String, String>? xmlAttributes,
       Stream<Object>? xmlMarkdownEventStream,
       String? renderInstanceKey,
     }) {
@@ -565,6 +566,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
             ? null
             : ValueKey<String>(renderInstanceKey),
         xmlContent: xmlContent,
+        xmlAttributes: xmlAttributes,
         isStreaming: isStreaming,
         textColor: textColor,
         xmlStream: xmlStream,
@@ -581,6 +583,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
       if (node.type == MarkdownNodeType.xmlBlock) {
         return renderXmlContent(
           xmlContent: node.content,
+          xmlAttributes: node.xmlAttributes,
           isStreaming: node.isStreaming,
           textColor: widget.textColor,
           xmlStream: widget.xmlNodeStreams[index],

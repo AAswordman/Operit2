@@ -1,0 +1,118 @@
+{
+  "read": {
+    "en": "Read",
+    "zh": "读取"
+  },
+  "edit": {
+    "en": "Edit",
+    "zh": "编辑"
+  },
+  "write": {
+    "en": "Write",
+    "zh": "写入"
+  },
+  "create": {
+    "en": "Create",
+    "zh": "创建"
+  },
+  "delete": {
+    "en": "Delete",
+    "zh": "删除"
+  },
+  "list": {
+    "en": "List",
+    "zh": "列出"
+  },
+  "search": {
+    "en": "Search",
+    "zh": "搜索"
+  },
+  "move": {
+    "en": "Move",
+    "zh": "移动"
+  },
+  "copy": {
+    "en": "Copy",
+    "zh": "复制"
+  },
+  "info": {
+    "en": "Inspect",
+    "zh": "查看"
+  },
+  "download": {
+    "en": "Download",
+    "zh": "下载"
+  },
+  "open": {
+    "en": "Open",
+    "zh": "打开"
+  },
+  "share": {
+    "en": "Share",
+    "zh": "分享"
+  },
+  "archive": {
+    "en": "Archive",
+    "zh": "压缩"
+  },
+  "extract": {
+    "en": "Extract",
+    "zh": "解压"
+  },
+  "execute": {
+    "en": "Execute",
+    "zh": "执行"
+  },
+  "visit": {
+    "en": "Visit",
+    "zh": "访问"
+  },
+  "request": {
+    "en": "Request",
+    "zh": "请求"
+  },
+  "activate": {
+    "en": "Activate",
+    "zh": "启用"
+  },
+  "close": {
+    "en": "Close",
+    "zh": "关闭"
+  },
+  "input": {
+    "en": "Input",
+    "zh": "输入"
+  },
+  "wait": {
+    "en": "Wait",
+    "zh": "等待"
+  },
+  "notify": {
+    "en": "Notify",
+    "zh": "通知"
+  },
+  "play": {
+    "en": "Play",
+    "zh": "播放"
+  },
+  "pause": {
+    "en": "Pause",
+    "zh": "暂停"
+  },
+  "stop": {
+    "en": "Stop",
+    "zh": "停止"
+  },
+  "configure": {
+    "en": "Configure",
+    "zh": "设置"
+  },
+  "speak": {
+    "en": "Synthesize speech",
+    "zh": "合成语音"
+  },
+  "transcribe": {
+    "en": "Transcribe",
+    "zh": "转录"
+  }
+}
