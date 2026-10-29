@@ -24,6 +24,22 @@ import uuid
 REPO = Path(__file__).resolve().parents[3]
 
 
+def space_call(action, identifier, version=None):
+    """Protocol regressions use the generated API, including stale IDs/versions.
+
+    Interactive CLI commands intentionally expose only names and list numbers.
+    """
+    if action == 'join':
+        method, arguments = 'requestDeviceSpaceJoin', {'deviceId': identifier}
+    elif action in ('approve', 'reject'):
+        method, arguments = 'decideDeviceSpaceJoin', {'requestId': identifier,
+            'assignmentVersion': int(version), 'approve': action == 'approve'}
+    else:
+        method = {'refresh': 'refreshDeviceSpaceJoin', 'cancel': 'cancelDeviceSpaceJoin'}[action]
+        arguments = {'requestId': identifier}
+    return ('call', 'server.runtimeRemoteLinkService', method, json.dumps(arguments))
+
+
 class Session:
     def __init__(self, run, name, transport):
         self.run, self.name, self.transport = run, name, transport
@@ -198,26 +214,29 @@ print(json.dumps(result))
         self.event('policy-verified', node=session.name, allowed=allowed, denied=session.bind, result=result)
 
     async def pair(self, source, target):
-        pending = await source.command('pair-start', target.node, target.address, target.transport)
+        # These transport regressions intentionally bind loopback, which QR codes exclude.
+        pending = await source.command('call', 'server.runtimeRemoteLinkService', 'startPairing',
+            json.dumps({'nodeId': target.node, 'address': target.address, 'transport': target.transport}))
         prompts = await target.command('prompts')
         prompt = next(p for p in prompts if p['pairingId'] == pending['pairingId'])
-        await source.command('pair-finish', pending['pairingId'], prompt['confirmationCode'])
+        await source.command('call', 'server.runtimeRemoteLinkService', 'finishPairing',
+            json.dumps({'pairingId': pending['pairingId'], 'confirmationCode': prompt['confirmationCode']}))
         self.pairings.add(frozenset((source.node, target.node)))
 
     async def join(self, source, gateway, reviewer, members):
         before = await source.command('space', 'show')
-        request = await source.command('space', 'join', gateway.node)
+        request = await source.command(*space_call('join', gateway.node))
         assert request['status'] == 'pending', request
         if request['reviewerDeviceId'] != reviewer.node:
-            request = await source.wait(('space', 'refresh', request['requestId']),
+            request = await source.wait(space_call('refresh', request['requestId']),
                 lambda value: value.get('reviewerDeviceId') == reviewer.node)
         assert request['status'] == 'pending', request
         assert await source.command('space', 'show') == before, 'pairing/request merged membership before approval'
         incoming = await reviewer.wait(('space', 'requests', 'incoming'),
             lambda rows: any(r['requestId'] == request['requestId'] and r['canApprove'] for r in rows))
         row = next(r for r in incoming if r['requestId'] == request['requestId'])
-        await reviewer.command('space', 'approve', row['requestId'], str(row['assignmentVersion']))
-        await source.wait(('space', 'refresh', request['requestId']), lambda v: v['status'] == 'joined')
+        await reviewer.command(*space_call('approve', row['requestId'], str(row['assignmentVersion'])))
+        await source.wait(space_call('refresh', request['requestId']), lambda v: v['status'] == 'joined')
         await self.members(members)
         return request
 
@@ -331,13 +350,13 @@ print(json.dumps(result))
         await self.pair(g,f)
         before = await g.command('space','show')
         async def pending():
-            request = await g.command('space','join',f.node)
+            request = await g.command(*space_call('join', f.node))
             assert request['status']=='pending', request
             incoming = await a.wait(('space','requests','incoming'), lambda rows:any(row['requestId']==request['requestId'] and row['canApprove'] for row in rows))
             return next(row for row in incoming if row['requestId']==request['requestId'])
         async def assert_cancelled(row):
-            await g.wait(('space','refresh',row['requestId']),lambda v:v.get('status')=='cancelled',allow_error=True)
-            await a.command('space','approve',row['requestId'],str(row['assignmentVersion']),error=True)
+            await g.wait(space_call('refresh', row['requestId']),lambda v:v.get('status')=='cancelled',allow_error=True)
+            await a.command(*space_call('approve', row['requestId'], str(row['assignmentVersion'])),error=True)
             assert await g.command('space','show') == before
             await self.members(nodes)
 
@@ -347,10 +366,10 @@ print(json.dumps(result))
                 row = await pending()
                 assert row['requestId'] != previous
                 previous = row['requestId']
-                result = await g.command('space','cancel',row['requestId'])
+                result = await g.command(*space_call('cancel', row['requestId']))
                 assert result['status']=='cancelled', result
                 # Repeat the cancellation and restart the actual applicant process.
-                assert (await g.command('space','cancel',row['requestId']))['status']=='cancelled'
+                assert (await g.command(*space_call('cancel', row['requestId'])))['status']=='cancelled'
                 await g.stop(crash=True); await g.start()
                 await assert_cancelled(row)
         await self.stage('directed-six-hop-cancel-reapply-restart', cancel_reapply)
@@ -358,10 +377,10 @@ print(json.dumps(result))
         async def cancel_gateway_down():
             row = await pending()
             await f.stop(crash=True)
-            await g.command('space','cancel',row['requestId'],error=True)
+            await g.command(*space_call('cancel', row['requestId']),error=True)
             await g.stop(crash=True); await g.start()
             # A failed cancellation must survive restart and block a replacement submission.
-            await g.command('space','join',f.node,error=True)
+            await g.command(*space_call('join', f.node),error=True)
             await f.start()
             await assert_cancelled(row)
             await asyncio.gather(self.routes(a,f,True,5),self.routes(f,a,True,5))
@@ -372,7 +391,7 @@ print(json.dumps(result))
             await c.stop(crash=True)
             marker = uuid.uuid4().hex
             await a.command('space','preference-set',f.node,'directed-offline',json.dumps(marker))
-            assert (await g.command('space','cancel',row['requestId']))['status']=='cancelled'
+            assert (await g.command(*space_call('cancel', row['requestId'])))['status']=='cancelled'
             await g.stop(crash=True); await g.start()
             await c.start()
             await assert_cancelled(row)
@@ -396,16 +415,16 @@ print(json.dumps(result))
             await self.verify_directed_policy(applicant)
             await self.pair(applicant,f)
             local = await applicant.command('space','show')
-            request = await applicant.command('space','join',f.node)
+            request = await applicant.command(*space_call('join', f.node))
             rows = await a.wait(('space','requests','incoming'),lambda rows:any(row['requestId']==request['requestId'] and row['canApprove'] for row in rows))
             row = next(row for row in rows if row['requestId']==request['requestId'])
             delay = [0, .002, .01, .03][index % 4]
             async def cancel():
                 await asyncio.sleep(delay)
-                return await applicant.command('space','cancel',row['requestId'],error=None)
+                return await applicant.command(*space_call('cancel', row['requestId']),error=None)
             cancelled, approved = await asyncio.gather(
-                cancel(), a.command('space','approve',row['requestId'],str(row['assignmentVersion']),error=None))
-            final = await applicant.wait(('space','refresh',row['requestId']),lambda v:v.get('status') in ('cancelled','joined'),allow_error=True)
+                cancel(), a.command(*space_call('approve', row['requestId'], str(row['assignmentVersion'])),error=None))
+            final = await applicant.wait(space_call('refresh', row['requestId']),lambda v:v.get('status') in ('cancelled','joined'),allow_error=True)
             if final['status']=='joined':
                 assert 'error' not in approved, approved
                 expected.add(applicant.node)
@@ -413,7 +432,7 @@ print(json.dumps(result))
             else:
                 assert 'error' in approved, approved
                 assert await applicant.command('space','show') == local
-                await a.command('space','approve',row['requestId'],str(row['assignmentVersion']),error=True)
+                await a.command(*space_call('approve', row['requestId'], str(row['assignmentVersion'])),error=True)
             await asyncio.gather(*(node.wait(('space','show'),lambda v:set(v['members'])==expected) for node in nodes))
             self.event('race-outcome', iteration=index, delay_s=delay, status=final['status'],
                 cancellation=cancelled.get('status',cancelled.get('error','').split('\n')[0]),
@@ -426,7 +445,7 @@ print(json.dumps(result))
             applicants = await asyncio.gather(*(self.node(f'P{index}') for index in range(max(4,self.args.rounds))))
             await asyncio.gather(*(self.verify_directed_policy(applicant) for applicant in applicants))
             await asyncio.gather(*(self.pair(applicant,f) for applicant in applicants))
-            requests = await asyncio.gather(*(applicant.command('space','join',f.node) for applicant in applicants))
+            requests = await asyncio.gather(*(applicant.command(*space_call('join', f.node)) for applicant in applicants))
             ids = {request['requestId'] for request in requests}
             rows = await a.wait(('space','requests','incoming'),lambda rows:ids.issubset({row['requestId'] for row in rows if row['canApprove']}))
             rows = {row['requestId']:row for row in rows}
@@ -434,11 +453,11 @@ print(json.dumps(result))
                 row = rows[request['requestId']]
                 async def cancel():
                     await asyncio.sleep([0,.002,.01,.03][index % 4])
-                    return await applicant.command('space','cancel',row['requestId'],error=None)
-                await asyncio.gather(cancel(),a.command('space','approve',row['requestId'],str(row['assignmentVersion']),error=None))
-                final = await applicant.wait(('space','refresh',row['requestId']),lambda v:v.get('status') in ('cancelled','joined'),allow_error=True)
+                    return await applicant.command(*space_call('cancel', row['requestId']),error=None)
+                await asyncio.gather(cancel(),a.command(*space_call('approve', row['requestId'], str(row['assignmentVersion'])),error=None))
+                final = await applicant.wait(space_call('refresh', row['requestId']),lambda v:v.get('status') in ('cancelled','joined'),allow_error=True)
                 await applicant.stop(crash=True); await applicant.start()
-                restored = await applicant.command('space','refresh',row['requestId'])
+                restored = await applicant.command(*space_call('refresh', row['requestId']))
                 assert restored['status']==final['status'], (final,restored)
                 return applicant,final['status']
             outcomes = await asyncio.gather(*(resolve(index,applicant,request) for index,(applicant,request) in enumerate(zip(applicants,requests))))
@@ -701,8 +720,8 @@ print(json.dumps(result))
             self.dial_targets['C']=[]
             await c.start()
             await self.verify_directed_policy(c)
-            for peer in await c.command('peers'):
-                await c.command('unpair',peer['nodeId'])
+            while await c.command('peers'):
+                await c.command('unpair','1')
             assert await c.command('peers')==[]
             own=await c.command('space','leave')
             assert own['spaceId']!=original and own['members']==[c.node]
@@ -927,12 +946,12 @@ print(json.dumps(result))
         async def cancel():
             g=await self.node('G');await self.pair(g,f)
             before=await a.command('space','show')
-            req=await g.command('space','join',f.node)
+            req=await g.command(*space_call('join', f.node))
             rows=await a.wait(('space','requests','incoming'),lambda rows:any(r['requestId']==req['requestId'] for r in rows))
             row=next(r for r in rows if r['requestId']==req['requestId'])
-            result=await g.command('space','cancel',req['requestId'])
+            result=await g.command(*space_call('cancel', req['requestId']))
             assert result['status']=='cancelled',result
-            await a.command('space','approve',row['requestId'],str(row['assignmentVersion']),error=True)
+            await a.command(*space_call('approve', row['requestId'], str(row['assignmentVersion'])),error=True)
             assert await a.command('space','show')==before
             await self.members(nodes)
             await g.stop()
@@ -942,7 +961,7 @@ print(json.dumps(result))
         if g.name == 'G' and g.process.returncode is None:
             for req in await g.command('space','requests','outgoing'):
                 if req['status']=='pending':
-                    await g.command('space','cancel',req['requestId'])
+                    await g.command(*space_call('cancel', req['requestId']))
             await g.stop()
         async def leave():
             old=await f.command('space','show')

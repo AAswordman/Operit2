@@ -33,12 +33,12 @@ class Terminal:
             'identities': [{'id': name, 'name': name, 'createdAt': int(time.time() * 1000)}],
         }))
         with socket.socket() as reservation:
-            reservation.bind(('127.0.0.1', 0))
+            reservation.bind(('0.0.0.0', 0))
             port = reservation.getsockname()[1]
         env = dict(os.environ, HOME=str(home), OPERIT_CLI_CONFIG_DIR=str(config))
         self.argv = [
             str(binary), 'cli', '--json', 'link', 'session', transport,
-            '--bind', f'127.0.0.1:{port}', '--no-discovery',
+            '--bind', f'0.0.0.0:{port}', '--fixed-port', '--no-discovery',
         ]
         self.env = env
         self.log_path = root / f'{name}.log'
@@ -129,15 +129,27 @@ class Terminal:
 
 
 def pair(source, target, transport):
-    pending = source.command('pair-start', target.node, target.address, transport)
-    prompt = next(p for p in target.command('prompts') if p['pairingId'] == pending['pairingId'])
+    code = target.command('qr')
+    source.command('confirm', '000000', error=True)
+    source.command('pair', code['connectionCode'])
+    source.command('pair', code['connectionCode'], error=True)
+    old_prompts = {prompt['pairingId'] for prompt in target.command('prompts')}
+    source.command('pair-cancel')
+    source.command('pair', code['connectionCode'])
+    source.command('pair-start', target.node, target.address, transport, error=True)
+    source.command('pair-finish', 'unused', '000000', error=True)
+    source.command('confirm', 'invalid', error=True)
+    prompt = next(p for p in target.command('prompts')
+                  if p['peerNodeId'] == source.node and p['pairingId'] not in old_prompts)
     assert len(prompt['confirmationCode']) == 6 and prompt['confirmationCode'].isdigit()
-    source.command('pair-finish', pending['pairingId'], prompt['confirmationCode'])
+    source.command('confirm', prompt['confirmationCode'])
 
 
 def join(a, b):
     before_a, before_b = a.command('space', 'show'), b.command('space', 'show')
-    request = a.command('space', 'join', b.node)
+    # Device IDs are no longer CLI selectors. One paired device needs no argument.
+    a.command('space', 'join', b.node, error=True)
+    request = a.command('space', 'join')
     assert request['status'] == 'pending' and request['reviewerDeviceId'] == b.node
     incoming = b.command('space', 'requests', 'incoming')
     assert len(incoming) == 1 and incoming[0]['canApprove']
@@ -145,15 +157,17 @@ def join(a, b):
     assert a.command('space', 'show') == before_a
     assert b.command('space', 'show') == before_b
     assert b.node not in a.command('control', 'show')['memberNodeIds']
-    b.command('space', 'approve', request['requestId'], str(request['assignmentVersion']))
-    assert a.command('space', 'refresh', request['requestId'])['status'] == 'joined'
+    b.command('space', 'approve', request['requestId'], str(request['assignmentVersion']), error=True)
+    b.command('space', 'approve', request['requestId'], error=True)
+    b.command('space', 'approve')
+    assert a.command('space', 'refresh')['status'] == 'joined'
     assert a.command('space', 'show') == b.command('space', 'show')
     assert a.command('control', 'show')['deviceIdentityIds'][a.node] == 'user'
     assert a.command('space', 'requests', 'incoming') == []
     return request
 
 
-def exercise(a, b, transport):
+def exercise_pairing(a, b, transport):
     pair(a, b, transport)
     # One pairing only. Space admission, not a second pairing, enables return traffic.
     assert next(p for p in b.command('peers') if p['nodeId'] == a.node)['outbound'] is False
@@ -173,15 +187,22 @@ def exercise(a, b, transport):
         assert control['initialized'] and control['deviceIdentityIds'][terminal.node] == 'admin'
         assert sum(row['summary'].startswith('Bootstrap control') for row in terminal.command('control', 'audit')) == 1
     # No process has restarted since startup. This is the leave lifecycle regression.
-    refused = a.command('space', 'join', b.node)
+    peer_name = next(peer['displayName'] for peer in a.command('peers') if peer['nodeId'] == b.node)
+    refused = a.command('space', 'join', peer_name)
     b.command('space', 'requests', 'incoming')
-    b.command('space', 'approve', refused['requestId'], '0', error=True)
-    b.command('space', 'reject', refused['requestId'], str(refused['assignmentVersion']))
-    assert a.command('space', 'refresh', refused['requestId'])['status'] == 'rejected'
-    cancelled = a.command('space', 'join', b.node)
-    assert a.command('space', 'cancel', cancelled['requestId'])['status'] == 'cancelled'
+    b.command('call', 'server.runtimeRemoteLinkService', 'decideDeviceSpaceJoin', json.dumps({
+        'requestId': refused['requestId'], 'assignmentVersion': 0, 'approve': True}), error=True)
+    b.command('space', 'reject', refused['applicantName'])
+    assert a.command('space', 'refresh')['status'] == 'rejected'
+    cancelled = a.command('space', 'join')
+    assert a.command('space', 'cancel')['status'] == 'cancelled'
     assert b.command('space', 'requests', 'incoming') == []
     join(a, b)
+    print('PASS: simplified pairing, confirmation/cancellation, name selection, Space approval/rejection and refresh', flush=True)
+
+
+def exercise(a, b, transport):
+    exercise_pairing(a, b, transport)
     a.command('control', 'policy', 'set', 'test-policy', 'forbidden', error=True)
     b.command('control', 'policy', 'set', 'test-policy', 'allowed')
     a.wait(lambda v: v.get('test-policy') == 'allowed', 'control', 'policy', 'list')

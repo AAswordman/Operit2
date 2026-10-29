@@ -26,15 +26,16 @@ use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts" | "listen") => {
+        Some("unpair" | "peers" | "prompts" | "listen") => {
             run_node_pairing_command(args).await
         }
+        Some("pair") => run_link_pair(&args[1..]).await,
         Some("qr") => run_link_qr(&args[1..]).await,
         Some("session") => run_link_session(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
@@ -48,6 +49,98 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Resolves a visible device/request name or a one-based list position.
+fn select_link_choice(choices: &[&str], selector: Option<&str>, kind: &str) -> Result<usize, String> {
+    if let Some(selector) = selector {
+        let matches: Vec<_> = choices.iter().enumerate()
+            .filter(|(_, name)| **name == selector).map(|(index, _)| index).collect();
+        match matches.as_slice() {
+            [index] => return Ok(*index),
+            [] => {
+                if let Ok(number) = selector.parse::<usize>() {
+                    if number > 0 && number <= choices.len() { return Ok(number - 1); }
+                }
+            }
+            _ => return Err(format!("Ambiguous {kind} name: {selector}. Choose a number:\n{}", link_choices(choices))),
+        }
+    } else if choices.len() == 1 {
+        return Ok(0);
+    }
+    if choices.is_empty() { return Err(format!("No {kind} available")); }
+    let reason = if selector.is_some() { "No matching" } else { "Choose a" };
+    Err(format!("{reason} {kind}; pass its name or number:\n{}", link_choices(choices)))
+}
+
+fn link_choices(choices: &[&str]) -> String {
+    choices.iter().enumerate().map(|(index, name)| format!("  {}. {name}", index + 1))
+        .collect::<Vec<_>>().join("\n")
+}
+
+/// Both interactive pairing and live sessions use the same public coordinates.
+async fn start_link_pair(application: &operit_core_application::CoreApplication, selector: Option<&str>, interactive: bool)
+    -> Result<operit_node_runtime::NodeServices::PendingPairing, String> {
+    if let Some(code) = selector.filter(|value| value.trim().starts_with("operit://")) {
+        return application.accessServices().startPairingFromCode(code.to_owned()).await;
+    }
+    let peers = application.accessServices().discoverPeers(2000).await?;
+    let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
+    if choices.is_empty() { return Err("No devices discovered. Run link qr on the receiving device, then use pair <connection-code>.".into()); }
+    let input;
+    let selector = if interactive && selector.is_none() && choices.len() > 1 {
+        eprintln!("Devices:\n{}", link_choices(&choices));
+        input = read_link_input("Device number or name: ").await?;
+        Some(input.as_str())
+    } else { selector };
+    let index = select_link_choice(&choices, selector, "device")?;
+    let peer = &peers[index];
+    application.nodeServices()?.peers().startPairing(
+        operit_node_runtime::NodeServices::PeerEndpoint { nodeId: peer.nodeId.clone(), address: peer.address.clone() }, None,
+    ).await.map_err(|error| error.to_string())
+}
+
+/// Reads on a blocking worker so the pairing handshake can keep serving network traffic.
+async fn read_link_input(prompt: &str) -> Result<String, String> {
+    eprint!("{prompt}");
+    io::stderr().flush().map_err(|error| error.to_string())?;
+    tokio::task::spawn_blocking(|| {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).map_err(|error| error.to_string())?;
+        if input.trim().is_empty() { return Err("Pairing cancelled".into()); }
+        Ok(input.trim().to_owned())
+    }).await.map_err(|error| error.to_string())?
+}
+
+/// One terminal flow from device selection to six-digit confirmation.
+async fn run_link_pair(args: &[String]) -> Result<(), String> {
+    if args.len() > 1 { return Err("usage: operit2 cli link pair [device-name|connection-code]".into()); }
+    if cli_json_mode() || !io::stdin().is_terminal() {
+        return Err("link pair needs an interactive terminal; scripts can use link session with pair and confirm".into());
+    }
+    let application = create_cli_core_application_without_space_sync("client").await?;
+    let result = async {
+        let service = application.accessServices();
+        let pending = start_link_pair(&application, args.first().map(String::as_str), true).await?;
+        eprintln!("Pairing with {}. Read the six-digit code on the receiving device (CLI: link prompts).", pending.displayName);
+        let confirmation = async {
+            let code = read_link_input("Pairing code (empty to cancel): ").await?;
+            service.finishPairing(pending.pairingId.clone(), code).await
+        }.await;
+        match confirmation {
+            Ok(peer) => {
+                println!("Paired with {}", peer.displayName);
+                println!("To request Space membership: operit2 cli link space join \"{}\"", peer.displayName);
+                Ok(())
+            }
+            Err(error) => {
+                let _ = application.nodeServices()?.peers().cancelPairing(&pending.pairingId).await;
+                Err(error)
+            }
+        }
+    }.await;
+    application.shutdown().await;
+    result
 }
 
 /// Reuses the current owner, or keeps an explicitly created listener alive until Ctrl-C.
@@ -149,13 +242,6 @@ async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
         return run_node_listen(&application, &args[1..]).await;
     }
     let result = execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await;
-    // 配对改变通知本身会唤醒常驻同步；短命 CLI 等待一次现有同步，避免退出截断它。
-    if result.is_ok() && args.first().map(String::as_str) == Some("pair-finish") {
-        operit_node_runtime::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
-            Arc::new(application.nodeRuntime()), application.nodeRouter(),
-            operit_store::CoreSpaceStore::CoreSpaceStore::new(application.nodeRuntime().runtimeStorageHost()),
-        ).synchronizeOnce().await?;
-    }
     application.shutdown().await;
     result
 }
@@ -239,7 +325,7 @@ fn parse_session_command(line: &str) -> Result<Vec<String>, String> {
 async fn run_link_session_inner(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
     start_node_listener(application, args).await?;
     if !cli_json_mode() {
-        println!("Commands: qr/pair-code/pair-start/pair-finish/prompts/peers, space ..., control ..., core ..., quit");
+        println!("Commands: qr/pair/confirm/pair-cancel/prompts/peers/unpair, space ..., control ..., core ..., quit");
         println!("For arguments containing spaces, enter a JSON array, e.g. [\"space\",\"rename\",\"My Space\"]");
     }
     let (sender, mut receiver) = tokio::sync::mpsc::channel(16);
@@ -251,6 +337,7 @@ async fn run_link_session_inner(application: &operit_core_application::CoreAppli
             if sender.blocking_send(line.map_err(|e| e.to_string())).is_err() || failed { break; }
         }
     });
+    let mut pendingPairing = None;
     loop {
         let line = tokio::select! {
             line = receiver.recv() => match line { Some(line) => line?, None => break },
@@ -259,7 +346,7 @@ async fn run_link_session_inner(application: &operit_core_application::CoreAppli
         let result = match parse_session_command(&line) {
             Ok(command) if command.is_empty() => continue,
             Ok(command) if command.as_slice() == ["quit"] || command.as_slice() == ["exit"] => break,
-            Ok(command) => execute_link_session_command(application, &command).await,
+            Ok(command) => execute_link_session_command(application, &command, &mut pendingPairing).await,
             Err(error) => Err(error),
         };
         if let Err(error) = result {
@@ -268,25 +355,48 @@ async fn run_link_session_inner(application: &operit_core_application::CoreAppli
         }
         io::stdout().flush().map_err(|e| e.to_string())?;
     }
+    if let Some(pending) = pendingPairing {
+        application.accessServices().cancelPairing(pending.pairingId).await?;
+    }
     application.accessServices().stopListening().await?;
     if cli_json_mode() { emit_cli_json(serde_json::json!({"stopped": true})); }
     Ok(())
 }
 
-async fn execute_link_session_command(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+async fn execute_link_session_command(application: &operit_core_application::CoreApplication, args: &[String],
+    pendingPairing: &mut Option<operit_node_runtime::NodeServices::PendingPairing>) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("qr") if args.len() == 1 => {
             print_connection_qr(&application.accessServices().peerConnectionCode().await?)
         }
-        Some("pair-code") if args.len() == 2 => {
-            let pending = application.accessServices().startPairingFromCode(args[1].clone()).await?;
-            emit_cli_json(serde_json::to_value(pending).map_err(|error| error.to_string())?);
+        Some("pair") if args.len() <= 2 => {
+            if pendingPairing.is_some() { return Err("A pairing is waiting. Use confirm <six-digit-code> or pair-cancel first.".into()); }
+            let pending = start_link_pair(application, args.get(1).map(String::as_str), false).await?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"deviceName": pending.displayName, "awaitingConfirmation": true})); }
+            else { println!("Pairing with {}. Read the receiving device's code, then enter: confirm <six-digit-code>", pending.displayName); }
+            *pendingPairing = Some(pending);
+            Ok(())
+        }
+        Some("confirm") if args.len() == 2 => {
+            let pending = pendingPairing.as_ref().ok_or("No pairing waiting. Use pair first.")?;
+            let peer = application.accessServices().finishPairing(pending.pairingId.clone(), args[1].clone()).await?;
+            *pendingPairing = None;
+            if cli_json_mode() { emit_cli_json(serde_json::to_value(peer).map_err(|error| error.to_string())?); }
+            else { println!("Paired with {}", peer.displayName); }
+            Ok(())
+        }
+        Some("pair-cancel") if args.len() == 1 => {
+            let pending = pendingPairing.as_ref().ok_or("No pairing waiting")?;
+            application.accessServices().cancelPairing(pending.pairingId.clone()).await?;
+            *pendingPairing = None;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"cancelled": true})); }
+            else { println!("Pairing cancelled"); }
             Ok(())
         }
         Some("space") => execute_link_space_command(application, &args[1..]).await,
         Some("control") => execute_link_control_command(application, &args[1..]).await,
         Some("edge-call") => execute_link_edge_call_command(application, &args[1..]).await,
-        Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts") =>
+        Some("unpair" | "peers" | "prompts") =>
             execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await,
         Some("chat-watch") if args.len() == 2 => {
             let target = operit_proxy_local::LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
@@ -321,7 +431,7 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
             if !output.stderr.is_empty() { eprint!("{}", output.stderr); }
             Ok(())
         }
-        _ => Err("session commands: pair-start|pair-finish|pair-cancel|unpair|prompts|peers|space|control|core|call <schema> <method> <JSON>|chat-watch <chat-id>|quit".into()),
+        _ => Err("session commands: qr|pair [device-name|connection-code]|confirm <code>|pair-cancel|unpair [device-name|number]|prompts|peers|space|control|core|call <schema> <method> <JSON>|chat-watch <chat-id>|quit".into()),
     }
 }
 
@@ -350,56 +460,29 @@ async fn execute_node_pairing_command(
     services: &dyn operit_node_runtime::RuntimePeerService::RuntimePeerService,
     args: &[String],
 ) -> Result<(), String> {
-    use operit_node_runtime::NodeServices::{PeerEndpoint, PeerTransport as Transport};
-    // `auto` leaves the carrier open: the core classifies the endpoint from
-    // the address itself (URL scheme or one probe connection).
-    let transport = |value: &str| match value {
-        "http" => Ok(Some(Transport::Http)),
-        "ws" => Ok(Some(Transport::WebSocket)),
-        "tcp" => Ok(Some(Transport::Tcp)),
-        "serial" => Ok(Some(Transport::Serial)),
-        "bluetooth" => Ok(Some(Transport::Bluetooth)),
-        "auto" => Ok(None),
-        _ => Err("transport must be auto, http, ws, tcp, serial or bluetooth".to_string()),
-    };
     let value = match args {
-        [command, node, address, mode] if command == "pair-start" => {
-            let pending = services.startPairing(
-                PeerEndpoint { nodeId: node.clone(), address: address.clone() },
-                transport(mode)?).await.map_err(|e| e.to_string())?;
-            serde_json::to_value(pending).map_err(|e| e.to_string())?
-        }
-        [command, id, code] if command == "pair-finish" => {
-            serde_json::to_value(services.finishPairing(id, code).await.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?
-        }
-        [command, id] if command == "pair-cancel" => {
-            services.cancelPairing(id).await.map_err(|e| e.to_string())?;
-            serde_json::json!({"cancelled": id})
-        }
-        [command, node] if command == "unpair" => {
-            services.removePairedPeer(node).await.map_err(|e| e.to_string())?;
-            serde_json::json!({"removed": node})
+        [command, ..] if command == "unpair" && args.len() <= 2 => {
+            let peers = services.pairedPeers().map_err(|error| error.to_string())?;
+            let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
+            let index = select_link_choice(&choices, args.get(1).map(String::as_str), "paired device")?;
+            services.removePairedPeer(&peers[index].nodeId).await.map_err(|error| error.to_string())?;
+            serde_json::json!({"removed": peers[index].displayName})
         }
         [command] if command == "prompts" => serde_json::to_value(services.pairingPrompts().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         [command] if command == "peers" => serde_json::to_value(services.pairedPeers().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
-        [command, mode] if command == "listen" => {
-            // Listening binds concrete carriers; "auto" only dials.
-            let listenTransport = transport(mode)?
-                .ok_or_else(|| "listening requires an explicit transport, not auto".to_string())?;
-            services.startListening(&[listenTransport]).await.map_err(|e| e.to_string())?;
-            tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
-            services.stop().await.map_err(|e| e.to_string())?;
-            serde_json::json!({"stopped": true})
-        }
-        _ => return Err("link pair-start <node-id> <address> <transport> | pair-finish <id> <code> | pair-cancel <id> | unpair <node-id> | peers | listen <transport>".into()),
+        _ => return Err("link unpair [device-name|number] | peers | prompts".into()),
     };
     if cli_json_mode() {
         emit_cli_json(value);
+    } else if let Some(entries) = value.as_array() {
+        if entries.is_empty() { println!("No devices"); }
+        for (index, entry) in entries.iter().enumerate() {
+            let name = entry["displayName"].as_str().unwrap_or("Unnamed device");
+            if let Some(code) = entry["confirmationCode"].as_str() { println!("{}. {name} · code: {code}", index + 1); }
+            else { println!("{}. {name}", index + 1); }
+        }
     } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
-        );
+        println!("Removed {}", value["removed"].as_str().unwrap_or("device"));
     }
     Ok(())
 }
@@ -701,8 +784,11 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("Removed device {device_label} from the Space and forgot its pairing"); }
             Ok(())
         }
-        Some("join") if args.len() == 2 => {
-            let request = service.requestDeviceSpaceJoin(args[1].clone()).await?;
+        Some("join") if args.len() <= 2 => {
+            let peers = coreApplication.nodeServices()?.peers().pairedPeers().map_err(|error| error.to_string())?;
+            let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
+            let index = select_link_choice(&choices, args.get(1).map(String::as_str), "paired device")?;
+            let request = service.requestDeviceSpaceJoin(peers[index].nodeId.clone()).await?;
             print_space_join_request(&request)?;
             Ok(())
         }
@@ -714,18 +800,30 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             };
             if cli_json_mode() { emit_cli_json(serde_json::json!(requests)); }
             else if requests.is_empty() { println!("No join requests"); }
-            else { for request in requests { print_space_join_request(&request)?; } }
+            else { for request in &requests { print_space_join_request(request)?; } }
             Ok(())
         }
-        Some("refresh") if args.len() == 2 => {
-            print_space_join_request(&service.refreshDeviceSpaceJoin(args[1].clone()).await?)
+        Some("refresh" | "cancel") if args.len() <= 2 => {
+            let history = service.outgoingDeviceSpaceJoins()?;
+            // A fresh application replaces the previous receipt for this target.
+            let mut latest = std::collections::BTreeMap::new();
+            for request in &history { latest.insert(&request.targetDeviceId, request); }
+            let mut requests: Vec<_> = latest.into_values().collect();
+            requests.sort_by_key(|request| request.createdAt);
+            let choices: Vec<_> = requests.iter().map(|request| request.spaceName.as_str()).collect();
+            let index = select_link_choice(&choices, args.get(1).map(String::as_str), "outgoing join request")?;
+            let id = requests[index].requestId.clone();
+            let updated = if args[0] == "refresh" { service.refreshDeviceSpaceJoin(id).await? }
+                else { service.cancelDeviceSpaceJoin(id).await? };
+            print_space_join_request(&updated)
         }
-        Some("approve" | "reject") if args.len() == 3 => {
-            let version = args[2].parse::<u64>().map_err(|_| "assignment-version must be a non-negative integer")?;
-            print_space_join_request(&service.decideDeviceSpaceJoin(args[1].clone(), version, args[0] == "approve").await?)
-        }
-        Some("cancel") if args.len() == 2 => {
-            print_space_join_request(&service.cancelDeviceSpaceJoin(args[1].clone()).await?)
+        Some("approve" | "reject") if args.len() <= 2 => {
+            let requests = service.incomingDeviceSpaceJoins().await?;
+            let requests: Vec<_> = requests.iter().filter(|request| request.canApprove).collect();
+            let choices: Vec<_> = requests.iter().map(|request| request.applicantName.as_str()).collect();
+            let index = select_link_choice(&choices, args.get(1).map(String::as_str), "join request awaiting your decision")?;
+            let request = requests[index];
+            print_space_join_request(&service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, args[0] == "approve").await?)
         }
         Some("preferences") if args.len() == 2 => {
             let preferences = service.devicePreferences(args[1].clone())?;
@@ -761,7 +859,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
-        _ => Err("usage: operit2 cli link space <show|topology|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|preferences <node-id>|preference-set <node-id> <key> <JSON>|preference-delete <node-id> <key>|sync|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>".to_string()),
+        _ => Err("usage: operit2 cli link space <show|topology|status <device-name>|rename <name>|join [device-name]|requests <incoming|outgoing>|refresh [space-name|number]|approve [device-name|number]|reject [device-name|number]|cancel [space-name|number]|preferences <node-id>|preference-set <node-id> <key> <JSON>|preference-delete <node-id> <key>|sync|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>".to_string()),
     }
 }
 
@@ -769,9 +867,9 @@ fn print_space_join_request(request: &operit_node_runtime::RuntimeRemoteLinkServ
     if cli_json_mode() {
         emit_cli_json(serde_json::to_value(request).map_err(|e| e.to_string())?);
     } else {
-        println!("Join request {}: {:?} · Space: {} · reviewer: {} · assignment-version: {}",
-            request.requestId, request.status, request.spaceName,
-            request.reviewerName.as_deref().unwrap_or("not assigned"), request.assignmentVersion);
+        println!("{}: {:?} · Space: {} · reviewer: {}",
+            request.applicantName, request.status, request.spaceName,
+            request.reviewerName.as_deref().unwrap_or("not assigned"));
     }
     Ok(())
 }
@@ -1187,21 +1285,20 @@ fn find_core_stream_descriptor(value: &CoreValue) -> Option<CoreStreamDescriptor
 pub(crate) fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
-            serde_json::json!({ "usage": "operit2 cli link <discover|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|doctor|control|stream-probe|edge-call>" }),
+            serde_json::json!({ "usage": "operit2 cli link <discover|qr|pair|unpair|peers|prompts|listen|session|space|doctor|control|stream-probe|edge-call>" }),
         );
         return;
     }
+    println!("operit2 cli link pair [device-name|connection-code]  # discover, choose device, enter six-digit code");
     println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link qr [http|ws|tcp] [--bind <host:port>] [--no-discovery]  # terminal QR; reuses daemon/TUI when running");
-    println!("  In a live link session: qr | pair-code <connection-code>");
+    println!("  In a live link session: qr | pair [device-name|connection-code] | confirm <six-digit-code> | pair-cancel");
     println!("operit2 cli link doctor [--repair]  # shared-Space health diagnosis and repair");
-    println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth>");
-    println!("operit2 cli link pair-finish <pairing-id> <code>");
-    println!("operit2 cli link pair-cancel <pairing-id> | unpair <node-id> | peers");
+    println!("operit2 cli link unpair [device-name|number] | peers | prompts");
     println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth> [--automatic-port|--fixed-port] [--bind <host:port>]");
-    println!("operit2 cli link space <show|topology|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
-    println!("operit2 cli link space requests <incoming|outgoing> | refresh <request-id> | cancel <request-id>");
-    println!("operit2 cli link space approve|reject <request-id> <assignment-version> | sync");
+    println!("operit2 cli link space <show|topology|status <device-name>|rename <name>|join [device-name|number]|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link space requests <incoming|outgoing> | refresh [space-name|number] | cancel [space-name|number]");
+    println!("operit2 cli link space approve|reject [device-name|number] | sync  # a single pending request is selected automatically");
     println!("operit2 cli link space preferences <node-id> | preference-set <node-id> <key> <JSON> | preference-delete <node-id> <key>");
     println!("operit2 cli link session <http|ws|tcp> [--automatic-port|--fixed-port] [--bind <host:port>] [--no-discovery]  # live interactive management");
     println!("operit2 cli link control <show|bootstrap|audit|identity|device|policy>");
@@ -1213,7 +1310,25 @@ pub(crate) fn print_link_usage() {
 
 #[cfg(test)]
 mod session_command_tests {
-    use super::parse_session_command;
+    use super::{parse_session_command, select_link_choice};
+
+    #[test]
+    fn single_candidate_needs_no_selector_but_multiple_candidates_do() {
+        assert_eq!(select_link_choice(&["Phone"], None, "device").unwrap(), 0);
+        let error = select_link_choice(&["Phone", "Server"], None, "device").unwrap_err();
+        assert!(error.contains("1. Phone") && error.contains("2. Server"));
+        assert!(select_link_choice(&[], None, "device").is_err());
+    }
+
+    #[test]
+    fn duplicate_and_numeric_names_cannot_silently_select_another_device() {
+        assert!(select_link_choice(&["Phone", "Phone"], Some("Phone"), "device").is_err());
+        assert_eq!(select_link_choice(&["Phone", "Phone"], Some("2"), "device").unwrap(), 1);
+        assert_eq!(select_link_choice(&["Server", "1"], Some("1"), "device").unwrap(), 1);
+        for selector in ["0", "3", "unknown", "-1"] {
+            assert!(select_link_choice(&["Phone", "Server"], Some(selector), "device").is_err());
+        }
+    }
 
     #[test]
     fn accepts_simple_commands_and_json_arguments_with_spaces() {
