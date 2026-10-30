@@ -31,33 +31,30 @@ Widget _app(Widget content, {double? maxHeight}) => MaterialApp(
 
 void main() {
   for (final alreadyScrollable in <bool>[false, true]) {
-    testWidgets(
-      'wrap-content dialog scrolls in a short window '
-      '(existing scroll view: $alreadyScrollable)',
-      (tester) async {
-        await tester.binding.setSurfaceSize(const Size(800, 420));
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-        var content = _content();
-        if (alreadyScrollable) {
-          content = SingleChildScrollView(child: content);
-        }
+    testWidgets('wrap-content dialog scrolls in a short window '
+        '(existing scroll view: $alreadyScrollable)', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 420));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var content = _content();
+      if (alreadyScrollable) {
+        content = SingleChildScrollView(child: content);
+      }
 
-        await tester.pumpWidget(_app(content));
-        await tester.pumpAndSettle();
+      await tester.pumpWidget(_app(content));
+      await tester.pumpAndSettle();
 
-        expect(tester.takeException(), isNull);
-        expect(find.text('Dialog title').hitTestable(), findsOneWidget);
-        expect(find.text('Save').hitTestable(), findsOneWidget);
-        await tester.drag(
-          find.byType(SingleChildScrollView).first,
-          const Offset(0, -600),
-        );
-        await tester.pumpAndSettle();
-        expect(find.byKey(_lastItemKey).hitTestable(), findsOneWidget);
-        expect(find.text('Save').hitTestable(), findsOneWidget);
-        expect(tester.takeException(), isNull);
-      },
-    );
+      expect(tester.takeException(), isNull);
+      expect(find.text('Dialog title').hitTestable(), findsOneWidget);
+      expect(find.text('Save').hitTestable(), findsOneWidget);
+      await tester.drag(
+        find.byType(SingleChildScrollView).first,
+        const Offset(0, -600),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_lastItemKey).hitTestable(), findsOneWidget);
+      expect(find.text('Save').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   }
 
   testWidgets('wrap-content dialog adapts when the keyboard opens', (

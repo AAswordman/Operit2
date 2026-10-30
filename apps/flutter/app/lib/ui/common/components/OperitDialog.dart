@@ -98,13 +98,20 @@ class OperitDialogScaffold extends StatelessWidget {
                   ],
                 ),
               ),
-              if (maxHeight == null)
-                Padding(padding: contentPadding, child: child)
-              else
-                Flexible(
-                  fit: expandContent ? FlexFit.tight : FlexFit.loose,
-                  child: Padding(padding: contentPadding, child: child),
-                ),
+              Flexible(
+                fit: maxHeight != null && expandContent
+                    ? FlexFit.tight
+                    : FlexFit.loose,
+                // Wrap-content dialogs still need a bounded, scrollable body
+                // when the window shrinks or the keyboard is visible.
+                child: maxHeight == null
+                    ? SingleChildScrollView(
+                        primary: false,
+                        padding: contentPadding,
+                        child: child,
+                      )
+                    : Padding(padding: contentPadding, child: child),
+              ),
               if (actions.isNotEmpty) ...<Widget>[
                 OperitDialogActionBar(
                   padding: actionsPadding,
