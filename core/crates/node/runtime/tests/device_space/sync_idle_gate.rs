@@ -746,3 +746,95 @@ async fn applied_remote_progress_does_not_reopen_a_settled_gate() {
         "received progress must not start a pass this device owes nothing to"
     );
 }
+
+
+/// Injects snapshot races at the application boundary while using real peer routing and sync gates.
+struct CorrectionRaceApplication {
+    inner: GateTestApplicationClient,
+    snapshot: Arc<StdMutex<operit_store::Transaction::Snapshot>>,
+    fault: &'static str,
+    reports: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait(?Send)]
+impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
+    async fn call(&self, request: operit_link::CoreCallRequest) -> operit_link::CoreCallResponse {
+        let result = match request.methodName.as_str() {
+            "syncConsistency" => {
+                let mut snapshot = self.snapshot.lock().unwrap().clone();
+                if self.fault == "manifest" && self.reports.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+                    snapshot.generation += 1;
+                }
+                operit_link::toCoreValue(serde_json::json!({"manifests":[snapshot.manifest().unwrap()],"pendingOwners":[],"errors":[]}))
+                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            }
+            "syncReadSnapshot" | "syncReadCoverage" if request.methodName == self.fault => {
+                Err(operit_link::CoreLinkError::internal("Snapshot changed; synchronize again"))
+            }
+            "syncReadSnapshot" if self.fault == "storage" => {
+                Err(operit_link::CoreLinkError::internal("database is corrupt"))
+            }
+            "syncReadSnapshot" | "syncReadCoverage" => {
+                // Both peers already hold this blob; only correction control flow is exercised here.
+                operit_link::toCoreValue(serde_json::json!({"contentHash":"0".repeat(64),"size":0}))
+                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            }
+            "syncBlobExists" => operit_link::toCoreValue(true)
+                .map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),
+            "syncRepairSnapshot" => operit_link::toCoreValue(self.fault != "syncRepairSnapshot")
+                .map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),
+            _ => return self.inner.call(request).await,
+        };
+        operit_link::CoreCallResponse { requestId: request.requestId, result }
+    }
+
+    async fn watchSnapshot(&self, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEvent, operit_link::CoreLinkError> {
+        self.inner.watchSnapshot(request).await
+    }
+    async fn watch(&self, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {
+        self.inner.watch(request).await
+    }
+    async fn openPush(&self, request: operit_link::CorePushRequest) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
+        self.inner.openPush(request).await
+    }
+}
+
+#[tokio::test]
+async fn snapshot_changes_retry_without_publishing_an_error_or_opening_the_sync_overlay() {
+    use operit_store::Transaction::{Backend, Data, Owner, Snapshot};
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "storage"] {
+        let (mut routers, _access, peers, _) = gateMesh(&format!("sync-quiet-{fault}"));
+        let snapshots = ["z", "a"].map(|node| {
+            let mut data = Data::empty(Owner { backend: Backend::Sql,
+                path: "runtime/plugin_data/space/com.operit.test/memory.sqlite".into(), format: 1, layout: 1 });
+            data.values.insert("record".into(), serde_json::json!(node));
+            Arc::new(StdMutex::new(Snapshot { node: node.into(), data, covered: BTreeSet::new(), generation: 0 }))
+        });
+        for (index, router) in routers.iter_mut().enumerate() {
+            router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
+                inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(2) },
+                snapshot: snapshots[index].clone(), fault, reports: std::sync::atomic::AtomicUsize::new(0),
+            }));
+        }
+        peers[1].link(&routers[0]);
+        peers[0].link(&routers[1]);
+        let observer = idleObserver(&routers[1]);
+        let result = observer.synchronizeOnce().await;
+        if fault == "storage" {
+            assert!(result.is_err());
+            assert!(observer.progressFlow().value().iter().any(|item| item.error.is_some()), "real storage failures must remain visible");
+            continue;
+        }
+        assert!(result.is_ok(), "{fault}: {result:?}");
+        assert!(observer.progressFlow().value().is_empty(), "a snapshot race must stay quiet: {fault}");
+        let before = synchronizedMethodCount(&peers[1], "syncConsistency");
+        // A subsequent pass must still run even though no business clock changed.
+        snapshots[1].lock().unwrap().data = snapshots[0].lock().unwrap().data.clone();
+        observer.synchronizeOnce().await.unwrap();
+        assert!(synchronizedMethodCount(&peers[1], "syncConsistency") > before, "lost retry: {fault}");
+        assert!(observer.progressFlow().value().is_empty(), "{fault}");
+    }
+}

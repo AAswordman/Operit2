@@ -38,10 +38,11 @@ impl SpacePersistenceSyncService {
         Ok((local?, remote?))
     }
 
-    pub(super) async fn synchronizeConsistency(&self, target: &str) -> Result<(), String> {
+    pub(super) async fn synchronizeConsistency(&self, target: &str) -> Result<bool, String> {
         let (local, remote) = self.consistencyReports(target).await?;
         let plans = correctionPlans(&local, &remote);
-        if plans.is_empty() { return verifyReports(&local, &remote); }
+        let mut changed = BTreeSet::new();
+        if plans.is_empty() { return verifyReports(&local, &remote, &changed); }
         let mut transfers = Vec::new();
         for (a, b, choice) in plans {
             let result = async {
@@ -56,6 +57,7 @@ impl SpacePersistenceSyncService {
             }.await;
             match result {
                 Ok(reference) => transfers.push((a, b, choice, reference)),
+                Err(error) if snapshotChanged(&error) => { changed.insert(a.or(b).expect("file exists").owner.path.clone()); },
                 Err(error) => self.recordPendingWork(target, "consistency transfer", &json!({"errors":[error],"pending":1})),
             }
         }
@@ -64,7 +66,7 @@ impl SpacePersistenceSyncService {
             let (current_a, current_b) = self.consistencyReports(target).await?;
             for (a, b, choice, reference) in transfers {
                 let result = async {
-                    unchangedPair(&current_a, &current_b, a, b)?;
+                    if unchangedPair(&current_a, &current_b, a, b).is_err() { return Ok(false); }
                     let source = if choice == Source::Local { a } else { b }.expect("source exists");
                     for local in [choice != Source::Local, choice == Source::Local] {
                         if !self.storageReplicationAllowed(target)? { return Err("Storage replication authorization changed".into()); }
@@ -72,17 +74,23 @@ impl SpacePersistenceSyncService {
                         let args = json!({"owner":source.owner,"expected":destination.map_or("", |m|m.token.as_str()),"reference":reference});
                         let repaired: bool = if local { self.callLocal("syncRepairSnapshot",args).await? }
                             else { callRemote(&self.state.nodeRouter,target,PeerSyncMethod::SyncRepairSnapshot,args).await? };
-                        if !repaired { return Err("File changed before correction; synchronize again".into()); }
+                        if !repaired { return Ok(false); }
                     }
-                    Ok::<_, String>(())
+                    Ok::<_, String>(true)
                 }.await;
-                if let Err(error) = result {
-                    self.recordPendingWork(target, "consistency correction", &json!({"errors":[error],"pending":1}));
+                match result {
+                    Ok(true) => {},
+                    Ok(false) => { changed.insert(a.or(b).expect("file exists").owner.path.clone()); },
+                    Err(error) if snapshotChanged(&error) => { changed.insert(a.or(b).expect("file exists").owner.path.clone()); },
+                    Err(error) => self.recordPendingWork(target, "consistency correction", &json!({"errors":[error],"pending":1})),
                 }
             }
         }
-        let (local, remote) = self.consistencyReports(target).await?;
-        verifyReports(&local, &remote)
+        let (latest_local, latest_remote) = self.consistencyReports(target).await?;
+        // Edits can also arrive after a successful CAS and before this final comparison.
+        changed.extend(changedOwners(&local, &latest_local));
+        changed.extend(changedOwners(&remote, &latest_remote));
+        verifyReports(&latest_local, &latest_remote, &changed)
     }
 
     async fn transferSnapshot(&self, target: &str, source: &Manifest, local: bool, coverage_only: bool) -> Result<RuntimeFileSyncReference, String> {
@@ -95,6 +103,13 @@ impl SpacePersistenceSyncService {
         Ok(reference)
     }
 
+}
+
+/// Application errors cross the RPC boundary as strings; only these exact retry reasons are quiet.
+fn snapshotChanged(error: &str) -> bool {
+    let reason = error.lines().next().unwrap_or_default();
+    ["Snapshot changed; synchronize again", "File changed before export"].iter()
+        .any(|message| reason == *message || reason.ends_with(&format!(": {message}")))
 }
 
 /// The union of inventories includes files that exist on only one endpoint.
@@ -126,30 +141,49 @@ fn unchangedPair(local: &Report, remote: &Report, a: Option<&Manifest>, b: Optio
     Ok(())
 }
 
-/// Completion means equal materialized contents for every ready owner on both peers.
-fn verifyReports(local: &Report, remote: &Report) -> Result<(), String> {
+fn changedOwners(before: &Report, after: &Report) -> BTreeSet<String> {
+    let mut owners = BTreeMap::new();
+    for manifest in &before.manifests { owners.entry((&manifest.owner.path, &manifest.owner.backend)).or_insert((None, None)).0 = Some(manifest); }
+    for manifest in &after.manifests { owners.entry((&manifest.owner.path, &manifest.owner.backend)).or_insert((None, None)).1 = Some(manifest); }
+    owners.into_iter().filter_map(|((path, _), (before, after))| (before != after).then(|| path.clone()))
+        .chain(before.pendingOwners.symmetric_difference(&after.pendingOwners).cloned()).collect()
+}
+
+/// Changed owners retry quietly; completion still requires every file and baseline to match.
+fn verifyReports(local: &Report, remote: &Report, changed: &BTreeSet<String>) -> Result<bool, String> {
     if !local.errors.is_empty() || !remote.errors.is_empty() {
         return Err("Consistency check has owner errors".into());
     }
-    if !local.pendingOwners.is_empty() || !remote.pendingOwners.is_empty() {
+    if local.pendingOwners.union(&remote.pendingOwners).any(|path| !changed.contains(path)) {
         return Err("Consistency check has pending owners".into());
     }
+    let mut complete = local.pendingOwners.is_empty() && remote.pendingOwners.is_empty();
     for (a,b) in [(local,remote),(remote,local)] {
         for manifest in &a.manifests {
-            let other = b.manifests.iter().find(|other|other.owner.path == manifest.owner.path && other.owner.backend == manifest.owner.backend)
-                .ok_or_else(||format!("Missing synchronized file: {}",manifest.owner.path))?;
-            if compare_manifests(manifest,other)? != Source::Equal {
-                return Err(format!("Synchronized file differs after correction: {}",manifest.owner.path));
+            let comparison = match b.manifests.iter().find(|other|other.owner.path == manifest.owner.path && other.owner.backend == manifest.owner.backend) {
+                Some(other) => compare_manifests(manifest,other),
+                None => Err(format!("Missing synchronized file: {}",manifest.owner.path)),
+            };
+            if matches!(comparison, Ok(Source::Equal)) { continue; }
+            if changed.contains(&manifest.owner.path) {
+                complete = false;
+                continue;
             }
+            comparison?;
+            return Err(format!("Synchronized file differs after correction: {}",manifest.owner.path));
         }
     }
-    Ok(())
+    Ok(complete)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use operit_store::Transaction::{Backend, Data, Owner, Snapshot};
+
+    fn verifyReports(local: &Report, remote: &Report) -> Result<bool, String> {
+        super::verifyReports(local, remote, &BTreeSet::new())
+    }
 
     fn report(snapshot: &Snapshot) -> Report {
         Report {
@@ -261,6 +295,68 @@ mod tests {
         assert!(verifyReports(&local, &remote).is_err());
         remote.manifests[1] = local.manifests[1].clone();
         assert!(verifyReports(&local, &remote).is_ok());
+    }
+
+    #[test]
+    fn only_known_snapshot_races_are_quiet_across_rpc_wrappers() {
+        for reason in ["Snapshot changed; synchronize again", "File changed before export"] {
+            for error in [reason.to_owned(), format!("local syncReadSnapshot: COMMAND_ERROR: {reason}"),
+                format!("remote peer syncReadCoverage: COMMAND_ERROR: {reason}\nRust error location: test.rs:1")] {
+                assert!(snapshotChanged(&error), "{error}");
+            }
+        }
+        for error in ["database is corrupt", "permission denied", "Snapshot verification failed after replacement",
+            "Snapshot changed; synchronize again: database is corrupt"] {
+            assert!(!snapshotChanged(error), "{error}");
+        }
+    }
+
+    #[test]
+    fn concurrent_changes_retry_quietly_without_hiding_other_failures_or_claiming_completion() {
+        let snapshot = |path: &str| Snapshot { node: "a".into(), data: Data::empty(Owner {
+            backend: Backend::DataStore, path: path.into(), format: 1, layout: 1,
+        }), covered: BTreeSet::new(), generation: 0 };
+        let original = snapshot("changing");
+        let mut changed = original.clone();
+        changed.data.values.insert("new".into(), json!(true));
+        let local = report(&original);
+        let mut remote = report(&changed);
+        let retry = BTreeSet::from(["changing".into()]);
+        assert_eq!(super::verifyReports(&local, &remote, &retry), Ok(false));
+        assert!(verifyReports(&local, &remote).is_err());
+        remote.manifests.clear();
+        assert_eq!(super::verifyReports(&local, &remote, &retry), Ok(false));
+        remote.pendingOwners.insert("changing".into());
+        assert_eq!(super::verifyReports(&local, &remote, &retry), Ok(false));
+        remote.errors.push("database is corrupt".into());
+        assert!(super::verifyReports(&local, &remote, &retry).is_err());
+        remote.errors.clear();
+        remote.pendingOwners.insert("unrelated".into());
+        assert!(super::verifyReports(&local, &remote, &retry).is_err());
+        remote.pendingOwners.clear();
+        remote.manifests.push(snapshot("unrelated").manifest().unwrap());
+        assert!(super::verifyReports(&local, &remote, &retry).is_err());
+        remote.manifests = local.manifests.clone();
+        assert_eq!(super::verifyReports(&local, &remote, &retry), Ok(true), "a concurrent correction may already have converged");
+    }
+
+    #[test]
+    fn final_comparison_detects_edits_arriving_after_correction() {
+        let original = Snapshot { node: "a".into(), data: Data::empty(Owner {
+            backend: Backend::Sql, path: "memory.sqlite".into(), format: 1, layout: 1,
+        }), covered: BTreeSet::new(), generation: 0 };
+        let before = report(&original);
+        let mut edited = original.clone();
+        edited.data.values.insert("new".into(), json!(true));
+        let after = report(&edited);
+        let retry = changedOwners(&before, &after);
+        assert_eq!(retry, BTreeSet::from(["memory.sqlite".into()]));
+        assert_eq!(super::verifyReports(&before, &after, &retry), Ok(false));
+        assert_eq!(super::verifyReports(&after, &after, &retry), Ok(true));
+        let empty = Report { manifests: vec![], errors: vec![], pendingOwners: BTreeSet::new() };
+        assert_eq!(changedOwners(&before, &empty), retry);
+        assert_eq!(changedOwners(&empty, &after), retry);
+        assert!(changedOwners(&before, &before).is_empty());
     }
 
     #[test]
