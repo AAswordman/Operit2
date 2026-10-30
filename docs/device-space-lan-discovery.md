@@ -12,7 +12,20 @@
   shared query while retaining subscription handles. It does not just read an
   old snapshot or create a competing browser.
 - Local and already-paired devices are intentionally excluded from add-device
-  results, including paired devices that are currently offline.
+  results, including paired devices that are currently offline. Their resolved
+  endpoints remain available to the connection layer.
+- The availability worker subscribes to the same Host browser even while the
+  add-device dialog is closed. An offline paired network device reconnects using
+  ranked discovered addresses, with its saved address as a fallback. Each
+  alternative gets a bounded connection and authentication attempt.
+- A discovered `nodeId` is only a dial hint. After a session handshake verifies
+  the expected node and proves possession of the existing pairing secret, the
+  runtime persists the successful address **and transport** in the outbound
+  pairing record. This includes changes to an OS-assigned listener port and
+  does not require a new pairing code. Failed authentication leaves the saved
+  endpoint unchanged; concurrent unpairing or credential replacement cannot be
+  undone by an in-flight connection. An established channel is reused until it
+  fails; discovery does not open an additional channel for an online peer.
 
 ## Host Resources
 
@@ -58,6 +71,17 @@ The opt-in live test starts independent publisher and scanner daemons, resolves
 the advertised service, and connects to its real TCP listener using the returned
 non-loopback IPv4 address and port. It requires a multicast-enabled LAN. It is a
 single-machine network smoke test, not evidence of a two-device pairing.
+
+Run the session authentication and random-port reconnection regressions from `core`:
+
+```sh
+cargo test -p operit-node-runtime --no-default-features --features peer-runtime --lib HostRuntimePeerService
+```
+
+These tests use real loopback TCP listeners with deterministic discovery events.
+They cover automatic reconnection after a listener changes port, endpoint and
+transport persistence, failed credential proofs, address fallback, and pairing
+removal during an in-flight update.
 
 Run UI checks from `apps/flutter/app`:
 

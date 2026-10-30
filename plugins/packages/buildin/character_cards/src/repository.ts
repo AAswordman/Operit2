@@ -1,7 +1,7 @@
 import { uuid } from "./identity";
 import type { CharacterRepository } from "./canonical";
 import type { ActivePrompt, BackupImportResult, Card, CharacterDirectories, CharacterState, ConversationGroupRecord, Group, MemorySpace, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
-import { assertBoolean, assertConversationGroups, assertGroup, assertString, assertTag, assertTagValues, requireId, requireName } from "./validation";
+import { assertBoolean, assertConversationGroups, assertGroup, assertInteger, assertString, assertTag, assertTagValues, requireId, requireName } from "./validation";
 import { clone } from "./storage/records";
 import { createMemorySpace, normalizeMemoryRecallSettings } from "./storage/state";
 import { DatabaseMemoryRepository } from "./storage/memory-repository";
@@ -219,13 +219,26 @@ export class RepositorySession extends DatabaseMemoryRepository implements Chara
     else if (active.Model.id !== "chat") throw new Error("Invalid model selection");
     this.state.active = copy(active);
   }
-  /** Rejects deletion while any stored chat binding references the selection. */
+  /** Rejects deletion only while an existing Core conversation references the selection. */
   private async requireUnboundSelection(selection: string): Promise<void> {
-    const binding = (await this.chatBindings.listChatBindings()).find(
+    const bindings = (await this.chatBindings.listChatBindings()).filter(
       /** Matches the exact selection proposed for deletion. */
       binding => binding.selection === selection,
     );
-    if (binding !== undefined) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
+    for (let offset = 0; offset < bindings.length; offset += 200) {
+      const ids = bindings.slice(offset, offset + 200).map(binding => binding.chatId);
+      const result = await Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
+      assertInteger(result.totalCount, "conversation count", 0);
+      if (!Array.isArray(result.chats) || result.chats.length !== result.totalCount)
+        throw new Error("对话列表不完整，请刷新后重试");
+      const remaining = new Set(ids);
+      for (const chat of result.chats) {
+        requireId(chat.id, "conversation id");
+        if (!remaining.delete(chat.id)) throw new Error("Chat batch returned an unrelated or duplicate identity");
+      }
+      const chat = result.chats[0];
+      if (chat !== undefined) throw new Error("Rebind or delete the chat extension before deleting its selection: " + chat.id);
+    }
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */
   async readUser(ownerKey: string): Promise<UserDocument> {

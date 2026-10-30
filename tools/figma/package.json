@@ -12,7 +12,11 @@
     "test:runtime": "node --experimental-strip-types test/runtime_roundtrip.ts",
     "format:check": "prettier --check src test *.mjs *.json README.md",
     "package": "node --experimental-strip-types package.mjs",
-    "test:package": "npm run package && node --experimental-strip-types test/package_roundtrip.ts"
+    "test:package": "npm run package && node --experimental-strip-types test/package_roundtrip.ts",
+    "build:live": "node build-live.mjs",
+    "live": "node live.mjs",
+    "test:live": "node --test test/live.test.mjs",
+    "test:live:browser": "node test/live_client.browser.mjs"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.119.0",

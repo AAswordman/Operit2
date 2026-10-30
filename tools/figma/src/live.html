@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Operit 实时设计</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        background: #e9ebef;
+        color: #20242c;
+        font:
+          13px system-ui,
+          sans-serif;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 100000;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #fff;
+        padding: 12px 18px;
+        border-bottom: 1px solid #d7dbe2;
+        flex-wrap: wrap;
+      }
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+      button {
+        border: 1px solid #d7dbe2;
+        border-radius: 7px;
+        background: #fff;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      button[aria-pressed="true"] {
+        background: #e5eaff;
+        border-color: #6776d8;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #connection {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #connection input {
+        width: 320px;
+        padding: 8px;
+        border: 1px solid #c7cbd3;
+        border-radius: 6px;
+      }
+      #status {
+        color: #58606f;
+        font-size: 12px;
+      }
+      #status.error {
+        color: #b22c32;
+      }
+      main {
+        display: flex;
+        align-items: flex-start;
+        padding: 24px;
+        gap: 24px;
+      }
+      #viewport {
+        position: relative;
+        flex: 0 0 auto;
+        box-shadow: 0 4px 28px #26324920;
+        background: white;
+        isolation: isolate;
+      }
+      .operit-selected {
+        outline: 2px solid #6859e8 !important;
+        outline-offset: 2px;
+      }
+      .operit-editing [data-runtime-key] {
+        cursor: crosshair;
+      }
+      aside {
+        position: sticky;
+        top: 100px;
+        width: 260px;
+        flex: 0 0 260px;
+        padding: 16px;
+        background: #fff;
+        border-radius: 10px;
+        border: 1px solid #d7dbe2;
+      }
+      aside[hidden] {
+        display: none;
+      }
+      aside h2 {
+        font-size: 14px;
+        margin: 0 0 14px;
+      }
+      #properties label {
+        display: block;
+        margin: 10px 0;
+        color: #58606f;
+      }
+      #properties input,
+      #properties textarea {
+        display: block;
+        width: 100%;
+        padding: 7px;
+        margin-top: 4px;
+        border: 1px solid #c7cbd3;
+        border-radius: 5px;
+      }
+      #properties textarea {
+        min-height: 80px;
+      }
+      #warnings {
+        margin: 0 24px 24px;
+        color: #765719;
+        max-width: 900px;
+        white-space: pre-wrap;
+      }
+      #empty {
+        padding: 60px 24px;
+        color: #657083;
+      }
+      #saved {
+        font-size: 11px;
+        overflow-wrap: anywhere;
+        color: #657083;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Operit</strong>
+      <form id="connection">
+        <input
+          aria-label="实时连接地址"
+          placeholder="粘贴本机生成的连接地址"
+          autocomplete="off"
+        /><button>连接</button>
+      </form>
+      <button id="mode" aria-pressed="false" disabled>选中编辑</button
+      ><button id="save" disabled>保存设计修改</button
+      ><span id="status" role="status">等待连接</span>
+    </header>
+    <main>
+      <div id="viewport" aria-label="Operit 应用">
+        <div id="empty">连接后，这里会显示正在运行的 Operit。</div>
+      </div>
+      <aside hidden>
+        <h2 id="selection">选择一个控件</h2>
+        <form id="properties"></form>
+        <button id="clear" disabled>撤销该控件修改</button>
+        <p id="saved"></p>
+      </aside>
+    </main>
+    <div id="warnings"></div>
+    <script>
+      /* OPERIT_LIVE_SCRIPT */
+    </script>
+  </body>
+</html>

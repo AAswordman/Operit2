@@ -462,6 +462,30 @@ class _DrawerContentState extends State<DrawerContent> {
     );
   }
 
+  Future<void> _deleteWorkspace(_WorkspaceSection section) async {
+    final workspaceId = section.workspaceId;
+    if (workspaceId == null || _groupMutationPending) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => DeleteWorkspaceDialog(name: section.label),
+    );
+    if (!mounted || confirmed != true) return;
+    await _runGroupMutation(() async {
+      await _chatCoreProxy.deleteWorkspace(workspaceId: workspaceId);
+      await _directoryPreferences.setDirectoryPinned(
+        SidebarDirectory.workspace(workspaceId),
+        false,
+      );
+      if (!mounted) return;
+      setState(() {
+        _collapsedWorkspaces.remove(section.key);
+        _rememberedCollapsedWorkspaces.remove(section.key);
+        _expandedWorkspaces.remove(section.key);
+      });
+      await _loadWorkspaces();
+    });
+  }
+
   /// Lets a conversation detach an exact workspace binding even when its record is missing.
   Future<void> _showUnbindConversationWorkspaceDialog(
     core_proxy.ChatHistoryListItem history,
@@ -1034,6 +1058,9 @@ class _DrawerContentState extends State<DrawerContent> {
                   expanded: !_collapsedWorkspaces.contains(section.key),
                   appearance: widget.appearance,
                   canCreate: section.canCreate,
+                  onDelete: section.workspaceId != null && section.canCreate
+                      ? () => unawaited(_deleteWorkspace(section))
+                      : null,
                   onToggleExpanded: () => _toggleWorkspace(section.key),
                   onCreateConversation: () => unawaited(
                     _createConversation(workspaceId: section.workspaceId),
@@ -1229,7 +1256,7 @@ class _WorkspaceSection {
       <core_proxy.ChatHistoryListItem>[];
 }
 
-enum _WorkspaceQuickAction { createChat, createGroup, togglePinned }
+enum _WorkspaceQuickAction { createChat, createGroup, togglePinned, delete }
 
 class _WorkspaceHeader extends StatelessWidget {
   const _WorkspaceHeader({
@@ -1244,6 +1271,7 @@ class _WorkspaceHeader extends StatelessWidget {
     required this.onCreateConversation,
     required this.onCreateGroup,
     required this.onTogglePinned,
+    this.onDelete,
   });
 
   final String label;
@@ -1256,6 +1284,7 @@ class _WorkspaceHeader extends StatelessWidget {
   final VoidCallback onCreateConversation;
   final VoidCallback onCreateGroup;
   final VoidCallback onTogglePinned;
+  final VoidCallback? onDelete;
 
   void _select(_WorkspaceQuickAction action) {
     switch (action) {
@@ -1265,6 +1294,8 @@ class _WorkspaceHeader extends StatelessWidget {
         onCreateGroup();
       case _WorkspaceQuickAction.togglePinned:
         onTogglePinned();
+      case _WorkspaceQuickAction.delete:
+        onDelete?.call();
     }
   }
 
@@ -1359,6 +1390,14 @@ class _WorkspaceHeader extends StatelessWidget {
                       : Icons.push_pin_rounded,
                   label: pinned ? '取消置顶' : '置顶',
                 ),
+                if (onDelete != null)
+                  const SidebarMenuAction(
+                    value: _WorkspaceQuickAction.delete,
+                    icon: Icons.delete_outline_rounded,
+                    label: '删除工作区',
+                    dividerBefore: true,
+                    danger: true,
+                  ),
               ],
             ),
             const SizedBox(width: 4),

@@ -61,6 +61,8 @@ export interface DesignNode {
   clipsContent?: boolean;
   paddingLeft?: number;
   paddingRight?: number;
+  paddingTop?: number;
+  paddingBottom?: number;
   source?: { [key: string]: Json };
   bindings?: Binding[];
   children?: DesignNode[];

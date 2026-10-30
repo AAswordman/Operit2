@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 export async function createDiskHarness(testContext, { legacyIdentity = null } = {}) {
   const temporaryRoot = path.resolve(tmpdir());
   const directory = path.resolve(await mkdtemp(path.join(temporaryRoot, "character-cards-disk-")));
+  await mkdir(path.join(directory, "local"));
   const calls = [], faults = new Map();
 
   /** Resolves one exact IO path and rejects every escape from the explicitly created plugin directory. */
@@ -174,6 +175,8 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
         wasm,
         /** Returns the test plugin's persistent Space data namespace. */
         getSpaceDataDir() { return directory.replaceAll("\\", "/"); },
+        /** Keeps local migration state separate from synchronized plugin preferences. */
+        getLocalDataDir() { return directory.replaceAll("\\", "/") + "/local"; },
         /** Implements only the existing authenticated config-directory IO binding, not provider or storage services. */
         getConfigDir(pluginId) {
           if (pluginId !== undefined && pluginId !== "com.operit.character_cards") throw new Error("Disk harness cannot expose another plugin directory");

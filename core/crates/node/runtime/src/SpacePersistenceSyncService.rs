@@ -116,6 +116,7 @@ struct SpacePersistenceSyncState {
     mutationSubscription: Mutex<Option<SyncMutationSubscription>>,
     peerChangesStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     synchronizationRequested: AtomicBool,
+    synchronizationReasons: Mutex<BTreeSet<&'static str>>,
     workspaceScanStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     peerGates: Mutex<BTreeMap<String, PeerSyncGate>>,
     progress: SyncProgressTracker,
@@ -148,6 +149,7 @@ impl SpacePersistenceSyncService {
             mutationSubscription: Mutex::new(None),
             peerChangesStop: Mutex::new(None),
             synchronizationRequested: AtomicBool::new(false),
+            synchronizationReasons: Mutex::new(BTreeSet::new()),
             workspaceScanStop: Mutex::new(None),
             peerGates: Mutex::new(BTreeMap::new()),
             progress: SyncProgressTracker::default(),
@@ -184,7 +186,7 @@ impl SpacePersistenceSyncService {
                 return;
             };
             let service = SpacePersistenceSyncService { state };
-            if let Err(error) = service.scheduleSynchronization() {
+            if let Err(error) = service.scheduleSynchronization("sync_mutation") {
                 operit_util::AppLogger::AppLogger::e(
                     "SpacePersistenceSyncService",
                     &format!("Space persistence sync scheduling failed: {error}"),
@@ -215,7 +217,7 @@ impl SpacePersistenceSyncService {
         );
         let synchronizationStartedAt = currentTimeMillis();
 
-        if let Err(error) = self.scheduleSynchronization() {
+        if let Err(error) = self.scheduleSynchronization("service_start") {
             let _ = self.stop();
             return Err(error);
         }
@@ -280,7 +282,7 @@ impl SpacePersistenceSyncService {
                         (intervalMs * 2).min(WORKSPACE_SCAN_IDLE_INTERVAL_MS)
                     };
                     // Also retry interrupted transfers even when no new edits occur.
-                    let _ = service.scheduleSynchronization();
+                    let _ = service.scheduleSynchronization(if changes > 0 { "workspace_changed" } else { "workspace_retry_poll" });
                 }
             })),
         ).map_err(|e| e.to_string())?;
@@ -313,7 +315,7 @@ impl SpacePersistenceSyncService {
                     }
                     let Some(state) = weakState.upgrade() else { break; };
                     if !state.active.load(Ordering::Acquire) { break; }
-                    if let Err(error) = (SpacePersistenceSyncService { state }).scheduleSynchronization() {
+                    if let Err(error) = (SpacePersistenceSyncService { state }).scheduleSynchronization("peer_connection_changed") {
                         operit_util::AppLogger::AppLogger::w(
                             "SpacePersistenceSyncService", &format!("Peer change sync scheduling failed: {error}"));
                     }
@@ -428,7 +430,7 @@ impl SpacePersistenceSyncService {
                 continue;
             }
             if let Err(error) = self
-                .synchronizeReachablePeer(targetNodeId.clone(), 512)
+                .synchronizeReachablePeerForReason(targetNodeId.clone(), 512, "change_gate")
                 .await
             {
                 errors.push(format!(
@@ -444,17 +446,34 @@ impl SpacePersistenceSyncService {
         Ok(())
     }
 
-    /// All entry points share serialization, progress, completion and retry state.
+    /// Test entry point for an explicit peer pass.
+    #[cfg(test)]
     pub(crate) async fn synchronizeReachablePeer(
         &self,
         targetNodeId: String,
         limit: usize,
     ) -> Result<(), String> {
+        self.synchronizeReachablePeerForReason(targetNodeId, limit, "direct_request").await
+    }
+
+    /// All entry points share serialization, progress, completion and retry state.
+    /// Keeps the caller visible even when it bypasses the background change gate.
+    pub(crate) async fn synchronizeReachablePeerForReason(
+        &self,
+        targetNodeId: String,
+        limit: usize,
+        trigger: &str,
+    ) -> Result<(), String> {
         if limit == 0 { return Err("sync limit must be greater than 0".into()); }
         if targetNodeId == self.state.nodeRouter.localNodeId() { return Ok(()); }
         let execution = self.state.peerGates.lock().map_err(|error| error.to_string())?
             .entry(targetNodeId.clone()).or_default().execution.clone();
+        let requestedAt = currentTimeMillis();
         let _pass = execution.lock().await;
+        let startedAt = currentTimeMillis();
+        operit_util::AppLogger::AppLogger::i("SpacePersistenceSyncService", &format!(
+            "sync_pass.start target={targetNodeId} trigger={trigger} limit={limit} queuedMs={}",
+            startedAt - requestedAt));
         let space = self.state.spaceStore.space()?;
         self.state.progress.retain(&space.spaceId, &space.members);
         self.state.progress.begin(&targetNodeId, &space.spaceId);
@@ -474,9 +493,12 @@ impl SpacePersistenceSyncService {
         match &result {
             Ok(allowed) => {
                 self.recordPeerPassCompleted(&targetNodeId, *allowed).await?;
+                let pending = self.state.peerGates.lock().map_err(|error| error.to_string())?
+                    .get(&targetNodeId).is_some_and(|gate| gate.pendingWork);
+                operit_util::AppLogger::AppLogger::i("SpacePersistenceSyncService", &format!(
+                    "sync_pass.done target={targetNodeId} trigger={trigger} businessReplication={allowed} pending={pending} elapsedMs={}",
+                    currentTimeMillis() - startedAt));
                 if *allowed {
-                    let pending = self.state.peerGates.lock().map_err(|error| error.to_string())?
-                        .get(&targetNodeId).is_some_and(|gate| gate.pendingWork);
                     self.state.progress.finish(&targetNodeId, pending, None, None);
                 } else {
                     self.state.progress.remove(&targetNodeId);
@@ -486,6 +508,9 @@ impl SpacePersistenceSyncService {
                 self.recordPeerPassFailed(&targetNodeId);
                 let retryAt = self.state.peerGates.lock().map_err(|error| error.to_string())?
                     .get(&targetNodeId).map(|gate| gate.nextFullSyncAllowedAt);
+                operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!(
+                    "sync_pass.failed target={targetNodeId} trigger={trigger} retryAt={retryAt:?} elapsedMs={} error={error}",
+                    currentTimeMillis() - startedAt));
                 self.state.progress.finish(&targetNodeId, false, retryAt, Some(error.clone()));
             }
         }
@@ -667,12 +692,15 @@ impl SpacePersistenceSyncService {
                     .ok_or_else(|| "peer sync gate absent".to_string())
             })
             .unwrap_or_default();
+        let mut reasons = Vec::new();
         let decision = if !gate.backoffElapsed(currentTimeMillis()) {
             false
         } else if gate.pendingWork {
+            reasons.push("pending_work");
             true
         } else if gate.consecutiveFailures > 0 {
             // Retry the failed exchange after the backoff has elapsed.
+            reasons.push("failure_retry");
             true
         } else if !self
             .storageReplicationAllowed(targetNodeId)
@@ -680,6 +708,7 @@ impl SpacePersistenceSyncService {
         {
             // Non-storage members never enter replication traffic: probing
             // them would only draw a denial, so keep exchanging directly.
+            reasons.push("authority_only");
             true
         } else {
             match self.probeRemoteClockSummary(targetNodeId).await {
@@ -690,8 +719,11 @@ impl SpacePersistenceSyncService {
                             .or_default()
                             .probedClockSummary = Some(summary.clone());
                     }
-                    gate.lastRemoteClockSummary.as_deref() != Some(summary.as_str())
-                        || gate.lastLocalStateSummary.as_deref() != Some(localStateSummary)
+                    if gate.lastRemoteClockSummary.is_none() { reasons.push("no_remote_baseline"); }
+                    else if gate.lastRemoteClockSummary.as_deref() != Some(summary.as_str()) { reasons.push("remote_clock_changed"); }
+                    if gate.lastLocalStateSummary.is_none() { reasons.push("no_local_baseline"); }
+                    else if gate.lastLocalStateSummary.as_deref() != Some(localStateSummary) { reasons.push("local_state_changed"); }
+                    !reasons.is_empty()
                 }
                 // The clock is unobservable (the probe was lost). Forcing the
                 // full exchange from here made every cycle re-export the whole
@@ -700,12 +732,21 @@ impl SpacePersistenceSyncService {
                 // pass instead so the exponential backoff governs the retry;
                 // once the peer answers again, the retry converges and the
                 // gate returns to probing.
-                Err(_) => {
+                Err(error) => {
                     self.recordPeerPassFailed(targetNodeId);
+                    operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!(
+                        "sync_gate.probe_failed target={targetNodeId} failures={} retryDelayMs={} error={error}",
+                        gate.consecutiveFailures.saturating_add(1),
+                        peerFullSyncBackoffMs(gate.consecutiveFailures.saturating_add(1))));
                     false
                 }
             }
         };
+        if decision {
+            operit_util::AppLogger::AppLogger::i("SpacePersistenceSyncService", &format!(
+                "sync_gate.required target={targetNodeId} reasons={} failures={} pending={}",
+                reasons.join(","), gate.consecutiveFailures, gate.pendingWork));
+        }
         cycleDecisions.insert(targetNodeId.to_string(), decision);
         decision
     }
@@ -1289,7 +1330,8 @@ impl SpacePersistenceSyncService {
     }
 
     /// Coalesces join, storage and connectivity changes into the existing worker.
-    pub(crate) fn scheduleSynchronization(&self) -> Result<(), String> {
+    pub(crate) fn scheduleSynchronization(&self, reason: &'static str) -> Result<(), String> {
+        self.state.synchronizationReasons.lock().unwrap_or_else(|error| error.into_inner()).insert(reason);
         self.state.synchronizationRequested.store(true, Ordering::Release);
         if self
             .state
@@ -1312,14 +1354,16 @@ impl SpacePersistenceSyncService {
                         return;
                     }
                     service.state.synchronizationRequested.store(false, Ordering::Release);
+                    let reasons = std::mem::take(&mut *service.state.synchronizationReasons.lock()
+                        .unwrap_or_else(|error| error.into_inner())).into_iter().collect::<Vec<_>>().join(",");
                     let synchronizedRevision = syncMutationRevision();
                     let syncStartedAt = currentTimeMillis();
                     let localNodeId = service.state.nodeRouter.localNodeId();
                     operit_util::AppLogger::AppLogger::v_with_level(
                         "SpacePersistenceSyncService",
                         &format!(
-                            "sync_cycle.start local={} revision={}",
-                            localNodeId, synchronizedRevision
+                            "sync_cycle.start local={} revision={} triggers={}",
+                            localNodeId, synchronizedRevision, reasons
                         ),
                         operit_util::AppLogger::VERBOSE_LEVEL_5,
                     );
@@ -1357,7 +1401,7 @@ impl SpacePersistenceSyncService {
                         && (service.state.synchronizationRequested.load(Ordering::Acquire)
                             || syncMutationRevision() != synchronizedRevision)
                     {
-                        if let Err(error) = service.scheduleSynchronization() {
+                        if let Err(error) = service.scheduleSynchronization("changes_during_pass") {
                             operit_util::AppLogger::AppLogger::e(
                                 "SpacePersistenceSyncService",
                                 &format!("Space persistence sync rescheduling failed: {error}"),

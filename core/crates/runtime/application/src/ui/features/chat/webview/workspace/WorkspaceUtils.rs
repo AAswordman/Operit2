@@ -55,6 +55,64 @@ pub fn createAndResetWorkspaceDirectory(chatId: String) -> Result<String, String
     PathMapper::workspacePath(&chatId)
 }
 
+/// Deletes app-owned folders and releases mounts unused by surviving workspaces.
+/// Mounted host directories are never passed to the filesystem delete operation.
+#[allow(non_snake_case)]
+pub(crate) fn deleteWorkspaceFiles(
+    workspace: &operit_model::Workspace::Workspace,
+    others: &[operit_model::Workspace::Workspace],
+) -> Result<(), String> {
+    let storage = defaultRuntimeStorageHost();
+    let registry = operit_tools::files::MountRegistry::MountRegistry::withStorage(storage.clone());
+    let mounts = registry.list()?;
+    let otherPaths = others
+        .iter()
+        .flat_map(|other| other.folders.iter().map(|folder| folder.path.as_str()))
+        .collect::<Vec<_>>();
+    let overlaps = |left: &str, right: &str| {
+        left == right
+            || left.starts_with(&format!("{right}/"))
+            || right.starts_with(&format!("{left}/"))
+    };
+    let mut ownedPaths = std::collections::BTreeSet::new();
+    for folder in &workspace.folders {
+        let Some(relative) =
+            PathMapper::relativePath(PathMapper::workspaceCollectionPath(), &folder.path)?
+        else {
+            continue;
+        };
+        // Only a workspace root directly under the app collection is owned here.
+        if relative.is_empty() || relative.contains('/') {
+            continue;
+        }
+        PathMapper::workspacePath(&relative)?;
+        if !otherPaths.iter().any(|other| overlaps(&folder.path, other)) {
+            ownedPaths.insert(format!("{WORKSPACE_DIR_PATH}/{relative}"));
+        }
+    }
+    for path in ownedPaths {
+        if storage.exists(&path).map_err(|error| error.to_string())? {
+            workspaceSyncStore().track(|| {
+                storage
+                    .delete(&path, true)
+                    .map_err(|error| error.to_string())
+            })?;
+        }
+    }
+    for mount in mounts {
+        let path = mount.vfsPath();
+        if workspace
+            .folders
+            .iter()
+            .any(|folder| overlaps(&folder.path, &path))
+            && !otherPaths.iter().any(|other| overlaps(other, &path))
+        {
+            registry.remove(&path)?;
+        }
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 fn getWorkspaceRelativePath(chatId: &str) -> String {
     format!("{WORKSPACE_DIR_PATH}/{chatId}")

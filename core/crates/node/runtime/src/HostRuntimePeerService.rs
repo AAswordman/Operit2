@@ -21,6 +21,7 @@ use crypto::{Channel, MultiplexedChannel, error};
 #[path = "peer/dispatch.rs"] mod dispatch;
 #[path = "peer/space_client.rs"] mod space_client;
 #[path = "peer/availability.rs"] mod availability;
+#[path = "peer/discovery.rs"] mod discovery;
 #[path = "peer/pairing_throttle.rs"] mod pairing_throttle;
 use pairing_throttle::{pairingSource, PairingThrottle};
 const HANDSHAKE: &str = "$peer.pairing";
@@ -244,6 +245,7 @@ struct State {
     slots: Arc<tokio::sync::Semaphore>,
     active: Mutex<BTreeSet<String>>, changes: broadcast::Sender<()>,
     availability: Mutex<Option<availability::AvailabilityWorker>>,
+    discoveryRecords: Mutex<BTreeMap<String, operit_host_api::ServiceDiscovery::DiscoveredService>>,
     lifecycle: AsyncMutex<()>,
     connectLocks: Mutex<BTreeMap<String, Weak<AsyncMutex<()>>>>,
     /// Cross-session budgets for unauthenticated pairing work.
@@ -293,6 +295,7 @@ impl HostRuntimePeerService {
                 active: Mutex::new(BTreeSet::new()),
                 changes: broadcast::channel(32).0,
                 availability: Mutex::new(None),
+                discoveryRecords: Mutex::new(BTreeMap::new()),
                 lifecycle: AsyncMutex::new(()),
                 connectLocks: Mutex::new(BTreeMap::new()),
                 pairingThrottle: Mutex::new(PairingThrottle::default()),
@@ -610,12 +613,37 @@ impl HostRuntimePeerService {
             if let Some(channel) = self.peerChannel(node) { return Ok(channel); }
             let record = self.outbound(node)?;
             let root = BASE64.decode(&record.sessionSecret).map_err(|_| error("Invalid stored credential"))?;
-            let raw = self.raw(PeerEndpoint { nodeId: node.into(), address: record.endpoint }, parseTransport(&record.transport)?).await?;
-            let result = self.handshake(raw.clone(), "session", &record.sessionId, Some(&root), None).await;
-            let (channel, _, _, _, _) = match result { Ok(result) => result, Err(error) => { raw.close().await; return Err(error); } };
-            self.requirePeerConnectionAllowed(node)?;
-            self.track(node, &raw);
-            self.startPeerChannel(node, channel, record.sessionId, dispatch::Authorization::Outbound).await
+            let endpoints = self.reconnectionEndpoints(node, &record)?;
+            let hasAlternatives = endpoints.len() > 1;
+            let mut failure = error("No pairing endpoint is available");
+            for (address, transport) in endpoints {
+                let connect = self.raw(PeerEndpoint { nodeId: node.into(), address: address.clone() }, transport);
+                let result = if hasAlternatives {
+                    tokio::time::timeout(std::time::Duration::from_secs(5), connect).await
+                        .unwrap_or_else(|_| Err(CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Pairing endpoint connection timed out")))
+                } else { connect.await };
+                let raw = match result {
+                    Ok(raw) => raw,
+                    Err(error) => { failure = error; continue; }
+                };
+                let handshake = self.handshake(raw.clone(), "session", &record.sessionId, Some(&root), None);
+                let result = if hasAlternatives {
+                    tokio::time::timeout(std::time::Duration::from_secs(5), handshake).await
+                        .unwrap_or_else(|_| Err(CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Pairing endpoint authentication timed out")))
+                } else { handshake.await };
+                let channel = match result {
+                    Ok((channel, _, _, _, _)) => channel,
+                    Err(error) => { raw.close().await; failure = error; continue; }
+                };
+                if let Err(error) = self.requirePeerConnectionAllowed(node)
+                    .and_then(|_| self.saveAuthenticatedEndpoint(node, &record, &address, transport)) {
+                    raw.close().await;
+                    return Err(error);
+                }
+                self.track(node, &raw);
+                return self.startPeerChannel(node, channel, record.sessionId, dispatch::Authorization::Outbound).await;
+            }
+            Err(failure)
         }).await.map_err(|_| CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Authenticated connection establishment timed out"))?
     }
 
@@ -866,6 +894,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             let result = host.discover("_operit-link._tcp.local.", timeoutMs); let _ = tx.send(result);
         })).map_err(|e| error(e.to_string()))?;
         let records = rx.await.map_err(|_| error("Discovery cancelled"))?.map_err(|e| error(e.to_string()))?;
+        self.rememberDiscoveryRecords(&records);
         let pairedNodeIds = self.state.store.pairedPeers(&self.state.nodeId).map_err(error)?
             .into_iter().map(|peer| peer.nodeId).collect::<BTreeSet<_>>();
         let recordCount = records.len();
@@ -1195,6 +1224,17 @@ fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredSer
     pairedNodeIds: &BTreeSet<String>,
 ) -> Vec<DiscoveredPeer> {
     let mut peers = BTreeMap::new();
+    for peer in discoveredEndpoints(records, localNodeId, pairedNodeIds) {
+        peers.entry(peer.nodeId.clone()).or_insert(peer);
+    }
+    peers.into_values().collect()
+}
+
+/// Keeps all ranked addresses so reconnection can fall back across interfaces and carriers.
+fn discoveredEndpoints(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredService>, localNodeId: &str,
+    pairedNodeIds: &BTreeSet<String>,
+) -> Vec<DiscoveredPeer> {
+    let mut peers = BTreeMap::new();
     let (mut local, mut paired, mut invalid) = (0, 0, 0);
     for record in records {
         let [Some(node), Some(displayName), Some(modes)] = ["nodeId", "displayName", "transports"]
@@ -1218,18 +1258,15 @@ fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredSer
                 let address = match mode { "http" => format!("http://{socket}/link"), "ws" => format!("ws://{socket}/link"), "tcp" => socket, _ => continue };
                 let candidate = DiscoveredPeer { nodeId: node.clone(), address, displayName: displayName.clone() };
                 valid = true;
-                // One device, not one row per NIC, IP family and transport.
                 let rank = discoveryEndpointRank(*ip, mode);
-                if peers.get(node).is_none_or(|(old, _)| rank < *old) {
-                    peers.insert(node.clone(), (rank, candidate));
-                }
+                peers.insert((node.clone(), rank, candidate.address.clone()), candidate);
             }
         }
         if !valid { invalid += 1; }
     }
     operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
         "LAN discovery filtering local={local} paired={paired} invalid={invalid} candidates={}", peers.len()));
-    peers.into_values().map(|(_, peer)| peer).collect()
+    peers.into_values().collect()
 }
 
 /// Prefer LAN IPv4, then routable IPv6, with loopback only as a last resort.
@@ -1450,7 +1487,7 @@ mod single_channel_tests {
     }
 
     /// Creates a peer service whose task queue can be controlled by the caller.
-    fn serviceWithScheduler(scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>) -> HostRuntimePeerService {
+    pub(super) fn serviceWithScheduler(scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>) -> HostRuntimePeerService {
         static ROUTER: std::sync::OnceLock<Arc<NoRouter>> = std::sync::OnceLock::new();
         let router: Arc<dyn PeerRouter> = ROUTER.get_or_init(|| Arc::new(NoRouter)).clone();
         let storage = Arc::new(Storage::default());
@@ -1472,6 +1509,7 @@ mod single_channel_tests {
             active: Mutex::default(), changes: broadcast::channel(32).0, availability: Mutex::new(None),
             lifecycle: AsyncMutex::new(()), mutation: Mutex::new(()),
             connectLocks: Mutex::default(),
+            discoveryRecords: Mutex::default(),
             pairingThrottle: Mutex::new(PairingThrottle::default()),
         })}
     }
@@ -1868,3 +1906,7 @@ mod handshake_response_tests {
         assert_eq!(rawCall::<_, CoreValue>(&peer(Outcome::Accepted), "hello", &CoreValue::Null).await.unwrap(), CoreValue::Null);
     }
 }
+
+#[cfg(test)]
+#[path = "peer/discovery_tests.rs"]
+mod discovery_tests;

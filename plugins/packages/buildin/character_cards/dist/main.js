@@ -4665,14 +4665,27 @@ var RepositorySession = class extends DatabaseMemoryRepository {
       this.state.active = copy(active);
     });
   }
-  /** Rejects deletion while any stored chat binding references the selection. */
+  /** Rejects deletion only while an existing Core conversation references the selection. */
   requireUnboundSelection(selection) {
     return __async(this, null, function* () {
-      const binding = (yield this.chatBindings.listChatBindings()).find(
+      const bindings = (yield this.chatBindings.listChatBindings()).filter(
         /** Matches the exact selection proposed for deletion. */
-        (binding2) => binding2.selection === selection
+        (binding) => binding.selection === selection
       );
-      if (binding !== void 0) throw new Error("Rebind or delete the chat extension before deleting its selection: " + binding.chatId);
+      for (let offset = 0; offset < bindings.length; offset += 200) {
+        const ids = bindings.slice(offset, offset + 200).map((binding) => binding.chatId);
+        const result2 = yield Tools.Chat.listChats({ chat_ids: ids, limit: 200 });
+        assertInteger(result2.totalCount, "conversation count", 0);
+        if (!Array.isArray(result2.chats) || result2.chats.length !== result2.totalCount)
+          throw new Error("\u5BF9\u8BDD\u5217\u8868\u4E0D\u5B8C\u6574\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5");
+        const remaining = new Set(ids);
+        for (const chat2 of result2.chats) {
+          requireId(chat2.id, "conversation id");
+          if (!remaining.delete(chat2.id)) throw new Error("Chat batch returned an unrelated or duplicate identity");
+        }
+        const chat = result2.chats[0];
+        if (chat !== void 0) throw new Error("Rebind or delete the chat extension before deleting its selection: " + chat.id);
+      }
     });
   }
   /** Reads the actual owner USER.md file or the edit staged within this same operation. */

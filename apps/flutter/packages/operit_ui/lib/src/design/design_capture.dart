@@ -256,7 +256,14 @@ Future<Map<String, Object?>> captureOperitDesign(
 }
 
 class _DesignCapture {
-  _DesignCapture(this.root, {this.runtime});
+  _DesignCapture(this.root, {this.runtime}) {
+    if (runtime != null) {
+      warnings
+        ..clear()
+        ..add('界面持续跟随真实应用；当前仅支持运行端声明的控件属性。')
+        ..add('未挂载或视口外的内容将在实际导航、展开或滚动后进入界面。');
+    }
+  }
   final RenderRepaintBoundary root;
   final OperitDesignRuntime? runtime;
   final List<Map<String, Object?>> assets = [];
@@ -443,7 +450,7 @@ class _DesignCapture {
     Offset parentOrigin,
     int depth,
   ) async {
-    if (!object.attached || depth > 90 || _nextId >= 10000) {
+    if (!object.attached || depth > 512 || _nextId >= 10000) {
       warnings.add('渲染树超过采集深度或 10000 图层限制；请缩小采集范围。');
       return null;
     }
@@ -515,7 +522,7 @@ class _DesignCapture {
             for (final key in ['x', 'width', 'paddingLeft', 'paddingRight']) {
               if (n[key] is num) n[key] = (n[key] as num) * sx;
             }
-            for (final key in ['y', 'height']) {
+            for (final key in ['y', 'height', 'paddingTop', 'paddingBottom']) {
               if (n[key] is num) n[key] = (n[key] as num) * sy;
             }
             for (final key in [

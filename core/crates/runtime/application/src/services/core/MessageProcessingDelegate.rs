@@ -953,6 +953,17 @@ impl MessageProcessingDelegate {
         .unwrap_or(false)
     }
 
+    /// Ends source execution after its final segment is committed, before route compaction acquires ownership.
+    #[allow(non_snake_case)]
+    pub(crate) fn releaseExecutionForRoute(&self, chatId: &str, turnId: u64) -> bool {
+        self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            if runtime.activeTurnId != turnId || runtime.isCancelling { return false; }
+            let Some(lease) = runtime.executionLease.take() else { return false; };
+            lease.release().expect("Route handoff must release source execution");
+            true
+        }).unwrap_or(false)
+    }
+
     /// Clears one turn's runtime state without touching a newer turn for the chat.
     #[allow(non_snake_case)]
     fn cleanupRuntimeAfterTurn(&mut self, chatId: String, turnId: u64) -> bool {
@@ -2647,6 +2658,13 @@ impl MessageProcessingDelegate {
                             }
                         });
                         if let Some(routeChange) = pendingRouteChange {
+                            if !completionMessageProcessingDelegate
+                                .lock()
+                                .expect("worker message processing delegate mutex poisoned")
+                                .releaseExecutionForRoute(&completionChatId, completionTurnId)
+                            {
+                                return;
+                            }
                             ChainLogger::verbose_with_level(
                                 SEND_CHAIN,
                                 "send.route_change.request",
@@ -2726,7 +2744,7 @@ impl MessageProcessingDelegate {
                                 return;
                             }
                         }
-                        if tokenLimitExceeded.load(Ordering::Acquire) {
+                        if !hasRouteChange && tokenLimitExceeded.load(Ordering::Acquire) {
                             let mut delegate = completionMessageProcessingDelegate
                                 .lock()
                                 .expect("worker message processing delegate mutex poisoned")

@@ -23,6 +23,40 @@ List<Map<String, Object?>> nodes(Map<String, Object?> document) {
 
 void main() {
   testWidgets(
+    'captures visible application content beyond 90 render ancestors',
+    (tester) async {
+      final boundary = GlobalKey();
+      Widget content = const Text('Deep visible application content');
+      for (var i = 0; i < 150; i++) {
+        content = Padding(padding: EdgeInsets.zero, child: content);
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RepaintBoundary(key: boundary, child: content),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final document = await tester.runAsync(
+        () => captureOperitDesign(
+          boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary,
+          includeReference: false,
+        ),
+      );
+      expect(
+        nodes(
+          document!,
+        ).any((node) => node['text'] == 'Deep visible application content'),
+        isTrue,
+      );
+      expect(
+        (document['warnings'] as List).any(
+          (warning) => warning.toString().contains('10000'),
+        ),
+        isFalse,
+      );
+    },
+  );
+  testWidgets(
     'captures nested text and shapes with owner, clipping and no hidden content',
     (tester) async {
       final key = GlobalKey();

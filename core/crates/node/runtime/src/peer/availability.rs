@@ -37,6 +37,8 @@ impl HostRuntimePeerService {
         let (stop, mut stopped) = oneshot::channel();
         let (done, finished) = oneshot::channel();
         scheduler.scheduleHostRuntimeAsyncTask("peer-availability", Box::new(move || Box::pin(async move {
+            // The subscription shares the Host browser with manual scans and lives only as long as this worker.
+            let _discovery = state.upgrade().and_then(|state| HostRuntimePeerService { state }.subscribeDiscovery());
             let mut pending = FuturesUnordered::<LocalBoxFuture<'static, (String, Result<(), CoreLinkError>)>>::new();
             let mut connecting = BTreeSet::new();
             let mut policyRevokedUntil = BTreeMap::<String, std::time::Instant>::new();

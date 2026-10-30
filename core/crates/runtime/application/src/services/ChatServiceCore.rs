@@ -1747,6 +1747,39 @@ impl ChatServiceCore {
         Ok(workspacePath)
     }
 
+    /// Deletes a workspace's shared default area and bindings while preserving chats and mounted files.
+    #[allow(non_snake_case)]
+    pub fn deleteWorkspace(&mut self, workspaceId: String) -> Result<(), String> {
+        let manager = &self.chatHistoryDelegate.chatHistoryManager;
+        let workspace = manager
+            .getWorkspace(&workspaceId)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("workspace does not exist: {workspaceId}"))?;
+        let others = manager
+            .listWorkspaces()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|other| other.id != workspaceId)
+            .collect::<Vec<_>>();
+        let chats = manager
+            .loadChatHistories()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|chat| chat.workspaceId.as_deref() == Some(workspaceId.as_str()))
+            .collect::<Vec<_>>();
+        WorkspaceUtils::deleteWorkspaceFiles(&workspace, &others)?;
+        for chat in chats {
+            manager
+                .updateChatWorkspaceId(chat.id.clone(), None)
+                .map_err(|error| error.to_string())?;
+            self.chatHistoryDelegate
+                .notifyChatWorkspaceChanged(&chat.id);
+        }
+        manager
+            .deleteWorkspace(workspaceId)
+            .map_err(|error| error.to_string())
+    }
+
     /// Removes the workspace binding from a chat without deleting workspace files.
     #[allow(non_snake_case)]
     pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
@@ -3684,9 +3717,9 @@ mod chat_deletion_tests {
         }
     }
 
-    /// Clears a deleted active conversation while leaving an unrelated live turn and queue untouched.
+    /// Exercises deletion cleanup and route handoff against the same process-wide native history manager.
     #[tokio::test]
-    async fn synchronized_chat_deletion_stops_stream_and_clears_local_state() {
+    async fn chat_deletion_and_route_handoff_preserve_execution_ownership() {
         operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(DeletionScheduler::default()));
         let root = std::env::temp_dir().join(format!("operit-chat-deletion-{}", uuid::Uuid::new_v4()));
         let runtimeRoot = root.join("runtime");
@@ -3744,6 +3777,54 @@ mod chat_deletion_tests {
         assert!(!core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("deleted-chat"));
         assert!(core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("live-chat"));
         assert!(core.chatHistoryDelegate.chatHistoryManager.loadChatHistory("deleted-chat".into()).unwrap().is_none());
+        drop(runtimes);
+
+        // Reuse the same native fixture: the production history manager is process-wide.
+        // A completed source turn must hand its lease to the route lifecycle.
+        for id in ["route-chat", "other-chat"] {
+            database.chatDao().insertChat(ChatEntity::new(id.into(), "Route test".into(), 1)).unwrap();
+        }
+        let source = database.store().beginChatExecution("route-chat").unwrap();
+        let other = database.store().beginChatExecution("other-chat").unwrap();
+        let mut turn = ChatRuntime::new();
+        turn.activeTurnId = 7;
+        turn.isLoading = true;
+        turn.executionLease = Some(source.clone());
+        core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert("route-chat".into(), turn);
+
+        // The lifecycle still rejects an unrelated attempt to switch an executing conversation.
+        assert!(core.beforeChangeRoute("route-chat".into()).await.unwrap_err().contains("Conversation is executing"));
+        assert!(!core.messageProcessingDelegate.releaseExecutionForRoute("missing", 7));
+        assert!(!core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 6));
+        core.messageProcessingDelegate.chatRuntimes.lock().unwrap().get_mut("route-chat").unwrap().isCancelling = true;
+        assert!(!core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 7));
+        assert!(database.store().beginChatExecution("route-chat").is_err());
+        core.messageProcessingDelegate.chatRuntimes.lock().unwrap().get_mut("route-chat").unwrap().isCancelling = false;
+
+        assert!(core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 7));
+        assert!(!core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 7));
+        // Source clones remain alive, as they do in the worker callback that awaits the route change.
+        core.beforeChangeRoute("route-chat".into()).await.unwrap();
+        assert!(database.store().beginChatExecution("other-chat").is_err());
+        let resumed = database.store().beginChatExecution("route-chat").unwrap();
+        {
+            let mut turns = core.messageProcessingDelegate.chatRuntimes.lock().unwrap();
+            let turn = turns.get_mut("route-chat").unwrap();
+            turn.activeTurnId = 8;
+            turn.executionLease = Some(resumed.clone());
+        }
+        assert!(!core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 7));
+        source.release().unwrap();
+        assert!(database.store().beginChatExecution("route-chat").is_err(), "a late source callback must preserve the resumed generation");
+        assert!(core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 8));
+
+        // A failure inside the lifecycle must also relinquish its compaction lease.
+        core.chatHistoryDelegate.addMessageToChat(
+            ChatMessage::new_with_markdown_timestamp("user".into(), "Needs compaction".into(), 123), Some("route-chat".into()));
+        assert!(core.beforeChangeRoute("route-chat".into()).await.unwrap_err().contains("initialized AI runtime"));
+        let retry = database.store().beginChatExecution("route-chat").unwrap();
+        retry.release().unwrap();
+        other.release().unwrap();
     }
 }
 

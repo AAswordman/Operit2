@@ -5,6 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Operit2: Figma design",
+            "cwd": "${workspaceFolder}/apps/flutter/app",
+            "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",
+            "request": "launch",
+            "type": "dart",
+            "deviceId": "macos",
+            "toolArgs": ["--dart-define=OPERIT_DESIGN_BRIDGE=true", "--vmservice-out-file=/tmp/operit-design-vm.txt"]
+        },
+        {
             "name": "app",
             "cwd": "${workspaceFolder}/apps/flutter/app",
             "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",

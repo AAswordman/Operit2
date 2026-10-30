@@ -26,7 +26,8 @@ async function environment(t, count = 3) {
     async listChats(options) {
       calls.push({ method: "listChats", options: plain(options) });
       assert.ok(options.chat_ids.length <= 200);
-      return { totalCount: options.chat_ids.length, currentChatId: null, chats: options.chat_ids.filter(id => chats.has(id)).map(id => plain(chats.get(id))) };
+      const found = options.chat_ids.filter(id => chats.has(id)).map(id => plain(chats.get(id)));
+      return { totalCount: found.length, currentChatId: null, chats: found };
     },
     /** Serves the stored inclusive range so orphan checks can match real message revisions. */
     async getMessagesRange(chatId, options) {
@@ -42,7 +43,7 @@ async function environment(t, count = 3) {
   return { disk, chats, messages, calls, repository, service, storage };
 }
 
-/** Role deletion checks the binding store without querying Core or rewriting bindings. */
+/** Role deletion verifies Core existence without rewriting genuine bindings. */
 test("binding CRUD persists in preferences and role deletion respects explicit bindings", async t => {
   const h = await environment(t);
   const role = await h.service.dispatchDomain("character.create", { values: { name: "Bound role" } });
@@ -50,7 +51,7 @@ test("binding CRUD persists in preferences and role deletion respects explicit b
   assert.deepEqual(plain(await h.service.dispatchDomain("chat.configuration.binding.write", binding)), binding);
   assert.deepEqual(plain(await h.storage.readChatBinding("chat-0")), binding);
   await assert.rejects(h.service.dispatchDomain("character.delete", { id: role.id }), /Rebind or delete/);
-  assert.deepEqual(h.calls.map(call => call.method), ["findChat"]);
+  assert.deepEqual(h.calls.map(call => call.method), ["findChat", "listChats"]);
   assert.deepEqual(plain(await h.storage.readChatBinding("chat-0")), binding);
   assert.deepEqual(plain(await h.storage.deleteChatBinding("chat-0")), { chatId: "chat-0", deleted: true });
   assert.equal(await h.storage.findChatBinding("chat-0"), null);
@@ -58,24 +59,19 @@ test("binding CRUD persists in preferences and role deletion respects explicit b
   h.disk.storage.inspectPreferences("chats", values => assert.equal(Object.keys(values).filter(key => key.startsWith("binding_")).length, 0));
 });
 
-/** Missing Core metadata must not silently authorize deleting plugin-owned bindings. */
-test("role and group deletion preserve bindings until explicit missing-chat maintenance", async t => {
+/** Confirmed absent Core conversations cannot keep their former role or group undeletable. */
+test("role and group deletion ignore confirmed missing-chat bindings without rewriting them", async t => {
   const h = await environment(t);
   const role = await h.service.dispatchDomain("character.create", { values: { name: "Member role" } });
   const group = await h.service.dispatchDomain("group.create", { values: { name: "Bound group", members: [{ characterCardId: role.id, orderIndex: 0 }] } });
   const binding = { chatId: "chat-gone", selection: "group:" + group.id };
   await h.storage.writeChatBinding(binding);
-  h.disk.clearCalls();
-  await assert.rejects(h.service.dispatchDomain("character.delete", { id: role.id }), /Rebind or delete.*chat-gone/);
-  await assert.rejects(h.service.dispatchDomain("group.delete", { id: group.id }), /Rebind or delete.*chat-gone/);
-  assert.deepEqual(h.calls, []);
-  assert.equal(h.disk.calls.some(call => call.method === "storage.preferences.edit"), false);
-  assert.deepEqual(plain(await h.storage.readChatBinding(binding.chatId)), binding);
-  assert.ok((await h.service.dispatchDomain("character.list", {})).some(card => card.id === role.id));
-  assert.ok((await h.service.dispatchDomain("group.list", {})).some(value => value.id === group.id));
-  assert.deepEqual(plain(await h.service.dispatchDomain("memory.chat.pruneMissing", { ownerKey: "character:" + role.id })), { removedChatIds: [binding.chatId], removedCandidateIds: [] });
-  assert.deepEqual(plain(await h.service.dispatchDomain("group.delete", { id: group.id })), { id: group.id, deleted: true });
   assert.deepEqual(plain(await h.service.dispatchDomain("character.delete", { id: role.id })), { id: role.id, deleted: true });
+  assert.deepEqual(plain(await h.service.dispatchDomain("group.delete", { id: group.id })), { id: group.id, deleted: true });
+  assert.deepEqual(h.calls.map(call => call.method), ["listChats", "listChats"]);
+  assert.deepEqual(plain(await h.storage.findChatBinding(binding.chatId)), binding);
+  assert.equal((await h.service.dispatchDomain("character.list", {})).some(card => card.id === role.id), false);
+  assert.equal((await h.service.dispatchDomain("group.list", {})).some(value => value.id === group.id), false);
 });
 
 /** A rejected deletion must preserve both missing and live bindings and the character snapshot. */
@@ -87,7 +83,7 @@ test("bound group blocks member deletion without sweeping other bindings", async
   for (const binding of bindings) await h.storage.writeChatBinding(binding);
   h.disk.clearCalls();
   await assert.rejects(h.service.dispatchDomain("character.delete", { id: role.id }), /Rebind or delete/);
-  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.calls.map(call => call.method), ["listChats", "listChats"]);
   assert.equal(h.disk.calls.some(call => call.method === "storage.preferences.edit"), false);
   assert.equal((await h.storage.listChatBindings()).length, bindings.length);
   for (const binding of bindings) assert.deepEqual(plain(await h.storage.readChatBinding(binding.chatId)), binding);

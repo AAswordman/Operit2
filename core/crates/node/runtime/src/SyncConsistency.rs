@@ -53,12 +53,20 @@ impl SpacePersistenceSyncService {
         let plans = correctionPlans(&local, &remote);
         let mut changed = BTreeSet::new();
         if plans.is_empty() { return verifyReports(&local, &remote, &changed); }
+        let startedAt = currentTimeMillis();
+        let correctionCount = plans.len();
         let mut transfers = Vec::new();
         for (a, b, choice) in plans {
-            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
-                "sync_consistency.correct target={target} owner={} source={choice:?} local={} remote={}",
+            let reason = match (a, b) {
+                (Some(_), Some(_)) => "content_digest_mismatch",
+                (None, _) => "local_file_missing",
+                (_, None) => "remote_file_missing",
+            };
+            operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                "sync_consistency.correct target={target} mode=full_snapshot reason={reason} owner={} source={choice:?} local={} remote={} localRevision={:?} remoteRevision={:?}",
                 a.or(b).expect("file exists").owner.path,
-                a.map_or("missing", |m|m.digest.as_str()), b.map_or("missing", |m|m.digest.as_str())));
+                a.map_or("missing", |m|m.digest.as_str()), b.map_or("missing", |m|m.digest.as_str()),
+                a.and_then(|m|m.revision.as_ref()), b.and_then(|m|m.revision.as_ref())));
             let result = async {
                 let source = if choice == Source::Local { a } else { b }.expect("source exists");
                 let other = if choice == Source::Local { b } else { a };
@@ -71,7 +79,12 @@ impl SpacePersistenceSyncService {
             }.await;
             match result {
                 Ok(reference) => transfers.push((a, b, choice, reference)),
-                Err(error) if snapshotChanged(&error) => { changed.insert(a.or(b).expect("file exists").owner.path.clone()); },
+                Err(error) if snapshotChanged(&error) => {
+                    let owner = &a.or(b).expect("file exists").owner.path;
+                    operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                        "sync_consistency.deferred target={target} owner={owner} stage=transfer reason=snapshot_changed error={error}"));
+                    changed.insert(owner.clone());
+                },
                 Err(error) => self.recordPendingWork(target, "consistency transfer", &json!({"errors":[error],"pending":1})),
             }
         }
@@ -93,9 +106,23 @@ impl SpacePersistenceSyncService {
                     Ok::<_, String>(true)
                 }.await;
                 match result {
-                    Ok(true) => {},
-                    Ok(false) => { changed.insert(a.or(b).expect("file exists").owner.path.clone()); },
-                    Err(error) if snapshotChanged(&error) => { changed.insert(a.or(b).expect("file exists").owner.path.clone()); },
+                    Ok(true) => {
+                        operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                            "sync_consistency.applied target={target} mode=full_snapshot owner={} source={choice:?}",
+                            a.or(b).expect("file exists").owner.path));
+                    },
+                    Ok(false) => {
+                        let owner = &a.or(b).expect("file exists").owner.path;
+                        operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                            "sync_consistency.deferred target={target} owner={owner} stage=apply reason=snapshot_changed"));
+                        changed.insert(owner.clone());
+                    },
+                    Err(error) if snapshotChanged(&error) => {
+                        let owner = &a.or(b).expect("file exists").owner.path;
+                        operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                            "sync_consistency.deferred target={target} owner={owner} stage=apply reason=snapshot_changed error={error}"));
+                        changed.insert(owner.clone());
+                    },
                     Err(error) => self.recordPendingWork(target, "consistency correction", &json!({"errors":[error],"pending":1})),
                 }
             }
@@ -105,7 +132,11 @@ impl SpacePersistenceSyncService {
         changed.extend(changedOwners(&local, &latest_local));
         changed.extend(changedOwners(&remote, &latest_remote));
         let complete = verifyReports(&latest_local, &latest_remote, &changed)?;
-        Ok(complete && reportsAtExchange(&latest_local, &latest_remote, &local_receipt, &remote_receipt)?)
+        let atExchange = reportsAtExchange(&latest_local, &latest_remote, &local_receipt, &remote_receipt)?;
+        operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+            "sync_consistency.done target={target} mode=full_snapshot corrections={correctionCount} complete={} exchangeUnchanged={atExchange} changedOwners={changed:?} elapsedMs={}",
+            complete && atExchange, currentTimeMillis() - startedAt));
+        Ok(complete && atExchange)
     }
 
     async fn transferSnapshot(&self, target: &str, source: &Manifest, local: bool, coverage_only: bool) -> Result<RuntimeFileSyncReference, String> {
@@ -114,6 +145,9 @@ impl SpacePersistenceSyncService {
         let args = json!({"owner":source.owner,"token":source.token});
         let reference: RuntimeFileSyncReference = if local { self.callLocal(name,args).await? }
             else { callRemote(&self.state.nodeRouter,target,method,args).await? };
+        operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+            "sync_consistency.snapshot target={target} owner={} source={} coverageOnly={coverage_only} bytes={} hash={}",
+            source.owner.path, if local { "local" } else { "remote" }, reference.size, reference.contentHash));
         self.synchronizeBlobReferences(target, vec![reference.clone()]).await?;
         Ok(reference)
     }

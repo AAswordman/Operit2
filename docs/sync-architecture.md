@@ -79,6 +79,18 @@
 
 旧内嵌格式逐条迁出并保留原始编码，所有记录文件落盘后才原子替换账本。升级中断时，原账本和原始操作仍是重试依据。
 
+## 同步触发诊断
+
+运行日志按以下事件串联同步原因：
+
+- `sync_cycle.start triggers=...`：本轮合并的唤醒来源，包括服务启动、同步数据变更、连接变化、加入 Space、工作区扫描和上一轮运行期间的新变更。周期开始不表示执行了全量快照传输。
+- `sync_gate.required reasons=...`：进入对端同步流程的条件，包括首次建立基线、本地状态变化、远端时钟变化、待处理工作、失败重试或仅交换授权。
+- `sync_pass.start/done/failed`：目标节点、调用来源、排队与执行耗时、待处理状态及失败后的重试时间。路由切换的来源包含 `route_change` 和会话 ID。
+- `sync_consistency.correct mode=full_snapshot`：决定进行完整文件快照修复，INFO 级别记录 `reason=content_digest_mismatch/local_file_missing/remote_file_missing`、文件路径、两端内容摘要和逻辑版本、选定的数据来源。
+- `sync_consistency.snapshot/applied/deferred/done`：快照或覆盖凭据大小、应用结果、并发修改导致的延后和最终一致性结果。`coverageOnly=true` 表示覆盖凭据；`bytes` 是导出的 Blob 大小，已持有的 Blob 不会重复传输。
+
+定位重复全量时先搜索 `mode=full_snapshot`，再按目标节点和时间对照 gate 与周期来源。关键快照决策及结果使用 INFO；空闲轮询来源保留在 V5 周期日志中。
+
 ## 相关入口
 
 - [工作区文件同步](workspace-file-sync.md)：文件范围、扫描和离线副本。
