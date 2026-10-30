@@ -445,7 +445,7 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
                     let validation = if binding.strict_arguments {
                         Some(argument_checks(sdk_src, &namespace, &method)?)
                     } else { None };
-                    Ok(generated_js_function(&namespace, &method, &binding.tool, signature, overloads, &binding.fixed_parameters, validation.as_deref()))
+                    Ok(generated_js_function(&namespace, &method, &binding.tool, signature, overloads, &binding.fixed_parameters, validation.as_deref(), binding_result_adapter(&namespace, &method)))
                 }
                 _ => Err(format!("Unknown result facade: {}", binding.facade).into()),
             }
@@ -618,15 +618,31 @@ fn generated_js_function(
     overloads: &str,
     fixed_parameters: &[(String, String)],
     validation: Option<&str>,
+    result_adapter: Option<&str>,
 ) -> String {
     let fixed_parameters = format!("[{}]", fixed_parameters.iter().map(|(key, value)| format!("[{key:?}, {value:?}]")).collect::<Vec<_>>().join(", "));
-    let invoke = format!("return __operitInvokeToolsBinding(\"{namespace}\", \"{method}\", \"{tool}\", [{overloads}], Array.prototype.slice.call(arguments), {fixed_parameters}, this);");
+    let adapted = result_adapter
+        .map(|adapter| format!(".then(function(result) {{ return {adapter}; }})"))
+        .unwrap_or_default();
+    let invoke = format!("return __operitInvokeToolsBinding(\"{namespace}\", \"{method}\", \"{tool}\", [{overloads}], Array.prototype.slice.call(arguments), {fixed_parameters}, this){adapted};");
     match validation {
         Some(validation) => {
             let count = overloads_count(signature);
             format!("function({signature}) {{ if (arguments.length !== {count}) return Promise.reject(new Error(\"{namespace}.{method} requires exactly {count} arguments\")); try {{ {validation} {invoke} }} catch (error) {{ return Promise.reject(error); }} }}")
         }
         None => format!("function({signature}) {{\n    {invoke}\n}}"),
+    }
+}
+
+/// Adapts executor payloads that wrap the declared public result. `Files.write`
+/// targets the diff-aware `write_file` executor, which returns the nested
+/// `FileApplyResultData` wrapper, while its declared SDK contract (and every
+/// TypeScript declaration) is `FileOperationData`. Unwrap only that binding so
+/// direct `toolCall("write_file")` callers still receive the diff envelope.
+fn binding_result_adapter(namespace: &str, method: &str) -> Option<&'static str> {
+    match (namespace, method) {
+        ("Files", "write") => Some("result && typeof result.operation === \"object\" && result.operation !== null ? result.operation : result"),
+        _ => None,
     }
 }
 
@@ -759,6 +775,38 @@ mod tests {
         validate_javascript_syntax("var Tools = { Files: {} };")
             .expect("valid JavaScript fixture must parse");
         assert!(validate_javascript_syntax("var Tools = {").is_err());
+    }
+
+    /// `Files.write` targets the diff-aware `write_file` executor, so its
+    /// generated binding must unwrap the nested operation and match the
+    /// declared FileOperationData contract. Other file bindings stay untouched.
+    #[test]
+    fn files_write_binding_unwraps_the_apply_operation() {
+        assert!(binding_result_adapter("Files", "write").is_some());
+        assert_eq!(binding_result_adapter("Files", "apply"), None);
+        let write = generated_js_function(
+            "Files",
+            "write",
+            "write_file",
+            "path, content, append",
+            r#"[["path","content","append"]]"#,
+            &[],
+            None,
+            binding_result_adapter("Files", "write"),
+        );
+        assert!(write.contains(".then(function(result)"));
+        assert!(write.contains("result.operation"));
+        let apply = generated_js_function(
+            "Files",
+            "apply",
+            "apply_file",
+            "path, oldContent, newContent",
+            r#"[["path","oldContent","newContent"]]"#,
+            &[],
+            None,
+            binding_result_adapter("Files", "apply"),
+        );
+        assert!(!apply.contains(".then("));
     }
 
     /// Verifies conversion from stable built-in names to generated Rust variants.
