@@ -20,10 +20,8 @@ use super::ThemeConfigManager::ThemeConfigManager;
 use super::TtsConfigManager::TtsConfigManager;
 
 /// Collects merge declarations without opening preference stores.
-pub(crate) fn schema(
-    history: &[operit_store::SyncOperationStore::SyncOperation],
-) -> PreferenceMergeSchema {
-    let mut schema = PreferenceMergeSchema {
+pub(crate) fn schema() -> PreferenceMergeSchema {
+    PreferenceMergeSchema {
         stores: vec![
             {
                 let path = operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH;
@@ -161,23 +159,7 @@ pub(crate) fn schema(
             operit_util::RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH, false,
             operit_store::repository::WorkspacePreferenceStore::WorkspacePreferenceStore::openStore),
         ],
-    };
-    let paths = history
-        .iter()
-        .filter(|operation| operation.domain == "preferences")
-        .filter_map(|operation| {
-            operation
-                .payload
-                .get("storagePath")
-                .and_then(serde_json::Value::as_str)
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    schema.stores.extend(
-        paths
-            .into_iter()
-            .filter_map(operit_store::CoreSpaceStore::CoreSpaceStore::preferenceSyncStore),
-    );
-    schema
+    }
 }
 /// Opens only explicitly configured native preference owners, including their versioned migrations.
 pub(crate) fn open(
@@ -187,7 +169,7 @@ pub(crate) fn open(
     operit_store::PreferencesDataStore::PreferencesDataStore,
     operit_store::PreferencesDataStore::PreferencesDataStoreError,
 > {
-    let owner = schema(&[])
+    let owner = schema()
         .stores
         .into_iter()
         .find(|owner| owner.path == path)
@@ -234,15 +216,21 @@ pub(crate) fn layout(
     })
 }
 
+/// Publishes all ready layout decisions before owner discovery and transaction application.
+pub(crate) fn prepareLayout(storage: Arc<dyn RuntimeStorageHost>) -> Result<(), String> {
+    layout(storage.clone()).prepare()?;
+    crate::data::backup::CharacterPluginLayout::prepare(storage)
+}
+
 /// Prepares existing datasets through the same migration, import and replay path as incoming data.
 pub(crate) fn prepare(storage: Arc<dyn RuntimeStorageHost>) -> Vec<String> {
     use operit_store::PreferenceMerge::applyIndependentOperations;
     let mut errors = Vec::new();
-    if let Err(error) = layout(storage.clone()).prepare() {
+    if let Err(error) = prepareLayout(storage.clone()) {
         errors.push(format!("preference layout: {error}"));
     }
     let journal = operit_store::SyncOperationStore::SyncOperationStore::new(storage.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
-    let mut schema = schema(&[]);
+    let mut schema = schema();
     match journal.preferenceDatasets() {
         Ok(paths) => for path in paths.keys() {
             if schema.stores.iter().any(|owner| &owner.path == path) { continue; }
@@ -416,7 +404,7 @@ mod tests {
         let operations = journal.preferenceHistory().unwrap();
         let outcomes = applyIndependentOperations(
             target.host.clone(),
-            &schema(&operations),
+            &schema(),
             &[],
             &operations,
             |_, _| true,
@@ -511,7 +499,7 @@ mod tests {
         for _ in 0..2 {
             let outcomes = applyIndependentOperations(
                 target.host.clone(),
-                &schema(&operations),
+                &schema(),
                 &[],
                 &operations,
                 |_, _| true,
@@ -586,7 +574,7 @@ mod tests {
         for _ in 0..2 {
             let outcomes = applyIndependentOperations(
                 fixture.host.clone(),
-                &schema(&operations),
+                &schema(),
                 &[],
                 &operations,
                 |_, _| true,
@@ -693,7 +681,7 @@ mod tests {
         let baseline = firstJournal.preferenceHistory().unwrap();
         let outcomes = applyIndependentOperations(
             second.host.clone(),
-            &schema(&baseline),
+            &schema(),
             &[],
             &baseline,
             |_, _| true,
@@ -723,7 +711,7 @@ mod tests {
                     let history = journal.preferenceHistory().unwrap();
                     let outcomes = applyIndependentOperations(
                         host.clone(),
-                        &schema(&history),
+                        &schema(),
                         &history,
                         &[operation.clone()],
                         |_, _| true,
@@ -811,7 +799,7 @@ mod tests {
 
     /// Commits the existing extension migration before retiring sources and keeps new-owner edits authoritative.
     #[test]
-    fn layout_migrates_local_extension_settings_and_preserves_unrouted_history() {
+    fn layout_migrates_local_extension_settings_and_confirms_retired_history() {
         use operit_store::ExtensionStore::{ExtensionRecord, ExtensionStore};
         use operit_store::SyncOperationStore::SyncOperationStore;
         let source = Fixture::new();
@@ -899,6 +887,14 @@ mod tests {
         );
         assert_eq!(journal.pendingOperationCount().unwrap(), 16);
         assert!(pending.iter().any(|op|op.payload["settings"] == json!(99) || op.payload["value"]["order"] == 99));
+        let declarations = schema();
+        let registry = operit_store::PreferenceMerge::registry(target.host.clone(), &declarations, [], |_, _| true).unwrap();
+        let report = registry.receive(&[]).unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.pending.is_empty());
+        assert_eq!(report.retired, 16);
+        assert_eq!(extensions.record("package", "demo").unwrap().settings["order"], 9);
+        assert_eq!(journal.preferenceHistory().unwrap().len(), 16);
     }
 
     /// Failed business migration leaves the layout uncommitted and preserves all received originals.
@@ -964,7 +960,7 @@ mod tests {
         assert!(old.repairSyncedSnapshot(&checkpoint.token().unwrap(),&checkpoint).unwrap());
         let source_store = UserPreferencesManager::store(source.host.clone());
         source_store.prepareSync().unwrap();
-        applyOperations(source.host.clone(),&schema(&[]),&[],&[],|_,_|true).unwrap();
+        applyOperations(source.host.clone(),&schema(),&[],&[],|_,_|true).unwrap();
         let authority = source_store.syncSnapshot().unwrap();
         let target_store = UserPreferencesManager::store(target.host.clone());
         target_store.prepareSync().unwrap();
@@ -972,7 +968,7 @@ mod tests {
         for revision in [40,60] {
             let incoming = historical(path,"theme_configs",json!([record("kept"),record("unseen")]),2,false,revision);
             for host in [source.host.clone(),target.host.clone()] {
-                applyOperations(host,&schema(&[]),&[],&[incoming.clone()],|_,_|true).unwrap();
+                applyOperations(host,&schema(),&[],&[incoming.clone()],|_,_|true).unwrap();
             }
             assert_eq!(target_store.data().unwrap().contains(&stringPreferencesKey("theme_config_unseen")),revision == 60);
             assert_eq!(source_store.syncSnapshot().unwrap().data,target_store.syncSnapshot().unwrap().data);

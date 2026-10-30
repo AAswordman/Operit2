@@ -99,7 +99,7 @@ impl OperitApplication {
     pub(super) fn consistencyManifest(&self) -> Result<Value,String> {
         let journal = self.runtimeSyncOperationStore()?;
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
-        let schema = PreferenceSpaceMerge::schema(&[]);
+        let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let (snapshots,pending,errors) = registry.snapshots()?;
         let manifests = snapshots.iter().map(Snapshot::manifest).collect::<Result<Vec<_>,_>>()?;
@@ -107,7 +107,7 @@ impl OperitApplication {
     }
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
-        let schema = PreferenceSpaceMerge::schema(&[]);
+        let schema = PreferenceSpaceMerge::schema();
         let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
         let bytes = serde_json::to_vec(&snapshot).map_err(|e|e.to_string())?;
@@ -118,7 +118,7 @@ impl OperitApplication {
         let _application = journal.lockApplication().map_err(|e|e.to_string())?;
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let source = serde_json::from_slice(&self.runtimeFileSyncStore()?.readBlob(&reference)?).map_err(|e|e.to_string())?;
-        let schema = PreferenceSpaceMerge::schema(&[]);
+        let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         registry.repair(&owner,expected,&source)
     }

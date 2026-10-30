@@ -1867,6 +1867,11 @@ impl SyncOperationStore {
 
     pub fn pendingOperationCount(&self) -> Result<usize, SyncOperationStoreError> { Ok(self.pendingOperationIds()?.len()) }
 
+    /// Discovers committed and pending preference owners without decoding transaction payloads.
+    pub fn preferenceOwnerPaths(&self) -> Result<Vec<String>, SyncOperationStoreError> {
+        self.withJournal(|journal| journal.owner_paths())
+    }
+
     pub fn pendingOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         self.pendingOperationIds()?.iter().map(|id| self.original(id)).collect()
     }

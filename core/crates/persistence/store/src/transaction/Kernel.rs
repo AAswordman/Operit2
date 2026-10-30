@@ -35,6 +35,7 @@ pub struct FileCommit {
 pub struct ApplyReport {
     pub received: usize,
     pub applied: Vec<SyncOperation>,
+    pub retired: usize,
     pub errors: Vec<String>,
     pub aliases: BTreeMap<String, String>,
     pub pending: Vec<String>,
@@ -64,17 +65,25 @@ pub struct Registry<'a> {
     pub owners: BTreeMap<String, Participant<'a>>,
     pub sources: Vec<Source<'a>>,
     pub routes: BTreeMap<String, String>,
+    pub retired: BTreeSet<String>,
     pub locate: Box<dyn Fn(&SyncOperation) -> Result<String, String> + 'a>,
 }
 
 impl<'a> Registry<'a> {
     pub fn register(&mut self, owner: Participant<'a>) -> Result<(), String> {
+        if self.is_retired(&owner.path) { return Ok(()); }
         if self.owners.insert(owner.path.clone(), owner).is_some() { return Err("Duplicate transaction owner".into()); }
         Ok(())
     }
 
     pub fn target(&self, operation: &SyncOperation) -> Result<String, String> {
         super::Migrations::resolve_path(&self.routes, &(self.locate)(operation)?)
+    }
+
+    /// Directory declarations include descendants, while file declarations match exactly.
+    pub fn is_retired(&self, path: &str) -> bool {
+        self.retired.iter().any(|source| path == source || source.ends_with('/')
+            && (path.starts_with(source) || path == source.trim_end_matches('/')))
     }
 
     pub fn prepare(&self) -> Vec<String> {
@@ -101,6 +110,12 @@ impl<'a> Registry<'a> {
         let mut groups = groups.into_iter().collect::<Vec<_>>();
         groups.sort_by_key(|(path, operations)| (operations[0].domain != "preferences", path.clone()));
         for (path, operations) in groups {
+            if self.is_retired(&path) {
+                self.journal.completeOperations(&operations).map_err(|e| e.to_string())?;
+                report.retired += operations.len();
+                report.outcomes.insert(path, Ok(BTreeMap::new()));
+                continue;
+            }
             let Some(owner) = self.owners.get(&path) else {
                 let error = format!("Pending transaction owner: {path}");
                 report.errors.push(error.clone());

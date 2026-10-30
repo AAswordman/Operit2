@@ -319,7 +319,7 @@ impl OperitApplication {
         AppLogger::v("OperitApplication", "runtime initialization start");
         setHostManager(self.hostManager.clone());
         if let Some(storage) = self.hostManager.runtimeStorageHost.clone() {
-            if let Err(error) = PreferenceSpaceMerge::layout(storage).prepare() {
+            if let Err(error) = PreferenceSpaceMerge::prepareLayout(storage) {
                 AppLogger::e(
                     "PreferenceLayout",
                     &format!("Preference layout migration incomplete: {error}"),
@@ -844,7 +844,7 @@ impl OperitApplication {
         }
         let store = self.runtimeSyncOperationStore()?;
         errors.extend(store.publishPreferenceOutboxes().map_err(|error| error.to_string())?);
-        let schema = PreferenceSpaceMerge::schema(&[]);
+        let schema = PreferenceSpaceMerge::schema();
         let pending_owners = store.pendingOperations().map_err(|e|e.to_string())?;
         let registry = self.transactionRegistry(&schema,&pending_owners)?;
         let (receipt,failures) = registry.receipt()?;
@@ -963,7 +963,7 @@ impl OperitApplication {
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
         let mut errors = PreferenceSpaceMerge::prepare(storage);
         let journal = self.runtimeSyncOperationStore()?;
-        let schema = PreferenceSpaceMerge::schema(&[]);
+        let schema = PreferenceSpaceMerge::schema();
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let registry = self.transactionRegistry(&schema,&pending)?;
         let (operations,failures) = registry.export(&receipt,&domains,limit)?;
@@ -991,8 +991,8 @@ impl OperitApplication {
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
         let mut errors = Vec::new();
-        if let Err(error) = PreferenceSpaceMerge::layout(storage.clone()).prepare() { errors.push(format!("layout: {error}")); }
-        let schema = PreferenceSpaceMerge::schema(&[]);
+        if let Err(error) = PreferenceSpaceMerge::prepareLayout(storage.clone()) { errors.push(format!("layout: {error}")); }
+        let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let mut report = registry.receive(&operations)?;
         errors.append(&mut report.errors);
@@ -1000,7 +1000,7 @@ impl OperitApplication {
         operit_store::SyncAppliedChanges::publish(&storage,&report.applied);
         let chats = report.applied.iter().filter_map(synchronizedChatId).collect();
         if let Err(error) = self.refreshSynchronizedChatFlows(&chats) { errors.push(format!("chat refresh: {error}")); }
-        Ok(serde_json::json!({"received":operations.len(),"applied":report.applied.len(),"skipped":0,"pending":report.pending.len(),
+        Ok(serde_json::json!({"received":operations.len(),"applied":report.applied.len(),"skipped":report.retired,"pending":report.pending.len(),
             "pendingOperationIds":report.pending,"errors":errors}))
     }
 

@@ -1,5 +1,5 @@
 //! Versions preference creation, ownership transfer and retirement through DataStore migrations.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
@@ -64,7 +64,7 @@ impl PreferenceLayout {
         let state = self.state.data().map_err(|error| error.to_string())?;
         let routes = CoreNodeStateStore::newWithStorage(self.storage.clone(), ROUTES_PATH);
         routes.edit(|current| {
-            for (key, value) in state.iterEntries().filter(|(key, _)| key.starts_with(ROUTE_FILE)) {
+            for (key, value) in state.iterEntries().filter(|(key, _)| [ROUTE_FILE, RETIRED_FILE, RETIRED_DIRECTORY].iter().any(|prefix| key.starts_with(prefix))) {
                 current.set(&stringPreferencesKey(key), value.clone());
             }
         }).map_err(|error| error.to_string())
@@ -137,4 +137,13 @@ pub fn routes(storage: Arc<dyn RuntimeStorageHost>) -> Result<BTreeMap<String, S
         resolved.insert(source.clone(), crate::Transaction::Migrations::resolve_path(&routes, source)?);
     }
     Ok(resolved)
+}
+
+/// Retirement is an explicit layout decision; unknown paths have no such disposition.
+pub fn retirements(storage: Arc<dyn RuntimeStorageHost>) -> Result<BTreeSet<String>, String> {
+    let values = CoreNodeStateStore::newWithStorage(storage, ROUTES_PATH).data().map_err(|e| e.to_string())?;
+    Ok(values.iterEntries().filter_map(|(key, value)| {
+        if value != &serde_json::Value::Bool(true) { return None; }
+        key.strip_prefix(RETIRED_FILE).or_else(|| key.strip_prefix(RETIRED_DIRECTORY)).map(str::to_owned)
+    }).collect())
 }

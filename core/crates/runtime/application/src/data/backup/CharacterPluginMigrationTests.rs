@@ -2544,7 +2544,7 @@ fn installed_startup_theme_failure_resumes_after_process_restart() {
     let saved = themePreferences(&fixture).data().unwrap();
     assert_eq!(
         saved.get(&stringPreferencesKey("__operit_preferences_schema_version")),
-        Some(&json!(4))
+        Some(&json!(5))
     );
     assert!(!saved
         .iterEntries()
@@ -2759,4 +2759,94 @@ fn cleanup_completion_marker_does_not_skip_the_remaining_startup_trigger() {
     fixture.writer().commit(vec![fixture.writer().mutation("imports", "operit2-v27", marker).unwrap()]).unwrap();
     cleanupLegacyCharacters(fixture.writer()).unwrap();
     assert!(!fixture.host.exists(CHARACTER_CARDS_PREFERENCES_PATH).unwrap());
+}
+
+/// A completed layout consumes retired originals without rewriting the plugin's current values.
+#[test]
+fn character_layout_retires_old_transactions_only_after_import_and_cleanup() {
+    use operit_store::{
+        PreferenceMerge,
+        SyncOperationStore::{SyncOperation, SyncOperationKnowledge, SyncOperationSemantics},
+    };
+    let fixture = Fixture::new();
+    let memory_root = format!("{DATA_MEMORY_CHARACTERS_DIR_PATH}/legacy");
+    let settings = format!("{memory_root}/settings/memory_search_settings.preferences.json");
+    let missing = format!("{DATA_MEMORY_CHARACTERS_DIR_PATH}/old-peer-only/settings/memory_search_settings.preferences.json");
+    let paths = [
+        CHARACTER_CARDS_PREFERENCES_PATH,
+        settings.as_str(),
+        missing.as_str(),
+    ];
+    let originals = paths.iter().enumerate().map(|(index, path)| SyncOperation {
+        opId: format!("legacy-peer:{}", index + 1), originDeviceId: "legacy-peer".into(),
+        sequence: index as i64 + 1, domain: "preferences".into(), entityType: "entry".into(),
+        entityId: serde_json::to_string(&(path, "legacy_setting")).unwrap(), operation: "set".into(),
+        semantics: SyncOperationSemantics::EntityState,
+        payload: json!({"storagePath":path,"key":"legacy_setting","value":"late history","encrypted":false,"formatVersion":1}),
+        createdAt: index as i64 + 1, schemaVersion: 1,
+    }).collect::<Vec<_>>();
+    let schema = crate::data::preferences::PreferenceSpaceMerge::schema();
+    let journal = SyncOperationStore::new(fixture.host.clone(), RUNTIME_SYNC_DIR_PATH);
+    journal.receiveOperations(&originals).unwrap();
+    crate::data::backup::CharacterPluginLayout::prepare(fixture.host.clone()).unwrap();
+    assert!(
+        operit_store::PreferenceLayout::retirements(fixture.host.clone())
+            .unwrap()
+            .is_empty()
+    );
+    fixture
+        .host
+        .writeBytes(CHARACTER_CARDS_PREFERENCES_PATH, b"{}")
+        .unwrap();
+    fixture.host.writeBytes(&settings, b"{}").unwrap();
+    let mut source = data();
+    source.cleanup_paths = vec![CHARACTER_CARDS_PREFERENCES_PATH.into(), memory_root];
+    fixture.writer().import("operit2-v27", source).unwrap();
+    crate::data::backup::CharacterPluginLayout::prepare(fixture.host.clone()).unwrap();
+    let registry =
+        PreferenceMerge::registry(fixture.host.clone(), &schema, [], |_, _| true).unwrap();
+    let before = registry.receive(&[]).unwrap();
+    assert_eq!(before.pending.len(), originals.len());
+    assert_eq!(before.retired, 0);
+    assert_eq!(before.errors.len(), originals.len());
+    cleanupLegacyCharacters(fixture.writer()).unwrap();
+    let card = fixture.writer().get("cards", "legacy").unwrap();
+    let owner = fixture.writer().get("owners", "character:legacy").unwrap();
+    let active = fixture.writer().get("meta", "state").unwrap();
+    for attempt in 0..2 {
+        // Startup publishes persisted layout rules, and a retry has no new incoming batch.
+        crate::data::preferences::PreferenceSpaceMerge::prepareLayout(fixture.host.clone())
+            .unwrap();
+        let registry =
+            PreferenceMerge::registry(fixture.host.clone(), &schema, [], |_, _| true).unwrap();
+        let report = registry.receive(&[]).unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.pending.is_empty());
+        assert!(report.applied.is_empty());
+        assert_eq!(
+            report.retired,
+            if attempt == 0 { originals.len() } else { 0 }
+        );
+        let (snapshots, pending, errors) = registry.snapshots().unwrap();
+        assert!(pending.is_empty());
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| !paths.contains(&snapshot.data.owner.path.as_str())));
+        assert_eq!(fixture.writer().get("cards", "legacy").unwrap(), card);
+        assert_eq!(
+            fixture.writer().get("owners", "character:legacy").unwrap(),
+            owner
+        );
+        assert_eq!(fixture.writer().get("meta", "state").unwrap(), active);
+        for path in &paths {
+            assert!(!fixture.host.exists(path).unwrap());
+        }
+    }
+    let history = journal.preferenceHistory().unwrap();
+    let receipt = journal.receipt().unwrap();
+    for operation in originals {
+        assert!(history.contains(&operation));
+        assert!(receipt.containsSequence(&operation.originDeviceId, operation.sequence));
+    }
 }

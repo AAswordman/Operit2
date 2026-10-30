@@ -867,3 +867,79 @@ fn occupied_layout_and_routed_object_fields_agree_after_destination_deletion() {
         );
     }
 }
+
+#[test]
+fn dynamic_space_owners_recover_pending_history_without_schema_registration() {
+    use operit_store::SyncOperationStore::SyncOperationSemantics;
+    use operit_util::RuntimeStorageLayout::*;
+    let fixture = Fixture::new();
+    let originals = [
+        RUNTIME_SPACE_MEMBERS_DIR_PATH,
+        RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
+        RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH,
+        RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, directory)| {
+        let path = format!("{directory}/old-peer.preferences.json");
+        let record = json!({"nodeId":"old-peer","updatedAt":index});
+        SyncOperation {
+            opId: format!("old-peer:{}", index + 1),
+            originDeviceId: "old-peer".into(),
+            sequence: index as i64 + 1,
+            domain: "preferences".into(),
+            entityType: "entry".into(),
+            entityId: serde_json::to_string(&(&path, "record")).unwrap(),
+            operation: "set".into(),
+            semantics: SyncOperationSemantics::EntityState,
+            payload: json!({"storagePath":path,"key":"record","value":record.to_string(),
+                "formatVersion":1,"encrypted":false}),
+            createdAt: index as i64 + 1,
+            schemaVersion: 1,
+        }
+    })
+    .collect::<Vec<_>>();
+    fixture.journal().receiveOperations(&originals).unwrap();
+    for _ in 0..2 {
+        let schema = PreferenceMergeSchema::default();
+        let registry =
+            PreferenceMerge::registry(fixture.reopen(), &schema, [], |_, _| true).unwrap();
+        // A retry with no incoming batch must discover owners from the durable journal.
+        let report = registry.receive(&[]).unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.pending.is_empty());
+        let (snapshots, pending, errors) = registry.snapshots().unwrap();
+        assert!(pending.is_empty());
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(snapshots.len(), originals.len());
+        for (index, operation) in originals.iter().enumerate() {
+            let path = operation.payload["storagePath"].as_str().unwrap();
+            let snapshot = snapshots
+                .iter()
+                .find(|snapshot| snapshot.data.owner.path == path)
+                .unwrap();
+            assert_eq!(
+                snapshot.data.values["record"],
+                json!({"nodeId":"old-peer","updatedAt":index})
+            );
+            assert!(snapshot.covered.contains(&operation.opId));
+        }
+    }
+    assert_eq!(fixture.journal().preferenceHistory().unwrap(), originals);
+}
+
+#[test]
+fn dynamic_space_owners_only_accept_declared_record_paths() {
+    use operit_util::RuntimeStorageLayout::*;
+    let schema = PreferenceMergeSchema::default();
+    for path in [
+        format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/.hidden.preferences.json"),
+        format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/nested/peer.preferences.json"),
+        format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/peer.json"),
+        CHARACTER_CARDS_PREFERENCES_PATH.into(),
+        format!("{DATA_MEMORY_CHARACTERS_DIR_PATH}/default_character/settings/memory_search_settings.preferences.json"),
+    ] {
+        assert!(schema.owner(&path).unwrap().is_none(), "{path}");
+    }
+}

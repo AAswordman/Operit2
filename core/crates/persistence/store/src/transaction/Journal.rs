@@ -192,7 +192,7 @@ impl Journal {
     }
 
     pub(crate) fn owner_paths(&mut self) -> Result<Vec<String>, Error> {
-        self.0.query("SELECT path FROM transaction_owners ORDER BY path", vec![])?.iter()
+        self.0.query("SELECT path FROM transaction_owners UNION SELECT target FROM originals WHERE pending=1 AND domain='preferences' ORDER BY path", vec![])?.iter()
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
     }
 

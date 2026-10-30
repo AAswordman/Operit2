@@ -63,11 +63,14 @@ pub struct PreferenceMergeSchema {
 }
 
 impl PreferenceMergeSchema {
-    /// Resolves explicit native files and the plugin API's Space-owned preference namespace.
+    /// Resolves native declarations, dynamic Space records and Space-owned plugin preferences.
     /// An unrelated file is not an implicit preference owner.
     pub fn owner(&self, path: &str) -> Result<Option<PreferenceMergeStore>, String> {
         if let Some(owner) = self.stores.iter().find(|store| store.path == path) {
             return Ok(Some(owner.clone()));
+        }
+        if let Some(owner) = crate::CoreSpaceStore::CoreSpaceStore::preferenceSyncStore(path) {
+            return Ok(Some(owner));
         }
         use operit_util::RuntimeStorageLayout::{PLUGIN_DATA_SPACE_DIR_PATH, PLUGIN_DATA_DEVICE_DIR_PATH};
         if ![PLUGIN_DATA_SPACE_DIR_PATH, PLUGIN_DATA_DEVICE_DIR_PATH].iter()
@@ -255,7 +258,7 @@ fn pluginDeclarations(entries: &[PreferencesSyncedEntry]) -> Result<BTreeMap<Str
 pub struct PreferenceMergeOutcome {
     pub paths: BTreeSet<String>,
     pub operations: Vec<SyncOperation>,
-    /// Terminally ignores unowned, older or unversioned operations without applying their values.
+    /// Layout explicitly retired this target; originals remain in the journal.
     pub skipped: bool,
     pub result: Result<BTreeMap<String, String>, String>,
 }
@@ -277,9 +280,12 @@ where F: Fn(&str, &str) -> bool + Copy {
                 }
             }
         }
-        Ok::<_,String>(report.outcomes.into_iter().map(|(path,result)| PreferenceMergeOutcome {
-            operations: incoming.iter().filter(|op| registry.target(op).as_ref() == Ok(&path)).cloned().collect(),
-            paths: BTreeSet::from([path]), skipped: false, result,
+        Ok::<_,String>(report.outcomes.into_iter().map(|(path,result)| {
+            let skipped = registry.is_retired(&path);
+            PreferenceMergeOutcome {
+                operations: incoming.iter().filter(|op| registry.target(op).as_ref() == Ok(&path)).cloned().collect(),
+                paths: BTreeSet::from([path]), skipped, result,
+            }
         }).collect::<Vec<_>>())
     })();
     result.unwrap_or_else(|error| vec![PreferenceMergeOutcome { paths: BTreeSet::new(),operations: incoming.to_vec(),skipped: false,result: Err(error) }])
@@ -295,15 +301,20 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
     let journal = crate::SyncOperationStore::SyncOperationStore::new(storage.clone(),operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
     let mut paths = schema.stores.iter().map(|owner|owner.path.clone()).collect::<BTreeSet<_>>();
     paths.extend(journal.preferenceDatasets().map_err(|e|e.to_string())?.into_keys());
+    for path in journal.preferenceOwnerPaths().map_err(|e|e.to_string())? {
+        paths.insert(crate::Transaction::Migrations::resolve_path(&routes,&path)?);
+    }
     for op in operations {
         if op.domain == "preferences" {
             let path = PreferencesSyncedEntry::operationPath(op).map_err(|e|e.to_string())?;
             paths.insert(crate::Transaction::Migrations::resolve_path(&routes,path)?);
         }
     }
-    let mut registry = Registry { journal,owners: BTreeMap::new(),sources: vec![],routes,
+    let retired = crate::PreferenceLayout::retirements(storage.clone())?;
+    let mut registry = Registry { journal,owners: BTreeMap::new(),sources: vec![],routes,retired,
         locate: Box::new(|op| PreferencesSyncedEntry::operationPath(op).map(str::to_owned).map_err(|e|e.to_string())) };
     for path in paths {
+        if registry.is_retired(&path) { continue; }
         let Some(owner) = schema.owner(&path)? else { continue; };
         let store = (owner.open)(storage.clone(),&path);
         let preparation = store.clone();

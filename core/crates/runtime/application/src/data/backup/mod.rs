@@ -1,3 +1,5 @@
+#[path = "CharacterPluginLayout.rs"]
+pub(crate) mod CharacterPluginLayout;
 #[path = "CharacterPluginLegacyData.rs"]
 pub(crate) mod CharacterPluginLegacyData;
 #[path = "CharacterPluginMigration.rs"]

@@ -1565,7 +1565,7 @@ fn cleanupLegacyCharacters(writer: &CharacterPluginWriter) -> Result<(), String>
             .delete(CHARACTER_CARDS_PREFERENCES_PATH, false)
             .map_err(|error| error.to_string())?;
     }
-    Ok(())
+    super::CharacterPluginLayout::prepare(writer.storage.clone())
 }
 
 /// Retains the exact source target and a complete independent theme for restartable adoption.

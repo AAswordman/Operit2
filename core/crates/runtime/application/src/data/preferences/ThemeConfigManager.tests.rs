@@ -1353,7 +1353,7 @@ fn synchronized_themes_preserve_independent_identity_records() {
     let history = targetJournal.preferenceHistory().unwrap();
     operit_store::PreferenceMerge::applyOperations(
         target.host.clone(),
-        &crate::data::preferences::PreferenceSpaceMerge::schema(&operations),
+        &crate::data::preferences::PreferenceSpaceMerge::schema(),
         &history,
         &operations,
         |_, _| true,
