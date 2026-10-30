@@ -164,6 +164,7 @@ impl AppDatabase {
             DROP TABLE IF EXISTS usage_request_records;
             DROP TABLE IF EXISTS token_usage_records;
             DROP TABLE IF EXISTS token_stats_models;
+            DROP TABLE IF EXISTS sync_sql_versions;
             DROP TABLE IF EXISTS sync_sql_deletions;
             DROP TABLE IF EXISTS sync_sql_message_part_rows;
             DROP TABLE IF EXISTS sync_sql_message_variant_rows;

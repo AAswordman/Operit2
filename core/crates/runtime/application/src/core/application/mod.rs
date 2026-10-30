@@ -9,3 +9,6 @@ pub mod OperitApplication;
 
 #[path = "MarketInstallSupport.rs"]
 mod MarketInstallSupport;
+
+#[path = "SyncConsistency.rs"]
+mod SyncConsistency;

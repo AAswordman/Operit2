@@ -805,7 +805,7 @@ impl Operit1SnapshotImportManager {
     /// Imports the OP1 v21 token ledger and pricing identities without deriving usage from chats.
     fn importTokenStatistics(&self, parsed: &ParsedOperit1Snapshot) -> Result<(i32, i32), String> {
         self.withStagedOperit1ChatDatabase(parsed, |connection, bridge| {
-            if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV28 {
+            if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV29 {
                 return Ok((0, 0));
             }
             let usageRows = connection

@@ -1800,6 +1800,11 @@ pub struct RuntimeStorageEntry {
 }
 
 pub trait RuntimeStorageHost: Send + Sync {
+    /// Opens a transaction journal in this storage namespace.
+    fn openTransactionDatabase(&self, _path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
+        Err(HostError::new("This storage host does not provide a SQL transaction journal"))
+    }
+
     /// Whether parsed preferences should remain cached. Constrained hosts may
     /// reload node-local durable bytes on reads and release idle store state.
     /// Concurrent handles still share a transaction; returned snapshots are immutable.

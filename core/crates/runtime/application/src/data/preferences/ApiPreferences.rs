@@ -52,17 +52,6 @@ impl ApiPreferences {
             .withSchema(2, Self::migratePreferences)
     }
 
-
-
-    /// Converts historical API values to the current typed value contract.
-    pub(crate) fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
-        entry.decodeHistoricalValues(|version, values| {
-            if version > 2 { return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: 2 }); }
-            if version < 2 { Self::migratePreferences(1, values)?; }
-            Ok(())
-        })
-    }
-
     /// Reads the committed typed values for another owning runtime module.
     pub(crate) fn snapshot(&self) -> Result<Preferences, PreferencesDataStoreError> {
         self.apiDataStore.data()

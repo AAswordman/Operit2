@@ -87,34 +87,13 @@ impl ModelConfigManager {
         path: impl Into<String>,
     ) -> PreferencesDataStore {
         PreferencesDataStore::newEncryptedWithStorage(storage, path)
-            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
-    }
-
-    /// Imports each historical provider value with its declared encoding and preserves its stable identity.
-    pub(crate) fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
-        entry.decodeHistoricalValues(|version, values| {
-            if version > Self::PREFERENCES_VERSION {
-                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
-            }
-            if version < 4 {
-                let records = values.iterEntries().filter(|(key, _)| key.starts_with("provider_") && *key != "provider_list")
-                    .map(|(key, value)| (key.to_owned(), value.clone())).collect::<Vec<_>>();
-                for (key, value) in records {
-                    let encoded: String = serde_json::from_value(value)?;
-                    let mut provider: ProviderProfile = serde_json::from_str(&encoded)?;
-                    if version < 3 {
-                        provider = Self::providerWithProviderOwnedThinkingRules(provider)
-                            .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
-                    }
-                    values.set(&stringPreferencesKey(&key), serde_json::to_value(provider)?);
+            .withMigration(Self::PREFERENCES_VERSION, |from,context| {
+                if from == 3 {
+                    operit_store::Transaction::Rule::DropKey {key:"provider_list".into()}.apply(context).map_err(PreferencesDataStoreError::Message)?;
                 }
-            }
-            values.remove(&Self::PROVIDER_LIST_KEY());
-            Ok(())
-        })
+                context.map_preferences(from,&Self::migratePreferences)
+            })
     }
-
-
 
     const PREFERENCES_VERSION: u32 = 5;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
@@ -1969,6 +1948,11 @@ mod tests {
     }
 
     impl RuntimeStorageHost for TestRuntimeStorageHost {
+        fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+            operit_host_native_storage::NativeRuntimeStorageHost::new(self.root.join("runtime"), self.root.join(WORKSPACE_DIR_PATH))
+                .openTransactionDatabase(path)
+        }
+
         /// Flushes the existing test file through its backing filesystem.
         fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
             std::fs::OpenOptions::new().write(true).open(self.resolve(path)?)?.sync_all()?;

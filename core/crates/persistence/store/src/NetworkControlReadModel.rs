@@ -134,17 +134,7 @@ impl NetworkControlReadModel {
         self.rebuild();
     }
 
-    pub(crate) fn replace_journal_origin(&mut self, origin: &str, operations: &[SyncOperation]) {
-        self.journal
-            .retain(|_, operation| operation.originDeviceId != origin);
-        for operation in operations {
-            if operation.domain == NETWORK_CONTROL_SYNC_DOMAIN {
-                self.journal
-                    .insert(operation.opId.clone(), operation.clone());
-            }
-        }
-        self.rebuild();
-    }
+
 
     pub(crate) fn retire_journal(&mut self) {
         self.journal.clear();

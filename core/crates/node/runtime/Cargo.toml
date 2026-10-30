@@ -45,6 +45,7 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
+operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 operit-model = { path = "../../foundation/model" }
 operit-rslink-runtime = { path = "../../rslink/runtime" }

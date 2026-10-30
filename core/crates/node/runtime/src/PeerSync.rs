@@ -12,6 +12,9 @@ pub(crate) enum PeerSyncMethod {
     DeviceSpace,
     SyncClock,
     SyncClockDigest,
+    SyncConsistency,
+    SyncReadSnapshot,
+    SyncRepairSnapshot,
     SyncOperationsSince,
     SyncApplyOperations,
     SyncBlobExists,
@@ -24,7 +27,8 @@ impl PeerSyncMethod {
     /// calls, not an invitation to replicate persistent business data.
     pub(crate) fn requiresStorageProvider(self) -> bool {
         matches!(self, Self::SyncClock | Self::SyncClockDigest | Self::SyncOperationsSince
-            | Self::SyncApplyOperations | Self::SyncBlobExists | Self::SyncReadBlobChunk)
+            | Self::SyncApplyOperations | Self::SyncBlobExists | Self::SyncReadBlobChunk
+            | Self::SyncConsistency | Self::SyncReadSnapshot | Self::SyncRepairSnapshot)
     }
 
     pub(crate) fn request(self, requestId: String, args: CoreValue) -> CoreCallRequest {
@@ -59,9 +63,25 @@ impl PeerSyncMethod {
                 })?;
             let _operations = args.operations;
         }
+        match method {
+            Self::SyncReadSnapshot => { let _: ReadSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
+            Self::SyncRepairSnapshot => { let _: RepairSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
+            _ => {},
+        }
         Ok(method)
     }
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ReadSnapshot { owner: operit_store::Transaction::Owner, token: String }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct RepairSnapshot { owner: operit_store::Transaction::Owner, expected: String,
+    reference: operit_store::RuntimeFileSyncStore::RuntimeFileSyncReference }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

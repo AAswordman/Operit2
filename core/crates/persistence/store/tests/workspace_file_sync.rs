@@ -333,6 +333,10 @@ struct CountingHost {
 }
 
 impl RuntimeStorageHost for CountingHost {
+    fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        self.inner.openTransactionDatabase(path)
+    }
+
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         self.inner.runtimeRootDir()
     }

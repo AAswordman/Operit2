@@ -1426,6 +1426,43 @@ pub fn receipt(
     Ok((receipt, errors))
 }
 
+/// Opens a catalog-owned dataset; peer input never becomes an arbitrary SQL path.
+fn withSyncDataset<R>(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str,
+    action: impl FnOnce(crate::Transaction::SqlDataset<'_>) -> Result<R, String>) -> Result<R, String> {
+    let owned = catalog(host.clone()).map_err(|e| e.to_string())?
+        .queryOne("SELECT kind FROM plugin_databases WHERE path=?1 AND sync=1", vec![SqliteValue::Text(path.into())]).map_err(|e| e.to_string())?
+        .ok_or("Unknown synchronized plugin database")?;
+    let store = SqliteStore::openWithHost(host, path).map_err(|e| e.to_string())?;
+    let mut tables = vec!["_operit_versions".to_owned(), "_operit_merge_map".into(), "_operit_merge_names".into()];
+    if owned.get::<_, String>(0).map_err(|e| e.to_string())? == "objects" {
+        tables.push("_operit_values".into());
+    } else {
+        for row in store.queryRows("SELECT name FROM _operit_tables ORDER BY name", vec![]).map_err(|e| e.to_string())? {
+            tables.push(row.get::<_, String>(0).map_err(|e| e.to_string())?);
+        }
+    }
+    let names = tables.iter().map(String::as_str).collect::<Vec<_>>();
+    action(crate::Transaction::SqlDataset { store: &store,
+        owner: crate::Transaction::Owner { backend: crate::Transaction::Backend::Sql, path: path.into(), format: 1, layout: 1 },
+        node: node.into(), tables: &names,
+        cleanup: "DELETE FROM _operit_dirty",
+        revisions: "SELECT origin || ':' || sequence,created_at,origin,sequence FROM _operit_log" })
+}
+
+pub fn syncDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
+    catalog(host)?.queryRows("SELECT path FROM plugin_databases WHERE sync=1 ORDER BY path", vec![])?.iter().map(|row|row.get(0)).collect()
+}
+
+
+
+pub fn syncSnapshot(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str) -> Result<crate::Transaction::Snapshot, String> {
+    withSyncDataset(host, path, node, |dataset| dataset.snapshot())
+}
+
+pub fn repairSyncedSnapshot(host: Arc<dyn RuntimeSqliteHost>, expected: &str, source: &crate::Transaction::Snapshot, node: &str) -> Result<bool, String> {
+    withSyncDataset(host, &source.data.owner.path, node, |dataset| dataset.repair(expected, source))
+}
+
 /// Inventories outgoing transactions without decoding database payloads or assuming contiguous sequences.
 pub fn operationIdsSince<K: SyncOperationKnowledge>(
     host: Arc<dyn RuntimeSqliteHost>, clock: &K,
@@ -2820,6 +2857,7 @@ pub fn applyOperation(
             if recorded != recordedPayload || row.get::<_,i64>(1)? != operation.createdAt { return Err(failure("Remote operation identity has conflicting content")); }
             return Ok(());
         }
+        let checkpointCovered = crate::Transaction::covered_by_checkpoint(tx, operation)?;
         if payload.tables.len() > 1000 {return Err(failure("Remote transaction exceeds table declaration limit"));}
         let mut tableNames=BTreeSet::new();
         for table in &payload.tables {
@@ -2842,11 +2880,11 @@ pub fn applyOperation(
         let mut seen=BTreeSet::new();
         if payload.changes.len()>1000 {return Err(failure("Remote transaction exceeds mutation limit"));}
         for change in &payload.changes {
+            if checkpointCovered { continue; }
             if change.key.is_empty() || change.key.len() > 2048 || change.key.chars().any(char::is_control) || !seen.insert((&change.collection,&change.key)) {return Err(failure("Invalid or duplicate remote key"));}
             if let Some(row)=tx.queryOne("SELECT created_at,origin,sequence FROM _operit_versions WHERE collection=?1 AND key=?2",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone())])? {
-                let current=(row.get::<_,i64>(0)?,row.get::<_,String>(1)?,row.get::<_,i64>(2)?);
-                let incoming=(operation.createdAt,operation.originDeviceId.clone(),operation.sequence);
-                if incoming<=current {continue;}
+                let current = crate::Transaction::Revision { createdAt: row.get(0)?,originDeviceId: row.get(1)?,sequence: row.get(2)? };
+                if !crate::Transaction::newer(&crate::Transaction::Revision::fromOperation(operation),&current) { continue; }
             }
             if let Some(descriptor) = &database.merge {
                 rememberPayloadNames(tx, database.kind, descriptor, std::slice::from_ref(change))?;
@@ -2859,7 +2897,7 @@ pub fn applyOperation(
             }
             tx.execute("INSERT INTO _operit_versions VALUES(?1,?2,?3,?4,?5) ON CONFLICT(collection,key) DO UPDATE SET created_at=excluded.created_at,origin=excluded.origin,sequence=excluded.sequence",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone()),SqliteValue::Integer(operation.createdAt),SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence)])?;
         }
-        if !payload.changes.is_empty() {
+        if !checkpointCovered && !payload.changes.is_empty() {
             if let Some(descriptor) = &database.merge {
                 reconcileLocalReferences(tx, database.kind, descriptor, preferences)?;
                 reconcileMergeNames(tx, database.kind, descriptor)?;

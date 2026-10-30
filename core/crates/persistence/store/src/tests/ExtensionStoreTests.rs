@@ -9,8 +9,10 @@ use std::sync::Mutex;
 struct MemoryStorage {
     files: Mutex<BTreeMap<String, Vec<u8>>>,
     fail_write: Mutex<Option<String>>,
+    journal: crate::transaction_test_host::TransactionJournalHost,
 }
 impl RuntimeStorageHost for MemoryStorage {
+    fn openTransactionDatabase(&self,path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> { self.journal.open(path) }
     /// Confirms synchronous in-memory publication without copying or rewriting bytes.
     fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
         if !self.exists(path)? {

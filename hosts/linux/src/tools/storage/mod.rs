@@ -169,6 +169,10 @@ fn defaultHostSecretRoot() -> PathBuf {
 }
 
 impl RuntimeStorageHost for LinuxRuntimeStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        RuntimeSqliteHost::openSqliteDatabase(self, path)
+    }
+
     /// Returns the shared runtime storage root.
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         self.storage.runtimeRootDir()

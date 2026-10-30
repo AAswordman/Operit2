@@ -3371,7 +3371,7 @@ var CharacterStorage = class _CharacterStorage {
         const configuration = {};
         for (const name of configurationNames) configuration[name] = yield open(name);
         const metadata = yield open("meta"), chats = yield open("chats");
-        const migration = yield Tools.Storage.dataStore.open({ path: directory + "/migration.preferences.json" });
+        const migration = yield Tools.Storage.dataStore.open({ path: ToolPkg.getLocalDataDir() + "/migration.preferences.json" });
         handles.push(migration);
         memory = yield CharacterMemoryDatabase.open();
         const storage = new _CharacterStorage(configuration, metadata, chats, migration, memory);

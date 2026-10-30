@@ -1396,8 +1396,7 @@ impl CoreSpaceStore {
         let node = name.strip_suffix(".preferences.json")?;
         if node.starts_with('.') || validateNodeId(node).is_err() { return None; }
         Some(crate::PreferenceMerge::PreferenceMergeStore::values(
-            path, false, |storage, path| Self::new(storage).recordStore(path), Self::decodeSyncedRecord,
-        ))
+            path, false, |storage, path| Self::new(storage).recordStore(path)))
     }
 
     /// Repairs schema-2 snapshots overwritten by unconverted history as well as older encodings.
@@ -1418,13 +1417,7 @@ impl CoreSpaceStore {
         Ok(())
     }
 
-    /// Uses the same owner codec for local upgrades and historical operations; current values stay typed.
-    fn decodeSyncedRecord(entry: &mut PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
-        entry.decodeHistoricalValues(|version, values| {
-            if version == CORE_SPACE_RECORD_VERSION { return Ok(()); }
-            Self::migrateRecord(version, values)
-        })
-    }
+
 
 }
 
@@ -1750,6 +1743,7 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct MemoryStorageHost {
+    journalHost: Arc<crate::transaction_test_host::TransactionJournalHost>,
         files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
         failedLists: Arc<Mutex<BTreeSet<String>>>,
         failedDeletes: Arc<Mutex<BTreeSet<String>>>,
@@ -1758,6 +1752,10 @@ mod tests {
     }
 
     impl RuntimeStorageHost for MemoryStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        self.journalHost.open(path)
+    }
+
         /// Confirms synchronous in-memory publication without copying or rewriting bytes.
         fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
             if !self.exists(path)? {

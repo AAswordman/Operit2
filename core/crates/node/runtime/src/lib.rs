@@ -172,3 +172,6 @@ mod tests {
 
 #[cfg(feature = "peer-runtime")]
 pub mod PeerConnectionCode;
+
+#[cfg(test)]
+mod TestTransactionJournal;

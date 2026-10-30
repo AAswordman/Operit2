@@ -2164,6 +2164,7 @@ dependencies = [
  "futures-util",
  "operit-host-api",
  "operit-host-native-common",
+ "operit-host-native-storage",
  "operit-link",
  "operit-model",
  "operit-peer-link",

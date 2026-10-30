@@ -1418,8 +1418,9 @@ mod single_channel_tests {
     }
 
     #[derive(Default)]
-    struct Storage(Mutex<BTreeMap<String, Vec<u8>>>);
+    struct Storage(Mutex<BTreeMap<String, Vec<u8>>>, crate::TestTransactionJournal::TestTransactionJournal);
     impl operit_host_api::RuntimeStorageHost for Storage {
+        fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> { self.1.open(path) }
         /// Confirms synchronous in-memory publication without copying or rewriting bytes.
         fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
             if !self.exists(path)? {

@@ -1706,3 +1706,62 @@ fn object_change_pages_reset_for_foreign_and_trimmed_cursors() {
     assert_eq!(page["changes"],json!([]));
     f.dispose();
 }
+
+/// A correction carries per-record versions: an older independent row remains applicable after restart.
+#[test]
+fn snapshot_correction_preserves_plugin_scope_versions_and_uncovered_late_rows() {
+    let author = Fixture::new("author");
+    let handle = author.open("objects");
+    author.call(json!({"op":"commit","handle":handle,"mutations":[put("x",json!("new"))]})).unwrap();
+    let mut initial = author.export();
+    for operation in &mut initial { operation.createdAt = 50; }
+    let source = Fixture::new("source");
+    source.replay(&initial);
+    let target = Fixture::new("target");
+    let target_handle = target.open("objects");
+    let authoritative = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+    let capture = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+    assert!(PluginStorage::repairSyncedSnapshot(target.host.clone(), &capture.token().unwrap(), &authoritative, target.device).unwrap());
+    assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, authoritative.data);
+    target.call(json!({"op":"close","handle":target_handle})).unwrap();
+
+    let delayed = Fixture::new("delayed");
+    let delayed_handle = delayed.open("objects");
+    delayed.call(json!({"op":"commit","handle":delayed_handle,"mutations":[put("x",json!("old")),put("y",json!("independent"))]})).unwrap();
+    let mut late = delayed.export();
+    for operation in &mut late { operation.createdAt = 40; }
+    let reopened = Arc::new(NativeRuntimeStorageHost::new(target.root.join("runtime"), target.root.join("workspaces")));
+    for operation in &late {
+        PluginStorage::applyOperation(reopened.clone(), reopened.clone(), operation, &Default::default()).unwrap();
+        PluginStorage::applyOperation(reopened.clone(), reopened.clone(), operation, &Default::default()).unwrap();
+    }
+    let target_handle = target.open("objects");
+    assert_eq!(target.get(&target_handle,"x")["value"], "new");
+    assert_eq!(target.get(&target_handle,"y")["value"], "independent");
+    source.replay(&late);
+    assert_eq!(PluginStorage::syncSnapshot(reopened, &target.path, target.device).unwrap().data,
+        PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap().data);
+    author.dispose();source.dispose();target.dispose();delayed.dispose();
+}
+
+#[test]
+fn same_author_sql_changes_follow_sequence_when_its_clock_moves_backwards() {
+    let source = Fixture::new("author");
+    let handle = source.open("objects");
+    for value in ["first","second"] {
+        source.call(json!({"op":"commit","handle":handle,"mutations":[put("x",json!(value))]})).unwrap();
+    }
+    let mut operations = source.export();
+    assert_eq!(operations.len(),2);
+    operations[0].createdAt = 50;
+    operations[1].createdAt = 10;
+    for reverse in [false,true] {
+        let target = Fixture::new("target");
+        let handle = target.open("objects");
+        if reverse { target.replay(&operations.iter().rev().cloned().collect::<Vec<_>>()); }
+        else { target.replay(&operations); }
+        assert_eq!(target.get(&handle,"x")["value"],"second");
+        target.dispose();
+    }
+    source.dispose();
+}

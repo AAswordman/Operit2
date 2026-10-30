@@ -1,6 +1,5 @@
 //! The JSONL journal owns record locations and routing metadata, never payload trees.
 //! Every reader uses bounded Host ranges; payloads are opened only by their owner.
-use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, BufReader, Read};
 
 use operit_host_api::RuntimeStorageHost;
@@ -10,7 +9,7 @@ use serde_json::value::RawValue;
 
 use crate::PreferenceMerge::PLUGIN_MERGE_DECLARATION_KEY;
 use crate::SyncOperationStore::{
-    OperationLogLineFinding, SyncOperation, SyncOperationOrder, SyncOperationSemantics,
+    SyncOperation, SyncOperationOrder, SyncOperationSemantics,
     SyncOperationStoreError,
 };
 
@@ -395,156 +394,5 @@ impl JournalRecord {
     pub(crate) fn is_merge_candidate(&self) -> bool {
         self.domain == "preferences"
             && ((self.route.encrypted && !self.route.resolved) || self.operation == "alias" || self.route.merge_metadata)
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct JournalIndex {
-    pub(crate) loaded: bool,
-    pub(crate) records: Vec<JournalRecord>,
-    pub(crate) operation_ids: BTreeSet<String>,
-    pub(crate) sequences: BTreeMap<i64, usize>,
-    pub(crate) highest_sequence: i64,
-    pub(crate) byte_length: u64,
-    pub(crate) needs_separator: bool,
-    pub(crate) findings: Vec<OperationLogLineFinding>,
-}
-
-impl JournalIndex {
-    fn push(&mut self, record: JournalRecord) {
-        self.highest_sequence = self.highest_sequence.max(record.sequence);
-        self.operation_ids.insert(record.op_id.clone());
-        self.sequences.insert(record.sequence, self.records.len());
-        self.records.push(record);
-    }
-
-    pub(crate) fn appended(
-        &mut self,
-        operation: &SyncOperation,
-        offset: u64,
-        length: u64,
-        encrypted: bool,
-    ) {
-        self.push(JournalRecord {
-            offset,
-            length,
-            op_id: operation.opId.clone(),
-            origin_device_id: operation.originDeviceId.clone(),
-            sequence: operation.sequence,
-            domain: operation.domain.clone(),
-            entity_type: operation.entityType.clone(),
-            entity_id: operation.entityId.clone(),
-            operation: operation.operation.clone(),
-            semantics: operation.semantics,
-            route: PayloadRoute::from_operation(operation, encrypted),
-            created_at: operation.createdAt,
-        });
-    }
-
-    pub(crate) fn load(
-        &mut self,
-        host: &dyn RuntimeStorageHost,
-        path: &str,
-        device_id: &str,
-    ) -> Result<(), SyncOperationStoreError> {
-        let exists = host.exists(path)?;
-        if self.loaded && (exists || self.byte_length == 0) {
-            return Ok(());
-        }
-        // Publish a complete index only after all Host reads succeeded.
-        let mut next = Self::default();
-        if exists {
-            let mut lines = JournalLines::new(host, path);
-            while lines.next()? {
-                next.byte_length = lines.offset + lines.bytes.len() as u64;
-                next.needs_separator = !lines.bytes.ends_with(b"\n");
-                if lines.bytes.iter().all(u8::is_ascii_whitespace) {
-                    continue;
-                }
-                match JournalRecord::parse(&lines.bytes, lines.offset) {
-                    Ok(record) => next.push(record),
-                    Err(error) => next.findings.push(OperationLogLineFinding {
-                        deviceId: device_id.to_owned(),
-                        lineNumber: lines.line_number,
-                        byteOffset: lines.offset,
-                        byteLength: lines.bytes.len() as u64,
-                        error: error.to_string(),
-                    }),
-                }
-            }
-        }
-        next.loaded = true;
-        *self = next;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::{json, Value};
-
-    #[test]
-    fn lightweight_routes_match_decoded_payload_semantics() {
-        let declaration =
-            serde_json::json!({"entries":[{"key":PLUGIN_MERGE_DECLARATION_KEY}]}).to_string();
-        for payload in [
-            declaration.as_str(),
-            "null",
-            "42",
-            "[]",
-            "true",
-            "{\"storagePath\":null}",
-            "{\"storagePath\":\"wrong\",\"storagePath\":\"right\"}",
-            "{\"contractVersion\":1,\"logicalTime\":17}",
-            "{\"initial\":true}",
-            "{\"key\":null,\"entries\":[null,2,{\"key\":\"__operit_merge_declaration_v1\"}]}",
-        ] {
-            for domain in ["preferences", "runtime_file"] {
-                let operation: SyncOperation = serde_json::from_value(json!({
-                    "opId":"a:1", "originDeviceId":"a", "sequence":1, "domain":domain,
-                    "entityType":"entry", "entityId":"id", "operation":"set", "semantics":"entity_state",
-                    "payload":serde_json::from_str::<Value>(payload).unwrap(), "createdAt":99, "schemaVersion":1,
-                })).unwrap();
-                let raw = serde_json::to_vec(&operation).unwrap();
-                let record = JournalRecord::parse(&raw, 0).unwrap();
-                assert_eq!(
-                    record.order().unwrap(),
-                    SyncOperationOrder::fromOperation(&operation)
-                );
-                assert_eq!(
-                    record.is_merge_candidate(),
-                    crate::PreferenceMerge::isMergeMetadata(&operation)
-                );
-                let raw_route =
-                    PayloadRoute::parse(serde_json::from_str::<&RawValue>(payload).unwrap());
-                assert_eq!(
-                    raw_route.storage_path.as_deref(),
-                    operation.payload.get("storagePath").and_then(Value::as_str)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn metadata_index_has_the_same_payload_depth_limit_as_decoding() {
-        for depth in 120..132 {
-            let payload = format!("{}null{}", "[".repeat(depth), "]".repeat(depth));
-            let raw = format!(
-                r#"{{"opId":"a:1","originDeviceId":"a","sequence":1,"domain":"chat","entityType":"message","entityId":"m","operation":"upsert","semantics":"entity_state","payload":{payload},"createdAt":1,"schemaVersion":1}}"#
-            );
-            assert_eq!(
-                JournalRecord::parse(raw.as_bytes(), 0).is_ok(),
-                serde_json::from_str::<SyncOperation>(&raw).is_ok(),
-                "depth={depth}"
-            );
-        }
-    }
-
-    #[test]
-    fn metadata_index_rejects_numbers_that_cannot_be_materialized_as_values() {
-        let raw = br#"{"opId":"a:1","originDeviceId":"a","sequence":1,"domain":"chat","entityType":"message","entityId":"m","operation":"upsert","semantics":"entity_state","payload":{"bad":1e999},"createdAt":1,"schemaVersion":1}"#;
-        assert!(serde_json::from_slice::<SyncOperation>(raw).is_err());
-        assert!(JournalRecord::parse(raw, 0).is_err());
     }
 }

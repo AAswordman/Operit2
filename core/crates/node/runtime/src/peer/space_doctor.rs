@@ -459,6 +459,7 @@ fn runRepair(
     spaceId: &str,
 ) -> Result<RepairReport, String> {
     let storage = service.storage();
+    let authorityBefore = service.networkControlStore().currentSpaceOperations()?;
     let timestamp = currentTimeMillis();
     let mut backupPaths = Vec::new();
     let mut quarantineByDevice: BTreeMap<String, Vec<u64>> = BTreeMap::new();
@@ -492,7 +493,7 @@ fn runRepair(
 
     // Selfcheck: the store's control view must equal the shadow set rebuilt
     // from the surviving raw journal lines plus the projection copy.
-    let mut shadowOperations = Vec::new();
+    let mut shadowOperations = authorityBefore;
     for deviceId in sync.devices().map_err(|error| error.to_string())? {
         let scan = sync.scanOperationLog(&deviceId).map_err(|error| error.to_string())?;
         shadowOperations.extend(scan.operations.iter().cloned());

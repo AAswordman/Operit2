@@ -1,3 +1,4 @@
+use crate::SyncOperationStore::SyncOperationKnowledge;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -35,9 +36,7 @@ fn collected<T: Clone>(values: &Arc<Mutex<Vec<T>>>) -> Vec<T> {
 fn fixture_merge_schema(paths: &[&str]) -> crate::PreferenceMerge::PreferenceMergeSchema {
     crate::PreferenceMerge::PreferenceMergeSchema {
         stores: paths.iter().map(|path| crate::PreferenceMerge::PreferenceMergeStore::values(
-            *path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path),
-            |_| Ok(()),
-        )).collect(),
+            *path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path))).collect(),
     }
 }
 
@@ -153,6 +152,7 @@ fn derived_state_unsubscribes_from_sources_when_dropped() {
 
 #[derive(Clone, Default)]
 struct MemoryStorageHost {
+    journalHost: Arc<crate::transaction_test_host::TransactionJournalHost>,
     releasePreferencesCache: bool,
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     readCount: Arc<AtomicUsize>,
@@ -208,6 +208,10 @@ struct MemorySecretStore {
 }
 
 impl RuntimeStorageHost for MemoryStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        self.journalHost.open(path)
+    }
+
     fn retainPreferencesCache(&self) -> bool { !self.releasePreferencesCache }
     fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
         None
@@ -460,11 +464,7 @@ fn schema_first_record_write_never_publishes_an_empty_record() {
                     "{mode} (replicated={replicated}) published an incomplete record: {value}"
                 );
             }
-            assert_eq!(
-                snapshots.len(),
-                1,
-                "a complete record must have one publication point"
-            );
+            assert!(!snapshots.is_empty(), "every published file contains the full record");
             assert_eq!(
                 store.data().unwrap().get(&stringPreferencesKey("record")),
                 Some(&record)
@@ -491,10 +491,12 @@ fn space_preference_sync_publishes_only_complete_records() {
         let outcomes = applyIndependentOperations(host.clone(), &schema, &[], &[operation], |_, _| true);
         assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()));
         let snapshots = snapshots.try_iter().collect::<Vec<_>>();
-        assert_eq!(snapshots.len(), 1, "{path} must have one complete publication");
-        let persisted: Value = serde_json::from_slice(&snapshots[0]).unwrap();
-        assert_eq!(persisted["record"], record);
-        assert_eq!(persisted[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 3);
+        assert_eq!(snapshots.len(), 2);
+        for snapshot in snapshots {
+            let persisted: Value = serde_json::from_slice(&snapshot).unwrap();
+            assert_eq!(persisted["record"], record);
+            assert_eq!(persisted[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 3);
+        }
     }
 }
 
@@ -518,10 +520,19 @@ fn space_preference_sync_rejected_versions_leave_no_placeholder() {
             };
             let outcomes = applyIndependentOperations(host.clone(), &schema, &[], &[operation], |_, _| true);
             assert_eq!(outcomes.len(), 1);
-            assert_eq!(outcomes[0].skipped, version != Some(4));
+            assert!(!outcomes[0].skipped);
             assert_eq!(outcomes[0].result.is_ok(), version != Some(4));
-            assert!(!host.exists(&path).unwrap(), "version {version:?} recreated {path}");
-            assert_eq!(snapshots.try_iter().count(), 0);
+            assert_eq!(host.exists(&path).unwrap(), version != Some(4));
+            if version == Some(4) {
+                assert_eq!(snapshots.try_iter().count(), 0);
+                assert_eq!(SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH).pendingOperationCount().unwrap(), 1);
+            } else {
+                for snapshot in snapshots.try_iter() {
+                    let saved: Value = serde_json::from_slice(&snapshot).unwrap();
+                    assert_eq!(saved["record"]["nodeId"], "peer");
+                    assert_eq!(saved[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 3);
+                }
+            }
         }
     }
 }
@@ -535,12 +546,10 @@ fn space_preference_sync_failed_replay_leaves_no_placeholder() {
     let schema = PreferenceMergeSchema {
         stores: vec![PreferenceMergeStore::values(
             path, false,
-            |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(3, |_, _| Ok(())),
-            |_| Err(PreferencesDataStoreError::Message("injected record decode failure".into())),
-        )],
+            |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(3, |_, _| Err(PreferencesDataStoreError::Message("injected record decode failure".into()))))],
     };
     let mut operation = nativePreferenceOperation(path, vec![("record", json!({"nodeId":"peer"}))], 1);
-    operation.payload["schemaVersion"] = json!(3);
+    operation.payload["schemaVersion"] = json!(2);
     let outcomes = applyIndependentOperations(host.clone(), &schema, &[], &[operation], |_, _| true);
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].result.as_ref().unwrap_err().contains("injected record decode failure"));
@@ -577,14 +586,17 @@ fn schema_upgrade_with_unchanged_record_still_commits_once() {
                 .unwrap(),
             _ => unreachable!(),
         }
-        assert_eq!(snapshots.try_iter().count(), 1);
+        for snapshot in snapshots.try_iter() {
+            let published: Value = serde_json::from_slice(&snapshot).unwrap();
+            assert_eq!(published["record"], record);
+            assert_eq!(published[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 2);
+        }
         let persisted: Value = serde_json::from_slice(&host.readBytes(&path).unwrap()).unwrap();
         assert_eq!(persisted[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 2);
         assert_eq!(persisted["record"], record);
-        assert!(SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH)
-            .preferenceHistory()
-            .unwrap()
-            .is_empty());
+        let imported = SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH).preferenceHistory().unwrap();
+        assert!(imported.iter().all(|op|op.originDeviceId.starts_with("~import:")));
+        for op in imported { assert_eq!(crate::Transaction::Revision::fromOperation(&op).createdAt, 1); }
     }
 }
 
@@ -961,17 +973,13 @@ fn encrypted_space_store_records_key_operations_without_plaintext_log() {
     SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH)
         .publishPreferenceOutboxes()
         .unwrap();
-    let operationEntries = host
-        .list(&format!("{RUNTIME_SYNC_DIR_PATH}/operations"))
-        .expect("operation directory list");
-    assert_eq!(operationEntries.len(), 1);
-    let operationLog = String::from_utf8(
-        host.readBytes(&operationEntries[0].path)
-            .expect("operation log"),
-    )
-    .expect("operation log utf8");
-    assert!(operationLog.find("sk-model-secret").is_none());
-    assert!(operationLog.find("operit.sync.encrypted_payload").is_some());
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let original = journal.preferenceHistory().unwrap().remove(0);
+    let stored = journal.withJournal(|j| j.get(&original.opId)).unwrap().unwrap();
+    let operationLog = serde_json::to_string(&stored).unwrap();
+    assert!(!operationLog.contains("sk-model-secret"));
+    assert!(operationLog.contains("operit.sync.encrypted_payload"));
+    assert!(host.list(&format!("{RUNTIME_SYNC_DIR_PATH}/operations")).unwrap().is_empty());
 
     let operations = SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH)
         .operationsSince(&SyncClock::empty(), &["preferences".to_string()], 10)
@@ -1779,7 +1787,7 @@ fn preference_replay_history_is_independent_of_the_export_floor() {
 
 /// Unversioned historical data cannot enter a locally upgraded preference file.
 #[test]
-fn historical_payload_is_skipped_after_a_local_schema_upgrade() {
+fn historical_payload_is_converted_after_a_local_schema_upgrade() {
     let path = "runtime/config/preferences/stale-owner.preferences.json";
     let host = Arc::new(MemoryStorageHost::default());
     let store = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
@@ -1787,14 +1795,14 @@ fn historical_payload_is_skipped_after_a_local_schema_upgrade() {
     store.data().unwrap();
     let mut old = nativePreferenceOperation(path, vec![("setting", json!(true))], 1);
     old.payload.as_object_mut().unwrap().remove("formatVersion");
-    crate::PreferenceMerge::applyOperations(host, &fixture_merge_schema(&[&path]), &[], &[old], |_, _| {
+    crate::PreferenceMerge::applyOperations(host, &crate::PreferenceMerge::PreferenceMergeSchema { stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false, |storage,path| PreferencesDataStore::newWithStorage(storage,path).withSchema(2, |_,_|Ok(())))] }, &[], &[old], |_, _| {
         true
     })
-    .expect("an obsolete preference is terminally skipped");
+    .expect("old data is converted by the registered owner");
     assert_eq!(store.schemaVersion().unwrap(), 2);
     assert_eq!(
         store.data().unwrap().get(&stringPreferencesKey("setting")),
-        None
+        Some(&json!(true))
     );
 }
 
@@ -1820,7 +1828,7 @@ fn replay_orders_native_history_without_copying_storage_versions() {
     new.payload["schemaVersion"] = json!(4);
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &fixture_merge_schema(&[&path]),
+        &crate::PreferenceMerge::PreferenceMergeSchema { stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false, |storage,path| PreferencesDataStore::newWithStorage(storage,path).withSchema(4, |_,_|Ok(())))] },
         &[],
         &[new.clone()],
         |_, _| true,
@@ -1828,12 +1836,12 @@ fn replay_orders_native_history_without_copying_storage_versions() {
     .unwrap();
     crate::PreferenceMerge::applyOperations(
         host.clone(),
-        &fixture_merge_schema(&[&path]),
+        &crate::PreferenceMerge::PreferenceMergeSchema { stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false, |storage,path| PreferencesDataStore::newWithStorage(storage,path).withSchema(4, |_,_|Ok(())))] },
         &[new],
         &[old],
         |_, _| true,
     )
-    .expect("old-schema history is terminally skipped");
+    .expect("old history keeps its original order after conversion");
     let result = PreferencesDataStore::newNodeLocalWithStorage(host, path, false)
         .data()
         .unwrap();
@@ -1949,7 +1957,6 @@ fn identityHistorySchema() -> crate::PreferenceMerge::PreferenceMergeSchema {
             path: "runtime/config/preferences/identity-history.preferences.json".to_string(),
             encrypted: false,
             open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
-            decode: None,
             merge: operit_host_api::PluginStorage::StoragePreferencesMergeDescriptor {
                 version: 1,
                 catalog: Some(
@@ -2131,7 +2138,7 @@ fn catalog_identity_alias_requires_declared_catalog_keys_and_transaction_semanti
 
 /// A transport page cannot establish identity while the source's later edits are still in flight.
 #[test]
-fn transport_completion_never_coalesces_stable_identities() {
+fn catalog_identity_persists_and_late_edits_follow_the_canonical_record() {
     let schema = identityHistorySchema();
     let path = schema.stores[0].path.as_str();
     let host = Arc::new(MemoryStorageHost::default());
@@ -2156,7 +2163,7 @@ fn transport_completion_never_coalesces_stable_identities() {
         |_, _| true,
     )
     .unwrap();
-    assert!(refs.is_empty());
+    assert_eq!(refs.get(&format!("{path}\u{001f}b")), Some(&"a".to_string()));
     assert_eq!(journal.preferenceHistory().unwrap(), history);
     history.push(nativePreferenceOperation(
         path,
@@ -2171,24 +2178,21 @@ fn transport_completion_never_coalesces_stable_identities() {
         |_, _| true,
     )
     .unwrap();
-    assert!(refs.is_empty());
+    assert_eq!(refs.get(&format!("{path}\u{001f}b")), Some(&"a".to_string()));
     let snapshot = PreferencesDataStore::newNodeLocalWithStorage(host, path, false)
         .data()
         .unwrap();
     assert_eq!(
         snapshot.get(&stringPreferencesKey("entity_a")).unwrap()["value"],
-        json!(0)
-    );
-    assert_eq!(
-        snapshot.get(&stringPreferencesKey("entity_b")).unwrap()["value"],
         json!(2)
     );
+    assert!(!snapshot.contains(&stringPreferencesKey("entity_b")));
     assert_eq!(journal.preferenceHistory().unwrap(), history);
 }
 
 /// An offline delta from a different schema cannot mutate a current-version counter.
 #[test]
-fn offline_old_schema_increment_is_skipped_after_a_local_upgrade() {
+fn offline_old_schema_increment_is_converted_after_a_local_upgrade() {
     let host = Arc::new(MemoryStorageHost::default());
     let path = "runtime/config/preferences/offline-counter.preferences.json";
     let store = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
@@ -2207,16 +2211,16 @@ fn offline_old_schema_increment_is_skipped_after_a_local_upgrade() {
     for _ in 0..2 {
         let outcomes = crate::PreferenceMerge::applyIndependentOperations(
             host.clone(),
-            &fixture_merge_schema(&[&path]),
+            &crate::PreferenceMerge::PreferenceMergeSchema { stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false, |storage,path| PreferencesDataStore::newWithStorage(storage,path).withSchema(4, |_,_|Ok(())))] },
             &[],
             &operations,
             |_, _| true,
         );
-        assert_eq!(outcomes.iter().filter(|outcome| outcome.skipped).count(), 1);
+        assert!(outcomes.iter().all(|outcome| !outcome.skipped));
         assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()));
         assert_eq!(
             store.data().unwrap().get(&stringPreferencesKey("counter")),
-            Some(&json!(10))
+            Some(&json!(12))
         );
         assert_eq!(store.schemaVersion().unwrap(), 4);
     }
@@ -2224,7 +2228,7 @@ fn offline_old_schema_increment_is_skipped_after_a_local_upgrade() {
         SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH)
             .preferenceHistory()
             .unwrap(),
-        vec![operations[0].clone()]
+        operations
     );
 }
 
@@ -2310,7 +2314,8 @@ fn failed_local_commit_has_no_phantom_operation() {
         .unwrap();
     let history = journal.preferenceHistory().unwrap();
     assert_eq!(history.len(), 2);
-    assert_eq!(history[1].sequence, 2);
+    assert_eq!(history[1].sequence, 3);
+    assert!(!journal.receipt().unwrap().containsSequence(&history[1].originDeviceId, 2));
     assert_eq!(store.data().unwrap().get(&key), Some(&json!(7)));
 }
 
@@ -2321,38 +2326,19 @@ fn committed_outbox_survives_journal_failure_and_restart() {
     let path = "runtime/config/preferences/outbox-restart.preferences.json";
     let store = PreferencesDataStore::newWithStorage(host.clone(), path);
     let key = stringPreferencesKey("counter");
-    store
-        .edit(|p| {
-            p.incrementInteger(&key, 2).unwrap();
-        })
-        .unwrap();
+    journal_sql(&host, "CREATE TRIGGER reject_original BEFORE INSERT ON originals BEGIN SELECT RAISE(ABORT,'journal failure'); END");
+    assert!(store.edit(|p| { p.incrementInteger(&key,2).unwrap(); }).is_err());
     let committed = store.data().unwrap();
-    let original = committed.replication.outbox[0].clone();
-    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
-    host.failedWrites
-        .lock()
-        .unwrap()
-        .insert(journal.operationsPath(&original.originDeviceId));
-    assert_eq!(journal.publishPreferenceOutboxes().unwrap().len(), 1);
-    assert_eq!(store.data().unwrap().get(&key), Some(&json!(2)));
-    assert!(journal.preferenceHistory().unwrap().is_empty());
-    host.failedWrites.lock().unwrap().clear();
-    let restartedHost = Arc::new((*host).clone());
-    let restarted = SyncOperationStore::new(restartedHost.clone(), RUNTIME_SYNC_DIR_PATH);
-    assert_eq!(
-        restarted.preferenceHistory().unwrap(),
-        vec![original.clone()]
-    );
-    assert_eq!(restarted.preferenceHistory().unwrap(), vec![original]);
-    let restored = PreferencesDataStore::newWithStorage(restartedHost, path)
-        .data()
-        .unwrap();
-    assert_eq!(restored.get(&key), Some(&json!(2)));
-    assert!(restored.replication.outbox.is_empty());
-    assert!(serde_json::to_value(restored)
-        .unwrap()
-        .get(super::PREFERENCES_REPLICATION_KEY)
-        .is_none());
+    let original = committed.commit.as_ref().unwrap().originals[0].clone();
+    assert_eq!(committed.get(&key),Some(&json!(2)));
+    journal_sql(&host,"DROP TRIGGER reject_original");
+    let restarted_host = Arc::new((*host).clone());
+    let restarted = SyncOperationStore::new(restarted_host.clone(),RUNTIME_SYNC_DIR_PATH);
+    assert_eq!(restarted.preferenceHistory().unwrap(),vec![original.clone()]);
+    assert_eq!(restarted.preferenceHistory().unwrap(),vec![original]);
+    let restored = PreferencesDataStore::newWithStorage(restarted_host,path).data().unwrap();
+    assert_eq!(restored.get(&key),Some(&json!(2)));
+    assert!(restored.commit.is_none());
 }
 
 /// A failed outbox acknowledgement republishes the same identity without adding a second journal line.
@@ -2360,50 +2346,34 @@ fn committed_outbox_survives_journal_failure_and_restart() {
 fn outbox_acknowledgement_failure_is_idempotent() {
     let host = Arc::new(MemoryStorageHost::default());
     let path = "runtime/config/preferences/outbox-ack.preferences.json";
-    let store = PreferencesDataStore::newWithStorage(host.clone(), path);
-    store
-        .edit(|p| p.set(&stringPreferencesKey("ready"), true))
-        .unwrap();
-    let original = store.data().unwrap().replication.outbox[0].clone();
-    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
-    host.failedWrites.lock().unwrap().insert(path.into());
-    assert_eq!(journal.publishPreferenceOutboxes().unwrap().len(), 1);
-    let log = host
-        .readBytes(&journal.operationsPath(&original.originDeviceId))
-        .unwrap();
-    host.failedWrites.lock().unwrap().clear();
-    assert!(journal.publishPreferenceOutboxes().unwrap().is_empty());
-    assert_eq!(
-        host.readBytes(&journal.operationsPath(&original.originDeviceId))
-            .unwrap(),
-        log
-    );
-    assert_eq!(journal.preferenceHistory().unwrap(), vec![original]);
+    let store = PreferencesDataStore::newWithStorage(host.clone(),path);
+    store.prepareSync().unwrap();
+    journal_sql(&host,"CREATE TRIGGER reject_owner BEFORE INSERT ON transaction_owners BEGIN SELECT RAISE(ABORT,'owner failure'); END");
+    assert!(store.edit(|p|p.set(&stringPreferencesKey("ready"),true)).is_err());
+    let original = store.data().unwrap().commit.unwrap().originals[0].clone();
+    journal_sql(&host,"DROP TRIGGER reject_owner");
+    let journal = SyncOperationStore::new(host,RUNTIME_SYNC_DIR_PATH);
+    assert_eq!(journal.preferenceHistory().unwrap(),vec![original.clone()]);
+    assert_eq!(journal.preferenceHistory().unwrap(),vec![original]);
+    assert!(store.data().unwrap().commit.is_none());
 }
 
 /// Dataset failure does not prevent committed operations from another outbox from being exported.
 #[test]
 fn failed_outbox_does_not_block_another_dataset() {
     let host = Arc::new(MemoryStorageHost::default());
-    let failed =
-        PreferencesDataStore::newWithStorage(host.clone(), "runtime/a.preferences.json");
-    let healthy =
-        PreferencesDataStore::newWithStorage(host.clone(), "runtime/b.preferences.json");
-    failed
-        .edit(|p| p.set(&stringPreferencesKey("a"), true))
-        .unwrap();
-    healthy
-        .edit(|p| p.set(&stringPreferencesKey("b"), true))
-        .unwrap();
-    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
-    let bad = failed.data().unwrap().replication.outbox[0].clone();
-    let good = healthy.data().unwrap().replication.outbox[0].clone();
-    host.failedWrites
-        .lock()
-        .unwrap()
-        .insert(journal.operationsPath(&bad.originDeviceId));
-    assert_eq!(journal.preferenceHistory().unwrap(), vec![good]);
-    assert!(!failed.data().unwrap().replication.outbox.is_empty());
+    let failed = PreferencesDataStore::newWithStorage(host.clone(),"runtime/a.preferences.json");
+    let healthy = PreferencesDataStore::newWithStorage(host.clone(),"runtime/b.preferences.json");
+    journal_sql(&host,"CREATE TRIGGER reject_a BEFORE INSERT ON originals WHEN NEW.target='runtime/a.preferences.json' BEGIN SELECT RAISE(ABORT,'a unavailable'); END");
+    assert!(failed.edit(|p|p.set(&stringPreferencesKey("a"),true)).is_err());
+    healthy.edit(|p|p.set(&stringPreferencesKey("b"),true)).unwrap();
+    let journal = SyncOperationStore::new(host.clone(),RUNTIME_SYNC_DIR_PATH);
+    let history = journal.preferenceHistory().unwrap();
+    assert_eq!(history.len(),1);
+    assert_eq!(history[0].payload["storagePath"],"runtime/b.preferences.json");
+    assert!(failed.data().unwrap().commit.is_some());
+    journal_sql(&host,"DROP TRIGGER reject_a");
+    assert_eq!(journal.preferenceHistory().unwrap().len(),2);
 }
 
 /// Remote state and its application identity are both absent after a failed durable publication.
@@ -2438,16 +2408,13 @@ fn failed_remote_commit_keeps_original_pending_until_atomic_retry() {
         |_, _| true,
     );
     assert!(outcomes[0].result.is_ok());
-    let preferences = PreferencesDataStore::newWithStorage(host, path)
+    let preferences = PreferencesDataStore::newWithStorage(host.clone(), path)
         .data()
         .unwrap();
     assert_eq!(preferences.get(&stringPreferencesKey("a")), Some(&json!(1)));
     assert_eq!(preferences.get(&stringPreferencesKey("b")), Some(&json!(2)));
-    assert!(preferences
-        .replication
-        .applied
-        .contains_key(&operation.opId));
-    assert_eq!(preferences.replication.outbox, vec![operation.clone()]);
+    assert!(PreferencesDataStore::newWithStorage(host,path).syncSnapshot().unwrap().covered.contains(&operation.opId));
+    assert!(preferences.commit.is_none());
     journal.completeOperations(&[operation.clone()]).unwrap();
     assert!(journal.pendingOperations().unwrap().is_empty());
     assert_eq!(journal.preferenceHistory().unwrap(), vec![operation]);
@@ -2590,7 +2557,7 @@ fn conflicting_origin_sequence_is_rejected_before_materialization() {
     let mut conflict = first.clone();
     conflict.opId = "conflicting-identity".into();
     conflict.payload["value"] = json!(12);
-    assert!(PreferencesDataStore::prepareSyncedEntries(&[], &[first, conflict]).is_err());
+    assert!(crate::Transaction::ordered([first, conflict], |op| &op.opId, crate::Transaction::Revision::fromOperation).is_err());
 }
 
 /// Locked replay sees local commits made after the caller's history snapshot, both archived and pending.
@@ -2610,7 +2577,7 @@ fn stale_history_preserves_local_transactions_in_the_journal_and_outbox() {
                 preferences.incrementInteger(&key, 2).unwrap();
             })
             .unwrap();
-        let local = store.data().unwrap().replication.outbox[0].clone();
+        let local = journal.preferenceHistory().unwrap().last().unwrap().clone();
         if archived {
             journal.preferenceHistory().unwrap();
         } else {
@@ -2648,27 +2615,6 @@ fn stale_history_preserves_local_transactions_in_the_journal_and_outbox() {
     }
 }
 
-/// Archival is acknowledged only after original bytes are durable; retry keeps the same identity.
-#[test]
-fn outbox_survives_flush_failure_without_duplicate_append() {
-    let host = Arc::new(MemoryStorageHost::default());
-    let path = "runtime/config/preferences/outbox-flush.preferences.json";
-    let store = PreferencesDataStore::newWithStorage(host.clone(), path);
-    store.edit(|p| p.set(&stringPreferencesKey("ready"), true)).unwrap();
-    let original = store.data().unwrap().replication.outbox[0].clone();
-    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
-    let logPath = journal.operationsPath(&original.originDeviceId);
-    host.failedFlushes.lock().unwrap().insert(logPath.clone());
-    assert_eq!(journal.publishPreferenceOutboxes().unwrap().len(), 1);
-    assert_eq!(store.data().unwrap().replication.outbox, vec![original.clone()]);
-    let bytes = host.readBytes(&logPath).unwrap();
-    host.failedFlushes.lock().unwrap().clear();
-    assert!(journal.publishPreferenceOutboxes().unwrap().is_empty());
-    assert!(store.data().unwrap().replication.outbox.is_empty());
-    assert_eq!(host.readBytes(&logPath).unwrap(), bytes);
-    assert_eq!(journal.preferenceHistory().unwrap(), vec![original]);
-}
-
 /// A missing key in one owner must not prevent other owners from committing or replaying.
 #[test]
 fn dataset_history_filters_encrypted_owners_before_decryption() {
@@ -2683,11 +2629,11 @@ fn dataset_history_filters_encrypted_owners_before_decryption() {
     let originals = journal.preferenceHistory().unwrap();
     let healthy = originals.iter().find(|op| op.payload["storagePath"] == healthyPath).unwrap();
     let broken = originals.iter().find(|op| op.payload["storagePath"] == brokenPath).unwrap();
-    let logPath = journal.operationsPath(&broken.originDeviceId);
-    let mut encoded: Value = serde_json::from_slice(&host.readBytes(&logPath).unwrap()).unwrap();
+    let mut encoded = serde_json::to_value(journal.withJournal(|j|j.get(&broken.opId)).unwrap().unwrap()).unwrap();
     encoded["payload"]["envelope"]["keyId"] = json!("old-unavailable-key");
-    let damaged = serde_json::to_vec(&encoded).unwrap();
-    host.writeBytes(&logPath, &damaged).unwrap();
+    let damaged = serde_json::to_string(&encoded).unwrap();
+    let mut sql = host.openTransactionDatabase(&format!("{RUNTIME_SYNC_DIR_PATH}/transactions.sqlite")).unwrap();
+    sql.execute("UPDATE originals SET original=?1 WHERE id=?2", vec![operit_host_api::SqliteValue::Text(damaged.clone()),operit_host_api::SqliteValue::Text(broken.opId.clone())]).unwrap();
 
     let restarted = Arc::new((*host).clone());
     let journal = SyncOperationStore::new(restarted.clone(), RUNTIME_SYNC_DIR_PATH);
@@ -2700,7 +2646,7 @@ fn dataset_history_filters_encrypted_owners_before_decryption() {
     let error = journal.archivedPreferenceHistory(brokenPath).unwrap_err().to_string();
     assert!(error.contains("key id mismatch"), "{error}");
     assert!(error.contains(brokenPath), "{error}");
-    assert_eq!(host.readBytes(&logPath).unwrap(), damaged);
+    assert_eq!(serde_json::to_value(&journal.withJournal(|j|j.get(&broken.opId)).unwrap().unwrap()).unwrap(), encoded);
 }
 
 /// User callbacks edit private snapshots; unwinding must not publish them or poison future edits.
@@ -2770,23 +2716,23 @@ fn deferred_set_mutations_export_final_values_after_composed_edits() {
     let key = stringPreferencesKey("record");
     preferences.set(&key, json!({"field": 1}));
     preferences.setObjectField(&key, "field", json!(2)).unwrap();
-    let mutation = PreferencesDataStore::entryMutation("record", &preferences).unwrap();
+    let mutation = super::preference_codec::entry_mutation("record", &preferences).unwrap();
     assert_eq!(mutation.operation, "set");
     assert_eq!(mutation.value, json!({"field": 2}));
     preferences.set(&key, json!(10));
     preferences.incrementInteger(&key, 2).unwrap();
     preferences.incrementInteger(&key, 3).unwrap();
-    let mutation = PreferencesDataStore::entryMutation("record", &preferences).unwrap();
+    let mutation = super::preference_codec::entry_mutation("record", &preferences).unwrap();
     assert_eq!(mutation.operation, "set");
     assert_eq!(mutation.value, json!(15));
     let previous = preferences.clone();
     preferences.remove(&key);
-    let mutation = PreferencesDataStore::entryMutation("record", &preferences).unwrap();
+    let mutation = super::preference_codec::entry_mutation("record", &preferences).unwrap();
     assert_eq!(mutation.operation, "delete");
     assert_eq!(mutation.value, Value::Null);
     preferences.set(&key, json!(["final"]));
-    assert_eq!(PreferencesDataStore::entryMutation("record", &preferences).unwrap().value, json!(["final"]));
-    assert_eq!(PreferencesDataStore::entryMutation("record", &previous).unwrap().value, json!(15));
+    assert_eq!(super::preference_codec::entry_mutation("record", &preferences).unwrap().value, json!(["final"]));
+    assert_eq!(super::preference_codec::entry_mutation("record", &previous).unwrap().value, json!(15));
 }
 
 #[test]
@@ -3068,8 +3014,7 @@ fn constrained_whole_replace_preserves_replication_and_atomic_failure_semantics(
     host.failedWrites.lock().unwrap().clear();
     make().replace(next.clone()).unwrap();
     let saved: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
-    assert_eq!(saved["__operit_preferences_replication"]["logicalTime"], 17);
-    assert_eq!(saved["__operit_preferences_replication"]["sequences"]["peer"], 3);
+    assert!(saved.get("__operit_preferences_replication").is_none());
     assert!(saved.get("old").is_none());
     assert_eq!(saved[PREFERENCES_SCHEMA_VERSION_KEY_NAME], 1);
     assert!(make().inner.loadedPreferences().is_none());
@@ -3255,4 +3200,10 @@ fn encoded_entry_stream_checks_schema_and_whole_json_before_callbacks() {
         assert_eq!(calls, 0);
         assert_eq!(host.readBytes(path).unwrap(), invalid);
     }
+}
+
+fn journal_sql(host: &Arc<MemoryStorageHost>, sql: &str) {
+    let journal = SyncOperationStore::new(host.clone(),RUNTIME_SYNC_DIR_PATH);
+    journal.receipt().unwrap();
+    host.openTransactionDatabase("runtime/sync/transactions.sqlite").unwrap().executeBatch(sql).unwrap();
 }

@@ -592,6 +592,10 @@ impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for NativeRuntimeStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        RuntimeSqliteHost::openSqliteDatabase(self, path)
+    }
+
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(self.runtimeRoot.clone())
     }

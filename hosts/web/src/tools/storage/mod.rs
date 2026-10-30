@@ -38,6 +38,10 @@ impl WebRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for WebRuntimeStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        RuntimeSqliteHost::openSqliteDatabase(self, path)
+    }
+
     fn runtimeRootDir(&self) -> Option<PathBuf> {
         Some(Self::defaultRuntimeRoot())
     }

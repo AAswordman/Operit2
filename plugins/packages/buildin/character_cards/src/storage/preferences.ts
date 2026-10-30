@@ -49,7 +49,7 @@ export class CharacterStorage {
       const configuration = {} as Record<ConfigurationName, Storage.DataStore>;
       for (const name of configurationNames) configuration[name] = await open(name);
       const metadata = await open("meta"), chats = await open("chats");
-      const migration = await Tools.Storage.dataStore.open({ path: directory + "/migration.preferences.json" });
+      const migration = await Tools.Storage.dataStore.open({ path: ToolPkg.getLocalDataDir() + "/migration.preferences.json" });
       handles.push(migration);
       memory = await CharacterMemoryDatabase.open();
       const storage = new CharacterStorage(configuration, metadata, chats, migration, memory);

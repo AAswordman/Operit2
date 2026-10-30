@@ -18,25 +18,19 @@ impl WorkspacePreferenceStore {
     /// Opens the same versioned workspace owner for background synchronization.
     pub fn openStore(storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
         PreferencesDataStore::newWithStorage(storage, path)
-            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
+            .withMigration(Self::PREFERENCES_VERSION, Self::migration)
     }
 
-    /// Imports historical complete workspace records without running initialization migrations.
-    pub fn decodeSyncedEntry(entry: &mut crate::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
-        entry.decodeHistoricalValues(|version, values| {
-            if version > Self::PREFERENCES_VERSION {
-                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
-            }
-            if version < 2 { Self::migratePreferences(1, values)?; }
-            Ok(())
-        })
+    fn migration(from: u32, context: &mut crate::Transaction::migration::Context) -> Result<(),PreferencesDataStoreError> {
+        if from == 1 { crate::Transaction::Rule::DropKey {key:"workspace_list".into()}.apply(context).map_err(PreferencesDataStoreError::Message)?; }
+        context.map_preferences(from,&Self::migratePreferences)
     }
 
     /// Creates a workspace preference store from explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
             dataStore: PreferencesDataStore::new(paths.workspaces_preferences_path())
-                .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences),
+                .withMigration(Self::PREFERENCES_VERSION, Self::migration),
         }
     }
 

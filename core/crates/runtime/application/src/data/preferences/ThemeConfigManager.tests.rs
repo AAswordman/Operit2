@@ -17,6 +17,10 @@ struct RecordingStorageHost {
 }
 
 impl RuntimeStorageHost for RecordingStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        self.inner.openTransactionDatabase(path)
+    }
+
     /// Delegates durability to the real storage host without rewriting the file.
     fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
         self.inner.flushFile(path)
@@ -42,13 +46,21 @@ impl RuntimeStorageHost for RecordingStorageHost {
         self.inner.readBytesRange(path, offset, length)
     }
 
-    /// Records and atomically publishes one complete preference commit through the real host.
+    /// Counts business commits; removing a completed file/SQL intent preserves the same business data.
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
         if path == OperitPaths::USER_PREFERENCES_PATH {
             if self.failPreferenceWrite.load(Ordering::SeqCst) {
                 return Err(HostError::new("injected theme preference write failure"));
             }
-            self.preferenceWrites.fetch_add(1, Ordering::SeqCst);
+            let business = |bytes: &[u8]| {
+                let mut value: Value = serde_json::from_slice(bytes).unwrap();
+                value.as_object_mut().unwrap().remove("__operit_transaction_commit");
+                value
+            };
+            let previous = self.inner.exists(path)?.then(|| self.inner.readBytes(path)).transpose()?;
+            if previous.as_deref().map(business).as_ref() != Some(&business(content)) {
+                self.preferenceWrites.fetch_add(1, Ordering::SeqCst);
+            }
         }
         self.inner.writeBytesAtomically(path, content)
     }

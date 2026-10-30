@@ -72,22 +72,6 @@ impl FunctionalConfigManager {
             .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
     }
 
-    /// Converts historical binding values without creating unrelated default bindings.
-    pub(crate) fn decodeSyncedEntry(entry: &mut operit_store::PreferencesDataStore::PreferencesSyncedEntry) -> Result<(), PreferencesDataStoreError> {
-        entry.decodeHistoricalValues(|version, values| {
-            if version > Self::PREFERENCES_VERSION {
-                return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: version, expected: Self::PREFERENCES_VERSION });
-            }
-            if version < 3 && values.contains(&Self::FUNCTION_MODEL_BINDING()) {
-                if version < 2 { Self::migratePreferences(1, values)?; }
-                Self::migratePreferences(2, values)?;
-            }
-            Ok(())
-        })
-    }
-
-
-
     const PREFERENCES_VERSION: u32 = 3;
 
     /// Returns the preference key that stores function-to-model bindings.

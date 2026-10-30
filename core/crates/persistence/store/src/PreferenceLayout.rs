@@ -1,5 +1,5 @@
 //! Versions preference creation, ownership transfer and retirement through DataStore migrations.
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
@@ -9,7 +9,10 @@ use crate::PreferencesDataStore::{
     stringPreferencesKey, CoreNodeStateStore, Preferences, PreferencesDataStore,
     PreferencesDataStoreError, PreferencesSyncedEntry,
 };
-use crate::SyncOperationStore::{SyncOperation, SyncOperationStore};
+use crate::SyncOperationStore::SyncOperation;
+
+const ROUTE_FILE: &str = "route_file:";
+const ROUTES_PATH: &str = "runtime/sync/preference_routes.preferences.json";
 
 const RETIRED_FILE: &str = "retired_file:";
 const RETIRED_DIRECTORY: &str = "retired_directory:";
@@ -58,53 +61,46 @@ impl PreferenceLayout {
 
     /// Completes all required layout steps before preference preparation or synchronization.
     pub fn prepare(&self) -> Result<(), String> {
-        self.state
-            .data()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        let state = self.state.data().map_err(|error| error.to_string())?;
+        let routes = CoreNodeStateStore::newWithStorage(self.storage.clone(), ROUTES_PATH);
+        routes.edit(|current| {
+            for (key, value) in state.iterEntries().filter(|(key, _)| key.starts_with(ROUTE_FILE)) {
+                current.set(&stringPreferencesKey(key), value.clone());
+            }
+        }).map_err(|error| error.to_string())
     }
 
-    /// Archives retired originals before removing their replay intent and the caller's active batch.
+    /// Layout preparation preserves immutable originals. Missing owners remain pending.
     pub fn prepareOperations(
         &self,
-        history: &mut Vec<SyncOperation>,
+        _history: &mut Vec<SyncOperation>,
         operations: &mut Vec<SyncOperation>,
     ) -> Result<usize, String> {
-        let state = self.state.data().map_err(|error| error.to_string())?;
-        let mut retired = Vec::new();
-        for operation in operations.iter() {
-            if let Ok(path) = PreferencesSyncedEntry::operationPath(operation) {
-                if std::path::Path::new(path) == self.state.path() {
-                    return Err(
-                        "Preference layout state is node-local and cannot be synchronized".into(),
-                    );
-                }
-                if isRetired(&state, path) {
-                    PreferencesSyncedEntry::fromOperation(operation)
-                        .map_err(|error| error.to_string())?;
-                    retired.push(operation.clone());
-                }
+        self.prepare()?;
+        for operation in operations {
+            if PreferencesSyncedEntry::operationPath(operation)
+                .is_ok_and(|path| std::path::Path::new(path) == self.state.path()) {
+                return Err("Preference layout state is node-local and cannot be synchronized".into());
             }
         }
-        if !retired.is_empty() {
-            SyncOperationStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH)
-                .skipOperations(&retired)
-                .map_err(|error| error.to_string())?;
-        }
-        let identities = retired
-            .iter()
-            .map(|operation| operation.opId.as_str())
-            .collect::<BTreeSet<_>>();
-        operations.retain(|operation| !identities.contains(operation.opId.as_str()));
-        history.retain(|operation| {
-            !PreferencesSyncedEntry::operationPath(operation)
-                .is_ok_and(|path| isRetired(&state, path))
-        });
-        Ok(retired.len())
+        Ok(0)
     }
+
 }
 
 impl PreferenceLayoutMigration<'_> {
+    /// Moves the complete state and records the same routing rule for late original transactions.
+    pub fn moveFile(&mut self, from: &str, to: &PreferencesDataStore) -> Result<(), PreferencesDataStoreError> {
+        let destination = to.path().to_string_lossy().into_owned();
+        if from == destination { return Ok(()); }
+        let source = PreferencesDataStore::newWithStorage(self.storage.clone(), from);
+        if self.storage.exists(from)? {
+            crate::Transaction::preference::move_to(&source,to)?;
+        }
+        self.state.set(&stringPreferencesKey(&format!("{ROUTE_FILE}{from}")), destination);
+        Ok(())
+    }
+
     /// Creates or upgrades a destination using its owner's existing DataStore schema.
     pub fn create(&self, store: &PreferencesDataStore) -> Result<(), PreferencesDataStoreError> {
         store.data().map(|_| ())
@@ -130,15 +126,15 @@ impl PreferenceLayoutMigration<'_> {
     }
 }
 
-/// Matches explicit retirement declarations with exact file identities and directory boundaries.
-fn isRetired(state: &Preferences, path: &str) -> bool {
-    state.iterEntries().any(|(key, value)| {
-        value.as_bool() == Some(true)
-            && (key
-                .strip_prefix(RETIRED_FILE)
-                .is_some_and(|file| file == path)
-                || key
-                    .strip_prefix(RETIRED_DIRECTORY)
-                    .is_some_and(|directory| path.starts_with(directory)))
-    })
+/// Resolves layout ownership for both stored snapshots and immutable transaction views.
+pub fn routes(storage: Arc<dyn RuntimeStorageHost>) -> Result<BTreeMap<String, String>, String> {
+    let values = CoreNodeStateStore::newWithStorage(storage, ROUTES_PATH).data().map_err(|error| error.to_string())?;
+    let routes = values.iterEntries().filter_map(|(key, value)| {
+        Some((key.strip_prefix(ROUTE_FILE)?.to_owned(), value.as_str()?.to_owned()))
+    }).collect::<BTreeMap<_, _>>();
+    let mut resolved = BTreeMap::new();
+    for source in routes.keys() {
+        resolved.insert(source.clone(), crate::Transaction::Migrations::resolve_path(&routes, source)?);
+    }
+    Ok(resolved)
 }

@@ -1,3 +1,6 @@
+#[path = "SyncConsistency.rs"]
+mod consistency;
+
 use crate::PeerSync::{PeerSyncMethod, NODE_SYNC_TARGET};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
@@ -122,14 +125,6 @@ struct SpacePersistenceSyncState {
 #[derive(Clone)]
 pub struct SpacePersistenceSyncService {
     state: Arc<SpacePersistenceSyncState>,
-}
-
-#[derive(Deserialize)]
-struct SyncOperationOrder {
-    opId: String,
-    originDeviceId: String,
-    sequence: i64,
-    createdAt: i64,
 }
 
 impl SpacePersistenceSyncService {
@@ -773,20 +768,6 @@ impl SpacePersistenceSyncService {
         targetNodeId: &str,
         limit: usize,
     ) -> Result<bool, String> {
-        let localVersion: String = self.callLocal("coreVersion", Value::Null).await?;
-        let remoteVersion: String = callRemote(
-            &self.state.nodeRouter,
-            targetNodeId,
-            PeerSyncMethod::CoreVersion,
-            Value::Null,
-        )
-        .await?;
-        if localVersion != remoteVersion {
-            return Err(format!(
-                "core version mismatch: local={localVersion}, remote={remoteVersion}. sync blocked"
-            ));
-        }
-
         self.synchronizeDomains(targetNodeId, limit, &SYNC_DOMAINS).await
     }
 
@@ -934,6 +915,8 @@ impl SpacePersistenceSyncService {
                 {
                     return Ok(false);
                 }
+                consistency::requireConsistencySupport(&localClock, &remoteClock)?;
+                self.synchronizeConsistency(targetNodeId).await?;
                 operit_util::AppLogger::AppLogger::trace(
                     "CoreSyncTrace",
                     &format!(
@@ -1623,70 +1606,14 @@ where
     fromCoreValue(value).map_err(|error| error.to_string())
 }
 
-/// Reads only the ordering fields of one encoded operation. Cloning each
-/// operation just to deserialize it would duplicate the whole page.
-fn syncOperationOrder(value: &Value) -> Result<SyncOperationOrder, String> {
-    let field = |name: &str| {
-        value
-            .get(name)
-            .ok_or_else(|| format!("invalid sync operation: missing {name}"))
-    };
-    Ok(SyncOperationOrder {
-        opId: field("opId")?
-            .as_str()
-            .ok_or("invalid sync operation: opId is not a string")?
-            .to_string(),
-        originDeviceId: field("originDeviceId")?
-            .as_str()
-            .ok_or("invalid sync operation: originDeviceId is not a string")?
-            .to_string(),
-        sequence: field("sequence")?
-            .as_i64()
-            .ok_or("invalid sync operation: sequence is not an integer")?,
-        createdAt: field("createdAt")?
-            .as_i64()
-            .ok_or("invalid sync operation: createdAt is not an integer")?,
-    })
-}
-
 /// Merges two operation pages into their deterministic application order.
 fn mergeSyncOperations(left: Value, right: Value) -> Result<Vec<Value>, String> {
-    let mut byId = BTreeMap::<String, (SyncOperationOrder, Value)>::new();
-    for operation in syncOperations(left)?
-        .into_iter()
-        .chain(syncOperations(right)?)
-    {
-        let key = syncOperationOrder(&operation)?;
-        if let Some((_, existing)) = byId.get(&key.opId) {
-            if existing == &operation { continue; }
-            let existing = serde_json::from_value::<SyncOperation>(existing.clone())
-                .map_err(|error| format!("invalid sync operation {}: {error}", key.opId))?;
-            let incoming = serde_json::from_value::<SyncOperation>(operation.clone())
-                .map_err(|error| format!("invalid sync operation {}: {error}", key.opId))?;
-            if !operit_store::SyncOperationStore::incomingSyncOperationWins(&existing, &incoming)
-                .map_err(|error| error.to_string())? { continue; }
-        }
-        byId.insert(key.opId.clone(), (key, operation));
-    }
-    let mut operations = byId.into_values().collect::<Vec<_>>();
-    operations.sort_by(|left, right| {
-        (
-            left.0.createdAt,
-            &left.0.originDeviceId,
-            left.0.sequence,
-            &left.0.opId,
-        )
-            .cmp(&(
-                right.0.createdAt,
-                &right.0.originDeviceId,
-                right.0.sequence,
-                &right.0.opId,
-            ))
-    });
-    Ok(operations
-        .into_iter()
-        .map(|(_, operation)| operation)
-        .collect())
+    let operations = syncOperations(left)?.into_iter().chain(syncOperations(right)?)
+        .map(|value| serde_json::from_value::<SyncOperation>(value).map_err(|e| format!("Invalid sync operation: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    operit_store::Transaction::ordered(operations, |op| &op.opId,
+        operit_store::Transaction::Revision::fromOperation)?.into_iter()
+        .map(|op| serde_json::to_value(op).map_err(|e| e.to_string())).collect()
 }
 
 /// Decodes one runtime sync operation page into its ordered operation array.
@@ -1885,9 +1812,9 @@ mod page_budget_tests {
             .collect()
     }
 
-    /// Resolves same-ID SQL revisions identically regardless of which peer supplied each page.
+    /// Transport rejects a changed original regardless of arrival direction.
     #[test]
-    fn merge_pages_keeps_newest_chat_revision_in_both_orders() {
+    fn merge_pages_rejects_changed_immutable_chat_original_in_both_orders() {
         let old = json!({
             "opId":"device:1", "originDeviceId":"device", "sequence":1,
             "domain":"chat", "entityType":"message", "entityId":"chat:1",
@@ -1898,7 +1825,7 @@ mod page_budget_tests {
         new["schemaVersion"] = json!(8);
         new["payload"] = json!({"text":"new"});
         for (left, right) in [(old.clone(), new.clone()), (new.clone(), old.clone())] {
-            assert_eq!(mergeSyncOperations(json!([left]), json!([right])).unwrap(), vec![new.clone()]);
+            assert!(mergeSyncOperations(json!([left]), json!([right])).is_err());
         }
         let mut control = old.clone(); control["domain"] = json!("network_control");
         let mut conflict = control.clone(); conflict["payload"] = json!({"permission":"admin"});
@@ -1971,20 +1898,15 @@ mod page_budget_tests {
     }
 
     #[test]
-    fn operation_order_is_read_without_cloning_the_payload() {
-        let value = json!({
-            "opId": "device:7",
-            "originDeviceId": "device",
-            "sequence": 7,
-            "createdAt": 1234,
-            "payload": "x".repeat(4096),
-        });
-        let order = syncOperationOrder(&value).unwrap();
-        assert_eq!(order.opId, "device:7");
-        assert_eq!(order.originDeviceId, "device");
-        assert_eq!(order.sequence, 7);
-        assert_eq!(order.createdAt, 1234);
-        assert!(syncOperationOrder(&json!({"opId": "device:7"})).is_err());
+    fn page_union_uses_the_common_business_order_and_rejects_invalid_originals() {
+        let mut first = operation("device:1", 4096);
+        first["entityType"] = json!("test"); first["entityId"] = json!("entity"); first["operation"] = json!("set");
+        first["semantics"] = json!("transaction"); first["schemaVersion"] = json!(1);
+        first["originDeviceId"] = json!("device"); first["sequence"] = json!(1); first["createdAt"] = json!(20);
+        let mut second = first.clone();
+        second["opId"] = json!("device:2"); second["sequence"] = json!(2); second["createdAt"] = json!(10);
+        assert_eq!(mergeSyncOperations(json!([second.clone(), first.clone()]), json!([first.clone()])).unwrap(), vec![first,second]);
+        assert!(mergeSyncOperations(json!([{"opId":"device:7"}]), json!([])).is_err());
     }
 
     #[test]

@@ -18,6 +18,8 @@
 
 | 主题 | 内容 |
 | --- | --- |
+| [事务同步与迁移](transaction-sync-contract.md) | 设计草案：准则、定义、情况期望与细节 |
+| [事务模型](transaction-model.md) | 统一类型、事务运算、迁移等价与高阶事务 |
 | [持久化同步](sync-architecture.md) | 接收、重放、原子提交、日志查询与内存边界 |
 | [工作区文件同步](workspace-file-sync.md) | 同步范围、扫描、冲突与离线副本 |
 | [VFS 挂载](vfs-mounts.md) | 工作区外部目录及文档树 |

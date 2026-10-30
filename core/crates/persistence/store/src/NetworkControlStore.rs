@@ -824,10 +824,29 @@ impl NetworkControlStore {
         let _lock = networkControlMutationLock().lock()
             .map_err(|error| format!("Network control mutation lock poisoned: {error}"))?;
         let entries = storage.list("runtime/sync/").map_err(|error| error.to_string())?;
-        if entries.is_empty() { return Ok(()); }
+        let hasJournal = self.syncOperationStore.hasTransactionJournal().map_err(|e|e.to_string())?;
+        if entries.is_empty() && !hasJournal { return Ok(()); }
         let mut preferences = self.controlProjection.data().map_err(|error| error.to_string())?;
+        if hasJournal {
+            for operation in self.syncOperationStore.retirementOperations().map_err(|e|e.to_string())? {
+                if operation.domain == NETWORK_CONTROL_SYNC_DOMAIN {
+                    validateControlOperation(&operation)?;
+                    let key = stringPreferencesKey(&operation.opId);
+                    let encoded = serde_json::to_value(&operation).map_err(|e|e.to_string())?;
+                    if preferences.get(&key).is_some_and(|old| old != &encoded) { return Err("Conflicting legacy authority command".into()); }
+                    preferences.set(&key, encoded);
+                } else {
+                    let record = crate::PreferencesDataStore::PreferencesSyncedEntry::fromOperation(&operation)
+                        .map_err(|_| "Endpoint journal contains business operations; refusing automatic retirement")?;
+                    if !endpointProjectionPreferencePath(record.storagePath()) { return Err("Endpoint journal contains business operations; refusing automatic retirement".into()); }
+                }
+            }
+            for (path, encrypted) in self.syncOperationStore.preferenceDatasets().map_err(|e|e.to_string())? {
+                if encrypted || !endpointProjectionPreferencePath(&path) { return Err("Endpoint outbox contains business operations; refusing automatic retirement".into()); }
+            }
+        }
         for entry in &entries {
-            if entry.isDirectory { continue; }
+            if entry.isDirectory || entry.path.starts_with("runtime/sync/transactions.sqlite") { continue; }
             if entry.path.starts_with("runtime/sync/operations/") && entry.path.ends_with(".jsonl") {
                 let bytes = storage.readBytes(&entry.path).map_err(|error| error.to_string())?;
                 let raw = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
@@ -866,7 +885,8 @@ impl NetworkControlStore {
         // migration can be retried without losing membership or reviewer rights.
         self.controlProjection.replaceRecoverably(preferences).map_err(|error| error.to_string())?;
         self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, false)?;
-        for entry in entries.into_iter().filter(|entry| !entry.isDirectory) {
+        if hasJournal { self.syncOperationStore.retireTransactionJournal().map_err(|e|e.to_string())?; }
+        for entry in entries.into_iter().filter(|entry| !entry.isDirectory && !entry.path.starts_with("runtime/sync/transactions.sqlite")) {
             storage.delete(&entry.path, false).map_err(|error| error.to_string())?;
         }
         self.syncOperationStore.replaceProjectedControlOperations(&self.controlProjection, true)?;

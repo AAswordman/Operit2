@@ -1576,27 +1576,11 @@ pub fn stringPreferencesKey(name: &str) -> PreferencesKey {
 #[derive(Clone, Debug, Default)]
 /// In-memory representation of a preferences file.
 pub struct Preferences {
-    values: Arc<HashMap<String, Value>>,
-    pendingMutations: BTreeMap<String, PreferencesTransactionMutation>,
-    replication: PreferencesReplicationState,
-}
-
-/// Commits replication intent in the same atomic file as the business values.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PreferencesReplicationState {
-    #[serde(default)]
-    initialized: bool,
-    #[serde(default)]
-    epoch: Option<String>,
-    #[serde(default)]
-    logicalTime: i64,
-    #[serde(default)]
-    sequences: BTreeMap<String, i64>,
-    #[serde(default)]
-    outbox: Vec<SyncOperation>,
-    #[serde(default)]
-    applied: BTreeMap<String, String>,
+    pub(crate) values: Arc<HashMap<String, Value>>,
+    pub(crate) pendingMutations: BTreeMap<String, PreferencesTransactionMutation>,
+    pub(crate) commit: Option<crate::Transaction::kernel::FileCommit>,
+    pub(crate) legacy: Option<Value>,
+    pub(crate) view: Option<crate::Transaction::Data>,
 }
 
 impl PartialEq for Preferences {
@@ -1815,14 +1799,15 @@ impl<'de> Deserialize<'de> for Preferences {
         D: Deserializer<'de>,
     {
         let mut values = HashMap::<String, Value>::deserialize(deserializer)?;
-        let replication = match values.remove(PREFERENCES_REPLICATION_KEY) {
-            Some(value) => serde_json::from_value(value).map_err(serde::de::Error::custom)?,
-            None => PreferencesReplicationState::default(),
-        };
+        let legacy = values.remove(PREFERENCES_REPLICATION_KEY);
+        let commit = values.remove("__operit_transaction_commit").map(serde_json::from_value)
+            .transpose().map_err(serde::de::Error::custom)?;
         Ok(Self {
             values: Arc::new(values),
             pendingMutations: BTreeMap::new(),
-            replication,
+            commit,
+            legacy,
+            view: None,
         })
     }
 }
@@ -1853,25 +1838,25 @@ struct PreferencesObjectPatch {
 #[derive(Clone)]
 /// File-backed preferences store with Flow-like observation and optional encryption.
 pub struct PreferencesDataStore {
-    path: PathBuf,
-    storagePath: String,
-    storageHost: Arc<dyn RuntimeStorageHost>,
-    encryption: Option<PreferencesEncryption>,
-    syncOperationStore: Option<SyncOperationStore>,
-    syncDescriptor: Option<PreferencesSyncDescriptor>,
+    pub(crate) path: PathBuf,
+    pub(crate) storagePath: String,
+    pub(crate) storageHost: Arc<dyn RuntimeStorageHost>,
+    pub(crate) encryption: Option<PreferencesEncryption>,
+    pub(crate) syncOperationStore: Option<SyncOperationStore>,
+    pub(crate) syncDescriptor: Option<PreferencesSyncDescriptor>,
     changeSignal: Arc<PreferencesDataStoreChangeSignal>,
     sharedState: Arc<PreferencesDataStoreSharedState>,
-    schema: Option<PreferencesSchema>,
+    pub(crate) schema: Option<PreferencesSchema>,
 }
 
-type PreferencesMigration =
-    dyn Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError> + Send + Sync;
+pub(crate) fn preferenceOwner(path: &str, format: u32) -> crate::Transaction::Owner {
+    crate::Transaction::Owner { backend: crate::Transaction::Backend::DataStore, path: path.into(), format, layout: 1 }
+}
 
 #[derive(Clone)]
-/// Declares the current schema and one-step migration dispatcher for a preferences file.
-struct PreferencesSchema {
-    currentVersion: u32,
-    migrate: Arc<PreferencesMigration>,
+pub(crate) struct PreferencesSchema {
+    pub(crate) currentVersion: u32,
+    pub(crate) migrate: Arc<crate::Transaction::migration::Definition>,
 }
 
 #[derive(Clone)]
@@ -2169,13 +2154,9 @@ impl CoreNodeStateStore {
     /// Declares a one-time schema migration for node-local state.
     #[allow(non_snake_case)]
     pub fn withSchema<F>(mut self, currentVersion: u32, migrate: F) -> Self
-    where
-        F: Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.inner = self.inner.withSchema(currentVersion, migrate);
+    where F: Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError> + Send + Sync + 'static {
+        self.inner.schema = Some(PreferencesSchema { currentVersion,
+            migrate: Arc::new(crate::Transaction::migration::Definition::from_preferences(migrate)) });
         self
     }
 
@@ -2200,7 +2181,7 @@ fn nodeEntryFieldPresent<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result
 /// buffer; a page export never needs the complete expanded policy allocation.
 struct NodePreferenceReader<'a> {
     storage: &'a dyn RuntimeStorageHost,
-    path: &'a str,
+    pub(crate) path: &'a str,
     buffer: Vec<u8>,
     next: usize,
     offset: u64,
@@ -2450,8 +2431,8 @@ fn legacyPreferencePayloadVersion() -> u32 {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 /// Carries one independently mergeable preference entry mutation.
-struct PreferencesSyncEntryPayload {
-    storagePath: String,
+pub(crate) struct PreferencesSyncEntryPayload {
+    pub(crate) storagePath: String,
     key: String,
     value: Value,
     encrypted: bool,
@@ -2461,6 +2442,8 @@ struct PreferencesSyncEntryPayload {
     schemaVersion: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     migrationSnapshot: bool,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    importCoverage: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     jsonPath: Vec<PreferencesSyncJsonPathSegment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2470,7 +2453,7 @@ struct PreferencesSyncEntryPayload {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 /// Carries one complete entry mutation inside an atomic preference transaction.
-struct PreferencesTransactionMutation {
+pub(crate) struct PreferencesTransactionMutation {
     key: String,
     operation: String,
     value: Value,
@@ -2479,33 +2462,37 @@ struct PreferencesTransactionMutation {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 /// Carries all related entry changes committed by one local preference edit.
-struct PreferencesSyncTransactionPayload {
+pub(crate) struct PreferencesSyncTransactionPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     contractVersion: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     logicalTime: Option<i64>,
-    storagePath: String,
+    pub(crate) storagePath: String,
     encrypted: bool,
     formatVersion: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     schemaVersion: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     migrationSnapshot: bool,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    importCoverage: BTreeSet<String>,
     entries: Vec<PreferencesTransactionMutation>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 /// Stores one validated incoming preferences mutation ready for batched application.
 pub struct PreferencesSyncedEntry {
-    storagePath: String,
+    pub(crate) storagePath: String,
     encrypted: bool,
     schemaVersion: Option<u32>,
-    contractVersion: Option<u32>,
     mutation: PreferencesSyncedMutation,
+    id: String,
+    revision: crate::Transaction::Revision,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum PreferencesSyncedMutation {
+    ReplaceRecords { prefix: String, records: BTreeMap<String,Value> },
     Transaction(Vec<PreferencesSyncedMutation>),
     AliasEntry {
         key: String,
@@ -2538,11 +2525,23 @@ enum PreferencesSyncedMutation {
 }
 
 impl PreferencesSyncedMutation {
+    fn visit<F>(&mut self, visitor: &mut F) -> Result<(), PreferencesDataStoreError>
+    where F: FnMut(&mut Self) -> Result<(), PreferencesDataStoreError> {
+        match self {
+            Self::Transaction(mutations) => {
+                for mutation in mutations { mutation.visit(visitor)?; }
+                Ok(())
+            }
+            mutation => visitor(mutation),
+        }
+    }
+
     /// Enumerates root entities without interpreting encoded string contents.
     fn keys(&self) -> Vec<&str> {
         match self {
             Self::Transaction(mutations) => mutations.iter().flat_map(Self::keys).collect(),
             Self::AliasEntry { key, target } => vec![key.as_str(), target.as_str()],
+            Self::ReplaceRecords {prefix,..} => vec![prefix.as_str()],
             Self::SetEntry { key, .. }
             | Self::DeleteEntry { key }
             | Self::IncrementEntry { key, .. }
@@ -2618,6 +2617,7 @@ impl PreferencesSyncedEntry {
                     formatVersion: 2,
                     schemaVersion: payload.schemaVersion,
                     migrationSnapshot: payload.migrationSnapshot,
+                    importCoverage: payload.importCoverage.clone(),
                     jsonPath: Vec::new(),
                     jsonMutation: None,
                 };
@@ -2633,10 +2633,11 @@ impl PreferencesSyncedEntry {
                 ));
             }
             return Ok(Self {
+                id: operation.opId.clone(),
+                revision: crate::Transaction::Revision::fromOperation(operation),
                 storagePath: payload.storagePath,
                 encrypted: payload.encrypted,
                 schemaVersion: payload.schemaVersion,
-                contractVersion: payload.contractVersion,
                 mutation: PreferencesSyncedMutation::Transaction(mutations),
             });
         }
@@ -2689,14 +2690,11 @@ impl PreferencesSyncedEntry {
                 decodePreferencesSyncedMutation(&operation.operation, &payload)?
             };
         Ok(Self {
+                id: operation.opId.clone(),
+                revision: crate::Transaction::Revision::fromOperation(operation),
             storagePath: payload.storagePath,
             encrypted: payload.encrypted,
             schemaVersion: payload.schemaVersion,
-            contractVersion: operation
-                .payload
-                .get("contractVersion")
-                .and_then(Value::as_u64)
-                .map(|version| version as u32),
             mutation,
         })
     }
@@ -2721,6 +2719,8 @@ impl PreferencesSyncedEntry {
         Ok(path)
     }
 
+    pub(crate) fn routeTo(&mut self, path: &str) { self.storagePath = path.into(); }
+
     /// Exposes an immutable identity decision to the schema-validated catalog materializer.
     pub(crate) fn identityAlias(&self) -> Option<(&str, &str)> {
         match &self.mutation {
@@ -2737,7 +2737,7 @@ impl PreferencesSyncedEntry {
     /// Rejects a different preference representation before any values or receipts are committed.
     pub(crate) fn requireSchemaVersion(&self, local: u32) -> Result<(), PreferencesDataStoreError> {
         let remote = self.schemaVersion();
-        if remote != Some(local) {
+        if remote.unwrap_or(0) > local {
             let remote = remote.map(|version| version.to_string()).unwrap_or_else(|| "missing".into());
             return Err(PreferencesDataStoreError::Message(format!(
                 "preference schema version mismatch: path={} local={local} remote={remote}; synchronization skipped",
@@ -2775,6 +2775,18 @@ impl PreferencesSyncedEntry {
                     }
                     Ok(())
                 }
+                PreferencesSyncedMutation::ReplaceRecords {prefix,records} => {
+                    let mut rewritten = BTreeMap::new();
+                    for (id,mut value) in std::mem::take(records) {
+                        let mut key = format!("{prefix}{id}");
+                        rewrite(&mut key,Some(&mut value))?;
+                        let id = key.strip_prefix(prefix.as_str()).filter(|id|!id.is_empty())
+                            .ok_or_else(||PreferencesDataStoreError::Message("Alias moved a record outside its namespace".into()))?;
+                        rewritten.insert(id.to_owned(),value);
+                    }
+                    *records = rewritten;
+                    Ok(())
+                }
                 PreferencesSyncedMutation::SetEntry { key, value } => rewrite(key, Some(value)),
                 PreferencesSyncedMutation::DeleteEntry { key } => rewrite(key, None),
                 _ => Ok(()),
@@ -2794,219 +2806,33 @@ impl PreferencesSyncedEntry {
         self.encrypted
     }
 
-    /// Applies a decoded business mutation without changing the local storage schema.
-    pub(crate) fn apply(
-        &self,
-        preferences: &mut Preferences,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.applyMutation(&self.mutation, preferences)
-            .map_err(|error| {
-                PreferencesDataStoreError::Message(format!("{}: {error}", self.storagePath))
-            })
-    }
-
-    /// Reconstructs independent root entries from their effective ordered mutations.
-    pub(crate) fn replay(
-        entries: &[Self],
-        preferences: &mut Preferences,
-    ) -> Result<(), PreferencesDataStoreError> {
-        type RootPlan<'a> = BTreeMap<
-            &'a str,
-            Vec<(&'a PreferencesSyncedEntry, &'a PreferencesSyncedMutation)>,
-        >;
-
-        /// Composes root assignments and deltas without executing overwritten intermediate state.
-        fn compose<'a>(
-            entry: &'a PreferencesSyncedEntry,
-            mutation: &'a PreferencesSyncedMutation,
-            plan: &mut RootPlan<'a>,
-        ) -> Result<(), PreferencesDataStoreError> {
+    pub(crate) fn transaction(&self) -> Result<crate::Transaction::Transaction, PreferencesDataStoreError> {
+        use crate::Transaction::{Edit, Target, Transaction};
+        fn convert(mutation: &PreferencesSyncedMutation, edits: &mut Vec<Edit>) -> Result<(), PreferencesDataStoreError> {
             match mutation {
-                PreferencesSyncedMutation::Transaction(mutations) => {
-                    for mutation in mutations {
-                        compose(entry, mutation, plan)?;
-                    }
-                }
-                PreferencesSyncedMutation::AliasEntry { .. } => {
-                    return Err(PreferencesDataStoreError::Message(
-                        "Identity aliases require a declared catalog materializer".into(),
-                    ));
-                }
-                PreferencesSyncedMutation::SetEntry { key, .. }
-                | PreferencesSyncedMutation::DeleteEntry { key } => {
-                    plan.insert(key, vec![(entry, mutation)]);
-                }
-                PreferencesSyncedMutation::IncrementEntry { key, .. }
-                | PreferencesSyncedMutation::PatchObject { key, .. }
-                | PreferencesSyncedMutation::SetJson { key, .. }
-                | PreferencesSyncedMutation::DeleteJson { key, .. } => {
-                    plan.entry(key).or_default().push((entry, mutation));
-                }
+                PreferencesSyncedMutation::Transaction(mutations) => for mutation in mutations { convert(mutation, edits)?; },
+                PreferencesSyncedMutation::ReplaceRecords {prefix,records} => edits.push(Edit::ReplaceRecords {prefix:prefix.clone(),records:records.clone()}),
+                PreferencesSyncedMutation::AliasEntry { .. } => return Err(PreferencesDataStoreError::Message("Identity aliases require a declared catalog materializer".into())),
+                PreferencesSyncedMutation::SetEntry { key, value } => edits.push(Edit::Set { key: key.clone(), path: vec![], value: value.clone() }),
+                PreferencesSyncedMutation::DeleteEntry { key } => edits.push(Edit::Delete { key: key.clone(), path: vec![] }),
+                PreferencesSyncedMutation::IncrementEntry { key, delta } => edits.push(Edit::Increment { key: key.clone(), path: vec![], delta: *delta }),
+                PreferencesSyncedMutation::PatchObject { key, patch } => edits.push(Edit::Patch { key: key.clone(), set: patch.set.clone(), delete: patch.delete.iter().cloned().collect() }),
+                PreferencesSyncedMutation::SetJson { key, path, value } => edits.push(Edit::Set { key: key.clone(), path: path.clone(), value: value.clone() }),
+                PreferencesSyncedMutation::DeleteJson { key, path } => edits.push(Edit::Delete { key: key.clone(), path: path.clone() }),
             }
             Ok(())
         }
-
-        let mut plan = RootPlan::new();
-        for entry in entries {
-            compose(entry, &entry.mutation, &mut plan)?;
-        }
-        for (key, mutations) in plan {
-            preferences.remove(&stringPreferencesKey(key));
-            for (entry, mutation) in mutations {
-                entry.applyMutation(mutation, preferences).map_err(|error| {
-                    PreferencesDataStoreError::Message(format!("{}: {error}", entry.storagePath))
-                })?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Converts complete historical values through an explicitly supplied owner codec.
-    pub fn decodeHistoricalValues<F>(&mut self, decode: F) -> Result<(), PreferencesDataStoreError>
-    where
-        F: FnOnce(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError>,
-    {
-        match self.contractVersion {
-            Some(1) => return Ok(()),
-            Some(version) => {
-                return Err(PreferencesDataStoreError::Message(format!(
-                    "Unsupported preference contract version: {version}"
-                )))
-            }
-            None => {}
-        }
-        let mut values = emptyPreferences();
-        self.clone().rewriteRootEntries(|key, value| {
-            if let Some(value) = value {
-                values.set(&stringPreferencesKey(key), value.clone());
-            }
-            Ok(())
-        })?;
-        let original = values
-            .entries()
-            .into_iter()
-            .map(|(key, _)| key)
-            .collect::<BTreeSet<_>>();
-        decode(self.schemaVersion.unwrap_or(0), &mut values)?;
-        let mut mutations = Vec::new();
-        // Deletions and deltas preserve their original atomic operation boundary.
-        let source = match &self.mutation {
-            PreferencesSyncedMutation::Transaction(mutations) => mutations.clone(),
-            mutation => vec![mutation.clone()],
-        };
-        for mutation in source {
-            if !matches!(mutation, PreferencesSyncedMutation::SetEntry { .. }) {
-                mutations.push(mutation);
-            }
-        }
-        for (key, value) in values.entries() {
-            if key != PREFERENCES_SCHEMA_VERSION_KEY_NAME {
-                mutations.push(PreferencesSyncedMutation::SetEntry { key, value });
-            }
-        }
-        for key in original {
-            if !values.contains(&stringPreferencesKey(&key)) {
-                mutations.push(PreferencesSyncedMutation::DeleteEntry { key });
-            }
-        }
-        self.mutation = PreferencesSyncedMutation::Transaction(mutations);
-        Ok(())
-    }
-
-    /// Stages every mutation in an atomic operation before the snapshot is persisted.
-    fn applyMutation(
-        &self,
-        mutation: &PreferencesSyncedMutation,
-        preferences: &mut Preferences,
-    ) -> Result<(), PreferencesDataStoreError> {
-        match mutation {
-            PreferencesSyncedMutation::AliasEntry { .. } => Err(PreferencesDataStoreError::Message(
-                "Identity aliases require a declared catalog materializer".into(),
-            )),
-            PreferencesSyncedMutation::Transaction(mutations) => {
-                for mutation in mutations {
-                    self.applyMutation(mutation, preferences)?;
-                }
-                Ok(())
-            }
-            PreferencesSyncedMutation::SetEntry { key, value } => {
-                preferences.set(&stringPreferencesKey(key), value.clone());
-                Ok(())
-            }
-            PreferencesSyncedMutation::DeleteEntry { key } => {
-                preferences.remove(&stringPreferencesKey(key));
-                Ok(())
-            }
-            PreferencesSyncedMutation::IncrementEntry { key, delta } => {
-                let key = stringPreferencesKey(key);
-                let current = match preferences.get(&key) {
-                    None => 0,
-                    Some(value) => value.as_i64().ok_or_else(|| {
-                        PreferencesDataStoreError::Message(
-                            "Integer delta requires an integer entry".into(),
-                        )
-                    })?,
-                };
-                let value = current.checked_add(*delta).ok_or_else(|| {
-                    PreferencesDataStoreError::Message("Preference integer overflow".into())
-                })?;
-                preferences.set(&key, value);
-                Ok(())
-            }
-            PreferencesSyncedMutation::PatchObject { key, patch } => {
-                let key = stringPreferencesKey(key);
-                let mut object = match preferences.get(&key) {
-                    None => serde_json::Map::new(),
-                    Some(value) => value.as_object().cloned().ok_or_else(|| {
-                        PreferencesDataStoreError::Message(
-                            "Object patch requires an object entry".into(),
-                        )
-                    })?,
-                };
-                for key in &patch.delete {
-                    object.remove(key);
-                }
-                for (key, value) in &patch.set {
-                    object.insert(key.clone(), value.clone());
-                }
-                preferences.set(&key, Value::Object(object));
-                Ok(())
-            }
-            PreferencesSyncedMutation::SetJson { key, path, value } => {
-                applyStructuredJsonPreferenceMutation(
-                    preferences,
-                    &stringPreferencesKey(key),
-                    path,
-                    Some(value.clone()),
-                )
-            }
-            PreferencesSyncedMutation::DeleteJson { key, path } => {
-                applyStructuredJsonPreferenceMutation(
-                    preferences,
-                    &stringPreferencesKey(key),
-                    path,
-                    None,
-                )
-            }
-        }
+        let mut edits = Vec::new();
+        convert(&self.mutation, &mut edits)?;
+        Ok(Transaction { id: self.id.clone(), revision: self.revision.clone(), target: Target::Data(preferenceOwner(&self.storagePath, self.schemaVersion.unwrap_or(0))), edits })
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-/// Identifies one independently synchronized location inside a JSON preference value.
-enum PreferencesSyncJsonPathSegment {
-    Field(String),
-    Item(String),
-}
+type PreferencesSyncJsonPathSegment = crate::Transaction::Path;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-/// Distinguishes an explicit JSON null assignment from a path deletion.
-enum PreferencesSyncJsonMutation {
-    Set(Value),
-    Delete,
-}
+enum PreferencesSyncJsonMutation { Set(Value), Delete }
 
 struct PreferencesDataStoreChangeSignal {
     version: Mutex<u64>,
@@ -3037,8 +2863,8 @@ struct PreferencesDataStoreLoadedPreferences {
 }
 
 struct PreferencesDataStoreRegistryKey {
-    storageHost: Arc<dyn RuntimeStorageHost>,
-    storagePath: String,
+    pub(crate) storageHost: Arc<dyn RuntimeStorageHost>,
+    pub(crate) storagePath: String,
 }
 
 impl PartialEq for PreferencesDataStoreRegistryKey {
@@ -3194,8 +3020,16 @@ impl PreferencesDataStore {
     {
         self.schema = Some(PreferencesSchema {
             currentVersion,
-            migrate: Arc::new(migrate),
+            migrate: Arc::new(crate::Transaction::migration::Definition::from_preferences(migrate)),
         });
+        self
+    }
+
+    /// Uses the transaction module's one migration interface for state and immutable operation views.
+    pub fn withMigration<F>(mut self, currentVersion: u32, migrate: F) -> Self
+    where F: Fn(u32, &mut crate::Transaction::migration::Context) -> Result<(), PreferencesDataStoreError> + Send + Sync + 'static {
+        self.schema = Some(PreferencesSchema { currentVersion,
+            migrate: Arc::new(crate::Transaction::migration::Definition::new(migrate)) });
         self
     }
 
@@ -3228,204 +3062,8 @@ impl PreferencesDataStore {
         Ok(schema.currentVersion)
     }
 
-    /// Reports whether the owner's schema and initial replication are durably committed.
-    pub fn isSyncPrepared(&self) -> Result<bool, PreferencesDataStoreError> {
-        let preferences = self.data()?;
-        Ok(self.schemaIsCurrent(&preferences)? && preferences.replication.initialized)
-    }
-
-    /// Decodes each immutable operation once and orders the prepared batch for shared consumers.
-    pub(crate) fn prepareSyncedEntries<'a>(
-        history: &'a [SyncOperation],
-        incoming: &'a [SyncOperation],
-    ) -> Result<Vec<(&'a SyncOperation, PreferencesSyncedEntry)>, PreferencesDataStoreError> {
-        let incomingEntries = incoming
-            .iter()
-            .map(|operation| {
-                PreferencesSyncedEntry::fromOperation(operation).map(|entry| (operation, entry))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let touchedPaths = incomingEntries
-            .iter()
-            .map(|(_, entry)| entry.storagePath.clone())
-            .collect::<BTreeSet<_>>();
-        let historicalEntries = history.iter().map(|operation| {
-            PreferencesSyncedEntry::fromOperation(operation).map(|entry| (operation, entry))
-        });
-        let mut operations = BTreeMap::new();
-        for candidate in historicalEntries.chain(incomingEntries.into_iter().map(Ok)) {
-            let (operation, entry) = candidate?;
-            if !touchedPaths.contains(&entry.storagePath) {
-                continue;
-            }
-            if let Some(existing) = operations.insert(operation.opId.as_str(), (operation, entry)) {
-                if existing.0 != operation {
-                    return Err(PreferencesDataStoreError::Message(
-                        "Conflicting immutable preference operation".into(),
-                    ));
-                }
-            }
-        }
-        let mut origins =
-            BTreeMap::<&str, BTreeMap<i64, (&SyncOperation, PreferencesSyncedEntry)>>::new();
-        for (operation, entry) in operations.into_values() {
-            if origins
-                .entry(&operation.originDeviceId)
-                .or_default()
-                .insert(operation.sequence, (operation, entry))
-                .is_some()
-            {
-                return Err(PreferencesDataStoreError::Message(
-                    "Conflicting preference operations at the same origin sequence".into(),
-                ));
-            }
-        }
-        let mut ordered = Vec::new();
-        while !origins.is_empty() {
-            let origin = *origins
-                .iter()
-                .min_by_key(|(_, queue)| {
-                    crate::SyncOperationStore::SyncOperationOrder::fromOperation(
-                        queue.first_key_value().expect("nonempty origin queue").1 .0,
-                    )
-                })
-                .expect("pending origins")
-                .0;
-            let queue = origins.get_mut(origin).expect("selected origin queue");
-            ordered.push(queue.pop_first().expect("nonempty origin queue").1);
-            if queue.is_empty() {
-                origins.remove(origin);
-            }
-        }
-        Ok(ordered)
-    }
-
-    /// Migrates, imports and replays a dataset under the same durable commit and dataset lock.
-    pub(crate) fn materializeSyncedDataset<R, F>(
-        &self,
-        schemaVersion: u32,
-        operations: &[SyncOperation],
-        materialize: F,
-    ) -> Result<R, PreferencesDataStoreError>
-    where
-        F: FnOnce(&mut Preferences, &[SyncOperation], bool) -> Result<R, PreferencesDataStoreError>,
-    {
-        let path = self.storagePath.as_str();
-        let encrypted = self.encryption.is_some();
-        let journal = self.syncOperationStore.as_ref().expect("replicated dataset journal");
-        self.materializeSyncedSnapshot(|preferences| {
-            for operation in operations {
-                PreferencesSyncedEntry::fromOperation(operation)?.requireSchemaVersion(schemaVersion)?;
-            }
-            let mut originals = journal.archivedPreferenceHistory(path)?;
-            originals.extend(preferences.replication.outbox.iter().cloned());
-            // Old schemas stay in the immutable journal, but cannot participate in current replay.
-            originals.retain(|operation| operation.payload.get("schemaVersion").and_then(Value::as_u64) == Some(u64::from(schemaVersion)));
-            let previous = preferences.clone();
-            self.migratePreferencesToCurrentSchema(preferences)?;
-            let actual = Self::readSchemaVersion(preferences)?;
-            if actual != schemaVersion {
-                return Err(PreferencesDataStoreError::Message(format!(
-                    "preference schema version mismatch: path={path} local={actual} remote={schemaVersion}; synchronization skipped"
-                )));
-            }
-            if Self::readSchemaVersion(&previous)? != actual {
-                preferences.replication.initialized = false;
-            }
-            let baseline = preferences.clone();
-            self.initializeReplicationUnlocked(&baseline, preferences, &originals)?;
-            originals.extend_from_slice(operations);
-            originals.extend(preferences.replication.outbox.iter().cloned());
-            let mut unique = BTreeMap::new();
-            for operation in originals {
-                let entry = PreferencesSyncedEntry::fromOperation(&operation)?;
-                if entry.schemaVersion() != Some(schemaVersion) { continue; }
-                if let Some(existing) = unique.get(&operation.opId) {
-                    if existing != &operation {
-                        return Err(PreferencesDataStoreError::Message(
-                            "Conflicting immutable preference operation".into(),
-                        ));
-                    }
-                } else {
-                    unique.insert(operation.opId.clone(), operation);
-                }
-            }
-            let originals = unique.into_values().collect::<Vec<_>>();
-            let replay = previous != *preferences || !previous.replication.initialized
-                || originals.iter().any(|operation| !previous.replication.applied.contains_key(&operation.opId));
-            for operation in &originals {
-                preferences.replication.logicalTime = preferences.replication.logicalTime.max(
-                    crate::SyncOperationStore::SyncOperationOrder::fromOperation(operation).createdAt,
-                );
-                Self::stageAppliedOperation(preferences, operation)?;
-            }
-            let result = materialize(preferences, &originals, replay)?;
-            if !originals.is_empty() {
-                journal.registerPreferenceOutbox(path, encrypted)?;
-            }
-            Ok(result)
-        })
-    }
-
-    /// Stores original identities beside their exact business commit, including archival retry intent.
-    fn stageAppliedOperation(
-        preferences: &mut Preferences,
-        operation: &SyncOperation,
-    ) -> Result<(), PreferencesDataStoreError> {
-        use sha2::{Digest, Sha256};
-        let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(operation)?));
-        match preferences.replication.applied.get(&operation.opId) {
-            Some(previous) if previous != &fingerprint => {
-                return Err(PreferencesDataStoreError::Message(format!(
-                    "Conflicting immutable preference operation {}", operation.opId
-                )));
-            }
-            Some(_) => return Ok(()),
-            None => {}
-        }
-        preferences.replication.applied.insert(operation.opId.clone(), fingerprint);
-        preferences.replication.outbox.push(operation.clone());
-        Ok(())
-    }
-
-    /// Stages and atomically publishes exactly one preference dataset before notifying its observers.
-    fn materializeSyncedSnapshot<R, F>(
-        &self,
-        materialize: F,
-    ) -> Result<R, PreferencesDataStoreError>
-    where
-        F: FnOnce(&mut Preferences) -> Result<R, PreferencesDataStoreError>,
-    {
-        let transaction = self.lockTransaction();
-        self.loadUnlocked()?;
-        let previous = self.loadedPreferences().expect("dataset loaded");
-        let mut preferences = previous.clone();
-        let result = materialize(&mut preferences)?;
-        preferences.pendingMutations.clear();
-        let changed = previous != preferences || previous.replication != preferences.replication;
-        if changed {
-            self.commitSyncedSnapshotUnlocked(&preferences)?;
-        }
-        drop(transaction);
-        if changed {
-            self.notifyChanged();
-        }
-        Ok(result)
-    }
-
-    /// Persists and caches one prepared snapshot, without notifying observers yet.
-    fn commitSyncedSnapshotUnlocked(
-        &self,
-        preferences: &Preferences,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.writeStoredPreferencesUnlocked(preferences)?;
-        let mut loaded = self
-            .sharedState
-            .preferences
-            .lock()
-            .expect("PreferencesDataStore shared state mutex must not be poisoned");
-        loaded.preferences = preferences.clone();
-        Ok(())
+    pub(crate) fn publishCommitted(&self, preferences: &Preferences) {
+        self.sharedState.preferences.lock().expect("preferences cache mutex").preferences = preferences.clone();
     }
 
     /// Reads the current preferences snapshot.
@@ -3460,7 +3098,7 @@ impl PreferencesDataStore {
 
     /// Mutation callbacks work on private snapshots. After an unwind, reload the durable commit
     /// instead of retaining a possibly stale cache or poisoning all future use of this file.
-    fn lockTransaction(&self) -> std::sync::MutexGuard<'_, ()> {
+    pub(crate) fn lockTransaction(&self) -> std::sync::MutexGuard<'_, ()> {
         match self.sharedState.transaction.lock() {
             Ok(transaction) => transaction,
             Err(poisoned) => {
@@ -3476,7 +3114,7 @@ impl PreferencesDataStore {
     }
 
     /// Returns the current cached snapshot when this store has already loaded it.
-    fn loadedPreferences(&self) -> Option<Preferences> {
+    pub(crate) fn loadedPreferences(&self) -> Option<Preferences> {
         if self.sharedState.transaction.is_poisoned() { return None; }
         let loaded = self
             .sharedState
@@ -3487,7 +3125,7 @@ impl PreferencesDataStore {
     }
 
     /// Loads the storage snapshot while the caller owns the shared transaction lock.
-    fn loadUnlocked(&self) -> Result<(), PreferencesDataStoreError> {
+    pub(crate) fn loadUnlocked(&self) -> Result<(), PreferencesDataStoreError> {
         if self.loadedPreferences().is_some() {
             return Ok(());
         }
@@ -3528,6 +3166,8 @@ impl PreferencesDataStore {
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded before schema migration");
         let mut preferences = currentPreferences.clone();
+        if self.syncDescriptor.is_some() { crate::Transaction::preference::recover(self, &mut preferences)?; }
+
         if !self.migratePreferencesToCurrentSchema(&mut preferences)? {
             return Ok(());
         }
@@ -3545,7 +3185,7 @@ impl PreferencesDataStore {
 
     #[allow(non_snake_case)]
     /// Applies every required one-step migration to an in-memory preferences snapshot.
-    fn migratePreferencesToCurrentSchema(
+    pub(crate) fn migratePreferencesToCurrentSchema(
         &self,
         preferences: &mut Preferences,
     ) -> Result<bool, PreferencesDataStoreError> {
@@ -3563,15 +3203,10 @@ impl PreferencesDataStore {
             return Ok(false);
         }
         while version < schema.currentVersion {
-            (schema.migrate)(version, preferences)?;
+            schema.migrate.state(version, preferences)?;
             version += 1;
         }
         preferences.set(&Self::schemaVersionKey(), schema.currentVersion);
-        // The migrated local values need a baseline in their new representation.
-        // Prior-version history must not stand in for that baseline during later replay.
-        if self.syncDescriptor.is_some() {
-            preferences.replication.initialized = false;
-        }
         Ok(true)
     }
 
@@ -3599,7 +3234,7 @@ impl PreferencesDataStore {
         stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
     }
 
-    fn readFromStorage(&self) -> Result<Preferences, PreferencesDataStoreError> {
+    pub(crate) fn readFromStorage(&self) -> Result<Preferences, PreferencesDataStoreError> {
         if !self.storageHost.exists(&self.storagePath)? {
             return Ok(emptyPreferences());
         }
@@ -3728,6 +3363,9 @@ impl PreferencesDataStore {
         let mut currentPreferences = self
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded before editing");
+        if self.syncDescriptor.is_some() {
+            crate::Transaction::preference::recover(self, &mut currentPreferences).map_err(E::from)?;
+        }
         // Stage schema changes with the edit. A failed first write must not
         // leave a schema-only file where readers expect a complete record.
         let migrated = self.migratePreferencesToCurrentSchema(&mut currentPreferences).map_err(E::from)?;
@@ -3780,10 +3418,7 @@ impl PreferencesDataStore {
                 if let Some(schema) = &self.schema {
                     preferences.set(&Self::schemaVersionKey(), schema.currentVersion);
                 }
-                preferences.replication = match entries.get(PREFERENCES_REPLICATION_KEY) {
-                    Some(replication) => serde_json::from_str(replication.get())?,
-                    None => PreferencesReplicationState::default(),
-                };
+
                 drop(entries);
                 let content = self.encodeStoredPreferences(&preferences)?;
                 if content == bytes { return Ok(()); }
@@ -3831,7 +3466,7 @@ impl PreferencesDataStore {
     }
 
     /// Writes one preferences snapshot while the caller owns the shared transaction lock.
-    fn writeStoredPreferencesUnlocked(
+    pub(crate) fn writeStoredPreferencesUnlocked(
         &self,
         preferences: &Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
@@ -3849,12 +3484,9 @@ impl PreferencesDataStore {
         // Preserve the existing sorted JSON encoding without copying business
         // value trees while both the old and new snapshots are still live.
         let mut values = preferences.iterEntries().collect::<BTreeMap<_, _>>();
-        let replication = if preferences.replication != PreferencesReplicationState::default() {
-            Some(serde_json::to_value(&preferences.replication)?)
-        } else { None };
-        if let Some(ref replication) = replication {
-            values.insert(PREFERENCES_REPLICATION_KEY, replication);
-        }
+        let commit = preferences.commit.as_ref().map(serde_json::to_value).transpose()?;
+        if let Some(ref commit) = commit { values.insert("__operit_transaction_commit", commit); }
+
         let bounded = self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache();
         let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: bounded, bounded };
         // PrettyFormatter with an empty indent still emits newlines and spaces.
@@ -3878,104 +3510,6 @@ impl PreferencesDataStore {
         Ok(storedContent)
     }
 
-    /// Imports values not anchored by a recorded root assignment exactly once.
-    /// Imports precede edits in conflict order and never replace existing business history.
-    fn initializeReplicationUnlocked(
-        &self,
-        baseline: &Preferences,
-        preferences: &mut Preferences,
-        history: &[SyncOperation],
-    ) -> Result<(), PreferencesDataStoreError> {
-        if preferences.replication.initialized || self.syncDescriptor.is_none() {
-            return Ok(());
-        }
-        let version = Self::readSchemaVersion(baseline)?;
-        let history = history.iter().filter(|operation|
-            operation.payload.get("schemaVersion").and_then(Value::as_u64) == Some(u64::from(version))
-        ).cloned().collect::<Vec<_>>();
-        let history = Self::prepareSyncedEntries(&[], &history)?;
-        let mut assigned = BTreeSet::new();
-        let mut increments = BTreeMap::<String, i128>::new();
-        fn effects(
-            mutation: &PreferencesSyncedMutation,
-            assigned: &mut BTreeSet<String>,
-            increments: &mut BTreeMap<String, i128>,
-        ) {
-            match mutation {
-                PreferencesSyncedMutation::Transaction(entries) => {
-                    for entry in entries { effects(entry, assigned, increments); }
-                }
-                PreferencesSyncedMutation::SetEntry { key, .. }
-                | PreferencesSyncedMutation::DeleteEntry { key } => { assigned.insert(key.clone()); }
-                PreferencesSyncedMutation::AliasEntry { key, target } => {
-                    assigned.insert(key.clone());
-                    assigned.insert(target.clone());
-                }
-                PreferencesSyncedMutation::IncrementEntry { key, delta } => {
-                    *increments.entry(key.clone()).or_default() += i128::from(*delta);
-                }
-                _ => {}
-            }
-        }
-        // Only same-version history can explain a current baseline's assignments and deltas.
-        for (_, entry) in &history { effects(&entry.mutation, &mut assigned, &mut increments); }
-        let mut initial = emptyPreferences();
-        initial.set(&Self::schemaVersionKey(), version);
-        for (key, value) in baseline.iterEntries() {
-            if key == PREFERENCES_SCHEMA_VERSION_KEY_NAME || assigned.contains(key) { continue; }
-            let mut value = value.clone();
-            if let Some(delta) = increments.get(key) {
-                let current = value.as_i64().ok_or_else(|| PreferencesDataStoreError::Message(
-                    "Recorded integer deltas require an integer initial value".into()
-                ))?;
-                let base = i64::try_from(i128::from(current) - delta).map_err(|_| {
-                    PreferencesDataStoreError::Message("Preference initial integer overflow".into())
-                })?;
-                if base == 0 { continue; }
-                value = Value::from(base);
-            }
-            initial.set(&stringPreferencesKey(key), value);
-        }
-        if let Some(mutation) = self.localMutation(&emptyPreferences(), &initial)? {
-            self.stageLocalMutation(preferences, mutation, true)?;
-        }
-        preferences.replication.initialized = true;
-        Ok(())
-    }
-
-    /// Allocates a durable local identity without publishing uncommitted business state.
-    fn stageLocalMutation(
-        &self,
-        preferences: &mut Preferences,
-        mutation: NewSyncOperation,
-        initial: bool,
-    ) -> Result<(), PreferencesDataStoreError> {
-        use sha2::{Digest, Sha256};
-        let journal = self.syncOperationStore.as_ref().expect("replicated dataset journal");
-        journal.registerPreferenceOutbox(&self.storagePath, self.encryption.is_some())?;
-        let device = journal.localDeviceId()?;
-        let epoch = preferences.replication.epoch.get_or_insert_with(|| uuid::Uuid::new_v4().to_string());
-        let origin = format!("{device}:preferences:{:x}:{epoch}{}",
-            Sha256::digest(self.storagePath.as_bytes()), if initial { ":initial" } else { "" });
-        let sequence = preferences.replication.sequences.get(&origin).copied().unwrap_or(0)
-            .checked_add(1).ok_or_else(|| PreferencesDataStoreError::Message("Preference sequence overflow".into()))?;
-        let createdAt = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(PreferencesDataStoreError::Message)?;
-        let logicalTime = if initial { 1 } else {
-            preferences.replication.logicalTime.max(createdAt).checked_add(1)
-                .ok_or_else(|| PreferencesDataStoreError::Message("Preference logical clock overflow".into()))?
-        };
-        let mut payload = mutation.payload;
-        payload["logicalTime"] = Value::from(logicalTime);
-        let operation = SyncOperation {
-            opId: format!("{origin}:{sequence}"), originDeviceId: origin.clone(), sequence,
-            domain: mutation.domain, entityType: mutation.entityType, entityId: mutation.entityId,
-            operation: mutation.operation, semantics: mutation.semantics, payload, createdAt, schemaVersion: 1,
-        };
-        preferences.replication.logicalTime = preferences.replication.logicalTime.max(logicalTime);
-        preferences.replication.sequences.insert(origin, sequence);
-        Self::stageAppliedOperation(preferences, &operation)
-    }
-
     /// Node-local edits on constrained Hosts may discard the old parsed cache
     /// while the transaction lock protects publication. Durable rollback bytes
     /// remain authoritative; after failure all handles reload them on demand.
@@ -3985,7 +3519,7 @@ impl PreferencesDataStore {
         preferences: &mut Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
         if self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache() {
-            preferences.replication = previous.replication.clone();
+            preferences.commit = previous.commit.clone();
             {
                 let mut loaded = self.sharedState.preferences.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 loaded.loaded = false;
@@ -3999,156 +3533,16 @@ impl PreferencesDataStore {
     }
 
     /// Persists imported initial values and the new business edit at one publication point.
-    fn persistUnlocked(
-        &self,
-        previous: &Preferences,
-        preferences: &mut Preferences,
-    ) -> Result<(), PreferencesDataStoreError> {
-        preferences.replication = previous.replication.clone();
-        if let Some(mutation) = self.localMutation(previous, preferences)? {
-            if !preferences.replication.initialized {
-                let journal = self.syncOperationStore.as_ref().expect("replicated dataset journal");
-                let mut history = journal.archivedPreferenceHistory(&self.storagePath)?;
-                history.extend(previous.replication.outbox.iter().cloned());
-                self.initializeReplicationUnlocked(previous, preferences, &history)?;
-            }
-            self.stageLocalMutation(preferences, mutation, false)?;
-        }
-        self.writeStoredPreferencesUnlocked(preferences)
-    }
-
-    /// Builds one immutable business operation carrying its preference representation version.
-    fn localMutation(
-        &self,
-        previous: &Preferences,
-        preferences: &Preferences,
-    ) -> Result<Option<NewSyncOperation>, PreferencesDataStoreError> {
-        let Some(descriptor) = &self.syncDescriptor else {
-            return Ok(None);
-        };
-        let previousEntries = previous.entries().into_iter().collect::<BTreeMap<_, _>>();
-        let nextEntries = preferences
-            .entries()
-            .into_iter()
-            .collect::<BTreeMap<_, _>>();
-        let mut keys = previousEntries
-            .keys()
-            .chain(nextEntries.keys())
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        keys.remove(PREFERENCES_SCHEMA_VERSION_KEY_NAME);
-        keys.remove(PREFERENCES_REPLICATION_KEY);
-        let schemaVersion = Self::readSchemaVersion(preferences)?;
-        let schemaChanged = Self::readSchemaVersion(previous)? != schemaVersion;
-        let changed = keys
-            .into_iter()
-            .filter(|key| schemaChanged || previousEntries.get(key) != nextEntries.get(key))
-            .collect::<Vec<_>>();
-        if changed.is_empty() {
-            return Ok(None);
-        }
-        let entries = changed
-            .iter()
-            .map(|key| Self::entryMutation(key, preferences))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut mutation = if entries.len() == 1 {
-            let entry = entries
-                .into_iter()
-                .next()
-                .expect("one changed preference entry");
-            let semantics = if matches!(entry.operation.as_str(), "increment" | "patch_object") {
-                SyncOperationSemantics::Transaction
-            } else {
-                SyncOperationSemantics::EntityState
-            };
-            NewSyncOperation {
-                domain: descriptor.domain.clone(),
-                entityType: descriptor.entityType.clone(),
-                entityId: preferenceMutationEntityId(&descriptor.storagePath, &entry.key, &[])?,
-                operation: entry.operation,
-                semantics,
-                payload: serde_json::to_value(PreferencesSyncEntryPayload {
-                    storagePath: descriptor.storagePath.clone(),
-                    key: entry.key,
-                    value: entry.value,
-                    encrypted: self.encryption.is_some(),
-                    formatVersion: 2,
-                    schemaVersion: Some(schemaVersion),
-                    migrationSnapshot: false,
-                    jsonPath: Vec::new(),
-                    jsonMutation: None,
-                })?,
-            }
+    fn persistUnlocked(&self, previous: &Preferences, preferences: &mut Preferences) -> Result<(), PreferencesDataStoreError> {
+        if self.syncDescriptor.is_some() {
+            crate::Transaction::preference::commit_local(self, previous, preferences)
         } else {
-            NewSyncOperation {
-                domain: descriptor.domain.clone(),
-                entityType: descriptor.entityType.clone(),
-                entityId: serde_json::to_string(&(descriptor.storagePath.as_str(), &changed))?,
-                operation: "transaction".into(),
-                semantics: SyncOperationSemantics::Transaction,
-                payload: serde_json::to_value(PreferencesSyncTransactionPayload {
-                    contractVersion: Some(1),
-                    logicalTime: None,
-                    storagePath: descriptor.storagePath.clone(),
-                    encrypted: self.encryption.is_some(),
-                    formatVersion: 2,
-                    schemaVersion: Some(schemaVersion),
-                    migrationSnapshot: false,
-                    entries,
-                })?,
-            }
-        };
-        mutation.payload["contractVersion"] = Value::from(1);
-        Ok(Some(mutation))
-    }
-
-    /// Archives an already committed outbox idempotently before exposing journal clocks or history.
-    pub(crate) fn publishOutbox(
-        &self,
-        journal: &SyncOperationStore,
-    ) -> Result<(), PreferencesDataStoreError> {
-        let _transaction = self.lockTransaction();
-        self.loadUnlocked()?;
-        let mut preferences = self.loadedPreferences().expect("outbox store loaded");
-        if preferences.replication.outbox.is_empty() {
-            return Ok(());
+            self.writeStoredPreferencesUnlocked(preferences)
         }
-        journal.appendOperations(&preferences.replication.outbox)?;
-        journal.flushOperations(&preferences.replication.outbox)?;
-        journal.recordAppliedOperations(&preferences.replication.outbox)?;
-        preferences.replication.outbox.clear();
-        self.writeStoredPreferencesUnlocked(&preferences)?;
-        self.sharedState
-            .preferences
-            .lock()
-            .expect("preferences cache mutex")
-            .preferences = preferences;
-        Ok(())
-    }
-
-    /// Encodes explicit edit intentions and ordinary root assignments for local business changes.
-    fn entryMutation(
-        key: &str,
-        preferences: &Preferences,
-    ) -> Result<PreferencesTransactionMutation, PreferencesDataStoreError> {
-        if let Some(mutation) = preferences.pendingMutations.get(key) {
-            if mutation.operation != "set" {
-                return Ok(mutation.clone());
-            }
-        }
-        let value = preferences.get(&stringPreferencesKey(key));
-        Ok(PreferencesTransactionMutation {
-            key: key.to_owned(),
-            operation: if value.is_some() { "set" } else { "delete" }.into(),
-            value: match value {
-                Some(value) => value.clone(),
-                None => Value::Null,
-            },
-        })
     }
 
     #[allow(non_snake_case)]
-    fn notifyChanged(&self) {
+    pub(crate) fn notifyChanged(&self) {
         let mut version = self
             .changeSignal
             .version
@@ -4318,126 +3712,6 @@ fn preferenceMutationEntityId(
     serde_json::to_string(&(storagePath, key, jsonPath)).map_err(PreferencesDataStoreError::from)
 }
 
-/// Applies one structured JSON mutation to an existing preference entry.
-#[allow(non_snake_case)]
-fn applyStructuredJsonPreferenceMutation(
-    preferences: &mut Preferences,
-    key: &PreferencesKey,
-    path: &[PreferencesSyncJsonPathSegment],
-    value: Option<Value>,
-) -> Result<(), PreferencesDataStoreError> {
-    if path.is_empty() {
-        return Err(PreferencesDataStoreError::Message(
-            "structured preference path must not be empty".to_string(),
-        ));
-    }
-    let encoded = preferences.get(key).ok_or_else(|| {
-        PreferencesDataStoreError::Message(format!(
-            "structured preference entry is missing: {}",
-            key.name
-        ))
-    })?;
-    let mut root = encoded.clone();
-    applyStructuredJsonMutation(&mut root, path, value)?;
-    preferences.set(key, root);
-    Ok(())
-}
-
-/// Traverses a structured JSON path and applies its terminal set or delete operation.
-#[allow(non_snake_case)]
-fn applyStructuredJsonMutation(
-    root: &mut Value,
-    path: &[PreferencesSyncJsonPathSegment],
-    value: Option<Value>,
-) -> Result<(), PreferencesDataStoreError> {
-    let (terminal, parents) = path
-        .split_last()
-        .expect("structured JSON path must contain a terminal segment");
-    let mut current = root;
-    for segment in parents {
-        current = match segment {
-            PreferencesSyncJsonPathSegment::Field(field) => current
-                .as_object_mut()
-                .and_then(|object| object.get_mut(field))
-                .ok_or_else(|| {
-                    PreferencesDataStoreError::Message(format!(
-                        "structured JSON field is missing: {field}"
-                    ))
-                })?,
-            PreferencesSyncJsonPathSegment::Item(itemId) => current
-                .as_array_mut()
-                .and_then(|items| {
-                    items.iter_mut().find(|item| {
-                        item.as_object()
-                            .and_then(|object| object.get("id"))
-                            .and_then(Value::as_str)
-                            == Some(itemId.as_str())
-                    })
-                })
-                .ok_or_else(|| {
-                    PreferencesDataStoreError::Message(format!(
-                        "structured JSON item is missing: {itemId}"
-                    ))
-                })?,
-        };
-    }
-    match terminal {
-        PreferencesSyncJsonPathSegment::Field(field) => {
-            let object = current.as_object_mut().ok_or_else(|| {
-                PreferencesDataStoreError::Message(
-                    "structured JSON field parent is not an object".to_string(),
-                )
-            })?;
-            match value {
-                Some(value) => {
-                    object.insert(field.clone(), value);
-                }
-                None => {
-                    object.remove(field);
-                }
-            }
-        }
-        PreferencesSyncJsonPathSegment::Item(itemId) => {
-            let items = current.as_array_mut().ok_or_else(|| {
-                PreferencesDataStoreError::Message(
-                    "structured JSON item parent is not an array".to_string(),
-                )
-            })?;
-            let existingIndex = items.iter().position(|item| {
-                item.as_object()
-                    .and_then(|object| object.get("id"))
-                    .and_then(Value::as_str)
-                    == Some(itemId.as_str())
-            });
-            match (existingIndex, value) {
-                (Some(index), Some(value)) => items[index] = value,
-                (None, Some(value)) => {
-                    let valueId = value
-                        .as_object()
-                        .and_then(|object| object.get("id"))
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            PreferencesDataStoreError::Message(
-                                "structured JSON array item is missing its id".to_string(),
-                            )
-                        })?;
-                    if valueId != itemId {
-                        return Err(PreferencesDataStoreError::Message(
-                            "structured JSON array item id does not match its path".to_string(),
-                        ));
-                    }
-                    items.push(value);
-                }
-                (Some(index), None) => {
-                    items.remove(index);
-                }
-                (None, None) => {}
-            }
-        }
-    }
-    Ok(())
-}
-
 #[allow(non_snake_case)]
 /// Builds the process-local registry key for one storage host and preference path.
 fn preferencesDataStoreRegistryKey(
@@ -4590,3 +3864,66 @@ pub(crate) fn installPreferenceObserverTestHost() {
 #[cfg(test)]
 #[path = "tests/PreferencesDataStoreTests.rs"]
 mod PreferencesDataStoreTests;
+
+#[path = "transaction/PreferenceCodec.rs"]
+mod preference_codec;
+pub(crate) use preference_codec::local_mutation;
+
+impl PreferencesDataStore {
+    pub fn prepareSync(&self) -> Result<(), PreferencesDataStoreError> { crate::Transaction::preference::prepare(self) }
+    pub fn isSyncPrepared(&self) -> Result<bool, PreferencesDataStoreError> { crate::Transaction::preference::is_prepared(self) }
+    pub fn syncSnapshot(&self) -> Result<crate::Transaction::Snapshot, PreferencesDataStoreError> { crate::Transaction::preference::snapshot(self) }
+    pub fn repairSyncedSnapshot(&self, expected: &str, source: &crate::Transaction::Snapshot) -> Result<bool, PreferencesDataStoreError> { crate::Transaction::preference::repair(self, expected, source) }
+}
+
+impl Preferences {
+    pub(crate) fn mergeAliases(&self) -> &BTreeMap<String, String> {
+        static EMPTY: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+        self.view.as_ref().map(|view| &view.aliases).unwrap_or_else(|| EMPTY.get_or_init(BTreeMap::new))
+    }
+    pub(crate) fn setMergeAliases(&mut self, aliases: BTreeMap<String, String>) {
+        self.view.as_mut().expect("owner materialization view").aliases = aliases;
+    }
+}
+
+impl PreferencesSyncedEntry {
+    pub(crate) fn fromTransaction(transaction: crate::Transaction::Transaction, encrypted: bool) -> Result<Self, PreferencesDataStoreError> {
+        use crate::Transaction::{Edit, Target};
+        let Target::Data(owner) = transaction.target else { return Err(PreferencesDataStoreError::Message("Expected a data transaction".into())); };
+        let mut mutations = Vec::new();
+        for edit in transaction.edits {
+            mutations.push(match edit {
+                Edit::Set { key, path, value } if path.is_empty() => PreferencesSyncedMutation::SetEntry { key, value },
+                Edit::Set { key, path, value } => PreferencesSyncedMutation::SetJson { key, path, value },
+                Edit::Delete { key, path } if path.is_empty() => PreferencesSyncedMutation::DeleteEntry { key },
+                Edit::Delete { key, path } => PreferencesSyncedMutation::DeleteJson { key, path },
+                Edit::Increment { key, path, delta } if path.is_empty() => PreferencesSyncedMutation::IncrementEntry { key, delta },
+                Edit::Increment { .. } => return Err(PreferencesDataStoreError::Message("Nested preference increment requires an explicit migration codec".into())),
+                Edit::ReplaceRecords {prefix,records} => PreferencesSyncedMutation::ReplaceRecords {prefix,records},
+                Edit::Patch { key, set, delete } => PreferencesSyncedMutation::PatchObject { key, patch: PreferencesObjectPatch { set, delete: delete.into_iter().collect() } },
+            });
+        }
+        Ok(Self { storagePath: owner.path, encrypted, schemaVersion: Some(owner.format), mutation: PreferencesSyncedMutation::Transaction(mutations), id: transaction.id, revision: transaction.revision })
+    }
+
+    pub(crate) fn replay(entries: &[Self], preferences: &mut Preferences) -> Result<(), PreferencesDataStoreError> {
+        let mut data = preferences.view.clone().ok_or_else(|| PreferencesDataStoreError::Message("Owner replay context is missing".into()))?;
+        for entry in entries { data.apply(&entry.transaction()?).map_err(PreferencesDataStoreError::Message)?; }
+        preferences.values = Arc::new(data.values.iter().map(|(k,v)| (k.clone(),v.clone())).collect());
+        preferences.set(&PreferencesDataStore::schemaVersionKey(), data.owner.format);
+        preferences.view = Some(data);
+        Ok(())
+    }
+}
+
+impl PreferencesDataStore {
+    pub(crate) fn publishOutbox(&self, _journal: &SyncOperationStore) -> Result<(), PreferencesDataStoreError> {
+        let _lock = self.lockTransaction();
+        self.loadUnlocked()?;
+        let mut values = self.loadedPreferences().expect("loaded file");
+        crate::Transaction::preference::recover(self, &mut values)
+    }
+    pub(crate) fn migrateSyncedEntries(&self, version: u32, entries: &mut Vec<PreferencesSyncedEntry>) -> Result<(), PreferencesDataStoreError> {
+        crate::Transaction::preference::migrate_entries(self,version,entries)
+    }
+}

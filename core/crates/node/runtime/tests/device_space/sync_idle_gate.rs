@@ -46,6 +46,7 @@ fn idleObserver(
 struct GateTestApplicationClient {
     control: operit_store::NetworkControlStore::NetworkControlStore,
     pendingFailure: Arc<std::sync::atomic::AtomicBool>,
+    consistencyVersion: Option<u64>,
 }
 
 impl GateTestApplicationClient {
@@ -81,9 +82,12 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
                 )
                 .map_err(|error| error.to_string()),
                 "syncClock" => operit_link::toCoreValue(
-                    serde_json::json!({"ranges":self.gateClock()?.ranges, "protocolVersion":1, "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
+                    serde_json::json!({"ranges":self.gateClock()?.ranges, "protocolVersion":1, "consistencyVersion":self.consistencyVersion, "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
                 )
                 .map_err(|error| error.to_string()),
+                "syncConsistency" => operit_link::toCoreValue(
+                    serde_json::json!({"manifests":[], "errors":self.gateErrors(), "pendingOwners":[]}),
+                ).map_err(|error| error.to_string()),
                 "syncClockDigest" => operit_link::toCoreValue(serde_json::json!({
                     "protocolVersion": 1,
                     // The fixture models one remote process per router, so the
@@ -198,7 +202,9 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
         &self,
         request: operit_link::CorePushRequest,
     ) -> Result<Box<dyn operit_link::CoreLinkPushSession>, operit_link::CoreLinkError> {
-        Err(operit_link::CoreLinkError::methodNotFound(&request.methodName))
+        Err(operit_link::CoreLinkError::methodNotFound(
+            &request.methodName,
+        ))
     }
 }
 
@@ -208,6 +214,7 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
     router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
         control,
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        consistencyVersion: Some(1),
     }));
 }
 
@@ -235,6 +242,7 @@ fn gateMesh(
             router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
                 control,
                 pendingFailure: pendingFailure.clone(),
+                consistencyVersion: Some(1),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -345,23 +353,62 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterChangePass);
 
-    // Slow work must become visible even before its total inventory is known.
+    // A delayed small exchange remains silent through completion.
     let reopenedFacade = RuntimeRemoteLinkService::newWithRouter(
-        (*routers[1].localCore).clone(), routers[1].clone());
+        (*routers[1].localCore).clone(),
+        routers[1].clone(),
+    );
     let progress = reopenedFacade.spaceSyncProgressFlow();
-    access[0].updateDeviceSpacePolicy("sync.large.incremental".into(), "v1".into()).unwrap();
+    access[0]
+        .updateDeviceSpacePolicy("sync.small.incremental".into(), "v1".into())
+        .unwrap();
     let (arrived, resume) = peers[1].pauseResponse("syncApplyOperations");
     let (result, ()) = tokio::join!(observer.synchronizeOnce(), async {
         arrived.await.unwrap();
-        assert!(progress.value().is_empty(), "a new incremental exchange starts silently");
+        assert!(
+            progress.value().is_empty(),
+            "a new incremental exchange starts silently"
+        );
         tokio::time::sleep(Duration::from_millis(3_100)).await;
-        assert!(progress.value().iter().any(|item| item.status == crate::SpaceSyncProgress::SpaceSyncStatus::Syncing),
-            "a slow exchange must expose its progress instead of appearing idle");
+        assert!(
+            progress.value().is_empty(),
+            "a small exchange remains silent even when delayed"
+        );
         resume.send(()).unwrap();
     });
     result.unwrap();
-    assert!(progress.value().iter().any(|item| item.status == crate::SpaceSyncProgress::SpaceSyncStatus::Completed),
-        "visible work must expose its completion");
+    assert!(
+        progress.value().is_empty(),
+        "small completed exchanges remain silent"
+    );
+}
+
+/// An older peer may exchange operations, but only a verified round can settle the gate.
+#[tokio::test]
+async fn a_peer_without_consistency_support_cannot_complete_until_upgraded() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (mut routers, _access, peers, _) = gateMesh("sync-old-consistency");
+    let control = routers[0].networkControlStore.clone();
+    routers[0].installTestApplicationClient(Arc::new(GateTestApplicationClient {
+        control,
+        pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        consistencyVersion: None,
+    }));
+    peers[1].link(&routers[0]);
+    let observer = idleObserver(&routers[1]);
+    let error = observer.synchronizeOnce().await.unwrap_err();
+    assert!(error.contains("compatible version is required"), "{error}");
+    assert!(synchronizedMethodCount(&peers[1], "syncApplyOperations") > 0);
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncConsistency"), 0);
+    installControlSyncTestApplication(&mut routers[0]);
+    peers[1].link(&routers[0]);
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
+    observer.synchronizeOnce().await.unwrap();
+    assert!(
+        synchronizedMethodCount(&peers[1], "syncConsistency") > 0,
+        "upgraded peers must verify contents before the round completes"
+    );
 }
 
 /// Verifies a failed pass arms the exponential backoff: the immediate retry is
@@ -386,8 +433,11 @@ async fn a_failed_pass_backs_off_before_retrying_the_full_exchange() {
         "the failed authority page must fail the cycle"
     );
     let markersAfterFailure = fullPassMarkers(&peers[1]);
-    assert_eq!(synchronizedMethodCount(&peers[1], "syncApplyOperations"), 0,
-        "failed authority validation must stop business replication in the same cycle");
+    assert_eq!(
+        synchronizedMethodCount(&peers[1], "syncApplyOperations"),
+        0,
+        "failed authority validation must stop business replication in the same cycle"
+    );
 
     // The immediate retry is suppressed by the failure backoff.
     observer.synchronizeOnce().await.unwrap();
@@ -467,7 +517,8 @@ async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
         .insert("syncClockDigest".into(), CallFault::BeforeDelivery);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(
-        fullPassMarkers(&peers[1]), settled,
+        fullPassMarkers(&peers[1]),
+        settled,
         "the settled gate must stay settled"
     );
 }
@@ -484,22 +535,33 @@ async fn rejected_digest_probes_back_off_without_reading_full_clocks() {
     let markersBefore = fullPassMarkers(&peers[1]);
     let fullClockCallsBefore = synchronizedMethodCount(&peers[1], "syncClock");
 
-    peers[1].faults.lock().unwrap()
+    peers[1]
+        .faults
+        .lock()
+        .unwrap()
         .insert("syncClockDigest".into(), CallFault::MethodDenied);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
-    assert_eq!(synchronizedMethodCount(&peers[1], "syncClock"), fullClockCallsBefore);
+    assert_eq!(
+        synchronizedMethodCount(&peers[1], "syncClock"),
+        fullClockCallsBefore
+    );
 
     let probesAfterFailure = synchronizedMethodCount(&peers[1], "syncClockDigest");
     observer.synchronizeOnce().await.unwrap();
-    assert_eq!(synchronizedMethodCount(&peers[1], "syncClockDigest"), probesAfterFailure,
-        "the rejected probe must arm backoff");
+    assert_eq!(
+        synchronizedMethodCount(&peers[1], "syncClockDigest"),
+        probesAfterFailure,
+        "the rejected probe must arm backoff"
+    );
     assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
 
     observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
     observer.synchronizeOnce().await.unwrap();
-    assert!(fullPassMarkers(&peers[1]) > markersBefore,
-        "a recovered digest probe must reopen the gate after backoff");
+    assert!(
+        fullPassMarkers(&peers[1]) > markersBefore,
+        "a recovered digest probe must reopen the gate after backoff"
+    );
 }
 
 /// A preference-only edit must reopen a settled storage-provider gate without
@@ -530,6 +592,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                consistencyVersion: Some(1),
             }
             .gateClock()
             .unwrap()
@@ -586,6 +649,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                consistencyVersion: Some(1),
             }
             .gateClock()
             .unwrap(),
@@ -594,7 +658,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
     }
 }
 
-/// Continues healthy replication and retries partial business failures without arming transport backoff.
+/// Healthy replication continues, but an owner failure keeps the complete round unfinished.
 #[tokio::test]
 async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     let _guard = routeTestGlobalLock().lock().await;
@@ -612,7 +676,8 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     access[0]
         .updateDeviceSpacePolicy("sync.partial.plugin".into(), "v1".into())
         .unwrap();
-    observer.synchronizeOnce().await.unwrap();
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
+    assert!(observer.synchronizeOnce().await.is_err());
     assert_eq!(
         routers[1]
             .networkControlStore
@@ -622,7 +687,8 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
         before + 1
     );
     let markers = fullPassMarkers(&peers[1]);
-    observer.synchronizeOnce().await.unwrap();
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
+    assert!(observer.synchronizeOnce().await.is_err());
     assert!(
         fullPassMarkers(&peers[1]) > markers,
         "partial failures must remain eligible for retry"
@@ -630,7 +696,8 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     access[0]
         .updateDeviceSpacePolicy("sync.partial.plugin".into(), "v2".into())
         .unwrap();
-    observer.synchronizeOnce().await.unwrap();
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
+    assert!(observer.synchronizeOnce().await.is_err());
     assert_eq!(
         routers[1]
             .networkControlStore
@@ -640,6 +707,7 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
         before + 2
     );
     pendingFailure.store(false, std::sync::atomic::Ordering::SeqCst);
+    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
     observer.synchronizeOnce().await.unwrap();
     observer.synchronizeOnce().await.unwrap();
     let settled = fullPassMarkers(&peers[1]);

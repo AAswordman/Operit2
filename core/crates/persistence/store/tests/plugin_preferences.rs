@@ -209,7 +209,7 @@ fn descriptor(path: &str) -> Value {
 
 /// Executes plugin-declared content/name merging and array references on a peer without loading the plugin.
 #[test]
-fn declarations_preserve_stable_ids_and_local_storage_version_boundaries() {
+fn declared_content_identity_coalesces_ids_and_rewrites_selection_without_changing_originals() {
     let first=Fixture::new("space");let second=Fixture::new("space");let receiver=Fixture::new("space");
     let open=json!({"op":"open_preferences","path":first.path,"merge":descriptor(&first.path)});
     let left=first.call(open.clone()).unwrap()["handle"].as_str().unwrap().to_owned();
@@ -226,14 +226,12 @@ fn declarations_preserve_stable_ids_and_local_storage_version_boundaries() {
     let rightHistory=rightOriginal.iter().filter(|op| op.payload["schemaVersion"] == 2).cloned().collect::<Vec<_>>();
     let schema=PreferenceMergeSchema::default();
     let refs=PreferenceMerge::applyOperations(receiver.host.clone(),&schema,&leftHistory,&rightHistory,|_,_|true).unwrap();
-    assert!(refs.is_empty());
+    assert_eq!(refs.get(&format!("{}\u{001f}{large}",receiver.path)), Some(&small.to_owned()));
     let handle=receiver.open();let snapshot=receiver.data(&handle);
     assert_eq!(snapshot["schemaVersion"],2);
     assert!(snapshot["values"].get(format!("card_{small}")).is_some());
-    assert!(snapshot["values"].get(format!("card_{large}")).is_some());
-    let order = operit_store::SyncOperationStore::SyncOperationOrder::fromOperation;
-    let selected = if order(leftHistory.last().unwrap()) < order(rightHistory.last().unwrap()) { large } else { small };
-    assert_eq!(snapshot["values"]["selection"],json!([selected]));
+    assert!(snapshot["values"].get(format!("card_{large}")).is_none());
+    assert_eq!(snapshot["values"]["selection"],json!([small]));
     assert!(snapshot["values"].get("__operit_preferences_merge").is_none());
     assert_eq!(first.history(),leftOriginal);assert_eq!(second.history(),rightOriginal);
     let mut changed=descriptor(&receiver.path);changed["catalog"]["nameField"]=json!("title");
@@ -259,7 +257,10 @@ fn aliases_retire_existing_catalog_sources_on_every_peer() {
     let schema = PreferenceMergeSchema::default();
     PreferenceMerge::applyOperations(receiver.host.clone(), &schema, &[], &history, |_, _| true).unwrap();
     let received = receiver.open();
-    assert!(receiver.data(&received)["values"].get("card_old").is_some());
+    let initial = receiver.data(&received)["values"].clone();
+    assert!(initial.get("card_old").is_none());
+    assert_eq!(initial["card_current"]["id"], "current");
+    assert_eq!(initial["selection"], json!(["current"]));
     let alias = aliasOperation(&source.path, "old", "current");
     for _ in 0..2 {
         PreferenceMerge::applyOperations(receiver.host.clone(), &schema, &history, &[alias.clone()], |_, _| true).unwrap();
@@ -456,7 +457,6 @@ fn rust_owner_and_plugin_declarations_share_catalog_aliases() {
     let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore {
         path: native_path.to_string(), encrypted: false,
             open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
-            decode: None,
         merge: serde_json::from_value(native).unwrap(),
     }] };
     let mut plugin = descriptor(&first.path);
@@ -495,7 +495,6 @@ fn shared_declaration_validation_precedes_storage_publication() {
         let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore {
             path: fixture.path.clone(), encrypted: false,
             open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
-            decode: None,
             merge: serde_json::from_value(invalid.clone()).unwrap(),
         }] };
         assert!(PreferenceMerge::applyOperations(fixture.host.clone(), &schema, &[], &[], |_, _| true).is_err());

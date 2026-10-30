@@ -1475,6 +1475,7 @@ fn cleanupLegacyCharacters(writer: &CharacterPluginWriter) -> Result<(), String>
     }
     let api_preferences =
         crate::data::preferences::ApiPreferences::ApiPreferences::store(writer.storage.clone());
+    api_preferences.data().map_err(|error| error.to_string())?;
     api_preferences
         .try_edit_result(
             |saved| -> Result<(), operit_store::PreferencesDataStore::PreferencesDataStoreError> {

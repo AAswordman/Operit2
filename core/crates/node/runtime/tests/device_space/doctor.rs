@@ -49,27 +49,14 @@ async fn doctor_detects_quarantines_and_selfchecks_damaged_lines() {
         .networkControlStore
         .setIdentity(NetworkControlIdentityAssignment { nodeId: "doc-away".into(), roleId: "admin".into() })
         .unwrap();
-    // Corrupt the identity grant (the last control line): the admission
-    // survives, so repair must lose exactly one operation while the member
-    // stays admitted by the surviving control log.
-    // Model offline journal damage followed by a process restart. The journal
-    // now retains record offsets while a runtime owns it; directly overwriting
-    // the file under a live index is not a supported append/repair operation.
-    let original = service.storage();
-    let storage: Arc<dyn RuntimeStorageHost> = Arc::new(TestRuntimeStorageHost::default());
-    for entry in original.list("").unwrap() {
-        if !entry.isDirectory {
-            storage.writeBytes(&entry.path, &original.readBytes(&entry.path).unwrap()).unwrap();
-        }
-    }
-    drop(service);
-    drop(router);
-    drop(original);
-    // A fresh Host identity also isolates this restart from process-global test
-    // services that can retain the original runtime's journal handles.
-    corruptLastControlLine(storage.clone(), &local);
-    let router = CoreNodeRouter::new(testLocalRuntime(storage)).unwrap();
-    let service = RuntimeRemoteLinkService::newWithRouter((*router.localCore).clone(), router);
+    // Diagnostic repair touches only the retired carrier. SQL authority stays immutable.
+    let storage = service.storage();
+    let sync = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
+    let originals = router.networkControlStore.currentSpaceOperations().unwrap();
+    let raw = originals.iter().filter(|op|op.originDeviceId == local)
+        .map(|op|serde_json::to_string(op).unwrap() + "\n").collect::<String>();
+    storage.writeBytes(&sync.operationsPath(&local),raw.as_bytes()).unwrap();
+    corruptLastControlLine(storage, &local);
 
     let report = space_doctor::diagnose(&service, false).unwrap();
     assert!(report.policyReadable, "resilient reads survive one damaged line: {:?}", report.policyError);
@@ -86,8 +73,8 @@ async fn doctor_detects_quarantines_and_selfchecks_damaged_lines() {
     assert!(!repair.restoredFromBackup);
     // The rescanned journals in the repaired report are clean.
     assert!(repaired.journals.iter().all(|journal| journal.findings.is_empty()));
-    // The surviving control policy keeps everything except the quarantined
-    // operation: the admission survives, so replay still admits the member.
+    // The SQL command set remains intact after quarantining legacy bytes.
+    assert_eq!(router.networkControlStore.currentSpaceOperations().unwrap(), originals);
     assert!(repaired.policyReadable);
     assert!(repaired.replayMembers.contains(&"doc-away".to_string()));
     assert!(repaired.counters.linesQuarantined >= 1);

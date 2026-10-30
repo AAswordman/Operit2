@@ -379,7 +379,7 @@ impl RuntimeFileSyncStore {
 
     /// Persists local bytes and returns their verified content identity.
     #[allow(non_snake_case)]
-    fn storeBlob(&self, content: &[u8]) -> Result<RuntimeFileSyncReference, String> {
+    pub fn storeBlob(&self, content: &[u8]) -> Result<RuntimeFileSyncReference, String> {
         let size = i64::try_from(content.len())
             .map_err(|_| "runtime file size does not fit i64".to_string())?;
         let reference = RuntimeFileSyncReference {
@@ -392,7 +392,7 @@ impl RuntimeFileSyncStore {
 
     /// Reads and verifies one complete content-addressed blob.
     #[allow(non_snake_case)]
-    pub(crate) fn readBlob(&self, reference: &RuntimeFileSyncReference) -> Result<Vec<u8>, String> {
+    pub fn readBlob(&self, reference: &RuntimeFileSyncReference) -> Result<Vec<u8>, String> {
         validateBlobReference(reference)?;
         let content = self
             .storageHost
@@ -495,10 +495,15 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct MemoryStorageHost {
+    journalHost: Arc<crate::transaction_test_host::TransactionJournalHost>,
         files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     }
 
     impl RuntimeStorageHost for MemoryStorageHost {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        self.journalHost.open(path)
+    }
+
         /// Confirms synchronous in-memory publication without copying or rewriting bytes.
         fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
             if !self.exists(path)? {
