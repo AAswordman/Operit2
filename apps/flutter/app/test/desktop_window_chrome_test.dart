@@ -108,6 +108,26 @@ void main() {
     await _finish(tester);
   });
 
+  testWidgets('full screen preserves the display safe area', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    tester.view.padding = FakeViewPadding(
+      top: 24 * tester.view.devicePixelRatio,
+    );
+    addTearDown(tester.view.resetPadding);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+    expect(
+      MediaQuery.paddingOf(tester.element(find.byKey(_contentKey))).top,
+      0,
+    );
+    await _nativeInset(tester, 0);
+    expect(
+      MediaQuery.paddingOf(tester.element(find.byKey(_contentKey))).top,
+      24,
+    );
+    await _finish(tester);
+  });
+
   testWidgets('mobile keeps its existing geometry and system safe area', (
     tester,
   ) async {
