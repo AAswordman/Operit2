@@ -4,6 +4,7 @@
 #[path = "../../common/chromium_browser.rs"]
 pub mod chromium_browser;
 pub mod tools;
+mod sandbox;
 #[cfg(target_vendor = "apple")]
 mod service_discovery;
 #[cfg(target_vendor = "apple")]

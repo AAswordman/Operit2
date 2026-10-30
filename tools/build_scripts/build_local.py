@@ -12,6 +12,7 @@ from common import DIST_DIR, host_arch, host_platform, release_asset_name, run
 
 BUILD_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PRODUCT_CHOICES = ("app", "cli", "esp32", "all")
+MACOS_TYPES = ("sandbox", "unsandbox")
 CLI_ARCH_CHOICES = ("host", "all", "x86_64", "aarch64")
 
 
@@ -20,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build Operit2 App and CLI for the current platform.")
     parser.add_argument("--products", choices=PRODUCT_CHOICES, default="all")
     parser.add_argument("--cli-arches", choices=CLI_ARCH_CHOICES, default="host")
+    parser.add_argument("--macos-type", "--type", choices=MACOS_TYPES, default="sandbox")
     parser.add_argument("--include-ios", action="store_true")
     parser.add_argument("--enforce-lockfile", action="store_true")
     parser.add_argument("--check", action="store_true", help="Check the local build environment and exit.")
@@ -32,24 +34,26 @@ def build_script(name: str, platform_name: str) -> str:
 
 
 # Returns the native App archive path under the release dist directory.
-def local_app_archive_path(platform_name: str, architecture: str) -> Path:
+def local_app_archive_path(platform_name: str, architecture: str, macos_type: str = "sandbox") -> Path:
     if platform_name == "windows":
         return DIST_DIR / release_asset_name("app", "windows", architecture, "zip")
     if platform_name == "linux":
         return DIST_DIR / release_asset_name("app", "linux", architecture, "tar.gz")
     if platform_name == "macos":
-        return DIST_DIR / release_asset_name("app", "macos", "universal", "zip")
+        return DIST_DIR / release_asset_name("app", "macos", "universal", "zip", macos_type)
     raise RuntimeError(f"Unsupported local App platform: {platform_name}")
 
 
 # Builds the native Flutter desktop App for the current platform.
-def build_local_app(platform_name: str, enforce_lockfile: bool) -> None:
+def build_local_app(platform_name: str, enforce_lockfile: bool, macos_type: str = "sandbox") -> None:
     command = [
         sys.executable,
         build_script("build_flutter", platform_name),
         "--archive-path",
-        local_app_archive_path(platform_name, host_arch()),
+        local_app_archive_path(platform_name, host_arch(), macos_type),
     ]
+    if platform_name == "macos":
+        command.extend(["--type", macos_type])
     if enforce_lockfile:
         command.append("--enforce-lockfile")
     run(command)
@@ -104,7 +108,7 @@ def main() -> int:
 
     os.environ["RUSTFLAGS"] = "-Awarnings"
     if args.products in ("app", "all"):
-        build_local_app(platform_name, args.enforce_lockfile)
+        build_local_app(platform_name, args.enforce_lockfile, args.macos_type)
         if args.include_ios:
             build_ios_app(args.enforce_lockfile)
     if args.products in ("cli", "all"):

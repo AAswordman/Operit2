@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xml/xml.dart' as xml;
 
@@ -24,6 +25,7 @@ import 'ChatActivityRowStyle.dart';
 import 'DetailsTagRenderer.dart';
 import 'DialogComponents.dart';
 import 'FontTagRenderer.dart';
+import 'ThinkingPreviewBuffer.dart';
 import 'ToolDisplayComponents.dart';
 import 'XmlCanvasBlockComponents.dart';
 
@@ -570,6 +572,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
   bool _userHasInteractedWithScroll = false;
   bool _isProgrammaticScroll = false;
   int _expandSession = 0;
+  final ThinkingPreviewBuffer _previewBuffer = ThinkingPreviewBuffer();
 
   /// Initializes expansion, height, and scroll state.
   @override
@@ -698,7 +701,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     }
     final l10n = AppLocalizations.of(context)!;
     final thinkingTitle = l10n.thinkingProcess;
-    final previewText = _cleanThinkingPreview(contentText);
+    final previewText = _expanded ? '' : _previewBuffer.update(contentText);
     final hasStreamingMarkdown =
         widget.isStreaming && widget.markdownEventStream != null;
     final shouldRenderBody =
@@ -716,143 +719,135 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         label: contentText.isEmpty
             ? thinkingTitle
             : '$thinkingTitle\n$contentText',
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              MessagePressShieldRegion(
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: _handleHeaderTap,
-                    borderRadius: BorderRadius.circular(4),
-                    child: Padding(
-                      padding: ChatActivityRowStyle.headerPadding,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: <Widget>[
-                          Icon(
-                            Icons.psychology_outlined,
-                            size: ChatActivityRowStyle.iconSize,
-                            color: widget.isStreaming
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant.withValues(
-                                    alpha: 0.8,
-                                  ),
-                          ),
-                          const SizedBox(width: ChatActivityRowStyle.iconGap),
-                          _ThinkingTitle(
-                            text: thinkingTitle,
-                            color: widget.isStreaming
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                            streaming: widget.isStreaming,
-                          ),
-                          if (!_expanded && previewText.isNotEmpty) ...<Widget>[
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                              ),
-                              child: Text(
-                                '·',
-                                style: ChatActivityRowStyle.textStyle(
-                                  context,
-                                ).copyWith(
-                                  color: theme.colorScheme.outlineVariant,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            MessagePressShieldRegion(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _handleHeaderTap,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: ChatActivityRowStyle.headerPadding,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: <Widget>[
+                        Icon(
+                          Icons.psychology_outlined,
+                          size: ChatActivityRowStyle.iconSize,
+                          color: widget.isStreaming
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.8,
                                 ),
-                              ),
+                        ),
+                        const SizedBox(width: ChatActivityRowStyle.iconGap),
+                        _ThinkingTitle(
+                          text: thinkingTitle,
+                          color: widget.isStreaming
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant,
+                          streaming: widget.isStreaming,
+                        ),
+                        if (!_expanded && previewText.isNotEmpty) ...<Widget>[
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Text(
+                              '·',
+                              style: ChatActivityRowStyle.textStyle(context)
+                                  .copyWith(
+                                    color: theme.colorScheme.outlineVariant,
+                                  ),
                             ),
-                            Expanded(
-                              child: _ThinkingPreviewTicker(
-                                text: previewText,
-                                isStreaming: widget.isStreaming,
-                                textColor: theme.colorScheme.onSurfaceVariant
-                                    .withValues(alpha: 0.7),
-                              ),
+                          ),
+                          Expanded(
+                            child: _ThinkingPreviewTicker(
+                              text: previewText,
+                              textOffset: _previewBuffer.textOffset,
+                              isStreaming: widget.isStreaming,
+                              textColor: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
                             ),
-                          ],
+                          ),
                         ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
               ),
-              ChatActivityDisclosure(
-                child: shouldRenderBody
-                    ? Padding(
-                        key: ValueKey<int>(_expandSession),
-                        padding: const EdgeInsets.only(top: 2, bottom: 4),
-                        child: Stack(
-                          children: <Widget>[
-                            PositionedDirectional(
-                              start: 10,
-                              top: 0,
-                              bottom: 0,
-                              child: Container(
-                                width: 1,
-                                decoration: BoxDecoration(
-                                  color: color.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
+            ),
+            ChatActivityDisclosure(
+              child: shouldRenderBody
+                  ? Padding(
+                      key: ValueKey<int>(_expandSession),
+                      padding: const EdgeInsets.only(top: 2, bottom: 4),
+                      child: Stack(
+                        children: <Widget>[
+                          PositionedDirectional(
+                            start: 10,
+                            top: 0,
+                            bottom: 0,
+                            child: Container(
+                              width: 1,
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(999),
                               ),
                             ),
-                            Padding(
-                              padding: const EdgeInsetsDirectional.only(
-                                start: ChatActivityRowStyle.contentInset,
-                              ),
-                              child: MessagePressShieldRegion(
-                                child: GestureDetector(
-                                  key: const ValueKey<String>(
-                                    'thinking-body-toggle',
-                                  ),
-                                  behavior: HitTestBehavior.translucent,
-                                  onTap: _handleBodyTap,
-                                  child: SizedBox(
-                                    width: double.infinity,
-                                    child: AnimatedSize(
-                                      alignment: Alignment.topCenter,
-                                      duration: const Duration(
-                                        milliseconds: 240,
-                                      ),
-                                      curve: Curves.easeOutCubic,
-                                      child: ConstrainedBox(
-                                        constraints: bodyConstraints,
-                                        child:
-                                            NotificationListener<
-                                              ScrollNotification
-                                            >(
-                                              onNotification:
-                                                  _handleScrollNotification,
-                                              child: SingleChildScrollView(
-                                                controller: _scrollController,
-                                                physics: bodyScrollPhysics,
-                                                child: _ThinkMarkdownBody(
-                                                  contentText: contentText,
-                                                  contentStream:
-                                                      hasStreamingMarkdown
-                                                      ? widget
-                                                            .markdownEventStream
-                                                      : null,
-                                                  textColor: widget.textColor,
-                                                  splitMarkdownContent: widget
-                                                      .splitMarkdownContent,
-                                                ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsetsDirectional.only(
+                              start: ChatActivityRowStyle.contentInset,
+                            ),
+                            child: MessagePressShieldRegion(
+                              child: GestureDetector(
+                                key: const ValueKey<String>(
+                                  'thinking-body-toggle',
+                                ),
+                                behavior: HitTestBehavior.translucent,
+                                onTap: _handleBodyTap,
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: AnimatedSize(
+                                    alignment: Alignment.topCenter,
+                                    duration: const Duration(milliseconds: 240),
+                                    curve: Curves.easeOutCubic,
+                                    child: ConstrainedBox(
+                                      constraints: bodyConstraints,
+                                      child:
+                                          NotificationListener<
+                                            ScrollNotification
+                                          >(
+                                            onNotification:
+                                                _handleScrollNotification,
+                                            child: SingleChildScrollView(
+                                              controller: _scrollController,
+                                              physics: bodyScrollPhysics,
+                                              child: _ThinkMarkdownBody(
+                                                contentText: contentText,
+                                                contentStream:
+                                                    hasStreamingMarkdown
+                                                    ? widget.markdownEventStream
+                                                    : null,
+                                                textColor: widget.textColor,
+                                                splitMarkdownContent:
+                                                    widget.splitMarkdownContent,
                                               ),
                                             ),
-                                      ),
+                                          ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                      )
-                    : null,
-              ),
-            ],
-          ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : null,
+            ),
+          ],
         ),
       ),
     );
@@ -967,9 +962,9 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final style = ChatActivityRowStyle.textStyle(context).copyWith(
-      color: widget.color,
-    );
+    final style = ChatActivityRowStyle.textStyle(
+      context,
+    ).copyWith(color: widget.color);
     final text = Text(widget.text, style: style);
     if (!widget.streaming) {
       return text;
@@ -1013,29 +1008,16 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
   }
 }
 
-String _cleanThinkingPreview(String text) {
-  if (text.isEmpty) return '';
-  final cleaned = text
-      .replaceAll(RegExp(r'```[\s\S]*?```'), ' [代码] ')
-      .replaceAll(RegExp(r'<[^>]+>'), ' ')
-      .replaceAll(RegExp(r'^[#*>\-\d.]+\s+', multiLine: true), '')
-      .replaceAll(RegExp(r'\r?\n'), ' ')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
-  if (cleaned.length > 1000) {
-    return cleaned.substring(cleaned.length - 1000);
-  }
-  return cleaned;
-}
-
 class _ThinkingPreviewTicker extends StatefulWidget {
   const _ThinkingPreviewTicker({
     required this.text,
+    required this.textOffset,
     required this.isStreaming,
     required this.textColor,
   });
 
   final String text;
+  final int textOffset;
   final bool isStreaming;
   final Color textColor;
 
@@ -1045,6 +1027,9 @@ class _ThinkingPreviewTicker extends StatefulWidget {
 
 class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
   late final ScrollController _controller;
+  final GlobalKey _textKey = GlobalKey();
+  bool _scrollScheduled = false;
+  double _pendingScrollCorrection = 0;
 
   @override
   void initState() {
@@ -1058,16 +1043,51 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
   @override
   void didUpdateWidget(covariant _ThinkingPreviewTicker oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text && widget.isStreaming) {
+    if (widget.isStreaming &&
+        (oldWidget.text != widget.text ||
+            oldWidget.textOffset != widget.textOffset)) {
+      final removed = widget.textOffset - oldWidget.textOffset;
+      if (removed > 0 &&
+          removed < oldWidget.text.length &&
+          widget.text.startsWith(oldWidget.text.substring(removed))) {
+        // The retained suffix shifts left when the ring evicts its prefix.
+        // Reuse the previous paragraph's glyph positions to keep the same
+        // content under the viewport before animating towards the new tail.
+        final paragraph = _textKey.currentContext?.findRenderObject();
+        if (paragraph is RenderParagraph && paragraph.hasSize) {
+          final removedWidth =
+              paragraph
+                  .getOffsetForCaret(TextPosition(offset: removed), Rect.zero)
+                  .dx -
+              paragraph
+                  .getOffsetForCaret(const TextPosition(offset: 0), Rect.zero)
+                  .dx;
+          if (removedWidth > 0) _pendingScrollCorrection += removedWidth;
+        }
+      }
       _scrollToEnd();
     }
   }
 
   void _scrollToEnd() {
+    if (_scrollScheduled) return;
+    _scrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollScheduled = false;
+      final correction = _pendingScrollCorrection;
+      _pendingScrollCorrection = 0;
       if (!mounted || !_controller.hasClients) return;
+      final target = _controller.position.maxScrollExtent;
+      if (correction > 0) {
+        _controller.jumpTo(
+          (_controller.offset - correction)
+              .clamp(_controller.position.minScrollExtent, target)
+              .toDouble(),
+        );
+      }
+      if (_controller.offset == target) return;
       _controller.animateTo(
-        _controller.position.maxScrollExtent,
+        target,
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
       );
@@ -1101,11 +1121,12 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
           children: <Widget>[
             Text(
               widget.text,
+              key: _textKey,
               maxLines: 1,
               softWrap: false,
-              style: ChatActivityRowStyle.textStyle(context).copyWith(
-                color: widget.textColor,
-              ),
+              style: ChatActivityRowStyle.textStyle(
+                context,
+              ).copyWith(color: widget.textColor),
             ),
             if (widget.isStreaming) ...<Widget>[
               const SizedBox(width: 4),

@@ -95,11 +95,16 @@ test('collapse preserves local state across revision updates and then uses the n
   assert.ok(page.nodes().some(node => node.props.text === '+2'));
 });
 
-test('original icons, tooltip delay, scroll cap and collapse timings stay plugin-owned', async () => {
+test('file rows preserve visible paths and both line counts with bounded scrolling', async () => {
   const page = await screen('../src/ui/summary.ui.ts', { message: message(Array.from({ length: 6 }, (_, index) => toolResult(`src/${index}.ts`, '+a'))) });
   const nodes = page.nodes();
-  assert.equal(nodes.filter(node => node.type === 'Svg').length, 6);
-  assert.ok(nodes.filter(node => node.type === 'Svg').every(node => node.props.source.startsWith('<svg')));
+  assert.equal(nodes.filter(node => node.type === 'Icon' && node.props.name === 'insert_drive_file_outlined').length, 6);
+  assert.equal(nodes.filter(node => node.props.text === '+6').length, 1);
+  assert.equal(nodes.filter(node => node.props.text === '−0').length, 7);
+  assert.equal(nodes.filter(node => node.props.text === '+1').length, 6);
+  assert.equal(nodes.filter(node => node.type === 'RichText' && node.props.spans.some(span => span.text === 'src/')).length, 6);
+  assert.ok(nodes.some(node => node.type === 'Tooltip' && node.props.message.includes('src/0.ts')));
+  assert.ok(nodes.filter(node => node.type === 'RichText').every(node => node.props.maxLines === 1 && node.props.spans.length === 3));
   assert.ok(nodes.filter(node => node.type === 'Tooltip').every(node => node.props.waitMillis === 400));
   assert.equal(nodes.find(node => node.type === 'ScrollArea').props.thumbVisibility, true);
   assert.ok(nodes.some(node => node.props.animation?.durationMillis === 220));

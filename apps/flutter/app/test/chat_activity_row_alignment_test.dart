@@ -16,6 +16,34 @@ void main() {
       testWidgets(
         'aligns activity headers at $width/$fontSize/$scale/$locale, streaming=$streaming',
         (tester) async {
+          Widget thinkingRow() => CustomXmlRenderer(
+            xmlContent: streaming
+                ? '<think>Review files'
+                : '<think>Review files</think>',
+            isStreaming: streaming,
+            xmlStream: streaming ? const Stream<String>.empty() : null,
+            textColor: Colors.black,
+            splitMarkdownContent: (_) async => [],
+          );
+          Widget toolRow() => ToolCallRow(
+            presentation: ToolPresentation.fromCall(
+              'read_file',
+              '<param name="path">/app/work</param>',
+              display: const ToolDisplayDeclaration(
+                labels: {'en': 'Read', 'zh': 'Read'},
+                icon: 'file',
+                targetParameter: 'path',
+              ),
+            ),
+            isStreaming: streaming,
+          );
+          final rows = [
+            thinkingRow(),
+            toolRow(),
+            toolRow(),
+            thinkingRow(),
+            toolRow(),
+          ];
           await tester.pumpWidget(
             MaterialApp(
               locale: locale,
@@ -39,29 +67,11 @@ void main() {
                       padding: const EdgeInsets.only(left: 22),
                       child: Column(
                         children: [
-                          CustomXmlRenderer(
-                            xmlContent: streaming
-                                ? '<think>Review files'
-                                : '<think>Review files</think>',
-                            isStreaming: streaming,
-                            xmlStream: streaming
-                                ? const Stream<String>.empty()
-                                : null,
-                            textColor: Colors.black,
-                            splitMarkdownContent: (_) async => [],
-                          ),
-                          ToolCallRow(
-                            presentation: ToolPresentation.fromCall(
-                              'read_file',
-                              '<param name="path">/app/work</param>',
-                              display: const ToolDisplayDeclaration(
-                                labels: {'en': 'Read', 'zh': 'Read'},
-                                icon: 'file',
-                                targetParameter: 'path',
-                              ),
+                          for (var index = 0; index < rows.length; index++)
+                            KeyedSubtree(
+                              key: ValueKey('activity-$index'),
+                              child: rows[index],
                             ),
-                            isStreaming: streaming,
-                          ),
                         ],
                       ),
                     ),
@@ -75,11 +85,11 @@ void main() {
           final thinkingTitle = find
               .text(locale.languageCode == 'zh' ? '思考过程' : 'Thinking Process')
               .first;
-          final toolTitle = find.text('Read');
-          final preview = find.text('Review files');
-          final target = find.text('/app/work');
-          final thinkingIcon = find.byIcon(Icons.psychology_outlined);
-          final toolIcon = find.byIcon(Icons.description_outlined);
+          final toolTitle = find.text('Read').first;
+          final preview = find.text('Review files').first;
+          final target = find.text('/app/work').first;
+          final thinkingIcon = find.byIcon(Icons.psychology_outlined).first;
+          final toolIcon = find.byIcon(Icons.description_outlined).first;
 
           expect(
             tester.getTopLeft(thinkingTitle).dx,
@@ -110,6 +120,23 @@ void main() {
             tester.getSize(thinkingHeader).height,
             tester.getSize(toolHeader).height,
           );
+
+          // Compare complete rows as well as headers: trailing padding must
+          // not change the rhythm of thinking/tool and tool/tool transitions.
+          final rowRects = [
+            for (var index = 0; index < rows.length; index++)
+              tester.getRect(find.byKey(ValueKey('activity-$index'))),
+          ];
+          final rowHeight = tester.getSize(toolHeader).height;
+          for (var index = 0; index < rowRects.length; index++) {
+            expect(rowRects[index].height, closeTo(rowHeight, 0.001));
+            if (index > 0) {
+              expect(
+                rowRects[index].center.dy - rowRects[index - 1].center.dy,
+                closeTo(rowHeight, 0.001),
+              );
+            }
+          }
 
           final titleStyle = tester.widget<Text>(toolTitle).style!;
           for (final text in [thinkingTitle, preview, target]) {

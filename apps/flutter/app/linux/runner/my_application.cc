@@ -3,13 +3,11 @@
 #include <flutter_linux/flutter_linux.h>
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 #include <file_selector_linux/file_selector_plugin.h>
-#ifdef GDK_WINDOWING_X11
-#include <gdk/gdkx.h>
-#endif
 
 #include "flutter/generated_plugin_registrant.h"
 #include "crash_channel.h"
 #include "operit_runtime_channel.h"
+#include "window_chrome.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -140,32 +138,7 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
-  // Use a header bar when running in GNOME as this is the common style used
-  // by applications and is the setup most users will be using (e.g. Ubuntu
-  // desktop).
-  // If running on X and not using GNOME then just use a traditional title bar
-  // in case the window manager does more exotic layout, e.g. tiling.
-  // If running on Wayland assume the header bar will work (may need changing
-  // if future cases occur).
-  gboolean use_header_bar = TRUE;
-#ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
-    }
-  }
-#endif
-  if (use_header_bar) {
-    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-    gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "Operit2");
-    gtk_header_bar_set_show_close_button(header_bar, TRUE);
-    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
-  } else {
-    gtk_window_set_title(window, "Operit2");
-  }
+  gtk_window_set_title(window, "Operit2");
 
   gtk_window_set_default_size(window, 1280, 720);
 
@@ -200,11 +173,13 @@ static void my_application_activate(GApplication* application) {
         register_operit_crash_channel(FL_VIEW(registry));
         register_operit_runtime_channel(FL_VIEW(registry));
         register_webview_theme(FL_VIEW(registry));
+        register_operit_window_chrome(FL_VIEW(registry));
       });
     register_operit_crash_channel(view);
     register_webview_theme(view);
   }
   register_operit_runtime_channel(view);
+  register_operit_window_chrome(view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
@@ -269,7 +244,17 @@ static void my_application_class_init(MyApplicationClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 
-static void my_application_init(MyApplication* self) {}
+static void my_application_init(MyApplication* self) {
+  // Install CSD before either the runner or desktop_multi_window realizes a
+  // window. Replacing a server-side titlebar after that would recreate its
+  // GdkWindow and invalidate Flutter's rendering surface.
+  g_signal_connect(self, "window-added",
+                   G_CALLBACK(+[](GtkApplication*, GtkWindow* window, gpointer) {
+                     if (GTK_IS_APPLICATION_WINDOW(window)) {
+                       prepare_operit_window_chrome(window);
+                     }
+                   }), nullptr);
+}
 
 MyApplication* my_application_new() {
   // Set the program name to the application ID, which helps various systems

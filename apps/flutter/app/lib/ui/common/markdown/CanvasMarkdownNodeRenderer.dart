@@ -563,6 +563,11 @@ class _TypewriterMarkdownRichTextState
       }
     }
     if (_paragraphs.isEmpty) return const SizedBox.shrink();
+    // Smaller inline code must not shrink lines below the block's line height.
+    // Leave forceStrutHeight disabled so larger glyphs and math can still fit.
+    final strutStyle = StrutStyle.fromTextStyle(
+      widget.style ?? theme.textTheme.bodyMedium ?? const TextStyle(),
+    );
     final pressShield = MessagePressShield.maybeOf(context);
 
     /// Wraps interactive spans so message dragging does not steal link taps.
@@ -582,6 +587,7 @@ class _TypewriterMarkdownRichTextState
             textDirection: Directionality.of(context),
             textScaler: MediaQuery.textScalerOf(context),
             textHeightBehavior: _markdownTextHeightBehavior,
+            strutStyle: strutStyle,
           )..layout(maxWidth: maxWidth);
           try {
             if (_isInteractiveSpanHit(
@@ -616,6 +622,7 @@ class _TypewriterMarkdownRichTextState
               paragraph.span,
               style: widget.style,
               textHeightBehavior: _markdownTextHeightBehavior,
+              strutStyle: strutStyle,
             ),
             constraints.maxWidth,
             paragraph.span,
@@ -641,12 +648,9 @@ class _TypewriterMarkdownRichTextState
   }
 }
 
-// Android's StaticLayout excludes font padding and applies line spacing only
-// between lines. Keep Flutter's first/last line from adding extra block gaps.
-const _markdownTextHeightBehavior = TextHeightBehavior(
-  applyHeightToFirstAscent: false,
-  applyHeightToLastDescent: false,
-);
+// Preserve leading at block boundaries as well as between wrapped lines.
+// Otherwise adjacent paragraphs, headings and list items lose their line spacing.
+const _markdownTextHeightBehavior = TextHeightBehavior();
 
 class _MarkdownTextParagraph {
   const _MarkdownTextParagraph(this.span, this.revealOffset);

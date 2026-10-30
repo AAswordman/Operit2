@@ -73,40 +73,60 @@ void main() {
     await _finish(tester);
   });
 
-  testWidgets('Windows keeps native caption space and follows the app theme', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
-    expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 6);
-    expect(calls.last.arguments['dark'], false);
+  for (final platform in [TargetPlatform.windows, TargetPlatform.linux]) {
+    testWidgets(
+      '${platform.name} keeps native caption space and follows the app theme',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = platform;
+        await tester.pumpWidget(_app());
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 6);
+        expect(find.byType(ThemeDesktopSidebarSurface), findsOneWidget);
+        expect(
+          tester.getBottomRight(find.byKey(_contentKey)),
+          const Offset(792, 592),
+        );
+        expect(calls.last.arguments['dark'], false);
+        expect(
+          calls.last.arguments['foregroundColor'],
+          _lightScheme.onSurface.toARGB32(),
+        );
 
-    await tester.pumpWidget(_app(mode: ThemeMode.dark));
-    await tester.pumpAndSettle();
-    expect(calls.last.arguments['dark'], true);
-    expect(
-      calls.last.arguments['backgroundColor'],
-      _darkScheme.surfaceContainerLow.toARGB32(),
+        await tester.pumpWidget(_app(mode: ThemeMode.dark));
+        await tester.pumpAndSettle();
+        expect(calls.last.arguments['dark'], true);
+        expect(
+          calls.last.arguments['backgroundColor'],
+          _darkScheme.surfaceContainerLow.toARGB32(),
+        );
+        expect(
+          calls.last.arguments['foregroundColor'],
+          _darkScheme.onSurface.toARGB32(),
+        );
+        expect(tester.takeException(), isNull);
+        await _finish(tester);
+      },
     );
-    expect(tester.takeException(), isNull);
-    await _finish(tester);
-  });
+  }
 
-  testWidgets('system appearance changes update the native caption', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
-    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
-    await tester.pumpWidget(_app(mode: ThemeMode.system));
-    await tester.pumpAndSettle();
-    expect(calls.last.arguments['dark'], false);
-    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
-    await tester.pumpAndSettle();
-    expect(calls.last.arguments['dark'], true);
-    await _finish(tester);
-  });
+  for (final platform in [TargetPlatform.macOS, TargetPlatform.linux]) {
+    testWidgets(
+      '${platform.name} system appearance changes update the native caption',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = platform;
+        tester.platformDispatcher.platformBrightnessTestValue =
+            Brightness.light;
+        addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+        await tester.pumpWidget(_app(mode: ThemeMode.system));
+        await tester.pumpAndSettle();
+        expect(calls.last.arguments['dark'], false);
+        tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+        await tester.pumpAndSettle();
+        expect(calls.last.arguments['dark'], true);
+        await _finish(tester);
+      },
+    );
+  }
 
   testWidgets('full screen preserves the display safe area', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;

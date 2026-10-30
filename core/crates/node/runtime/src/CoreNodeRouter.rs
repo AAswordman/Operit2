@@ -3629,6 +3629,68 @@ mod tests {
         peer.close();
     }
 
+    /// Manual selection moves the binding without resuming a turn and preserves it on rejection.
+    #[tokio::test]
+    async fn manual_chat_execution_device_selection_checks_idle_and_does_not_resume() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        struct LifecycleClient {
+            calls: StdMutex<Vec<String>>,
+            busy: std::sync::atomic::AtomicBool,
+        }
+        #[async_trait(?Send)]
+        impl CoreLinkSharedClient for LifecycleClient {
+            async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+                self.calls.lock().unwrap().push(request.methodName.clone());
+                assert_eq!(request.methodName, "beforeChangeRoute", "manual selection must not start a turn");
+                if self.busy.load(Ordering::SeqCst) {
+                    CoreCallResponse::err(request.requestId, CoreLinkError::internal("chat is executing"))
+                } else {
+                    CoreCallResponse::ok(request.requestId, CoreValue::Null)
+                }
+            }
+            async fn watchSnapshot(&self, _: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+                unreachable!()
+            }
+            async fn watch(&self, _: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+                unreachable!()
+            }
+            async fn openPush(&self, _: CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+                unreachable!()
+            }
+        }
+        let mut router = testCoreNodeRouter("select-local", "select-peer", "select-chat");
+        router.spaceStore.writeLocalDeviceProfile(
+            "Local".into(), "test".into(), "core".into(), "1".into(), Some("test-core".into()),
+        ).unwrap();
+        let store = CoreNodeBindingStore::new(router.localCore.runtimeStorageHost()).unwrap();
+        store.create("select-chat", "select-peer").unwrap();
+        router.bindingStore = Arc::new(store.clone());
+        let lifecycle = Arc::new(LifecycleClient {
+            calls: StdMutex::new(Vec::new()),
+            busy: std::sync::atomic::AtomicBool::new(true),
+        });
+        let (mut owner, _) = testCoreNodeRouterInJoinedSpace(
+            "select-peer", "select-local", "select-chat", "select-peer", router.spaceStore.initialize().unwrap(),
+        );
+        Arc::make_mut(&mut owner.localCore).spaceRuntime = lifecycle.clone();
+        let peer = installTestPeer(&router, "select-peer".into(), TestCoreNodeRouterEndpoint::new(owner)).unwrap();
+        let service = RuntimeRemoteLinkService::newWithRouter((*router.localCore).clone(), router);
+        let before = store.binding("select-chat").unwrap();
+        let error = service.changeChatExecutionDevice("select-chat".into(), "select-local".into())
+            .await.unwrap_err();
+        assert!(error.contains("chat is executing"), "{error}");
+        assert_eq!(store.binding("select-chat").unwrap(), before);
+        lifecycle.busy.store(false, Ordering::SeqCst);
+        let status = service.changeChatExecutionDevice("select-chat".into(), "select-local".into())
+            .await.unwrap();
+        assert_eq!(store.binding("select-chat").unwrap().nodeId, "select-local");
+        assert_eq!(status.ownerNodeId, "select-local");
+        assert!(status.ownerIsLocal);
+        assert_eq!(*lifecycle.calls.lock().unwrap(), vec!["beforeChangeRoute", "beforeChangeRoute"]);
+        peer.close();
+    }
+
     #[tokio::test]
     async fn core_route_candidates_report_live_execution_capacity() {
         let _guard = routeTestGlobalLock().lock().await;
@@ -3664,6 +3726,9 @@ mod tests {
                     turnOptions: Default::default(),
                 };
                 let error = service.requestChangeRoute("capacity-chat".into(), "capacity-peer".into(), context)
+                    .await.unwrap_err();
+                assert!(error.contains("cannot host Core execution"), "{error}");
+                let error = service.changeChatExecutionDevice("capacity-chat".into(), "capacity-peer".into())
                     .await.unwrap_err();
                 assert!(error.contains("cannot host Core execution"), "{error}");
                 assert_eq!(router.bindingStore.binding("capacity-chat").unwrap(), before);

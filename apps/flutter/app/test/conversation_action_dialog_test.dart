@@ -21,7 +21,7 @@ void main() {
 
     expect(find.text('聊天记录'), findsOneWidget);
     expect(find.text('在新窗口打开'), findsOneWidget);
-    expect(find.text('解除绑定'), findsOneWidget);
+    expect(find.text('从当前对话移除项目'), findsOneWidget);
     expect(find.text('删除'), findsOneWidget);
 
     final dialogHeight = tester.getSize(_dialogSurface()).height;
@@ -36,6 +36,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(selected, <ConversationAction?>[ConversationAction.delete]);
   });
+
+  for (final entry in <(String, ConversationAction)>[
+    ('搜索消息', ConversationAction.searchMessages),
+    ('查看收藏', ConversationAction.viewFavorites),
+  ]) {
+    testWidgets('long press menu exposes ${entry.$1}', (tester) async {
+      final selected = <ConversationAction?>[];
+      await _pumpDialog(tester, selected);
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(entry.$1));
+      await tester.pumpAndSettle();
+      expect(selected, [entry.$2]);
+    });
+  }
 
   testWidgets('keeps a short action menu wrapped on a tall window', (
     tester,

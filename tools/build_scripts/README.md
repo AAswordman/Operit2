@@ -12,8 +12,9 @@ Release package filenames use
 `operit2-<product>-<platform>-<architecture>-<release-version>.<extension>`.
 `release_artifacts.py` validates the shared App runtime and CLI version and keeps
 prerelease identifiers and compound extensions intact. App packages for macOS
-use `universal` and `.zip`; macOS CLI packages use their target architecture and
-`.tar.gz`. Build and verification scripts must not write separate `.sha256`
+use `operit2-app-macos-universal-<sandbox|unsandbox>-<release-version>.zip`.
+Sandbox App Store installers use the same naming rule with `.pkg`. macOS CLI
+packages retain their target architecture and `.tar.gz` naming. Build and verification scripts must not write separate `.sha256`
 files or `SHA256SUMS` lists for release packages. Verification results may
 include hashes in the existing build manifest.
 
@@ -100,15 +101,54 @@ HNP files under `apps/flutter/app/ohos/entry/hnp/x86_64/` for emulator builds.
 ```bash
 # Build Flutter artifacts
 python3 tools/build_scripts/build_flutter_ios.py --build-name 2.0.0 --build-number 15
-python3 tools/build_scripts/build_flutter_macos.py --build-name 2.0.0 --build-number 15
+python3 tools/build_scripts/build_flutter_macos.py --type sandbox --build-name 2.0.0 --build-number 15
+python3 tools/build_scripts/build_flutter_macos.py --type unsandbox --build-name 2.0.0 --build-number 15
 
-# Sign the macOS app and create a .pkg
-python3 tools/build_scripts/sign_macos.py
+# Sign the sandbox app for App Store Connect (.pkg)
+python3 tools/build_scripts/sign_macos.py --type sandbox
+
+# Sign the unsandbox app with Developer ID (.zip)
+python3 tools/build_scripts/sign_macos.py --type unsandbox
+# Optionally notarize using credentials already stored in the keychain
+python3 tools/build_scripts/sign_macos.py --type unsandbox --notary-profile OperitDeveloperID
+
+# Current-host dispatcher: build just the unrestricted macOS app
+python3 tools/build_scripts/build_local.py --products app --macos-type unsandbox
+# Apple release dispatcher builds both macOS types by default
+python3 tools/build_scripts/build_apple_release.py --build-name 2.0.0 --build-number 15 --products app
 
 # Validate or upload an .ipa/.pkg
 python3 tools/build_scripts/validate_appstore.py path/to/App.ipa
 python3 tools/build_scripts/upload_appstore.py path/to/App.ipa
 ```
+
+`build_flutter_macos.py` defaults to `sandbox`. Builds are checked against the
+actual signed `com.apple.security.app-sandbox` value before archiving, and each
+App is retained at `tools/release/work/macos/<type>/Operit2.app`. Signing reads
+that type's retained App and writes to `tools/release/work/macos-sign/<type>/`.
+Do not re-sign a different type's App instead of rebuilding it. Sandbox signing
+uses the App Store profile and distribution/installer certificates; unsandbox
+uses Developer ID Application, Hardened Runtime and no App Store profile.
+Without `--notary-profile`, a signed unsandbox archive is not yet notarized.
+
+Direct `flutter run`, VS Code Run (including profile/release), and Xcode Runner
+builds default to **unsandbox**. Release scripts override a custom Runner setting
+through a temporary `XCODE_XCCONFIG_FILE`; they do not edit the project or impose
+application entitlements on CocoaPods frameworks. Existing xcconfig overrides
+are included before the selected type. CI and the release publisher build both
+types; other platform and CLI names are unchanged.
+
+`macos/flutter_assemble.sh` confines a `lipo` compatibility wrapper to Flutter
+assemble. It verifies each requested architecture individually because Xcode 27
+rejects Flutter's multi-architecture `-verify_arch` invocation. All other `lipo`
+commands pass through to the selected Xcode toolchain. The SDK itself is unchanged.
+
+The application reads isolation from the running process signature. The
+unsandbox Host registers native zsh/bash login PTYs with controlling-terminal
+job control and exposes the native `/` filesystem through VFS `/mnt/macos`.
+The sandbox Host retains its no-controlling-TTY PTY adapter and folder bookmarks.
+AI permission modes and approvals apply to both; unsandbox remains subject to
+the current account and macOS privacy permissions.
 
 The App Store Connect scripts read the ignored file
 `tools/release/secrets/appstoreconnect/appstoreconnect.env`. No credentials are
@@ -258,7 +298,8 @@ OPERIT_CODE_SIGN_STYLE = Manual
 DEVELOPMENT_TEAM = <team ID associated with that certificate>
 ```
 
-This keeps the app's own bundle identifier, sandbox and encryption entitlements.
+This keeps the app's own bundle identifier and selected distribution entitlements.
+Direct runs select unsandbox; packaging scripts select their explicit type.
 It does not export private keys or alter Keychain ACLs. Without this local file,
 the project's existing ad-hoc signing behavior is retained. A previously
 unauthorized certificate may still require the user to approve its first

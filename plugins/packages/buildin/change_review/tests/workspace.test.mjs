@@ -293,7 +293,32 @@ test('tree directories are cached and ordinary previews stay plugin-owned', asyn
   }
   assert.equal(listings.filter(path => path === '/workspace/src').length, 1);
   await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === '/workspace/src/a.ts')); await page.settle();
-  assert.ok(page.nodes().some(node => node.type === 'SelectableText' && node.props.text === 'first\nsecond\nnew\nlast\n'));
+  assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.filePath === '/workspace/src/a.ts' && node.props.text === 'first\nsecond\nnew\nlast\n'));
+  assert.deepEqual(page.errors, []);
+});
+
+test('tree previews use selectable syntax text with the selected file grammar', async () => {
+  const html = '<!-- header\ncomment -->\n<html lang="zh-CN">\n</html>\n';
+  const script = '// note\nconst answer = 42;\n';
+  const native = host({ read: async path => ({ content: path.endsWith('.html') ? html : script }) });
+  native.tools.Files.list = async () => ({ entries: [
+    { name: 'index.html', isDirectory: false }, { name: 'main.ts', isDirectory: false },
+  ] });
+  const page = await screen('../src/ui/workspace.ui.ts', { workspacePath: '/workspace', input: { files: [review] } }, { tools: native.tools });
+  await page.settle();
+  await page.click(control(page, '切换至项目工作树')); await page.settle();
+  for (const [name, content] of [['index.html', html], ['main.ts', script]]) {
+    await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === `/workspace/${name}`));
+    await page.settle();
+    const selection = page.nodes().find(node => node.type === 'SelectionContainer');
+    assert.equal(selection?.children[0].type, 'CodeText');
+    assert.equal(selection.children[0].props.filePath, `/workspace/${name}`);
+    assert.equal(selection.children[0].props.text, content);
+  }
+  await page.click(control(page, '切换至变更文件列表')); await page.settle();
+  await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === review.path));
+  await page.settle();
+  assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.text === 'new'));
   assert.deepEqual(page.errors, []);
 });
 
@@ -312,7 +337,7 @@ test('late previews cannot reopen over a newly selected diff, and read errors re
   await page.click(control(page, '切换至变更文件列表')); await page.settle();
   await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === review.path));
   release(); await pending; await page.settle();
-  assert.ok(!page.nodes().some(node => node.type === 'SelectableText' && node.props.text === 'obsolete-preview'));
+  assert.ok(!page.nodes().some(node => node.props.text === 'obsolete-preview'));
   assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.text === 'new'));
   await page.click(control(page, '切换至项目工作树')); await page.settle();
   await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === '/workspace/denied.ts')); await page.settle();

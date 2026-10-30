@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../../../../../l10n/generated/app_localizations.dart';
 
@@ -280,7 +281,6 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
 
 class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
   static const double _maxBodyHeight = 420;
-  static const double _followBottomThreshold = 80;
   static final Map<String, Duration> _measuredGroupDurations =
       <String, Duration>{};
 
@@ -290,6 +290,8 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
   bool _wasExecutionActive = false;
   bool _followLatest = true;
   bool _scrollScheduled = false;
+  ScrollDirection _bodyScrollDirection = ScrollDirection.idle;
+  final Set<int> _activeBodyScrollPointers = <int>{};
   final ScrollController _bodyScrollController = ScrollController();
   final Stopwatch _stopwatch = Stopwatch();
   Timer? _tickerTimer;
@@ -323,7 +325,8 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
     if (_scrollScheduled ||
         !_expanded ||
         !_wasExecutionActive ||
-        !_followLatest) {
+        !_followLatest ||
+        _activeBodyScrollPointers.isNotEmpty) {
       return;
     }
     _scrollScheduled = true;
@@ -333,25 +336,61 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
           !_expanded ||
           !_wasExecutionActive ||
           !_followLatest ||
-          !_bodyScrollController.hasClients) {
+          _activeBodyScrollPointers.isNotEmpty ||
+          !_bodyScrollController.hasClients ||
+          _bodyScrollController.position.isScrollingNotifier.value) {
         return;
       }
       final position = _bodyScrollController.position;
-      _bodyScrollController.jumpTo(position.maxScrollExtent);
+      if (position.pixels != position.maxScrollExtent) {
+        _bodyScrollController.jumpTo(position.maxScrollExtent);
+      }
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  /// Holds off queued jumps while touch or trackpad gestures take ownership.
+  void _handleBodyPointerStart(PointerEvent event) {
+    _activeBodyScrollPointers.add(event.pointer);
+  }
+
+  void _handleBodyPointerEnd(PointerEvent event) {
+    _activeBodyScrollPointers.remove(event.pointer);
+    _scheduleFollowLatest();
   }
 
   bool _handleBodyScrollNotification(ScrollNotification notification) {
-    if (notification is! ScrollUpdateNotification ||
-        notification.dragDetails == null ||
-        !_bodyScrollController.hasClients) {
+    // Shrink-wrapped viewports can leave nested notifications at depth zero,
+    // so also verify which scrollable actually sent the notification.
+    final source = notification.context;
+    if (notification.depth != 0 ||
+        source == null ||
+        !_bodyScrollController.hasClients ||
+        Scrollable.maybeOf(source)?.position !=
+            _bodyScrollController.position) {
       return false;
     }
-    final position = _bodyScrollController.position;
-    setState(() {
-      _followLatest =
-          position.maxScrollExtent - position.pixels <= _followBottomThreshold;
-    });
+    if (notification is UserScrollNotification) {
+      _bodyScrollDirection = notification.direction;
+      if (_bodyScrollDirection == ScrollDirection.forward) {
+        _followLatest = false;
+      } else if (_bodyScrollDirection == ScrollDirection.reverse) {
+        _followLatest = notification.metrics.extentAfter <= 1;
+      }
+    } else if (notification is ScrollUpdateNotification &&
+        (_bodyScrollDirection != ScrollDirection.idle ||
+            notification.dragDetails != null)) {
+      // Wheel/trackpad updates can have no dragDetails. Pause on the first
+      // upward movement; resume only after the user actually reaches bottom.
+      final delta = notification.scrollDelta ?? 0;
+      if (delta < 0) {
+        _followLatest = false;
+      } else if (delta > 0 && notification.metrics.extentAfter <= 1) {
+        _followLatest = true;
+      }
+    } else if (notification is ScrollEndNotification) {
+      _scheduleFollowLatest();
+    }
     return false;
   }
 
@@ -557,17 +596,24 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                       ),
                       child: NotificationListener<ScrollNotification>(
                         onNotification: _handleBodyScrollNotification,
-                        child: Scrollbar(
-                          controller: _bodyScrollController,
-                          child: ListView(
+                        child: Listener(
+                          onPointerDown: _handleBodyPointerStart,
+                          onPointerUp: _handleBodyPointerEnd,
+                          onPointerCancel: _handleBodyPointerEnd,
+                          onPointerPanZoomStart: _handleBodyPointerStart,
+                          onPointerPanZoomEnd: _handleBodyPointerEnd,
+                          child: Scrollbar(
                             controller: _bodyScrollController,
-                            primary: false,
-                            shrinkWrap: true,
-                            padding: const EdgeInsets.only(right: 14),
-                            children: <Widget>[
-                              for (final child in bodyChildren)
-                                _KeepAliveGroupItem(child: child),
-                            ],
+                            child: ListView(
+                              controller: _bodyScrollController,
+                              primary: false,
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.only(right: 14),
+                              children: <Widget>[
+                                for (final child in bodyChildren)
+                                  _KeepAliveGroupItem(child: child),
+                              ],
+                            ),
                           ),
                         ),
                       ),

@@ -52,6 +52,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
+    this.messageNavigation,
     required this.loadLocatorEntries,
     required this.onRevealMessageForLocator,
     required this.onAutoScrollToBottomChanged,
@@ -133,6 +134,7 @@ class ChatScreenContent extends StatelessWidget {
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
+  final ChatMessageNavigationController? messageNavigation;
   final LoadMessageLocatorEntries loadLocatorEntries;
   final RevealMessageForLocator onRevealMessageForLocator;
   final ValueChanged<bool> onAutoScrollToBottomChanged;
@@ -225,7 +227,8 @@ class ChatScreenContent extends StatelessWidget {
       AppLocalizations.of(context)!,
       inputProcessingState,
     );
-    final hasVisibleStatus = inputProcessingState.isProcessing &&
+    final hasVisibleStatus =
+        inputProcessingState.isProcessing &&
         !isExcludedBottomStatus &&
         processingStatus.isNotEmpty;
     final statusLaneInset = _inputProcessingStatusLaneInset(
@@ -233,139 +236,150 @@ class ChatScreenContent extends StatelessWidget {
       hasVisibleStatus: hasVisibleStatus,
     );
     final showProcessingStatus = statusLaneInset > 0 && hasVisibleStatus;
-    return Stack(
-      alignment: Alignment.topCenter,
-      children: <Widget>[
-        if (backgroundUri != null)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: ThemeAssetImage(
-                storagePath: backgroundUri!,
-                fit: BoxFit.cover,
+    return CallbackShortcuts(
+      bindings: {
+        if (messageNavigation != null) ...{
+          const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+              messageNavigation!.open,
+          const SingleActivator(LogicalKeyboardKey.keyF, meta: true):
+              messageNavigation!.open,
+        },
+      },
+      child: Stack(
+        alignment: Alignment.topCenter,
+        children: <Widget>[
+          if (backgroundUri != null)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ThemeAssetImage(
+                  storagePath: backgroundUri!,
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
-          ),
-        Positioned.fill(
-          child: Column(
-            children: <Widget>[
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    IgnorePointer(
-                      ignoring: isPreparingChatSwitch,
-                      child: Opacity(
-                        opacity: isPreparingChatSwitch ? 0 : 1,
-                        child: _buildChatArea(
-                          context,
-                          bottomContentInset: statusLaneInset,
+          Positioned.fill(
+            child: Column(
+              children: <Widget>[
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      IgnorePointer(
+                        ignoring: isPreparingChatSwitch,
+                        child: Opacity(
+                          opacity: isPreparingChatSwitch ? 0 : 1,
+                          child: _buildChatArea(
+                            context,
+                            bottomContentInset: statusLaneInset,
+                          ),
                         ),
                       ),
-                    ),
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: NewChatIntroOverlay(
-                          currentChatId: currentChatId,
-                          isChatEmpty:
-                              !loading &&
-                              messages.isEmpty &&
-                              errorMessage == null,
-                          isSwitching: loading || isPreparingChatSwitch,
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: NewChatIntroOverlay(
+                            currentChatId: currentChatId,
+                            isChatEmpty:
+                                !loading &&
+                                messages.isEmpty &&
+                                errorMessage == null,
+                            isSwitching: loading || isPreparingChatSwitch,
+                          ),
                         ),
                       ),
-                    ),
-                    if (!isPreparingChatSwitch && statusLaneInset > 0)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: _buildInputProcessingStatusLane(
-                          themePreferenceSnapshot,
-                          visible: showProcessingStatus,
-                          status: processingStatus,
-                          textStyle: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.8,
+                      if (!isPreparingChatSwitch && statusLaneInset > 0)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: _buildInputProcessingStatusLane(
+                            themePreferenceSnapshot,
+                            visible: showProcessingStatus,
+                            status: processingStatus,
+                            textStyle: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.8,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
-                  ],
+                      if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
+                    ],
+                  ),
                 ),
-              ),
-              if (!isPreparingChatSwitch && toolPermissionRequests.isNotEmpty)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: themePreferenceSnapshot.bubbleWideLayoutEnabled
-                          ? chatWideContentMaxWidth
-                          : chatContentMaxWidth,
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: themePreferenceSnapshot.chatInputFloating
-                            ? 8
-                            : 0,
+                if (!isPreparingChatSwitch && toolPermissionRequests.isNotEmpty)
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth:
+                            themePreferenceSnapshot.bubbleWideLayoutEnabled
+                            ? chatWideContentMaxWidth
+                            : chatContentMaxWidth,
                       ),
-                      child: ChatToolPermissionPanel(
-                        request: toolPermissionRequests.first,
-                        onRespond: onToolPermissionDecision,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: themePreferenceSnapshot.chatInputFloating
+                              ? 8
+                              : 0,
+                        ),
+                        child: ChatToolPermissionPanel(
+                          request: toolPermissionRequests.first,
+                          onRespond: onToolPermissionDecision,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              // Keep the input subtree mounted during chat switches: tearing
-              // it down deactivates tooltip states whose global pointer
-              // routes then crash on ancestor lookups ("deactivated
-              // widget's ancestor"), matching the chat area treatment.
-              if (showInput || isMultiSelectMode)
-                IgnorePointer(
-                  ignoring: isPreparingChatSwitch,
-                  child: Opacity(
-                    opacity: isPreparingChatSwitch ? 0 : 1,
-                    child: isMultiSelectMode
-                        ? ChatMultiSelectBar(
-                            selectedCount: selectedMessageTimestamps.length,
-                            allSelected:
-                                _selectableMessageTimestamps.isNotEmpty &&
-                                _selectableMessageTimestamps.length ==
-                                    selectedMessageTimestamps.length,
-                            onClose: onExitMultiSelectMode,
-                            onToggleSelectAll:
-                                _selectableMessageTimestamps.isNotEmpty &&
-                                    _selectableMessageTimestamps.length ==
-                                        selectedMessageTimestamps.length
-                                ? onClearMessageSelection
-                                : onSelectAllMessages,
-                            onCopy: selectedMessageTimestamps.isEmpty
-                                ? null
-                                : () => _copySelectedMessages(context),
-                            onShareImage: selectedMessageTimestamps.isEmpty
-                                ? null
-                                : () => _generateShareImage(context),
-                            onDelete: selectedMessageTimestamps.isEmpty
-                                ? null
-                                : () => _confirmDeleteSelected(context),
-                          )
-                        : DrawerGestureExclusion(
-                            child: _buildChatInputSection(inputStyle),
-                          ),
+                // Keep the input subtree mounted during chat switches: tearing
+                // it down deactivates tooltip states whose global pointer
+                // routes then crash on ancestor lookups ("deactivated
+                // widget's ancestor"), matching the chat area treatment.
+                if (showInput || isMultiSelectMode)
+                  IgnorePointer(
+                    ignoring: isPreparingChatSwitch,
+                    child: Opacity(
+                      opacity: isPreparingChatSwitch ? 0 : 1,
+                      child: isMultiSelectMode
+                          ? ChatMultiSelectBar(
+                              selectedCount: selectedMessageTimestamps.length,
+                              allSelected:
+                                  _selectableMessageTimestamps.isNotEmpty &&
+                                  _selectableMessageTimestamps.length ==
+                                      selectedMessageTimestamps.length,
+                              onClose: onExitMultiSelectMode,
+                              onToggleSelectAll:
+                                  _selectableMessageTimestamps.isNotEmpty &&
+                                      _selectableMessageTimestamps.length ==
+                                          selectedMessageTimestamps.length
+                                  ? onClearMessageSelection
+                                  : onSelectAllMessages,
+                              onCopy: selectedMessageTimestamps.isEmpty
+                                  ? null
+                                  : () => _copySelectedMessages(context),
+                              onShareImage: selectedMessageTimestamps.isEmpty
+                                  ? null
+                                  : () => _generateShareImage(context),
+                              onDelete: selectedMessageTimestamps.isEmpty
+                                  ? null
+                                  : () => _confirmDeleteSelected(context),
+                            )
+                          : DrawerGestureExclusion(
+                              child: _buildChatInputSection(inputStyle),
+                            ),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          top: 0,
-          child: _ChatNoticeBridge(
-            messageListenable: toastMessageListenable,
-            onDismiss: onDismissToast,
+          Positioned(
+            left: 0,
+            top: 0,
+            child: _ChatNoticeBridge(
+              messageListenable: toastMessageListenable,
+              onDismiss: onDismissToast,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -486,6 +500,7 @@ class ChatScreenContent extends StatelessWidget {
       hasOlderDisplayHistory: hasOlderDisplayHistory,
       hasNewerDisplayHistory: hasNewerDisplayHistory,
       isLoadingDisplayWindow: isLoadingDisplayWindow,
+      messageNavigation: messageNavigation,
       loadLocatorEntries: loadLocatorEntries,
       onRevealMessageForLocator: onRevealMessageForLocator,
       onAutoScrollToBottomChanged: onAutoScrollToBottomChanged,

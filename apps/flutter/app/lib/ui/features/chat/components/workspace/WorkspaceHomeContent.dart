@@ -1,13 +1,13 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../common/ChatAvatarImage.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
 import 'WorkspaceOverviewModels.dart';
@@ -71,37 +71,37 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
     final hasBoundWorkspace =
         (boundWorkspacePath != null && boundWorkspacePath.isNotEmpty) ||
         (boundWorkspaceName != null && boundWorkspaceName.isNotEmpty);
-    if (!hasBoundWorkspace) {
-      return _WorkspaceUnboundContent(
-        onCreateWorkspace: widget.onCreateWorkspace,
-        onChooseExistingWorkspace: widget.onChooseExistingWorkspace,
-      );
-    }
     final title = boundWorkspaceName != null && boundWorkspaceName.isNotEmpty
         ? boundWorkspaceName
         : '工作区总览';
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       children: <Widget>[
-        Card.filled(
-          margin: EdgeInsets.zero,
-          color: colorScheme.surfaceContainerLow,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            child: _WorkspaceHeaderCard(
-              title: title,
-              workspaceUsage: widget.workspaceUsage,
-              onUnbindWorkspace: widget.onUnbindWorkspace,
+        if (hasBoundWorkspace)
+          Card.filled(
+            margin: EdgeInsets.zero,
+            color: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
             ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: _WorkspaceHeaderCard(
+                title: title,
+                workspaceUsage: widget.workspaceUsage,
+                onUnbindWorkspace: widget.onUnbindWorkspace,
+              ),
+            ),
+          )
+        else
+          _WorkspaceUnboundContent(
+            onCreateWorkspace: widget.onCreateWorkspace,
+            onChooseExistingWorkspace: widget.onChooseExistingWorkspace,
           ),
-        ),
         const SizedBox(height: 12),
-        widget.pluginContent,
+        if (hasBoundWorkspace) widget.pluginContent,
         _WorkspaceWorkstationGrid(
+          key: const ValueKey('workspace-workstations'),
           terminalSessionCountListenable: widget.terminalSessionCountListenable,
           browserSessionCountListenable: widget.browserSessionCountListenable,
           terminalSessionsListenable: widget.terminalSessionsListenable,
@@ -114,19 +114,21 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
           onSelectBrowserTab: widget.onSelectBrowserTab,
           onCloseBrowserSession: widget.onCloseBrowserSession,
         ),
-        const SizedBox(height: 12),
-        _WorkspaceFoldersCard(
-          workspaceUsage: widget.workspaceUsage,
-          onOpenFolder: widget.onOpenFolder,
-          onAddFolder: widget.onAddFolder,
-        ),
+        if (hasBoundWorkspace) ...<Widget>[
+          const SizedBox(height: 20),
+          _WorkspaceFoldersCard(
+            workspaceUsage: widget.workspaceUsage,
+            onOpenFolder: widget.onOpenFolder,
+            onAddFolder: widget.onAddFolder,
+          ),
+        ],
       ],
     );
   }
 }
 
 class _WorkspaceUnboundContent extends StatelessWidget {
-  /// Creates a dedicated starting point for chats without a workspace.
+  /// Offers optional project binding alongside the always available tools.
   const _WorkspaceUnboundContent({
     required this.onCreateWorkspace,
     required this.onChooseExistingWorkspace,
@@ -135,84 +137,63 @@ class _WorkspaceUnboundContent extends StatelessWidget {
   final VoidCallback onCreateWorkspace;
   final VoidCallback onChooseExistingWorkspace;
 
-  /// Centers the setup actions while allowing short viewports to scroll.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
 
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 400),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        color: colors.primaryContainer,
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                      child: Icon(
-                        Icons.create_new_folder_outlined,
-                        size: 32,
-                        color: colors.onPrimaryContainer,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      '为当前对话添加工作区',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '在工作区中管理项目文件、终端和浏览器。\n创建一个新的工作区，或继续已有项目。',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: colors.onSurfaceVariant,
-                        height: 1.6,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: <Widget>[
-                        FilledButton.icon(
-                          onPressed: onCreateWorkspace,
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(164, 48),
-                          ),
-                          icon: const Icon(Icons.add_rounded, size: 20),
-                          label: const Text('创建工作区'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: onChooseExistingWorkspace,
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(164, 48),
-                          ),
-                          icon: const Icon(Icons.folder_open_rounded, size: 20),
-                          label: const Text('选择工作区'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            '工作区（可选）',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w500,
             ),
           ),
-        ),
+          const SizedBox(height: 6),
+          Text(
+            '终端和浏览器可直接使用，绑定工作区后可管理项目文件。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              height: 1.6,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: <Widget>[
+              FilledButton.tonalIcon(
+                onPressed: onCreateWorkspace,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 40),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                ),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('创建工作区'),
+              ),
+              TextButton.icon(
+                onPressed: onChooseExistingWorkspace,
+                style: TextButton.styleFrom(
+                  foregroundColor: colors.onSurfaceVariant,
+                  minimumSize: const Size(0, 40),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                ),
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                label: const Text('选择工作区'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -221,6 +202,7 @@ class _WorkspaceUnboundContent extends StatelessWidget {
 class _WorkspaceWorkstationGrid extends StatelessWidget {
   /// Keeps terminal and browser controls in their own compact cards.
   const _WorkspaceWorkstationGrid({
+    super.key,
     required this.terminalSessionCountListenable,
     required this.browserSessionCountListenable,
     required this.terminalSessionsListenable,
@@ -319,10 +301,8 @@ class _TerminalWorkstationCard extends StatelessWidget {
 
     return Card.filled(
       margin: EdgeInsets.zero,
-      color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-      ),
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -330,7 +310,11 @@ class _TerminalWorkstationCard extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Icon(Icons.terminal_rounded, size: 16, color: colorScheme.onSurfaceVariant),
+                Icon(
+                  Icons.terminal_rounded,
+                  size: 16,
+                  color: colorScheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -338,7 +322,7 @@ class _TerminalWorkstationCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -359,7 +343,8 @@ class _TerminalWorkstationCard extends StatelessWidget {
                 if (sessionsListenable != null) sessionsListenable!,
               ]),
               builder: (context, _) {
-                final sessions = sessionsListenable?.value ??
+                final sessions =
+                    sessionsListenable?.value ??
                     const <WorkspaceTerminalSessionInfo>[];
                 if (sessions.isEmpty && terminalCountListenable.value == 0) {
                   return Padding(
@@ -367,7 +352,9 @@ class _TerminalWorkstationCard extends StatelessWidget {
                     child: Text(
                       '暂无运行中的终端会话',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                        color: colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.65,
+                        ),
                         fontSize: 11.5,
                       ),
                     ),
@@ -379,12 +366,17 @@ class _TerminalWorkstationCard extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: colorScheme.surface.withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(
-                              color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                              color: colorScheme.outlineVariant.withValues(
+                                alpha: 0.15,
+                              ),
                             ),
                           ),
                           child: Row(
@@ -394,24 +386,29 @@ class _TerminalWorkstationCard extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: <Widget>[
                                     Text(
-                                      session.title.isNotEmpty ? session.title : '终端会话',
+                                      session.title.isNotEmpty
+                                          ? session.title
+                                          : '终端会话',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurface,
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 11,
-                                      ),
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: colorScheme.onSurface,
+                                            fontWeight: FontWeight.w500,
+                                            fontSize: 11,
+                                          ),
                                     ),
                                     if (session.workingDir.isNotEmpty)
                                       Text(
                                         session.workingDir,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: theme.textTheme.labelSmall?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                          fontSize: 9.5,
-                                        ),
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                              fontSize: 9.5,
+                                            ),
                                       ),
                                   ],
                                 ),
@@ -421,13 +418,16 @@ class _TerminalWorkstationCard extends StatelessWidget {
                                 onTap: () => onSelectSession?.call(session),
                                 borderRadius: BorderRadius.circular(4),
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
+                                  ),
                                   child: Text(
                                     '切换',
                                     style: TextStyle(
                                       color: accentColor,
                                       fontSize: 11,
-                                      fontWeight: FontWeight.w600,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                 ),
@@ -500,10 +500,8 @@ class _BrowserWorkstationCard extends StatelessWidget {
 
     return Card.filled(
       margin: EdgeInsets.zero,
-      color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-      ),
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -511,7 +509,11 @@ class _BrowserWorkstationCard extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Icon(Icons.public_rounded, size: 16, color: colorScheme.onSurfaceVariant),
+                Icon(
+                  Icons.public_rounded,
+                  size: 16,
+                  color: colorScheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -519,7 +521,7 @@ class _BrowserWorkstationCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -547,7 +549,9 @@ class _BrowserWorkstationCard extends StatelessWidget {
                     child: Text(
                       '暂无打开的浏览器页面',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                        color: colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.65,
+                        ),
                         fontSize: 11.5,
                       ),
                     ),
@@ -559,12 +563,17 @@ class _BrowserWorkstationCard extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: colorScheme.surface.withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(
-                              color: colorScheme.outlineVariant.withValues(alpha: 0.15),
+                              color: colorScheme.outlineVariant.withValues(
+                                alpha: 0.15,
+                              ),
                             ),
                           ),
                           child: Row(
@@ -574,24 +583,29 @@ class _BrowserWorkstationCard extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: <Widget>[
                                     Text(
-                                      tab.title.isNotEmpty ? tab.title : '浏览器页面',
+                                      tab.title.isNotEmpty
+                                          ? tab.title
+                                          : '浏览器页面',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurface,
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 11,
-                                      ),
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: colorScheme.onSurface,
+                                            fontWeight: FontWeight.w500,
+                                            fontSize: 11,
+                                          ),
                                     ),
                                     if (tab.url.isNotEmpty)
                                       Text(
                                         tab.url,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: theme.textTheme.labelSmall?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                          fontSize: 9.5,
-                                        ),
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                              fontSize: 9.5,
+                                            ),
                                       ),
                                   ],
                                 ),
@@ -601,20 +615,24 @@ class _BrowserWorkstationCard extends StatelessWidget {
                                 onTap: () => onSelectBrowserTab?.call(tab),
                                 borderRadius: BorderRadius.circular(4),
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
+                                  ),
                                   child: Text(
                                     '切换',
                                     style: TextStyle(
                                       color: accentColor,
                                       fontSize: 11,
-                                      fontWeight: FontWeight.w600,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                 ),
                               ),
                               if (onCloseBrowserSession != null)
                                 InkWell(
-                                  onTap: () => onCloseBrowserSession?.call(tab.id),
+                                  onTap: () =>
+                                      onCloseBrowserSession?.call(tab.id),
                                   borderRadius: BorderRadius.circular(4),
                                   child: const Padding(
                                     padding: EdgeInsets.all(2),
@@ -674,10 +692,8 @@ class _WorkspaceFoldersCard extends StatelessWidget {
 
     return Card.filled(
       margin: EdgeInsets.zero,
-      color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-      ),
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -695,7 +711,7 @@ class _WorkspaceFoldersCard extends StatelessWidget {
                   child: Text(
                     '文件夹',
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -781,10 +797,7 @@ class _WorkspaceHeaderCard extends StatelessWidget {
 
 class _WorkspaceFolderTile extends StatelessWidget {
   /// Creates an inline navigation row for one mounted folder.
-  const _WorkspaceFolderTile({
-    required this.folder,
-    required this.onTap,
-  });
+  const _WorkspaceFolderTile({required this.folder, required this.onTap});
 
   final WorkspaceMountedFolder folder;
   final VoidCallback onTap;
@@ -808,7 +821,7 @@ class _WorkspaceFolderTile extends StatelessWidget {
               Icon(
                 Icons.folder_outlined,
                 size: 14,
-                color: colorScheme.primary,
+                color: colorScheme.onSurfaceVariant,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -822,7 +835,7 @@ class _WorkspaceFolderTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurface,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w500,
                         fontSize: 12,
                       ),
                     ),
@@ -886,7 +899,9 @@ class _WorkspaceMenuAnchorState extends State<_WorkspaceMenuAnchor> {
       onOpen: () => setState(() => _isOpen = true),
       onClose: () => setState(() => _isOpen = false),
       style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(colorScheme.surfaceContainerHigh),
+        backgroundColor: WidgetStatePropertyAll(
+          colorScheme.surfaceContainerHigh,
+        ),
         padding: const WidgetStatePropertyAll(EdgeInsets.all(4)),
         shape: WidgetStatePropertyAll(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -894,7 +909,7 @@ class _WorkspaceMenuAnchorState extends State<_WorkspaceMenuAnchor> {
       ),
       builder: (context, controller, _) => _WorkspaceToolCapsule(
         icon: Icons.work_outline_rounded,
-        accentColor: colorScheme.primary,
+        accentColor: colorScheme.onSurfaceVariant,
         label: widget.title,
         isExpanded: _isOpen,
         onTap: () {
@@ -945,10 +960,10 @@ class _WorkspaceToolCapsule extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     return TextButton(
       style: TextButton.styleFrom(
-        foregroundColor: isExpanded ? colorScheme.primary : colorScheme.onSurface,
+        foregroundColor: colorScheme.onSurface,
         backgroundColor: isExpanded
-            ? colorScheme.primaryContainer
-            : colorScheme.surfaceContainerHigh,
+            ? colorScheme.surfaceContainerHigh
+            : Colors.transparent,
         minimumSize: const Size(0, 28),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -968,7 +983,9 @@ class _WorkspaceToolCapsule extends StatelessWidget {
           ),
           const SizedBox(width: 3),
           Icon(
-            isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+            isExpanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.keyboard_arrow_down_rounded,
             size: 14,
             color: colorScheme.onSurfaceVariant,
           ),
@@ -1103,8 +1120,9 @@ class _WorkspaceContributionAvatarState
             onTap: _presenting ? null : () => unawaited(_presentPreview()),
             child: SizedBox.square(
               dimension: 22,
-              child: _WorkspaceContributionAvatarImage(
+              child: ChatAvatarImage(
                 avatarUri: usage.avatarUri,
+                fit: BoxFit.cover,
               ),
             ),
           ),
@@ -1113,105 +1131,6 @@ class _WorkspaceContributionAvatarState
     );
   }
 }
-
-class _WorkspaceContributionAvatarImage extends StatefulWidget {
-  /// Creates a display-only image backed by the existing runtime asset host.
-  const _WorkspaceContributionAvatarImage({required this.avatarUri});
-
-  final String? avatarUri;
-
-  /// Retains the image request until the plugin changes its display URI.
-  @override
-  State<_WorkspaceContributionAvatarImage> createState() =>
-      _WorkspaceContributionAvatarImageState();
-}
-
-class _WorkspaceContributionAvatarImageState
-    extends State<_WorkspaceContributionAvatarImage> {
-  static const _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
-  Future<Uint8List>? _bytes;
-
-  /// Starts the request for the exact display URI published by the contribution.
-  @override
-  void initState() {
-    super.initState();
-    _loadImage();
-  }
-
-  /// Replaces image requests when the authoritative display URI changes.
-  @override
-  void didUpdateWidget(covariant _WorkspaceContributionAvatarImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.avatarUri != widget.avatarUri) {
-      _loadImage();
-    }
-  }
-
-  /// Reads the runtime asset without searching character stores or platform paths.
-  Future<Uint8List> _readImage(String uri) async {
-    final encoded = await _clients.repositoryRuntimeStorageRepository
-        .readBase64(path: uri);
-    if (encoded == null) {
-      throw StateError('The contribution avatar asset is missing: $uri');
-    }
-    return base64Decode(encoded);
-  }
-
-  /// Uses explicit image absence only when the catalog publishes a null URI.
-  void _loadImage() {
-    final uri = widget.avatarUri;
-    _bytes = uri == null ? null : _readImage(uri);
-  }
-
-  /// Displays loading and asset errors without synthesizing an avatar identity.
-  @override
-  Widget build(BuildContext context) {
-    final bytes = _bytes;
-    if (bytes == null) {
-      return Icon(
-        Icons.extension_outlined,
-        size: 14,
-        color: Theme.of(context).colorScheme.onPrimaryContainer,
-      );
-    }
-    return FutureBuilder<Uint8List>(
-      key: ValueKey(widget.avatarUri),
-      future: bytes,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return _imageError(snapshot.error!);
-        }
-        final data = snapshot.data;
-        if (data == null) {
-          return const Padding(
-            padding: EdgeInsets.all(5),
-            child: CircularProgressIndicator(strokeWidth: 1.5),
-          );
-        }
-        return Image.memory(
-          data,
-          fit: BoxFit.cover,
-          width: 22,
-          height: 22,
-          errorBuilder: (context, error, stackTrace) => _imageError(error),
-        );
-      },
-    );
-  }
-
-  /// Makes failed avatar assets explicit rather than substituting another image.
-  Widget _imageError(Object error) {
-    return Tooltip(
-      message: '贡献项头像加载失败：$error',
-      child: Icon(
-        Icons.broken_image_outlined,
-        size: 14,
-        color: Theme.of(context).colorScheme.error,
-      ),
-    );
-  }
-}
-
 
 class _WorkspaceInlineState extends StatelessWidget {
   /// Creates a compact inline state row for overview subsections.

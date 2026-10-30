@@ -188,6 +188,12 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
     update({ dialog: null });
     return { type: "toolpkg.chat.openInWindow", chatId: id };
   }
+  /** Lets the host activate the exact chat before opening its shared message lookup. */
+  function lookupMessages(id: string, favoritesOnly: boolean): { type: string; chatId: string } {
+    assertCurrent(); chatFor(id);
+    update({ dialog: null });
+    return { type: favoritesOnly ? "toolpkg.chat.viewFavorites" : "toolpkg.chat.searchMessages", chatId: id };
+  }
   async function changeFlag(id: string, pinned: boolean): Promise<void> {
     await run(async () => {
       const chat = chatFor(id);
@@ -223,15 +229,20 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
     if (kind === "chat") {
       const chat = chatFor(id);
       return ctx.UI.PopupMenu({ key: "sidebar-chat-menu-" + id, width: 22, height: 22, tooltip: "对话操作", enabled: !state.busy,
-        items: [ { label: "编辑名称", icon: "Edit" },
+        items: [ { label: "搜索消息", icon: "Search" },
+          { label: "查看收藏", icon: "StarBorder" },
+          { label: "编辑名称", icon: "Edit" },
           { label: chat.pinned ? "取消置顶" : "置顶", icon: "PushPin" },
           { label: chat.locked ? "解锁" : "锁定", icon: chat.locked ? "LockOpen" : "Lock" },
           { label: "删除", icon: "DeleteOutline", danger: true } ],
         onSelected: async (index: number) => {
-          if (index === 0) renameChat(id);
-          else if (index === 1) await changeFlag(id, true);
-          else if (index === 2) await changeFlag(id, false);
-          else if (index === 3) await deleteChat(id);
+          if (index === 0) return lookupMessages(id, false);
+          else if (index === 1) return lookupMessages(id, true);
+          else if (index === 2) renameChat(id);
+          else if (index === 3) await changeFlag(id, true);
+          else if (index === 4) await changeFlag(id, false);
+          else if (index === 5) await deleteChat(id);
+          return null;
         },
       }, ctx.UI.Icon({ name: "MoreHoriz", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
     }
@@ -374,6 +385,8 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
             ctx.UI.Icon({ name: icon, size: 20, tint: danger ? colors.error : colors.onSurfaceVariant }),
             ctx.UI.Text({ text: label, weight: 1, fontSize: 14, color: danger ? colors.error : colors.onSurface }),
           ]));
+      body.push(tile("搜索消息", "Search", () => lookupMessages(chat.id, false)),
+        tile("查看收藏", "StarBorder", () => lookupMessages(chat.id, true)));
       if (capabilities?.openInWindow === true) body.push(tile("在新窗口打开", "OpenInNew", () => openInWindow(chat.id)));
       body.push(tile("编辑名称", "Edit", () => renameChat(chat.id)),
         tile("上移", "KeyboardArrowUp", () => moveRelative(chat.id, -1), index > 0),
@@ -386,7 +399,9 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
     if (state.error !== "") body.push(ctx.UI.Text({ text: state.error, color: colors.error, fontSize: 11 }));
     body.push(ctx.UI.Row({ spacing: 8 }, [ctx.UI.TextButton({ text: "取消", enabled: !state.busy, onClick: () => update({ dialog: null }) }),
       ...(staged.progress === null && staged.kind !== "chatActions" ? [ctx.UI.Button({ text: "确认", enabled: !state.busy, onClick: () => run(submit) })] : [])]));
-    content.push(ctx.UI.Dialog({ key: "sidebar-edit-dialog", closeOnDismissRequest: !state.busy, onDismissRequest: () => { if (!state.busy) update({ dialog: null }); } }, ctx.UI.Column({ padding: 20, spacing: 12, width: 320 }, body)));
+    const dialogBody = ctx.UI.Column({ padding: 20, spacing: 12, width: 320 }, body);
+    content.push(ctx.UI.Dialog({ key: "sidebar-edit-dialog", closeOnDismissRequest: !state.busy, onDismissRequest: () => { if (!state.busy) update({ dialog: null }); } },
+      staged.kind === "chatActions" ? ctx.UI.ScrollArea({ key: "sidebar-chat-actions-scroll" }, dialogBody) : dialogBody));
   }
   // Prepared data already makes the first tree usable. Refresh it in the
   // background so the initial lifecycle command does not wait on catalog IPC;

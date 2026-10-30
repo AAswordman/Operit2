@@ -229,6 +229,18 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         label: '复制消息',
       ),
     ];
+    final l10n = AppLocalizations.of(context);
+    items.add(
+      _menuItem(
+        value: _MessageMenuAction.favorite,
+        icon: message.isFavorite
+            ? Icons.star_rounded
+            : Icons.star_outline_rounded,
+        label: message.isFavorite
+            ? (l10n?.messageLocatorRemoveFavorite ?? '取消收藏')
+            : (l10n?.messageLocatorAddFavorite ?? '收藏消息'),
+      ),
+    );
     if (message.sender == 'user') {
       items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
         _menuItem(
@@ -382,6 +394,32 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
             splitMarkdownContent: widget.splitMarkdownContent,
           ),
         );
+        break;
+      case _MessageMenuAction.favorite:
+        try {
+          await widget.onToggleFavoriteMessage(
+            widget.message.timestamp,
+            !widget.message.isFavorite,
+          );
+          await widget.onRefresh?.call();
+        } catch (error, stackTrace) {
+          ClientLogger.e(
+            'Failed to update message favorite',
+            tag: 'MessageContextMenu',
+            error: error,
+            stackTrace: stackTrace,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  AppLocalizations.of(context)?.messageLocatorFavoriteFailed ??
+                      '收藏更新失败，请重试',
+                ),
+              ),
+            );
+          }
+        }
         break;
       case _MessageMenuAction.editAndResend:
       case _MessageMenuAction.modifyMemory:
@@ -678,6 +716,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 
 enum _MessageMenuAction {
   copy,
+  favorite,
   editAndResend,
   modifyMemory,
   rollback,

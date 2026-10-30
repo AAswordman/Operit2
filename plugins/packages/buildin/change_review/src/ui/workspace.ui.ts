@@ -411,7 +411,7 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
         UI.Spacer({ height: 2 }), text({ text: relative, style: 'bodySmall', color: c.outline, maxLines: 1, overflow: 'ellipsis' }),
       ]), line(), UI.Box({ weight: 1, fillMaxWidth: true }, previewLoading ? UI.Box({ fillMaxSize: true, contentAlignment: 'center' }, UI.CircularProgressIndicator({ width: 18, height: 18, strokeWidth: 2 }))
         : previewError !== '' ? UI.Box({ modifier: M.padding(12) }, text({ text: previewError }))
-        : UI.ScrollArea({}, UI.Box({ modifier: M.padding(12) }, UI.SelectableText({ text: preview.content, style: 'bodySmall', fontFamily: 'monospace' })))),
+        : UI.ScrollArea({}, UI.Box({ modifier: M.padding(12) }, UI.SelectionContainer({}, UI.CodeText({ text: preview.content, filePath: preview.path, style: 'bodySmall', fontFamily: 'monospace' }))))),
     ]);
   }
 

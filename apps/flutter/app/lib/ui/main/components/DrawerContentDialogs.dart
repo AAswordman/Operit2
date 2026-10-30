@@ -7,6 +7,8 @@ import '../../../l10n/generated/app_localizations.dart';
 import '../../common/components/OperitDialog.dart';
 
 enum ConversationAction {
+  searchMessages,
+  viewFavorites,
   openInWindow,
   rename,
   moveUp,
@@ -175,6 +177,19 @@ class ConversationActionDialog extends StatelessWidget {
                 ),
               ),
             ),
+            _ConversationActionTile(
+              icon: Icons.search_rounded,
+              label: l10n.messageLocatorSearchMessages,
+              onTap: () =>
+                  Navigator.of(context).pop(ConversationAction.searchMessages),
+            ),
+            _ConversationActionTile(
+              icon: Icons.star_outline_rounded,
+              label: l10n.messageLocatorViewFavorites,
+              onTap: () =>
+                  Navigator.of(context).pop(ConversationAction.viewFavorites),
+            ),
+            const Divider(height: 16),
             if (canOpenInWindow)
               _ConversationActionTile(
                 icon: Icons.open_in_new,

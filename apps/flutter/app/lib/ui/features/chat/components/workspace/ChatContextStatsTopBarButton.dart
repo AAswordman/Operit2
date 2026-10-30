@@ -44,6 +44,8 @@ class _ChatContextStatsTopBarButtonState
   bool _loadFailed = false;
   bool _routeFailed = false;
   bool _isOpen = false;
+  String? _switchingDeviceId;
+  String? _switchError;
   int _requestEpoch = 0;
 
   /// Starts polling without creating a second device settings surface.
@@ -71,6 +73,8 @@ class _ChatContextStatsTopBarButtonState
       _loading = true;
       _loadFailed = false;
       _routeFailed = false;
+      _switchingDeviceId = null;
+      _switchError = null;
       _bindRouteStatus();
       unawaited(_loadAllData());
     }
@@ -137,6 +141,41 @@ class _ChatContextStatsTopBarButtonState
       });
     } finally {
       if (epoch == _requestEpoch) _polling = false;
+    }
+  }
+
+  /// Changes the owning Core and keeps selection tied to the confirmed route.
+  Future<void> _switchExecutionDevice(
+    core_proxy.RuntimeDeviceSpaceDevice device,
+  ) async {
+    final chatId = widget.currentChatId;
+    if (chatId == null || chatId.trim().isEmpty || _switchingDeviceId != null) {
+      return;
+    }
+    final epoch = _requestEpoch;
+    setState(() {
+      _switchingDeviceId = device.deviceId;
+      _switchError = null;
+    });
+    try {
+      final service = widget.viewModel.clients.server.runtimeRemoteLinkService;
+      final status = await service.changeChatExecutionDevice(
+        chatId: chatId,
+        targetNodeId: device.deviceId,
+      );
+      if (!mounted || epoch != _requestEpoch) return;
+      setState(() {
+        _bindingStatus = status;
+        _routeFailed = false;
+      });
+      unawaited(_loadAllData());
+    } catch (error) {
+      if (!mounted || epoch != _requestEpoch) return;
+      setState(() => _switchError = '切换失败：$error');
+    } finally {
+      if (mounted && epoch == _requestEpoch) {
+        setState(() => _switchingDeviceId = null);
+      }
     }
   }
 
@@ -308,6 +347,18 @@ class _ChatContextStatsTopBarButtonState
                             isLocal:
                                 device.deviceId == _topology!.currentDeviceId,
                             isExecuting: device.deviceId == ownerDeviceId,
+                            isSwitching: device.deviceId == _switchingDeviceId,
+                            onSelect:
+                                widget.currentChatId?.trim().isNotEmpty ==
+                                        true &&
+                                    _switchingDeviceId == null &&
+                                    device.deviceId != ownerDeviceId &&
+                                    device.online &&
+                                    (device.deviceId ==
+                                            _topology!.currentDeviceId ||
+                                        device.coreVersion != null)
+                                ? () => _switchExecutionDevice(device)
+                                : null,
                             online: device.deviceId == ownerDeviceId
                                 ? _bindingStatus!.ownerReachable
                                 : device.online,
@@ -316,6 +367,20 @@ class _ChatContextStatsTopBarButtonState
                           Text(
                             '执行设备不在当前空间中',
                             style: TextStyle(color: colorScheme.error),
+                          ),
+                        if (_switchError case final error?)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Tooltip(
+                              message: error,
+                              child: Text(
+                                error,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: colorScheme.error),
+                              ),
+                            ),
                           ),
                         if (_routeFailed)
                           Text(
@@ -379,58 +444,119 @@ class _DeviceRow extends StatelessWidget {
     required this.isLocal,
     required this.isExecuting,
     required this.online,
+    required this.isSwitching,
+    required this.onSelect,
   });
 
   final core_proxy.RuntimeDeviceSpaceDevice device;
   final bool isLocal;
   final bool isExecuting;
   final bool online;
+  final bool isSwitching;
+  final VoidCallback? onSelect;
 
-  /// Keeps device names and trailing statuses aligned across every device row.
+  /// Keeps roles and connectivity compact while names use the remaining width.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final connection = !online
         ? '离线'
         : device.relayHops != null && device.relayHops! > 0
-        ? '${device.relayHops} 跳'
+        ? '在线 · ${device.relayHops} 跳中继'
         : '在线';
     final status = <String>[
       if (isLocal) '本机',
-      if (isExecuting) '当前执行',
+      if (isExecuting) '当前执行设备',
+      if (isSwitching) '正在切换',
       connection,
-    ].join(' · ');
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: <Widget>[
-          Icon(
-            Icons.devices_other_rounded,
-            size: 16,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              device.deviceName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              status,
-              textAlign: TextAlign.end,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: online
-                    ? theme.colorScheme.onSurfaceVariant
-                    : theme.colorScheme.error,
+    ].join('，');
+    final onlineColor = theme.brightness == Brightness.dark
+        ? Colors.green.shade400
+        : Colors.green.shade700;
+
+    return Semantics(
+      container: true,
+      label: '${device.deviceName}，$status',
+      excludeSemantics: true,
+      button: true,
+      selected: isExecuting,
+      enabled: onSelect != null,
+      onTap: onSelect,
+      child: InkWell(
+        onTap: onSelect,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          child: Row(
+            children: <Widget>[
+              Tooltip(
+                message: isLocal ? '本机' : '远程设备',
+                child: Icon(
+                  isLocal
+                      ? Icons.computer_rounded
+                      : Icons.devices_other_rounded,
+                  size: 16,
+                  color: colors.onSurfaceVariant,
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: device.deviceName,
+                  child: Text(
+                    device.deviceName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ),
+              if (isSwitching) ...<Widget>[
+                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ] else if (isExecuting) ...<Widget>[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: '当前执行设备',
+                  child: Icon(
+                    Icons.check_rounded,
+                    size: 16,
+                    color: colors.primary,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              Tooltip(
+                message: connection,
+                child: SizedBox(
+                  width: 16,
+                  height: 22,
+                  child: Center(
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: online ? onlineColor : null,
+                        border: online
+                            ? null
+                            : Border.all(
+                                color: colors.onSurfaceVariant,
+                                width: 1.5,
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

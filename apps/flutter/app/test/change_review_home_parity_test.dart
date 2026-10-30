@@ -7,9 +7,8 @@ import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.da
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 
 import 'change_review_workspace_parity_test.dart' show captureWorkspace;
-import 'reference/change_review/HomeCard.dart';
 
-/// Compares the actual plugin entry card against the frozen pre-migration widget.
+/// Keeps the whole review entry clickable across themes, widths and text sizes.
 void main() {
   final fixture =
       jsonDecode(
@@ -17,35 +16,46 @@ void main() {
           )
           as Map<String, dynamic>;
   for (final brightness in Brightness.values) {
-    testWidgets('home card pixel parity: ${brightness.name}', (tester) async {
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final reference = await captureWorkspace(
+    for (final width in [280.0, 400.0]) {
+      testWidgets('quiet review entry: ${brightness.name}/$width', (
         tester,
-        ChangeReviewHomeReference(onOpenDiff: () {}),
-        brightness,
-        'home-${brightness.name}-native',
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pumpAndSettle();
-      final plugin = await captureWorkspace(
-        tester,
-        buildComposeDslLayoutForTest(
-          node: fixture,
-          hostContext: ComposeDslWebViewHostContext(
-            packageName: 'com.operit.change_review',
-            routeInstanceId: 'home-parity',
-            executionContextKey: 'home-parity',
-            dispatchAction: (_, [payload]) async => null,
-            runtimeOptionsProvider: () => {},
+      ) async {
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        var opened = false;
+        await captureWorkspace(
+          tester,
+          Align(
+            alignment: Alignment.topLeft,
+            child: buildComposeDslLayoutForTest(
+              node: fixture,
+              hostContext: ComposeDslWebViewHostContext(
+                packageName: 'com.operit.change_review',
+                routeInstanceId: 'home-layout',
+                executionContextKey: 'home-layout',
+                dispatchAction: (_, [payload]) async {
+                  opened = true;
+                  return null;
+                },
+                runtimeOptionsProvider: () => {},
+              ),
+              splitMarkdownContent: (_) async => [],
+              onTextInput: (_, _) async => null,
+            ),
           ),
-          splitMarkdownContent: (_) async => [],
-          onTextInput: (_, _) async => null,
-        ),
-        brightness,
-        'home-${brightness.name}-plugin',
-      );
-      expect(plugin, orderedEquals(reference));
-    });
+          brightness,
+          'home-${brightness.name}-$width',
+          width: width,
+          scale: 1.5,
+        );
+        expect(find.text('代码变更'), findsOneWidget);
+        expect(find.text('查看文件改动与对比'), findsOneWidget);
+        expect(find.byType(Card), findsNothing);
+        await tester.tap(find.text('查看文件改动与对比'));
+        await tester.pumpAndSettle();
+        expect(opened, isTrue);
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 }

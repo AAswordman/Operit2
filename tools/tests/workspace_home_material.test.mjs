@@ -7,20 +7,23 @@ const source = readFileSync(new URL(
   'apps/flutter/app/lib/ui/features/chat/components/workspace/WorkspaceHomeContent.dart', root,
 ), 'utf8');
 
-/** Unbound chats get a setup surface rather than a disabled overview toolbar. */
-test('unbound workspace has a dedicated responsive setup surface', () => {
-  assert.match(source, /if \(!hasBoundWorkspace\) \{\s+return _WorkspaceUnboundContent\(/);
+/** Workspace binding is optional; live tools remain in the shared overview. */
+test('unbound workspace keeps live tools and offers optional file binding', () => {
+  const home = source.split('class _WorkspaceHomeContentState ')[1]
+    .split('class _WorkspaceUnboundContent ')[0];
+  assert.doesNotMatch(home, /if \(!hasBoundWorkspace\) \{\s+return/);
+  assert.match(home, /else\s+_WorkspaceUnboundContent\(/);
+  assert.match(home, /_WorkspaceWorkstationGrid\(/);
+  assert.match(home, /if \(hasBoundWorkspace\) widget\.pluginContent/);
   const setup = source.split('class _WorkspaceUnboundContent ')[1]
     .split('class _WorkspaceWorkstationGrid ')[0];
-  for (const widget of ['SingleChildScrollView', 'ConstrainedBox', 'Wrap', 'FilledButton.icon', 'OutlinedButton.icon']) {
+  for (const widget of ['Wrap', 'FilledButton.tonalIcon', 'TextButton.icon']) {
     assert.ok(setup.includes(`${widget}(`), `Missing setup component: ${widget}`);
   }
-  assert.match(setup, /minHeight: constraints\.maxHeight/);
-  assert.match(setup, /maxWidth: 400/);
-  assert.match(setup, /minimumSize: const Size\(164, 48\)/);
+  assert.match(setup, /minimumSize: const Size\(0, 40\)/);
   assert.match(setup, /onPressed: onCreateWorkspace/);
   assert.match(setup, /onPressed: onChooseExistingWorkspace/);
-  assert.doesNotMatch(setup, /Card\.|onOpenTerminal|onOpenBrowser|workspaceUsage/);
+  assert.doesNotMatch(setup, /Card\.|SingleChildScrollView|onOpenTerminal|onOpenBrowser|workspaceUsage/);
   assert.doesNotMatch(source, /_WorkspaceCapsuleButton|当前对话未绑定工作区/);
 });
 
@@ -43,7 +46,7 @@ test('workspace home retains the PR toolbar and compact card geometry', () => {
   assert.match(source, /constraints\.maxWidth < 520/);
   assert.match(source, /minimumSize: const Size\(0, 28\)/);
   assert.match(source, /fontSize: 11\.5/);
-  assert.match(source, /color: colorScheme\.surfaceContainerLow/);
+  assert.match(source, /color: Colors\.transparent/);
   for (const group of ['_WorkspaceHeaderCard', '_TerminalWorkstationCard', '_BrowserWorkstationCard', '_WorkspaceFoldersCard']) {
     assert.ok(source.includes(`class ${group} `), `Missing PR layout group: ${group}`);
   }

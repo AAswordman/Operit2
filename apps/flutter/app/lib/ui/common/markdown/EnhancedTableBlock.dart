@@ -16,7 +16,7 @@ const double tableOuterVerticalPadding = 8;
 const double tableCornerRadius = 4;
 const double tableBorderWidth = 1;
 const double tableGridWidth = 0.5;
-const double tableLineHeight = 1.3;
+const double tableLineHeight = markdownLineHeight;
 
 class EnhancedTableBlock extends StatelessWidget {
   const EnhancedTableBlock({
@@ -254,6 +254,9 @@ class _MarkdownTableCellTextState extends State<_MarkdownTableCellText> {
                 ),
           textAlign: widget.textAlign,
           style: widget.style,
+          strutStyle: StrutStyle.fromTextStyle(
+            widget.style ?? const TextStyle(),
+          ),
         );
       } finally {
         _gestures.endFrame();

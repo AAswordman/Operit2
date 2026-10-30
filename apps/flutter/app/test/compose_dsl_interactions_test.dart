@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
@@ -260,7 +261,7 @@ void main() {
   );
 
   testWidgets(
-    'combinedClickable exposes independent tap and long press callbacks on arbitrary content',
+    'combinedClickable exposes tap and opens its menu by long press or secondary click',
     (tester) async {
       final events = <(String, Object?)>[];
       final tree = surface('Generic button');
@@ -279,7 +280,13 @@ void main() {
       await tester.pump();
       await tester.longPress(find.text('Generic button'));
       await tester.pump();
-      expect(events.map((event) => event.$1), ['tap', 'long']);
+      await tester.tap(
+        find.text('Generic button'),
+        buttons: kSecondaryMouseButton,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      expect(events.map((event) => event.$1), ['tap', 'long', 'long']);
     },
   );
   testWidgets(

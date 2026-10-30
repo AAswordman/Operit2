@@ -46,6 +46,7 @@ class ChatArea extends StatefulWidget {
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
+    this.messageNavigation,
     required this.loadLocatorEntries,
     required this.onRevealMessageForLocator,
     required this.onAutoScrollToBottomChanged,
@@ -86,6 +87,7 @@ class ChatArea extends StatefulWidget {
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
+  final ChatMessageNavigationController? messageNavigation;
   final LoadMessageLocatorEntries loadLocatorEntries;
   final RevealMessageForLocator onRevealMessageForLocator;
   final ValueChanged<bool> onAutoScrollToBottomChanged;
@@ -180,7 +182,9 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _messageContributions.setLanguage(Localizations.localeOf(context).languageCode);
+    _messageContributions.setLanguage(
+      Localizations.localeOf(context).languageCode,
+    );
   }
 
   /// Binds message actions to the mounted chat and exact answer revision, not plugin-supplied ids.
@@ -191,9 +195,16 @@ class _ChatAreaState extends State<ChatArea>
     Object? value,
   ) async {
     if (!mounted || widget.currentChatId != chatId) return;
-    final current = widget.messages.firstWhereOrNull((item) => item.timestamp == message.timestamp);
-    if (current == null || current.selectedVariantIndex != message.selectedVariantIndex) return;
-    if (!_messageContributions.entries.any((item) => item.mountIdentity == entry.mountIdentity)) return;
+    final current = widget.messages.firstWhereOrNull(
+      (item) => item.timestamp == message.timestamp,
+    );
+    if (current == null ||
+        current.selectedVariantIndex != message.selectedVariantIndex)
+      return;
+    if (!_messageContributions.entries.any(
+      (item) => item.mountIdentity == entry.mountIdentity,
+    ))
+      return;
     try {
       if (value is Map && value['type'] == 'toolpkg.message.rollback') {
         widget.onRollbackToMessage(message.timestamp);
@@ -208,13 +219,20 @@ class _ChatAreaState extends State<ChatArea>
         language: Localizations.localeOf(context).languageCode,
         hostState: {'chatId': chatId},
       );
-      if (mounted && widget.currentChatId == chatId && widget.messages.any((item) =>
-          item.timestamp == message.timestamp && item.selectedVariantIndex == message.selectedVariantIndex)) {
+      if (mounted &&
+          widget.currentChatId == chatId &&
+          widget.messages.any(
+            (item) =>
+                item.timestamp == message.timestamp &&
+                item.selectedVariantIndex == message.selectedVariantIndex,
+          )) {
         WorkspaceShell.session.openPluginPage(presentation);
       }
     } catch (error) {
       if (mounted && widget.currentChatId == chatId) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$error')));
       }
     }
   }
@@ -336,6 +354,7 @@ class _ChatAreaState extends State<ChatArea>
                       viewportHeight: _viewportHeight,
                       autoScrollToBottom: autoScrollToBottom,
                       hasNewerDisplayHistory: widget.hasNewerDisplayHistory,
+                      messageNavigation: widget.messageNavigation,
                       loadLocatorEntries: widget.loadLocatorEntries,
                       onRequestLatestMessages: widget.onShowLatestDisplayWindow,
                       onAutoScrollToBottomChanged:
@@ -1055,16 +1074,16 @@ class _ChatAreaState extends State<ChatArea>
         children: <Widget>[
           chatMessage,
           if (!selectionMode)
-          if (widget.currentChatId case final chatId?)
-            ChatMessageSlotHost(
-              catalog: _messageContributions,
-              chatId: chatId,
-              message: message,
-              isStreaming: isStreaming,
-              onActionResult: (entry, value) => unawaited(
-                _handleMessageContribution(chatId, message, entry, value),
+            if (widget.currentChatId case final chatId?)
+              ChatMessageSlotHost(
+                catalog: _messageContributions,
+                chatId: chatId,
+                message: message,
+                isStreaming: isStreaming,
+                onActionResult: (entry, value) => unawaited(
+                  _handleMessageContribution(chatId, message, entry, value),
+                ),
               ),
-            ),
           if (message.sender == 'ai' && message.variantCount > 1)
             _MessageVariantSwitcher(
               message: message,

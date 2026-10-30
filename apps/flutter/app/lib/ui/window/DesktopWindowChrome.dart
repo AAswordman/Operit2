@@ -11,7 +11,8 @@ import 'package:operit_ui/operit_ui.dart';
 bool get usesDesktopWindowChrome =>
     !kIsWeb &&
     (defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.windows);
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux);
 
 /// Owns the native caption appearance and its unscaled content inset per engine.
 class DesktopWindowChrome extends StatefulWidget {

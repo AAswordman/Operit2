@@ -1077,7 +1077,7 @@ function Workspace(ctx) {
         text({ text: relative, style: "bodySmall", color: c.outline, maxLines: 1, overflow: "ellipsis" })
       ]),
       line(),
-      UI.Box({ weight: 1, fillMaxWidth: true }, previewLoading ? UI.Box({ fillMaxSize: true, contentAlignment: "center" }, UI.CircularProgressIndicator({ width: 18, height: 18, strokeWidth: 2 })) : previewError !== "" ? UI.Box({ modifier: M.padding(12) }, text({ text: previewError })) : UI.ScrollArea({}, UI.Box({ modifier: M.padding(12) }, UI.SelectableText({ text: preview.content, style: "bodySmall", fontFamily: "monospace" }))))
+      UI.Box({ weight: 1, fillMaxWidth: true }, previewLoading ? UI.Box({ fillMaxSize: true, contentAlignment: "center" }, UI.CircularProgressIndicator({ width: 18, height: 18, strokeWidth: 2 })) : previewError !== "" ? UI.Box({ modifier: M.padding(12) }, text({ text: previewError })) : UI.ScrollArea({}, UI.Box({ modifier: M.padding(12) }, UI.SelectionContainer({}, UI.CodeText({ text: preview.content, filePath: preview.path, style: "bodySmall", fontFamily: "monospace" })))))
     ]);
   }
   const noChanges = error || (!workspace ? "项目变更将显示在此处" : source === "git" ? "当前分支工作区无未提交的 Git 改动" : source === "branch" ? "当前分支与基准分支无差异或未检测到上游基准" : "项目变更将显示在此处");

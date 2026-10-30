@@ -680,3 +680,52 @@ fn invalid_assistant_presentation_does_not_mutate_history() {
         operations.len()
     );
 }
+
+/// Locator titles use the saved author of the selected revision in both query paths.
+#[test]
+fn locator_previews_preserve_saved_participant_names() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, _) = fixture("locator-participant-names");
+    manager.writePluginExtension("host.chat.identity", &messageTarget(0),
+        json!({"title":"原始参与者","avatarUri":null})).unwrap();
+    manager.writePluginExtension("host.chat.identity", &messageTarget(2),
+        json!({"title":"另一个参与者","avatarUri":null})).unwrap();
+
+    // Only recorded participant identities supply names; obsolete role names are ignored.
+    for (timestamp, sender, roleName, title) in [
+        (43, "user", "Old user", Some("小明")),
+        (44, "ai", "废弃角色卡名字", None),
+        (45, "ai", "", None),
+        (46, "user", "废弃角色卡名字", None),
+        (47, "ai", "废弃角色卡名字", Some("  ")),
+    ] {
+        let mut message = ChatMessage::new_with_markdown_timestamp(
+            sender.to_string(), "locator-body".to_string(), timestamp);
+        message.roleName = roleName.to_string();
+        if let Some(title) = title {
+            message.pluginExtensions.insert("host.chat.identity".into(),
+                json!({"title":title,"avatarUri":null}));
+        }
+        manager.addMessage("extensions-chat".to_string(), message).unwrap();
+    }
+    for (index, query, expectedName) in [
+        (0, "", "原始参与者"),
+        (0, "base", "原始参与者"),
+        (2, "", "另一个参与者"),
+        (2, "variant-2", "另一个参与者"),
+        (1, "variant-1", ""),
+    ] {
+        manager.selectMessageVariant("extensions-chat".to_string(), 42, index).unwrap();
+        let previews = manager.loadChatMessageLocatorPreviews(
+            "extensions-chat".to_string(), query.to_string()).unwrap();
+        assert_eq!(previews[0].displayName, expectedName);
+        assert_eq!(previews[0].timestamp, 42);
+    }
+    for query in ["", "locator-body"] {
+        let previews = manager.loadChatMessageLocatorPreviews(
+            "extensions-chat".to_string(), query.to_string()).unwrap();
+        let names: Vec<_> = previews.iter().filter(|preview| preview.timestamp > 42)
+            .map(|preview| preview.displayName.as_str()).collect();
+        assert_eq!(names, ["小明", "", "", "", ""]);
+    }
+}

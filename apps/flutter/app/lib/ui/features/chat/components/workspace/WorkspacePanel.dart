@@ -23,7 +23,8 @@ import '../../../../main/layout/SidebarDockController.dart';
 import '../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
-import '../../../../theme/OperitGlassSurface.dart';
+import '../../../../theme/OperitTheme.dart';
+import 'WorkspacePanelSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceOverviewContributionCatalog.dart';
@@ -120,10 +121,11 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   bool? _workspaceOverviewUseEnglish;
   final WorkspaceOverviewContributionCatalog _workspaceOverviewContributions =
       WorkspaceOverviewContributionCatalog();
-  final EmbeddedPluginSurfaceCatalog _embeddedContributions = EmbeddedPluginSurfaceCatalog(
-    clients: _coreClients,
-    surfaces: const {'workspace_home'},
-  );
+  final EmbeddedPluginSurfaceCatalog _embeddedContributions =
+      EmbeddedPluginSurfaceCatalog(
+        clients: _coreClients,
+        surfaces: const {'workspace_home'},
+      );
   List<WorkspaceFileEntry> _workspaceOverviewMountedFolders =
       const <WorkspaceFileEntry>[];
   bool _workspaceOverviewMountedFoldersLoading = false;
@@ -181,7 +183,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _embeddedContributions.setLanguage(Localizations.localeOf(context).languageCode);
+    _embeddedContributions.setLanguage(
+      Localizations.localeOf(context).languageCode,
+    );
     final useEnglish = Localizations.localeOf(context).languageCode == 'en';
     if (_workspaceOverviewUseEnglish != useEnglish) {
       _workspaceOverviewUseEnglish = useEnglish;
@@ -337,26 +341,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final surfaceColor = theme.colorScheme.surface;
-    final borderColor = isDark
-        ? const Color(0xFF262626)
-        : theme.colorScheme.outlineVariant.withValues(alpha: 0.5);
-
-    return OperitGlassSurface(
-      color: surfaceColor,
-      layer: OperitGlassSurfaceLayer.panel,
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: borderColor, width: 1),
-      shadows: <BoxShadow>[
-        BoxShadow(
-          color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
-          blurRadius: 18,
-          offset: const Offset(0, 4),
-        ),
-      ],
-      clip: true,
+    return WorkspacePanelSurface(
+      transparentSurface: OperitTheme.of(context)
+          .themePreferenceSnapshot.transparentSurfaceEnabled,
       child: _buildWorkspaceLayout(),
     );
   }
@@ -1143,10 +1130,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   /// Resolves workspace surface actions only under their live authenticated owner.
-  Future<void> _handleEmbeddedAction(EmbeddedPluginSurfaceEntry entry, Object? value) async {
+  Future<void> _handleEmbeddedAction(
+    EmbeddedPluginSurfaceEntry entry,
+    Object? value,
+  ) async {
     final workspace = widget.workspacePath;
     final chatId = widget.currentChatId;
-    if (!_embeddedContributions.entries.any((item) => item.mountIdentity == entry.mountIdentity)) return;
+    if (!_embeddedContributions.entries.any(
+      (item) => item.mountIdentity == entry.mountIdentity,
+    ))
+      return;
     try {
       final request = PluginWorkspaceRequest.fromActionResult(value);
       if (request == null) return;
@@ -1157,11 +1150,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         language: Localizations.localeOf(context).languageCode,
         hostState: {..._session.pluginHostState, 'workspacePath': workspace},
       );
-      if (mounted && widget.workspacePath == workspace && widget.currentChatId == chatId) {
+      if (mounted &&
+          widget.workspacePath == workspace &&
+          widget.currentChatId == chatId) {
         _session.openPluginPage(presentation);
       }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -1197,9 +1195,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         catalog: _embeddedContributions,
         surface: 'workspace_home',
         instanceIdentity: (widget.currentChatId, widget.workspacePath),
-        hostState: {..._session.pluginHostState, 'workspacePath': widget.workspacePath},
+        hostState: {
+          ..._session.pluginHostState,
+          'workspacePath': widget.workspacePath,
+        },
         entryPadding: const EdgeInsets.only(bottom: 12),
-        onActionResult: (entry, value) => unawaited(_handleEmbeddedAction(entry, value)),
+        onActionResult: (entry, value) =>
+            unawaited(_handleEmbeddedAction(entry, value)),
       ),
       onFinishWebVisit: (tab, response) =>
           _finishWebVisitTab(tab, response, paneIndex: paneIndex),

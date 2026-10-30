@@ -56,21 +56,28 @@ def release_version() -> str:
 
 
 # Builds a versioned release filename without changing compound extensions.
-def release_asset_name(product: str, platform: str, arch: str, extension: str) -> str:
+def release_asset_name(product: str, platform: str, arch: str, extension: str, build_type: str | None = None) -> str:
     for value in (product, platform, arch):
         if re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", value) is None:
             raise ValueError(f"Invalid release target component: {value!r}")
     if extension not in ("apk", "hap", "zip", "tar.gz", "pkg", "ipa"):
         raise ValueError(f"Unsupported release extension: {extension}")
-    return f"operit2-{product}-{platform}-{arch}-{release_version()}.{extension}"
+    if product == "app" and platform == "macos":
+        build_type = build_type or "sandbox"
+        if build_type not in ("sandbox", "unsandbox"):
+            raise ValueError(f"Unsupported macOS build type: {build_type}")
+    elif build_type is not None:
+        raise ValueError("Build types apply only to macOS App packages")
+    suffix = f"-{build_type}" if build_type else ""
+    return f"operit2-{product}-{platform}-{arch}{suffix}-{release_version()}.{extension}"
 
 
 # Returns the exact filenames accepted for the current release across all targets.
 def release_asset_names() -> frozenset[str]:
-    version = release_version()
     return frozenset(
-        f"operit2-{product}-{platform}-{arch}-{version}.{extension}"
+        release_asset_name(product, platform, arch, extension, build_type)
         for product, platform, arch, extension in RELEASE_TARGETS
+        for build_type in (("sandbox", "unsandbox") if (product, platform) == ("app", "macos") else (None,))
     )
 
 

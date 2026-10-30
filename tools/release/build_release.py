@@ -1020,19 +1020,19 @@ def build_host_app(build_name, build_number):
         return
 
     if current_platform == HostPlatform.MACOS:
-        run(
-            [
-                sys.executable,
-                BUILD_SCRIPTS_DIR / "build_flutter_macos.py",
-                "--build-name",
-                build_name,
-                "--build-number",
-                build_number,
-                "--enforce-lockfile",
-                "--archive-path",
-                DIST_DIR / release_asset_name("app", "macos", "universal", "zip"),
-            ]
-        )
+        for build_type in ("sandbox", "unsandbox"):
+            run(
+                [
+                    sys.executable,
+                    BUILD_SCRIPTS_DIR / "build_flutter_macos.py",
+                    "--type", build_type,
+                    "--build-name", build_name,
+                    "--build-number", build_number,
+                    "--enforce-lockfile",
+                    "--archive-path",
+                    DIST_DIR / release_asset_name("app", "macos", "universal", "zip", build_type),
+                ]
+            )
         return
 
     raise RuntimeError(f"Unsupported host app platform: {current_platform}")

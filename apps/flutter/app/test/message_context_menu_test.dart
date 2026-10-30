@@ -15,6 +15,25 @@ import 'package:operit2/ui/common/components/RetainedPage.dart';
 void main() {
   setUpAll(ClientLogger.initialize);
 
+  for (final favorite in [false, true]) {
+    testWidgets('toggles favorite $favorite before refreshing', (tester) async {
+      final actions = <String>[];
+      await _openMenu(
+        tester,
+        selectedVariantIndex: 0,
+        variantCount: 1,
+        isFavorite: favorite,
+        onToggleFavorite: (timestamp, value) async =>
+            actions.add('$timestamp:$value'),
+        onRefresh: () async => actions.add('refresh'),
+      );
+      await tester.tap(find.text(favorite ? '取消收藏' : '收藏消息'));
+      await tester.pumpAndSettle();
+      expect(actions, ['123:${!favorite}', 'refresh']);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('disables regeneration while the chat is busy', (tester) async {
     final actions = <int>[];
     await _openMenu(
@@ -197,6 +216,8 @@ Future<void> _openMenu(
   required int selectedVariantIndex,
   required int variantCount,
   String sender = 'ai',
+  bool isFavorite = false,
+  MessageFavoriteAction? onToggleFavorite,
   _MessageMenuBridge? bridge,
   MessageVariantAction? onDeleteMessageVariant,
   MessageSelectionAction? onSelectMessageToEdit,
@@ -236,14 +257,15 @@ Future<void> _openMenu(
                   waitDurationMs: 0,
                   completedAt: 1,
                   displayMode: ChatMessageDisplayMode.normal,
-                  isFavorite: false,
+                  isFavorite: isFavorite,
                   contentStream: null,
                 ),
                 chatId: 'chat',
                 messageIndex: 0,
                 clients: clients,
                 packageManager: clients.application.packageManager(),
-                onToggleFavoriteMessage: (timestamp, isFavorite) async {},
+                onToggleFavoriteMessage:
+                    onToggleFavorite ?? (timestamp, isFavorite) async {},
                 onDeleteMessageVariant: onDeleteMessageVariant,
                 onSelectMessageToEdit: onSelectMessageToEdit,
                 onRegenerateMessage: onRegenerateMessage,

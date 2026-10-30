@@ -301,6 +301,33 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get messageLocatorSearchMessages => '搜索消息';
+
+  @override
+  String get messageLocatorViewFavorites => '查看收藏';
+
+  @override
+  String get messageLocatorAll => '全部';
+
+  @override
+  String get messageLocatorFavorites => '收藏';
+
+  @override
+  String get messageLocatorNoFavorites => '还没有收藏的消息';
+
+  @override
+  String get messageLocatorLoadFailed => '暂时无法加载消息，请重试';
+
+  @override
+  String get messageLocatorFavoriteFailed => '收藏更新失败，请重试';
+
+  @override
+  String get messageLocatorAddFavorite => '收藏消息';
+
+  @override
+  String get messageLocatorRemoveFavorite => '取消收藏';
+
+  @override
   String get messageLocatorNoMatches => '没有匹配的消息';
 
   @override

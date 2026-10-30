@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'support/compose_session_fixture.dart';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/features/chat/viewmodel/ChatMessageLookupRequests.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit_ui/operit_ui.dart';
@@ -514,6 +515,32 @@ void main() {
       expect(() => chatSidebarActivation(malformed), throwsFormatException);
     }
   });
+
+  for (final type in [
+    'toolpkg.chat.searchMessages',
+    'toolpkg.chat.viewFavorites',
+  ]) {
+    test('$type requires an exact chat request', () {
+      expect(chatSidebarLookupRequest(null), isNull);
+      final request = chatSidebarLookupRequest({
+        'type': type,
+        'chatId': 'chat-a',
+      })!;
+      expect(request.chatId, 'chat-a');
+      expect(request.favoritesOnly, type == 'toolpkg.chat.viewFavorites');
+      for (final malformed in <Object?>[
+        {'type': type},
+        {'type': type, 'chatId': ' '},
+        {'type': type, 'chatId': 42},
+        {'type': type, 'chatId': 'chat-a', 'extra': true},
+      ]) {
+        expect(
+          () => chatSidebarLookupRequest(malformed),
+          throwsFormatException,
+        );
+      }
+    });
+  }
 
   test(
     'detached-window requests require exactly type and a nonblank chatId',
@@ -1369,6 +1396,42 @@ void main() {
       expect(find.textContaining('selection changed'), findsOneWidget);
     },
   );
+
+  for (final type in [
+    'toolpkg.chat.searchMessages',
+    'toolpkg.chat.viewFavorites',
+  ]) {
+    testWidgets(
+      'plugin $type validates and activates before requesting lookup',
+      (tester) async {
+        final bridge = _registry();
+        final activated = <String>[];
+        final activation = Completer<void>();
+        await tester.pumpWidget(
+          _host(
+            bridge,
+            onActivate: activated.add,
+            onActivateAsync: (_) => activation.future,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await _openFirstTab(tester);
+        _launcher(tester).onActionResult!({'type': type, 'chatId': 'chat-a'});
+        await tester.pumpAndSettle();
+        expect(activated, ['chat-a']);
+        expect(ChatMessageLookupRequests.requests.value, isNull);
+        activation.complete();
+        await tester.pumpAndSettle();
+        final request = ChatMessageLookupRequests.requests.value!;
+        expect(request.chatId, 'chat-a');
+        expect(request.favoritesOnly, type == 'toolpkg.chat.viewFavorites');
+        ChatMessageLookupRequests.consume(request);
+        expect(bridge.historyReads, 1);
+        expect(bridge.catalogReads, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'detached windows validate current metadata without activating the chat',

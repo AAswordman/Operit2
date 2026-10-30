@@ -356,7 +356,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "echo \"$PRODUCT_NAME.app\" > \"$PROJECT_DIR\"/Flutter/ephemeral/.app_filename && \"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh embed\n";
+			shellScript = "echo \"$PRODUCT_NAME.app\" > \"$PROJECT_DIR\"/Flutter/ephemeral/.app_filename && /bin/sh \"$PROJECT_DIR/flutter_assemble.sh\" embed\n";
 		};
 		33A1B0102D00000200A1B010 /* Build Rust Bridge */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -396,7 +396,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
+			shellScript = "/bin/sh \"$PROJECT_DIR/flutter_assemble.sh\" && touch Flutter/ephemeral/tripwire";
 		};
 		8FB968987B9C93E4CADEB21B /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -562,7 +562,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(OPERIT_MACOS_ENTITLEMENTS_$(OPERIT_MACOS_TYPE))";
+				ENABLE_APP_SANDBOX = "$(OPERIT_MACOS_SANDBOX_$(OPERIT_MACOS_TYPE))";
+				OPERIT_MACOS_ENTITLEMENTS_FILE = DebugProfile.entitlements;
 				CODE_SIGN_STYLE = "$(OPERIT_CODE_SIGN_STYLE)";
 				COMBINE_HIDPI_IMAGES = YES;
 				INFOPLIST_FILE = Runner/Info.plist;
@@ -704,7 +706,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(OPERIT_MACOS_ENTITLEMENTS_$(OPERIT_MACOS_TYPE))";
+				ENABLE_APP_SANDBOX = "$(OPERIT_MACOS_SANDBOX_$(OPERIT_MACOS_TYPE))";
+				OPERIT_MACOS_ENTITLEMENTS_FILE = DebugProfile.entitlements;
 				CODE_SIGN_STYLE = "$(OPERIT_CODE_SIGN_STYLE)";
 				COMBINE_HIDPI_IMAGES = YES;
 				INFOPLIST_FILE = Runner/Info.plist;
@@ -734,7 +738,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(OPERIT_MACOS_ENTITLEMENTS_$(OPERIT_MACOS_TYPE))";
+				ENABLE_APP_SANDBOX = "$(OPERIT_MACOS_SANDBOX_$(OPERIT_MACOS_TYPE))";
+				OPERIT_MACOS_ENTITLEMENTS_FILE = Release.entitlements;
 				CODE_SIGN_STYLE = "$(OPERIT_CODE_SIGN_STYLE)";
 				COMBINE_HIDPI_IMAGES = YES;
 				INFOPLIST_FILE = Runner/Info.plist;

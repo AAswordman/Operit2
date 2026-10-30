@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 
 use crate::{
-    CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
+    CoreNodeRouter::{BindingRouteStatus, CoreNodeLocalRuntime, CoreNodeRouter},
     GeneratedRouteLifecycle,
     NodeServices::NodeServices,
     PeerSync::PeerSyncMethod,
@@ -913,6 +913,28 @@ impl RuntimeRemoteLinkService {
         targetNodeId: String,
         resumeContext: CoreRouteResumeContext,
     ) -> Result<(), String> {
+        self.changeRoute(chatId, targetNodeId, Some(resumeContext)).await
+    }
+
+    /// Selects the Core for subsequent chat execution without starting a new turn.
+    #[allow(non_snake_case)]
+    pub async fn changeChatExecutionDevice(
+        &self,
+        chatId: String,
+        targetNodeId: String,
+    ) -> Result<BindingRouteStatus, String> {
+        self.changeRoute(chatId.clone(), targetNodeId, None).await?;
+        self.nodeRouter.bindingRouteStatus(chatId)
+    }
+
+    /// Shares route validation, synchronization and binding installation with turn handoff.
+    #[allow(non_snake_case)]
+    async fn changeRoute(
+        &self,
+        chatId: String,
+        targetNodeId: String,
+        resumeContext: Option<CoreRouteResumeContext>,
+    ) -> Result<(), String> {
         if chatId.trim().is_empty() {
             return Err("route change chat id must not be empty".to_string());
         }
@@ -939,8 +961,10 @@ impl RuntimeRemoteLinkService {
                 "route change target is not reachable in the current device space: {targetNodeId}"
             ));
         }
+        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
+        let currentBinding = bindingStore.binding(&chatId)?;
         self.callChatCoreLifecycle(
-            &localNodeId,
+            &currentBinding.nodeId,
             GeneratedRouteLifecycle::BeforeChangeRoute,
             chatId.clone(),
             None,
@@ -948,8 +972,6 @@ impl RuntimeRemoteLinkService {
         .await?;
 
         let routeChangeStartedAt = currentTimeMillis();
-        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
-        let currentBinding = bindingStore.binding(&chatId)?;
         operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
             &format!(
@@ -1029,6 +1051,10 @@ impl RuntimeRemoteLinkService {
 
         self.installRouteBindingOnTarget(&targetNodeId, commit.operation.clone())
             .await?;
+
+        let Some(resumeContext) = resumeContext else {
+            return Ok(());
+        };
 
         operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",

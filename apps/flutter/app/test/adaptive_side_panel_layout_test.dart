@@ -52,7 +52,9 @@ void main() {
     }
   }
 
-  testWidgets('applies defaultWidthFraction on wide layout', (tester) async {
+  testWidgets('flush panel uses its full width fraction without an inset', (
+    tester,
+  ) async {
     const double screenWidth = 1000;
     tester.view.physicalSize = const Size(screenWidth, 800);
     tester.view.devicePixelRatio = 1;
@@ -69,6 +71,7 @@ void main() {
             animate: false,
             defaultWidth: 360,
             defaultWidthFraction: 0.45,
+            widePanelPadding: EdgeInsets.zero,
             panel: const SizedBox(key: panelKey),
             child: const SizedBox.expand(),
           ),
@@ -79,5 +82,8 @@ void main() {
 
     final panelRect = tester.getRect(find.byKey(panelKey));
     expect(panelRect.width, closeTo(screenWidth * 0.45, 0.001));
+    expect(panelRect.top, 0);
+    expect(panelRect.bottom, 800);
+    expect(panelRect.right, screenWidth);
   });
 }

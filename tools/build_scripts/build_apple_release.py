@@ -9,6 +9,7 @@ from pathlib import Path
 from common import DIST_DIR, REPO_ROOT, copy_required_file, host_arch, release_asset_name, run
 
 
+MACOS_TYPES = ("sandbox", "unsandbox")
 BUILD_SCRIPTS_DIR = REPO_ROOT / "tools" / "build_scripts"
 
 
@@ -20,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dist-dir", type=Path, default=DIST_DIR)
     parser.add_argument("--cli-arches", default="all", choices=["host", "all", "x86_64", "aarch64"])
     parser.add_argument("--products", nargs="+", choices=["app", "cli"], default=["app", "cli"])
+    parser.add_argument("--macos-types", nargs="+", choices=MACOS_TYPES, default=list(MACOS_TYPES))
     parser.add_argument("--include-ios", action="store_true", help="Build the unsigned iOS app package.")
     return parser.parse_args()
 
@@ -32,20 +34,21 @@ def require_macos_host() -> None:
 
 
 # Builds the macOS app package and, when selected, the iOS app package.
-def build_apple_apps(build_name: str, build_number: str, dist_dir: Path, include_ios: bool) -> None:
-    run(
-        [
-            sys.executable,
-            BUILD_SCRIPTS_DIR / "build_flutter_macos.py",
-            "--build-name",
-            build_name,
-            "--build-number",
-            build_number,
-            "--enforce-lockfile",
-            "--archive-path",
-            dist_dir / release_asset_name("app", "macos", "universal", "zip"),
-        ],
-    )
+def build_apple_apps(build_name: str, build_number: str, dist_dir: Path, include_ios: bool,
+                     macos_types: list[str] | tuple[str, ...] = MACOS_TYPES) -> None:
+    for build_type in dict.fromkeys(macos_types):
+        run(
+            [
+                sys.executable,
+                BUILD_SCRIPTS_DIR / "build_flutter_macos.py",
+                "--type", build_type,
+                "--build-name", build_name,
+                "--build-number", build_number,
+                "--enforce-lockfile",
+                "--archive-path",
+                dist_dir / release_asset_name("app", "macos", "universal", "zip", build_type),
+            ],
+        )
     if include_ios:
         run(
             [
@@ -94,7 +97,7 @@ def main() -> int:
 
     products = set(args.products)
     if "app" in products:
-        build_apple_apps(args.build_name, args.build_number, args.dist_dir, args.include_ios)
+        build_apple_apps(args.build_name, args.build_number, args.dist_dir, args.include_ios, args.macos_types)
     if "cli" in products:
         build_apple_cli(args.cli_arches, args.dist_dir)
     return 0

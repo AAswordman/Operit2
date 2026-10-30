@@ -311,6 +311,35 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get messageLocatorSearchMessages => 'Search messages';
+
+  @override
+  String get messageLocatorViewFavorites => 'View favorites';
+
+  @override
+  String get messageLocatorAll => 'All';
+
+  @override
+  String get messageLocatorFavorites => 'Favorites';
+
+  @override
+  String get messageLocatorNoFavorites => 'No favorite messages yet';
+
+  @override
+  String get messageLocatorLoadFailed =>
+      'Could not load messages. Please try again.';
+
+  @override
+  String get messageLocatorFavoriteFailed =>
+      'Could not update favorite. Please try again.';
+
+  @override
+  String get messageLocatorAddFavorite => 'Favorite message';
+
+  @override
+  String get messageLocatorRemoveFavorite => 'Remove favorite';
+
+  @override
   String get messageLocatorNoMatches => 'No matching messages';
 
   @override

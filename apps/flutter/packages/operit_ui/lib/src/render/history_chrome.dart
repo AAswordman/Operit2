@@ -450,6 +450,7 @@ class ThemeConversationRow extends StatelessWidget {
         borderRadius: itemShape,
         onTap: onTap,
         onLongPress: onLongPress,
+        onSecondaryTap: onLongPress,
         child: Padding(
           padding: EdgeInsetsDirectional.fromSTEB(
             workspaceStyle ? 4.0 : 6.0,

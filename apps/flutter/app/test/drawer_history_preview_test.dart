@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/features/chat/viewmodel/ChatMessageLookupRequests.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/host/AppToastController.dart';
@@ -81,6 +82,47 @@ void main() {
       await tester.pump();
     },
   );
+
+  for (final entry in <(String, bool)>[('搜索消息', false), ('查看收藏', true)]) {
+    testWidgets(
+      'sidebar ${entry.$1} activates the selected conversation first',
+      (tester) async {
+        final bridge = _DrawerBridge();
+        await _pumpDrawer(tester, bridge, [
+          _history('lookup', 0),
+        ], currentChatId: 'another-chat');
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(DrawerContent)),
+        )!;
+        final row = find.byType(ConversationDrawerItem);
+        await tester.tap(
+          row,
+          buttons: kSecondaryMouseButton,
+          kind: PointerDeviceKind.mouse,
+        );
+        await _pumpSidebar(tester);
+        await tester.tap(
+          find.text(
+            entry.$2
+                ? l10n.messageLocatorViewFavorites
+                : l10n.messageLocatorSearchMessages,
+          ),
+        );
+        await _pumpSidebar(tester);
+        final calls = bridge.calls.where(
+          (call) => call.methodName == 'switchChat',
+        );
+        expect(calls, hasLength(1));
+        expect((calls.single.args as Map)['chatId'], 'lookup-0');
+        final request = ChatMessageLookupRequests.requests.value!;
+        expect(request.chatId, 'lookup-0');
+        expect(request.favoritesOnly, entry.$2);
+        ChatMessageLookupRequests.consume(request);
+        ChatSelectionTransition.complete('lookup-0');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('brand header fits the narrow drawer beside the tab switch', (
     tester,

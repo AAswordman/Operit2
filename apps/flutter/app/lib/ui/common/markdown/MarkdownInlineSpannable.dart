@@ -9,7 +9,7 @@ import 'MarkdownLatexBlock.dart';
 import 'MarkdownLink.dart';
 import 'MarkdownNodeGrouper.dart';
 
-const double markdownLineHeight = 1.4;
+const double markdownLineHeight = 1.6;
 const double markdownLetterSpacing = 0.35;
 
 /// Paints Core's semantic inline tree. This layer never reads Markdown syntax.
@@ -85,10 +85,13 @@ InlineSpan _inlineSpan(
       ).copyWith(color: color, decorationColor: color);
       break;
     case MarkdownNodeType.inlineCode:
+      const fontSizeFactor = .9;
       final color = style.color ?? Colors.black;
       style = style
-          .apply(fontSizeFactor: .9)
+          .apply(fontSizeFactor: fontSizeFactor)
           .copyWith(
+            // Keep the surrounding line height when reducing the glyph size.
+            height: (style.height ?? markdownLineHeight) / fontSizeFactor,
             fontFamily: markdownCodeFontFamily,
             fontFamilyFallback: markdownCodeFontFamilyFallback,
             backgroundColor: color.withValues(

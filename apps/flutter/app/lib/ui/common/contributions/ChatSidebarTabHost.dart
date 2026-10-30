@@ -12,6 +12,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../data/preferences/UserPreferencesManager.dart';
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
+import '../../features/chat/viewmodel/ChatMessageLookupRequests.dart';
 import '../components/M3LoadingIndicator.dart';
 import '../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
@@ -41,6 +42,18 @@ String? chatSidebarActivation(Object? raw) =>
 /// Returns a detached-window request only for the exact generic action shape.
 String? chatSidebarWindowRequest(Object? raw) =>
     _chatSidebarActionChatId(raw, 'toolpkg.chat.openInWindow');
+
+/// Uses the same validated host activation path for plugin-owned lookup menus.
+ChatMessageLookupRequest? chatSidebarLookupRequest(Object? raw) {
+  final search = _chatSidebarActionChatId(raw, 'toolpkg.chat.searchMessages');
+  if (search != null) {
+    return ChatMessageLookupRequest(search, favoritesOnly: false);
+  }
+  final favorites = _chatSidebarActionChatId(raw, 'toolpkg.chat.viewFavorites');
+  return favorites == null
+      ? null
+      : ChatMessageLookupRequest(favorites, favoritesOnly: true);
+}
 
 String? _chatSidebarActionChatId(Object? raw, String type) {
   if (raw is! Map || raw['type'] != type) {
@@ -350,7 +363,9 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
     var acquiredActivation = false;
     try {
       final windowChatId = chatSidebarWindowRequest(raw);
-      final chatId = windowChatId ?? chatSidebarActivation(raw);
+      final lookup = chatSidebarLookupRequest(raw);
+      final chatId =
+          windowChatId ?? lookup?.chatId ?? chatSidebarActivation(raw);
       if (chatId == null) return;
       if (windowChatId != null && widget.onOpenChatInWindow == null) {
         throw UnsupportedError('Detached chat windows are not available.');
@@ -396,6 +411,12 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
         await openInWindow(chats.firstWhere((chat) => chat.id == chatId));
       } else {
         await widget.onActivateChat(chatId);
+        if (lookup != null) {
+          ChatMessageLookupRequests.open(
+            chatId,
+            favoritesOnly: lookup.favoritesOnly,
+          );
+        }
       }
     } catch (error) {
       if (mounted) setState(() => _actionError = error);

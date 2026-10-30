@@ -68,6 +68,7 @@ class WorkspaceShell extends StatelessWidget {
         : null;
     return AdaptiveSidePanel(
       open: workspaceOpen,
+      widePanelPadding: EdgeInsets.zero,
       onOpenChanged: onWorkspaceOpenChanged,
       breakpoint: workspaceTabletBreakpoint,
       defaultWidth: workspaceDefaultTabletWidth,

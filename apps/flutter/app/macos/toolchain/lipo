@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Keep Flutter's universal-architecture verification compatible with Xcode lipo."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def run_lipo(tool, arguments):
+    # Flutter uses: lipo <binary> -verify_arch <arch> [<arch> ...].
+    # Xcode 27 rejects multiple archs despite listing them in the fat binary.
+    # Verify each requested architecture; preserve the first real failure.
+    if len(arguments) > 3 and arguments[1] == "-verify_arch" and Path(arguments[0]).is_file():
+        for arch in arguments[2:]:
+            result = subprocess.run([tool, arguments[0], "-verify_arch", arch])
+            if result.returncode:
+                return result.returncode
+        return 0
+    return subprocess.run([tool, *arguments]).returncode
+
+
+if __name__ == "__main__":
+    tool = subprocess.check_output(["/usr/bin/xcrun", "--find", "lipo"], text=True).strip()
+    raise SystemExit(run_lipo(tool, sys.argv[1:]))

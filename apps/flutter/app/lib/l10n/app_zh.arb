@@ -154,6 +154,15 @@
       }
     }
   },
+  "messageLocatorSearchMessages": "搜索消息",
+  "messageLocatorViewFavorites": "查看收藏",
+  "messageLocatorAll": "全部",
+  "messageLocatorFavorites": "收藏",
+  "messageLocatorNoFavorites": "还没有收藏的消息",
+  "messageLocatorLoadFailed": "暂时无法加载消息，请重试",
+  "messageLocatorFavoriteFailed": "收藏更新失败，请重试",
+  "messageLocatorAddFavorite": "收藏消息",
+  "messageLocatorRemoveFavorite": "取消收藏",
   "messageLocatorNoMatches": "没有匹配的消息",
   "messageSenderUser": "用户",
   "messageSenderSummary": "总结",

@@ -24,6 +24,7 @@ class AdaptiveSidePanel extends StatefulWidget {
     this.resizeHandleVisualWidth = 3,
     this.resizeHandleHeight = 56,
     this.closedDropTarget,
+    this.widePanelPadding = const EdgeInsets.all(8),
     this.animate = true,
   });
 
@@ -40,6 +41,9 @@ class AdaptiveSidePanel extends StatefulWidget {
   final double resizeHandleVisualWidth;
   final double resizeHandleHeight;
   final Widget? closedDropTarget;
+
+  /// Embedded panes can meet the host edges without adding a second frame.
+  final EdgeInsetsGeometry widePanelPadding;
   final bool animate;
 
   /// Creates the state that tracks the panel width and drag interaction.
@@ -86,11 +90,11 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
             : constraints.maxWidth;
         final targetDefaultWidth =
             widget.defaultWidthFraction != null && useWideLayout
-                ? math.max(
-                    widget.defaultWidth,
-                    constraints.maxWidth * widget.defaultWidthFraction!,
-                  )
-                : widget.defaultWidth;
+            ? math.max(
+                widget.defaultWidth,
+                constraints.maxWidth * widget.defaultWidthFraction!,
+              )
+            : widget.defaultWidth;
         final panelWidth = _resolvePanelWidth(
           targetDefaultWidth,
           minimumPanelWidth,
@@ -170,7 +174,7 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
                   active: widget.open || _closing,
                   child: useWideLayout
                       ? Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                          padding: widget.widePanelPadding,
                           child: widget.panel,
                         )
                       : widget.panel,

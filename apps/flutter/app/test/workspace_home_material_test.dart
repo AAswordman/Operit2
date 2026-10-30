@@ -31,9 +31,15 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          expect(find.text('查看变更'), findsOneWidget);
-          expect(find.byType(Card), findsNWidgets(5));
-          expect(find.text('代码变更审查'), findsOneWidget);
+          expect(find.text('查看文件改动与对比'), findsOneWidget);
+          expect(find.byType(Card), findsNWidgets(4));
+          expect(
+            tester
+                .widgetList<Card>(find.byType(Card))
+                .every((card) => card.color == Colors.transparent),
+            isTrue,
+          );
+          expect(find.text('代码变更'), findsOneWidget);
           expect(find.text('就绪'), findsNothing);
           expect(find.text('0 个终端'), findsNothing);
           expect(find.text('0 个浏览器'), findsNothing);
@@ -85,50 +91,76 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          expect(find.text('为当前对话添加工作区'), findsOneWidget);
-          expect(find.byType(Card), findsNothing);
+          expect(find.text('工作区（可选）'), findsOneWidget);
           expect(find.byType(MenuAnchor), findsNothing);
-          expect(find.text('查看变更'), findsNothing);
-          expect(find.text('终端工件'), findsNothing);
-          expect(find.text('浏览器工件'), findsNothing);
+          expect(find.text('代码变更'), findsNothing);
+          expect(find.byTooltip('挂载文件夹'), findsNothing);
           expect(find.text('当前对话未绑定工作区'), findsNothing);
-          for (final (label, call) in <(String, String)>[
-            ('创建工作区', 'create'),
-            ('选择工作区', 'choose'),
+          for (final (action, call) in <(Finder, String)>[
+            (find.widgetWithText(FilledButton, '创建工作区'), 'create'),
+            (find.widgetWithText(TextButton, '选择工作区'), 'choose'),
+            (find.byTooltip('新建终端'), 'terminal'),
+            (find.byTooltip('新建浏览器页面'), 'browser'),
           ]) {
-            final action = find.ancestor(
-              of: find.text(label),
-              matching: find.byWidgetPredicate(
-                (widget) => widget is ButtonStyleButton,
-              ),
-            );
-            await tester.ensureVisible(action);
+            await tester.scrollUntilVisible(action, 80);
             await tester.pumpAndSettle();
-            expect(tester.getSize(action).height, greaterThanOrEqualTo(48));
+            if (tester.widget(action) is ButtonStyleButton) {
+              expect(tester.getSize(action).height, greaterThanOrEqualTo(40));
+            }
             await tester.tap(action);
             expect(fixture.calls.last, call);
           }
+          expect(find.byType(Card), findsNWidgets(2));
+          expect(find.text('终端工件'), findsOneWidget);
+          expect(find.text('浏览器工件'), findsOneWidget);
           expect(tester.takeException(), isNull);
         });
       }
     }
   }
 
-  testWidgets('binding swaps the setup screen for the workspace overview', (
+  testWidgets('binding keeps live tools available across workspace changes', (
     tester,
   ) async {
     final fixture = _HomeFixture();
     addTearDown(fixture.dispose);
-    await tester.pumpWidget(fixture.app(bound: false));
-    expect(find.text('创建工作区'), findsOneWidget);
-    await tester.pumpWidget(fixture.app());
-    expect(find.text('创建工作区'), findsNothing);
-    expect(find.text(_HomeFixture.name), findsOneWidget);
-    expect(find.text('终端工件'), findsOneWidget);
-    await tester.pumpWidget(fixture.app(bound: false));
-    expect(find.text('创建工作区'), findsOneWidget);
-    expect(find.text(_HomeFixture.name), findsNothing);
-    expect(tester.takeException(), isNull);
+    fixture.terminals.value = 1;
+    fixture.browsers.value = 1;
+    fixture.sessions.value = const <WorkspaceTerminalSessionInfo>[
+      WorkspaceTerminalSessionInfo(
+        sessionId: 'standalone',
+        sessionName: 'Standalone terminal',
+        platform: 'host',
+        terminal: 'shell',
+        terminalType: 'shell',
+        sessionKind: 'pty',
+        workingDir: '/app/data',
+        commandRunning: false,
+      ),
+    ];
+    for (final bound in <bool>[false, true, false]) {
+      await tester.pumpWidget(fixture.app(bound: bound));
+      await tester.pumpAndSettle();
+      expect(find.text('创建工作区'), bound ? findsNothing : findsOneWidget);
+      expect(
+        find.text(_HomeFixture.name),
+        bound ? findsOneWidget : findsNothing,
+      );
+      expect(find.text('Standalone terminal'), findsOneWidget);
+      expect(find.text('终端工件'), findsOneWidget);
+      expect(find.text('浏览器工件'), findsOneWidget);
+      await tester.tap(find.text('切换'));
+      await tester.tap(find.text('管理全部'));
+      await tester.tap(find.byTooltip('新建终端'));
+      await tester.tap(find.byTooltip('新建浏览器页面'));
+      expect(fixture.calls.sublist(fixture.calls.length - 4), <String>[
+        'select:standalone',
+        'browsers',
+        'terminal',
+        'browser',
+      ]);
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('compact review and session creation preserve their callbacks', (
@@ -137,7 +169,7 @@ void main() {
     final fixture = _HomeFixture();
     addTearDown(fixture.dispose);
     await tester.pumpWidget(fixture.app());
-    await tester.tap(find.text('查看变更'));
+    await tester.tap(find.text('代码变更'));
     await tester.tap(find.byTooltip('新建终端'));
     await tester.tap(find.byTooltip('新建浏览器页面'));
     expect(fixture.calls, <String>['review', 'terminal', 'browser']);
@@ -224,66 +256,68 @@ void main() {
     });
   }
 
-  testWidgets('live terminal rows retain select, close and view-all actions', (
-    tester,
-  ) async {
-    final fixture = _HomeFixture();
-    addTearDown(fixture.dispose);
-    await tester.pumpWidget(fixture.app());
-    fixture.terminals.value = 4;
-    fixture.sessions.value = <WorkspaceTerminalSessionInfo>[
-      for (var index = 0; index < 4; index++)
-        WorkspaceTerminalSessionInfo(
-          sessionId: '$index',
-          sessionName: 'session-$index',
-          platform: 'host',
-          terminal: 'shell',
-          terminalType: 'shell',
-          sessionKind: 'pty',
-          workingDir: '/app/workspaces/project',
-          commandRunning: false,
-        ),
-    ];
-    await tester.pumpAndSettle();
-    expect(find.text('4 个运行中'), findsNothing);
-    expect(find.byTooltip('新建终端'), findsOneWidget);
-    expect(find.text('session-2'), findsOneWidget);
-    expect(find.text('session-3'), findsNothing);
-    await tester.tap(find.text('切换').first);
-    await tester.tap(find.byIcon(Icons.close_rounded).first);
-    expect(find.text('4 个终端'), findsNothing);
-    expect(find.text('管理全部'), findsOneWidget);
-    await tester.tap(find.text('管理全部'));
-    expect(fixture.calls, <String>['select:0', 'close:0', 'terminals']);
+  for (final bound in <bool>[false, true]) {
+    testWidgets('live terminal rows retain actions / bound $bound', (
+      tester,
+    ) async {
+      final fixture = _HomeFixture();
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.app(bound: bound));
+      fixture.terminals.value = 4;
+      fixture.sessions.value = <WorkspaceTerminalSessionInfo>[
+        for (var index = 0; index < 4; index++)
+          WorkspaceTerminalSessionInfo(
+            sessionId: '$index',
+            sessionName: 'session-$index',
+            platform: 'host',
+            terminal: 'shell',
+            terminalType: 'shell',
+            sessionKind: 'pty',
+            workingDir: '/app/workspaces/project',
+            commandRunning: false,
+          ),
+      ];
+      await tester.pumpAndSettle();
+      expect(find.text('4 个运行中'), findsNothing);
+      expect(find.byTooltip('新建终端'), findsOneWidget);
+      expect(find.text('session-2'), findsOneWidget);
+      expect(find.text('session-3'), findsNothing);
+      await tester.tap(find.text('切换').first);
+      await tester.tap(find.byIcon(Icons.close_rounded).first);
+      expect(find.text('4 个终端'), findsNothing);
+      expect(find.text('管理全部'), findsOneWidget);
+      await tester.tap(find.text('管理全部'));
+      expect(fixture.calls, <String>['select:0', 'close:0', 'terminals']);
 
-    fixture.terminals.value = 0;
-    fixture.sessions.value = const <WorkspaceTerminalSessionInfo>[];
-    await tester.pumpAndSettle();
-    expect(find.text('暂无运行中的终端会话'), findsOneWidget);
-    expect(find.text('管理全部'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+      fixture.terminals.value = 0;
+      fixture.sessions.value = const <WorkspaceTerminalSessionInfo>[];
+      await tester.pumpAndSettle();
+      expect(find.text('暂无运行中的终端会话'), findsOneWidget);
+      expect(find.text('管理全部'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
 
-  testWidgets('session management stays reachable before row details arrive', (
-    tester,
-  ) async {
-    final fixture = _HomeFixture();
-    addTearDown(fixture.dispose);
-    await tester.pumpWidget(fixture.app());
-    fixture.terminals.value = 2;
-    fixture.browsers.value = 1;
-    await tester.pumpAndSettle();
-    expect(find.text('2 个运行中'), findsNothing);
-    expect(find.text('1 个打开'), findsNothing);
-    expect(find.byIcon(Icons.add_rounded), findsNWidgets(3));
-    expect(find.text('暂无运行中的终端会话'), findsNothing);
-    expect(find.text('暂无打开的浏览器页面'), findsNothing);
-    expect(find.text('管理全部'), findsNWidgets(2));
-    await tester.tap(find.text('管理全部').first);
-    await tester.tap(find.text('管理全部').last);
-    expect(fixture.calls, <String>['terminals', 'browsers']);
-    expect(tester.takeException(), isNull);
-  });
+    testWidgets('session management before row details / bound $bound', (
+      tester,
+    ) async {
+      final fixture = _HomeFixture();
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.app(bound: bound));
+      fixture.terminals.value = 2;
+      fixture.browsers.value = 1;
+      await tester.pumpAndSettle();
+      expect(find.text('2 个运行中'), findsNothing);
+      expect(find.text('1 个打开'), findsNothing);
+      expect(find.byIcon(Icons.add_rounded), findsNWidgets(3));
+      expect(find.text('暂无运行中的终端会话'), findsNothing);
+      expect(find.text('暂无打开的浏览器页面'), findsNothing);
+      expect(find.text('管理全部'), findsNWidgets(2));
+      await tester.tap(find.text('管理全部').first);
+      await tester.tap(find.text('管理全部').last);
+      expect(fixture.calls, <String>['terminals', 'browsers']);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
 
 class _HomeFixture {

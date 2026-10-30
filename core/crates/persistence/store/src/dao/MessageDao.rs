@@ -128,7 +128,13 @@ impl MessageDao {
                         ))
                     END AS contentLength,
                     displayMode AS displayMode,
-                    isFavorite AS isFavorite
+                    isFavorite AS isFavorite,
+                    CASE WHEN selectedVariantIndex = 0 THEN pluginExtensions ELSE (
+                        SELECT pluginExtensions FROM message_variants
+                        WHERE message_variants.chatId = messages.chatId
+                            AND message_variants.messageTimestamp = messages.timestamp
+                            AND message_variants.variantIndex = messages.selectedVariantIndex
+                    ) END AS pluginExtensions
                 FROM messages
                 WHERE chatId = ?1
                 ORDER BY timestamp ASC
@@ -136,17 +142,7 @@ impl MessageDao {
                 sqliteParams![chatId, previewCharCount],
             )?
             .into_iter()
-            .map(|row| {
-                Ok(ChatMessageLocatorPreview {
-                    messageIndex: row.get(0)?,
-                    timestamp: row.get(1)?,
-                    sender: row.get(2)?,
-                    previewContent: row.get(3)?,
-                    contentLength: row.get(4)?,
-                    displayMode: row.get(5)?,
-                    isFavorite: row.get(6)?,
-                })
-            })
+            .map(|row| mapLocatorPreview(&row))
             .collect()
     }
 
@@ -206,7 +202,13 @@ impl MessageDao {
                         )
                     )) AS contentLength,
                     displayMode AS displayMode,
-                    isFavorite AS isFavorite
+                    isFavorite AS isFavorite,
+                    CASE WHEN selectedVariantIndex = 0 THEN pluginExtensions ELSE (
+                        SELECT pluginExtensions FROM message_variants
+                        WHERE message_variants.chatId = messages.chatId
+                            AND message_variants.messageTimestamp = messages.timestamp
+                            AND message_variants.variantIndex = messages.selectedVariantIndex
+                    ) END AS pluginExtensions
                 FROM messages
                 WHERE chatId = ?1
                     AND NOT (sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER')
@@ -226,17 +228,7 @@ impl MessageDao {
                 sqliteParams![chatId, query, previewCharCount],
             )?
             .into_iter()
-            .map(|row| {
-                Ok(ChatMessageLocatorPreview {
-                    messageIndex: row.get(0)?,
-                    timestamp: row.get(1)?,
-                    sender: row.get(2)?,
-                    previewContent: row.get(3)?,
-                    contentLength: row.get(4)?,
-                    displayMode: row.get(5)?,
-                    isFavorite: row.get(6)?,
-                })
-            })
+            .map(|row| mapLocatorPreview(&row))
             .collect()
     }
 
@@ -845,4 +837,27 @@ pub(crate) fn insertMessageParams(
             encodePluginExtensions(&message.pluginExtensions)?,
         ])
     }
+}
+
+/// Reads the saved author from the same revision as the locator's preview text.
+fn mapLocatorPreview(row: &SqliteRow) -> Result<ChatMessageLocatorPreview, SqliteStoreError> {
+    let extensionsJson: String = row.get(7)?;
+    let extensions = decodePluginExtensions(&extensionsJson)?;
+    let displayName = extensions.get("host.chat.identity")
+        .and_then(|identity| identity.get("title"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or_default()
+        .to_string();
+    Ok(ChatMessageLocatorPreview {
+        messageIndex: row.get(0)?,
+        timestamp: row.get(1)?,
+        sender: row.get(2)?,
+        displayName,
+        previewContent: row.get(3)?,
+        contentLength: row.get(4)?,
+        displayMode: row.get(5)?,
+        isFavorite: row.get(6)?,
+    })
 }

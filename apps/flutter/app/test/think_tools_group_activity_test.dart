@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
@@ -37,7 +38,11 @@ const _answer = MarkdownNodeStable(
 );
 
 /// Supplies group inputs without depending on tool presentation or generated runtime clients.
-Widget _renderGroup(List<MarkdownNodeStable> nodes, {bool live = true}) {
+Widget _renderGroup(
+  List<MarkdownNodeStable> nodes, {
+  bool live = true,
+  List<Widget> body = const [Text('Tool body')],
+}) {
   const grouper = ThinkToolsXmlNodeGrouper(showThinkingProcess: true);
   final group =
       grouper.group(nodes, 'activity-test').first as MarkdownGroupItem;
@@ -68,7 +73,7 @@ Widget _renderGroup(List<MarkdownNodeStable> nodes, {bool live = true}) {
               required endIndexInclusive,
               required renderInstanceKeyPrefix,
               required shouldRenderNode,
-            }) => [const Text('Tool body')],
+            }) => body,
         xmlStreamResolver: (index) =>
             live && index == 0 ? const Stream<String>.empty() : null,
         xmlMarkdownEventStreamResolver: (_) => null,
@@ -81,6 +86,163 @@ Widget _renderGroup(List<MarkdownNodeStable> nodes, {bool live = true}) {
 }
 
 void main() {
+  Future<ScrollPosition> pumpScrollableGroup(WidgetTester tester) async {
+    await tester.pumpWidget(
+      _renderGroup([_tool], body: const [SizedBox(height: 1600)]),
+    );
+    await tester.pump();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable))
+        .position;
+    expect(position.extentAfter, 0);
+    return position;
+  }
+
+  Future<void> appendOutput(WidgetTester tester) async {
+    await tester.pumpWidget(
+      _renderGroup([_tool], body: const [SizedBox(height: 1800)]),
+    );
+    await tester.pump();
+  }
+
+  testWidgets('wheel scrolling up pauses live group following until bottom', (
+    tester,
+  ) async {
+    final position = await pumpScrollableGroup(tester);
+    final bottom = position.pixels;
+    final center = tester.getCenter(find.byType(ListView));
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: center, scrollDelta: const Offset(0, -20)),
+    );
+    await tester.pump();
+    expect(position.pixels, closeTo(bottom - 20, 0.1));
+
+    await appendOutput(tester);
+    expect(position.pixels, closeTo(bottom - 20, 0.1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(position.pixels, closeTo(bottom - 20, 0.1));
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: center, scrollDelta: const Offset(0, 10000)),
+    );
+    await tester.pump();
+    expect(position.extentAfter, 0);
+    await tester.pumpWidget(
+      _renderGroup([_tool], body: const [SizedBox(height: 2000)]),
+    );
+    await tester.pump();
+    expect(position.extentAfter, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a slow upward drag yields to the user before leaving bottom', (
+    tester,
+  ) async {
+    final position = await pumpScrollableGroup(tester);
+    final bottom = position.pixels;
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(ListView)),
+    );
+    await gesture.moveBy(const Offset(0, 30));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 10));
+    await tester.pump();
+    expect(position.pixels, lessThan(bottom));
+    expect(position.extentAfter, lessThan(80));
+    final readingOffset = position.pixels;
+
+    await appendOutput(tester);
+    expect(position.pixels, closeTo(readingOffset, 0.1));
+    await gesture.up();
+    await tester.pump(const Duration(seconds: 1));
+    expect(position.pixels, lessThan(bottom));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('an untouched live group keeps following appended output', (
+    tester,
+  ) async {
+    final position = await pumpScrollableGroup(tester);
+    final bottom = position.pixels;
+    await appendOutput(tester);
+    expect(position.pixels, greaterThan(bottom));
+    expect(position.extentAfter, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  for (final kind in [PointerDeviceKind.touch, PointerDeviceKind.trackpad]) {
+    testWidgets('a $kind contact holds off group jumps before dragging', (
+      tester,
+    ) async {
+      final position = await pumpScrollableGroup(tester);
+      final bottom = position.pixels;
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byType(ListView)),
+        kind: kind,
+      );
+      await appendOutput(tester);
+      expect(position.pixels, bottom);
+      await tester.pump(const Duration(seconds: 1));
+      expect(position.pixels, bottom);
+
+      // A stationary contact only pauses following for the gesture lifetime.
+      await gesture.up();
+      await tester.pump();
+      expect(position.extentAfter, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets('nested content scrolling does not change group follow intent', (
+    tester,
+  ) async {
+    final innerScroll = ScrollController(initialScrollOffset: 100);
+    addTearDown(innerScroll.dispose);
+    Widget group(double height) => _renderGroup(
+      [_tool],
+      body: [
+        SizedBox(
+          height: height,
+          child: Column(
+            children: [
+              const Spacer(),
+              SizedBox(
+                height: 300,
+                child: ListView(
+                  controller: innerScroll,
+                  children: const [SizedBox(height: 1000)],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(group(1300));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    final bottom = position.pixels;
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(ListView).last),
+        scrollDelta: const Offset(0, -20),
+      ),
+    );
+    await tester.pump();
+    expect(innerScroll.offset, 80);
+    expect(position.pixels, bottom);
+
+    await tester.pumpWidget(group(1500));
+    await tester.pump();
+    expect(position.pixels, greaterThan(bottom));
+    expect(position.extentAfter, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final (description, trailing) in [
     ('no separator', <MarkdownNodeStable>[]),
     ('a line break', [_lineBreak]),

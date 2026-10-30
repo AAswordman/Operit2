@@ -2,13 +2,131 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/ui/common/markdown/EnhancedTableBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownLatexBlock.dart';
+import 'package:operit2/ui/common/markdown/MarkdownInlineSpannable.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 
 import 'support/semantic_markdown_fixture.dart';
+import 'support/markdown_event_fixture.dart';
 
 void main() {
+  testWidgets('separate blocks retain the full configured line height', (
+    tester,
+  ) async {
+    for (final type in [
+      MarkdownNodeType.plainText,
+      MarkdownNodeType.orderedList,
+      MarkdownNodeType.unorderedList,
+    ]) {
+      await _pumpNode(
+        tester,
+        MarkdownNodeStable(
+          type: type,
+          content: '内容',
+          isStreaming: false,
+          sourcePrefix: '1. ',
+        ),
+      );
+      final text = tester.widget<RichText>(find.text('内容', findRichText: true));
+      final lineHeight = text.text.style!.fontSize! * markdownLineHeight;
+      expect(
+        tester.getSize(find.byType(CanvasMarkdownNodeRenderer)).height,
+        greaterThanOrEqualTo(lineHeight.floorToDouble()),
+        reason: '$type must retain line spacing at block boundaries',
+      );
+    }
+  });
+
+  for (final scale in [1.0, 1.8]) {
+    testWidgets(
+      'wrapped inline code retains body line height at scale $scale',
+      (tester) async {
+        const code =
+            'workspace/very_long_path/another_directory/project/file.dart';
+        await _pumpNode(
+          tester,
+          const MarkdownNodeStable(
+            type: MarkdownNodeType.plainText,
+            content: '正文\n$code\n结束',
+            isStreaming: false,
+            children: [
+              MarkdownNodeStable(
+                type: MarkdownNodeType.plainText,
+                content: '正文\n',
+                isStreaming: false,
+              ),
+              MarkdownNodeStable(
+                type: MarkdownNodeType.inlineCode,
+                content: code,
+                isStreaming: false,
+              ),
+              MarkdownNodeStable(
+                type: MarkdownNodeType.plainText,
+                content: '\n结束',
+                isStreaming: false,
+              ),
+            ],
+          ),
+          textScaler: TextScaler.linear(scale),
+        );
+        final finder = find.text('正文\n$code\n结束', findRichText: true);
+        final rich = tester.widget<RichText>(finder);
+        final painter = TextPainter(
+          text: rich.text,
+          textDirection: rich.textDirection ?? TextDirection.ltr,
+          textScaler: rich.textScaler,
+          textHeightBehavior: rich.textHeightBehavior,
+          strutStyle: rich.strutStyle,
+        )..layout(maxWidth: tester.getSize(finder).width);
+        try {
+          final lines = painter.computeLineMetrics();
+          expect(lines.length, greaterThan(3));
+          final minHeight =
+              rich.textScaler.scale(rich.text.style!.fontSize!) *
+              markdownLineHeight;
+          for (final line in lines) {
+            expect(
+              line.height,
+              greaterThanOrEqualTo(minHeight.floorToDouble()),
+            );
+          }
+          expect(tester.takeException(), isNull);
+        } finally {
+          painter.dispose();
+        }
+      },
+    );
+  }
+
+  testWidgets('table cells use the configured Markdown line height', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EnhancedTableBlock(
+            tableText: '| 标题 |\n| --- |\n| 内容 |',
+            textColor: Colors.black,
+            splitMarkdownContent: splitMarkdownEventFixture,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final content in ['标题', '内容']) {
+      final finder = find.text(content, findRichText: true);
+      final rich = tester.widget<RichText>(finder);
+      final minHeight = rich.text.style!.fontSize! * markdownLineHeight;
+      expect(
+        tester.getSize(finder).height,
+        greaterThanOrEqualTo(minHeight.floorToDouble()),
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   for (final type in [
     MarkdownNodeType.header,
     MarkdownNodeType.plainText,
@@ -243,9 +361,14 @@ Future<void> _pumpNode(
   MarkdownNodeStable node, {
   bool isLastNode = true,
   void Function(String)? onLinkClick,
+  TextScaler textScaler = TextScaler.noScaling,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+        child: child!,
+      ),
       home: Scaffold(
         body: Align(
           alignment: Alignment.topLeft,

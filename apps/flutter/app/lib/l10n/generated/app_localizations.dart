@@ -650,6 +650,60 @@ abstract class AppLocalizations {
   /// **'{count} results'**
   String messageLocatorResultCount(int count);
 
+  /// No description provided for @messageLocatorSearchMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Search messages'**
+  String get messageLocatorSearchMessages;
+
+  /// No description provided for @messageLocatorViewFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'View favorites'**
+  String get messageLocatorViewFavorites;
+
+  /// No description provided for @messageLocatorAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get messageLocatorAll;
+
+  /// No description provided for @messageLocatorFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'Favorites'**
+  String get messageLocatorFavorites;
+
+  /// No description provided for @messageLocatorNoFavorites.
+  ///
+  /// In en, this message translates to:
+  /// **'No favorite messages yet'**
+  String get messageLocatorNoFavorites;
+
+  /// No description provided for @messageLocatorLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load messages. Please try again.'**
+  String get messageLocatorLoadFailed;
+
+  /// No description provided for @messageLocatorFavoriteFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not update favorite. Please try again.'**
+  String get messageLocatorFavoriteFailed;
+
+  /// No description provided for @messageLocatorAddFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Favorite message'**
+  String get messageLocatorAddFavorite;
+
+  /// No description provided for @messageLocatorRemoveFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove favorite'**
+  String get messageLocatorRemoveFavorite;
+
   /// No description provided for @messageLocatorNoMatches.
   ///
   /// In en, this message translates to:

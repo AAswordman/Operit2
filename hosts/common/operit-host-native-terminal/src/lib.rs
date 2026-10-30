@@ -36,6 +36,7 @@ pub struct NativePtyTerminalHost {
 #[derive(Clone)]
 struct PtyCommandSpec {
     program: String,
+    controllingTty: bool,
     args: Vec<String>,
     terminalType: String,
     description: String,
@@ -102,6 +103,7 @@ impl PtyCommandSpec {
                 "bash"
             }
             .to_string(),
+            controllingTty: !cfg!(target_os = "macos"),
             args: vec![
                 "--noprofile".to_string(),
                 "--norc".to_string(),
@@ -121,6 +123,7 @@ impl PtyCommandSpec {
     fn systemShell() -> Self {
         Self {
             program: "/bin/sh".to_string(),
+            controllingTty: !cfg!(target_os = "macos"),
             args: vec!["-i".to_string()],
             terminalType: "shell".to_string(),
             description: "Privileged system /bin/sh terminal".to_string(),
@@ -155,6 +158,7 @@ impl PtyCommandSpec {
         }
         Ok(Self {
             program,
+            controllingTty: !cfg!(target_os = "macos"),
             args: command.arguments,
             terminalType: "shell".to_string(),
             description,
@@ -228,6 +232,39 @@ impl NativePtyTerminalHost {
         Ok(Self {
             state: Arc::new(Mutex::new(TerminalState::default())),
             commandSpec: Arc::new(PtyCommandSpec::customShell(command)?),
+        })
+    }
+
+    /// Retains ownership after shell exit, until the caller closes the session.
+    pub fn ownsSession(&self, sessionId: &str) -> HostResult<bool> {
+        Ok(self.lockState()?.ptySessions.contains_key(sessionId))
+    }
+
+    /// Selects whether the real PTY becomes the child process's controlling TTY.
+    /// Apple sandbox hosts must disable TIOCSCTTY; unrestricted hosts keep job control.
+    pub fn withControllingTty(mut self, enabled: bool) -> Self {
+        Arc::make_mut(&mut self.commandSpec).controllingTty = enabled;
+        self
+    }
+
+    /// Creates a native login shell with its normal startup files and environment.
+    pub fn loginShell(program: &str, terminalType: &str, home: &str) -> HostResult<Self> {
+        if !std::path::Path::new(program).is_absolute() || !std::path::Path::new(program).is_file() {
+            return Err(HostError::new(format!("Login shell is unavailable: {program}")));
+        }
+        let home = nonBlank(home, "home_directory")?;
+        let mut spec = PtyCommandSpec::nativeBash();
+        spec.program = program.to_string();
+        spec.controllingTty = true;
+        spec.args = vec!["-l".to_string(), "-i".to_string()];
+        spec.terminalType = nonBlank(terminalType, "terminal_type")?;
+        spec.description = format!("Native {program} login shell");
+        spec.commandProtocol = PtyCommandProtocol::ExplicitMarker;
+        spec.initialWorkingDirectory = PtyInitialWorkingDirectory::Fixed(home);
+        spec.environment = vec![("SHELL".to_string(), program.to_string())];
+        Ok(Self {
+            state: Arc::new(Mutex::new(TerminalState::default())),
+            commandSpec: Arc::new(spec),
         })
     }
 
@@ -854,14 +891,9 @@ fn posixPtyCommand(workingDir: &str, commandSpec: &PtyCommandSpec) -> CommandBui
         PtySessionWorkingDirectoryEnvironment::None => {}
         PtySessionWorkingDirectoryEnvironment::Name(key) => command.env(key, workingDir),
     }
-    // App Sandbox permits creating a PTY but rejects TIOCSCTTY when the child
-    // tries to make it the controlling terminal (EPERM). The PTY master/slave
-    // still provides terminal I/O, resize support, and bash interaction; only
-    // controlling-terminal-only signal delivery is unavailable. Avoiding this
-    // ioctl is required for the App Store sandbox build and keeps the same
-    // host implementation usable by future non-sandboxed builds.
-    #[cfg(target_os = "macos")]
-    command.set_controlling_tty(false);
+    // Isolation is selected by the owning Host from its actual signature.
+    // Unrestricted macOS shells retain controlling-terminal signals and job control.
+    command.set_controlling_tty(commandSpec.controllingTty);
 
     command.env(
         "PS1",

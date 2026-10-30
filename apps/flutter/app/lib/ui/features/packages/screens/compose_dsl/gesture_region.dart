@@ -134,6 +134,9 @@ class _ComposeGestureRegionState extends State<_ComposeGestureRegion> {
             onLongPress: _has('onLongClick')
                 ? () => _emit('onLongClick')
                 : null,
+            onSecondaryTap: _has('onLongClick')
+                ? () => _emit('onLongClick')
+                : null,
             child: widget.child,
           ),
         );

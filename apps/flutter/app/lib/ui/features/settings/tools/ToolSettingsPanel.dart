@@ -424,6 +424,18 @@ class _HostRequirement {
   }
 }
 
+/// Uses the Host's actual process signature, independently of AI approval mode.
+String _hostIsolationDescription(core_proxy.RuntimeHostDescriptor host) {
+  if (host.platform == core_proxy.HostPlatform.macos) {
+    return switch (host.isolation) {
+      core_proxy.HostIsolation.osAppSandbox => 'sandbox（已启用 macOS App Sandbox）',
+      core_proxy.HostIsolation.none => 'unsandbox（未启用 macOS App Sandbox）',
+      _ => host.isolation.value,
+    };
+  }
+  return host.isolation.value;
+}
+
 class _PermissionChain extends StatelessWidget {
   const _PermissionChain({required this.data});
 
@@ -438,7 +450,7 @@ class _PermissionChain extends StatelessWidget {
         _ChainStep(
           index: '0',
           title: '应用运行隔离',
-          value: '${data.host.isolation}',
+          value: _hostIsolationDescription(data.host),
         ),
         _ChainStep(
           index: '1',
@@ -472,7 +484,7 @@ class _AdvancedHostSummary extends StatelessWidget {
       children: <Widget>[
         _InfoRow(label: '当前运行环境', value: host.displayName),
         _InfoRow(label: '平台', value: '${host.platform}'),
-        _InfoRow(label: '外层隔离', value: '${host.isolation}'),
+        _InfoRow(label: '外层隔离', value: _hostIsolationDescription(host)),
         _InfoRow(label: '文件能力', value: host.fileSystemHost ? '已注册' : '未注册'),
         _InfoRow(label: '终端能力', value: host.terminalHost ? '已注册' : '未注册'),
         _InfoRow(

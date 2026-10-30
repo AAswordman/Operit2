@@ -313,7 +313,9 @@ test('generic long press and swipe callbacks render plugin-owned actions and con
   const combined = hit.props.modifier.__modifierOps.find(op => op.name === 'combinedClickable').args[0];
   const pressed = await screen.dispatch(combined.onLongClick);
   assert.ok(keyedNode(pressed.tree, 'sidebar-edit-dialog'));
-  for (const label of ['编辑名称', '上移', '下移', '置顶', '锁定', '删除'])
+  assert.ok(keyedNode(pressed.tree, 'sidebar-chat-actions-scroll'));
+  if (process.env.OPERIT_NATIVE_SIDEBAR_ACTIONS_FIXTURE) await writeFile(process.env.OPERIT_NATIVE_SIDEBAR_ACTIONS_FIXTURE, JSON.stringify(pressed.tree, null, 2) + '\n');
+  for (const label of ['搜索消息', '查看收藏', '编辑名称', '上移', '下移', '置顶', '锁定', '删除'])
     assert.ok(composeNodes(pressed.tree, node => node.type === 'Text' && node.props.text === label).length > 0, label);
   const rename = await screen.dispatch(keyedNode(tree, 'sidebar-chat-swipe-c1').props.onStartAction);
   assert.equal(keyedNode(rename.tree, 'sidebar-group-name').props.value, '对话 c1');
@@ -346,6 +348,38 @@ for (const view of ['characters', 'groups']) {
     assert.equal(keyedNode(opened.tree, 'sidebar-chat-rail-indicator-c2').props.height, 0);
     assert.equal(screen.calls.length, reads);
   });
+}
+
+for (const view of ['characters', 'groups']) {
+  for (const entry of ['popup', 'longPress']) {
+    for (const [label, type] of [['搜索消息', 'toolpkg.chat.searchMessages'], ['查看收藏', 'toolpkg.chat.viewFavorites']]) {
+      test(view + ' ' + entry + ' delegates ' + label + ' for the exact conversation to the host', async () => {
+        const chats = [summary('c1'), summary('c2')], roles = catalog(chats);
+        const data = view === 'characters' ? roles : { view, scopes: roles.sections.map(section => ({
+          id: section.id, title: section.title, ownerSelection: section.selection,
+          kind: section.kind, avatarUri: section.avatarUri, groups: section.conversationGroups,
+          ungrouped: section.ungroupedChats,
+        })) };
+        const screen = mount({ ...context(chats), input: { view } }, data);
+        const { tree } = await screen.load();
+        let result;
+        const reads = screen.calls.length;
+        if (entry === 'popup') {
+          const menu = keyedNode(tree, 'sidebar-chat-menu-c2');
+          result = await screen.dispatch(menu.props.onSelected, menu.props.items.findIndex(item => item.label === label));
+        } else {
+          const combined = keyedNode(tree, 'sidebar-chat-hit-c2').props.modifier.__modifierOps.find(op => op.name === 'combinedClickable').args[0];
+          const pressed = await screen.dispatch(combined.onLongClick);
+          const tile = composeNodes(pressed.tree, node => node.type === 'Surface' && node.props.onClick
+            && composeNodes(node, child => child.type === 'Text' && child.props.text === label).length > 0)[0];
+          result = await screen.dispatch(tile.props.onClick);
+        }
+        assert.deepEqual(JSON.parse(JSON.stringify(result.actionResult)), { type, chatId: 'c2' });
+        assert.equal(composeNodes(result.tree, node => node.type === 'Dialog').length, 0);
+        assert.equal(screen.calls.length, reads, 'lookup must use the validated host activation path');
+      });
+    }
+  }
 }
 
 for (const capabilities of [undefined, { openInWindow: false }]) {
@@ -388,7 +422,7 @@ for (const entry of ['popup', 'longPress']) {
     const { tree } = await screen.load();
     let result;
     if (entry === 'popup') {
-      result = await screen.dispatch(keyedNode(tree, 'sidebar-chat-menu-c1').props.onSelected, 3);
+      result = await screen.dispatch(keyedNode(tree, 'sidebar-chat-menu-c1').props.onSelected, 5);
     } else {
       const hit = keyedNode(tree, 'sidebar-chat-hit-c1');
       const combined = hit.props.modifier.__modifierOps.find(op => op.name === 'combinedClickable').args[0];
@@ -408,7 +442,7 @@ test('direct deletion keeps backend lock refusal visible', async () => {
     deleteChat: async id => { calls.push(id); throw new Error('Locked conversation cannot be deleted'); },
   }});
   const { tree } = await screen.load();
-  const result = await screen.dispatch(keyedNode(tree, 'sidebar-chat-menu-c1').props.onSelected, 3);
+  const result = await screen.dispatch(keyedNode(tree, 'sidebar-chat-menu-c1').props.onSelected, 5);
   assert.deepEqual(calls, ['c1']);
   assert.equal(composeNodes(result.tree, node => node.type === 'Dialog').length, 0);
   assert.ok(composeNodes(result.tree, node => node.type === 'Text'
@@ -423,8 +457,8 @@ test('plugin menu delegates pin and lock to the real SDK interface, not native b
   }});
   const {tree} = await screen.load();
   const selected = keyedNode(tree, 'sidebar-chat-menu-c1').props.onSelected;
-  await screen.dispatch(selected, 1);
-  await screen.dispatch(selected, 2);
+  await screen.dispatch(selected, 3);
+  await screen.dispatch(selected, 4);
   assert.deepEqual(mutations, [['pin', 'c1', true], ['lock', 'c1', true]]);
 });
 

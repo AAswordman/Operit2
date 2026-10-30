@@ -121,14 +121,41 @@ extension _ComposePresentationNodes on _ComposeProgramExecutorState {
     final language = WorkspaceSyntaxLanguage.forPath(
       _string(props['filePath']),
     );
-    final tokens =
-        language == WorkspaceSyntaxLanguage.plainText ||
-            language == WorkspaceSyntaxLanguage.diff
-        ? const <WorkspaceSyntaxToken>[]
-        : WorkspaceSyntaxLexer(
-            language,
-          ).scan(text, WorkspaceSyntaxState.empty, tokens: true).tokens;
+    final tokens = <WorkspaceSyntaxToken>[];
+    if (language != WorkspaceSyntaxLanguage.plainText &&
+        language != WorkspaceSyntaxLanguage.diff) {
+      final lexer = WorkspaceSyntaxLexer(language);
+      var state = WorkspaceSyntaxState.empty;
+      var offset = 0;
+      for (final line in text.split('\n')) {
+        final result = lexer.scan(line, state, tokens: true);
+        for (final token in result.tokens) {
+          tokens.add(
+            WorkspaceSyntaxToken(
+              offset + token.start,
+              offset + token.end,
+              token.kind,
+            ),
+          );
+        }
+        state = result.state;
+        offset += line.length + 1;
+      }
+    }
     final palette = WorkspaceSyntaxPalette(Theme.of(context).brightness);
+    // Source intervals are ordered; walk them once for whole-file previews.
+    var tokenIndex = 0;
+    Color? syntaxColor(int start, int end) {
+      while (tokenIndex < tokens.length && tokens[tokenIndex].end <= start) {
+        tokenIndex++;
+      }
+      if (tokenIndex == tokens.length) return null;
+      final token = tokens[tokenIndex];
+      return token.start <= start && token.end >= end
+          ? palette.color(token.kind)
+          : null;
+    }
+
     final emphasis = props['emphasis'];
     final ranges = <({int start, int end, Map<String, dynamic> style})>[];
     if (emphasis is List) {
@@ -171,14 +198,7 @@ extension _ComposePresentationNodes on _ComposeProgramExecutorState {
                 TextSpan(
                   text: text.substring(cuts[index], cuts[index + 1]),
                   style: baseStyle.copyWith(
-                    color: tokens
-                        .where(
-                          (token) =>
-                              token.start <= cuts[index] &&
-                              token.end >= cuts[index + 1],
-                        )
-                        .map((token) => palette.color(token.kind))
-                        .firstOrNull,
+                    color: syntaxColor(cuts[index], cuts[index + 1]),
                     backgroundColor: ranges
                         .where(
                           (range) =>

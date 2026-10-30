@@ -5,6 +5,8 @@ pub struct ChatMessageLocatorPreview {
     pub messageIndex: Option<i32>,
     pub timestamp: i64,
     pub sender: String,
+    /// Display identity saved on the selected message revision, when available.
+    pub displayName: String,
     pub previewContent: String,
     pub contentLength: i32,
     pub displayMode: String,

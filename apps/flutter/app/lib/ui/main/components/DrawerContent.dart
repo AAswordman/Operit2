@@ -14,6 +14,7 @@ import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../l10n/generated/app_localizations.dart';
 import '../../common/contributions/ChatSidebarTabHost.dart';
 import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
+import '../../features/chat/viewmodel/ChatMessageLookupRequests.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../../features/chat/components/workspace/WorkspaceUnbindDialog.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -419,6 +420,10 @@ class _DrawerContentState extends State<DrawerContent> {
       return;
     }
     switch (action) {
+      case ConversationAction.searchMessages:
+        await _openMessageLookup(history);
+      case ConversationAction.viewFavorites:
+        await _openMessageLookup(history, favoritesOnly: true);
       case ConversationAction.openInWindow:
         await _openConversationInWindow(history);
       case ConversationAction.rename:
@@ -440,6 +445,19 @@ class _DrawerContentState extends State<DrawerContent> {
       case ConversationAction.delete:
         await _deleteConversation(history);
     }
+  }
+
+  Future<void> _openMessageLookup(
+    core_proxy.ChatHistoryListItem history, {
+    bool favoritesOnly = false,
+  }) async {
+    try {
+      await _activateChat(history.id);
+    } catch (_) {
+      // Activation already exposes its failure in the sidebar.
+      return;
+    }
+    ChatMessageLookupRequests.open(history.id, favoritesOnly: favoritesOnly);
   }
 
   Future<void> _showMoveConversationToWorkspaceDialog(
@@ -821,6 +839,9 @@ class _DrawerContentState extends State<DrawerContent> {
         nested: true,
         workspaceStyle: true,
         onClick: () => unawaited(_switchConversation(history)),
+        onSearchMessages: () => unawaited(_openMessageLookup(history)),
+        onViewFavorites: () =>
+            unawaited(_openMessageLookup(history, favoritesOnly: true)),
         onRename: () => unawaited(_showRenameConversationDialog(history)),
         onBindWorkspace: () => unawaited(_showBindWorkspaceDialog(history)),
         onTogglePinned: () => unawaited(_updateConversationPinned(history)),

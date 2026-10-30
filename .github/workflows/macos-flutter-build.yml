@@ -102,7 +102,9 @@ jobs:
 
       - name: Build and package macOS app
         if: inputs.products != 'cli'
-        run: python3 tools/build_scripts/build_flutter_macos.py
+        run: |
+          python3 tools/build_scripts/build_flutter_macos.py --type sandbox
+          python3 tools/build_scripts/build_flutter_macos.py --type unsandbox
 
       - name: Build and package macOS CLI
         if: inputs.products != 'app'

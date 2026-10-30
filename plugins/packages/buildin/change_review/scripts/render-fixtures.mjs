@@ -2,13 +2,16 @@ import { writeFile } from 'node:fs/promises';
 import { screen, message, toolResult } from '../tests/runtime.mjs';
 
 const fixtures = {};
-for (const locale of ['zh', 'en']) {
-  for (const count of [1, 6, 12]) {
-    const page = await screen('../src/ui/summary.ui.ts', { locale, chatId: 'chat-a',
-      message: message(Array.from({ length: count }, (_, index) => toolResult(`src/file${index}.ts`, '@@ -1 +1,2 @@\n-old\n+new\n+second'))) });
-    fixtures[`${locale}-${count}-expanded`] = page.fixture.latest.tree;
-    await page.click(page.nodes().find(node => node.type === 'InkWell'));
-    fixtures[`${locale}-${count}-collapsed`] = page.fixture.latest.tree;
+for (const brightness of ['light', 'dark']) {
+  for (const locale of ['zh', 'en']) {
+    for (const count of [1, 6, 12]) {
+      const page = await screen('../src/ui/summary.ui.ts', { locale, chatId: 'chat-a',
+        message: message(Array.from({ length: count }, (_, index) => toolResult(`src/file${index}.ts`, '@@ -1 +1,2 @@\n-old\n+new\n+second'))) },
+        { theme: { brightness, colors: {} } });
+      fixtures[`${brightness}-${locale}-${count}-expanded`] = page.fixture.latest.tree;
+      await page.click(page.nodes().find(node => node.type === 'InkWell'));
+      fixtures[`${brightness}-${locale}-${count}-collapsed`] = page.fixture.latest.tree;
+    }
   }
 }
 await writeFile(new URL('../../../../../apps/flutter/app/test/fixtures/change_review_summary.json', import.meta.url), JSON.stringify(fixtures));

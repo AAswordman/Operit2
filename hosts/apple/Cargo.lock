@@ -1399,6 +1399,8 @@ dependencies = [
  "axum",
  "futures-util",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "operit-host-api",
  "operit-host-native-scheduler",
  "reqwest",

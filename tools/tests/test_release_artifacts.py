@@ -1,6 +1,7 @@
 """Exercise versioned packaging paths without compiling platform applications."""
 
 import importlib.util
+from contextlib import ExitStack
 from pathlib import Path
 import sys
 import tempfile
@@ -83,7 +84,8 @@ class ReleaseArtifactTests(unittest.TestCase):
                 with self.subTest(version=version, target=(product, platform, arch)):
                     self.assertEqual(
                         release_artifacts.release_asset_name(product, platform, arch, extension),
-                        f"operit2-{product}-{platform}-{arch}-{version}.{extension}",
+                        f"operit2-{product}-{platform}-{arch}"
+                        f"{'-sandbox' if (product, platform) == ('app', 'macos') else ''}-{version}.{extension}",
                     )
 
     # Rejects missing, mismatched, malformed, and metadata-only release versions.
@@ -150,9 +152,21 @@ class ReleaseArtifactTests(unittest.TestCase):
                 build_flutter_ios.parse_args().archive_path.name,
                 release_artifacts.release_asset_name("app", "ios", "arm64", "zip"),
             )
-        with patch.object(sys, "argv", ["build_flutter_ohos.py"]):
+        # OHOS resolves the target-dependent output in main, after parsing.
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", ["build_flutter_ohos.py"]))
+            stack.enter_context(patch.object(build_flutter_ohos, "OHOS_PROJECT_DIR", self.root))
+            for operation in (
+                "verify_ohos_sdk_preflight", "prepare_plugin_assets", "build_ohos_rust_bridge",
+                "ohos_hvigor_env", "flutter_pub_get", "prepare_ohos_package_dependencies",
+                "build_unsigned_ohos_hap", "verify_ohos_hap_native_libraries",
+                "package_ohos_terminal_hnp", "sign_ohos_hap",
+            ):
+                stack.enter_context(patch.object(build_flutter_ohos, operation))
+            copy = stack.enter_context(patch.object(build_flutter_ohos, "copy_required_file"))
+            self.assertEqual(build_flutter_ohos.main(), 0)
             self.assertEqual(
-                build_flutter_ohos.parse_args().output.name,
+                copy.call_args.args[1].name,
                 release_artifacts.release_asset_name("app", "ohos", "arm64", "hap"),
             )
 

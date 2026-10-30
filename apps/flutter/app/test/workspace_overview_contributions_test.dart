@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/common/ChatAvatarImage.dart';
 import 'package:operit2/ui/common/contributions/ChatUiContributionModels.dart';
 import 'package:operit2/ui/common/contributions/ToolPkgChatUiCatalog.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceHomeContent.dart';
@@ -551,7 +553,7 @@ void main() {
   );
 
   testWidgets(
-    'home retains host counts and shows contribution errors explicitly',
+    'home retains workspace content and shows contribution errors explicitly',
     (tester) async {
       await _mountHome(
         tester,
@@ -561,13 +563,14 @@ void main() {
         ),
       );
       expect(find.text('Same display name'), findsOneWidget);
-      expect(find.text('2 个对话 · 贡献项加载失败 · 1 个文件夹'), findsOneWidget);
       expect(
         find.text('工作区贡献项加载失败：Bad state: Exact catalog failure'),
         findsOneWidget,
       );
-      expect(find.text('3 个终端'), findsOneWidget);
-      expect(find.text('2 个浏览器'), findsOneWidget);
+      expect(find.text('终端工件'), findsOneWidget);
+      expect(find.text('浏览器工件'), findsOneWidget);
+      expect(find.text('Mounted folder'), findsOneWidget);
+      expect(find.byType(ChatAvatarImage), findsNothing);
     },
   );
 
@@ -579,7 +582,7 @@ void main() {
         _section('owner', 'first::opaque', ['a']),
       ]);
       await _mountHome(tester, WorkspaceContributionsReady(usages));
-      expect(find.text('2 个对话 · 2 个贡献项 · 1 个文件夹'), findsOneWidget);
+      expect(find.text('Same display name'), findsOneWidget);
       for (final usage in usages) {
         final avatar = find.byKey(ValueKey(usage.identity));
         expect(avatar, findsOneWidget);
@@ -588,7 +591,43 @@ void main() {
           findsOneWidget,
         );
       }
-      expect(find.byIcon(Icons.extension_outlined), findsNWidgets(2));
+      expect(find.byIcon(Icons.extension_outlined), findsNothing);
+      expect(find.byType(ChatAvatarImage), findsNWidgets(2));
+      for (final image in tester.widgetList<Image>(find.byType(Image))) {
+        expect(image.image, isA<AssetImage>());
+        expect(
+          (image.image as AssetImage).assetName,
+          'assets/images/operit_avatar.png',
+        );
+      }
+    },
+  );
+
+  testWidgets(
+    'home decodes inline participant avatars through the shared loader',
+    (tester) async {
+      const png =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY2Bg+P8fAAMCAf/Jsq3uAAAAAElFTkSuQmCC';
+      final usages = workspaceContributionUsages([
+        _section('owner', 'custom', [
+          'a',
+        ], avatarUri: 'data:image/png;base64,$png'),
+      ]);
+      await _mountHome(tester, WorkspaceContributionsReady(usages));
+      await tester.runAsync(
+        () => precacheImage(
+          tester.widget<Image>(find.byType(Image)).image,
+          tester.element(find.byType(ChatAvatarImage)),
+        ),
+      );
+      await tester.pump();
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.image, isA<MemoryImage>());
+      expect((image.image as MemoryImage).bytes, base64Decode(png));
+      expect(image.fit, BoxFit.cover);
+      expect(tester.getSize(find.byType(ChatAvatarImage)), const Size(22, 22));
+      expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -597,10 +636,11 @@ void main() {
     (tester) async {
       await _mountHome(tester, const WorkspaceContributionsLoading());
       expect(find.text('正在读取工作区贡献项'), findsOneWidget);
-      expect(find.text('2 个对话 · 贡献项读取中 · 1 个文件夹'), findsOneWidget);
+      expect(find.byType(ChatAvatarImage), findsNothing);
       await _mountHome(tester, const WorkspaceContributionsReady([]));
       expect(find.text('正在读取工作区贡献项'), findsNothing);
-      expect(find.text('2 个对话 · 0 个贡献项 · 1 个文件夹'), findsOneWidget);
+      expect(find.byType(ChatAvatarImage), findsNothing);
+      expect(find.text('Same display name'), findsOneWidget);
     },
   );
 
@@ -697,16 +737,20 @@ Map<String, Object?> _sectionData(String id, List<String> chatIds) => {
 };
 
 /// Creates an already validated section for display-only aggregation assertions.
-ChatUiSection _section(String owner, String id, List<String> chatIds) =>
-    ChatUiSection(
-      ownerPackageName: owner,
-      id: id,
-      title: 'Same contribution title',
-      avatarUri: null,
-      chatIds: chatIds,
-      selection: _opaqueInput,
-      preview: ChatUiAction(route: _route(owner), input: _opaqueInput),
-    );
+ChatUiSection _section(
+  String owner,
+  String id,
+  List<String> chatIds, {
+  String? avatarUri,
+}) => ChatUiSection(
+  ownerPackageName: owner,
+  id: id,
+  title: 'Same contribution title',
+  avatarUri: avatarUri,
+  chatIds: chatIds,
+  selection: _opaqueInput,
+  preview: ChatUiAction(route: _route(owner), input: _opaqueInput),
+);
 
 /// Prepares a deterministic public API result while preserving async invocation.
 _SectionsRequest _completedSections(List<Map<String, Object?>> sections) {

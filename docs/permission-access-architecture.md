@@ -90,3 +90,14 @@ Host descriptor 提供平台、权限等级、隔离状态、能力、工作区�
 | [平台 Host](../hosts/README.md) | 系统授权与具体能力执行 |
 
 权限执行检查必须位于 Core 与 Host 的实际调用路径。Flutter、CLI 和 Web Access 负责展示与发起请求；Link 协议层负责传输契约。
+
+## macOS 发行类型
+
+macOS 打包脚本通过 `--type sandbox|unsandbox` 选择发行类型，产物命名为
+`operit2-app-macos-universal-<type>-<version>.zip`（商店签名安装包为 `.pkg`）。
+VS Code Run 和直接 Flutter / Xcode 开发运行默认 `unsandbox`。
+
+Host 从当前进程的签名 entitlement 检测 App Sandbox，不使用 AI 模式或前端配置推断。
+`sandbox` 保留目录选择及 security-scoped bookmarks；`unsandbox` 将本机 `/` 暴露为
+VFS `/mnt/macos`，注册带控制终端的原生 zsh/bash 登录 shell，正常加载用户 shell 配置。
+两种类型共用现有 AI 模式和审批链；`unsandbox` 不赋予管理员、root 或绕过 macOS 隐私授权。

@@ -6,8 +6,14 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart'
+    show ChatMessageDisplayMode;
+import '../../../common/ChatMessageIdentity.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatScrollRailGeometry.dart';
+import 'ChatMessageLocatorContent.dart';
+
+export 'ChatMessageLocatorContent.dart';
 
 typedef LoadMessageLocatorEntries =
     Future<List<ChatMessageLocatorPreview>> Function(
@@ -17,6 +23,27 @@ typedef LoadMessageLocatorEntries =
 typedef ToggleFavoriteMessage =
     Future<void> Function(int timestamp, bool isFavorite);
 typedef RevealMessageForLocator = Future<bool> Function(int timestamp);
+
+/// Routes lookup selections and keyboard requests for the mounted transcript.
+class ChatMessageNavigationController extends ChangeNotifier {
+  final openRequests = ValueNotifier<int>(0);
+  String? chatId;
+  int? timestamp;
+
+  void open() => openRequests.value++;
+
+  void jumpTo(String selectedChatId, int selectedTimestamp) {
+    chatId = selectedChatId;
+    timestamp = selectedTimestamp;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    openRequests.dispose();
+    super.dispose();
+  }
+}
 
 class ChatScrollMessageAnchor {
   const ChatScrollMessageAnchor({
@@ -37,6 +64,7 @@ class ChatScrollMessageAnchor {
 class ChatScrollNavigator extends StatefulWidget {
   const ChatScrollNavigator({
     super.key,
+    this.messageNavigation,
     required this.messages,
     required this.currentChatId,
     required this.scrollController,
@@ -55,6 +83,7 @@ class ChatScrollNavigator extends StatefulWidget {
     required this.onNavigatorChipHidden,
   });
 
+  final ChatMessageNavigationController? messageNavigation;
   final List<ChatUiMessage> messages;
   final String? currentChatId;
   final ScrollController scrollController;
@@ -88,6 +117,7 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
   @override
   void initState() {
     super.initState();
+    widget.messageNavigation?.addListener(_onMessageNavigation);
     _visibleEntries = _fallbackEntriesFromMessages();
     _loadLocatorEntries();
   }
@@ -96,9 +126,16 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
   @override
   void didUpdateWidget(ChatScrollNavigator oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.messageNavigation != widget.messageNavigation) {
+      oldWidget.messageNavigation?.removeListener(_onMessageNavigation);
+      widget.messageNavigation?.addListener(_onMessageNavigation);
+    }
     if (oldWidget.viewportHeight != widget.viewportHeight) {
       _hoveredEntryIndex = null;
     }
+    final favoritesChanged =
+        !identical(oldWidget.messages, widget.messages) &&
+        _favoritesChanged(oldWidget.messages, widget.messages);
     if (!identical(oldWidget.messages, widget.messages)) {
       _visibleEntries = _fallbackEntriesFromMessages();
     }
@@ -108,7 +145,9 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
             widget.messages.firstOrNull?.timestamp ||
         oldWidget.messages.lastOrNull?.timestamp !=
             widget.messages.lastOrNull?.timestamp;
-    if (messagesChanged || oldWidget.currentChatId != widget.currentChatId) {
+    if (messagesChanged ||
+        favoritesChanged ||
+        oldWidget.currentChatId != widget.currentChatId) {
       _hoveredEntryIndex = null;
       if (oldWidget.currentChatId != widget.currentChatId) {
         _locatorEntries = const <ChatMessageLocatorPreview>[];
@@ -237,20 +276,26 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
 
   /// Projects the loaded transcript into locator previews once per message update.
   List<ChatMessageLocatorPreview> _fallbackEntriesFromMessages() {
-    return widget.messages.indexed.map<ChatMessageLocatorPreview>((item) {
-      final idx = item.$1;
-      final msg = item.$2;
-      final text = msg.displayText;
-      return ChatMessageLocatorPreview(
-        messageIndex: idx,
-        timestamp: msg.timestamp,
-        sender: msg.sender,
-        previewContent: text,
-        contentLength: text.length,
-        displayMode: 'NORMAL',
-        isFavorite: false,
-      );
-    }).toList(growable: false);
+    return widget.messages.indexed
+        .map<ChatMessageLocatorPreview>((item) {
+          final idx = item.$1;
+          final msg = item.$2;
+          final text = msg.displayText;
+          return ChatMessageLocatorPreview(
+            messageIndex: idx,
+            timestamp: msg.timestamp,
+            sender: msg.sender,
+            displayName: readChatMessageIdentity(msg)?.title.trim() ?? '',
+            previewContent: text,
+            contentLength: text.length,
+            displayMode:
+                msg.displayMode == ChatMessageDisplayMode.hiddenPlaceholder
+                ? 'HIDDEN_PLACEHOLDER'
+                : 'NORMAL',
+            isFavorite: msg.isFavorite,
+          );
+        })
+        .toList(growable: false);
   }
 
   /// Routes a confirmed tap to its visible row or its history timestamp.
@@ -265,6 +310,33 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     }
   }
 
+  /// Detects metadata updates without reloading history on streamed text chunks.
+  bool _favoritesChanged(
+    List<ChatUiMessage> before,
+    List<ChatUiMessage> after,
+  ) {
+    final favorites = {
+      for (final message in before) message.timestamp: message.isFavorite,
+    };
+    return after.any(
+      (message) => favorites[message.timestamp] != message.isFavorite,
+    );
+  }
+
+  void _onMessageNavigation() {
+    final navigation = widget.messageNavigation;
+    if (navigation?.chatId == widget.currentChatId &&
+        navigation?.timestamp != null) {
+      _handleJumpToMessage(navigation!.timestamp!);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.messageNavigation?.removeListener(_onMessageNavigation);
+    super.dispose();
+  }
+
   /// Rejects stale preview loads after a chat or history window changes.
   Future<void> _loadLocatorEntries() async {
     final generation = ++_locatorLoadGeneration;
@@ -275,7 +347,13 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
       });
       return;
     }
-    final entries = await widget.loadLocatorEntries(chatId, '');
+    List<ChatMessageLocatorPreview> entries;
+    try {
+      entries = await widget.loadLocatorEntries(chatId, '');
+    } catch (_) {
+      // The transcript remains navigable while history is unavailable.
+      return;
+    }
     if (!mounted || generation != _locatorLoadGeneration) {
       return;
     }
@@ -395,9 +473,11 @@ class _MessageTickRailState extends State<_MessageTickRail>
         position.dy >= geometry.hitTop &&
         position.dy <= geometry.hitTop + geometry.hitHeight;
     _animateProximity(insideHeight ? geometry.proximityAt(position.dx) : 0);
-    final index = insideHeight &&
-            position.dx >= ChatScrollRailGeometry.interactionWidth -
-                ChatScrollRailGeometry.hitWidth &&
+    final index =
+        insideHeight &&
+            position.dx >=
+                ChatScrollRailGeometry.interactionWidth -
+                    ChatScrollRailGeometry.hitWidth &&
             position.dx <= ChatScrollRailGeometry.interactionWidth
         ? geometry.entryIndexAt(position.dy)
         : null;
@@ -427,7 +507,8 @@ class _MessageTickRailState extends State<_MessageTickRail>
 
   /// Scrubs previews without jumping through the transcript on drag updates.
   void _handlePointerMove(PointerMoveEvent event) {
-    if (event.kind != PointerDeviceKind.mouse && event.pointer != _touchPointer) {
+    if (event.kind != PointerDeviceKind.mouse &&
+        event.pointer != _touchPointer) {
       return;
     }
     _updatePointer(event.localPosition);
@@ -556,8 +637,9 @@ class _MessageTickPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final position = pointer.value;
     final strength = proximity.value;
-    final hoveredIndex =
-        strength > 0.01 ? geometry.entryIndexAt(position.dy) : null;
+    final hoveredIndex = strength > 0.01
+        ? geometry.entryIndexAt(position.dy)
+        : null;
     final right = size.width - ChatScrollRailGeometry.rightInset;
     final line = Paint();
     final favorite = Paint()..color = Colors.amber;
@@ -584,7 +666,9 @@ class _MessageTickPainter extends CustomPainter {
         ),
         line,
       );
-      if (tick.isFavorite) canvas.drawCircle(Offset(right + 4, y), 1.2, favorite);
+      if (tick.isFavorite) {
+        canvas.drawCircle(Offset(right + 4, y), 1.2, favorite);
+      }
     }
   }
 
@@ -614,6 +698,10 @@ class _CodexHoverTooltipCard extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     final isUser = entry.sender == 'user';
+    final displayName = entry.displayName.trim();
+    final title = displayName.isNotEmpty
+        ? displayName
+        : senderLabel(context, entry.sender);
     final previewText = buildMessagePreview(l10n, entry, '');
 
     return Material(
@@ -641,9 +729,7 @@ class _CodexHoverTooltipCard extends StatelessWidget {
             Row(
               children: <Widget>[
                 Icon(
-                  isUser
-                      ? Icons.person_rounded
-                      : Icons.auto_awesome_rounded,
+                  isUser ? Icons.person_rounded : Icons.auto_awesome_rounded,
                   size: 11,
                   color: isUser
                       ? theme.colorScheme.primary
@@ -652,9 +738,7 @@ class _CodexHoverTooltipCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    isUser
-                        ? '${senderLabel(context, entry.sender)} #${(entry.messageIndex ?? 0) + 1}'
-                        : senderLabel(context, entry.sender),
+                    isUser ? '$title #${(entry.messageIndex ?? 0) + 1}' : title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelSmall?.copyWith(
@@ -733,104 +817,4 @@ class _ScrollToBottomCircleButton extends StatelessWidget {
       ),
     );
   }
-}
-
-String senderLabel(BuildContext context, String sender) {
-  final l10n = AppLocalizations.of(context)!;
-  switch (sender) {
-    case 'user':
-      return l10n.messageSenderUser;
-    case 'ai':
-      return 'AI';
-    case 'summary':
-      return l10n.messageSenderSummary;
-    case 'system':
-      return l10n.messageSenderSystem;
-    case 'think':
-      return l10n.messageSenderThinking;
-    default:
-      return l10n.messageSenderOther;
-  }
-}
-
-String visibleLocatorContent(
-  AppLocalizations l10n,
-  ChatMessageLocatorPreview preview,
-) {
-  if (preview.sender == 'user' && preview.displayMode == 'HIDDEN_PLACEHOLDER') {
-    return l10n.hiddenUserMessage;
-  }
-  return preview.previewContent;
-}
-
-int messageContentLength(
-  AppLocalizations l10n,
-  ChatMessageLocatorPreview preview,
-) {
-  if (preview.contentLength > 0) {
-    return preview.contentLength;
-  }
-  return math.max(visibleLocatorContent(l10n, preview).length, 1);
-}
-
-String buildMessagePreview(
-  AppLocalizations l10n,
-  ChatMessageLocatorPreview preview,
-  String searchQuery,
-) {
-  final content = normalizeMessageSearchText(
-    visibleLocatorContent(l10n, preview),
-  );
-  if (content.isEmpty) {
-    return preview.sender;
-  }
-  final normalizedSearchQuery = normalizeMessageSearchText(searchQuery);
-  if (normalizedSearchQuery.isNotEmpty) {
-    final matchIndex = content.toLowerCase().indexOf(
-      normalizedSearchQuery.toLowerCase(),
-    );
-    if (matchIndex >= 0) {
-      const previewLength = 72;
-      final preferredStart = math.max(matchIndex - 18, 0);
-      final start = math.min(
-        preferredStart,
-        math.max(content.length - previewLength, 0),
-      );
-      final end = math.min(start + previewLength, content.length);
-      final prefix = start > 0 ? '...' : '';
-      final suffix = end < content.length ? '...' : '';
-      final snippet = content.substring(start, end).trim();
-      if (snippet.isNotEmpty) {
-        return '$prefix$snippet$suffix';
-      }
-    }
-  }
-  final previewText = content.length > 72 ? content.substring(0, 72) : content;
-  return previewText.length < content.length
-      ? '${previewText.trimRight()}...'
-      : previewText;
-}
-
-String normalizeMessageSearchText(String text) {
-  if (text.isEmpty) {
-    return '';
-  }
-  final buffer = StringBuffer();
-  var pendingWhitespace = false;
-  for (final codePoint in text.runes) {
-    final char = String.fromCharCode(codePoint);
-    final normalizedChar = char == '\n' || char == '\r' || char == '\t'
-        ? ' '
-        : char;
-    if (normalizedChar.trim().isEmpty) {
-      pendingWhitespace = buffer.isNotEmpty;
-      continue;
-    }
-    if (pendingWhitespace) {
-      buffer.write(' ');
-      pendingWhitespace = false;
-    }
-    buffer.write(normalizedChar);
-  }
-  return buffer.toString().trim();
 }

@@ -154,6 +154,15 @@
       }
     }
   },
+  "messageLocatorSearchMessages": "Search messages",
+  "messageLocatorViewFavorites": "View favorites",
+  "messageLocatorAll": "All",
+  "messageLocatorFavorites": "Favorites",
+  "messageLocatorNoFavorites": "No favorite messages yet",
+  "messageLocatorLoadFailed": "Could not load messages. Please try again.",
+  "messageLocatorFavoriteFailed": "Could not update favorite. Please try again.",
+  "messageLocatorAddFavorite": "Favorite message",
+  "messageLocatorRemoveFavorite": "Remove favorite",
   "messageLocatorNoMatches": "No matching messages",
   "messageSenderUser": "User",
   "messageSenderSummary": "Summary",
