@@ -428,28 +428,22 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
         return _dialog(context, type == 'AlertDialog');
       case 'Row':
         final contentNodes = _slotNodes('content', useChildren: true);
-        return LayoutBuilder(
-          builder: (context, constraints) => _trackBuild(() {
-            final children = _buildRowChildren(
-              contentNodes,
-              pathPrefix: '$nodePath:content',
-              boundedWidth: constraints.hasBoundedWidth,
-            );
-            return _ComposeFlex(
-              direction: Axis.horizontal,
-              nodes: contentNodes,
-              mainAxisSize: _nodesRequireRowFlex(contentNodes)
-                  ? MainAxisSize.max
-                  : MainAxisSize.min,
-              crossAxisAlignment: _crossAxis(props['verticalAlignment']),
-              mainAxisAlignment: _mainAxis(props['horizontalArrangement']),
-              spacing: _flexSpacing(
-                props['horizontalArrangement'],
-                props['spacing'],
-              ),
-              children: children,
-            );
-          }),
+        return _ComposeFlex(
+          direction: Axis.horizontal,
+          nodes: contentNodes,
+          mainAxisSize: _nodesRequireRowFlex(contentNodes)
+              ? MainAxisSize.max
+              : MainAxisSize.min,
+          crossAxisAlignment: _crossAxis(props['verticalAlignment']),
+          mainAxisAlignment: _mainAxis(props['horizontalArrangement']),
+          spacing: _flexSpacing(
+            props['horizontalArrangement'],
+            props['spacing'],
+          ),
+          children: _buildRowChildren(
+            contentNodes,
+            pathPrefix: '$nodePath:content',
+          ),
         );
       case 'FlowRow':
         return Wrap(
@@ -497,6 +491,12 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
               Colors.transparent,
           splitMarkdownContent: splitMarkdownContent,
         );
+      case 'SelectableText':
+        return SelectableText(
+          _string(props['text']),
+          style: _textStyle(context, props),
+          maxLines: _int(props['maxLines']),
+        );
       case 'Text':
       case 'BasicText':
         return Text(
@@ -516,6 +516,14 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
           softWrap: props['softWrap'] as bool?,
           style: _textStyle(context, props),
         );
+      case 'RichText':
+      case 'CodeText':
+      case 'Tooltip':
+      case 'ScrollArea':
+      case 'MenuAnchor':
+      case 'InkWell':
+      case 'Svg':
+        return _presentationNode(context, type);
       case 'Button':
       case 'ElevatedButton':
       case 'FilledTonalButton':
@@ -560,6 +568,9 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
         return _switch(context);
       case 'Slider':
         return _slider();
+      case 'SegmentedControl':
+      case 'Select':
+        return _selectionControl(context, type);
       case 'Checkbox':
         return _checkbox();
       case 'RadioButton':
@@ -573,10 +584,17 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
       case 'MaterialTheme':
         return _slotOrChildren('content');
       case 'Icon':
-        return Icon(
+        final icon = Icon(
           _iconData(_string(props['name'])),
           size: _number(props['size']),
           color: _color(context, props['tint']),
+        );
+        if (props['turns'] == null) return icon;
+        return AnimatedRotation(
+          turns: _number(props['turns'])!,
+          duration: Duration(milliseconds: _int(props['durationMillis']) ?? 200),
+          curve: Curves.easeOutCubic,
+          child: icon,
         );
       case 'LinearProgressIndicator':
         final progress = _number(props['progress']);
@@ -600,11 +618,13 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
       case 'Divider':
       case 'HorizontalDivider':
         return Divider(
+          height: _number(props['height']),
           thickness: _number(props['thickness']),
           color: _color(context, props['color']),
         );
       case 'VerticalDivider':
         return VerticalDivider(
+          width: _number(props['width']),
           thickness: _number(props['thickness']),
           color: _color(context, props['color']),
         );
@@ -683,6 +703,8 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
           chatId: props['chatId'] as String?,
           showInput: props['showInput'] as bool? ?? true,
         );
+      case 'Table':
+        return _table();
       case 'AdaptiveSidePanel':
         return _adaptiveSidePanel();
       case 'PullToRefreshBox':

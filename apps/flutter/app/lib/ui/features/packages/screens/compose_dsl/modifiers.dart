@@ -361,6 +361,43 @@ Widget _withModifier(
           child: current,
         );
         break;
+      case 'cursor':
+        current = MouseRegion(
+          cursor: switch (_string(args.firstOrNull)) {
+            'resizeColumn' => SystemMouseCursors.resizeColumn,
+            'resizeRow' => SystemMouseCursors.resizeRow,
+            'click' => SystemMouseCursors.click,
+            'basic' => SystemMouseCursors.basic,
+            'text' => SystemMouseCursors.text,
+            final name => throw FormatException('Unknown Compose cursor: $name'),
+          },
+          child: current,
+        );
+        break;
+      case 'bordersides':
+        final sides = _stringMap(args.firstOrNull);
+        BorderSide side(String name) {
+          final spec = _stringMap(sides[name]);
+          return spec.isEmpty
+              ? BorderSide.none
+              : BorderSide(
+                  width: _number(spec['width']) ?? 1,
+                  color: _color(context, spec['color']) ??
+                      Theme.of(context).colorScheme.outline,
+                );
+        }
+        current = DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              left: side('start'),
+              right: side('end'),
+              top: side('top'),
+              bottom: side('bottom'),
+            ),
+          ),
+          child: current,
+        );
+        break;
       case 'border':
         current = DecoratedBox(
           decoration: BoxDecoration(
@@ -471,7 +508,14 @@ Widget _withDirectModifierProps(
       _ => Curves.linear,
     };
     if (_bool(animation['animateContentSize'])) {
-      current = AnimatedSize(duration: duration, curve: curve, child: current);
+      current = AnimatedSize(
+        duration: duration,
+        curve: curve,
+        alignment: animation['alignment'] == null
+            ? Alignment.center
+            : _alignment(animation['alignment']),
+        child: current,
+      );
     }
     final decoration = BoxDecoration(
       color: _color(

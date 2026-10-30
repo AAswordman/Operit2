@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.change_review",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "变更审阅", "en": "Change review" },
+  "description": {
+    "zh": "消息后的文件变更摘要与工作区变更审阅。界面、差异组织及 Git 查询由插件负责。",
+    "en": "Plugin-owned message change summaries and workspace reviews, including Git queries and diff presentation."
+  },
+  "enabled_by_default": true,
+  "installation_scope": "space"
+}

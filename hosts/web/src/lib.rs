@@ -49,7 +49,8 @@ pub fn createRuntimeHostManager() -> HostManager {
         runtimeStorageHost,
         runtimeSqliteHost,
     )
-    .withToastHost(systemOperationHost)
+    .withToastHost(systemOperationHost.clone())
+    .withClipboardHost(systemOperationHost)
     .withHostSecretStore(hostSecretStore)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withArchiveStagingHost(archiveStagingHost);

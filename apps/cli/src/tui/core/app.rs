@@ -204,6 +204,7 @@ pub(super) struct OperitTui {
     pub(super) startup_workspace_prompt: Option<StartupWorkspacePrompt>,
     pub(super) join_decision: Option<JoinDecisionModal>,
     pub(super) device_manager: Option<DeviceManagerModal>,
+    pub(super) diff_viewer: Option<super::diff::DiffViewerModal>,
     pub(super) control_panel: Option<ControlPanelModal>,
     pub(super) show_config_popup: bool,
     pub(super) config_ui: ConfigUi,
@@ -1035,6 +1036,7 @@ impl OperitTui {
             config_ui: ConfigUi::new(),
             join_decision: None,
             device_manager: None,
+            diff_viewer: None,
             control_panel: None,
             should_quit: false,
         })
@@ -1722,6 +1724,11 @@ impl OperitTui {
         // Config popup has its own key handling — intercept early
         if self.show_config_popup {
             self.handle_config_key(key).await?;
+            return Ok(());
+        }
+
+        if self.diff_viewer.is_some() {
+            self.handle_diff_viewer_key(key)?;
             return Ok(());
         }
 
@@ -2448,6 +2455,9 @@ impl OperitTui {
         match command.to_ascii_lowercase().as_str() {
             "help" => {
                 self.show_help = true;
+            }
+            "diff" => {
+                self.open_diff_viewer().await?;
             }
             "quit" | "exit" => {
                 self.should_quit = true;
@@ -5242,6 +5252,44 @@ impl OperitTui {
         self.current_chat_id_cache
             .clone()
             .ok_or_else(|| "no active chat in tui".to_string())
+    }
+
+    async fn open_diff_viewer(&mut self) -> Result<(), String> {
+        let mut files = Vec::new();
+        for message in self.current_messages() {
+            for part in &message.parts {
+                files.extend(super::diff::parse_file_diffs_from_text(&part.content));
+            }
+        }
+        if files.is_empty() {
+            self.status_message = self.text().diff_no_changes().to_string();
+            return Ok(());
+        }
+        self.diff_viewer = Some(super::diff::DiffViewerModal::new(files));
+        Ok(())
+    }
+
+    fn handle_diff_viewer_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let Some(modal) = &mut self.diff_viewer else {
+            return Ok(());
+        };
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => self.diff_viewer = None,
+            KeyCode::Char('j') | KeyCode::Down => modal.scroll_down(1),
+            KeyCode::Char('k') | KeyCode::Up => modal.scroll_up(1),
+            KeyCode::PageDown => modal.scroll_down(10),
+            KeyCode::PageUp => modal.scroll_up(10),
+            KeyCode::Char('[') => modal.prev_file(),
+            KeyCode::Char(']') => modal.next_file(),
+            KeyCode::Tab => modal.toggle_view_mode(),
+            KeyCode::Char('e') => {
+                if let Err(error) = modal.open_external() {
+                    self.status_message = error;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     pub(super) fn current_messages(&mut self) -> Vec<ChatMessage> {

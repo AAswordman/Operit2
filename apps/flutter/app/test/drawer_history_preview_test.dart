@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
@@ -16,6 +17,7 @@ import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/ChatHistoryTree.dart';
 import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit2/ui/main/layout/SidebarDockPreferences.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 
 /// Verifies independent previews preserve conversation context and workspace isolation.
@@ -39,7 +41,7 @@ void main() {
   );
 
   testWidgets(
-    'child conversations stay collapsed while running and search reveals their ancestors',
+    'workspace conversations stay flat and search finds direct titles',
     (tester) async {
       final bridge = _DrawerBridge();
       final histories = [
@@ -47,35 +49,16 @@ void main() {
         _history('A', 1, parentChatId: 'A-0'),
         _history('A', 2, parentChatId: 'A-1'),
       ];
-      await _pumpDrawer(tester, bridge, histories, streamingIds: {'A-1'});
-      expect(_visibleIds(tester), ['A-0']);
-      await tester.tap(find.byKey(const ValueKey('workspace-children:A-0')));
-      await _pumpSidebar(tester);
-      expect(_visibleIds(tester), ['A-0', 'A-1']);
-      final parent = tester.getTopLeft(
-        find.byKey(const ValueKey('workspace-chat:A-0')),
-      );
-      final child = tester.getTopLeft(
-        find.byKey(const ValueKey('workspace-chat:A-1')),
-      );
-      expect(child.dx - parent.dx, 16);
-      await tester.tap(find.byKey(const ValueKey('workspace-children:A-0')));
-      await _pumpSidebar(tester);
-      await _pumpDrawer(
-        tester,
-        bridge,
-        histories,
-        streamingIds: {'A-1', 'A-2'},
-      );
-      expect(_visibleIds(tester), ['A-0']);
+      await _pumpDrawer(tester, bridge, histories);
+      expect(_visibleIds(tester), ['A-0', 'A-1', 'A-2']);
       await tester.tap(find.byTooltip('搜索对话'));
       await _pumpSidebar(tester);
       await tester.enterText(find.byType(TextField), 'A-2');
       await _pumpSidebar(tester);
-      expect(_visibleIds(tester), ['A-0', 'A-1', 'A-2']);
+      expect(_visibleIds(tester), ['A-2']);
       await tester.enterText(find.byType(TextField), '');
       await _pumpSidebar(tester);
-      expect(_visibleIds(tester), ['A-0']);
+      expect(_visibleIds(tester), ['A-0', 'A-1', 'A-2']);
       expect(tester.takeException(), isNull);
     },
   );
@@ -404,17 +387,17 @@ void main() {
   });
 
   testWidgets(
-    'workspace group controls are native and folding performs no backend mutations',
+    'workspace controls are native and folding performs no backend mutations',
     (tester) async {
       final bridge = _DrawerBridge();
       await _pumpDrawer(tester, bridge, _histories('A', 6));
       expect(find.text('A'), findsOneWidget);
-      expect(find.byTooltip('分组操作'), findsOneWidget);
-      expect(find.text('未分组'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('workspace-create-group')),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(find.byKey(const ValueKey('workspace-bind-folder')), findsNothing);
+      expect(find.text('新建对话'), findsOneWidget);
       await tester.tap(find.text('A'));
       await _pumpSidebar(tester);
       expect(find.text('A-0'), findsNothing);
@@ -453,13 +436,13 @@ void main() {
       ];
       final bridge = _DrawerBridge();
       await _pumpDrawer(tester, bridge, histories);
-      expect(find.text('未绑定工作区'), findsOneWidget);
-      expect(find.text('工作区缺失'), findsNWidgets(2));
+      expect(find.text('未绑定项目'), findsOneWidget);
+      expect(find.text('项目记录缺失'), findsNWidgets(2));
       expect(_visibleIds(tester), [
-        'pending-a-0',
-        'pending-b-0',
         'unbound-a-0',
         'unbound-b-0',
+        'pending-a-0',
+        'pending-b-0',
       ]);
 
       final hydrated = [
@@ -474,15 +457,15 @@ void main() {
           }),
       ];
       await _pumpDrawer(tester, bridge, hydrated);
-      expect(find.text('未绑定工作区'), findsOneWidget);
-      expect(find.text('工作区缺失'), findsNothing);
+      expect(find.text('未绑定项目'), findsOneWidget);
+      expect(find.text('项目记录缺失'), findsNothing);
       expect(find.text('Project A'), findsOneWidget);
       expect(find.text('Project B'), findsOneWidget);
       expect(_visibleIds(tester), [
-        'pending-a-0',
-        'pending-b-0',
         'unbound-a-0',
         'unbound-b-0',
+        'pending-a-0',
+        'pending-b-0',
       ]);
     },
   );
@@ -572,7 +555,7 @@ void main() {
         'workspaceName': null,
       });
       await _pumpDrawer(tester, bridge, [history], currentChatId: history.id);
-      expect(find.text('工作区缺失'), findsOneWidget);
+      expect(find.text('项目记录缺失'), findsOneWidget);
       final l10n = AppLocalizations.of(
         tester.element(find.byType(DrawerContent)),
       )!;
@@ -691,6 +674,231 @@ void main() {
     },
   );
 
+  testWidgets('top project and group creation keep explicit ownership', (
+    tester,
+  ) async {
+    final bridge = _DrawerBridge();
+    await _pumpDrawer(tester, bridge, [
+      _history('A', 0, groupName: 'Research'),
+    ]);
+    await tester.tap(find.byKey(const ValueKey('workspace-create-chat')));
+    await _pumpSidebar(tester);
+    var createCalls = bridge.calls.where(
+      (call) => call.methodName == 'createNewChat',
+    );
+    expect((createCalls.single.args as Map)['workspaceId'], isNull);
+    expect((createCalls.single.args as Map)['sourceChatId'], isNull);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('workspace-header:workspace:A')),
+        matching: find.byTooltip('项目操作'),
+      ),
+    );
+    await _pumpSidebar(tester);
+    await tester.tap(find.text('新建对话').last);
+    await _pumpSidebar(tester);
+    createCalls = bridge.calls.where(
+      (call) => call.methodName == 'createNewChat',
+    );
+    expect(createCalls, hasLength(2));
+    expect((createCalls.last.args as Map)['workspaceId'], 'A');
+    expect(
+      bridge.calls.where((call) => call.methodName == 'updateChatGroups'),
+      isEmpty,
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(
+          const ValueKey('workspace-group:workspace:A::group:Research'),
+        ),
+        matching: find.byTooltip('分组操作'),
+      ),
+    );
+    await _pumpSidebar(tester);
+    await tester.tap(find.text('新建对话').last);
+    await _pumpSidebar(tester);
+    createCalls = bridge.calls.where(
+      (call) => call.methodName == 'createNewChat',
+    );
+    expect(createCalls, hasLength(3));
+    expect((createCalls.last.args as Map)['workspaceId'], 'A');
+    expect((createCalls.last.args as Map)['sourceChatId'], isNull);
+    final groupCall = bridge.calls.singleWhere(
+      (call) => call.methodName == 'updateChatGroups',
+    );
+    expect((groupCall.args as Map)['groupName'], 'Research');
+  });
+
+  testWidgets('directory pinning reorders only directories', (tester) async {
+    final bridge = _DrawerBridge();
+    await _pumpDrawer(tester, bridge, [
+      ..._histories('A', 1),
+      _history('B', 0, groupName: 'Research'),
+    ]);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('workspace-header:workspace:B')),
+        matching: find.byTooltip('项目操作'),
+      ),
+    );
+    await _pumpSidebar(tester);
+    await tester.tap(find.text('置顶').last);
+    await _pumpSidebar(tester);
+    expect(
+      tester
+          .getTopLeft(
+            find.byKey(const ValueKey('workspace-header:workspace:B')),
+          )
+          .dy,
+      lessThan(
+        tester
+            .getTopLeft(
+              find.byKey(const ValueKey('workspace-header:workspace:A')),
+            )
+            .dy,
+      ),
+    );
+    expect(
+      bridge.directoryPreferences[(const SidebarDirectory.workspace(
+        'B',
+      )).preferenceKey],
+      isTrue,
+    );
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(
+          const ValueKey('workspace-group:workspace:B::group:Research'),
+        ),
+        matching: find.byTooltip('分组操作'),
+      ),
+    );
+    await _pumpSidebar(tester);
+    await tester.tap(find.text('置顶').last);
+    await _pumpSidebar(tester);
+    expect(
+      bridge.directoryPreferences[(const SidebarDirectory.group(
+        workspaceId: 'B',
+        groupName: 'Research',
+      )).preferenceKey],
+      isTrue,
+    );
+    expect(
+      bridge.calls.where((call) => call.methodName == 'updateChatPinned'),
+      isEmpty,
+    );
+  });
+
+  testWidgets(
+    'renaming and dissolving a group use all members and keep chats',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      const originalDirectory = SidebarDirectory.group(
+        workspaceId: 'A',
+        groupName: 'Research',
+      );
+      const renamedDirectory = SidebarDirectory.group(
+        workspaceId: 'A',
+        groupName: 'Team',
+      );
+      bridge.directoryPreferences[originalDirectory.preferenceKey] = true;
+      final histories = [
+        for (var index = 0; index < 6; index++)
+          _history('A', index, groupName: 'Research'),
+      ];
+      await _pumpDrawer(tester, bridge, histories);
+      final menu = find.descendant(
+        of: find.byKey(
+          const ValueKey('workspace-group:workspace:A::group:Research'),
+        ),
+        matching: find.byTooltip('分组操作'),
+      );
+      await tester.tap(menu);
+      await _pumpSidebar(tester);
+      await tester.tap(find.text('重命名'));
+      await _pumpSidebar(tester);
+      await tester.enterText(find.byType(TextFormField), 'Team');
+      await tester.tap(find.text('确认'));
+      await _pumpSidebar(tester);
+      var groupCalls = bridge.calls
+          .where((call) => call.methodName == 'updateChatGroups')
+          .toList();
+      expect((groupCalls.single.args as Map)['chatIds'], hasLength(6));
+      expect((groupCalls.single.args as Map)['groupName'], 'Team');
+      expect(
+        bridge.directoryPreferences.containsKey(
+          originalDirectory.preferenceKey,
+        ),
+        isFalse,
+      );
+      expect(
+        bridge.directoryPreferences[renamedDirectory.preferenceKey],
+        isTrue,
+      );
+      final renamed = histories
+          .map(
+            (history) => core.ChatHistoryListItem.fromJson({
+              ...history.toJson(),
+              'group': 'Team',
+            }),
+          )
+          .toList();
+      await _pumpDrawer(tester, bridge, renamed);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(
+            const ValueKey('workspace-group:workspace:A::group:Team'),
+          ),
+          matching: find.byTooltip('分组操作'),
+        ),
+      );
+      await _pumpSidebar(tester);
+      await tester.tap(find.text('解散分组'));
+      await _pumpSidebar(tester);
+      groupCalls = bridge.calls
+          .where((call) => call.methodName == 'updateChatGroups')
+          .toList();
+      expect(groupCalls, hasLength(2));
+      expect((groupCalls.last.args as Map)['chatIds'], hasLength(6));
+      expect((groupCalls.last.args as Map)['groupName'], isNull);
+      expect(
+        bridge.directoryPreferences.containsKey(renamedDirectory.preferenceKey),
+        isFalse,
+      );
+      expect(
+        bridge.calls.where((call) => call.methodName == 'deleteChatHistory'),
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets('binding action targets the clicked conversation', (
+    tester,
+  ) async {
+    final bridge = _DrawerBridge();
+    await _pumpDrawer(tester, bridge, _histories('A', 2), currentChatId: 'A-0');
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('workspace-chat:A-1')),
+        matching: find.byTooltip('更多操作'),
+      ),
+    );
+    await _pumpSidebar(tester);
+    await tester.tap(find.text('项目绑定'));
+    await _pumpSidebar(tester);
+    await tester.tap(find.text('新建空白项目'));
+    await _pumpSidebar(tester);
+    await tester.enterText(find.byType(TextFormField), 'Bound project');
+    await tester.tap(find.text('确认'));
+    await _pumpSidebar(tester);
+    final binding = bridge.calls.singleWhere(
+      (call) => call.methodName == 'createAndBindWorkspace',
+    );
+    expect((binding.args as Map)['chatId'], 'A-1');
+  });
+
   testWidgets('renamed workspace metadata keeps preview keyed by identity', (
     tester,
   ) async {
@@ -723,6 +931,7 @@ Future<void> _pumpDrawer(
   String? currentChatId,
   Set<String> streamingIds = const <String>{},
 }) async {
+  bridge.updateHistories(histories);
   tester.view.physicalSize = const Size(500, 2400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -796,9 +1005,10 @@ core.ChatHistoryListItem _history(
   int index, {
   bool pinned = false,
   String? parentChatId,
+  String? groupName,
 }) => core.ChatHistoryListItem(
   parentChatId: parentChatId,
-  group: null,
+  group: groupName,
   id: '$group-$index',
   title: '$group-$index',
   updatedAt: '2026-10-06T00:00:00Z',
@@ -812,56 +1022,169 @@ core.ChatHistoryListItem _history(
 );
 
 class _DrawerBridge extends OperitRuntimeBridge {
-  /// Creates a workspace sidebar bridge without a selected plugin tab.
   _DrawerBridge({this.deleteAllowed = true});
 
+  static const String _userFile = 'user_preferences.preferences.json';
+  static const String _dockFile = 'sidebar_dock.preferences.json';
+
   final bool deleteAllowed;
-
-  /// Exposes the committed preference snapshot used by reads and watches.
-  Map<String, String> get preferences => <String, String>{};
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
+  final Map<String, Map<String, Object?>> _preferences =
+      <String, Map<String, Object?>>{
+        _userFile: <String, Object?>{},
+        _dockFile: <String, Object?>{},
+      };
+  final Map<String, CoreWatchRequest> _preferenceRequests = {};
+  final Map<String, StreamController<CoreEvent>> _preferenceControllers = {};
+  List<core.Workspace> _workspaces = <core.Workspace>[];
+  int _createdChatCount = 0;
 
-  /// Implements only preference reads and the group mutations exercised here.
-  @override
-  Future<Uint8List> callBytes(CoreCallRequest request) async {
-    calls.add(request);
-    final value = switch (request.methodName) {
-      'getPreferences' => preferences,
-      'getToolPkgNavigationEntries' || 'getToolPkgUiRoutes' => <Object?>[],
-      'updateChatOrderAndGroup' ||
-      'updateChatPinned' ||
-      'switchChat' ||
-      'unbindChatFromWorkspace' => null,
-      'deleteChatHistory' => deleteAllowed,
-      _ => throw StateError('Unexpected Core call: ${request.methodName}'),
-    };
-    return encodeCoreLink(<Object?>[0, value]);
+  Map<String, Object?> get directoryPreferences => _preferences[_dockFile]!;
+
+  void updateHistories(List<core.ChatHistoryListItem> histories) {
+    final workspaces = <String, core.Workspace>{};
+    for (final history in histories) {
+      final id = history.workspaceId;
+      final name = history.workspaceName;
+      if (id == null || name == null) continue;
+      workspaces[id] = core.Workspace(
+        id: id,
+        name: name,
+        folders: const <core.WorkspaceFolder>[],
+        createdAt: 0,
+        updatedAt: 0,
+      );
+    }
+    _workspaces = workspaces.values.toList(growable: false);
   }
 
-  /// Emits the initial preference snapshot required by the grouping observer.
-  @override
-  Stream<CoreEvent> watchStream(CoreWatchRequest request) {
-    if (request.propertyName != 'preferencesFlow') {
-      throw StateError('Unexpected Core watch: ${request.propertyName}');
-    }
-    return Stream<CoreEvent>.value(
-      CoreEvent.raw(
-        requestId: request.requestId,
-        target: request.target,
-        propertyName: request.propertyName,
-        kind: 'Snapshot',
-        valueBytes: encodeCoreLink(preferences),
-        decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
-      ),
+  Map<String, Object?> _preferencesFor(String fileName) {
+    final values = _preferences[fileName];
+    if (values == null)
+      throw StateError('Unexpected preference file: $fileName');
+    return values;
+  }
+
+  CoreEvent _event(CoreWatchRequest request, Object? value) => CoreEvent.raw(
+    requestId: request.requestId,
+    target: request.target,
+    propertyName: request.propertyName,
+    kind: 'Snapshot',
+    valueBytes: encodeCoreLink(value),
+    decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
+  );
+
+  void _emitPreferences(String fileName) {
+    final request = _preferenceRequests[fileName];
+    if (request == null) return;
+    _preferenceControllers[fileName]?.add(
+      _event(request, _preferencesFor(fileName)),
     );
   }
 
-  /// Rejects pushes outside the sidebar test contract.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
+    calls.add(request);
+    final args = request.args as Map;
+    switch (request.methodName) {
+      case 'getPreferences':
+        final values = _preferencesFor(args['fileName'] as String);
+        return encodeCoreLink(<Object?>[
+          0,
+          <String, Object?>{
+            for (final key in (args['keys'] as List).cast<String>())
+              if (values.containsKey(key)) key: values[key],
+          },
+        ]);
+      case 'getPreference':
+        return encodeCoreLink(<Object?>[
+          0,
+          _preferencesFor(args['fileName'] as String)[args['key']],
+        ]);
+      case 'setPreference':
+        final fileName = args['fileName'] as String;
+        _preferencesFor(fileName)[args['key'] as String] = args['value'];
+        _emitPreferences(fileName);
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'setPreferences':
+        final fileName = args['fileName'] as String;
+        _preferencesFor(
+          fileName,
+        ).addAll((args['values'] as Map).cast<String, Object?>());
+        _emitPreferences(fileName);
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'removePreference':
+        final fileName = args['fileName'] as String;
+        _preferencesFor(fileName).remove(args['key']);
+        _emitPreferences(fileName);
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'removePreferences':
+        final fileName = args['fileName'] as String;
+        for (final key in (args['keys'] as List).cast<String>()) {
+          _preferencesFor(fileName).remove(key);
+        }
+        _emitPreferences(fileName);
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'listWorkspaces':
+        return encodeCoreLink(<Object?>[
+          0,
+          _workspaces.map((workspace) => workspace.toJson()).toList(),
+        ]);
+      case 'getToolPkgNavigationEntries' || 'getToolPkgUiRoutes':
+        return encodeCoreLink(<Object?>[0, <Object?>[]]);
+      case 'createNewChat':
+        return encodeCoreLink(<Object?>[
+          0,
+          'created-chat-${_createdChatCount++}',
+        ]);
+      case 'createAndBindWorkspace':
+        return encodeCoreLink(<Object?>[0, 'created-workspace']);
+      case 'updateChatOrderAndGroup' ||
+          'updateChatOrder' ||
+          'updateChatGroups' ||
+          'updateChatPinned' ||
+          'updateChatLocked' ||
+          'updateChatTitle' ||
+          'switchChat' ||
+          'moveChatToWorkspace' ||
+          'bindChatToWorkspace' ||
+          'unbindChatFromWorkspace':
+        return encodeCoreLink(<Object?>[0, null]);
+      case 'deleteChatHistory':
+        return encodeCoreLink(<Object?>[0, deleteAllowed]);
+    }
+    throw StateError('Unexpected Core call: ${request.methodName}');
+  }
+
+  @override
+  Stream<CoreEvent> watchStream(CoreWatchRequest request) {
+    if (request.propertyName == 'allWorkspacesFlow') {
+      return Stream<CoreEvent>.value(
+        _event(
+          request,
+          _workspaces.map((workspace) => workspace.toJson()).toList(),
+        ),
+      );
+    }
+    if (request.propertyName != 'preferencesFlow') {
+      throw StateError('Unexpected Core watch: ${request.propertyName}');
+    }
+    final fileName = (request.args as Map)['fileName'] as String;
+    _preferenceRequests[fileName] = request;
+    final controller = _preferenceControllers.putIfAbsent(
+      fileName,
+      () => StreamController<CoreEvent>.broadcast(),
+    );
+    return (() async* {
+      yield _event(request, _preferencesFor(fileName));
+      yield* controller.stream;
+    })();
+  }
+
   @override
   Future<CorePushSink> push(CorePushRequest request) =>
       throw UnimplementedError();
 
-  /// Rejects snapshot reads outside the sidebar test contract.
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) =>
       throw UnimplementedError();

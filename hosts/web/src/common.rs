@@ -528,6 +528,7 @@ pub(crate) fn program_to_js(program: ManagedRuntimeProgram) -> JsValue {
         ManagedRuntimeProgram::Python => JsValue::from_str("python"),
         ManagedRuntimeProgram::Uv => JsValue::from_str("uv"),
         ManagedRuntimeProgram::Pnpm => JsValue::from_str("pnpm"),
+        ManagedRuntimeProgram::Command(name) => JsValue::from_str(&name),
     }
 }
 

@@ -2410,6 +2410,7 @@ name = "operit-host-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "js-sys",
  "operit-data-rescue",
  "operit-host-api",

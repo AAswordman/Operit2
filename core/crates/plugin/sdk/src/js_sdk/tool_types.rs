@@ -3,36 +3,63 @@
 use super::results::*;
 
 /// Maps every built-in tool name to its concrete public result type.
+#[operit_plugin_sdk_macros::tool_display]
 pub struct ToolResultMap {
     pub edge_execute: EdgePortResultData,
     pub io_execute: EdgePortResultData,
+    #[display(action = "list", icon = "folder", target = "path", result = "directory")]
     pub list_files: DirectoryListingData,
+    #[display(action = "read", icon = "file", target = "path")]
     pub read_file: FileContentData,
+    #[display(action = "read", icon = "file", target = "path")]
     pub read_file_part: FilePartContentData,
+    #[display(action = "read", icon = "file", target = "path")]
     pub read_file_full: FileContentData,
+    #[display(action = "read", icon = "file", target = "path")]
     pub read_file_binary: BinaryFileContentData,
-    pub write_file: FileOperationData,
+    #[display(action = "write", icon = "edit", target = "path", result = "fileDiff")]
+    pub write_file: FileApplyResultData,
+    #[display(action = "write", icon = "edit", target = "path")]
     pub write_file_binary: FileOperationData,
+    #[display(action = "delete", icon = "delete", target = "path")]
     pub delete_file: FileOperationData,
+    #[display(action = "info", icon = "file", target = "path")]
     pub file_exists: FileExistsData,
+    #[display(action = "move", icon = "file", target = "source")]
     pub move_file: FileOperationData,
+    #[display(action = "copy", icon = "file", target = "source")]
     pub copy_file: FileOperationData,
+    #[display(action = "create", icon = "folder", target = "path")]
     pub make_directory: FileOperationData,
+    #[display(action = "search", icon = "search", target = "pattern")]
     pub find_files: FindFilesResultData,
+    #[display(action = "search", icon = "search", target = "pattern")]
     pub grep_code: GrepResultData,
+    #[display(action = "search", icon = "search", target = "pattern")]
     pub grep_context: GrepResultData,
+    #[display(action = "info", icon = "file", target = "path")]
     pub file_info: FileInfoData,
+    #[display(action = "archive", icon = "folder", target = "destination")]
     pub zip_files: FileOperationData,
+    #[display(action = "extract", icon = "folder", target = "source")]
     pub unzip_files: FileOperationData,
+    #[display(action = "open", icon = "file", target = "path")]
     pub open_file: FileOperationData,
+    #[display(action = "share", icon = "file", target = "path")]
     pub share_file: FileOperationData,
+    #[display(action = "download", icon = "download", target = "url")]
     pub download_file: FileOperationData,
+    #[display(action = "edit", icon = "edit", target = "path", result = "fileDiff")]
     pub apply_file: FileApplyResultData,
+    #[display(action = "create", icon = "file", target = "path", result = "fileDiff")]
     pub create_file: FileApplyResultData,
+    #[display(action = "edit", icon = "edit", target = "path", result = "fileDiff")]
     pub edit_file: FileApplyResultData,
     pub storage_request: StorageRequestResultData,
     pub web_socket: WebSocketResultData,
+    #[display(action = "request", icon = "web", target = "url")]
     pub http_request: HttpResponseData,
+    #[display(action = "visit", icon = "web", target = "url")]
     pub visit_web: VisitWebResultData,
     pub browser_click: String,
     pub browser_close: String,
@@ -44,6 +71,7 @@ pub struct ToolResultMap {
     pub browser_fill_form: String,
     pub browser_handle_dialog: String,
     pub browser_hover: String,
+    #[display(action = "visit", icon = "web", target = "url")]
     pub browser_navigate: String,
     pub browser_navigate_back: String,
     pub browser_network_requests: String,
@@ -56,12 +84,18 @@ pub struct ToolResultMap {
     pub browser_take_screenshot: String,
     pub browser_type: String,
     pub browser_tabs: String,
+    #[display(action = "request", icon = "web", target = "url")]
     pub multipart_request: HttpResponseData,
     pub manage_cookies: HttpResponseData,
+    #[display(action = "wait", icon = "time", target = "duration_ms")]
     pub sleep: SleepResultData,
     pub get_system_setting: SystemSettingData,
     pub modify_system_setting: SystemSettingData,
+    #[display(action = "notify", icon = "notification", target = "message")]
     pub toast: String,
+    #[display(action = "write", icon = "clipboard", target = "text")]
+    pub set_clipboard_text: String,
+    #[display(action = "notify", icon = "notification", target = "title")]
     pub send_notification: String,
     pub install_app: AppOperationData,
     pub uninstall_app: AppOperationData,
@@ -94,10 +128,13 @@ pub struct ToolResultMap {
     pub bluetooth_ble_read_notifications: BluetoothBleNotificationData,
     pub read_environment_variable: EnvironmentVariableReadResultData,
     pub write_environment_variable: EnvironmentVariableWriteResultData,
+    #[display(action = "execute", icon = "terminal", target = "command")]
     pub execute_cli_command: serde_json::Value,
     pub models_list_summaries: ModelsListSummariesResultData,
+    #[display(action = "speak", icon = "audio", target = "text")]
     pub tts_synthesize: TtsSynthesizeResultData,
     pub tts_speak: TtsSpeakResultData,
+    #[display(action = "transcribe", icon = "audio", target = "path")]
     pub stt_transcribe: SttTranscribeResultData,
     pub tts_list_configs: TtsListConfigsResultData,
     pub tts_get_current_config_id: TtsGetCurrentConfigIdResultData,
@@ -106,23 +143,33 @@ pub struct ToolResultMap {
     pub media_register_from_path: MediaRegistrationResultData,
     pub theme_list_configs: ThemeListConfigsResultData,
     pub theme_apply_config: ThemeApplyConfigResultData,
+    #[display(action = "activate", icon = "package", target = "package_name")]
     pub use_package: String,
     pub catalog_read_tool_sources: CatalogReadToolSourcesResultData,
     pub list_core_nodes: String,
     pub switch_core: String,
     pub package_proxy: ToolResultData,
     pub get_terminal_info: TerminalInfoResultData,
+    #[display(action = "execute", icon = "terminal", target = "command")]
     pub execute_in_terminal_session: TerminalCommandResultData,
+    #[display(action = "execute", icon = "terminal", target = "command")]
     pub execute_in_terminal_session_streaming: TerminalCommandResultData,
     pub terminal_observe: TerminalObservationResultData,
     pub execute_hidden_terminal_command: HiddenTerminalCommandResultData,
+    #[display(action = "create", icon = "terminal", target = "session_name")]
     pub create_terminal_session: TerminalSessionCreationResultData,
+    #[display(action = "close", icon = "terminal", target = "session_id")]
     pub close_terminal_session: TerminalSessionCloseResultData,
+    #[display(action = "input", icon = "terminal", target = "input")]
     pub input_in_terminal_session: String,
+    #[display(action = "read", icon = "terminal", target = "session_id")]
     pub get_terminal_session_screen: TerminalSessionScreenResultData,
+    #[display(action = "play", icon = "audio", target = "path")]
     pub music_play: MusicPlaybackResultData,
+    #[display(action = "pause", icon = "audio")]
     pub music_pause: MusicPlaybackResultData,
     pub music_resume: MusicPlaybackResultData,
+    #[display(action = "stop", icon = "audio")]
     pub music_stop: MusicPlaybackResultData,
     pub music_seek: MusicPlaybackResultData,
     pub music_set_volume: MusicPlaybackResultData,
@@ -184,6 +231,7 @@ mod tests {
         assert!(BuiltinToolName::ApplyFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::CreateFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::EditFile.accepts_runtime_result(&result));
+        assert!(BuiltinToolName::WriteFile.accepts_runtime_result(&result));
     }
 
     #[test]

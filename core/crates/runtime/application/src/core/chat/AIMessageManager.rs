@@ -20,8 +20,8 @@ use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiRes
 use operit_providers::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
-    EnhancedAIService, MessageCancellationToken, ResumeRequest, SendMessageCallbacks,
-    SendMessageOptions, SendMessageRuntime,
+    ChatGuidanceInbox, EnhancedAIService, MessageCancellationToken, ResumeRequest,
+    SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
 use operit_providers::runtime_support::ChatConfigurationResult;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
@@ -61,6 +61,7 @@ pub struct BuildUserMessageContentRequest {
 pub struct SendMessageRequest<'a> {
     pub chatConfiguration: ChatConfigurationResult,
     pub enhancedAiService: &'a mut EnhancedAIService,
+    pub guidanceInbox: Option<ChatGuidanceInbox>,
     pub chatId: Option<String>,
     pub messageContent: String,
     pub chatHistory: Vec<ChatMessage>,
@@ -396,6 +397,7 @@ impl AIMessageManager {
 
         let mut options = SendMessageOptions::new();
         options.cancellationToken = Some(cancellationToken);
+        options.guidanceInbox = request.guidanceInbox;
         options.message = request.messageContent;
         options.chatId = request.chatId;
         options.chatHistory = memoryForRequest;
@@ -559,9 +561,11 @@ impl AIMessageManager {
             (role, format!("#{}: {cleanedContent}", index + 1))
         }).collect::<Vec<_>>();
 
+        let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
         let summary = enhancedAiService
             .generateSummary(conversationToSummarize, previousSummary)
             .await?;
+        let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
         if summary.trim().is_empty() {
             return Ok(None);
         }
@@ -587,6 +591,9 @@ impl AIMessageManager {
             summaryWithQuotes.trim_end().to_string()
         };
 
+        let estimatedInputTokens = (summaryWithQuotes.len() * 3 / 2).max(1) as i64;
+        let estimatedOutputTokens = (finalSummary.len() / 2).max(1) as i64;
+
         Ok(Some(ChatMessage {
             sender: "summary".to_string(),
             parts: vec![operit_model::MessagePart::MessagePart::markdown(
@@ -596,6 +603,11 @@ impl AIMessageManager {
             )],
             timestamp: ChatMessageTimestampAllocator::next(),
             roleName: "system".to_string(),
+            inputTokens: estimatedInputTokens,
+            outputTokens: estimatedOutputTokens,
+            waitDurationMs: (endTime - startTime).max(1),
+            sentAt: startTime,
+            completedAt: endTime,
             ..ChatMessage::new("summary".to_string())
         }))
     }
@@ -973,7 +985,7 @@ impl AIMessageManager {
         {
             attributes.push_str(&format!(" node_id=\"{}\"", escape(nodeId)));
         }
-        if toolPath.starts_with("/app/data/temp/clean_on_exit/") {
+        if toolPath.starts_with("/app/data/data/chat_attachments/") {
             attributes.push_str(&format!(" path=\"{}\"", escape(&toolPath)));
         }
         if attachment.fileSize > 0 {
@@ -1506,7 +1518,7 @@ mod tests {
     #[test]
     fn attachment_markup_keeps_the_source_node_and_portable_tool_path() {
         let mut attachment = AttachmentInfo::new(
-            "/device-b/runtime/temp/clean_on_exit/report.pdf".into(),
+            "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf".into(),
             "报价单\".pdf".into(),
             "application/pdf".into(),
             3,
@@ -1515,9 +1527,9 @@ mod tests {
         let tag =
             AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
         assert!(tag.contains("node_id=\"core-b\""));
-        assert!(tag.contains("path=\"/app/data/temp/clean_on_exit/report.pdf\""));
+        assert!(tag.contains("path=\"/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
         assert!(tag.contains("filename=\"报价单&quot;.pdf\""));
-        assert!(tag.contains("id=\"/app/data/temp/clean_on_exit/report.pdf\""));
+        assert!(tag.contains("id=\"/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
         assert!(!tag.contains("/device-b/"));
     }
 
@@ -1525,7 +1537,7 @@ mod tests {
     fn remote_media_never_reads_the_current_file_host() {
         for mimeType in ["image/png", "audio/mpeg", "video/mp4"] {
             let mut attachment = AttachmentInfo::new(
-                "/device-b/runtime/temp/clean_on_exit/media".into(),
+                "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/media".into(),
                 "media".into(),
                 mimeType.into(),
                 3,

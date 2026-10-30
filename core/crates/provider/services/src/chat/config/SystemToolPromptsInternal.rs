@@ -959,18 +959,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                 ),
                 tool(
-                    "write_file",
-                    "Write content to a file.",
-                    "",
-                    vec![
-                        param("path", "string", "file path", true, None),
-                        param("content", "string", "file content", true, None),
-                        param("append", "boolean", "optional", false, Some("false".to_string()))
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
                     "write_file_binary",
                     "Write base64 content to a binary file.",
                     "",
@@ -2202,18 +2190,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("path", "string", "文件路径", true, None)
-                    ],
-                    "",
-                    "",
-                ),
-                tool(
-                    "write_file",
-                    "写入文件内容。",
-                    "",
-                    vec![
-                        param("path", "string", "文件路径", true, None),
-                        param("content", "string", "文件内容", true, None),
-                        param("append", "boolean", "可选", false, Some("false".to_string()))
                     ],
                     "",
                     "",

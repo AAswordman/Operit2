@@ -49,6 +49,14 @@ class _ComposeDslRenderResult {
 
 /// Canonical node names indexed by the Kotlin-compatible normalized token.
 const _composeNodeTypes = <String, String>{
+  'richtext': 'RichText',
+  'codetext': 'CodeText',
+  'selectabletext': 'SelectableText',
+  'menuanchor': 'MenuAnchor',
+  'tooltip': 'Tooltip',
+  'scrollarea': 'ScrollArea',
+  'inkwell': 'InkWell',
+  'svg': 'Svg',
   'gradientrule': 'GradientRule',
   'loadingindicator': 'LoadingIndicator',
   'activitydots': 'ActivityDots',
@@ -123,6 +131,8 @@ const _composeNodeTypes = <String, String>{
   'outlinedcard': 'OutlinedCard',
   'outlinediconbutton': 'OutlinedIconButton',
   'outlinedicontogglebutton': 'OutlinedIconToggleButton',
+  'segmentedcontrol': 'SegmentedControl',
+  'select': 'Select',
   'permanentdrawersheet': 'PermanentDrawerSheet',
   'permanentnavigationdrawer': 'PermanentNavigationDrawer',
   'primaryscrollabletabrow': 'PrimaryScrollableTabRow',
@@ -145,6 +155,7 @@ const _composeNodeTypes = <String, String>{
   'surface': 'Surface',
   'switch': 'Switch',
   'slider': 'Slider',
+  'table': 'Table',
   'tab': 'Tab',
   'text': 'Text',
   'textbutton': 'TextButton',
@@ -198,5 +209,6 @@ class _ComposeDslPendingCommand {
   final int generation;
   final Completer<void> completion = Completer<void>();
   Object? actionResult;
-  final List<({String routeId, Map<String, Object?> args})> navigationCommands = [];
+  final List<({String routeId, Map<String, Object?> args})> navigationCommands =
+      [];
 }

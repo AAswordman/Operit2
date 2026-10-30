@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import '../../../../common/contributions/PluginWorkspacePresentation.dart';
 import 'file_preview/WorkspaceTextDocument.dart';
 
 enum WorkspaceTabKind {
@@ -48,9 +49,11 @@ class WorkspaceTab {
     this.terminalSessionId,
     this.terminalType,
     this.terminalWorkingDir,
+    this.browserSessionId,
     this.pluginEntryId,
     this.pluginPackageName,
     this.pluginUiModuleId,
+    this.pluginPresentation,
     this.identityToken = '',
   });
 
@@ -70,9 +73,11 @@ class WorkspaceTab {
   final String? terminalSessionId;
   final String? terminalType;
   final String? terminalWorkingDir;
+  final String? browserSessionId;
   final String? pluginEntryId;
   final String? pluginPackageName;
   final String? pluginUiModuleId;
+  final PluginWorkspacePresentation? pluginPresentation;
   final String identityToken;
 }
 

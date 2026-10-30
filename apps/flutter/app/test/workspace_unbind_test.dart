@@ -95,6 +95,8 @@ void main() {
   ) async {
     var taps = 0;
     await mountHome(tester, path: '/workspace/project', onUnbind: () => taps++);
+    await tester.tap(find.text('工作区总览'));
+    await tester.pumpAndSettle();
     expect(find.text('解除绑定'), findsOneWidget);
     expect(find.text('创建工作区'), findsNothing);
     expect(find.text('选择工作区'), findsNothing);
@@ -104,6 +106,8 @@ void main() {
 
   testWidgets('workspace known by name also exposes unbind', (tester) async {
     await mountHome(tester, name: '项目工作区');
+    await tester.tap(find.text('项目工作区'));
+    await tester.pumpAndSettle();
     expect(find.text('解除绑定'), findsOneWidget);
   });
 

@@ -1001,9 +1001,17 @@ impl StandardFileSystemTools {
             Err(error) => return toolError(tool, String::new(), error),
         };
         let path = parameterValue(tool, "path");
-        let content = parameterValue(tool, "content");
+        let content = {
+            let val = parameterValue(tool, "content");
+            if val.is_empty() {
+                parameterValue(tool, "new")
+            } else {
+                val
+            }
+        };
         let append = parameterBool(tool, "append");
         let vfs = self.vfs();
+        let originalContent = vfs.readFile(&path).unwrap_or_default();
 
         match self.writeMappedText(&vfs, &path, &content, append) {
             Ok(()) => {
@@ -1013,7 +1021,22 @@ impl StandardFileSystemTools {
                 } else {
                     format!("Content written to {path}")
                 };
-                successData(tool, fileOperationResult(operation, &path, true, details))
+                let newContent = if append {
+                    format!("{originalContent}{content}")
+                } else {
+                    content.clone()
+                };
+                let diffContent = self
+                    .runtimeSupport
+                    .generateUnifiedDiff(&originalContent, &newContent);
+                successData(
+                    tool,
+                    ToolResultData::FileApplyResultData(FileApplyResultData {
+                        operation: fileOperationData(operation, &path, true, details),
+                        aiDiffInstructions: String::new(),
+                        diffContent: Some(diffContent),
+                    }),
+                )
             }
             Err(errorValue) => {
                 let message = format!("Error writing to file: {errorValue}");
@@ -1670,7 +1693,14 @@ impl StandardFileSystemTools {
     /// Creates a new file from structured tool parameters.
     pub async fn createFile(&self, tool: &AITool) -> ToolResult {
         let path = parameterValue(tool, "path");
-        let newContent = parameterValue(tool, "new");
+        let newContent = {
+            let value = parameterValue(tool, "new");
+            if value.trim().is_empty() {
+                parameterValue(tool, "content")
+            } else {
+                value
+            }
+        };
         let mut results = self
             .applyFile(&AITool {
                 name: "apply_file".to_string(),
@@ -2220,6 +2250,27 @@ fn validateOperationParameters(
     operation: &FileSystemToolOperation,
     tool: &AITool,
 ) -> ToolValidationResult {
+    if matches!(operation, FileSystemToolOperation::CreateFile) {
+        let path = parameterValue(tool, "path");
+        if path.trim().is_empty() {
+            return ToolValidationResult {
+                valid: false,
+                errorMessage: "path parameter is required".to_string(),
+            };
+        }
+        let newContent = parameterValue(tool, "new");
+        let content = parameterValue(tool, "content");
+        if newContent.trim().is_empty() && content.trim().is_empty() {
+            return ToolValidationResult {
+                valid: false,
+                errorMessage: "new or content parameter is required for create_file".to_string(),
+            };
+        }
+        return ToolValidationResult {
+            valid: true,
+            errorMessage: String::new(),
+        };
+    }
     for name in requiredParameters(operation) {
         let parameter = tool
             .parameters

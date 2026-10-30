@@ -209,6 +209,7 @@ void main() {
             setAsCurrentChat: false,
             sourceChatId: null,
             parentChatId: null,
+            workspaceId: null,
             input: {
               package: {'version': 1, 'selection': 'card:${card['id']}'},
             },

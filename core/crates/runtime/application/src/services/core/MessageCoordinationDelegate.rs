@@ -17,8 +17,10 @@ use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
 use crate::services::ProviderRuntimeSupportService::{ChatConfigurationApi, MODEL_CONFIGURATION_OWNER};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
+use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
@@ -584,7 +586,7 @@ impl MessageCoordinationDelegate {
                 Some(chatId) => chatId,
                 None => match self
                     .chatHistoryDelegate
-                    .createNewChat(enhancedAiService, true, None, None, None)
+                    .createNewChat(enhancedAiService, true, None, None, None, None)
                     .await
                 {
                     Ok(chatId) => chatId,
@@ -1060,20 +1062,19 @@ impl MessageCoordinationDelegate {
         Ok(())
     }
 
-    /// Starts a user-requested summary and waits for its host-owned task to finish.
-    pub async fn manuallySummarizeConversation(
+    /// Starts a user-requested summary for one explicit chat and waits for its host-owned task.
+    #[allow(non_snake_case)]
+    pub async fn manuallySummarizeConversationForChat(
         &mut self,
         enhancedAiService: &mut EnhancedAIService,
-    ) {
-        let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow.value() else {
-            return;
-        };
+        chatId: String,
+    ) -> bool {
         if self
             .messageProcessingDelegate
             .summaryTaskForChat(&chatId)
             .is_some()
         {
-            return;
+            return false;
         }
         let messages = self
             .chatHistoryDelegate
@@ -1094,11 +1095,27 @@ impl MessageCoordinationDelegate {
             Ok(completion) => completion.await,
             Err(error) => Err(error),
         };
-        if let Err(error) = result {
-            self.messageProcessingDelegate
-                .nonFatalErrorEventFlow
-                .set_value(Some(error));
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                self.messageProcessingDelegate
+                    .nonFatalErrorEventFlow
+                    .set_value(Some(error));
+                false
+            }
         }
+    }
+
+    /// Starts a user-requested summary and waits for its host-owned task to finish.
+    pub async fn manuallySummarizeConversation(
+        &mut self,
+        enhancedAiService: &mut EnhancedAIService,
+    ) {
+        let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow.value() else {
+            return;
+        };
+        self.manuallySummarizeConversationForChat(enhancedAiService, chatId)
+            .await;
     }
 
     /// Compacts a persisted tool round and resumes the same committed user turn after compaction.

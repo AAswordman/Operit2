@@ -1231,10 +1231,9 @@ impl OpenAIProvider {
                 .map(|turn| {
                     let role = match turn.kind {
                         PromptTurnKind::SYSTEM => "system",
-                        PromptTurnKind::USER => "user",
+                        PromptTurnKind::USER | PromptTurnKind::SUMMARY => "user",
                         PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => "assistant",
                         PromptTurnKind::TOOL_RESULT => "tool",
-                        PromptTurnKind::SUMMARY => "system",
                     };
 
                     let mut message = Map::new();

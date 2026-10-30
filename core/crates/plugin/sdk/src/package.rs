@@ -59,9 +59,9 @@ mod tests {
     #[test]
     fn parses_operit1_locale_object() {
         let text: LocalizedText =
-            serde_json::from_str(r#"{"zh":"思考引导","en":"Thinking Guidance"}"#).unwrap();
-        assert_eq!(text.resolve(false), "思考引导");
-        assert_eq!(text.resolve(true), "Thinking Guidance");
+            serde_json::from_str(r#"{"zh":"每日生活","en":"Daily Life"}"#).unwrap();
+        assert_eq!(text.resolve(false), "每日生活");
+        assert_eq!(text.resolve(true), "Daily Life");
     }
 }
 
@@ -102,6 +102,8 @@ pub struct ToolPackageState {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 /// Executable tool declaration inside a package manifest.
 pub struct PackageTool {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::js_sdk::tool_display::ToolDisplayDeclaration>,
     pub name: String,
     pub description: LocalizedText,
     pub parameters: Vec<PackageToolParameter>,

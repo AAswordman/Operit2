@@ -1,7 +1,8 @@
 use js_sys::{Array, Reflect, Uint8Array};
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
-    FileSystemHost, HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage, OCRQuality,
+    ClipboardHost, FileSystemHost, HostError, HostResult, LocationData, NotificationData,
+    NotificationEntry, OCRLanguage, OCRQuality,
     SystemNotificationRequest, SystemOperationHost, SystemSettingData, ToastHost,
 };
 use wasm_bindgen::prelude::*;
@@ -30,6 +31,15 @@ impl ToastHost for WebSystemOperationHost {
     fn toast(&self, message: &str) -> HostResult<()> {
         call_system("toast", &[JsValue::from_str(message)])?;
         Ok(())
+    }
+}
+
+impl ClipboardHost for WebSystemOperationHost {
+    /// Writes clipboard text through the browser application host.
+    fn setClipboardText(&self, text: &str) -> HostResult<String> {
+        let result = call_system("setClipboardText", &[JsValue::from_str(text)])?;
+        let stored = read_string_property(&result, "text")?;
+        Ok(stored)
     }
 }
 

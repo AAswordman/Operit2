@@ -254,6 +254,14 @@ class ChatViewModel {
     return _chat.cancelMessage(chatId: chatId);
   }
 
+  /// Guides the active turn without cancelling its current model or tool round.
+  Future<void> steerMessage({
+    required String chatId,
+    required String messageText,
+  }) {
+    return _chat.steerMessage(chatId: chatId, messageText: messageText);
+  }
+
   /// Adds a message to the runtime-owned queue for one chat.
   Future<void> enqueuePendingQueueMessage({
     required String chatId,
@@ -343,6 +351,9 @@ class ChatViewModel {
 
     try {
       checkCancellation();
+      if (expectedChatId == null || expectedChatId.trim().isEmpty) {
+        throw StateError('File attachments require a selected chat');
+      }
       uploadId = await transfer.beginAttachmentUpload(
         fileName: file.name,
         expectedByteLength: file.byteLength,
@@ -422,7 +433,7 @@ class ChatViewModel {
     final buffer = StringBuffer('<attachment ');
     const escape = HtmlEscape(HtmlEscapeMode.attribute);
     final normalized = attachment.filePath.replaceAll('\\', '/');
-    const marker = '/temp/clean_on_exit/';
+    const marker = '/data/chat_attachments/';
     final markerIndex = normalized.lastIndexOf(marker);
     String? toolPath;
     if (markerIndex >= 0) {
@@ -433,7 +444,7 @@ class ChatViewModel {
               .every(
                 (part) => part.isNotEmpty && part != '.' && part != '..',
               )) {
-        toolPath = '/app/data/temp/clean_on_exit/$relative';
+        toolPath = '/app/data/data/chat_attachments/$relative';
       }
     }
     buffer.write('id="${escape.convert(toolPath ?? attachment.filePath)}" ');
@@ -562,7 +573,8 @@ class ChatViewModel {
   }
 
   /// Previews workspace changes associated with a message timestamp.
-  Future<List<WorkspaceFileChange>> previewWorkspaceChangesForMessage(
+  /// Returns null when the snapshot for that message is no longer retained.
+  Future<List<WorkspaceFileChange>?> previewWorkspaceChangesForMessage(
     String chatId,
     int messageTimestamp,
   ) {

@@ -13,27 +13,31 @@ class MarkdownLatexBlock extends StatelessWidget {
   final String content;
   final Color textColor;
 
+  /// Renders display math without interpreting application-specific languages.
   @override
   Widget build(BuildContext context) {
     final latexContent = extractLatexContent(content.trim());
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 2),
-      alignment: Alignment.centerLeft,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Math.tex(
-          latexContent,
-          mathStyle: MathStyle.display,
-          textStyle: Theme.of(
-            context,
-          ).textTheme.bodyMedium!.copyWith(color: textColor),
+    return ExcludeSemantics(
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        alignment: Alignment.centerLeft,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Math.tex(
+            latexContent,
+            mathStyle: MathStyle.display,
+            textStyle: Theme.of(
+              context,
+            ).textTheme.bodyMedium!.copyWith(color: textColor),
+          ),
         ),
       ),
     );
   }
 }
 
+/// Removes the recognized outer math delimiter from one LaTeX expression.
 String extractLatexContent(String content) {
   if (content.startsWith(r'$$') && content.endsWith(r'$$')) {
     return content.substring(2, content.length - 2).trim();
@@ -60,13 +64,18 @@ class MarkdownInlineLatex extends StatelessWidget {
   final String content;
   final Color textColor;
 
+  /// Renders inline math using the surrounding text style.
   @override
   Widget build(BuildContext context) {
-    final style = DefaultTextStyle.of(context).style;
-    return Math.tex(
-      extractLatexContent(content.trim()),
-      mathStyle: MathStyle.text,
-      textStyle: style.copyWith(color: textColor),
+    final latexContent = extractLatexContent(content.trim());
+    return ExcludeSemantics(
+      child: Math.tex(
+        latexContent,
+        mathStyle: MathStyle.text,
+        textStyle: DefaultTextStyle.of(
+          context,
+        ).style.copyWith(color: textColor),
+      ),
     );
   }
 }

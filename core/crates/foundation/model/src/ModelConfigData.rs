@@ -195,7 +195,7 @@ pub struct ModelConfigDefaults;
 
 impl ModelConfigDefaults {
     pub const DEFAULT_MAX_CONTEXT_LENGTH: f32 = 200.0;
-    pub const DEFAULT_SUMMARY_TOKEN_THRESHOLD: f32 = 0.70;
+    pub const DEFAULT_SUMMARY_TOKEN_THRESHOLD: f32 = 0.85;
     pub const DEFAULT_ENABLE_SUMMARY: bool = true;
     pub const DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT: bool = true;
     pub const DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD: i32 = 16;

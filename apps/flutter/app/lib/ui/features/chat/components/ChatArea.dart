@@ -20,6 +20,10 @@ import 'MessageCopyPreview.dart';
 import 'ChatScrollNavigator.dart';
 import 'NewChatIntro.dart';
 import 'style/ThemedChatMessage.dart';
+import '../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
+import '../../../common/contributions/PluginWorkspacePresentation.dart';
+import 'ChatMessageSlotHost.dart';
+import 'WorkspaceShell.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
 const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
@@ -127,6 +131,7 @@ class _ChatAreaState extends State<ChatArea>
   final Map<int, _CachedMessageRow> _messageRowCache =
       <int, _CachedMessageRow>{};
   late final ValueNotifier<bool> _chatBusyNotifier;
+  late EmbeddedPluginSurfaceCatalog _messageContributions;
   Timer? _navigatorHideTimer;
   Timer? _viewportResizeTimer;
   bool _userScrollSessionActive = false;
@@ -158,6 +163,10 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void initState() {
     super.initState();
+    _messageContributions = EmbeddedPluginSurfaceCatalog(
+      clients: widget.clients,
+      surfaces: const {'chat_message_after'},
+    );
     _chatBusyNotifier = ValueNotifier<bool>(widget.isLoading);
     _layoutScrollController = _ChatLayoutScrollController(
       delegate: widget.scrollController,
@@ -165,6 +174,49 @@ class _ChatAreaState extends State<ChatArea>
       shouldInitiallyAlignBottom: _ownsBottomScroll,
     );
     _bottomFollowTicker = createTicker(_tickBottomFollow);
+  }
+
+  /// Updates localized declarations without opening a catalog per transcript row.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _messageContributions.setLanguage(Localizations.localeOf(context).languageCode);
+  }
+
+  /// Binds message actions to the mounted chat and exact answer revision, not plugin-supplied ids.
+  Future<void> _handleMessageContribution(
+    String chatId,
+    ChatUiMessage message,
+    EmbeddedPluginSurfaceEntry entry,
+    Object? value,
+  ) async {
+    if (!mounted || widget.currentChatId != chatId) return;
+    final current = widget.messages.firstWhereOrNull((item) => item.timestamp == message.timestamp);
+    if (current == null || current.selectedVariantIndex != message.selectedVariantIndex) return;
+    if (!_messageContributions.entries.any((item) => item.mountIdentity == entry.mountIdentity)) return;
+    try {
+      if (value is Map && value['type'] == 'toolpkg.message.rollback') {
+        widget.onRollbackToMessage(message.timestamp);
+        return;
+      }
+      final request = PluginWorkspaceRequest.fromActionResult(value);
+      if (request == null) return;
+      final presentation = await PluginWorkspacePresentation.resolve(
+        clients: widget.clients,
+        sourceOwnerPackageName: entry.route.containerPackageName,
+        request: request,
+        language: Localizations.localeOf(context).languageCode,
+        hostState: {'chatId': chatId},
+      );
+      if (mounted && widget.currentChatId == chatId && widget.messages.any((item) =>
+          item.timestamp == message.timestamp && item.selectedVariantIndex == message.selectedVariantIndex)) {
+        WorkspaceShell.session.openPluginPage(presentation);
+      }
+    } catch (error) {
+      if (mounted && widget.currentChatId == chatId) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      }
+    }
   }
 
   /// Builds the scrollable message area and its navigation overlay.
@@ -266,6 +318,7 @@ class _ChatAreaState extends State<ChatArea>
           animation: Listenable.merge(<Listenable>[
             _messageAnchorsNotifier,
             _viewportHeightNotifier,
+            widget.scrollController,
           ]),
           builder: (context, _) {
             final messageAnchors = _messageAnchorsNotifier.value;
@@ -549,6 +602,7 @@ class _ChatAreaState extends State<ChatArea>
       }
       final scrollController = widget.scrollController;
       if (scrollController.hasClients &&
+          scrollController.positions.length == 1 &&
           scrollController.position.isScrollingNotifier.value) {
         _scheduleNavigatorHide();
         return;
@@ -617,7 +671,9 @@ class _ChatAreaState extends State<ChatArea>
         !widget.autoScrollToBottomListenable.value ||
         widget.hasNewerDisplayHistory ||
         widget.isLoadingDisplayWindow ||
-        !widget.scrollController.hasClients) {
+        !widget.scrollController.hasClients ||
+        widget.scrollController.positions.length != 1 ||
+        !widget.scrollController.position.hasPixels) {
       _stopBottomFollow();
       return;
     }
@@ -701,8 +757,14 @@ class _ChatAreaState extends State<ChatArea>
       await widget.onShowLatestDisplayWindow();
       return;
     }
-    await widget.scrollController.animateTo(
-      widget.scrollController.position.maxScrollExtent,
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients ||
+        scroll.positions.length != 1 ||
+        !scroll.position.hasPixels) {
+      return;
+    }
+    await scroll.animateTo(
+      scroll.position.maxScrollExtent,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
@@ -770,7 +832,10 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Collects render anchors for currently visible chat message rows.
   void _collectMessageAnchors() {
-    if (!widget.scrollController.hasClients) {
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients ||
+        scroll.positions.length != 1 ||
+        !scroll.position.hasPixels) {
       return;
     }
     final viewportContext = _viewportKey.currentContext;
@@ -787,16 +852,21 @@ class _ChatAreaState extends State<ChatArea>
       if (rowBox == null || !rowBox.attached || !rowBox.hasSize) {
         continue;
       }
-      final localTop = rowBox
-          .localToGlobal(Offset.zero, ancestor: viewportBox)
-          .dy;
-      anchors[message.timestamp] = ChatScrollMessageAnchor(
-        timestamp: message.timestamp,
-        index: index,
-        key: key,
-        absoluteTopPx: widget.scrollController.offset + localTop,
-        heightPx: rowBox.size.height,
-      );
+      try {
+        final localTop = rowBox
+            .localToGlobal(Offset.zero, ancestor: viewportBox)
+            .dy;
+        anchors[message.timestamp] = ChatScrollMessageAnchor(
+          timestamp: message.timestamp,
+          index: index,
+          key: key,
+          absoluteTopPx: scroll.offset + localTop,
+          heightPx: rowBox.size.height,
+        );
+      } catch (_) {
+        // Skip rows that are being unmounted or detached from viewportBox during resize
+        continue;
+      }
     }
     _messageAnchorsNotifier.value = anchors;
   }
@@ -840,6 +910,7 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void didUpdateWidget(ChatArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _messageContributions.bindClients(widget.clients);
     _chatBusyNotifier.value = widget.isLoading;
     _layoutScrollController.delegate = widget.scrollController;
     final chatChanged = oldWidget.currentChatId != widget.currentChatId;
@@ -917,6 +988,7 @@ class _ChatAreaState extends State<ChatArea>
   /// Releases timers, cached rows, and navigation state.
   @override
   void dispose() {
+    _messageContributions.dispose();
     _navigatorHideTimer?.cancel();
     _viewportResizeTimer?.cancel();
     _layoutScrollController.dispose();
@@ -982,6 +1054,17 @@ class _ChatAreaState extends State<ChatArea>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           chatMessage,
+          if (!selectionMode)
+          if (widget.currentChatId case final chatId?)
+            ChatMessageSlotHost(
+              catalog: _messageContributions,
+              chatId: chatId,
+              message: message,
+              isStreaming: isStreaming,
+              onActionResult: (entry, value) => unawaited(
+                _handleMessageContribution(chatId, message, entry, value),
+              ),
+            ),
           if (message.sender == 'ai' && message.variantCount > 1)
             _MessageVariantSwitcher(
               message: message,

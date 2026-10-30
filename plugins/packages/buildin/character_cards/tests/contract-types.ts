@@ -40,8 +40,14 @@ export type FileRepositoryIdentifierContracts = [
   Assert<Equal<DomainInput<"memory.link.update">["linkId"], MemoryLink["id"]>>,
 ];
 
-/** The list API exposes viewport geometry; content invalidation belongs to the engine. */
+/** The list API exposes viewport geometry and optional natural row sizing; content invalidation belongs to the engine. */
 export type LazyItemOptionContract = Assert<Equal<
   keyof import("../../../../types/compose-dsl").ComposeLazyItemOptions,
-  "key" | "itemCount" | "itemExtent" | "initialItemCount"
+  "key" | "itemCount" | "itemExtent" | "initialItemCount" | "variableExtent"
+>>;
+
+/** Natural row sizing remains optional so fixed-extent lists retain their existing contract. */
+export type LazyItemVariableExtentContract = Assert<Equal<
+  Pick<import("../../../../types/compose-dsl").ComposeLazyItemOptions, "variableExtent">,
+  { variableExtent?: boolean }
 >>;

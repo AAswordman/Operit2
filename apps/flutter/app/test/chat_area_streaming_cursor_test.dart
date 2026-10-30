@@ -1574,7 +1574,7 @@ void main() {
       find.byKey(const ValueKey<String>('assistant-markdown-surface')),
       findsOneWidget,
     );
-    expect(find.byType(CompactToolDisplay), findsOneWidget);
+    expect(find.byType(ToolCallRow), findsOneWidget);
   });
 
   testWidgets(
@@ -2030,10 +2030,16 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
     }
   }
 
-  /// Rejects encoded calls because this harness only exercises watch streams.
+  /// Declares an empty plugin catalog while keeping unrelated calls unsupported.
   @override
-  Future<Uint8List> callBytes(CoreCallRequest request) {
-    throw UnimplementedError();
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
+    switch (request.methodName) {
+      case 'getToolPkgNavigationEntries':
+      case 'getToolPkgUiRoutes':
+        return encodeCoreLink([0, const <Object?>[]]);
+      default:
+        throw UnimplementedError();
+    }
   }
 
   /// Rejects client-owned streams because this harness only exercises watches.

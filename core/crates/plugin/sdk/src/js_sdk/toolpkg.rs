@@ -2147,19 +2147,28 @@ pub enum ToolPkgNavigationSurface {
     /// Embeds a package-owned Compose DSL section below chat statistics and above native controls.
     #[serde(rename = "chat_input_menu_sections")]
     ChatInputMenuSections,
+    /// Embeds a package-owned Compose DSL screen after one versioned chat message.
+    #[serde(rename = "chat_message_after")]
+    ChatMessageAfter,
+    /// Registers a package-owned page opened inside the workspace independently of sidebar docking.
+    #[serde(rename = "workspace")]
+    Workspace,
+    /// Embeds package-owned Compose content on the workspace home surface.
+    #[serde(rename = "workspace_home")]
+    WorkspaceHome,
 }
 /// Describes a plugin action exposed through a host navigation surface.
 pub struct ToolPkgNavigationEntryRegistration {
     /// Uniquely identifies this navigation entry registration within the package.
     pub id: String,
-    /// Provides this package's registered UI route; required for chat_attachments, chat_sidebar_tabs, chat_input_menu and chat_input_menu_sections.
-    /// Embedded sidebar and input-menu surfaces require one owned Compose DSL route registered before the navigation entry.
+    /// Provides this package's registered UI route; required for attachment and embedded UI surfaces.
+    /// Embedded surfaces require one owned Compose DSL route registered before the navigation entry.
     pub route: Option<String>,
     /// Carries opaque plugin-owned route input without host domain interpretation.
     pub params: Option<ToolPkgJsonValue>,
     /// Selects the host navigation surface containing this entry.
     pub surface: ToolPkgNavigationSurface,
-    /// Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments, chat_sidebar_tabs, chat_input_menu and chat_input_menu_sections.
+    /// Supplies navigation callbacks on other surfaces; attachment and embedded UI surfaces require routes instead.
     pub action: Option<ToolPkgNavigationEntryActionHookHandler>,
     /// Provides primary text displayed by the host UI.
     pub title: Option<ToolPkgLocalizedText>,

@@ -81,10 +81,20 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 case 'chat_sidebar_tabs':
                 case 'chat_input_menu':
                 case 'chat_input_menu_sections':
+                case 'chat_message_after':
+                case 'workspace':
+                case 'workspace_home':
                     return;
                 default:
                     throw new Error('registerNavigationEntry.surface is unsupported: ' + String(surface));
             }
+        }
+
+        /** Identifies surfaces rendered by a package-owned Compose DSL route. */
+        function isEmbeddedUiSurface(surface) {
+            return surface === 'chat_sidebar_tabs' || surface === 'chat_input_menu' ||
+                surface === 'chat_input_menu_sections' || surface === 'chat_message_after' ||
+                surface === 'workspace' || surface === 'workspace_home';
         }
 
         /** Requires one already registered package-owned Compose DSL route for an embedded surface. */
@@ -507,7 +517,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                     throw new Error('registerNavigationEntry requires an object');
                 }
                 validateNavigationSurface(definition.surface);
-                if (definition.surface === 'chat_attachments' || definition.surface === 'chat_sidebar_tabs' || definition.surface === 'chat_input_menu' || definition.surface === 'chat_input_menu_sections') {
+                if (definition.surface === 'chat_attachments' || isEmbeddedUiSurface(definition.surface)) {
                     if (definition.action !== undefined && definition.action !== null) {
                         throw new Error('registerNavigationEntry.action is unsupported for ' + definition.surface);
                     }
@@ -515,7 +525,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                         throw new Error('registerNavigationEntry.route is required for ' + definition.surface);
                     }
                 }
-                if (definition.surface === 'chat_sidebar_tabs' || definition.surface === 'chat_input_menu' || definition.surface === 'chat_input_menu_sections') validateEmbeddedRoute(definition);
+                if (isEmbeddedUiSurface(definition.surface)) validateEmbeddedRoute(definition);
                 if (Object.prototype.hasOwnProperty.call(definition, 'params')) {
                     validateNavigationParams(definition.params, []);
                 }

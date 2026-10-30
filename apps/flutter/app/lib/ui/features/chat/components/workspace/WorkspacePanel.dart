@@ -7,13 +7,18 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:operit2/core/browser/BrowserSessions.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/host/AppToastController.dart';
 import 'package:operit2/core/host/browser/RuntimeBrowserSessionRegistry.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import '../../../../common/components/RetainedPage.dart';
 import '../../../../common/contributions/ToolPkgChatUiCatalog.dart';
+import '../../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
+import '../../../../common/contributions/EmbeddedPluginSurfaceHost.dart';
+import '../../../../common/contributions/PluginWorkspacePresentation.dart';
 import '../../../../main/layout/SidebarDockController.dart';
 import '../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
@@ -28,7 +33,8 @@ import 'WorkspaceSession.dart';
 import 'WorkspaceUnbindDialog.dart';
 import 'WorkspaceTabStrip.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
-import 'package:operit2/core/web_visit/RuntimeWebVisitRegistry.dart';
+import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
+import 'browser/tabs/WorkspaceBrowserTabModels.dart';
 import 'file_preview/WorkspaceTextDocument.dart';
 import 'file_preview/WorkspaceTextCloseDialog.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
@@ -85,10 +91,12 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       RuntimeBrowserSessionRegistry.instance;
   final WorkspaceBrowserViewStore _browserViewStore =
       WorkspaceBrowserViewStore.instance;
-  final RuntimeWebVisitRegistry _webVisitSessionRegistry =
-      RuntimeWebVisitRegistry.instance;
+  final WorkspaceWebVisitSessionRegistry _webVisitSessionRegistry =
+      WorkspaceWebVisitSessionRegistry.instance;
   final WorkspaceTerminalSessions _terminalSessions =
       const WorkspaceTerminalSessions();
+  final Map<String, Completer<WebVisitResponse>> _webVisitCompleters =
+      <String, Completer<WebVisitResponse>>{};
 
   /// Returns the workspace state owned by the main chat shell.
   WorkspaceSession get _session => widget.session;
@@ -100,6 +108,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   bool _workspaceUnbindDialogOpen = false;
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
+  final ValueNotifier<List<WorkspaceTerminalSessionInfo>>
+  _terminalSessionsNotifier = ValueNotifier<List<WorkspaceTerminalSessionInfo>>(
+    const <WorkspaceTerminalSessionInfo>[],
+  );
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
   final ValueNotifier<int> _browserSessionCount = ValueNotifier<int>(0);
   List<core_proxy.ChatHistoryListItem>? _workspaceOverviewHistories;
@@ -108,6 +120,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   bool? _workspaceOverviewUseEnglish;
   final WorkspaceOverviewContributionCatalog _workspaceOverviewContributions =
       WorkspaceOverviewContributionCatalog();
+  final EmbeddedPluginSurfaceCatalog _embeddedContributions = EmbeddedPluginSurfaceCatalog(
+    clients: _coreClients,
+    surfaces: const {'workspace_home'},
+  );
   List<WorkspaceFileEntry> _workspaceOverviewMountedFolders =
       const <WorkspaceFileEntry>[];
   bool _workspaceOverviewMountedFoldersLoading = false;
@@ -124,11 +140,20 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void initState() {
     super.initState();
+    _session.addListener(_handleSessionChanged);
     widget.sidebarDockController?.addListener(_handleSidebarDockChanged);
     _syncDockedPluginTabs();
-    unawaited(_browserViewStore.ensureLoaded());
+    unawaited(
+      _browserViewStore.ensureLoaded().catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        debugPrint('Failed to load browser sessions: $error\n$stackTrace');
+      }),
+    );
     _browserSessionRegistry.addListener(_handleBrowserSessionRegistryChanged);
     _handleBrowserSessionRegistryChanged();
+    _browserViewStore.addListener(_handleBrowserViewStoreChanged);
     _registerWebVisitControls();
     _workspaceOverviewContributions.addListener(
       _handleWorkspaceOverviewContributionsChanged,
@@ -156,6 +181,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _embeddedContributions.setLanguage(Localizations.localeOf(context).languageCode);
     final useEnglish = Localizations.localeOf(context).languageCode == 'en';
     if (_workspaceOverviewUseEnglish != useEnglish) {
       _workspaceOverviewUseEnglish = useEnglish;
@@ -194,11 +220,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   /// Releases subscriptions and invalidates every asynchronous overview request.
   @override
   void dispose() {
+    _embeddedContributions.dispose();
+    _session.removeListener(_handleSessionChanged);
     widget.sidebarDockController?.removeListener(_handleSidebarDockChanged);
-    _webVisitSessionRegistry.clearControls(this);
+    _webVisitSessionRegistry.clearControls();
     _browserSessionRegistry.removeListener(
       _handleBrowserSessionRegistryChanged,
     );
+    _browserViewStore.removeListener(_handleBrowserViewStoreChanged);
     ++_workspaceOverviewHistoryWatchGeneration;
     ++_workspaceOverviewMountedFoldersLoadGeneration;
     unawaited(_workspaceOverviewHistorySubscription?.cancel());
@@ -207,10 +236,32 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       _handleWorkspaceOverviewContributionsChanged,
     );
     _workspaceOverviewContributions.dispose();
+    for (final entry in _webVisitCompleters.entries) {
+      final completer = entry.value;
+      if (!completer.isCompleted) {
+        completer.complete(
+          WebVisitResponse(
+            requestId: entry.key,
+            success: false,
+            error: 'visit_web workspace closed',
+          ),
+        );
+      }
+    }
+    _webVisitCompleters.clear();
     unawaited(_terminalSessionSubscription?.cancel());
     _terminalSessionCount.dispose();
+    _terminalSessionsNotifier.dispose();
     _browserSessionCount.dispose();
     super.dispose();
+  }
+
+  /// Rebuilds after a turn review selects the workspace diff tab.
+  void _handleSessionChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
   }
 
   /// Refreshes peer plugin tabs after a sidebar dock movement.
@@ -233,11 +284,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _session.tabs.removeWhere(
       (tab) =>
           tab.kind == WorkspaceTabKind.plugin &&
+          tab.pluginPresentation == null &&
           !dockedById.containsKey(tab.pluginEntryId),
     );
     _session.secondaryTabs.removeWhere(
       (tab) =>
           tab.kind == WorkspaceTabKind.plugin &&
+          tab.pluginPresentation == null &&
           !dockedById.containsKey(tab.pluginEntryId),
     );
     final existingIds = <String>{
@@ -285,25 +338,27 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final panel = OperitGlassSurface(
-      color: theme.colorScheme.surface,
+    final isDark = theme.brightness == Brightness.dark;
+    final surfaceColor = theme.colorScheme.surface;
+    final borderColor = isDark
+        ? const Color(0xFF262626)
+        : theme.colorScheme.outlineVariant.withValues(alpha: 0.5);
+
+    return OperitGlassSurface(
+      color: surfaceColor,
       layer: OperitGlassSurfaceLayer.panel,
-      transparentAlpha: 0.035,
-      borderRadius: BorderRadius.zero,
-      material: true,
-      clip: false,
-      child: SizedBox.expand(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: BorderDirectional(
-              start: BorderSide(color: theme.colorScheme.outlineVariant),
-            ),
-          ),
-          child: _buildWorkspaceLayout(),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: borderColor, width: 1),
+      shadows: <BoxShadow>[
+        BoxShadow(
+          color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+          blurRadius: 18,
+          offset: const Offset(0, 4),
         ),
-      ),
+      ],
+      clip: true,
+      child: _buildWorkspaceLayout(),
     );
-    return panel;
   }
 
   /// Builds the workspace layout with one or two independently tabbed panes.
@@ -711,10 +766,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   void _registerWebVisitControls() {
-    _webVisitSessionRegistry.setControls(
-      owner: this,
-      openWebVisitTab: _openWebVisitTab,
-    );
+    _webVisitSessionRegistry.setControls(openWebVisitTab: _openWebVisitTab);
   }
 
   /// Watches actual history summaries and rejects events from a replaced chat core.
@@ -892,6 +944,17 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     setState(() {
       _setSelectedIndexForPane(paneIndex, index);
     });
+    final tabs = _tabsForPane(paneIndex);
+    if (index >= 0 && index < tabs.length) {
+      final tab = tabs[index];
+      if (tab.kind == WorkspaceTabKind.browser &&
+          tab.browserSessionId != null &&
+          tab.browserSessionId!.isNotEmpty) {
+        try {
+          _browserViewStore.selectSession(tab.browserSessionId!);
+        } catch (_) {}
+      }
+    }
   }
 
   void _openSingletonTab(WorkspaceTab tab) {
@@ -927,6 +990,47 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
+  void _openBrowserSessionTab(
+    WorkspaceBrowserTabState tabState, {
+    String? absolutePath,
+    String? workspaceHtmlPath,
+    String? userAgent,
+    Map<String, String>? headers,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    final existingIndex = _session.tabs.indexWhere(
+      (item) =>
+          item.kind == WorkspaceTabKind.browser &&
+          item.browserSessionId == tabState.id,
+    );
+    final title = tabState.title.trim().isNotEmpty
+        ? tabState.title.trim()
+        : (tabState.siteHost.isNotEmpty ? tabState.siteHost : '浏览器');
+    final tab = WorkspaceTab(
+      kind: WorkspaceTabKind.browser,
+      title: title,
+      icon: Icons.public,
+      browserSessionId: tabState.id,
+      url: tabState.url,
+      absolutePath: absolutePath,
+      workspaceHtmlPath: workspaceHtmlPath,
+      userAgent: userAgent,
+      headers: headers,
+    );
+    setState(() {
+      if (existingIndex >= 0) {
+        _session.tabs[existingIndex] = tab;
+        _session.selectedIndex = existingIndex;
+      } else {
+        _session.tabs.add(tab);
+        _session.selectedIndex = _session.tabs.length - 1;
+      }
+    });
+    _browserViewStore.selectSession(tabState.id);
+  }
+
   Future<void> _openBrowserTabAsync({
     String? url,
     String? localFilePath,
@@ -934,51 +1038,89 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     String? userAgent,
     Map<String, String>? headers,
   }) async {
-    final htmlPath = workspaceHtmlPath?.trim();
-    if (htmlPath != null && htmlPath.isNotEmpty) {
-      await _browserViewStore.openWorkspaceHtmlTab(htmlPath, initialUrl: url);
-    } else {
-      final filePath = localFilePath?.trim();
-      if (filePath != null && filePath.isNotEmpty) {
-        await _browserViewStore.openLocalFileTab(filePath);
-      } else {
-        await _browserViewStore.openTab(
-          url: url,
-          userAgent: userAgent,
-          headers: headers,
+    try {
+      final htmlPath = workspaceHtmlPath?.trim();
+      if (htmlPath != null && htmlPath.isNotEmpty) {
+        final existingIndex = _session.tabs.indexWhere(
+          (item) =>
+              item.kind == WorkspaceTabKind.browser &&
+              item.workspaceHtmlPath == htmlPath,
         );
+        if (existingIndex >= 0) {
+          setState(() {
+            _session.selectedIndex = existingIndex;
+          });
+          final existingTab = _session.tabs[existingIndex];
+          if (existingTab.browserSessionId != null) {
+            _browserViewStore.selectSession(existingTab.browserSessionId!);
+          }
+          return;
+        }
+      } else {
+        final filePath = localFilePath?.trim();
+        if (filePath != null && filePath.isNotEmpty) {
+          final existingIndex = _session.tabs.indexWhere(
+            (item) =>
+                item.kind == WorkspaceTabKind.browser &&
+                item.absolutePath == filePath,
+          );
+          if (existingIndex >= 0) {
+            setState(() {
+              _session.selectedIndex = existingIndex;
+            });
+            final existingTab = _session.tabs[existingIndex];
+            if (existingTab.browserSessionId != null) {
+              _browserViewStore.selectSession(existingTab.browserSessionId!);
+            }
+            return;
+          }
+        }
       }
-    }
-    if (!mounted) {
-      return;
-    }
-    _openBrowserWorkspaceTab();
-  }
 
-  void _openBrowserWorkspaceTab() {
-    if (!mounted) {
-      return;
-    }
-    final existingIndex = _session.tabs.indexWhere(
-      (item) => item.kind == WorkspaceTabKind.browser,
-    );
-    setState(() {
-      if (existingIndex >= 0) {
-        _session.selectedIndex = existingIndex;
+      final WorkspaceBrowserTabState tabState;
+      if (htmlPath != null && htmlPath.isNotEmpty) {
+        tabState = await _browserViewStore.openWorkspaceHtmlTab(
+          htmlPath,
+          initialUrl: url,
+        );
+      } else {
+        final filePath = localFilePath?.trim();
+        if (filePath != null && filePath.isNotEmpty) {
+          tabState = await _browserViewStore.openLocalFileTab(filePath);
+        } else {
+          tabState = await _browserViewStore.openTab(
+            url: url,
+            userAgent: userAgent,
+            headers: headers,
+          );
+        }
+      }
+      if (!mounted) {
         return;
       }
-      _session.tabs.add(
-        const WorkspaceTab(
-          kind: WorkspaceTabKind.browser,
-          title: '',
-          icon: Icons.public,
-        ),
+      _openBrowserSessionTab(
+        tabState,
+        absolutePath: localFilePath,
+        workspaceHtmlPath: workspaceHtmlPath,
+        userAgent: userAgent,
+        headers: headers,
       );
-      _session.selectedIndex = _session.tabs.length - 1;
-    });
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'open browser tab failed',
+        tag: 'WorkspacePanel',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        AppToastController.instance.show('打开浏览器失败: $error');
+      }
+    }
   }
 
-  void _openWebVisitTab(WebVisitRequest request) {
+  Future<WebVisitResponse> _openWebVisitTab(WebVisitRequest request) {
+    final completer = Completer<WebVisitResponse>();
+    _webVisitCompleters[request.requestId] = completer;
     final tab = WorkspaceTab(
       kind: WorkspaceTabKind.webVisit,
       title: _webVisitTabTitle(request),
@@ -989,18 +1131,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       _session.tabs.add(tab);
       _session.selectedIndex = _session.tabs.length - 1;
     });
-    final visit = _webVisitSessionRegistry.sessionFor(request.requestId)!;
-    unawaited(
-      visit.response.then((_) {
-        if (!mounted) return;
-        for (final paneIndex in [0, 1]) {
-          if (_tabsForPane(paneIndex).contains(tab)) {
-            _finishWebVisitTab(tab, paneIndex: paneIndex);
-            break;
-          }
-        }
-      }),
-    );
+    return completer.future;
   }
 
   String _webVisitTabTitle(WebVisitRequest request) {
@@ -1009,6 +1140,29 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       return uri.host;
     }
     return 'visit_web';
+  }
+
+  /// Resolves workspace surface actions only under their live authenticated owner.
+  Future<void> _handleEmbeddedAction(EmbeddedPluginSurfaceEntry entry, Object? value) async {
+    final workspace = widget.workspacePath;
+    final chatId = widget.currentChatId;
+    if (!_embeddedContributions.entries.any((item) => item.mountIdentity == entry.mountIdentity)) return;
+    try {
+      final request = PluginWorkspaceRequest.fromActionResult(value);
+      if (request == null) return;
+      final presentation = await PluginWorkspacePresentation.resolve(
+        clients: _coreClients,
+        sourceOwnerPackageName: entry.route.containerPackageName,
+        request: request,
+        language: Localizations.localeOf(context).languageCode,
+        hostState: {..._session.pluginHostState, 'workspacePath': workspace},
+      );
+      if (mounted && widget.workspacePath == workspace && widget.currentChatId == chatId) {
+        _session.openPluginPage(presentation);
+      }
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+    }
   }
 
   /// Builds one tab's content with callbacks bound to its physical pane.
@@ -1030,10 +1184,25 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onOpenFolder: _openMountedFolder,
       onAddFolder: _openWorkspaceBindingPickerTab,
       filesListingRevision: _filesListingRevision,
+      terminalSessionsListenable: _terminalSessionsNotifier,
       onOpenTerminal: _createAndOpenTerminalSession,
       onOpenTerminalSessions: _showTerminalSessionPicker,
       onOpenBrowserSessions: _showBrowserSessionPicker,
       onOpenBrowser: _openBrowserTab,
+      onSelectTerminalSession: _openTerminalSessionTab,
+      onCloseTerminalSession: _handleCloseTerminalSession,
+      onSelectBrowserTab: _openBrowserSessionTab,
+      onCloseBrowserSession: _handleCloseBrowserSession,
+      pluginHomeContent: EmbeddedPluginSurfaceHost(
+        catalog: _embeddedContributions,
+        surface: 'workspace_home',
+        instanceIdentity: (widget.currentChatId, widget.workspacePath),
+        hostState: {..._session.pluginHostState, 'workspacePath': widget.workspacePath},
+        entryPadding: const EdgeInsets.only(bottom: 12),
+        onActionResult: (entry, value) => unawaited(_handleEmbeddedAction(entry, value)),
+      ),
+      onFinishWebVisit: (tab, response) =>
+          _finishWebVisitTab(tab, response, paneIndex: paneIndex),
       onActivateCurrentTab: () =>
           _selectWorkspaceTab(tab, paneIndex: paneIndex),
       onCloseCurrentTab: () => _closeWorkspaceTab(tab, paneIndex: paneIndex),
@@ -1341,14 +1510,12 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                               ),
                               onTap: () async {
                                 Navigator.of(context).pop();
-                                await _browserViewStore.attachSession(session);
+                                final tabState = await _browserViewStore
+                                    .attachSession(session);
                                 if (!mounted) {
                                   return;
                                 }
-                                _openBrowserWorkspaceTab();
-                                _browserViewStore.selectSession(
-                                  session.sessionId,
-                                );
+                                _openBrowserSessionTab(tabState);
                               },
                             );
                           },
@@ -1373,6 +1540,30 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   ) {
     _terminalSessionEntries = sessions;
     _terminalSessionCount.value = sessions.length;
+    _terminalSessionsNotifier.value = sessions;
+  }
+
+  Future<void> _handleCloseTerminalSession(
+    WorkspaceTerminalSessionInfo session,
+  ) async {
+    _removeTerminalTabsForSession(session.sessionId);
+    await _closeManualTerminalSession(session.sessionId);
+    final updatedSessions = await _terminalSessions.listSessions();
+    if (!mounted) {
+      return;
+    }
+    _updateTerminalSessionEntries(updatedSessions);
+  }
+
+  Future<void> _handleCloseBrowserSession(String sessionId) async {
+    setState(() {
+      _session.tabs.removeWhere(
+        (t) =>
+            t.kind == WorkspaceTabKind.browser &&
+            t.browserSessionId == sessionId,
+      );
+    });
+    await _browserSessions.close(sessionId);
   }
 
   /// Updates terminal session entries from the runtime snapshot.
@@ -1387,6 +1578,92 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   /// Updates the browser session counter from the owner registry.
   void _handleBrowserSessionRegistryChanged() {
     _browserSessionCount.value = _browserSessionRegistry.sessions.length;
+  }
+
+  /// Synchronizes open browser tab titles and removes closed browser sessions.
+  void _handleBrowserViewStoreChanged() {
+    if (!mounted) {
+      return;
+    }
+    bool needsSetState = false;
+
+    for (final paneIndex in <int>[0, 1]) {
+      final tabs = _tabsForPane(paneIndex);
+      for (int i = tabs.length - 1; i >= 0; i--) {
+        final tab = tabs[i];
+        if (tab.kind == WorkspaceTabKind.browser &&
+            tab.browserSessionId != null &&
+            tab.browserSessionId!.isNotEmpty) {
+          final sessionState = _browserViewStore.tabById(tab.browserSessionId!);
+          if (sessionState == null) {
+            tabs.removeAt(i);
+            final selectedIndex = _selectedIndexForPane(paneIndex);
+            if (selectedIndex >= tabs.length) {
+              _setSelectedIndexForPane(
+                paneIndex,
+                (tabs.length - 1).clamp(0, tabs.length - 1),
+              );
+            }
+            needsSetState = true;
+          } else {
+            final newTitle = sessionState.title.trim().isNotEmpty
+                ? sessionState.title.trim()
+                : (sessionState.siteHost.isNotEmpty
+                      ? sessionState.siteHost
+                      : '浏览器');
+            if (tab.title != newTitle || tab.url != sessionState.url) {
+              tabs[i] = WorkspaceTab(
+                kind: tab.kind,
+                title: newTitle,
+                icon: tab.icon,
+                closable: tab.closable,
+                browserSessionId: tab.browserSessionId,
+                url: sessionState.url,
+                absolutePath: tab.absolutePath,
+                workspaceHtmlPath: tab.workspaceHtmlPath,
+                userAgent: tab.userAgent,
+                headers: tab.headers,
+              );
+              needsSetState = true;
+            }
+          }
+        }
+      }
+    }
+    if (needsSetState) {
+      setState(() {
+        _collapseEmptyPane();
+      });
+    }
+  }
+
+  /// Removes closed browser sessions from both tab groups.
+  void _removeBrowserTabsForSession(String sessionId) {
+    final selectedTab = _session.tabs[_session.selectedIndex];
+    setState(() {
+      _session.tabs.removeWhere((tab) => tab.browserSessionId == sessionId);
+      final secondarySelected = _session.secondaryTabs.isEmpty
+          ? null
+          : _session.secondaryTabs[_session.secondarySelectedIndex];
+      _session.secondaryTabs.removeWhere(
+        (tab) => tab.browserSessionId == sessionId,
+      );
+      _session.secondarySelectedIndex = _clampSelectedIndex(
+        secondarySelected == null
+            ? 0
+            : _session.secondaryTabs.indexOf(secondarySelected),
+        _session.secondaryTabs,
+      );
+      _collapseEmptyPane();
+      final preservedIndex = _session.tabs.indexOf(selectedTab);
+      if (preservedIndex >= 0) {
+        _session.selectedIndex = preservedIndex;
+      } else {
+        _session.selectedIndex = _session.selectedIndex
+            .clamp(0, _session.tabs.length - 1)
+            .toInt();
+      }
+    });
   }
 
   /// Removes closed terminal sessions from both tab groups.
@@ -1598,20 +1875,32 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Builds a stable workspace tab identity for diffing tab lists.
   String _tabIdentity(WorkspaceTab tab) {
-    return <String>[
-      tab.kind.name,
-      tab.filePath ?? '',
-      tab.absolutePath ?? '',
-      tab.url ?? '',
-      tab.workspaceHtmlPath ?? '',
-      tab.webVisitRequest?.requestId ?? '',
-      tab.terminalSessionId ?? '',
-      tab.pluginEntryId ?? '',
-      tab.pluginPackageName ?? '',
-      tab.pluginUiModuleId ?? '',
-      tab.identityToken,
-      tab.title,
-    ].join('|');
+    switch (tab.kind) {
+      case WorkspaceTabKind.home:
+        return 'home';
+      case WorkspaceTabKind.workspacePicker:
+        return 'workspacePicker';
+      case WorkspaceTabKind.files:
+        return 'files';
+      case WorkspaceTabKind.terminal:
+        final sessionId = tab.terminalSessionId;
+        return 'terminal-${sessionId != null && sessionId.isNotEmpty ? sessionId : tab.identityToken}';
+      case WorkspaceTabKind.browser:
+        final sessionId = tab.browserSessionId;
+        return 'browser-${sessionId != null && sessionId.isNotEmpty ? sessionId : tab.identityToken}';
+      case WorkspaceTabKind.webVisit:
+        final requestId = tab.webVisitRequest?.requestId;
+        return 'webVisit-${requestId != null && requestId.isNotEmpty ? requestId : tab.identityToken}';
+      case WorkspaceTabKind.filePreview:
+        final path = tab.absolutePath ?? tab.filePath;
+        return 'filePreview-${path != null && path.isNotEmpty ? path : tab.identityToken}';
+      case WorkspaceTabKind.plugin:
+        if (tab.pluginPresentation != null) {
+          return 'plugin-page-${tab.identityToken}';
+        }
+        final pluginId = tab.pluginEntryId ?? tab.pluginUiModuleId;
+        return 'plugin-${pluginId != null && pluginId.isNotEmpty ? pluginId : tab.identityToken}';
+    }
   }
 
   /// Confirms unsaved changes before closing a tab from its physical pane.
@@ -1666,10 +1955,23 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         unawaited(_closeManualTerminalSession(sessionId));
       }
     }
+    if (tab.kind == WorkspaceTabKind.browser) {
+      final sessionId = tab.browserSessionId;
+      if (sessionId != null && sessionId.trim().isNotEmpty) {
+        _browserViewStore.closeSession(sessionId);
+      }
+    }
     if (tab.kind == WorkspaceTabKind.webVisit) {
       final request = tab.webVisitRequest;
       if (request != null) {
-        _webVisitSessionRegistry.cancel(request.requestId);
+        _completeWebVisitRequest(
+          request.requestId,
+          WebVisitResponse(
+            requestId: request.requestId,
+            success: false,
+            error: 'visit_web cancelled',
+          ),
+        );
       }
     }
   }
@@ -1684,6 +1986,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     setState(() {
       _setSelectedIndexForPane(paneIndex, index);
     });
+    if (tab.kind == WorkspaceTabKind.browser &&
+        tab.browserSessionId != null &&
+        tab.browserSessionId!.isNotEmpty) {
+      try {
+        _browserViewStore.selectSession(tab.browserSessionId!);
+      } catch (_) {}
+    }
   }
 
   /// Closes a tab after its content widget requests closure.
@@ -1697,11 +2006,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   /// Completes a web visit and removes its tab from the owning pane.
-  void _finishWebVisitTab(WorkspaceTab tab, {int paneIndex = 0}) {
+  void _finishWebVisitTab(
+    WorkspaceTab tab,
+    WebVisitResponse response, {
+    int paneIndex = 0,
+  }) {
     final request = tab.webVisitRequest;
     if (request == null) {
       return;
     }
+    _completeWebVisitRequest(request.requestId, response);
     final tabs = _tabsForPane(paneIndex);
     final index = tabs.indexOf(tab);
     if (index >= 0) {
@@ -1715,6 +2029,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         }
         _collapseEmptyPane();
       });
+    }
+  }
+
+  void _completeWebVisitRequest(String requestId, WebVisitResponse response) {
+    final completer = _webVisitCompleters.remove(requestId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(response);
     }
   }
 

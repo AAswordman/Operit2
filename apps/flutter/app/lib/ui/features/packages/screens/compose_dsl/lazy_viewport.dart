@@ -3,6 +3,60 @@ import 'dart:math' as math;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+/// Reports the measured cache interval of a variable-height embedded sliver.
+class ComposeDslVariableSliverList extends SliverList {
+  /// Keeps Flutter's ordinary list element, child lifecycle and scroll geometry.
+  const ComposeDslVariableSliverList({
+    super.key,
+    required super.delegate,
+    required this.onLayoutItems,
+  });
+
+  final ValueChanged<Map<int, double>> onLayoutItems;
+
+  /// Creates an ordinary list renderer with a post-layout measurement hook.
+  @override
+  RenderSliverList createRenderObject(BuildContext context) =>
+      _RenderComposeVariableSliverList(
+        childManager: context as SliverMultiBoxAdaptorElement,
+        onLayoutItems: onLayoutItems,
+      );
+
+  /// Rebinds the observer without replacing retained child elements.
+  @override
+  void updateRenderObject(BuildContext context, RenderSliverList renderObject) {
+    (renderObject as _RenderComposeVariableSliverList).onLayoutItems =
+        onLayoutItems;
+  }
+}
+
+/// Measures actual cached rows after Flutter has resolved scroll corrections.
+class _RenderComposeVariableSliverList extends RenderSliverList {
+  /// Delegates all layout and child ownership to Flutter's variable sliver.
+  _RenderComposeVariableSliverList({
+    required super.childManager,
+    required this.onLayoutItems,
+  });
+
+  ValueChanged<Map<int, double>> onLayoutItems;
+
+  /// Reports indices and extents only from children laid out in this cache.
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (geometry?.scrollOffsetCorrection != null) return;
+    final items = <int, double>{};
+    var child = firstChild;
+    while (child != null) {
+      items[indexOf(child)] = constraints.axis == Axis.vertical
+          ? child.size.height
+          : child.size.width;
+      child = childAfter(child);
+    }
+    onLayoutItems(items);
+  }
+}
+
 /// Keeps Flutter list behavior while supplying Compose-aware viewport measurement.
 class ComposeDslLazyListView extends ListView {
   /// Creates a lazy list whose cross axis is measured from its instantiated items.
@@ -15,7 +69,11 @@ class ComposeDslLazyListView extends ListView {
     required super.childrenDelegate,
     super.itemExtent,
     super.cacheExtent,
-  }) : super.custom(padding: EdgeInsets.zero);
+    EdgeInsetsGeometry padding = EdgeInsets.zero,
+    this.onLayoutItems,
+  }) : super.custom(padding: padding);
+
+  final ValueChanged<Map<int, double>>? onLayoutItems;
 
   /// Uses one content-measuring viewport for both list axes and sizing modes.
   @override
@@ -32,6 +90,7 @@ class ComposeDslLazyListView extends ListView {
     itemCacheExtent: cacheExtent,
     clipBehavior: clipBehavior,
     paintOrder: paintOrder,
+    onLayoutItems: onLayoutItems,
   );
 }
 
@@ -46,10 +105,12 @@ class _ComposeLazyViewport extends ShrinkWrappingViewport {
     required this.itemCacheExtent,
     required super.clipBehavior,
     required super.paintOrder,
+    required this.onLayoutItems,
   });
 
   final bool shrinkWrap;
   final double? itemCacheExtent;
+  final ValueChanged<Map<int, double>>? onLayoutItems;
 
   /// Creates the sliver viewport without requiring a bounded cross axis.
   @override
@@ -65,6 +126,7 @@ class _ComposeLazyViewport extends ShrinkWrappingViewport {
         itemCacheExtent: itemCacheExtent,
         clipBehavior: clipBehavior,
         paintOrder: paintOrder,
+        onLayoutItems: onLayoutItems,
       );
 
   /// Preserves the existing scroll position and render children during updates.
@@ -76,7 +138,8 @@ class _ComposeLazyViewport extends ShrinkWrappingViewport {
     super.updateRenderObject(context, renderObject);
     renderObject
       ..shrinkWrap = shrinkWrap
-      ..cacheExtent = itemCacheExtent;
+      ..cacheExtent = itemCacheExtent
+      ..onLayoutItems = onLayoutItems;
   }
 }
 
@@ -91,6 +154,7 @@ class _RenderComposeLazyViewport extends RenderShrinkWrappingViewport {
     required super.paintOrder,
     required bool shrinkWrap,
     required double? itemCacheExtent,
+    required this.onLayoutItems,
   }) : _shrinkWrap = shrinkWrap {
     cacheExtent = itemCacheExtent;
   }
@@ -100,6 +164,7 @@ class _RenderComposeLazyViewport extends RenderShrinkWrappingViewport {
   double _contentScrollExtent = 0;
   double _contentPaintExtent = 0;
   bool _visualOverflow = false;
+  ValueChanged<Map<int, double>>? onLayoutItems;
 
   /// Exposes the parent's actual cross-axis limit to item measurement.
   double get availableCrossAxisExtent => _availableCrossAxisExtent;
@@ -176,6 +241,15 @@ class _RenderComposeLazyViewport extends RenderShrinkWrappingViewport {
           Axis.vertical => Size(crossExtent, mainExtent),
           Axis.horizontal => Size(mainExtent, crossExtent),
         };
+        if (onLayoutItems case final observe?) {
+          final items = <int, double>{};
+          _visitComposeListItems(this, (item) {
+            if (item.itemIndex case final index?) {
+              items[index] = item.measuredMainAxisExtent;
+            }
+          });
+          observe(items);
+        }
         return;
       }
     }
@@ -293,15 +367,21 @@ class ComposeDslLazyListItem extends SingleChildRenderObjectWidget {
     required this.axis,
     required this.alignment,
     required Widget super.child,
+    this.itemIndex,
   });
 
   final Axis axis;
   final Alignment alignment;
+  final int? itemIndex;
 
   /// Creates the natural-size measuring and alignment adapter.
   @override
   RenderAligningShiftedBox createRenderObject(BuildContext context) =>
-      _RenderComposeListItem(axis: axis, alignment: alignment);
+      _RenderComposeListItem(
+        axis: axis,
+        alignment: alignment,
+        itemIndex: itemIndex,
+      );
 
   /// Updates measurement and alignment without replacing the item subtree.
   @override
@@ -311,19 +391,25 @@ class ComposeDslLazyListItem extends SingleChildRenderObjectWidget {
   ) {
     (renderObject as _RenderComposeListItem)
       ..axis = axis
-      ..alignment = alignment;
+      ..alignment = alignment
+      ..itemIndex = itemIndex;
   }
 }
 
 /// Separates a child's natural cross size from its final sliver cross constraint.
 class _RenderComposeListItem extends RenderAligningShiftedBox {
   /// Stores the list axis and delegates painting and hit testing to Flutter.
-  _RenderComposeListItem({required Axis axis, required super.alignment})
-    : _axis = axis,
-      super(textDirection: null);
+  _RenderComposeListItem({
+    required Axis axis,
+    required super.alignment,
+    this.itemIndex,
+  }) : _axis = axis,
+       super(textDirection: null);
 
   Axis _axis;
   double naturalCrossAxisExtent = 0;
+  double measuredMainAxisExtent = 0;
+  int? itemIndex;
 
   /// Reports the direction used to loosen item measurement.
   Axis get axis => _axis;
@@ -396,6 +482,7 @@ class _RenderComposeListItem extends RenderAligningShiftedBox {
       Axis.horizontal => child!.size.height,
     };
     size = constraints.constrain(child!.size);
+    measuredMainAxisExtent = axis == Axis.vertical ? size.height : size.width;
     alignChild();
   }
 }

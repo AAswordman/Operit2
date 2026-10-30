@@ -52,7 +52,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder.coreForTarget(target).unwrap();
-                core.createNewChat(true, None, None, None).await.unwrap();
+                core.createNewChat(true, None, None, None, None).await.unwrap();
                 core.chatHistoryDelegate
                     .currentChatIdFlow()
                     .value()
@@ -90,7 +90,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                 );
                 core.chatHistoryDelegate
                     .addMessageToChat(message, Some(chat_id.clone()));
-                core.createNewChat(true, Some(chat_id.clone()), None, None)
+                core.createNewChat(true, Some(chat_id.clone()), None, None, None)
                     .await
                     .unwrap();
                 let inherited_chat_id = core
@@ -105,6 +105,17 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                     .unwrap()
                     .unwrap();
                 assert_eq!(inherited_workspace, workspace);
+                let mismatch_error = core
+                    .createNewChat(
+                        true,
+                        Some(inherited_chat_id.clone()),
+                        None,
+                        Some("missing-workspace".to_string()),
+                        None,
+                    )
+                    .await
+                    .expect_err("workspace mismatch must be rejected");
+                assert!(mismatch_error.contains("does not match"));
                 (workspace, inherited_chat_id)
             };
             assert_ne!(chat_id, inherited_chat_id);

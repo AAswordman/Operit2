@@ -11,6 +11,7 @@ import '../bridge/PlatformCoreProxy.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../browser/BrowserAutomationBridge.dart';
 import '../browser/BrowserAutomationModels.dart';
+import '../link/CoreLinkProtocol.dart';
 import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
@@ -81,6 +82,8 @@ class RuntimeHostInteractionSubscriber {
       ];
 
   static StreamSubscription<RuntimeHostInteractionRequest>? _subscription;
+  static Timer? _reconnectTimer;
+  static bool _uninstalled = false;
   static int _ttsPlaybackOwnerSequence = 0;
   static final Map<String, _BrowserInteractHostTiming>
   _browserInteractHostTimings = <String, _BrowserInteractHostTiming>{};
@@ -92,6 +95,9 @@ class RuntimeHostInteractionSubscriber {
 
   /// Installs the owner host interaction stream listener.
   static void install() {
+    _uninstalled = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     if (_subscription != null) {
       return;
     }
@@ -112,6 +118,7 @@ class RuntimeHostInteractionSubscriber {
                 ),
               ),
             );
+            _scheduleReconnect();
           },
           onDone: () {
             _releaseSubscription(subscription);
@@ -120,14 +127,32 @@ class RuntimeHostInteractionSubscriber {
               tag: 'RuntimeHostInteraction',
               verboseLevel: VerboseLevel.level4,
             );
+            _scheduleReconnect();
           },
-          cancelOnError: true,
+          cancelOnError: false,
         );
     _subscription = subscription;
   }
 
+  /// Schedules a reconnect if the host subscriber was not deliberately uninstalled.
+  static void _scheduleReconnect() {
+    if (_uninstalled) {
+      return;
+    }
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(milliseconds: 500), () {
+      _reconnectTimer = null;
+      if (!_uninstalled && _subscription == null) {
+        install();
+      }
+    });
+  }
+
   /// Stops the owner host interaction stream listener.
   static Future<void> uninstall() async {
+    _uninstalled = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     final subscription = _subscription;
     _subscription = null;
     await subscription?.cancel();
@@ -147,8 +172,10 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionRequest request,
   ) async {
     final eventStopwatch = Stopwatch()..start();
+    var dispatchCompleted = false;
     try {
       final response = await _dispatch(request);
+      dispatchCompleted = true;
       final respondStopwatch = Stopwatch()..start();
       await _respondOwnerHostInteraction(request.requestId, response);
       respondStopwatch.stop();
@@ -159,20 +186,22 @@ class RuntimeHostInteractionSubscriber {
         failed: false,
       );
     } catch (error, stackTrace) {
-      final response = _errorResponse(error);
-      try {
-        await _respondOwnerHostInteraction(request.requestId, response);
-      } catch (respondError, respondStackTrace) {
-        FlutterError.reportError(
-          FlutterErrorDetails(
-            exception: respondError,
-            stack: respondStackTrace,
-            library: 'runtime host interaction subscriber',
-            context: ErrorDescription(
-              'responding owner host interaction error',
+      if (!dispatchCompleted) {
+        final response = _errorResponse(error);
+        try {
+          await _respondOwnerHostInteraction(request.requestId, response);
+        } catch (respondError, respondStackTrace) {
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: respondError,
+              stack: respondStackTrace,
+              library: 'runtime host interaction subscriber',
+              context: ErrorDescription(
+                'responding owner host interaction error',
+              ),
             ),
-          ),
-        );
+          );
+        }
       }
       _recordBrowserInteractHostResponseTiming(
         request.requestId,
@@ -180,14 +209,24 @@ class RuntimeHostInteractionSubscriber {
         roundTripElapsedUs: eventStopwatch.elapsedMicroseconds,
         failed: true,
       );
-      FlutterError.reportError(
-        FlutterErrorDetails(
-          exception: error,
-          stack: stackTrace,
-          library: 'runtime host interaction subscriber',
-          context: ErrorDescription('handling owner host interaction event'),
-        ),
-      );
+      final isRequestNotFound =
+          error is CoreLinkError &&
+          error.message.contains('host interaction request not found');
+      if (isRequestNotFound) {
+        ClientLogger.w(
+          'Host interaction request expired or was cancelled by Core: ${request.requestId}',
+          tag: 'RuntimeHostInteraction',
+        );
+      } else {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'runtime host interaction subscriber',
+            context: ErrorDescription('handling owner host interaction event'),
+          ),
+        );
+      }
     }
   }
 
@@ -507,6 +546,9 @@ class RuntimeHostInteractionSubscriber {
     if (payload.operation == 'toast') {
       return _handleToastOperation(payload);
     }
+    if (payload.operation == 'set_clipboard_text') {
+      return _handleClipboardWriteOperation(payload);
+    }
     if (payload.operation == 'get_device_location_foreground') {
       return _handleForegroundLocationOperation(payload);
     }
@@ -611,6 +653,33 @@ class RuntimeHostInteractionSubscriber {
     return _response(
       systemOperation: RuntimeHostInteractionSystemOperationResponse(
         resultJson: jsonEncode(<String, Object?>{'success': true}),
+      ),
+    );
+  }
+
+  /// Writes system-operation clipboard text inside the Flutter application.
+  static Future<RuntimeHostInteractionResponse> _handleClipboardWriteOperation(
+    RuntimeHostInteractionSystemOperationPayload payload,
+  ) async {
+    final decoded = jsonDecode(payload.paramsJson);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException(
+        'set_clipboard_text paramsJson must be an object',
+      );
+    }
+    final text = decoded['text'];
+    if (text is! String || text.isEmpty) {
+      throw const FormatException(
+        'set_clipboard_text text must be a non-empty string',
+      );
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    return _response(
+      systemOperation: RuntimeHostInteractionSystemOperationResponse(
+        resultJson: jsonEncode(<String, Object?>{
+          'success': true,
+          'text': text,
+        }),
       ),
     );
   }

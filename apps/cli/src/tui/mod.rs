@@ -6,6 +6,8 @@ mod commands;
 mod compose;
 #[path = "config/mod.rs"]
 mod config;
+#[path = "diff/mod.rs"]
+pub(crate) mod diff;
 #[path = "transcript/empty_state.rs"]
 mod empty_state;
 #[path = "core/focus.rs"]

@@ -9,6 +9,7 @@ import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
 import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.dart';
+import 'package:operit2/ui/features/chat/components/part/ToolCallResultMergeRender.dart';
 
 void main() {
   group('MarkdownEventNodeBuilder streaming cursor', () {
@@ -139,15 +140,18 @@ void main() {
       expect(group.stableKey, 'think-tools-0');
     });
 
-    test('keeps a single complete tool-only call expanded', () {
+    test('groups a single tool call with its result', () {
       final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
           .group(<MarkdownNodeStable>[
             _xml('<tool name="read_file"></tool>'),
             _xml('<tool_result name="read_file"></tool_result>'),
           ], 'renderer');
 
-      expect(items, hasLength(2));
-      expect(items, everyElement(isA<MarkdownSingleItem>()));
+      expect(items, hasLength(1));
+      final group = items.single as MarkdownGroupItem;
+      expect(group.startIndex, 0);
+      expect(group.endIndexInclusive, 1);
+      expect(group.stableKey, 'tools-only-0');
     });
 
     test('collapses a thinking block with one write tool call', () {
@@ -177,6 +181,7 @@ void main() {
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: StreamMarkdownRenderer(
+              mergeRender: const ToolCallResultMergeRender(),
               content: '',
               isStreaming: true,
               contentStream: controller.stream,
@@ -205,11 +210,11 @@ void main() {
         ..add(_markdownBlockStart(3, nodeType: 'HtmlBreak'));
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.textContaining('read_file'), findsWidgets);
+      expect(find.text('read_file'), findsOneWidget);
       expect(find.byType(StreamingCursor), findsOneWidget);
       expect(
         find.descendant(
-          of: find.byType(CompactToolDisplay),
+          of: find.byType(ToolCallRow),
           matching: find.byType(StreamingCursor),
         ),
         findsOneWidget,
@@ -228,6 +233,7 @@ void main() {
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: StreamMarkdownRenderer(
+              mergeRender: const ToolCallResultMergeRender(),
               content: '',
               isStreaming: true,
               contentStream: controller.stream,
@@ -268,7 +274,7 @@ void main() {
         );
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.textContaining('read_file'), findsWidgets);
+      expect(find.text('read_file'), findsOneWidget);
 
       await controller.close();
     });
@@ -283,6 +289,7 @@ void main() {
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: StreamMarkdownRenderer(
+              mergeRender: const ToolCallResultMergeRender(),
               content: '',
               isStreaming: true,
               contentStream: controller.stream,
@@ -314,7 +321,7 @@ void main() {
             '<tool name="read_file"><param name="path">README.md</param></tool>',
       );
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.textContaining('read_file'), findsWidgets);
+      expect(find.text('read_file'), findsOneWidget);
 
       _emitRsXmlBlock(
         controller,
@@ -322,7 +329,7 @@ void main() {
         xml: '<tool_result name="read_file">ok</tool_result>',
       );
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.textContaining('read_file'), findsWidgets);
+      expect(find.text('read_file'), findsOneWidget);
 
       _emitRsXmlBlock(
         controller,
@@ -330,7 +337,7 @@ void main() {
         xml: '<tool name="grep_code"><param name="pattern">TODO</param></tool>',
       );
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.textContaining('grep_code'), findsWidgets);
+      expect(find.text('grep_code'), findsOneWidget);
 
       _emitRsXmlBlock(
         controller,
@@ -338,9 +345,186 @@ void main() {
         xml: '<tool_result name="grep_code">none</tool_result>',
       );
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.textContaining('grep_code'), findsWidgets);
+      expect(find.text('grep_code'), findsOneWidget);
 
       await controller.close();
+    });
+
+    testWidgets(
+      'keeps streamed Markdown visible when later tool groups arrive',
+      (tester) async {
+        final controller = StreamController<Object>();
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('zh'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: StreamMarkdownRenderer(
+                mergeRender: const ToolCallResultMergeRender(),
+                content: '',
+                isStreaming: true,
+                contentStream: controller.stream,
+                textColor: Colors.black,
+                backgroundColor: Colors.white,
+                nodeGrouper: const ThinkToolsXmlNodeGrouper(
+                  showThinkingProcess: true,
+                ),
+                showThinkingProcess: true,
+                splitMarkdownContent: (_) async =>
+                    const <MarkdownStreamEvent>[],
+              ),
+            ),
+          ),
+        );
+
+        _emitRsXmlBlock(
+          controller,
+          blockId: 1,
+          xml: '<think>first plan</think>',
+          complete: true,
+        );
+        _emitRsXmlBlock(
+          controller,
+          blockId: 2,
+          xml: '<tool name="read_file"></tool>',
+          complete: true,
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.textContaining('正在执行 · 1 次思考 · 1 次调用'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(ToolCallRow),
+            matching: find.byType(StreamingCursor),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('read_file'), findsOneWidget);
+
+        _emitRsXmlBlock(
+          controller,
+          blockId: 3,
+          xml: '<tool_result name="read_file">first result</tool_result>',
+          complete: true,
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.textContaining('正在执行 · 1 次思考 · 1 次调用'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(ToolCallRow),
+            matching: find.byType(StreamingCursor),
+          ),
+          findsNothing,
+        );
+
+        _emitRsTextBlock(
+          controller,
+          blockId: 4,
+          text: 'Streaming intermediate A',
+        );
+        await tester.pump(const Duration(milliseconds: 900));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        final markdownA = find.text(
+          'Streaming intermediate A',
+          findRichText: true,
+        );
+        final firstGroupHeader = find.textContaining('1 次思考 · 1 次调用');
+        expect(markdownA, findsOneWidget);
+        expect(firstGroupHeader, findsOneWidget);
+        expect(find.text('已完成 · 1 次思考 · 1 次调用'), findsOneWidget);
+        expect(find.textContaining('正在执行'), findsNothing);
+        // Finished phases fold away automatically once body text arrives.
+        expect(find.text('read_file'), findsNothing);
+
+        await tester.tap(firstGroupHeader);
+        await tester.pump(const Duration(milliseconds: 250));
+        // Manual expansion survives and is not auto-collapsed again.
+        expect(find.text('read_file'), findsOneWidget);
+        final originalMarkdownOffset = tester.getTopLeft(markdownA);
+
+        _emitRsXmlBlock(
+          controller,
+          blockId: 5,
+          xml: '<think>second plan</think>',
+          complete: true,
+        );
+        _emitRsXmlBlock(
+          controller,
+          blockId: 6,
+          xml: '<tool name="grep_code"></tool>',
+          complete: true,
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(markdownA, findsOneWidget);
+        expect(firstGroupHeader, findsNWidgets(2));
+        expect(find.text('已完成 · 1 次思考 · 1 次调用'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(ToolCallRow),
+            matching: find.byType(StreamingCursor),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('grep_code'), findsOneWidget);
+        expect(find.textContaining('2 次思考 · 2 次调用'), findsNothing);
+        expect(tester.getTopLeft(markdownA), originalMarkdownOffset);
+
+        _emitRsXmlBlock(
+          controller,
+          blockId: 7,
+          xml: '<tool_result name="grep_code">second result</tool_result>',
+          complete: true,
+        );
+        _emitRsTextBlock(
+          controller,
+          blockId: 8,
+          text: 'Streaming intermediate B',
+        );
+        controller.add(_markdownCompleted());
+        await tester.pump(const Duration(milliseconds: 900));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(markdownA, findsOneWidget);
+        expect(
+          find.text('Streaming intermediate B', findRichText: true),
+          findsOneWidget,
+        );
+        expect(firstGroupHeader, findsNWidgets(2));
+        expect(find.textContaining('正在执行'), findsNothing);
+        // The second phase auto-collapses on completion; the manually opened
+        // first phase stays expanded.
+        expect(find.text('grep_code'), findsNothing);
+        expect(find.text('read_file'), findsOneWidget);
+        expect(tester.getTopLeft(markdownA), originalMarkdownOffset);
+
+        await controller.close();
+      },
+    );
+  });
+
+  group('formatExecutionDuration', () {
+    test('formats seconds, minutes and hours with carryover correctly', () {
+      expect(formatExecutionDuration(Duration.zero), '0s');
+      expect(formatExecutionDuration(const Duration(seconds: 45)), '45s');
+      expect(formatExecutionDuration(const Duration(seconds: 59)), '59s');
+      expect(formatExecutionDuration(const Duration(seconds: 60)), '1min');
+      expect(formatExecutionDuration(const Duration(seconds: 61)), '1min 1s');
+      expect(formatExecutionDuration(const Duration(seconds: 90)), '1min 30s');
+      expect(formatExecutionDuration(const Duration(seconds: 120)), '2min');
+      expect(
+        formatExecutionDuration(const Duration(seconds: 3599)),
+        '59min 59s',
+      );
+      expect(formatExecutionDuration(const Duration(seconds: 3600)), '1h');
+      expect(formatExecutionDuration(const Duration(seconds: 3605)), '1h 5s');
+      expect(formatExecutionDuration(const Duration(seconds: 3660)), '1h 1min');
+      expect(
+        formatExecutionDuration(const Duration(seconds: 3665)),
+        '1h 1min 5s',
+      );
+      expect(formatExecutionDuration(const Duration(seconds: 7320)), '2h 2min');
     });
   });
 }
@@ -405,6 +589,7 @@ MarkdownStreamEvent _markdownBlockChunk(
   int blockId,
   String value, {
   int? parentBlockId,
+  String? nodeType = 'XmlBlock',
 }) {
   return MarkdownStreamEvent(
     chatId: 'chat',
@@ -414,9 +599,28 @@ MarkdownStreamEvent _markdownBlockChunk(
     blockId: blockId,
     inlineId: null,
     parentBlockId: parentBlockId,
-    nodeType: 'XmlBlock',
+    nodeType: nodeType,
     headerLevel: null,
     xml: _xmlEvent(value),
+  );
+}
+
+MarkdownStreamEvent _markdownBlockEnd(
+  int blockId, {
+  String? nodeType,
+  String? xmlContent,
+}) {
+  return MarkdownStreamEvent(
+    chatId: 'chat',
+    eventType: 'markdownBlockEnd',
+    value: null,
+    id: null,
+    blockId: blockId,
+    inlineId: null,
+    parentBlockId: null,
+    nodeType: nodeType,
+    headerLevel: null,
+    xml: xmlContent == null ? null : _xmlEvent(xmlContent),
   );
 }
 
@@ -559,9 +763,27 @@ void _emitRsXmlBlock(
   StreamController<Object> controller, {
   required int blockId,
   required String xml,
+  bool complete = false,
 }) {
   controller
     ..add(_markdownChunk(xml))
     ..add(_markdownBlockStart(blockId))
     ..add(_markdownBlockChunk(blockId, xml));
+  if (complete) {
+    controller.add(
+      _markdownBlockEnd(blockId, nodeType: 'XmlBlock', xmlContent: xml),
+    );
+  }
+}
+
+void _emitRsTextBlock(
+  StreamController<Object> controller, {
+  required int blockId,
+  required String text,
+}) {
+  controller
+    ..add(_markdownChunk(text))
+    ..add(_markdownBlockStart(blockId, nodeType: null))
+    ..add(_markdownBlockChunk(blockId, text, nodeType: null))
+    ..add(_markdownBlockEnd(blockId));
 }

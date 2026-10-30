@@ -447,13 +447,26 @@ class AppearanceSettingsPanel extends StatelessWidget {
           icon: Icons.chat_bubble_outline,
           children: <Widget>[
             _AppearanceFieldBlock(
-              label: l10n.settingsAppearanceMessageStyle,
-              badge: _messageStyleLabel(l10n, snapshot.chatStyle),
+              label: l10n.settingsAppearanceUserMessageStyle,
+              badge: _messageStyleLabel(l10n, snapshot.userChatStyle),
               child: _MessageStyleSelector(
-                value: snapshot.chatStyle,
+                value: snapshot.userChatStyle,
                 onChanged: (value) {
                   unawaited(
-                    themeController.saveThemeSettings(chatStyle: value),
+                    themeController.saveThemeSettings(userChatStyle: value),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceAiMessageStyle,
+              badge: _messageStyleLabel(l10n, snapshot.aiChatStyle),
+              child: _MessageStyleSelector(
+                value: snapshot.aiChatStyle,
+                onChanged: (value) {
+                  unawaited(
+                    themeController.saveThemeSettings(aiChatStyle: value),
                   );
                 },
               ),
@@ -511,6 +524,39 @@ class AppearanceSettingsPanel extends StatelessWidget {
                 ),
               ],
             ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceAvatarSection,
+          icon: Icons.account_circle_outlined,
+          children: <Widget>[
+            SettingsSwitchRow(
+              icon: Icons.visibility_outlined,
+              title: l10n.settingsAppearanceShowAvatars,
+              value: snapshot.bubbleShowAvatar,
+              onChanged: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(bubbleShowAvatar: value),
+                );
+              },
+            ),
+            if (snapshot.bubbleShowAvatar) ...<Widget>[
+              const SizedBox(height: 8),
+              _AppearanceFieldBlock(
+                label: l10n.settingsAppearanceAvatarShape,
+                badge: _avatarShapeLabel(l10n, snapshot.avatarShape),
+                child: _AvatarShapeSelector(
+                  value: _avatarShapeFromSnapshot(snapshot.avatarShape),
+                  onChanged: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        avatarShape: _avatarShapeValue(value),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ],
         ),
         _SectionCard(
@@ -731,39 +777,6 @@ class AppearanceSettingsPanel extends StatelessWidget {
         showInputPreview: true,
       ),
       children: <Widget>[
-        _SectionCard(
-          title: l10n.settingsAppearanceAvatarSection,
-          icon: Icons.account_circle_outlined,
-          children: <Widget>[
-            SettingsSwitchRow(
-              icon: Icons.visibility_outlined,
-              title: l10n.settingsAppearanceShowAvatars,
-              value: snapshot.bubbleShowAvatar,
-              onChanged: (value) {
-                unawaited(
-                  themeController.saveThemeSettings(bubbleShowAvatar: value),
-                );
-              },
-            ),
-            if (snapshot.bubbleShowAvatar) ...<Widget>[
-              const SizedBox(height: 8),
-              _AppearanceFieldBlock(
-                label: l10n.settingsAppearanceAvatarShape,
-                badge: _avatarShapeLabel(l10n, snapshot.avatarShape),
-                child: _AvatarShapeSelector(
-                  value: _avatarShapeFromSnapshot(snapshot.avatarShape),
-                  onChanged: (value) {
-                    unawaited(
-                      themeController.saveThemeSettings(
-                        avatarShape: _avatarShapeValue(value),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ],
-        ),
         _SectionCard(
           title: l10n.settingsAppearanceInputSection,
           icon: Icons.keyboard_outlined,
@@ -1143,7 +1156,9 @@ class _ChatAppearanceLivePreviewCard extends StatelessWidget {
       title: l10n.settingsAppearanceLivePreviewTitle,
       icon: Icons.preview_outlined,
       action: SettingsInfoBadge(
-        label: _messageStyleLabel(l10n, snapshot.chatStyle),
+        label:
+            '${_messageStyleLabel(l10n, snapshot.userChatStyle)} / '
+            '${_messageStyleLabel(l10n, snapshot.aiChatStyle)}',
       ),
       children: <Widget>[
         ChatAppearancePreview(showInputPreview: showInputPreview),

@@ -1347,7 +1347,7 @@ impl ToolPkgArchiveParser {
             requireToolPkgNavigationSurface(&surface).map_err(|error| {
                 format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].surface {error}")
             })?;
-            if surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS {
+            if surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || isToolPkgEmbeddedUiSurface(&surface) {
                 if entry.action.is_some() {
                     return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].action is unsupported for {surface}"));
                 }
@@ -1355,7 +1355,7 @@ impl ToolPkgArchiveParser {
                     return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for {surface}"));
                 }
             }
-            if surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU || surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS {
+            if isToolPkgEmbeddedUiSurface(&surface) {
                 if !routeId.starts_with(&format!("toolpkg:{}:ui:", manifest.toolpkgId)) {
                     return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must belong to this package for {surface}: {routeId}"));
                 }

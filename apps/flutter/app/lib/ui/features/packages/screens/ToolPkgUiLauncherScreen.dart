@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../../../common/components/PageActivityMixin.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
@@ -32,6 +33,10 @@ import 'compose_dsl/lazy_viewport.dart';
 import 'compose_dsl/action_scheduler.dart';
 import 'compose_dsl/execution_owner.dart';
 import '../../../common/components/SwipeActions.dart';
+import '../../chat/components/workspace/file_preview/syntax/WorkspaceSyntaxLanguage.dart';
+import '../../chat/components/workspace/file_preview/syntax/WorkspaceSyntaxLexer.dart';
+import '../../chat/components/workspace/file_preview/syntax/WorkspaceSyntaxPalette.dart';
+import '../../chat/components/workspace/file_preview/syntax/WorkspaceSyntaxToken.dart';
 
 part 'compose_dsl/compose_host.dart';
 part 'compose_dsl/dialog_host.dart';
@@ -55,11 +60,13 @@ part 'compose_dsl/box_layout.dart';
 part 'compose_dsl/flex_layout.dart';
 part 'compose_dsl/desktop_widget.dart';
 part 'compose_dsl/material_controls.dart';
+part 'compose_dsl/selection_controls.dart';
 part 'compose_dsl/navigation_nodes.dart';
 part 'compose_dsl/interactive_nodes.dart';
 part 'compose_dsl/renderer_slots.dart';
 part 'compose_dsl/image.dart';
 part 'compose_dsl/pager.dart';
+part 'compose_dsl/presentation_nodes.dart';
 
 class ToolPkgUiLauncherScreen extends StatefulWidget {
   /// Creates a routable or embedded screen using the existing Compose host.

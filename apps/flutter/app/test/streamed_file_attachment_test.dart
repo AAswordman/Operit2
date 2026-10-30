@@ -29,7 +29,7 @@ class UploadBridge extends OperitRuntimeBridge {
       case 'completeAttachmentUpload':
         result = <String, Object?>{
           'filePath':
-              '/receiver/runtime/temp/clean_on_exit/attachment_id_文档.apk',
+              '/receiver/runtime/temp/clean_on_exit/chat_attachment_uploads/upload-id/文档.apk',
           'nodeId': 'core-receiver',
           'fileName': '文档.apk',
           'mimeType': 'application/octet-stream',
@@ -79,6 +79,24 @@ class UploadSink implements CorePushSink {
 }
 
 void main() {
+  test('a missing chat rejects input before allocating an upload', () async {
+    final bridge = UploadBridge();
+    final file = SelectedFileInput.fromStream(
+      name: 'report.pdf',
+      byteLength: 3,
+      stream: Stream.value(Uint8List(3)),
+    );
+    await expectLater(
+      ChatViewModel(bridge: bridge).attachSelectedFile(
+        file,
+        expectedChatId: null,
+      ),
+      throwsStateError,
+    );
+    expect(bridge.methods, isEmpty);
+    await expectLater(file.readChunk(), throwsStateError);
+  });
+
   test('143 MB file is streamed without complete-content arguments', () async {
     const length = 143388128;
     final bridge = UploadBridge();
@@ -98,7 +116,7 @@ void main() {
     );
     await ChatViewModel(
       bridge: bridge,
-    ).attachSelectedFile(file, expectedChatId: null);
+    ).attachSelectedFile(file, expectedChatId: 'chat-a');
     expect(bridge.received, length);
     expect(bridge.closed, isTrue);
     expect(bridge.methods, [
@@ -134,7 +152,7 @@ void main() {
     );
     final uploading = ChatViewModel(
       bridge: bridge,
-    ).attachSelectedFile(file, expectedChatId: null);
+    ).attachSelectedFile(file, expectedChatId: 'chat-a');
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(bridge.chunkLengths, hasLength(1));
     expect(produced, 1);
@@ -161,7 +179,7 @@ void main() {
         await expectLater(
           ChatViewModel(
             bridge: bridge,
-          ).attachSelectedFile(file, expectedChatId: null),
+          ).attachSelectedFile(file, expectedChatId: 'chat-a'),
           throwsStateError,
         );
         if (failure == 'beginAttachmentUpload') {
@@ -189,7 +207,7 @@ void main() {
       );
       await ChatViewModel(
         bridge: bridge,
-      ).attachSelectedFile(file, expectedChatId: null);
+      ).attachSelectedFile(file, expectedChatId: 'chat-a');
       final complete = bridge.requests.firstWhere(
         (request) => request.methodName == 'completeAttachmentUpload',
       );
@@ -238,7 +256,7 @@ void main() {
     await expectLater(
       ChatViewModel(
         bridge: bridge,
-      ).attachSelectedFile(file, expectedChatId: null),
+      ).attachSelectedFile(file, expectedChatId: 'chat-a'),
       throwsStateError,
     );
     expect(bridge.methods.last, 'discardAttachmentUpload');

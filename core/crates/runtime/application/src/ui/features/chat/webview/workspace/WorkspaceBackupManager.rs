@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use operit_host_api::FindFilesRequest;
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -15,10 +14,10 @@ use operit_tools::tools::AIToolHook::AIToolHook;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::AITool;
 
-const BACKUP_DIR_NAME: &str = ".backup";
+/// Snapshot data belongs to the workspace and is excluded from its own captures.
+const BACKUP_DIR_NAME: &str = ".operit/backups";
 const OBJECTS_DIR_NAME: &str = "objects";
-const CHAT_BACKUPS_DIR_NAME: &str = "chats";
-const CURRENT_STATE_FILE_NAME: &str = "current_state.json";
+const STATE_FILE_NAME: &str = "state.json";
 
 const WORKSPACE_MUTATING_TOOLS: [&str; 9] = [
     "apply_file",
@@ -31,19 +30,6 @@ const WORKSPACE_MUTATING_TOOLS: [&str; 9] = [
     "copy_file",
     "make_directory",
 ];
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileStat {
-    pub size: i64,
-    pub lastModified: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BackupManifest {
-    pub timestamp: i64,
-    pub files: BTreeMap<String, String>,
-    pub fileStats: BTreeMap<String, FileStat>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceFileChange {
@@ -59,23 +45,56 @@ pub enum ChangeType {
     MODIFIED,
 }
 
+/// One changed file in the retained turn; `None` means the file was absent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TurnFileSnapshot {
+    before: Option<String>,
+    after: Option<String>,
+}
+
+/// The only snapshot kept for a chat: the most recent turn that touched files.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WorkspaceTurnSnapshot {
+    turnTimestamp: i64,
+    workspacePath: String,
+    files: BTreeMap<String, TurnFileSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceRewindOutcome {
+    Restored,
+    NoRestoreNeeded,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RewindAvailability {
+    Unavailable,
+    NoRestoreNeeded,
+    UseSnapshot,
+}
+
+/// Only the latest editing turn can be restored; later turns without edits
+/// need no restore, and older turns have already been discarded.
+fn rewindAvailability(turnTimestamp: i64, messageTimestamp: i64) -> RewindAvailability {
+    if messageTimestamp < turnTimestamp {
+        RewindAvailability::Unavailable
+    } else if messageTimestamp > turnTimestamp {
+        RewindAvailability::NoRestoreNeeded
+    } else {
+        RewindAvailability::UseSnapshot
+    }
+}
+
 #[derive(Clone)]
 pub struct WorkspaceBackupManager {
     context: HostManager,
 }
 
-struct HookSessionInit {
-    backupDir: String,
-    objectsDir: String,
-    currentState: BackupManifest,
-    gitignoreRules: Vec<String>,
-}
-
 struct WorkspaceToolHookState {
     initialized: bool,
-    backupDir: Option<String>,
-    objectsDir: Option<String>,
-    currentState: Option<BackupManifest>,
+    beforeFiles: BTreeMap<String, Capture>,
+    affectedPaths: BTreeSet<String>,
     gitignoreRules: Vec<String>,
 }
 
@@ -87,6 +106,13 @@ pub struct WorkspaceToolHookSession {
     chatScopeId: Option<String>,
     closed: AtomicBool,
     state: Mutex<WorkspaceToolHookState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Capture {
+    Absent,
+    Present(String),
+    Unknown,
 }
 
 impl WorkspaceBackupManager {
@@ -118,52 +144,118 @@ impl WorkspaceBackupManager {
             closed: AtomicBool::new(false),
             state: Mutex::new(WorkspaceToolHookState {
                 initialized: false,
-                backupDir: None,
-                objectsDir: None,
-                currentState: None,
+                beforeFiles: BTreeMap::new(),
+                affectedPaths: BTreeSet::new(),
                 gitignoreRules: Vec::new(),
             }),
         })
     }
 
+    /// Returns `None` when this message's workspace snapshot is no longer kept.
     #[allow(non_snake_case)]
-    pub fn syncState(&self, workspacePath: String, messageTimestamp: i64, chatId: Option<String>) {
-        self.syncStateProvider(&workspacePath, messageTimestamp, chatId.as_deref());
-    }
-
-    #[allow(non_snake_case)]
-    pub fn previewChanges(
+    pub fn previewChangesForMessage(
         &self,
         workspacePath: String,
-        targetTimestamp: i64,
+        messageTimestamp: i64,
         chatId: Option<String>,
-    ) -> Vec<WorkspaceFileChange> {
-        self.previewChangesProvider(&workspacePath, targetTimestamp, chatId.as_deref())
+    ) -> Option<Vec<WorkspaceFileChange>> {
+        let vfs = self.vfs();
+        let snapshot = self.loadTurnSnapshot(&vfs, &workspacePath, chatId.as_deref());
+        let turnTimestamp = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.turnTimestamp)
+            .unwrap_or(0);
+        match rewindAvailability(turnTimestamp, messageTimestamp) {
+            RewindAvailability::Unavailable => None,
+            RewindAvailability::NoRestoreNeeded => Some(Vec::new()),
+            RewindAvailability::UseSnapshot => {
+                let snapshot = snapshot?;
+                if snapshot.workspacePath != normalizeWorkspacePath(&workspacePath) {
+                    return None;
+                }
+                Some(self.changesFromSnapshot(&vfs, chatId.as_deref(), &snapshot))
+            }
+        }
     }
 
+    /// Restores the retained turn, or reports why no workspace restore happened.
     #[allow(non_snake_case)]
-    pub fn previewChangesForRewind(
+    pub fn restoreWorkspaceForMessage(
         &self,
         workspacePath: String,
-        rewindTimestamp: i64,
+        messageTimestamp: i64,
         chatId: Option<String>,
-    ) -> Vec<WorkspaceFileChange> {
-        let vfs = self.vfsForWorkspace(&workspacePath);
-        let backupRootDir = joinPath(&workspacePath, BACKUP_DIR_NAME);
-        let backupDir = resolveChatBackupDir(&backupRootDir, chatId.as_deref());
-        let existingBackups = listBackupsInBackupDir(&vfs, &backupDir);
-        let newerBackups = existingBackups
-            .into_iter()
-            .filter(|timestamp| *timestamp > rewindTimestamp)
-            .collect::<Vec<_>>();
-        let Some(restoreTimestamp) = newerBackups.first().copied() else {
-            return Vec::new();
+    ) -> WorkspaceRewindOutcome {
+        let vfs = self.vfs();
+        let snapshot = self.loadTurnSnapshot(&vfs, &workspacePath, chatId.as_deref());
+        let turnTimestamp = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.turnTimestamp)
+            .unwrap_or(0);
+        match rewindAvailability(turnTimestamp, messageTimestamp) {
+            RewindAvailability::Unavailable => return WorkspaceRewindOutcome::Unavailable,
+            RewindAvailability::NoRestoreNeeded => {
+                return WorkspaceRewindOutcome::NoRestoreNeeded
+            }
+            RewindAvailability::UseSnapshot => {}
+        }
+        let Some(snapshot) = snapshot else {
+            return WorkspaceRewindOutcome::NoRestoreNeeded;
         };
-        self.previewChangesProvider(&workspacePath, restoreTimestamp, chatId.as_deref())
+        if snapshot.workspacePath != normalizeWorkspacePath(&workspacePath) {
+            return WorkspaceRewindOutcome::Unavailable;
+        }
+
+        let objectsDir = self.objectsDir(&workspacePath, chatId.as_deref());
+        let mut filesToWrite = Vec::new();
+        let mut filesToDelete = Vec::new();
+        for (path, entry) in &snapshot.files {
+            let targetPath = joinPath(&workspacePath, path);
+            match &entry.before {
+                Some(hash) => {
+                    let Ok(bytes) = vfs.readFileBytes(&joinPath(&objectsDir, hash)) else {
+                        return WorkspaceRewindOutcome::Unavailable;
+                    };
+                    filesToWrite.push((targetPath, bytes));
+                }
+                None => filesToDelete.push(targetPath),
+            }
+        }
+        for (targetPath, bytes) in filesToWrite {
+            if let Some((parent, _)) = targetPath.rsplit_once('/') {
+                if !parent.is_empty() {
+                    ensureDirectory(&vfs, parent);
+                }
+            }
+            let _ = vfs.writeFileBytes(&targetPath, &bytes);
+        }
+        for targetPath in filesToDelete {
+            let _ = vfs.deleteFile(&targetPath, false);
+        }
+
+        // Keep the timestamp as a watermark so older messages stay unavailable.
+        let _ = vfs.deleteFile(&objectsDir, true);
+        ensureDirectory(&vfs, &objectsDir);
+        self.saveTurnSnapshot(
+            &vfs,
+            chatId.as_deref(),
+            &WorkspaceTurnSnapshot {
+                turnTimestamp: snapshot.turnTimestamp,
+                workspacePath: snapshot.workspacePath,
+                files: BTreeMap::new(),
+            },
+        );
+        WorkspaceRewindOutcome::Restored
     }
 
+    /// Drops all retained snapshot data owned by one chat.
     #[allow(non_snake_case)]
-    fn vfsForWorkspace(&self, workspacePath: &str) -> VisualFileSystem {
+    pub fn deleteChatState(&self, workspacePath: String, chatId: Option<String>) {
+        let vfs = self.vfs();
+        let _ = vfs.deleteFile(&self.chatBackupDir(&workspacePath, chatId.as_deref()), true);
+    }
+
+    fn vfs(&self) -> VisualFileSystem {
         let runtimeStorageHost = self
             .context
             .runtimeStorageHost
@@ -184,166 +276,169 @@ impl WorkspaceBackupManager {
         )
     }
 
-    fn initializeHookSessionProvider(
-        &self,
-        workspacePath: &str,
-        messageTimestamp: i64,
-        chatId: Option<&str>,
-    ) -> Option<HookSessionInit> {
-        let vfs = self.vfsForWorkspace(workspacePath);
-        let workspaceInfo = vfs.fileExists(workspacePath).ok()?;
-        if !workspaceInfo.exists || !workspaceInfo.isDirectory {
-            return None;
-        }
-
-        let backupRootDir = joinPath(workspacePath, BACKUP_DIR_NAME);
-        ensureDirectory(&vfs, &backupRootDir);
-        let backupDir = resolveChatBackupDir(&backupRootDir, chatId);
-        ensureDirectory(&vfs, &backupDir);
-        let objectsDir = joinPath(&backupRootDir, OBJECTS_DIR_NAME);
-        ensureDirectory(&vfs, &objectsDir);
-
-        let existingBackups = listBackupsInBackupDir(&vfs, &backupDir);
-        let targetManifestPath = joinPath(&backupDir, &format!("{messageTimestamp}.json"));
-        let hasTargetManifest = vfs
-            .fileExists(&targetManifestPath)
-            .map(|value| value.exists)
-            .unwrap_or(false);
-        let gitignoreRules = self.loadGitignoreRulesProvider(&vfs, workspacePath);
-
-        let mut currentState = self.loadCurrentStateManifestProvider(&vfs, &backupDir);
-        if currentState.is_none() && hasTargetManifest {
-            currentState = self.loadBackupManifestProvider(&vfs, &backupDir, messageTimestamp);
-        }
-        if currentState.is_none() {
-            if let Some(latestTimestamp) = existingBackups.last().copied() {
-                currentState = self.loadBackupManifestProvider(&vfs, &backupDir, latestTimestamp);
-            }
-        }
-        let currentState = currentState.unwrap_or_else(|| BackupManifest {
-            timestamp: messageTimestamp,
-            files: BTreeMap::new(),
-            fileStats: BTreeMap::new(),
-        });
-
-        if !hasTargetManifest {
-            self.writeBackupManifestProvider(
-                &vfs,
-                &backupDir,
-                messageTimestamp,
-                &BackupManifest {
-                    timestamp: messageTimestamp,
-                    ..currentState.clone()
-                },
-            );
-        }
-        self.saveCurrentStateManifestProvider(&vfs, &backupDir, &currentState);
-
-        Some(HookSessionInit {
-            backupDir,
-            objectsDir,
-            currentState,
-            gitignoreRules,
-        })
+    fn chatBackupDir(&self, workspacePath: &str, chatId: Option<&str>) -> String {
+        joinPath(
+            &joinPath(workspacePath, BACKUP_DIR_NAME),
+            &normalizeChatScope(chatId),
+        )
     }
 
-    fn loadCurrentStateManifestProvider(
+    fn objectsDir(&self, workspacePath: &str, chatId: Option<&str>) -> String {
+        joinPath(&self.chatBackupDir(workspacePath, chatId), OBJECTS_DIR_NAME)
+    }
+
+    fn statePath(&self, workspacePath: &str, chatId: Option<&str>) -> String {
+        joinPath(&self.chatBackupDir(workspacePath, chatId), STATE_FILE_NAME)
+    }
+
+    fn loadTurnSnapshot(
         &self,
         vfs: &VisualFileSystem,
-        backupDir: &str,
-    ) -> Option<BackupManifest> {
-        let statePath = joinPath(backupDir, CURRENT_STATE_FILE_NAME);
-        let content = vfs.readFile(&statePath).ok()?;
+        workspacePath: &str,
+        chatId: Option<&str>,
+    ) -> Option<WorkspaceTurnSnapshot> {
+        let content = vfs.readFile(&self.statePath(workspacePath, chatId)).ok()?;
         if content.trim().is_empty() {
             return None;
         }
         serde_json::from_str(&content).ok()
     }
 
-    fn saveCurrentStateManifestProvider(
+    fn saveTurnSnapshot(
         &self,
         vfs: &VisualFileSystem,
-        backupDir: &str,
-        manifest: &BackupManifest,
+        chatId: Option<&str>,
+        snapshot: &WorkspaceTurnSnapshot,
     ) {
-        let statePath = joinPath(backupDir, CURRENT_STATE_FILE_NAME);
-        let content = serde_json::to_string(manifest).expect("BackupManifest must serialize");
-        let _ = vfs.writeFile(&statePath, &content, false);
+        ensureDirectory(vfs, &self.chatBackupDir(&snapshot.workspacePath, chatId));
+        let content =
+            serde_json::to_string(snapshot).expect("WorkspaceTurnSnapshot must serialize");
+        let _ = vfs.writeFile(
+            &self.statePath(&snapshot.workspacePath, chatId),
+            &content,
+            false,
+        );
     }
 
-    fn writeBackupManifestProvider(
+    /// Starts a new editing turn and discards the previous turn's snapshot.
+    fn beginTurn(
         &self,
         vfs: &VisualFileSystem,
-        backupDir: &str,
-        timestamp: i64,
-        manifest: &BackupManifest,
-    ) {
-        let manifestPath = joinPath(backupDir, &format!("{timestamp}.json"));
-        let content = serde_json::to_string(manifest).expect("BackupManifest must serialize");
-        let _ = vfs.writeFile(&manifestPath, &content, false);
+        workspacePath: &str,
+        messageTimestamp: i64,
+        chatId: Option<&str>,
+    ) -> Option<Vec<String>> {
+        let workspaceInfo = vfs.fileExists(workspacePath).ok()?;
+        if !workspaceInfo.exists || !workspaceInfo.isDirectory {
+            return None;
+        }
+        let objectsDir = self.objectsDir(workspacePath, chatId);
+        let _ = vfs.deleteFile(&objectsDir, true);
+        ensureDirectory(vfs, &objectsDir);
+        self.saveTurnSnapshot(
+            vfs,
+            chatId,
+            &WorkspaceTurnSnapshot {
+                turnTimestamp: messageTimestamp,
+                workspacePath: normalizeWorkspacePath(workspacePath),
+                files: BTreeMap::new(),
+            },
+        );
+        Some(self.loadGitignoreRulesProvider(vfs, workspacePath))
     }
 
-    fn refreshPathInStateProvider(
+    /// Captures after-state once, when the turn ends, and persists the changes.
+    fn finalizeTurn(
+        &self,
+        vfs: &VisualFileSystem,
+        workspacePath: &str,
+        messageTimestamp: i64,
+        chatId: Option<&str>,
+        gitignoreRules: &[String],
+        beforeFiles: &BTreeMap<String, Capture>,
+        affectedPaths: &BTreeSet<String>,
+    ) {
+        let objectsDir = self.objectsDir(workspacePath, chatId);
+        let mut afterFiles = BTreeMap::new();
+        for path in affectedPaths {
+            self.capturePath(
+                vfs,
+                workspacePath,
+                path,
+                gitignoreRules,
+                &objectsDir,
+                &mut afterFiles,
+            );
+        }
+        self.saveTurnSnapshot(
+            vfs,
+            chatId,
+            &WorkspaceTurnSnapshot {
+                turnTimestamp: messageTimestamp,
+                workspacePath: normalizeWorkspacePath(workspacePath),
+                files: mergeTurnFiles(beforeFiles, &afterFiles),
+            },
+        );
+    }
+
+    /// Captures one affected path; the first capture of a file wins in a turn.
+    fn capturePath(
         &self,
         vfs: &VisualFileSystem,
         workspacePath: &str,
         targetPath: &str,
-        objectsDir: &str,
         gitignoreRules: &[String],
-        files: &mut BTreeMap<String, String>,
-        stats: &mut BTreeMap<String, FileStat>,
+        objectsDir: &str,
+        captures: &mut BTreeMap<String, Capture>,
     ) {
         let normalizedTargetPath = targetPath.trim().trim_end_matches('/');
-        let relativeTarget = match makeRelativePath(workspacePath, normalizedTargetPath) {
-            Some(value) => value,
-            None => return,
+        let Some(relativeTarget) = makeRelativePath(workspacePath, normalizedTargetPath) else {
+            return;
         };
-
-        removePathFromState(&relativeTarget, files, stats);
-
         let Ok(existsData) = vfs.fileExists(normalizedTargetPath) else {
             return;
         };
         if !existsData.exists {
             return;
         }
-
         if existsData.isDirectory {
-            let childFiles = self.listWorkspaceTextFilesUnderPathProvider(
+            for childPath in self.listWorkspaceTextFilesUnderPathProvider(
                 vfs,
                 workspacePath,
                 normalizedTargetPath,
                 gitignoreRules,
-            );
-            for childPath in childFiles {
+            ) {
                 let Some(relativeChildPath) = makeRelativePath(workspacePath, &childPath) else {
                     continue;
                 };
-                let Some((hash, stat)) =
-                    self.snapshotFileForStateProvider(vfs, &childPath, objectsDir)
-                else {
+                if captures.contains_key(&relativeChildPath) {
                     continue;
+                }
+                let capture = match self.snapshotFile(vfs, &childPath, objectsDir) {
+                    Some(hash) => Capture::Present(hash),
+                    None => Capture::Unknown,
                 };
-                files.insert(relativeChildPath.clone(), hash);
-                stats.insert(relativeChildPath, stat);
+                captures.insert(relativeChildPath, capture);
             }
             return;
         }
-
+        if relativeTarget.is_empty() {
+            return;
+        }
         let fileName = relativeTarget.rsplit('/').next().unwrap_or(&relativeTarget);
-        if !isTextBasedFileName(fileName) {
-            return;
-        }
-        if GitIgnoreFilter::shouldIgnore(&relativeTarget, fileName, false, gitignoreRules) {
-            return;
-        }
-
-        if let Some((hash, stat)) =
-            self.snapshotFileForStateProvider(vfs, normalizedTargetPath, objectsDir)
+        if !isTextBasedFileName(fileName)
+            || GitIgnoreFilter::shouldIgnore(&relativeTarget, fileName, false, gitignoreRules)
         {
-            files.insert(relativeTarget.clone(), hash);
-            stats.insert(relativeTarget, stat);
+            return;
         }
+        if captures.contains_key(&relativeTarget) {
+            return;
+        }
+        let capture = match self.snapshotFile(vfs, normalizedTargetPath, objectsDir) {
+            Some(hash) => Capture::Present(hash),
+            None => Capture::Unknown,
+        };
+        captures.insert(relativeTarget, capture);
     }
 
     fn listWorkspaceTextFilesUnderPathProvider(
@@ -379,51 +474,26 @@ impl WorkspaceBackupManager {
             .collect()
     }
 
-    fn snapshotFileForStateProvider(
+    fn snapshotFile(
         &self,
         vfs: &VisualFileSystem,
         filePath: &str,
         objectsDir: &str,
-    ) -> Option<(String, FileStat)> {
+    ) -> Option<String> {
         let bytes = vfs.readFileBytes(filePath).ok()?;
         let hash = format!("{:x}", Sha256::digest(&bytes));
-        let info = vfs.fileInfo(filePath).ok();
-        let stat = FileStat {
-            size: info
-                .as_ref()
-                .map(|value| value.size)
-                .unwrap_or(bytes.len() as i64),
-            lastModified: info
-                .as_ref()
-                .and_then(|value| parseLastModifiedToMillis(&value.lastModified))
-                .unwrap_or(0),
-        };
-
-        let objectPath = buildShardedObjectPath(objectsDir, &hash);
+        let objectPath = joinPath(objectsDir, &hash);
         let objectExists = vfs
             .fileExists(&objectPath)
             .map(|value| value.exists)
             .unwrap_or(false);
         if !objectExists {
-            let bucketDir = joinPath(objectsDir, &objectBucketPrefix(&hash));
-            ensureDirectory(vfs, &bucketDir);
-            let _ = vfs.writeFileBytes(&objectPath, &bytes);
+            ensureDirectory(vfs, objectsDir);
+            if vfs.writeFileBytes(&objectPath, &bytes).is_err() {
+                return None;
+            }
         }
-        Some((hash, stat))
-    }
-
-    fn loadBackupManifestProvider(
-        &self,
-        vfs: &VisualFileSystem,
-        backupDir: &str,
-        targetTimestamp: i64,
-    ) -> Option<BackupManifest> {
-        let manifestPath = joinPath(backupDir, &format!("{targetTimestamp}.json"));
-        let content = vfs.readFile(&manifestPath).ok()?;
-        if content.trim().is_empty() {
-            return None;
-        }
-        serde_json::from_str(&content).ok()
+        Some(hash)
     }
 
     fn loadGitignoreRulesProvider(
@@ -440,150 +510,51 @@ impl WorkspaceBackupManager {
         }
     }
 
-    fn syncStateProvider(&self, workspacePath: &str, messageTimestamp: i64, chatId: Option<&str>) {
-        let vfs = self.vfsForWorkspace(workspacePath);
-        let Ok(exists) = vfs.fileExists(workspacePath) else {
-            return;
-        };
-        if !exists.exists || !exists.isDirectory {
-            return;
-        }
-
-        let backupRootDir = joinPath(workspacePath, BACKUP_DIR_NAME);
-        ensureDirectory(&vfs, &backupRootDir);
-        let backupDir = resolveChatBackupDir(&backupRootDir, chatId);
-        ensureDirectory(&vfs, &backupDir);
-        let objectsDir = joinPath(&backupRootDir, OBJECTS_DIR_NAME);
-        ensureDirectory(&vfs, &objectsDir);
-
-        let existingBackups = listBackupsInBackupDir(&vfs, &backupDir);
-        let mut currentState = self.loadCurrentStateManifestProvider(&vfs, &backupDir);
-        if currentState.is_none() {
-            if let Some(latestTimestamp) = existingBackups.last().copied() {
-                currentState = self.loadBackupManifestProvider(&vfs, &backupDir, latestTimestamp);
-            }
-            let currentStateValue = currentState.clone().unwrap_or_else(|| BackupManifest {
-                timestamp: messageTimestamp,
-                files: BTreeMap::new(),
-                fileStats: BTreeMap::new(),
-            });
-            self.saveCurrentStateManifestProvider(&vfs, &backupDir, &currentStateValue);
-            currentState = Some(currentStateValue);
-        }
-
-        let Some(currentStateValue) = currentState else {
-            return;
-        };
-        let newerBackups = existingBackups
-            .iter()
-            .copied()
-            .filter(|timestamp| *timestamp > messageTimestamp)
-            .collect::<Vec<_>>();
-        if let Some(restoreTimestamp) = newerBackups.first().copied() {
-            let targetManifest =
-                self.loadBackupManifestProvider(&vfs, &backupDir, restoreTimestamp);
-            self.restoreFromManifestsProvider(
-                &vfs,
-                workspacePath,
-                &objectsDir,
-                &currentStateValue,
-                targetManifest.as_ref(),
-            );
-            let restoredState = targetManifest.unwrap_or_else(|| BackupManifest {
-                timestamp: restoreTimestamp,
-                files: BTreeMap::new(),
-                fileStats: BTreeMap::new(),
-            });
-            self.saveCurrentStateManifestProvider(&vfs, &backupDir, &restoredState);
-            for timestamp in newerBackups {
-                let _ = vfs.deleteFile(&joinPath(&backupDir, &format!("{timestamp}.json")), false);
-            }
-            return;
-        }
-
-        if existingBackups.contains(&messageTimestamp) {
-            if let Some(existingManifest) =
-                self.loadBackupManifestProvider(&vfs, &backupDir, messageTimestamp)
-            {
-                self.saveCurrentStateManifestProvider(&vfs, &backupDir, &existingManifest);
-            }
-            return;
-        }
-
-        self.writeBackupManifestProvider(
-            &vfs,
-            &backupDir,
-            messageTimestamp,
-            &BackupManifest {
-                timestamp: messageTimestamp,
-                ..currentStateValue
-            },
-        );
-    }
-
-    fn restoreFromManifestsProvider(
+    fn changesFromSnapshot(
         &self,
         vfs: &VisualFileSystem,
-        workspacePath: &str,
-        objectsDir: &str,
-        currentState: &BackupManifest,
-        targetManifest: Option<&BackupManifest>,
-    ) {
-        let targetFiles = targetManifest
-            .map(|manifest| manifest.files.clone())
-            .unwrap_or_default();
-        for relativePath in currentState.files.keys() {
-            if targetFiles.contains_key(relativePath) {
-                continue;
-            }
-            let currentFilePath = joinPath(workspacePath, relativePath);
-            let _ = vfs.deleteFile(&currentFilePath, false);
-        }
-
-        for (relativePath, hash) in targetFiles {
-            if currentState.files.get(&relativePath) == Some(&hash) {
-                continue;
-            }
-            let Some(objectPath) = resolveObjectPathForRead(vfs, objectsDir, &hash) else {
-                continue;
-            };
-            let Ok(bytes) = vfs.readFileBytes(&objectPath) else {
-                continue;
-            };
-            let targetPath = joinPath(workspacePath, &relativePath);
-            let parent = targetPath
-                .rsplit_once('/')
-                .map(|(parent, _)| parent)
-                .unwrap_or("");
-            if !parent.is_empty() {
-                ensureDirectory(vfs, parent);
-            }
-            let _ = vfs.writeFileBytes(&targetPath, &bytes);
-        }
-    }
-
-    fn loadCurrentStateForDiffProvider(
-        &self,
-        vfs: &VisualFileSystem,
-        backupDir: &str,
-    ) -> BackupManifest {
-        if let Some(currentState) = self.loadCurrentStateManifestProvider(vfs, backupDir) {
-            return currentState;
-        }
-
-        if let Some(latestTimestamp) = listBackupsInBackupDir(vfs, backupDir).last().copied() {
-            if let Some(latestManifest) =
-                self.loadBackupManifestProvider(vfs, backupDir, latestTimestamp)
-            {
-                return latestManifest;
+        chatId: Option<&str>,
+        snapshot: &WorkspaceTurnSnapshot,
+    ) -> Vec<WorkspaceFileChange> {
+        let objectsDir = self.objectsDir(&snapshot.workspacePath, chatId);
+        let mut changes = Vec::new();
+        for (path, entry) in &snapshot.files {
+            match (&entry.before, &entry.after) {
+                (Some(before), Some(after)) => {
+                    let changedLines = self.estimateChangedLinesBetweenHashesProvider(
+                        vfs, &objectsDir, after, before,
+                    );
+                    if changedLines > 0 {
+                        changes.push(WorkspaceFileChange {
+                            path: path.clone(),
+                            changeType: ChangeType::MODIFIED,
+                            changedLines,
+                        });
+                    }
+                }
+                (Some(before), None) => {
+                    changes.push(WorkspaceFileChange {
+                        path: path.clone(),
+                        changeType: ChangeType::ADDED,
+                        changedLines: self.estimateLineCountFromHashProvider(
+                            vfs, &objectsDir, before,
+                        ),
+                    });
+                }
+                (None, Some(after)) => {
+                    changes.push(WorkspaceFileChange {
+                        path: path.clone(),
+                        changeType: ChangeType::DELETED,
+                        changedLines: self.estimateLineCountFromHashProvider(
+                            vfs, &objectsDir, after,
+                        ),
+                    });
+                }
+                (None, None) => {}
             }
         }
-
-        BackupManifest {
-            timestamp: currentTimeMillis(),
-            files: BTreeMap::new(),
-            fileStats: BTreeMap::new(),
-        }
+        changes.sort_by(|left, right| left.path.cmp(&right.path));
+        changes
     }
 
     fn readTextFromObjectHashProvider(
@@ -592,8 +563,7 @@ impl WorkspaceBackupManager {
         objectsDir: &str,
         hash: &str,
     ) -> Option<String> {
-        let objectPath = resolveObjectPathForRead(vfs, objectsDir, hash)?;
-        let bytes = vfs.readFileBytes(&objectPath).ok()?;
+        let bytes = vfs.readFileBytes(&joinPath(objectsDir, hash)).ok()?;
         String::from_utf8(bytes).ok()
     }
 
@@ -629,81 +599,6 @@ impl WorkspaceBackupManager {
         };
         estimateChangedLines(&currentText, &targetText)
     }
-
-    fn previewChangesProvider(
-        &self,
-        workspacePath: &str,
-        targetTimestamp: i64,
-        chatId: Option<&str>,
-    ) -> Vec<WorkspaceFileChange> {
-        let vfs = self.vfsForWorkspace(workspacePath);
-        let Ok(exists) = vfs.fileExists(workspacePath) else {
-            return Vec::new();
-        };
-        if !exists.exists || !exists.isDirectory {
-            return Vec::new();
-        }
-
-        let backupRootDir = joinPath(workspacePath, BACKUP_DIR_NAME);
-        let backupDir = resolveChatBackupDir(&backupRootDir, chatId);
-        let objectsDir = joinPath(&backupRootDir, OBJECTS_DIR_NAME);
-        let currentState = self.loadCurrentStateForDiffProvider(&vfs, &backupDir);
-        let targetManifest = self
-            .loadBackupManifestProvider(&vfs, &backupDir, targetTimestamp)
-            .unwrap_or_else(|| BackupManifest {
-                timestamp: targetTimestamp,
-                files: BTreeMap::new(),
-                fileStats: BTreeMap::new(),
-            });
-
-        let currentFiles = currentState.files;
-        let targetFiles = targetManifest.files;
-        let mut changes = Vec::<WorkspaceFileChange>::new();
-
-        for (relativePath, currentHash) in &currentFiles {
-            let Some(targetHash) = targetFiles.get(relativePath) else {
-                let deletedLines =
-                    self.estimateLineCountFromHashProvider(&vfs, &objectsDir, currentHash);
-                changes.push(WorkspaceFileChange {
-                    path: relativePath.clone(),
-                    changeType: ChangeType::DELETED,
-                    changedLines: deletedLines,
-                });
-                continue;
-            };
-
-            if targetHash != currentHash {
-                let changedLines = self.estimateChangedLinesBetweenHashesProvider(
-                    &vfs,
-                    &objectsDir,
-                    currentHash,
-                    targetHash,
-                );
-                if changedLines > 0 {
-                    changes.push(WorkspaceFileChange {
-                        path: relativePath.clone(),
-                        changeType: ChangeType::MODIFIED,
-                        changedLines,
-                    });
-                }
-            }
-        }
-
-        for (relativePath, targetHash) in &targetFiles {
-            if currentFiles.contains_key(relativePath) {
-                continue;
-            }
-            let addedLines = self.estimateLineCountFromHashProvider(&vfs, &objectsDir, targetHash);
-            changes.push(WorkspaceFileChange {
-                path: relativePath.clone(),
-                changeType: ChangeType::ADDED,
-                changedLines: addedLines,
-            });
-        }
-
-        changes.sort_by(|left, right| left.path.cmp(&right.path));
-        changes
-    }
 }
 
 impl WorkspaceToolHookSession {
@@ -713,23 +608,23 @@ impl WorkspaceToolHookSession {
     }
 
     pub fn close(&self) {
+        let state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        let state = self
-            .state
-            .lock()
-            .expect("WorkspaceToolHookSession mutex poisoned");
         if !state.initialized {
             return;
         }
-        if let (Some(backupDir), Some(currentState)) =
-            (state.backupDir.as_deref(), state.currentState.as_ref())
-        {
-            let vfs = self.manager.vfsForWorkspace(&self.workspacePath);
-            self.manager
-                .saveCurrentStateManifestProvider(&vfs, backupDir, currentState);
-        }
+        let vfs = self.manager.vfs();
+        self.manager.finalizeTurn(
+            &vfs,
+            &self.workspacePath,
+            self.messageTimestamp,
+            self.chatScopeId.as_deref(),
+            &state.gitignoreRules,
+            &state.beforeFiles,
+            &state.affectedPaths,
+        );
     }
 }
 
@@ -738,6 +633,7 @@ impl AIToolHook for WorkspaceToolHookSession {
         &self.id
     }
 
+    /// Captures before-state immediately before each mutating tool runs.
     fn onToolExecutionStarted(&self, tool: &AITool) {
         if self.closed.load(Ordering::SeqCst) || !isWorkspaceMutatingTool(&tool.name) {
             return;
@@ -747,25 +643,45 @@ impl AIToolHook for WorkspaceToolHookSession {
             return;
         }
 
-        let mut state = self
-            .state
-            .lock()
-            .expect("WorkspaceToolHookSession mutex poisoned");
-        if state.initialized {
+        let mut state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
+        if self.closed.load(Ordering::SeqCst) {
             return;
         }
-        let Some(init) = self.manager.initializeHookSessionProvider(
-            &self.workspacePath,
-            self.messageTimestamp,
-            self.chatScopeId.as_deref(),
-        ) else {
-            return;
-        };
-        state.backupDir = Some(init.backupDir);
-        state.objectsDir = Some(init.objectsDir);
-        state.currentState = Some(init.currentState);
-        state.gitignoreRules = init.gitignoreRules;
-        state.initialized = true;
+        if !state.initialized {
+            let vfs = self.manager.vfs();
+            let Some(gitignoreRules) = self.manager.beginTurn(
+                &vfs,
+                &self.workspacePath,
+                self.messageTimestamp,
+                self.chatScopeId.as_deref(),
+            ) else {
+                return;
+            };
+            state.gitignoreRules = gitignoreRules;
+            state.initialized = true;
+        }
+
+        let vfs = self.manager.vfs();
+        let objectsDir = self
+            .manager
+            .objectsDir(&self.workspacePath, self.chatScopeId.as_deref());
+        let gitignoreRules = state.gitignoreRules.clone();
+        for path in affectedPaths {
+            // A path first touched later in the same turn must keep its original
+            // before-state; paths created by an earlier tool have no before blob.
+            let shouldCapture = !isCoveredByAffectedPath(&state.affectedPaths, &path);
+            state.affectedPaths.insert(path.clone());
+            if shouldCapture {
+                self.manager.capturePath(
+                    &vfs,
+                    &self.workspacePath,
+                    &path,
+                    &gitignoreRules,
+                    &objectsDir,
+                    &mut state.beforeFiles,
+                );
+            }
+        }
     }
 
     fn onToolExecutionResult(&self, tool: &AITool, result: &ToolResult) {
@@ -780,50 +696,34 @@ impl AIToolHook for WorkspaceToolHookSession {
             return;
         }
 
-        let mut state = self
-            .state
-            .lock()
-            .expect("WorkspaceToolHookSession mutex poisoned");
-        if !state.initialized {
+        let mut state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
+        if self.closed.load(Ordering::SeqCst) || !state.initialized {
             return;
         }
-        let Some(objectsDir) = state.objectsDir.clone() else {
-            return;
-        };
-        let gitignoreRules = state.gitignoreRules.clone();
-        let Some(currentState) = state.currentState.as_mut() else {
-            return;
-        };
-        let mut updatedFiles = currentState.files.clone();
-        let mut updatedStats = currentState.fileStats.clone();
-
-        let mut distinctPaths = BTreeSet::new();
         for path in affectedPaths {
-            distinctPaths.insert(path);
+            state.affectedPaths.insert(path);
         }
-        let vfs = self.manager.vfsForWorkspace(&self.workspacePath);
-        for affectedPath in distinctPaths {
-            self.manager.refreshPathInStateProvider(
-                &vfs,
-                &self.workspacePath,
-                &affectedPath,
-                &objectsDir,
-                &gitignoreRules,
-                &mut updatedFiles,
-                &mut updatedStats,
-            );
-        }
-
-        *currentState = BackupManifest {
-            timestamp: currentTimeMillis(),
-            files: updatedFiles,
-            fileStats: updatedStats,
-        };
     }
 }
 
 fn isWorkspaceMutatingTool(toolName: &str) -> bool {
     WORKSPACE_MUTATING_TOOLS.contains(&toolName)
+}
+
+/// Reports whether this path or one of its ancestors was already touched in the
+/// current turn, so a later tool cannot overwrite the original before-state.
+fn isCoveredByAffectedPath(affectedPaths: &BTreeSet<String>, path: &str) -> bool {
+    if affectedPaths.contains(path) {
+        return true;
+    }
+    let mut current = path;
+    while let Some((parent, _)) = current.rsplit_once('/') {
+        if affectedPaths.contains(parent) {
+            return true;
+        }
+        current = parent;
+    }
+    false
 }
 
 fn extractWorkspaceAffectedPaths(tool: &AITool, workspacePath: &str) -> Vec<String> {
@@ -868,36 +768,14 @@ fn collectWorkspacePath(result: &mut Vec<String>, path: Option<&str>, workspaceP
     } else {
         normalizedPath
     };
-    let Some(relativePath) = makeRelativePath(workspacePath, &normalizedPath) else {
-        return;
-    };
-    if relativePath == BACKUP_DIR_NAME || relativePath.starts_with(&format!("{BACKUP_DIR_NAME}/")) {
-        return;
+    if makeRelativePath(workspacePath, &normalizedPath).is_some() {
+        result.push(normalizedPath);
     }
-    result.push(normalizedPath);
 }
 
 fn startsWithAbsoluteRoot(path: &str) -> bool {
     let normalized = GitIgnoreFilter::normalizePath(path);
     normalized.starts_with('/') || normalized.as_bytes().get(1) == Some(&b':')
-}
-
-fn listBackupsInBackupDir(vfs: &VisualFileSystem, backupDir: &str) -> Vec<i64> {
-    let Ok(entries) = vfs.listFiles(backupDir) else {
-        return Vec::new();
-    };
-    let mut timestamps = entries
-        .into_iter()
-        .filter(|entry| !entry.isDirectory)
-        .filter_map(|entry| {
-            entry
-                .name
-                .strip_suffix(".json")
-                .and_then(|value| value.parse::<i64>().ok())
-        })
-        .collect::<Vec<_>>();
-    timestamps.sort_unstable();
-    timestamps
 }
 
 fn ensureDirectory(vfs: &VisualFileSystem, path: &str) {
@@ -920,11 +798,10 @@ fn normalizeChatScope(chatId: Option<&str>) -> String {
         .collect()
 }
 
-fn resolveChatBackupDir(backupRootDir: &str, chatId: Option<&str>) -> String {
-    joinPath(
-        &joinPath(backupRootDir, CHAT_BACKUPS_DIR_NAME),
-        &normalizeChatScope(chatId),
-    )
+fn normalizeWorkspacePath(path: &str) -> String {
+    GitIgnoreFilter::normalizePath(path)
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn joinPath(parent: &str, child: &str) -> String {
@@ -942,9 +819,7 @@ fn joinPath(parent: &str, child: &str) -> String {
 }
 
 fn makeRelativePath(root: &str, fullPath: &str) -> Option<String> {
-    let normalizedRoot = GitIgnoreFilter::normalizePath(root)
-        .trim_end_matches('/')
-        .to_string();
+    let normalizedRoot = normalizeWorkspacePath(root);
     if normalizedRoot.is_empty() {
         return None;
     }
@@ -963,76 +838,31 @@ fn makeRelativePathForNormalizedRoot(root: &str, fullPath: &str) -> Option<Strin
     Some(fullPath[prefix.len()..].trim_start_matches('/').to_string())
 }
 
-fn objectBucketPrefix(hash: &str) -> String {
-    if hash.len() < 2 {
-        "__".to_string()
-    } else {
-        hash[..2].to_string()
-    }
-}
-
-fn buildShardedObjectPath(objectsDir: &str, hash: &str) -> String {
-    joinPath(&joinPath(objectsDir, &objectBucketPrefix(hash)), hash)
-}
-
-fn buildLegacyObjectPath(objectsDir: &str, hash: &str) -> String {
-    joinPath(objectsDir, hash)
-}
-
-fn resolveObjectPathForRead(
-    vfs: &VisualFileSystem,
-    objectsDir: &str,
-    hash: &str,
-) -> Option<String> {
-    let sharded = buildShardedObjectPath(objectsDir, hash);
-    if vfs
-        .fileExists(&sharded)
-        .map(|value| value.exists)
-        .unwrap_or(false)
+/// Keeps only real changes and never restores files whose capture failed.
+fn mergeTurnFiles(
+    beforeFiles: &BTreeMap<String, Capture>,
+    afterFiles: &BTreeMap<String, Capture>,
+) -> BTreeMap<String, TurnFileSnapshot> {
+    let mut files = BTreeMap::new();
+    for path in beforeFiles
+        .keys()
+        .chain(afterFiles.keys())
+        .collect::<BTreeSet<_>>()
     {
-        return Some(sharded);
-    }
-    let legacy = buildLegacyObjectPath(objectsDir, hash);
-    if vfs
-        .fileExists(&legacy)
-        .map(|value| value.exists)
-        .unwrap_or(false)
-    {
-        return Some(legacy);
-    }
-    None
-}
-
-fn removePathFromState(
-    relativePath: &str,
-    files: &mut BTreeMap<String, String>,
-    stats: &mut BTreeMap<String, FileStat>,
-) {
-    if relativePath.is_empty() {
-        files.clear();
-        stats.clear();
-        return;
-    }
-    let prefix = format!("{relativePath}/");
-    files.retain(|path, _| path != relativePath && !path.starts_with(&prefix));
-    stats.retain(|path, _| path != relativePath && !path.starts_with(&prefix));
-}
-
-fn parseLastModifiedToMillis(lastModified: &str) -> Option<i64> {
-    let raw = lastModified.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    for pattern in ["%Y-%m-%d %H:%M:%S%.3f", "%Y-%m-%d %H:%M:%S"] {
-        if let Ok(value) = chrono::NaiveDateTime::parse_from_str(raw, pattern) {
-            return Some(value.and_utc().timestamp_millis());
+        let before = beforeFiles.get(path).cloned().unwrap_or(Capture::Absent);
+        let after = afterFiles.get(path).cloned().unwrap_or(Capture::Absent);
+        if before == after {
+            continue;
         }
+        let (before, after) = match (before, after) {
+            (Capture::Present(before), Capture::Present(after)) => (Some(before), Some(after)),
+            (Capture::Present(before), Capture::Absent) => (Some(before), None),
+            (Capture::Absent, Capture::Present(after)) => (None, Some(after)),
+            _ => continue,
+        };
+        files.insert(path.clone(), TurnFileSnapshot { before, after });
     }
-    None
-}
-
-fn currentTimeMillis() -> i64 {
-    operit_host_api::TimeUtils::currentTimeMillis()
+    files
 }
 
 fn normalizeTextLinesForDiff(text: &str) -> Vec<String> {
@@ -1128,4 +958,237 @@ fn isTextBasedFileName(fileName: &str) -> bool {
             | "sql"
             | "lock"
     ) || !lower.contains('.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_tools::ToolExecutionManager::ToolParameter;
+
+    struct BackupFixture {
+        root: std::path::PathBuf,
+        manager: WorkspaceBackupManager,
+    }
+
+    impl BackupFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("operit-workspace-backup-{}", uuid::Uuid::new_v4()));
+            let runtime = root.join("runtime");
+            let workspaces = root.join("workspaces");
+            std::fs::create_dir_all(&runtime).unwrap();
+            std::fs::create_dir_all(&workspaces).unwrap();
+            let context = HostManager {
+                fileSystemHost: Some(Arc::new(PosixFileSystemHost::new())),
+                runtimeStorageHost: Some(Arc::new(NativeRuntimeStorageHost::new(
+                    runtime, workspaces,
+                ))),
+                ..HostManager::default()
+            };
+            Self {
+                root,
+                manager: WorkspaceBackupManager::new(context),
+            }
+        }
+
+        fn edit(&self, workspace: &str, chat: &str, path: &str, timestamp: i64, content: &str) {
+            let session = self.manager.createWorkspaceToolHookSession(
+                workspace.to_string(),
+                timestamp,
+                Some(chat.to_string()),
+            );
+            session.onToolExecutionStarted(&AITool {
+                name: "edit_file".to_string(),
+                parameters: vec![ToolParameter {
+                    name: "path".to_string(),
+                    value: path.to_string(),
+                }],
+            });
+            self.manager.vfs().writeFile(path, content, false).unwrap();
+            session.close();
+        }
+    }
+
+    impl Drop for BackupFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn snapshots_live_in_operit_and_restore_without_capturing_workspace_metadata() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/app/workspaces/project";
+        vfs.makeDirectory(&joinPath(workspace, ".operit"), true)
+            .unwrap();
+        let file = joinPath(workspace, "main.rs");
+        vfs.writeFile(&file, "before\n", false).unwrap();
+        vfs.writeFile(&joinPath(workspace, ".operit/config.json"), "{}", false)
+            .unwrap();
+        let session =
+            manager.createWorkspaceToolHookSession(workspace.into(), 100, Some("chat-a".into()));
+        // Capturing a whole directory must exclude its configuration and backup objects.
+        session.onToolExecutionStarted(&AITool {
+            name: "delete_file".into(),
+            parameters: vec![ToolParameter {
+                name: "path".into(),
+                value: workspace.into(),
+            }],
+        });
+        vfs.writeFile(&file, "after\n", false).unwrap();
+        session.close();
+
+        let backup = fixture
+            .root
+            .join("workspaces/project/.operit/backups/chat-a");
+        assert!(backup.join("state.json").is_file());
+        assert!(backup.join("objects").is_dir());
+        assert!(!fixture.root.join("runtime/workspace_backups").exists());
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+            .unwrap();
+        assert_eq!(
+            snapshot
+                .files
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["main.rs"]
+        );
+        assert_eq!(
+            manager
+                .previewChangesForMessage(workspace.into(), 100, Some("chat-a".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager.restoreWorkspaceForMessage(workspace.into(), 100, Some("chat-a".into())),
+            WorkspaceRewindOutcome::Restored
+        );
+        assert_eq!(vfs.readFile(&file).unwrap(), "before\n");
+        assert_eq!(
+            vfs.readFile(&joinPath(workspace, ".operit/config.json"))
+                .unwrap(),
+            "{}"
+        );
+    }
+
+    #[test]
+    fn deleting_chat_backups_is_scoped_to_its_workspace_and_preserves_other_operit_data() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        for workspace in ["/app/workspaces/first", "/app/workspaces/second"] {
+            vfs.makeDirectory(&joinPath(workspace, ".operit"), true)
+                .unwrap();
+            vfs.writeFile(&joinPath(workspace, ".operit/config.json"), "{}", false)
+                .unwrap();
+            let file = joinPath(workspace, "main.rs");
+            vfs.writeFile(&file, "original", false).unwrap();
+            fixture.edit(workspace, "chat-a", &file, 100, "edited");
+        }
+        let first = "/app/workspaces/first";
+        let other = joinPath(first, "other.rs");
+        vfs.writeFile(&other, "original", false).unwrap();
+        fixture.edit(first, "chat-b", &other, 200, "edited");
+
+        manager.deleteChatState(first.into(), Some("chat-a".into()));
+
+        assert!(
+            !vfs.fileExists(&manager.chatBackupDir(first, Some("chat-a")))
+                .unwrap()
+                .exists
+        );
+        assert!(manager
+            .loadTurnSnapshot(&vfs, "/app/workspaces/second", Some("chat-a"))
+            .is_some());
+        assert!(manager
+            .loadTurnSnapshot(&vfs, first, Some("chat-b"))
+            .is_some());
+        assert_eq!(
+            vfs.readFile(&joinPath(first, ".operit/config.json"))
+                .unwrap(),
+            "{}"
+        );
+    }
+
+    fn present(hash: &str) -> Capture {
+        Capture::Present(hash.to_string())
+    }
+
+    #[test]
+    fn merge_turn_files_keeps_only_real_changes() {
+        let before = BTreeMap::from([
+            ("same.rs".to_string(), present("same")),
+            ("modified.rs".to_string(), present("old")),
+            ("deleted.rs".to_string(), present("gone")),
+        ]);
+        let after = BTreeMap::from([
+            ("same.rs".to_string(), present("same")),
+            ("modified.rs".to_string(), present("new")),
+            ("added.rs".to_string(), present("added")),
+        ]);
+
+        let files = mergeTurnFiles(&before, &after);
+
+        assert_eq!(files.len(), 3);
+        assert!(!files.contains_key("same.rs"));
+        let modified = files.get("modified.rs").expect("modified entry");
+        assert_eq!(modified.before.as_deref(), Some("old"));
+        assert_eq!(modified.after.as_deref(), Some("new"));
+        let deleted = files.get("deleted.rs").expect("deleted entry");
+        assert_eq!(deleted.before.as_deref(), Some("gone"));
+        assert_eq!(deleted.after, None);
+        let added = files.get("added.rs").expect("added entry");
+        assert_eq!(added.before, None);
+        assert_eq!(added.after.as_deref(), Some("added"));
+    }
+
+    #[test]
+    fn merge_turn_files_never_restores_unreadable_captures() {
+        let before = BTreeMap::from([("a.rs".to_string(), Capture::Unknown)]);
+        let after = BTreeMap::from([("a.rs".to_string(), present("new"))]);
+
+        assert!(mergeTurnFiles(&before, &after).is_empty());
+    }
+
+    #[test]
+    fn affected_paths_cover_their_descendants() {
+        let affected = BTreeSet::from(["/app/workspaces/w/dir".to_string()]);
+
+        assert!(isCoveredByAffectedPath(&affected, "/app/workspaces/w/dir"));
+        assert!(isCoveredByAffectedPath(
+            &affected,
+            "/app/workspaces/w/dir/new.rs"
+        ));
+        assert!(!isCoveredByAffectedPath(
+            &affected,
+            "/app/workspaces/w/other.rs"
+        ));
+    }
+
+    #[test]
+    fn rewind_availability_uses_the_latest_editing_turn_as_watermark() {
+        assert_eq!(
+            rewindAvailability(200, 100),
+            RewindAvailability::Unavailable
+        );
+        assert_eq!(
+            rewindAvailability(200, 200),
+            RewindAvailability::UseSnapshot
+        );
+        assert_eq!(
+            rewindAvailability(200, 300),
+            RewindAvailability::NoRestoreNeeded
+        );
+        assert_eq!(
+            rewindAvailability(0, 100),
+            RewindAvailability::NoRestoreNeeded
+        );
+    }
 }

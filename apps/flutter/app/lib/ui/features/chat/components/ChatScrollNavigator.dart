@@ -1,12 +1,13 @@
 // ignore_for_file: file_names
 
-import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 import '../viewmodel/ChatViewModel.dart';
+import 'ChatScrollRailGeometry.dart';
 
 typedef LoadMessageLocatorEntries =
     Future<List<ChatMessageLocatorPreview>> Function(
@@ -16,12 +17,6 @@ typedef LoadMessageLocatorEntries =
 typedef ToggleFavoriteMessage =
     Future<void> Function(int timestamp, bool isFavorite);
 typedef RevealMessageForLocator = Future<bool> Function(int timestamp);
-
-const double _navigatorRightInset = 16;
-const double _locatorDialogWidthFactor = 0.92;
-const double _locatorDialogMaxWidth = 720;
-const double _locatorDialogMaxHeight = 560;
-const double _locatorDialogListMaxHeight = 420;
 
 class ChatScrollMessageAnchor {
   const ChatScrollMessageAnchor({
@@ -82,23 +77,31 @@ class ChatScrollNavigator extends StatefulWidget {
 }
 
 class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
-  int? _currentMessageIndex;
   List<ChatMessageLocatorPreview> _locatorEntries =
       const <ChatMessageLocatorPreview>[];
-  bool _isLoadingLocatorEntries = false;
 
+  late List<ChatMessageLocatorPreview> _visibleEntries;
+  int? _hoveredEntryIndex;
+  int _locatorLoadGeneration = 0;
+
+  /// Loads history previews once instead of generating them on pointer motion.
   @override
   void initState() {
     super.initState();
-    _currentMessageIndex = widget.messages.isEmpty
-        ? null
-        : widget.messages.length - 1;
+    _visibleEntries = _fallbackEntriesFromMessages();
     _loadLocatorEntries();
   }
 
+  /// Refreshes history geometry without retaining a preview from another chat.
   @override
   void didUpdateWidget(ChatScrollNavigator oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.viewportHeight != widget.viewportHeight) {
+      _hoveredEntryIndex = null;
+    }
+    if (!identical(oldWidget.messages, widget.messages)) {
+      _visibleEntries = _fallbackEntriesFromMessages();
+    }
     final messagesChanged =
         oldWidget.messages.length != widget.messages.length ||
         oldWidget.messages.firstOrNull?.timestamp !=
@@ -106,123 +109,114 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
         oldWidget.messages.lastOrNull?.timestamp !=
             widget.messages.lastOrNull?.timestamp;
     if (messagesChanged || oldWidget.currentChatId != widget.currentChatId) {
+      _hoveredEntryIndex = null;
+      if (oldWidget.currentChatId != widget.currentChatId) {
+        _locatorEntries = const <ChatMessageLocatorPreview>[];
+      }
       _loadLocatorEntries();
     }
-    _updateCenteredMessage();
   }
 
+  /// Builds an isolated paint-driven rail and a preview only for the selected row.
   @override
   Widget build(BuildContext context) {
-    _updateCenteredMessage();
-    final activeMessageIndex = _currentMessageIndex;
-    final activeMessageTimestamp = activeMessageIndex == null
-        ? null
-        : widget.messages.elementAtOrNull(activeMessageIndex)?.timestamp;
-    final activeGlobalMessageIndex = activeMessageTimestamp == null
-        ? null
-        : _locatorEntries.indexWhere(
-            (entry) => entry.timestamp == activeMessageTimestamp,
-          );
-
-    return Stack(
-      children: <Widget>[
-        Positioned(
-          right: _navigatorRightInset,
-          top: (widget.viewportHeight / 2) - 57,
-          child: AnimatedSwitcher(
-            duration: widget.showNavigatorChip
-                ? const Duration(milliseconds: 180)
-                : const Duration(milliseconds: 120),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) {
-              final offsetAnimation = Tween<Offset>(
-                begin: const Offset(0.5, 0),
-                end: Offset.zero,
-              ).animate(animation);
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(position: offsetAnimation, child: child),
-              );
-            },
-            child: widget.showNavigatorChip && activeMessageIndex != null
-                ? _NavigatorChip(
-                    key: const ValueKey<String>('chat-scroll-navigator-chip'),
-                    progress: _progress(
-                      activeGlobalMessageIndex,
-                      activeMessageIndex,
-                    ),
-                    onOpenLocator: () {
-                      widget.onNavigatorChipHidden();
-                      _showLocatorDialog(activeMessageTimestamp);
-                    },
-                    onScrollToBottom: () {
-                      widget.onNavigatorChipHidden();
-                      widget.onRequestScrollToBottom();
-                    },
-                  )
-                : const SizedBox(
-                    key: ValueKey<String>('chat-scroll-navigator-empty'),
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _showLocatorDialog(int? activeMessageTimestamp) async {
-    if (activeMessageTimestamp == null) {
-      return;
+    if (widget.messages.isEmpty ||
+        widget.viewportHeight <= 60.0 ||
+        !widget.viewportHeight.isFinite) {
+      return const SizedBox.shrink();
     }
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return ChatMessageLocatorDialog(
-          locatorEntries: _locatorEntries,
-          currentMessageTimestamp: activeMessageTimestamp,
-          isLoading: _isLoadingLocatorEntries,
-          currentChatId: widget.currentChatId,
-          loadLocatorEntries: widget.loadLocatorEntries,
-          onDismiss: () {
-            Navigator.of(dialogContext).pop();
-          },
-          onToggleFavoriteMessage: widget.onToggleFavoriteMessage,
-          onJumpToMessage: (timestamp) {
-            Navigator.of(dialogContext).pop();
-            final targetIndex = widget.messages.indexWhere(
-              (message) => message.timestamp == timestamp,
-            );
-            if (targetIndex >= 0) {
-              widget.onJumpToMessage(targetIndex);
-            } else {
-              widget.onJumpToMessageTimestamp(timestamp);
-            }
-          },
+
+    final entries = _getEntries();
+    final activeTimestamp = _resolveActiveTimestamp();
+    final geometry = ChatScrollRailGeometry(
+      entryCount: entries.length,
+      viewportHeight: widget.viewportHeight,
+    );
+    final hoveredIndex = _hoveredEntryIndex;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final previewWidth = math.min(
+          210.0,
+          math.max(
+            0.0,
+            constraints.maxWidth - ChatScrollRailGeometry.interactionWidth - 24,
+          ),
+        );
+        return Stack(
+          children: <Widget>[
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: ChatScrollRailGeometry.interactionWidth,
+              child: _MessageTickRail(
+                entries: entries,
+                activeTimestamp: activeTimestamp,
+                geometry: geometry,
+                onHoverEntry: (index) {
+                  if (_hoveredEntryIndex == index) return;
+                  setState(() {
+                    _hoveredEntryIndex = index;
+                  });
+                },
+                onTapTick: _handleJumpToMessage,
+              ),
+            ),
+            if (hoveredIndex != null &&
+                hoveredIndex < entries.length &&
+                previewWidth > 0)
+              Positioned(
+                right: ChatScrollRailGeometry.interactionWidth + 8,
+                top: (geometry.entryCenter(hoveredIndex) - 32).clamp(
+                  8.0,
+                  math.max(8.0, widget.viewportHeight - 112),
+                ),
+                child: IgnorePointer(
+                  child: SizedBox(
+                    width: previewWidth,
+                    child: _CodexHoverTooltipCard(entry: entries[hoveredIndex]),
+                  ),
+                ),
+              ),
+            if (!widget.autoScrollToBottom)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 16,
+                child: Center(
+                  child: _ScrollToBottomCircleButton(
+                    onTap: widget.onRequestScrollToBottom,
+                  ),
+                ),
+              ),
+          ],
         );
       },
     );
   }
 
-  double _progress(int? activeGlobalMessageIndex, int activeMessageIndex) {
-    final totalCount = _locatorEntries.isNotEmpty
-        ? _locatorEntries.length
-        : widget.messages.length;
-    final progressIndex =
-        activeGlobalMessageIndex != null && activeGlobalMessageIndex >= 0
-        ? activeGlobalMessageIndex
-        : activeMessageIndex;
-    if (totalCount <= 1) {
-      return 1;
+  /// Pins boundary highlights to endpoint messages and tracks the center between them.
+  int? _resolveActiveTimestamp() {
+    final scroll = widget.scrollController;
+    if (!scroll.hasClients ||
+        scroll.positions.length != 1 ||
+        !scroll.position.hasPixels ||
+        widget.viewportHeight <= 0 ||
+        !widget.viewportHeight.isFinite) {
+      return widget.messages.lastOrNull?.timestamp;
     }
-    return (progressIndex / (totalCount - 1)).clamp(0, 1).toDouble();
-  }
-
-  void _updateCenteredMessage() {
-    if (widget.viewportHeight <= 0 || widget.messageAnchors.isEmpty) {
-      return;
+    final position = scroll.position;
+    if (position.hasContentDimensions) {
+      // A transcript that fits entirely in the viewport stays on its latest message.
+      if (position.pixels >= position.maxScrollExtent) {
+        return widget.messages.lastOrNull?.timestamp;
+      }
+      if (position.pixels <= position.minScrollExtent) {
+        return widget.messages.firstOrNull?.timestamp;
+      }
     }
-    final viewportCenter =
-        widget.scrollController.offset + widget.viewportHeight / 2;
+    final viewportCenter = scroll.offset + widget.viewportHeight / 2;
     ChatScrollMessageAnchor? centeredAnchor;
     double? centeredDistance;
     for (final anchor in widget.messageAnchors.values) {
@@ -233,864 +227,512 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
         centeredDistance = distance;
       }
     }
-    final index = centeredAnchor?.index;
-    if (index != null && index != _currentMessageIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _currentMessageIndex = index;
-        });
-      });
+    return centeredAnchor?.timestamp ?? widget.messages.lastOrNull?.timestamp;
+  }
+
+  /// Returns the current cached history preview collection.
+  List<ChatMessageLocatorPreview> _getEntries() {
+    return _locatorEntries.isNotEmpty ? _locatorEntries : _visibleEntries;
+  }
+
+  /// Projects the loaded transcript into locator previews once per message update.
+  List<ChatMessageLocatorPreview> _fallbackEntriesFromMessages() {
+    return widget.messages.indexed.map<ChatMessageLocatorPreview>((item) {
+      final idx = item.$1;
+      final msg = item.$2;
+      final text = msg.displayText;
+      return ChatMessageLocatorPreview(
+        messageIndex: idx,
+        timestamp: msg.timestamp,
+        sender: msg.sender,
+        previewContent: text,
+        contentLength: text.length,
+        displayMode: 'NORMAL',
+        isFavorite: false,
+      );
+    }).toList(growable: false);
+  }
+
+  /// Routes a confirmed tap to its visible row or its history timestamp.
+  void _handleJumpToMessage(int timestamp) {
+    final targetIndex = widget.messages.indexWhere(
+      (m) => m.timestamp == timestamp,
+    );
+    if (targetIndex >= 0) {
+      widget.onJumpToMessage(targetIndex);
+    } else {
+      widget.onJumpToMessageTimestamp(timestamp);
     }
   }
 
+  /// Rejects stale preview loads after a chat or history window changes.
   Future<void> _loadLocatorEntries() async {
+    final generation = ++_locatorLoadGeneration;
     final chatId = widget.currentChatId;
     if (chatId == null || chatId.trim().isEmpty) {
       setState(() {
         _locatorEntries = const <ChatMessageLocatorPreview>[];
-        _isLoadingLocatorEntries = false;
       });
       return;
     }
-    setState(() {
-      _isLoadingLocatorEntries = true;
-    });
     final entries = await widget.loadLocatorEntries(chatId, '');
-    if (!mounted) {
+    if (!mounted || generation != _locatorLoadGeneration) {
       return;
     }
     setState(() {
       _locatorEntries = entries;
-      _isLoadingLocatorEntries = false;
+      _hoveredEntryIndex = null;
     });
   }
 }
 
-class _NavigatorChip extends StatelessWidget {
-  const _NavigatorChip({
-    super.key,
-    required this.progress,
-    required this.onOpenLocator,
-    required this.onScrollToBottom,
+class _MessageTickRail extends StatefulWidget {
+  /// Creates a paint-only rail with a separate, finger-sized gesture strip.
+  const _MessageTickRail({
+    required this.entries,
+    required this.activeTimestamp,
+    required this.geometry,
+    required this.onHoverEntry,
+    required this.onTapTick,
   });
 
-  final double progress;
-  final VoidCallback onOpenLocator;
-  final VoidCallback onScrollToBottom;
+  final List<ChatMessageLocatorPreview> entries;
+  final int? activeTimestamp;
+  final ChatScrollRailGeometry geometry;
+  final ValueChanged<int?> onHoverEntry;
+  final ValueChanged<int> onTapTick;
 
+  /// Keeps pointer motion and animation outside the transcript widget tree.
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final bubbleColor = theme.colorScheme.surfaceContainerHighest.withValues(
-      alpha: 0.58,
-    );
-    final borderColor = theme.colorScheme.outlineVariant.withValues(
-      alpha: 0.12,
-    );
-    final lineColor = theme.colorScheme.outlineVariant.withValues(alpha: 0.55);
-    final dotColor = theme.colorScheme.primary.withValues(alpha: 0.92);
-
-    return SizedBox(
-      width: 34,
-      height: 114,
-      child: Stack(
-        children: <Widget>[
-          Positioned(
-            left: 0,
-            top: 22,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTap: () {
-                  Feedback.forTap(context);
-                  onOpenLocator();
-                },
-                child: SizedBox(
-                  width: 34,
-                  height: 70,
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Container(
-                          width: 20,
-                          height: 58,
-                          decoration: BoxDecoration(
-                            color: bubbleColor,
-                            border: Border.all(color: borderColor),
-                            borderRadius: const BorderRadius.horizontal(
-                              left: Radius.circular(14),
-                              right: Radius.circular(10),
-                            ),
-                          ),
-                          child: Center(
-                            child: CustomPaint(
-                              size: const Size(8, 34),
-                              painter: _ProgressRailPainter(
-                                progress: progress,
-                                lineColor: lineColor,
-                                dotColor: dotColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Transform.translate(
-                          offset: const Offset(-1, 0),
-                          child: CustomPaint(
-                            size: const Size(9, 18),
-                            painter: _NavigatorArrowPainter(color: bubbleColor),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            top: 84,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTap: () {
-                  Feedback.forTap(context);
-                  onScrollToBottom();
-                },
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: Center(
-                    child: Container(
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color: bubbleColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: borderColor),
-                      ),
-                      child: Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 16,
-                        color: theme.colorScheme.primary.withValues(
-                          alpha: 0.92,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  State<_MessageTickRail> createState() => _MessageTickRailState();
 }
 
-class _ProgressRailPainter extends CustomPainter {
-  const _ProgressRailPainter({
-    required this.progress,
-    required this.lineColor,
-    required this.dotColor,
-  });
+class _MessageTickRailState extends State<_MessageTickRail>
+    with SingleTickerProviderStateMixin {
+  final _pointer = ValueNotifier<Offset>(Offset.zero);
+  late final AnimationController _proximity;
+  late final Listenable _paintSignal;
+  late List<_RailTick> _ticks;
+  late Map<int, int> _entryIndices;
+  int? _touchPointer;
+  int? _previewIndex;
+  double _targetProximity = 0;
+  bool _disableAnimations = false;
 
-  final double progress;
-  final Color lineColor;
-  final Color dotColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = lineColor
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round;
-    final centerX = size.width / 2;
-    const topY = 2.0;
-    final bottomY = size.height - 2;
-    canvas.drawLine(Offset(centerX, topY), Offset(centerX, bottomY), paint);
-    canvas.drawCircle(
-      Offset(centerX, topY + (bottomY - topY) * progress),
-      3,
-      Paint()..color = dotColor,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_ProgressRailPainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.lineColor != lineColor ||
-        oldDelegate.dotColor != dotColor;
-  }
-}
-
-class _NavigatorArrowPainter extends CustomPainter {
-  const _NavigatorArrowPainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width, size.height / 2)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(path, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(_NavigatorArrowPainter oldDelegate) {
-    return oldDelegate.color != color;
-  }
-}
-
-class ChatMessageLocatorDialog extends StatefulWidget {
-  const ChatMessageLocatorDialog({
-    super.key,
-    required this.locatorEntries,
-    required this.currentMessageTimestamp,
-    required this.isLoading,
-    required this.currentChatId,
-    required this.loadLocatorEntries,
-    required this.onDismiss,
-    required this.onToggleFavoriteMessage,
-    required this.onJumpToMessage,
-  });
-
-  final List<ChatMessageLocatorPreview> locatorEntries;
-  final int currentMessageTimestamp;
-  final bool isLoading;
-  final String? currentChatId;
-  final LoadMessageLocatorEntries loadLocatorEntries;
-  final VoidCallback onDismiss;
-  final ToggleFavoriteMessage onToggleFavoriteMessage;
-  final ValueChanged<int> onJumpToMessage;
-
-  @override
-  State<ChatMessageLocatorDialog> createState() =>
-      _ChatMessageLocatorDialogState();
-}
-
-class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
-  late final ScrollController _scrollController;
-  final TextEditingController _searchController = TextEditingController();
-  Timer? _searchDebounce;
-  String _searchQuery = '';
-  List<ChatMessageLocatorPreview> _searchEntries =
-      const <ChatMessageLocatorPreview>[];
-  bool _isLoadingSearchEntries = false;
-  bool _favoritesOnly = false;
-  Map<int, bool> _favoriteOverrides = const <int, bool>{};
-
+  /// Allocates one animation and caches visual buckets for the whole history.
   @override
   void initState() {
     super.initState();
-    _scrollController = ScrollController(
-      initialScrollOffset: _initialRowOffset(),
-    );
+    _proximity = AnimationController(vsync: this);
+    _paintSignal = Listenable.merge(<Listenable>[_pointer, _proximity]);
+    _rebuildTicks();
   }
 
+  /// Re-buckets only when history or viewport geometry actually changes.
+  @override
+  void didUpdateWidget(covariant _MessageTickRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.entries, widget.entries) ||
+        oldWidget.geometry.viewportHeight != widget.geometry.viewportHeight) {
+      _rebuildTicks();
+      _previewIndex = null;
+    }
+  }
+
+  /// Releases the single repaint animation and pointer notifier.
   @override
   void dispose() {
-    _searchDebounce?.cancel();
-    _scrollController.dispose();
-    _searchController.dispose();
+    _proximity.dispose();
+    _pointer.dispose();
     super.dispose();
   }
 
+  /// Preserves active and favorite markers when many messages share one tick.
+  void _rebuildTicks() {
+    final geometry = widget.geometry;
+    _entryIndices = <int, int>{
+      for (final entry in widget.entries.indexed) entry.$2.timestamp: entry.$1,
+    };
+    _ticks = List<_RailTick>.generate(geometry.tickCount, (index) {
+      final start = geometry.bucketStart(index);
+      final end = geometry.bucketEnd(index);
+      var favorite = false;
+      for (var entry = start; entry < end; entry++) {
+        favorite |= widget.entries[entry].isFavorite;
+      }
+      return _RailTick(
+        start: start,
+        end: end,
+        isUser: widget.entries[(start + end - 1) ~/ 2].sender == 'user',
+        isFavorite: favorite,
+      );
+    }, growable: false);
+  }
+
+  /// Animates only horizontal growth; vertical motion follows the pointer directly.
+  void _animateProximity(double value) {
+    if (_disableAnimations || value == 1) {
+      _targetProximity = value;
+      if (_proximity.value != value || _proximity.isAnimating) {
+        _proximity.value = value;
+      }
+      return;
+    }
+    if ((_targetProximity - value).abs() < 0.005) return;
+    _targetProximity = value;
+    _proximity.animateTo(
+      value,
+      duration: Duration(milliseconds: value == 0 ? 160 : 70),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// Repaints on every motion but rebuilds the preview only when its row changes.
+  void _updatePointer(Offset position) {
+    final geometry = widget.geometry;
+    _pointer.value = position;
+    final insideHeight =
+        position.dy >= geometry.hitTop &&
+        position.dy <= geometry.hitTop + geometry.hitHeight;
+    _animateProximity(insideHeight ? geometry.proximityAt(position.dx) : 0);
+    final index = insideHeight &&
+            position.dx >= ChatScrollRailGeometry.interactionWidth -
+                ChatScrollRailGeometry.hitWidth &&
+            position.dx <= ChatScrollRailGeometry.interactionWidth
+        ? geometry.entryIndexAt(position.dy)
+        : null;
+    if (index != _previewIndex) {
+      _previewIndex = index;
+      widget.onHoverEntry(index);
+    }
+  }
+
+  /// Collapses the wave after leaving the rail without changing scroll position.
+  void _clearPointer() {
+    _animateProximity(0);
+    if (_previewIndex != null) {
+      _previewIndex = null;
+      widget.onHoverEntry(null);
+    }
+  }
+
+  /// Shows touch previews immediately, before a tap or drag wins its gesture arena.
+  void _handlePointerDown(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.mouse) {
+      if (_touchPointer != null) return;
+      _touchPointer = event.pointer;
+    }
+    _updatePointer(event.localPosition);
+  }
+
+  /// Scrubs previews without jumping through the transcript on drag updates.
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.kind != PointerDeviceKind.mouse && event.pointer != _touchPointer) {
+      return;
+    }
+    _updatePointer(event.localPosition);
+  }
+
+  /// Clears touch state on both release and cancellation without hiding mouse hover.
+  void _handlePointerEnd(PointerEvent event) {
+    if (event.pointer != _touchPointer) return;
+    _touchPointer = null;
+    _clearPointer();
+  }
+
+  /// Observes proximity without consuming transcript gestures outside the hit strip.
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final theme = Theme.of(context);
-    final normalizedSearchQuery = normalizeMessageSearchText(_searchQuery);
-    final activeEntries = normalizedSearchQuery.isEmpty
-        ? widget.locatorEntries
-        : _searchEntries;
-    final indexedEntries = activeEntries.indexed
-        .map(
-          (entry) => _ChatMessageLocatorEntry(
-            index: entry.$2.messageIndex ?? entry.$1,
-            preview: entry.$2,
-          ),
-        )
-        .toList(growable: false);
-    final filteredEntries = indexedEntries
-        .where((entry) {
-          final isFavorite =
-              _favoriteOverrides[entry.preview.timestamp] ??
-              entry.preview.isFavorite;
-          return !_favoritesOnly || isFavorite;
-        })
-        .toList(growable: false);
-    final currentMessageIndex = widget.locatorEntries.indexWhere(
-      (entry) => entry.timestamp == widget.currentMessageTimestamp,
-    );
-    final maxMessageLength = activeEntries
-        .map((preview) => messageContentLength(l10n, preview))
-        .fold<int>(1, (max, value) => math.max(max, value));
-    final dialogIsLoading = widget.isLoading || _isLoadingSearchEntries;
-    final locatorPositionText = l10n.messageLocatorCurrent(
-      (currentMessageIndex + 1).clamp(0, widget.locatorEntries.length),
-      widget.locatorEntries.length,
-    );
-    final bodyContent = Column(
-      mainAxisSize: MainAxisSize.max,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
+    _disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final geometry = widget.geometry;
+    final colors = Theme.of(context).colorScheme;
+    return MouseRegion(
+      opaque: false,
+      hitTestBehavior: HitTestBehavior.translucent,
+      onHover: (event) => _updatePointer(event.localPosition),
+      onExit: (_) {
+        if (_touchPointer == null) _clearPointer();
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerEnd,
+        onPointerCancel: _handlePointerEnd,
+        child: Stack(
+          fit: StackFit.expand,
           children: <Widget>[
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                maxLines: 1,
-                decoration: InputDecoration(
-                  labelText: l10n.search,
-                  hintText: l10n.messageLocatorSearchHint,
+            Positioned.fill(
+              child: IgnorePointer(
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    key: const ValueKey<String>('chat-scroll-rail-paint'),
+                    painter: _MessageTickPainter(
+                      ticks: _ticks,
+                      activeIndex: _entryIndices[widget.activeTimestamp],
+                      geometry: geometry,
+                      pointer: _pointer,
+                      proximity: _proximity,
+                      primary: colors.primary,
+                      foreground: colors.onSurfaceVariant,
+                      repaint: _paintSignal,
+                    ),
+                  ),
                 ),
-                onChanged: _onSearchChanged,
               ),
             ),
-            const SizedBox(width: 10),
-            _FavoriteFilterButton(
-              selected: _favoritesOnly,
-              onPressed: () {
-                setState(() {
-                  _favoritesOnly = !_favoritesOnly;
-                });
-              },
+            Positioned(
+              right: 0,
+              top: geometry.hitTop,
+              width: ChatScrollRailGeometry.hitWidth,
+              height: geometry.hitHeight,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                opaque: false,
+                child: GestureDetector(
+                  key: const ValueKey<String>('chat-scroll-rail-hit-target'),
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (details) {
+                    final index = geometry.entryIndexAt(
+                      details.localPosition.dy + geometry.hitTop,
+                    );
+                    widget.onTapTick(widget.entries[index].timestamp);
+                  },
+                  // This strip owns scrubbing; raw motion only updates the preview.
+                  onVerticalDragStart: (_) {},
+                ),
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        if (normalizedSearchQuery.isEmpty && !_favoritesOnly)
-          Text(
-            l10n.messageLocatorInstruction,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          )
-        else if (filteredEntries.isNotEmpty)
-          Text(
-            l10n.messageLocatorResultCount(filteredEntries.length),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        const SizedBox(height: 8),
-        Flexible(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxHeight: _locatorDialogListMaxHeight,
-            ),
-            child: _buildEntryList(
-              context,
-              dialogIsLoading,
-              filteredEntries,
-              currentMessageIndex,
-              maxMessageLength,
-            ),
-          ),
-        ),
-      ],
-    );
-    return _ChatMessageLocatorDialogFrame(
-      title: l10n.messageLocatorTitle,
-      subtitle: locatorPositionText,
-      closeLabel: l10n.close,
-      onDismiss: widget.onDismiss,
-      child: bodyContent,
-    );
-  }
-
-  Widget _buildEntryList(
-    BuildContext context,
-    bool dialogIsLoading,
-    List<_ChatMessageLocatorEntry> filteredEntries,
-    int currentMessageIndex,
-    int maxMessageLength,
-  ) {
-    final theme = Theme.of(context);
-    final l10n = AppLocalizations.of(context)!;
-    if (dialogIsLoading) {
-      return const Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 2.4),
-        ),
-      );
-    }
-    if (filteredEntries.isEmpty) {
-      return Center(
-        child: Text(
-          l10n.messageLocatorNoMatches,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-      );
-    }
-    return ListView.separated(
-      controller: _scrollController,
-      itemCount: filteredEntries.length,
-      separatorBuilder: (context, index) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final entry = filteredEntries[index];
-        final isFavorite =
-            _favoriteOverrides[entry.preview.timestamp] ??
-            entry.preview.isFavorite;
-        return ChatMessageLocatorRow(
-          key: ValueKey<String>('${entry.preview.timestamp}_${entry.index}'),
-          index: entry.index,
-          preview: entry.preview,
-          isFavorite: isFavorite,
-          isCurrent: entry.index == currentMessageIndex,
-          maxMessageLength: maxMessageLength,
-          searchQuery: _searchQuery,
-          onToggleFavorite: () => _toggleFavorite(entry.preview, isFavorite),
-          onClick: () => widget.onJumpToMessage(entry.preview.timestamp),
-        );
-      },
-    );
-  }
-
-  /// Updates the locator search query and schedules one search request.
-  void _onSearchChanged(String value) {
-    setState(() {
-      _searchQuery = value;
-    });
-    _searchDebounce?.cancel();
-    final normalizedSearchQuery = normalizeMessageSearchText(value);
-    if (normalizedSearchQuery.isEmpty) {
-      setState(() {
-        _searchEntries = const <ChatMessageLocatorPreview>[];
-        _isLoadingSearchEntries = false;
-      });
-      return;
-    }
-    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
-      _loadSearchEntries(normalizedSearchQuery);
-    });
-  }
-
-  /// Loads search results for the active locator query.
-  Future<void> _loadSearchEntries(String normalizedSearchQuery) async {
-    final chatId = widget.currentChatId;
-    if (chatId == null || chatId.trim().isEmpty) {
-      setState(() {
-        _searchEntries = const <ChatMessageLocatorPreview>[];
-        _isLoadingSearchEntries = false;
-      });
-      return;
-    }
-    setState(() {
-      _isLoadingSearchEntries = true;
-    });
-    try {
-      final entries = await widget.loadLocatorEntries(
-        chatId,
-        normalizedSearchQuery,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _searchEntries = entries;
-        _isLoadingSearchEntries = false;
-      });
-      _scrollToClosestSearchRow();
-    } catch (error, stackTrace) {
-      debugPrint('Failed to search chat locator entries: $error\n$stackTrace');
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoadingSearchEntries = false;
-      });
-    }
-  }
-
-  /// Toggles the favorite state for one locator row.
-  Future<void> _toggleFavorite(
-    ChatMessageLocatorPreview preview,
-    bool isFavorite,
-  ) async {
-    final nextFavorite = !isFavorite;
-    setState(() {
-      _favoriteOverrides = Map<int, bool>.of(_favoriteOverrides)
-        ..[preview.timestamp] = nextFavorite;
-    });
-    await widget.onToggleFavoriteMessage(preview.timestamp, nextFavorite);
-  }
-
-  /// Returns the initial scroll offset that centers near the current message.
-  double _initialRowOffset() {
-    final currentMessageIndex = widget.locatorEntries.indexWhere(
-      (entry) => entry.timestamp == widget.currentMessageTimestamp,
-    );
-    if (currentMessageIndex < 0) {
-      return 0;
-    }
-    final target = (currentMessageIndex - 2).clamp(
-      0,
-      widget.locatorEntries.length,
-    );
-    return (target * 56).toDouble();
-  }
-
-  /// Scrolls search results near the currently visible chat message.
-  void _scrollToClosestSearchRow() {
-    final currentMessageIndex = widget.locatorEntries.indexWhere(
-      (entry) => entry.timestamp == widget.currentMessageTimestamp,
-    );
-    if (currentMessageIndex < 0 ||
-        _searchEntries.isEmpty ||
-        !_scrollController.hasClients) {
-      return;
-    }
-    final target = _searchEntries.indexed
-        .map(
-          (entry) => MapEntry(
-            entry.$1,
-            ((entry.$2.messageIndex ?? entry.$1) - currentMessageIndex).abs(),
-          ),
-        )
-        .reduce((left, right) => left.value <= right.value ? left : right)
-        .key;
-    _scrollController.jumpTo(target * 56);
-  }
-}
-
-class _ChatMessageLocatorDialogFrame extends StatelessWidget {
-  const _ChatMessageLocatorDialogFrame({
-    required this.title,
-    required this.subtitle,
-    required this.closeLabel,
-    required this.onDismiss,
-    required this.child,
-  });
-
-  final String title;
-  final String subtitle;
-  final String closeLabel;
-  final VoidCallback onDismiss;
-  final Widget child;
-
-  /// Builds the centered locator dialog shell used by the chat navigator.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(vertical: 24),
-      child: FractionallySizedBox(
-        widthFactor: _locatorDialogWidthFactor,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: _locatorDialogMaxWidth,
-            maxHeight: _locatorDialogMaxHeight,
-          ),
-          child: Material(
-            color: colorScheme.surface.withValues(alpha: 0.95),
-            surfaceTintColor: Colors.transparent,
-            shadowColor: colorScheme.shadow.withValues(alpha: 0.18),
-            elevation: 8,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 18,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.max,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: <Widget>[
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              Text(
-                                title,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  color: colorScheme.onSurface,
-                                ),
-                              ),
-                              Text(
-                                subtitle,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: onDismiss,
-                          child: Text(closeLabel),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(child: child),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
 }
 
-class _FavoriteFilterButton extends StatelessWidget {
-  const _FavoriteFilterButton({
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final bool selected;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: selected
-          ? theme.colorScheme.primaryContainer
-          : theme.colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: selected
-              ? theme.colorScheme.primary.withValues(alpha: 0.42)
-              : theme.colorScheme.outlineVariant.withValues(alpha: 0.32),
-        ),
-      ),
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(selected ? Icons.star : Icons.star_outline),
-        color: selected
-            ? theme.colorScheme.primary
-            : theme.colorScheme.onSurfaceVariant,
-      ),
-    );
-  }
-}
-
-class ChatMessageLocatorRow extends StatelessWidget {
-  const ChatMessageLocatorRow({
-    super.key,
-    required this.index,
-    required this.preview,
+/// Describes one visual tick bucket without allocating a widget per message.
+class _RailTick {
+  /// Records the history interval and markers represented by a painted tick.
+  const _RailTick({
+    required this.start,
+    required this.end,
+    required this.isUser,
     required this.isFavorite,
-    required this.isCurrent,
-    required this.maxMessageLength,
-    required this.searchQuery,
-    required this.onToggleFavorite,
-    required this.onClick,
   });
 
-  final int index;
-  final ChatMessageLocatorPreview preview;
+  final int start;
+  final int end;
+  final bool isUser;
   final bool isFavorite;
-  final bool isCurrent;
-  final int maxMessageLength;
-  final String searchQuery;
-  final VoidCallback onToggleFavorite;
-  final VoidCallback onClick;
+
+  /// Tests whether the active or previewed message belongs to this visual bucket.
+  bool contains(int? index) => index != null && index >= start && index < end;
+}
+
+/// Draws the entire proximity wave in one bounded, independently repainted layer.
+class _MessageTickPainter extends CustomPainter {
+  /// Connects pointer and animation notifiers directly to painting, not rebuilding.
+  _MessageTickPainter({
+    required this.ticks,
+    required this.activeIndex,
+    required this.geometry,
+    required this.pointer,
+    required this.proximity,
+    required this.primary,
+    required this.foreground,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final List<_RailTick> ticks;
+  final int? activeIndex;
+  final ChatScrollRailGeometry geometry;
+  final ValueNotifier<Offset> pointer;
+  final Animation<double> proximity;
+  final Color primary;
+  final Color foreground;
+
+  /// Anchors tick ends while a capped bell-shaped wave extends them to the left.
+  @override
+  void paint(Canvas canvas, Size size) {
+    final position = pointer.value;
+    final strength = proximity.value;
+    final hoveredIndex =
+        strength > 0.01 ? geometry.entryIndexAt(position.dy) : null;
+    final right = size.width - ChatScrollRailGeometry.rightInset;
+    final line = Paint();
+    final favorite = Paint()..color = Colors.amber;
+    for (var index = 0; index < ticks.length; index++) {
+      final tick = ticks[index];
+      final current = tick.contains(activeIndex);
+      final hovered = tick.contains(hoveredIndex);
+      final y = geometry.tickCenter(index);
+      final restingWidth = current ? 15.0 : (tick.isUser ? 10.0 : 6.5);
+      final width = geometry.tickWidth(
+        restingWidth: restingWidth,
+        tickY: y,
+        pointerY: position.dy,
+        proximity: strength,
+      );
+      line.color = current || hovered
+          ? primary
+          : foreground.withValues(alpha: tick.isUser ? 0.55 : 0.28);
+      final thickness = current || hovered ? 2.8 : 1.8;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(right - width, y - thickness / 2, width, thickness),
+          Radius.circular(thickness / 2),
+        ),
+        line,
+      );
+      if (tick.isFavorite) canvas.drawCircle(Offset(right + 4, y), 1.2, favorite);
+    }
+  }
+
+  /// Lets the proximity observation area pass gestures through to the transcript.
+  @override
+  bool hitTest(Offset position) => false;
+
+  /// Repaints static state only when history, viewport, selection or theme changes.
+  @override
+  bool shouldRepaint(covariant _MessageTickPainter oldDelegate) =>
+      oldDelegate.ticks != ticks ||
+      oldDelegate.activeIndex != activeIndex ||
+      oldDelegate.geometry.viewportHeight != geometry.viewportHeight ||
+      oldDelegate.primary != primary ||
+      oldDelegate.foreground != foreground;
+}
+
+class _CodexHoverTooltipCard extends StatelessWidget {
+  /// Shows the selected message preview immediately on hover or touch.
+  const _CodexHoverTooltipCard({required this.entry});
+
+  final ChatMessageLocatorPreview entry;
+
+  /// Renders message identity and content without an extra navigation hint.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final isUser = entry.sender == 'user';
+    final previewText = buildMessagePreview(l10n, entry, '');
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.25),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(
+                  isUser
+                      ? Icons.person_rounded
+                      : Icons.auto_awesome_rounded,
+                  size: 11,
+                  color: isUser
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.tertiary,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    isUser
+                        ? '${senderLabel(context, entry.sender)} #${(entry.messageIndex ?? 0) + 1}'
+                        : senderLabel(context, entry.sender),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 10,
+                      color: isUser
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                if (entry.isFavorite) ...[
+                  const SizedBox(width: 4),
+                  const Icon(Icons.star, size: 11, color: Colors.amber),
+                ],
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              previewText,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScrollToBottomCircleButton extends StatelessWidget {
+  const _ScrollToBottomCircleButton({required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDarkSurface = theme.colorScheme.surface.computeLuminance() < 0.5;
-    final fillColor = _fillColor(theme, isDarkSurface);
-    final previewTextColor = isDarkSurface
-        ? theme.colorScheme.onSurface.withValues(alpha: isCurrent ? 0.96 : 0.88)
-        : _previewTextColor(theme);
-    final containerColor = isCurrent
-        ? theme.colorScheme.secondaryContainer.withValues(alpha: 0.72)
-        : theme.colorScheme.surfaceContainerLow;
-    final borderColor = isCurrent
-        ? theme.colorScheme.primary.withValues(alpha: 0.4)
-        : theme.colorScheme.outlineVariant.withValues(alpha: 0.22);
-    final l10n = AppLocalizations.of(context)!;
-    final messageLength = messageContentLength(l10n, preview);
-    final previewText = buildMessagePreview(l10n, preview, searchQuery);
-
     return Material(
-      color: containerColor,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: borderColor),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onClick,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: <Widget>[
-              SizedBox(
-                width: 90,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Text('${index + 1}', style: theme.textTheme.titleSmall),
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            iconSize: 13,
-                            onPressed: onToggleFavorite,
-                            icon: Icon(
-                              isFavorite ? Icons.star : Icons.star_outline,
-                              color: isFavorite
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurfaceVariant
-                                        .withValues(alpha: 0.72),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      senderLabel(context, preview.sender),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
+      color: Colors.transparent,
+      child: Tooltip(
+        message: '回到底部',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.75,
               ),
-              Expanded(
-                child: Container(
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.42,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Stack(
-                    children: <Widget>[
-                      FractionallySizedBox(
-                        widthFactor: messageBarFraction(
-                          messageLength,
-                          maxMessageLength,
-                        ),
-                        heightFactor: 1,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: fillColor.withValues(
-                              alpha: isDarkSurface ? 0.9 : 0.98,
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Text(
-                            previewText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: previewTextColor,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
               ),
-              const SizedBox(width: 12),
-              Text(
-                messageLength.toString(),
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
                 ),
-              ),
-            ],
+              ],
+            ),
+            child: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: theme.colorScheme.primary,
+            ),
           ),
         ),
       ),
     );
   }
-
-  Color _fillColor(ThemeData theme, bool isDarkSurface) {
-    if (isDarkSurface) {
-      switch (preview.sender) {
-        case 'user':
-          return theme.colorScheme.primaryContainer;
-        case 'summary':
-          return theme.colorScheme.tertiaryContainer;
-        case 'system':
-          return theme.colorScheme.secondaryContainer;
-        case 'think':
-          return theme.colorScheme.surfaceContainerHighest;
-        default:
-          return theme.colorScheme.secondaryContainer;
-      }
-    }
-    switch (preview.sender) {
-      case 'user':
-        return theme.colorScheme.primaryContainer;
-      case 'ai':
-        return theme.colorScheme.tertiaryContainer;
-      case 'summary':
-        return theme.colorScheme.secondaryContainer;
-      case 'system':
-      case 'think':
-        return theme.colorScheme.surfaceContainerHighest;
-      default:
-        return theme.colorScheme.secondaryContainer;
-    }
-  }
-
-  Color _previewTextColor(ThemeData theme) {
-    switch (preview.sender) {
-      case 'user':
-        return theme.colorScheme.onPrimaryContainer;
-      case 'ai':
-        return theme.colorScheme.onTertiaryContainer;
-      case 'summary':
-      case 'system':
-      case 'think':
-      default:
-        return theme.colorScheme.onSecondaryContainer;
-    }
-  }
-}
-
-class _ChatMessageLocatorEntry {
-  const _ChatMessageLocatorEntry({required this.index, required this.preview});
-
-  final int index;
-  final ChatMessageLocatorPreview preview;
 }
 
 String senderLabel(BuildContext context, String sender) {
@@ -1129,13 +771,6 @@ int messageContentLength(
     return preview.contentLength;
   }
   return math.max(visibleLocatorContent(l10n, preview).length, 1);
-}
-
-double messageBarFraction(int messageLength, int maxMessageLength) {
-  if (maxMessageLength <= 0) {
-    return 0.18;
-  }
-  return math.sqrt(messageLength / maxMessageLength).clamp(0.18, 1).toDouble();
 }
 
 String buildMessagePreview(

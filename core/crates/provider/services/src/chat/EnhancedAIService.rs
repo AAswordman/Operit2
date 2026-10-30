@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -152,6 +152,7 @@ impl EnhancedAISharedState {
             MutableSharedStreamMirror::new(usize::MAX),
         );
         context.cancellationToken = options.cancellationToken.clone();
+        context.guidanceInbox = options.guidanceInbox.clone();
         self.active_execution_contexts
             .insert(context.executionId, context.clone());
         Ok(context)
@@ -212,8 +213,99 @@ impl MessageCancellationToken {
     }
 }
 
+/// Shares user guidance between the owning chat turn and its provider worker.
+///
+/// The provider only peeks at pending entries. The outer chat turn is the sole
+/// consumer and commits each entry before starting the continuation that reads it.
+#[derive(Clone, Debug, Default)]
+pub struct ChatGuidanceInbox {
+    state: Arc<Mutex<ChatGuidanceInboxState>>,
+}
+
+#[derive(Debug)]
+struct ChatGuidanceInboxState {
+    pending: VecDeque<String>,
+    accepting: bool,
+}
+
+impl Default for ChatGuidanceInboxState {
+    fn default() -> Self {
+        Self {
+            pending: VecDeque::new(),
+            accepting: true,
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+impl ChatGuidanceInbox {
+    /// Accepts one nonempty guidance message while the logical turn remains open.
+    pub fn enqueue(&self, message: String) -> Result<(), String> {
+        let message = message.trim().to_string();
+        if message.is_empty() {
+            return Err("Guidance message cannot be empty".to_string());
+        }
+        let mut state = self.state.lock().expect("chat guidance inbox mutex poisoned");
+        if !state.accepting {
+            return Err("The current chat turn is no longer accepting guidance".to_string());
+        }
+        state.pending.push_back(message);
+        Ok(())
+    }
+
+    /// Reports whether a model-round boundary should suspend for guidance.
+    pub fn hasPending(&self) -> bool {
+        !self
+            .state
+            .lock()
+            .expect("chat guidance inbox mutex poisoned")
+            .pending
+            .is_empty()
+    }
+
+    /// Drains a completed segment, or atomically closes an idle turn.
+    ///
+    /// An empty return therefore means no continuation is needed and later
+    /// enqueue calls are rejected. A nonempty return leaves the inbox open so
+    /// guidance can also be accepted between physical response segments.
+    pub fn drainOrClose(&self) -> Vec<String> {
+        let mut state = self.state.lock().expect("chat guidance inbox mutex poisoned");
+        if state.pending.is_empty() {
+            state.accepting = false;
+            return Vec::new();
+        }
+        state.pending.drain(..).collect()
+    }
+
+    /// Drains entries that arrived while a guidance batch was being committed.
+    pub fn drainPending(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .expect("chat guidance inbox mutex poisoned")
+            .pending
+            .drain(..)
+            .collect()
+    }
+
+    /// Rejects later entries and discards guidance not yet committed by the turn.
+    pub fn closeAndClear(&self) {
+        let mut state = self.state.lock().expect("chat guidance inbox mutex poisoned");
+        state.accepting = false;
+        state.pending.clear();
+    }
+
+    /// Reports whether this inbox can still be inherited by a continuation.
+    pub fn isAccepting(&self) -> bool {
+        self.state
+            .lock()
+            .expect("chat guidance inbox mutex poisoned")
+            .accepting
+    }
+}
+
 pub struct SendMessageOptions {
     pub cancellationToken: Option<MessageCancellationToken>,
+    pub guidanceInbox: Option<ChatGuidanceInbox>,
     pub message: String,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
@@ -254,6 +346,7 @@ impl SendMessageOptions {
     pub fn new() -> Self {
         Self {
             cancellationToken: None,
+            guidanceInbox: None,
             message: String::new(),
             maxTokens: 0,
             tokenUsageThreshold: 0.0,
@@ -288,6 +381,7 @@ impl SendMessageOptions {
 pub struct MessageExecutionContext {
     pub executionId: i32,
     pub cancellationToken: Option<MessageCancellationToken>,
+    pub guidanceInbox: Option<ChatGuidanceInbox>,
     pub streamBuffer: String,
     pub roundManager: ConversationRoundManagerMirror,
     pub isConversationActive: bool,
@@ -312,6 +406,7 @@ impl MessageExecutionContext {
         Self {
             executionId,
             cancellationToken: None,
+            guidanceInbox: None,
             streamBuffer: String::new(),
             roundManager: ConversationRoundManagerMirror::new(),
             isConversationActive: true,
@@ -2142,7 +2237,7 @@ impl EnhancedAIService {
         toolResultMessage: String,
         callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
         runtime: &mut SendMessageRuntime,
-    ) -> Result<(), AiServiceError> {
+    ) -> Result<bool, AiServiceError> {
         let toolNames = results
             .iter()
             .map(|result| result.toolName.clone())
@@ -2177,7 +2272,7 @@ impl EnhancedAIService {
         );
 
         if !self.isExecutionContextActive(context) {
-            return Ok(());
+            return Ok(false);
         }
 
         if !isSubTask {
@@ -2187,7 +2282,7 @@ impl EnhancedAIService {
         }
 
         if !self.isExecutionContextActive(context) {
-            return Ok(());
+            return Ok(false);
         }
 
         context.conversationHistory.push(PromptTurn {
@@ -2219,6 +2314,20 @@ impl EnhancedAIService {
             ),
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
+        if context
+            .guidanceInbox
+            .as_ref()
+            .is_some_and(ChatGuidanceInbox::hasPending)
+        {
+            AppLogger::i(
+                TAG,
+                &format!(
+                    "chat.guidance.pause_before_model_request executionId={} round={}",
+                    context.executionId, context.roundManager.roundIndex
+                ),
+            );
+            return Ok(false);
+        }
         self.startAssistantResponseRound(context);
         AppLogger::v_with_level(
             TAG,
@@ -2267,7 +2376,7 @@ impl EnhancedAIService {
             )
             .await?;
         if !self.isExecutionContextActive(context) {
-            return Ok(());
+            return Ok(false);
         }
 
         if maxTokens > 0 {
@@ -2306,7 +2415,7 @@ impl EnhancedAIService {
                 if !isSubTask {
                     self.stopAiService(participantName, avatarUri);
                 }
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -2367,7 +2476,7 @@ impl EnhancedAIService {
         });
 
         if !self.isExecutionContextActive(context) {
-            return Ok(());
+            return Ok(false);
         }
 
         if !isSubTask {
@@ -2377,7 +2486,7 @@ impl EnhancedAIService {
         }
 
         if !self.isExecutionContextActive(context) {
-            return Ok(());
+            return Ok(false);
         }
 
         let activeExecutionState = self.shared_state.clone();
@@ -2427,7 +2536,7 @@ impl EnhancedAIService {
             })
             .await;
         if !self.isExecutionContextActive(context) {
-            return Ok(());
+            return Ok(false);
         }
         ensure_response_completed(response.as_ref())?;
         AppLogger::v_with_level(
@@ -2502,7 +2611,7 @@ impl EnhancedAIService {
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
 
-        Ok(())
+        Ok(true)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2572,7 +2681,7 @@ impl EnhancedAIService {
             };
 
             // Finish this request before inspecting and dispatching the next response round.
-            self.processToolResults(
+            let shouldContinue = self.processToolResults(
                 collector,
                 continuation.results,
                 context,
@@ -2597,6 +2706,9 @@ impl EnhancedAIService {
                 runtime,
             )
             .await?;
+            if !shouldContinue {
+                return Ok(());
+            }
         }
     }
 
@@ -2850,6 +2962,7 @@ impl EnhancedAIService {
         let ToolExecutionBatch {
             results: allToolResults,
             message: toolResultMessage,
+            displayMessage,
             routeChangeIntent,
         } =
             ToolExecutionManager::executeInvocations(
@@ -2890,7 +3003,7 @@ impl EnhancedAIService {
             return Ok(None);
         }
 
-        let content = format!("\n{toolResultMessage}\n");
+        let content = format!("\n{displayMessage}\n");
         context.streamBuffer.push_str(&content);
         context.roundManager.appendContent(&content);
         collector.emit_chunk(content);
@@ -3872,5 +3985,67 @@ mod cancellation_tests {
         assert!(!EnhancedAIService::isExecutionContextActiveInSharedState(
             &state, &context
         ));
+    }
+}
+
+#[cfg(test)]
+mod guidance_tests {
+    use super::{ChatGuidanceInbox, EnhancedAISharedState, SendMessageOptions};
+
+    #[test]
+    fn inbox_clones_share_fifo_guidance_with_the_provider_worker() {
+        let inbox = ChatGuidanceInbox::default();
+        let worker = inbox.clone();
+        inbox.enqueue("first".to_string()).unwrap();
+        worker.enqueue("second".to_string()).unwrap();
+
+        assert!(worker.hasPending());
+        assert_eq!(
+            worker.drainOrClose(),
+            vec!["first".to_string(), "second".to_string()]
+        );
+        assert!(inbox.isAccepting());
+        assert!(!inbox.hasPending());
+    }
+
+    #[test]
+    fn empty_final_segment_atomically_closes_the_inbox() {
+        let inbox = ChatGuidanceInbox::default();
+
+        assert!(inbox.drainOrClose().is_empty());
+        assert!(!inbox.isAccepting());
+        assert!(inbox.enqueue("too late".to_string()).is_err());
+    }
+
+    #[test]
+    fn cancellation_discards_only_uncommitted_guidance() {
+        let inbox = ChatGuidanceInbox::default();
+        inbox.enqueue("pending".to_string()).unwrap();
+
+        inbox.closeAndClear();
+        assert!(!inbox.hasPending());
+        assert!(inbox.enqueue("after cancellation".to_string()).is_err());
+    }
+
+    #[test]
+    fn execution_context_clones_share_the_same_guidance_inbox() {
+        let inbox = ChatGuidanceInbox::default();
+        let options = SendMessageOptions {
+            guidanceInbox: Some(inbox),
+            ..SendMessageOptions::new()
+        };
+        let mut state = EnhancedAISharedState::default();
+        let worker = state
+            .createExecutionContext(state.execution_generation, &options)
+            .unwrap();
+        let registered = state.active_execution_contexts[&worker.executionId].clone();
+
+        worker
+            .guidanceInbox
+            .as_ref()
+            .unwrap()
+            .enqueue("guide the next request".to_string())
+            .unwrap();
+        assert!(registered.guidanceInbox.as_ref().unwrap().hasPending());
     }
 }

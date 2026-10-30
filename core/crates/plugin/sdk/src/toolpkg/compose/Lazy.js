@@ -6,6 +6,7 @@ var OperitComposeLazy = function () {
     var count = options.itemCount;
     var extent = options.itemExtent;
     var initial = options.initialItemCount;
+    var variable = options.variableExtent === true;
     if (typeof key !== 'string' || !key || !Number.isInteger(count) || count < 0 ||
         !Number.isFinite(extent) || extent <= 0 || !Number.isInteger(initial) || initial <= 0 ||
         typeof itemBuilder !== 'function') throw new TypeError('Invalid Compose lazy item options');
@@ -21,8 +22,8 @@ var OperitComposeLazy = function () {
     var revision = OperitComposeReactive.contentRevision(ctx);
     var inputs = ctx.useRef('compose:lazy-inputs:' + key, null);
     if (!inputs.current || inputs.current.revision !== revision ||
-        inputs.current.count !== count || inputs.current.extent !== extent) {
-      inputs.current = { revision: revision, count: count, extent: extent };
+        inputs.current.count !== count || inputs.current.extent !== extent || inputs.current.variable !== variable) {
+      inputs.current = { revision: revision, count: count, extent: extent, variable: variable };
     }
     var version = inputs.current;
     function materializeItem(index) {
@@ -40,13 +41,15 @@ var OperitComposeLazy = function () {
     // Overlapping items keep their own generation and callbacks. The window's
     // memo region releases items as soon as they leave it, so cache size stays
     // bounded by materialized rows rather than the full catalog.
-    var content = ctx.useMemo('compose:lazy-content:' + key, materialize, [first, last, count, extent, revision]);
+    var content = ctx.useMemo('compose:lazy-content:' + key, materialize, [first, last, count, extent, revision, variable]);
     return {
       content: content,
       viewport: {
         firstIndex: first,
         itemCount: count,
         itemExtent: extent,
+        variableExtent: variable,
+        contentRevision: revision,
         /// Invalidates the owning composition after a validated viewport range change.
         onRangeChanged: OperitComposeActions.viewport(function (range) {
           if (!range || !Number.isInteger(range.firstIndex) || !Number.isInteger(range.lastIndex) ||

@@ -23,6 +23,7 @@ class AgentInputMenuPopup extends StatefulWidget {
     required this.currentChatId,
     required this.onDismiss,
     required this.isChatContextCurrent,
+    this.showNativeStatistics = true,
     this.leadingChildren = const <Widget>[],
   });
 
@@ -30,6 +31,7 @@ class AgentInputMenuPopup extends StatefulWidget {
   final String? currentChatId;
   final VoidCallback onDismiss;
   final bool Function() isChatContextCurrent;
+  final bool showNativeStatistics;
   final List<Widget> leadingChildren;
 
   @override
@@ -230,6 +232,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       currentChatId: widget.currentChatId,
                       onDismiss: widget.onDismiss,
                       isChatContextCurrent: widget.isChatContextCurrent,
+                      showNativeStatistics: widget.showNativeStatistics,
                     ),
                     const Divider(height: 1),
                     ...widget.leadingChildren,
@@ -323,12 +326,14 @@ class _ChatSessionSummarySection extends StatefulWidget {
     required this.currentChatId,
     required this.onDismiss,
     required this.isChatContextCurrent,
+    this.showNativeStatistics = true,
   });
 
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onDismiss;
   final bool Function() isChatContextCurrent;
+  final bool showNativeStatistics;
 
   /// Creates the state for the current chat summary section.
   @override
@@ -351,27 +356,29 @@ class _ChatSessionSummarySectionState
   @override
   void initState() {
     super.initState();
-    _maxContextLengthFuture = _loadSummary();
-    _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      if (_pollingSummary) return;
-      _pollingSummary = true;
-      try {
-        final chatId = widget.currentChatId;
-        final viewModel = widget.viewModel;
-        final value = await _loadSummary();
-        if (mounted &&
-            widget.currentChatId == chatId &&
-            widget.viewModel == viewModel) {
-          setState(() {
-            _maxContextLengthFuture = Future.value(value);
-          });
+    if (widget.showNativeStatistics) {
+      _maxContextLengthFuture = _loadSummary();
+      _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+        if (_pollingSummary) return;
+        _pollingSummary = true;
+        try {
+          final chatId = widget.currentChatId;
+          final viewModel = widget.viewModel;
+          final value = await _loadSummary();
+          if (mounted &&
+              widget.currentChatId == chatId &&
+              widget.viewModel == viewModel) {
+            setState(() {
+              _maxContextLengthFuture = Future.value(value);
+            });
+          }
+        } catch (error) {
+          debugPrint('Chat menu summary refresh: $error');
+        } finally {
+          _pollingSummary = false;
         }
-      } catch (error) {
-        debugPrint('Chat menu summary refresh: $error');
-      } finally {
-        _pollingSummary = false;
-      }
-    });
+      });
+    }
   }
 
   /// Replaces context futures when the actual chat or runtime owner changes.
@@ -524,6 +531,9 @@ class _ChatSessionSummarySectionState
   /// Builds registered chat context actions and native token statistics.
   @override
   Widget build(BuildContext context) {
+    if (!widget.showNativeStatistics) {
+      return _buildContextActions();
+    }
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Column(

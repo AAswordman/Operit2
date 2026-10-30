@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "fixtures": "node scripts/render-fixtures.mjs",
+    "pack:toolpkg": "pnpm run check && node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "fflate": "0.8.2",
+    "typescript": "5.9.2"
+  },
+  "packageManager": "pnpm@10.7.0"
+}

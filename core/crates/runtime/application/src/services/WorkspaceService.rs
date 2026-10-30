@@ -211,6 +211,12 @@ impl WorkspaceService {
         Ok(directoryEntries)
     }
 
+    /// Lists every persisted workspace independently from chat history.
+    #[allow(non_snake_case)]
+    pub fn listWorkspaces(&self) -> Result<Vec<Workspace>, String> {
+        self.workspaceStore.getAll().map_err(|error| error.to_string())
+    }
+
     /// Reads a text file from a chat-bound workspace.
     #[allow(non_snake_case)]
     pub fn readWorkspaceTextFile(

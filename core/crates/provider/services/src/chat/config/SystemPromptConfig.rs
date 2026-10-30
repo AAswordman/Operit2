@@ -533,13 +533,13 @@ fn buildWorkspaceRuleFileSection(
     }
 }
 
-/// Attachment files remain node-local and ephemeral; metadata does not copy their bytes.
+/// Attachment files persist node-locally across restarts; metadata does not copy their bytes.
 #[allow(non_snake_case)]
 fn getAttachmentGuidelines(use_english: bool) -> &'static str {
     if use_english {
-        "ATTACHMENT LOCATIONS:\n- An attachment's `node_id` identifies the CoreNode that actually holds its file; it is not necessarily the current execution node. Node metadata does not transfer or synchronize the file.\n- Use content already embedded in the message directly. To access a file, use `list_core_nodes` to check the current node and source reachability. If the source differs, call `switch_core` with the exact `node_id` and wait for continuation on that node before using file tools; switching changes this chat's execution node. Use the attachment's `path` VFS locator for file tools. Client-local physical paths are not exposed in attachment metadata. If no `path` is provided, use embedded content or request re-upload; do not guess a physical path or search for a mapping. Do not search the current device for another device's file.\n- Files under `/app/data/temp/clean_on_exit` are temporary, not Space-synchronized, and may have been cleaned. If the source is unreachable or the file has been cleaned, explain this and request reconnection or re-upload instead of searching unrelated directories. Legacy attachments without `node_id` have an unknown source; do not invent one."
+        "ATTACHMENT LOCATIONS:\n- An attachment's `node_id` identifies the CoreNode that actually holds its file; it is not necessarily the current execution node. Node metadata does not transfer or synchronize the file.\n- Use content already embedded in the message directly. To access a file, use `list_core_nodes` to check the current node and source reachability. If the source differs, call `switch_core` with the exact `node_id` and wait for continuation on that node before using file tools; switching changes this chat's execution node. Use the attachment's `path` VFS locator for file tools. Client-local physical paths are not exposed in attachment metadata. If no `path` is provided, use embedded content or request re-upload; do not guess a physical path or search for a mapping. Do not search the current device for another device's file.\n- Files under `/app/data/data/chat_attachments` are persistent and remain readable across restarts on the node that holds them; they are not Space-synchronized. Attachments without a `path` may be legacy or missing; ask the user to re-upload instead of searching unrelated directories. Legacy attachments without `node_id` have an unknown source; do not invent one."
     } else {
-        "附件位置：\n- 附件的 `node_id` 是文件实际所在的 CoreNode，不一定是当前执行节点；携带节点信息不代表文件已传输或同步。\n- 消息中已经内嵌的内容可直接使用。需要访问文件时，先用 `list_core_nodes` 确认当前节点和来源节点是否可达；来源不同则用精确的 `node_id` 调用 `switch_core`，等待在目标节点继续执行后再调用文件工具。切换会改变这段聊天的执行节点。文件工具使用附件的 `path` VFS 地址；附件元数据不暴露客户端物理路径。没有 `path` 时，使用内嵌内容或请用户重新上传，不要猜测物理路径或搜索映射。不要在当前设备搜索另一台设备的文件。\n- `/app/data/temp/clean_on_exit` 下的文件是临时附件，不参与 Space 文件同步，可能已经清理。来源不可达或文件已清理时，明确说明并请用户重连或重新上传，不要搜索无关目录。旧附件没有 `node_id` 时来源未知，不得猜测补成当前节点。"
+        "附件位置：\n- 附件的 `node_id` 是文件实际所在的 CoreNode，不一定是当前执行节点；携带节点信息不代表文件已传输或同步。\n- 消息中已经内嵌的内容可直接使用。需要访问文件时，先用 `list_core_nodes` 确认当前节点和来源节点是否可达；来源不同则用精确的 `node_id` 调用 `switch_core`，等待在目标节点继续执行后再调用文件工具。切换会改变这段聊天的执行节点。文件工具使用附件的 `path` VFS 地址；附件元数据不暴露客户端物理路径。没有 `path` 时，使用内嵌内容或请用户重新上传，不要猜测物理路径或搜索映射。不要在当前设备搜索另一台设备的文件。\n- `/app/data/data/chat_attachments` 下的文件持久保存，重启后仍可在持有它的节点上读取；不参与 Space 文件同步。没有 `path` 的附件可能是旧格式或已缺失，请用户重新上传，不要搜索无关目录。旧附件没有 `node_id` 时来源未知，不得猜测补成当前节点。"
     }
 }
 
@@ -701,7 +701,7 @@ mod tests {
             .await.expect("Tool-prompt policies must succeed in this test");
             assert!(prompt.contains("node_id"));
             assert!(prompt.contains("switch_core"));
-            assert!(prompt.contains("/app/data/temp/clean_on_exit"));
+            assert!(prompt.contains("/app/data/data/chat_attachments"));
             assert!(!prompt.contains("resolve `id`"));
             assert!(!prompt.contains("物理路径 `id`"));
             assert!(prompt.contains(if use_english {

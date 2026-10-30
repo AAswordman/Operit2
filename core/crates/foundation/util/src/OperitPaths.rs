@@ -23,6 +23,7 @@ pub const EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH: &str = Layout::EXTENSIONS_PLUGIN_C
 pub const EXTENSIONS_MCP_DIR_PATH: &str = Layout::EXTENSIONS_MCP_DIR_PATH;
 
 pub const RUNTIME_CLEAN_ON_EXIT_DIR_PATH: &str = Layout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH;
+pub const RUNTIME_CHAT_ATTACHMENTS_DIR_PATH: &str = Layout::RUNTIME_CHAT_ATTACHMENTS_DIR_PATH;
 pub const RUNTIME_TOOLPKG_RESOURCE_EXPORTS_DIR_PATH: &str =
     Layout::RUNTIME_TOOLPKG_RESOURCE_EXPORTS_DIR_PATH;
 pub const RUNTIME_TOOLPKG_RESOURCE_EXPORTS_INTERNAL_DIR_PATH: &str =
@@ -121,6 +122,18 @@ pub fn pluginConfigDirName(pluginId: &str) -> Result<String, String> {
 #[allow(non_snake_case)]
 pub fn cleanOnExitDir() -> Result<PathBuf, String> {
     relativeDir(RUNTIME_CLEAN_ON_EXIT_DIR_PATH)
+}
+
+#[allow(non_snake_case)]
+/// Returns the persistent attachment collection for the active identity.
+pub fn chatAttachmentsDir() -> Result<PathBuf, String> {
+    relativeDir(RUNTIME_CHAT_ATTACHMENTS_DIR_PATH)
+}
+
+/// Returns unregistered attachment uploads removed by startup cleanup.
+#[allow(non_snake_case)]
+pub fn chatAttachmentUploadsDir() -> Result<PathBuf, String> {
+    relativeDir(Layout::RUNTIME_CHAT_ATTACHMENT_UPLOADS_DIR_PATH)
 }
 
 #[allow(non_snake_case)]

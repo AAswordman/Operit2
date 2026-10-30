@@ -28,6 +28,7 @@ class TabletLayout extends StatefulWidget {
     required this.collapsedTabletSidebarWidth,
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
+    this.onCollapseSidebar,
   });
 
   final OperitRuntimeBridge bridge;
@@ -41,6 +42,7 @@ class TabletLayout extends StatefulWidget {
   final double collapsedTabletSidebarWidth;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
+  final VoidCallback? onCollapseSidebar;
 
   @override
   State<TabletLayout> createState() => _TabletLayoutState();
@@ -124,6 +126,14 @@ class _TabletLayoutState extends State<TabletLayout> {
           curve: Curves.fastOutSlowIn,
           width: targetSidebarWidth,
           height: double.infinity,
+          decoration: BoxDecoration(
+            border: Border(
+              right: BorderSide(
+                color: appearance.dividerColor,
+                width: 1,
+              ),
+            ),
+          ),
           child: RepaintBoundary(
             // Sidebar state and status animations repaint independently of chat.
             child: ThemeDesktopSidebarSurface(
@@ -155,6 +165,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                                 widget.onNavigationEntrySelected,
                             onConversationActivated:
                                 widget.onConversationActivated,
+                            onCollapseSidebar: widget.onCollapseSidebar,
                           );
                         },
                       )
@@ -169,6 +180,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                             selectedRouteId: widget.selectedRouteId,
                             appearance: appearance,
                             currentChatId: drawerState.currentChatId,
+                            histories: drawerState.histories,
                             onNavigationEntrySelected:
                                 widget.onNavigationEntrySelected,
                             onConversationActivated:

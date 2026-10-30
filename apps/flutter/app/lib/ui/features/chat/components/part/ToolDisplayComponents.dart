@@ -3,10 +3,13 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
-import 'DialogComponents.dart';
-import 'XmlCanvasSummaryComponents.dart';
+import 'ChatActivityDisclosure.dart';
+import 'ChatActivityRowStyle.dart';
+import 'FileDiffDisplay.dart';
 
 class CompactToolDisplay extends StatelessWidget {
   const CompactToolDisplay({
@@ -15,35 +18,24 @@ class CompactToolDisplay extends StatelessWidget {
     required this.params,
     required this.textColor,
     required this.isStreaming,
+    this.display,
   });
 
   final String toolName;
   final String params;
   final Color textColor;
   final bool isStreaming;
+  final ToolDisplayDeclaration? display;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final display = normalizeToolDisplayForStrictProxy(toolName, params);
-    final summary = buildParamsHeadPreview(display.params);
-    return _ToolDetailLauncher(
-      displayToolName: display.toolName,
-      displayParams: display.params,
-      childBuilder: (openDialog) => CanvasToolSummaryRow(
-        toolName: display.toolName,
-        summary: summary,
-        semanticDescription: buildToolSemanticDescription(
-          display.toolName,
-          display.params,
-          useByteSummary: false,
-        ),
-        leadingIcon: getToolIcon(display.toolName),
-        titleColor: theme.colorScheme.primary,
-        summaryColor: textColor.withValues(alpha: 0.7),
-        onClick: display.params.trim().isEmpty ? null : openDialog,
-        trailing: isStreaming ? const StreamingCursor() : null,
+    return ToolCallRow(
+      presentation: ToolPresentation.fromCall(
+        toolName,
+        params,
+        display: display,
       ),
+      isStreaming: isStreaming,
     );
   }
 }
@@ -55,44 +47,24 @@ class DetailedToolDisplay extends StatelessWidget {
     required this.params,
     required this.textColor,
     required this.isStreaming,
+    this.display,
   });
 
   final String toolName;
   final String params;
   final Color textColor;
   final bool isStreaming;
+  final ToolDisplayDeclaration? display;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final display = normalizeToolDisplayForStrictProxy(toolName, params);
-    return _ToolDetailLauncher(
-      displayToolName: display.toolName,
-      displayParams: display.params,
-      childBuilder: (openDialog) => Row(
-        children: <Widget>[
-          Expanded(
-            child: CanvasToolSummaryRow(
-              toolName: display.toolName,
-              summary: buildToolParamsSizeLabel(display.params),
-              semanticDescription: buildToolSemanticDescription(
-                display.toolName,
-                display.params,
-                useByteSummary: true,
-              ),
-              leadingIcon: getToolIcon(display.toolName),
-              titleColor: theme.colorScheme.primary,
-              summaryColor: textColor.withValues(alpha: 0.7),
-              onClick: display.params.trim().isEmpty ? null : openDialog,
-            ),
-          ),
-          if (isStreaming)
-            const Padding(
-              padding: EdgeInsets.only(left: 6),
-              child: StreamingCursor(),
-            ),
-        ],
+    return ToolCallRow(
+      presentation: ToolPresentation.fromCall(
+        toolName,
+        params,
+        display: display,
       ),
+      isStreaming: isStreaming,
     );
   }
 }
@@ -149,49 +121,625 @@ class CodeContentWithLineNumbers extends StatelessWidget {
   }
 }
 
-class _ToolDetailLauncher extends StatefulWidget {
-  const _ToolDetailLauncher({
-    required this.displayToolName,
-    required this.displayParams,
-    required this.childBuilder,
+enum ToolResultRenderer { text, directory, fileDiff }
+
+/// Immutable display metadata supplied by the registered tool owner.
+class ToolDisplayDeclaration {
+  const ToolDisplayDeclaration({
+    required this.labels,
+    this.icon = 'tool',
+    this.targetParameter,
+    this.resultRenderer = ToolResultRenderer.text,
   });
 
-  final String displayToolName;
-  final String displayParams;
-  final Widget Function(VoidCallback openDialog) childBuilder;
-
-  @override
-  State<_ToolDetailLauncher> createState() => _ToolDetailLauncherState();
-}
-
-class _ToolDetailLauncherState extends State<_ToolDetailLauncher> {
-  @override
-  Widget build(BuildContext context) {
-    return widget.childBuilder(() {
-      showDialog<void>(
-        context: context,
-        builder: (dialogContext) {
-          return ContentDetailDialog(
-            title: '${widget.displayToolName} Tool call parameters',
-            content: widget.displayParams,
-            icon: getToolIcon(widget.displayToolName),
-            onDismiss: () {
-              Navigator.of(dialogContext).pop();
-            },
-          );
+  factory ToolDisplayDeclaration.fromJson(Map<String, dynamic> json) =>
+      ToolDisplayDeclaration(
+        labels: (json['label'] as Map? ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value.toString()),
+        ),
+        icon: json['icon'] as String? ?? 'tool',
+        targetParameter: json['targetParameter'] as String?,
+        resultRenderer: switch (json['resultRenderer']) {
+          'directory' => ToolResultRenderer.directory,
+          'fileDiff' => ToolResultRenderer.fileDiff,
+          _ => ToolResultRenderer.text,
         },
       );
-    });
+
+  final Map<String, String> labels;
+  final String icon;
+  final String? targetParameter;
+  final ToolResultRenderer resultRenderer;
+
+  String labelFor(Locale locale, String fallback) =>
+      labels[locale.toLanguageTag()] ??
+      labels[locale.languageCode] ??
+      labels['default'] ??
+      labels['en'] ??
+      (labels.isNotEmpty ? labels.values.first : fallback);
+}
+
+/// Decodes only explicit renderer metadata, accepting raw events or XML attributes.
+Map<String, dynamic>? decodeToolMetadata(String? value) {
+  if (value == null || value.isEmpty) return null;
+  for (final candidate in [value, unescapeXmlForDisplay(value)]) {
+    try {
+      final decoded = jsonDecode(candidate);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } on FormatException {
+      continue;
+    }
+  }
+  return null;
+}
+
+ToolDisplayDeclaration? toolDisplayFromAttributes(
+  Map<String, String>? attributes,
+) {
+  final json = decodeToolMetadata(attributes?['display']);
+  if (json == null || json['label'] is! Map) return null;
+  final labels = json['label'] as Map;
+  if (labels.entries.any(
+        (entry) => entry.key is! String || entry.value is! String,
+      ) ||
+      (json['icon'] != null && json['icon'] is! String) ||
+      (json['targetParameter'] != null && json['targetParameter'] is! String) ||
+      (json['resultRenderer'] != null && json['resultRenderer'] is! String)) {
+    return null;
+  }
+  return ToolDisplayDeclaration.fromJson(json);
+}
+
+class ToolPresentation {
+  const ToolPresentation({
+    required this.toolName,
+    required this.icon,
+    required this.parameterSummary,
+    required this.result,
+    required this.isSuccess,
+    required this.fileDiffs,
+    this.rawParams = '',
+    this.callId,
+    this.display,
+    this.resultData,
+  });
+
+  factory ToolPresentation.fromCall(
+    String toolName,
+    String params, {
+    String? callId,
+    String result = '',
+    bool? isSuccess,
+    ToolDisplayDeclaration? display,
+    Map<String, dynamic>? resultData,
+  }) {
+    final call = normalizeToolDisplayForStrictProxy(toolName, params);
+    return ToolPresentation(
+      toolName: call.toolName,
+      callId: callId,
+      icon: toolDisplayIcon(display?.icon),
+      rawParams: call.params,
+      parameterSummary: formatToolParameters(call.params),
+      result: result,
+      isSuccess: isSuccess,
+      display: display,
+      resultData: resultData,
+      fileDiffs: fileDiffsForResult(result, resultData, display: display),
+    );
+  }
+
+  factory ToolPresentation.fromResult(
+    String toolName,
+    String result, {
+    required bool isSuccess,
+    ToolDisplayDeclaration? display,
+    Map<String, dynamic>? resultData,
+  }) => ToolPresentation.fromCall(
+    toolName,
+    '',
+    result: result,
+    isSuccess: isSuccess,
+    display: display,
+    resultData: resultData,
+  );
+
+  final String toolName;
+  final String? callId;
+  final IconData icon;
+  final String rawParams;
+  final String parameterSummary;
+  final String result;
+  final bool? isSuccess;
+  final ToolDisplayDeclaration? display;
+  final Map<String, dynamic>? resultData;
+  final List<FileDiff> fileDiffs;
+
+  bool get hasDetails =>
+      parameterSummary.isNotEmpty ||
+      result.isNotEmpty ||
+      resultData != null ||
+      fileDiffs.isNotEmpty;
+
+  bool get hasDirectoryListing =>
+      display?.resultRenderer == ToolResultRenderer.directory &&
+      isDirectoryListingData(resultData);
+
+  String get target {
+    final parameter = display?.targetParameter;
+    return parameter == null
+        ? ''
+        : extractToolParamMap(rawParams)[parameter] ?? '';
+  }
+}
+
+/// Selects a visual for a declared semantic icon, independently of tool names.
+IconData toolDisplayIcon(String? icon) => switch (icon) {
+  'file' => Icons.description_outlined,
+  'folder' => Icons.folder_outlined,
+  'edit' => Icons.edit_outlined,
+  'delete' => Icons.delete_outline,
+  'search' => Icons.search,
+  'terminal' => Icons.terminal,
+  'web' => Icons.language,
+  'download' => Icons.download_outlined,
+  'package' => Icons.extension_outlined,
+  'time' => Icons.schedule,
+  'notification' => Icons.notifications_outlined,
+  'clipboard' => Icons.content_paste,
+  'audio' => Icons.volume_up_outlined,
+  _ => Icons.build_outlined,
+};
+
+String formatToolParameters(String rawParams) {
+  final parameters = extractToolParamMap(rawParams);
+  return parameters.isEmpty
+      ? rawParams
+      : parameters.entries
+            .map((entry) => '${entry.key}: ${entry.value}')
+            .join('\n');
+}
+
+/// Reads parameter markup without selecting, suppressing, or interpreting parameter names.
+Map<String, String> extractToolParamMap(String params) => {
+  for (final match in RegExp(
+    r'<param\s+name="([^"]+)">([\s\S]*?)</param>',
+  ).allMatches(params))
+    unescapeXmlForDisplay(match.group(1)!): unescapeXmlForDisplay(
+      match.group(2)!,
+    ),
+};
+
+/// Retains paths from the execution host exactly as supplied.
+String cleanToolPath(String path) => path;
+
+List<FileDiff> fileDiffsForResult(
+  String text,
+  Map<String, dynamic>? data, {
+  ToolDisplayDeclaration? display,
+}) {
+  if (display?.resultRenderer != ToolResultRenderer.fileDiff) {
+    return const [];
+  }
+  final operation = data?['operation'];
+  final diff = data?['diffContent'];
+  if (operation is Map &&
+      operation['path'] is String &&
+      (operation['details'] == null || operation['details'] is String) &&
+      diff is String &&
+      diff.isNotEmpty) {
+    return [
+      FileDiff(
+        path: operation['path'] as String,
+        diffContent: diff,
+        details: operation['details'] as String? ?? '',
+      ),
+    ];
+  }
+  // Historical results may carry the explicit file-diff protocol instead of typed data.
+  return extractFileDiffs(text);
+}
+
+/// Validates the directory payload after its renderer was explicitly declared.
+bool isDirectoryListingData(Map<String, dynamic>? data) {
+  if (data?['path'] is! String) return false;
+  final entries = data?['entries'];
+  return entries is List &&
+      entries.every(
+        (entry) =>
+            entry is Map &&
+            entry['name'] is String &&
+            entry['isDirectory'] is bool &&
+            entry['size'] is num,
+      );
+}
+
+class ToolCallRow extends StatefulWidget {
+  const ToolCallRow({
+    super.key,
+    required this.presentation,
+    required this.isStreaming,
+  });
+  final ToolPresentation presentation;
+  final bool isStreaming;
+  @override
+  State<ToolCallRow> createState() => _ToolCallRowState();
+}
+
+class _ToolCallRowState extends State<ToolCallRow> {
+  bool _expanded = false;
+  bool _userToggled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.presentation.fileDiffs.isNotEmpty;
+  }
+
+  @override
+  void didUpdateWidget(covariant ToolCallRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_userToggled &&
+        oldWidget.presentation.fileDiffs.isEmpty &&
+        widget.presentation.fileDiffs.isNotEmpty) {
+      _expanded = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final presentation = widget.presentation;
+    final theme = Theme.of(context);
+    final l10n =
+        AppLocalizations.of(context) ??
+        lookupAppLocalizations(Localizations.localeOf(context));
+    final title =
+        presentation.display?.labelFor(
+          Localizations.localeOf(context),
+          presentation.toolName,
+        ) ??
+        presentation.toolName;
+    final status = widget.isStreaming
+        ? l10n.toolRunning
+        : presentation.isSuccess == false
+        ? l10n.failed
+        : l10n.completed;
+    final color = presentation.isSuccess == false
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: presentation.hasDetails
+              ? () => setState(() {
+                  _expanded = !_expanded;
+                  _userToggled = true;
+                })
+              : null,
+          child: Padding(
+            padding: ChatActivityRowStyle.headerPadding,
+            child: Row(
+              children: [
+                Icon(
+                  presentation.icon,
+                  size: ChatActivityRowStyle.iconSize,
+                  color: color,
+                ),
+                const SizedBox(width: ChatActivityRowStyle.iconGap),
+                Text(title, style: ChatActivityRowStyle.textStyle(context)),
+                if (presentation.target.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      presentation.target,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: ChatActivityRowStyle.textStyle(context),
+                    ),
+                  ),
+                ] else
+                  const Spacer(),
+                if (widget.isStreaming)
+                  const StreamingCursor()
+                else
+                  Tooltip(
+                    message: status,
+                    child: Icon(
+                      presentation.isSuccess == false
+                          ? Icons.error_outline
+                          : Icons.check,
+                      size: 14,
+                      color: color,
+                    ),
+                  ),
+                if (presentation.hasDetails)
+                  AnimatedRotation(
+                    turns: _expanded ? 0.25 : 0,
+                    duration: ChatActivityDisclosure.duration,
+                    curve: ChatActivityDisclosure.curve,
+                    child: const Icon(Icons.chevron_right, size: 16),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        ChatActivityDisclosure(
+          child: _expanded && presentation.hasDetails
+              ? Padding(
+                  key: const ValueKey('tool-details'),
+                  padding: const EdgeInsets.only(
+                    left: ChatActivityRowStyle.contentInset,
+                    bottom: 8,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (presentation.parameterSummary.isNotEmpty)
+                        ToolInlineDetailSurface(
+                          title: l10n.toolParametersLabel,
+                          text: presentation.parameterSummary,
+                          initiallyCollapsed: true,
+                        ),
+                      for (final diff in presentation.fileDiffs)
+                        FileDiffDisplay(diff: diff, actionTitle: title),
+                      if (presentation.hasDirectoryListing)
+                        DirectoryListingDisplay(
+                          data: presentation.resultData!,
+                          showPath:
+                              presentation.resultData!['path'] !=
+                              presentation.target,
+                        ),
+                      if (presentation.result.isNotEmpty)
+                        ToolInlineDetailSurface(
+                          title: l10n.toolResultLabel,
+                          text: presentation.result,
+                          isSuccess: presentation.isSuccess,
+                          initiallyCollapsed:
+                              presentation.fileDiffs.isNotEmpty ||
+                              presentation.hasDirectoryListing,
+                        ),
+                      if (presentation.result.isEmpty &&
+                          presentation.resultData != null)
+                        ToolInlineDetailSurface(
+                          title: l10n.toolResultLabel,
+                          text: const JsonEncoder.withIndent(
+                            '  ',
+                          ).convert(presentation.resultData),
+                          initiallyCollapsed:
+                              presentation.fileDiffs.isNotEmpty ||
+                              presentation.hasDirectoryListing,
+                        ),
+                    ],
+                  ),
+                )
+              : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// Renders the native directory result schema, including empty directories.
+class DirectoryListingDisplay extends StatelessWidget {
+  const DirectoryListingDisplay({
+    super.key,
+    required this.data,
+    this.showPath = true,
+  });
+
+  final Map<String, dynamic> data;
+  final bool showPath;
+
+  /// Uses chat-sized rows instead of Material list tiles and bounds long listings.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = ChatActivityRowStyle.textStyle(context);
+    final entries = data['entries'] as List;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 240),
+        child: SingleChildScrollView(
+          primary: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (showPath)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: SelectableText(
+                    data['path'] as String,
+                    style: style.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              if (entries.isEmpty)
+                Text(
+                  (AppLocalizations.of(context) ??
+                          lookupAppLocalizations(
+                            Localizations.localeOf(context),
+                          ))
+                      .emptyFolder,
+                  style: style.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              for (final entry in entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        entry['isDirectory'] as bool
+                            ? Icons.folder_outlined
+                            : Icons.description_outlined,
+                        size: ChatActivityRowStyle.iconSize,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: ChatActivityRowStyle.iconGap),
+                      Expanded(
+                        child: SelectableText(
+                          entry['name'] as String,
+                          style: style,
+                        ),
+                      ),
+                      if (entry['isDirectory'] == false) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          '${entry['size']} B',
+                          style: style.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact, independently expandable tool payload with complete copyable text.
+class ToolInlineDetailSurface extends StatefulWidget {
+  const ToolInlineDetailSurface({
+    super.key,
+    required this.title,
+    required this.text,
+    this.isSuccess,
+    this.initiallyCollapsed = false,
+  });
+  final String title;
+  final String text;
+  final bool? isSuccess;
+  final bool initiallyCollapsed;
+
+  /// Keeps disclosure state local so streaming updates do not reopen details.
+  @override
+  State<ToolInlineDetailSurface> createState() =>
+      _ToolInlineDetailSurfaceState();
+}
+
+class _ToolInlineDetailSurfaceState extends State<ToolInlineDetailSurface> {
+  late bool _expanded;
+
+  /// Applies the initial disclosure choice only when this payload first appears.
+  @override
+  void initState() {
+    super.initState();
+    _expanded = !widget.initiallyCollapsed;
+  }
+
+  /// Renders a small disclosure header and a bounded, selectable payload body.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = widget.isSuccess == false
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      AnimatedRotation(
+                        turns: _expanded ? 0.25 : 0,
+                        duration: ChatActivityDisclosure.duration,
+                        curve: ChatActivityDisclosure.curve,
+                        child: Icon(
+                          Icons.chevron_right,
+                          size: 14,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: color,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: MaterialLocalizations.of(context).copyButtonLabel,
+              constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.copy, size: 14, color: color),
+              onPressed: () =>
+                  Clipboard.setData(ClipboardData(text: widget.text)),
+            ),
+          ],
+        ),
+        ChatActivityDisclosure(
+          child: _expanded
+              ? Container(
+                  key: const ValueKey('tool-payload'),
+                  margin: const EdgeInsets.only(top: 2, bottom: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
+                    ),
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    child: SingleChildScrollView(
+                      primary: false,
+                      child: SelectableText(
+                        widget.text,
+                        style: ChatActivityRowStyle.textStyle(context).copyWith(
+                          color: widget.isSuccess == false
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+        ),
+      ],
+    );
   }
 }
 
 class ToolDisplayData {
   const ToolDisplayData({required this.toolName, required this.params});
-
   final String toolName;
   final String params;
 }
 
+/// Unwraps only the explicit proxy protocol; malformed envelopes remain readable as submitted.
 ToolDisplayData normalizeToolDisplayForStrictProxy(
   String toolName,
   String params,
@@ -199,28 +747,24 @@ ToolDisplayData normalizeToolDisplayForStrictProxy(
   if (toolName != 'package_proxy' && toolName != 'proxy') {
     return ToolDisplayData(toolName: toolName, params: params);
   }
-
-  final toolNameMatch = RegExp(
-    r'<param\s+name="tool_name">([\s\S]*?)<\/param>',
-  ).firstMatch(params);
-  final paramsMatch = RegExp(
-    r'<param\s+name="params">([\s\S]*?)<\/param>',
-  ).firstMatch(params);
-
-  final rawTargetToolName = toolNameMatch?.group(1)?.trim() ?? '';
-  final rawProxiedParams = paramsMatch?.group(1)?.trim() ?? '';
-  final displayToolName = normalizeEscapedTextForDisplay(
-    rawTargetToolName,
-  ).trim();
-  final displayParams = rawProxiedParams.isNotEmpty
-      ? parseProxyJsonParamsToXml(
-          normalizeEscapedTextForDisplay(rawProxiedParams),
-        )
-      : params;
-
+  final parameters = extractToolParamMap(params);
+  final target = parameters['tool_name'];
+  final payload = parameters['params'];
+  if (target == null || target.trim().isEmpty || payload == null) {
+    return ToolDisplayData(toolName: toolName, params: params);
+  }
+  final decoded = decodeToolMetadata(payload);
+  if (decoded == null) {
+    return ToolDisplayData(toolName: toolName, params: params);
+  }
   return ToolDisplayData(
-    toolName: displayToolName.isNotEmpty ? displayToolName : toolName,
-    params: displayParams ?? params,
+    toolName: target,
+    params: decoded.entries
+        .map(
+          (entry) =>
+              '<param name="${escapeXmlAttribute(entry.key)}">${escapeXmlText(jsonValueToParamText(entry.value))}</param>',
+        )
+        .join('\n'),
   );
 }
 
@@ -248,9 +792,9 @@ String unescapeXmlForDisplay(String input) {
   return result
       .replaceAll('&lt;', '<')
       .replaceAll('&gt;', '>')
-      .replaceAll('&amp;', '&')
       .replaceAll('&quot;', '"')
-      .replaceAll('&apos;', "'");
+      .replaceAll('&apos;', "'")
+      .replaceAll('&amp;', '&');
 }
 
 String? parseProxyJsonParamsToXml(String input) {
@@ -313,8 +857,13 @@ String escapeXmlText(String input) {
 String buildParamsHeadPreview(String params, {int maxChars = 120}) {
   final match = RegExp(r'<param.*?>([^<]*)<\/param>').firstMatch(params);
   final matched = match?.group(1)?.trim();
-  final cleaned = (matched != null && matched.isNotEmpty ? matched : params)
+  var cleaned = (matched != null && matched.isNotEmpty ? matched : params)
       .replaceAll('\n', ' ')
+      .trim();
+  cleaned = unescapeXmlForDisplay(cleaned);
+  cleaned = cleaned
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
   return cleaned.length <= maxChars
       ? cleaned
@@ -334,17 +883,6 @@ int calculateToolParamsBytes(String params) {
 
 String buildToolParamsSizeLabel(String params) {
   return '${calculateToolParamsBytes(params)} B';
-}
-
-String buildToolSemanticDescription(
-  String toolName,
-  String params, {
-  required bool useByteSummary,
-}) {
-  final summary = useByteSummary
-      ? buildToolParamsSizeLabel(params)
-      : buildParamsHeadPreview(params);
-  return 'Tool operation: $toolName, $summary';
 }
 
 List<String> extractParamPayloadsForSize(String params) {
@@ -378,33 +916,4 @@ List<String> extractParamPayloadsForSize(String params) {
   return payloads.isNotEmpty
       ? payloads
       : <String>[normalizeEscapedTextForDisplay(params)];
-}
-
-IconData getToolIcon(String toolName) {
-  final lower = toolName.toLowerCase();
-  if (lower.contains('file') ||
-      lower.contains('read') ||
-      lower.contains('write')) {
-    return Icons.file_open;
-  }
-  if (lower.contains('search') ||
-      lower.contains('find') ||
-      lower.contains('query')) {
-    return Icons.search;
-  }
-  if (lower.contains('terminal') ||
-      lower.contains('exec') ||
-      lower.contains('command') ||
-      lower.contains('shell')) {
-    return Icons.terminal;
-  }
-  if (lower.contains('code') || lower.contains('ffmpeg')) {
-    return Icons.code;
-  }
-  if (lower.contains('http') ||
-      lower.contains('web') ||
-      lower.contains('visit')) {
-    return Icons.web;
-  }
-  return Icons.arrow_forward;
 }

@@ -110,7 +110,7 @@ async fn rollback_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<
         .map_err(|error| error.to_string())?;
     match rolledBack {
         Some(message) => println!("rolled back to message: {messageTimestamp}\n{message}"),
-        None => println!("rollback skipped: message must exist and be a user message"),
+        None => println!("rollback skipped: message must exist and be a user message, and its workspace snapshot must still be available (only the latest editing turn is kept; use Git for older changes)"),
     }
     Ok(())
 }

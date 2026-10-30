@@ -290,7 +290,7 @@ fn validateEmbeddedRoutes(registration: &ToolPkgMainRegistration, toolPkgId: &st
         .chain(registration.toolboxUiModules.iter().map(|module| (buildToolPkgRouteId(toolPkgId, module.id.trim()), module.runtime.as_str())))
         .collect::<Vec<_>>();
     for (index, entry) in registration.navigationEntries.iter().enumerate() {
-        if entry.surface != TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS && entry.surface != TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU { continue; }
+        if !isToolPkgEmbeddedUiSurface(&entry.surface) { continue; }
         let surface = &entry.surface;
         let routeId = entry.routeId.as_deref().ok_or_else(|| format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for {surface}"))?;
         if !routeId.starts_with(&format!("toolpkg:{toolPkgId}:ui:")) {
@@ -468,7 +468,7 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
         requireToolPkgNavigationSurface(&self.surface).map_err(|error| {
             format!("{registryName}[{index}].surface {error}")
         })?;
-        if self.surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || self.surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS || self.surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU {
+        if self.surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || isToolPkgEmbeddedUiSurface(&self.surface) {
             if self.action.is_some() {
                 return Err(format!("{registryName}[{index}].action is unsupported for {}", self.surface));
             }

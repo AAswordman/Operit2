@@ -4,6 +4,7 @@ import '../../../../main/layout/NavigationLayoutMetrics.dart';
 
 const double workspaceTabletBreakpoint = navigationTabletBreakpoint;
 const double workspaceDefaultTabletWidth = 360;
+const double workspaceDefaultWidthFraction = 0.45;
 const double workspaceMinWidth = 280;
 const double workspaceMinTabletChatWidth = 320;
 const double workspaceResizeHandleHitWidth = 24;

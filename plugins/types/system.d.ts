@@ -454,6 +454,11 @@ export namespace System {
    */
   function sendNotification(message: string, title?: string): Promise<string>;
   /**
+   * Write text to the system clipboard.
+   * @param text - The text to store
+   */
+  function setClipboardText(text: string): Promise<string>;
+  /**
    * Modify a system setting
    * @param setting - Setting name
    * @param value - New value

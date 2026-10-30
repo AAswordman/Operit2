@@ -406,6 +406,11 @@ pub trait SystemHost: Send + Sync {
     ///
     fn toast(&self, message: String) -> JsFuture<String>;
     ///
+    ///Write text to the system clipboard.
+    ///@param text - The text to store
+    ///
+    fn setClipboardText(&self, text: String) -> JsFuture<String>;
+    ///
     ///Send a notification using the same channel as AI reply completion.
     ///@param message - Notification content
     ///@param title - Optional notification title

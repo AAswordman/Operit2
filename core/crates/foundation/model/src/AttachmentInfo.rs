@@ -23,17 +23,17 @@ impl AttachmentInfo {
             content: String::new(),
         }
     }
-    /// File tools use the same temporary VFS path even when device storage roots differ.
+    /// File tools use the same VFS path even when device storage roots differ.
     /// Keep the original host path for local previews and direct media processing.
     pub fn fileToolPath(&self) -> String {
         let normalized = self.filePath.replace('\\', "/");
-        if let Some((_, relative)) = normalized.rsplit_once("/temp/clean_on_exit/") {
+        if let Some((_, relative)) = normalized.rsplit_once("/data/chat_attachments/") {
             if !relative.is_empty()
                 && relative
                     .split('/')
                     .all(|part| !part.is_empty() && part != "." && part != "..")
             {
-                return format!("/app/data/temp/clean_on_exit/{relative}");
+                return format!("/app/data/data/chat_attachments/{relative}");
             }
         }
         self.filePath.clone()
@@ -83,21 +83,21 @@ mod tests {
     }
 
     #[test]
-    fn temporary_file_tool_paths_are_portable_without_changing_host_paths() {
+    fn persistent_file_tool_paths_are_portable_without_changing_host_paths() {
         for path in [
-            "/device-b/runtime/temp/clean_on_exit/file.pdf",
-            r"C:\runtime\temp\clean_on_exit\file.pdf",
+            "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/file.pdf",
+            r"C:\runtime\data\chat_attachments\chat-a\attachment-a\file.pdf",
         ] {
             let attachment =
                 AttachmentInfo::new(path.into(), "file.pdf".into(), "application/pdf".into(), 3);
             assert_eq!(
                 attachment.fileToolPath(),
-                "/app/data/temp/clean_on_exit/file.pdf"
+                "/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf"
             );
             assert_eq!(attachment.filePath, path);
         }
         let attachment = AttachmentInfo::new(
-            "/temp/clean_on_exit/../file.pdf".into(),
+            "/runtime/data/chat_attachments/chat-a/../file.pdf".into(),
             "file.pdf".into(),
             "application/pdf".into(),
             3,

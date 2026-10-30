@@ -2819,36 +2819,6 @@ fn execute_minified_package_script_with_metadata() {
 
 /// Registers the bundled package with its explicit installation scope.
 #[test]
-fn register_thinking_guidance_toolpkg_main() {
-    ensure_test_runtime_root();
-    let engine = newTestToolPkgRegistrationEngine();
-    let repoRoot = testRepositoryRoot();
-    let scriptPath = repoRoot.join("plugins/packages/buildin/thinking_guidance/dist/main.js");
-    let script = std::fs::read_to_string(&scriptPath).expect("thinking_guidance main.js");
-    let mut params = testParams();
-    params.insert(
-        "toolPkgId".to_string(),
-        Value::String("thinking_guidance".to_string()),
-    );
-    params.insert(
-        "__operit_registration_config_scope".to_string(),
-        Value::String("device".to_string()),
-    );
-
-    let capture = engine
-        .execute_toolpkg_main_registration_function(&script, "registerToolPkg", &params)
-        .expect("thinking_guidance registration");
-
-    assert_eq!(capture.inputMenuTogglePlugins.len(), 1);
-    assert_eq!(capture.systemPromptComposeHooks.len(), 1);
-    let menu = serde_json::from_str::<Value>(&capture.inputMenuTogglePlugins[0]).unwrap();
-    assert_eq!(menu["function"], "onInputMenuToggle");
-    let prompt = serde_json::from_str::<Value>(&capture.systemPromptComposeHooks[0]).unwrap();
-    assert_eq!(prompt["function"], "onSystemPromptCompose");
-}
-
-/// Registers the package and its text resources in the selected installation scope.
-#[test]
 fn register_message_insert_toolpkg_main() {
     ensure_test_runtime_root();
     let engine = newTestToolPkgRegistrationEngine();

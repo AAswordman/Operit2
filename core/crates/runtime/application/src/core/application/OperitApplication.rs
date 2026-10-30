@@ -802,6 +802,14 @@ impl OperitApplication {
         Ok(path.to_string_lossy().into_owned())
     }
 
+    /// Returns the directory holding persisted chat attachment files.
+    #[allow(non_snake_case)]
+    pub fn chatAttachmentsPath(&self) -> Result<String, String> {
+        let path = OperitPaths::chatAttachmentsDir()?;
+        self.ensureHostDirectory(&path)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
     /// Clears the current runtime log files.
     #[allow(non_snake_case)]
     pub fn resetLogs(&self) {

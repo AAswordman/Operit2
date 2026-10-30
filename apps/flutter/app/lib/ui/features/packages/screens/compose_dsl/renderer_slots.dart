@@ -127,18 +127,17 @@ extension _ComposeRendererSlots on _ComposeProgramExecutorState {
         .toList(growable: false);
   }
 
-  /// Applies implicit text flex only to bounded rows without explicit weights.
+  /// Uses loose text flex so rows shrink-wrap unbounded axes and support intrinsic measurement.
   List<Widget> _buildRowChildren(
     List<_ComposeProgramNode> nodes, {
     required String pathPrefix,
-    required bool boundedWidth,
   }) {
     final widgets = _buildNodeWidgets(
       nodes,
       pathPrefix: pathPrefix,
       modifierScope: _ComposeDslModifierScope.row,
     );
-    if (!boundedWidth || _nodesRequireRowFlex(nodes)) {
+    if (_nodesRequireRowFlex(nodes)) {
       return widgets;
     }
     return nodes

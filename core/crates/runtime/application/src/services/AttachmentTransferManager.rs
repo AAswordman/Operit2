@@ -7,14 +7,20 @@ use operit_host_api::{FileSystemHost, RuntimeStorageHost, RuntimeStorageWriteHos
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_util::stream::ReverseStream::ReverseStream;
-use operit_util::{OperitPaths, RuntimeStorageLayout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH};
+use operit_util::{
+    OperitPaths,
+    RuntimeStorageLayout::{
+        RUNTIME_CHAT_ATTACHMENTS_DIR_PATH, RUNTIME_CHAT_ATTACHMENT_UPLOADS_DIR_PATH,
+    },
+};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use super::ChatServiceCore::getMimeTypeFromPath;
 
 const ATTACHMENT_UPLOAD_MAX_CHUNK_BYTES: usize = 1024 * 1024;
 
-/// Receives selected files directly into ephemeral Host storage with bounded memory.
+/// Receives selected files into cleanable Host staging storage with bounded memory.
 #[derive(Clone)]
 pub struct AttachmentTransferManager {
     storageHost: Arc<dyn RuntimeStorageHost>,
@@ -119,6 +125,13 @@ impl AttachmentTransferManager {
         if expectedByteLength.is_some_and(|expected| expected != stored.size) {
             return Err("Uploaded attachment byte length mismatch".to_string());
         }
+        let noMediaMarker = path
+            .parent()
+            .ok_or("Uploaded attachment path has no parent directory")?
+            .join(".nomedia");
+        self.fileSystemHost
+            .writeFile(&noMediaMarker.to_string_lossy(), "", false)
+            .map_err(|error| error.to_string())?;
         Ok(AttachmentInfo {
             nodeId: CoreNodeIdentityStore::new(self.storageHost.clone())
                 .identity()
@@ -138,32 +151,37 @@ impl AttachmentTransferManager {
         uploadId: String,
         fileName: String,
     ) -> Result<(), String> {
-        let path = attachmentStoragePath(&uploadId, &fileName)?;
+        let file = attachmentStoragePath(&uploadId, &fileName)?;
+        let (path, _) = file
+            .rsplit_once('/')
+            .ok_or("Attachment upload path has no parent")?;
         if self
             .storageHost
-            .exists(&path)
+            .exists(path)
             .map_err(|error| error.to_string())?
         {
             self.storageHost
-                .delete(&path, false)
+                .delete(path, true)
                 .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
 }
 
+/// Rejects names that would escape an attachment directory or alias its metadata.
 pub(crate) fn validateAttachmentFileName(fileName: &str) -> Result<(), String> {
     if fileName.trim().is_empty()
-        || matches!(fileName, "." | "..")
+        || matches!(fileName, "." | ".." | ".nomedia")
         || fileName
             .chars()
-            .any(|value| matches!(value, '/' | '\\' | '\0'))
+            .any(|value| value.is_control() || matches!(value, '/' | '\\' | ':'))
     {
         return Err("Attachment filename must be a single non-empty filename".to_string());
     }
     Ok(())
 }
 
+/// Rejects invalid declared lengths before starting a Host write.
 fn validateLength(length: Option<i64>) -> Result<(), String> {
     if length.is_some_and(|length| length < 0) {
         return Err("Attachment byte length must not be negative".to_string());
@@ -171,34 +189,141 @@ fn validateLength(length: Option<i64>) -> Result<(), String> {
     Ok(())
 }
 
+/// Keeps unregistered uploads isolated from persistent chat attachments.
 fn attachmentStoragePath(uploadId: &str, fileName: &str) -> Result<String, String> {
     validateAttachmentFileName(fileName)?;
     let id = Uuid::parse_str(uploadId).map_err(|_| "Invalid attachment upload identity")?;
     Ok(format!(
-        "{RUNTIME_CLEAN_ON_EXIT_DIR_PATH}/attachment_{}_{}",
+        "{RUNTIME_CHAT_ATTACHMENT_UPLOADS_DIR_PATH}/{}/{}",
         id.simple(),
         fileName
     ))
+}
+
+/// Builds one attachment destination without allowing a chat id to escape its directory.
+fn chatAttachmentStoragePath(
+    chatId: &str,
+    attachmentId: &str,
+    fileName: &str,
+) -> Result<String, String> {
+    validateAttachmentFileName(chatId)?;
+    validateAttachmentFileName(fileName)?;
+    let id = Uuid::parse_str(attachmentId).map_err(|_| "Invalid attachment identity")?;
+    Ok(format!(
+        "{RUNTIME_CHAT_ATTACHMENTS_DIR_PATH}/{chatId}/{}/{fileName}",
+        id.simple()
+    ))
+}
+
+/// Prepares a dedicated directory while retaining the original file name.
+pub(crate) fn prepareChatAttachmentPath(
+    fileSystem: &dyn FileSystemHost,
+    chatId: &str,
+    attachmentId: &str,
+    fileName: &str,
+) -> Result<PathBuf, String> {
+    let storagePath = chatAttachmentStoragePath(chatId, attachmentId, fileName)?;
+    let path = OperitPaths::runtimePathFromRoot(&OperitPaths::operitRootDir()?, &storagePath)?;
+    if fileSystem
+        .fileExists(&path.to_string_lossy())
+        .map_err(|error| error.to_string())?
+        .exists
+    {
+        return Err("An existing attachment must not be overwritten".into());
+    }
+    let directory = path
+        .parent()
+        .ok_or("Attachment path has no parent directory")?;
+    fileSystem
+        .makeDirectory(&directory.to_string_lossy(), true)
+        .map_err(|error| error.to_string())?;
+    let marker = directory.join(".nomedia");
+    fileSystem
+        .writeFile(&marker.to_string_lossy(), "", false)
+        .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+/// Promotes only an exact committed upload into its receiving chat's attachment directory.
+pub(crate) fn adoptUploadedAttachment(
+    fileSystem: &dyn FileSystemHost,
+    attachment: &mut AttachmentInfo,
+    chatId: &str,
+) -> Result<(), String> {
+    let uploadRoot = OperitPaths::chatAttachmentUploadsDir()?;
+    let relative = Path::new(&attachment.filePath)
+        .strip_prefix(&uploadRoot)
+        .map_err(|_| "Uploaded attachment is outside the staging directory")?;
+    let segments = relative.components().collect::<Vec<_>>();
+    let [std::path::Component::Normal(id), std::path::Component::Normal(name)] =
+        segments.as_slice()
+    else {
+        return Err("Uploaded attachment must name one staged file".into());
+    };
+    if name.to_str() != Some(attachment.fileName.as_str()) {
+        return Err("Uploaded attachment file name does not match its metadata".into());
+    }
+    let id = id.to_str().ok_or("Invalid attachment upload identity")?;
+    let destination = prepareChatAttachmentPath(fileSystem, chatId, id, &attachment.fileName)?;
+    fileSystem
+        .moveFile(&attachment.filePath, &destination.to_string_lossy())
+        .map_err(|error| error.to_string())?;
+    let sourceDirectory = Path::new(&attachment.filePath)
+        .parent()
+        .ok_or("Attachment upload has no parent")?;
+    if let Err(error) = fileSystem.deleteFile(&sourceDirectory.to_string_lossy(), true) {
+        operit_host_api::logHostError("AttachmentUpload", &error.to_string());
+    }
+    attachment.filePath = destination.to_string_lossy().into_owned();
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Keeps uploads transient and rejects attempts to traverse out of staging.
     #[test]
-    fn upload_paths_are_ephemeral_and_cannot_escape_the_attachment_directory() {
+    fn upload_paths_are_transient_and_cannot_escape_the_attachment_directory() {
         let id = Uuid::new_v4().simple().to_string();
-        assert!(
-            attachmentStoragePath(&id, "文档.apk")
-                .unwrap()
-                .starts_with("runtime/temp/clean_on_exit/")
-        );
-        for name in ["", " ", ".", "..", "../bad", "a/b", "a\\b", "a\0b"] {
+        assert!(attachmentStoragePath(&id, "文档.apk")
+            .unwrap()
+            .starts_with("runtime/temp/clean_on_exit/chat_attachment_uploads/"));
+        for name in [
+            "", " ", ".", "..", ".nomedia", "../bad", "a/b", "a\\b", "a\0b", "C:bad",
+        ] {
             assert!(attachmentStoragePath(&id, name).is_err(), "{name:?}");
         }
         assert!(attachmentStoragePath("../bad", "file.apk").is_err());
         assert!(validateLength(Some(-1)).is_err());
         assert!(validateLength(None).is_ok());
         assert!(validateLength(Some(0)).is_ok());
+    }
+
+    /// Isolates duplicate names by chat and attachment identity while keeping original names.
+    #[test]
+    fn persistent_paths_are_grouped_and_cannot_escape_the_chat_directory() {
+        let id = Uuid::new_v4().simple().to_string();
+        let path = chatAttachmentStoragePath("chat-a", &id, "report.pdf").unwrap();
+        assert_eq!(
+            path,
+            format!("runtime/data/chat_attachments/chat-a/{id}/report.pdf")
+        );
+        assert_ne!(
+            path,
+            chatAttachmentStoragePath("chat-b", &id, "report.pdf").unwrap()
+        );
+        assert_ne!(
+            path,
+            chatAttachmentStoragePath("chat-a", &Uuid::new_v4().to_string(), "report.pdf").unwrap()
+        );
+        for chat in ["", ".", "..", "../other-chat", "a/b", "a\\b", "C:chat"] {
+            assert!(
+                chatAttachmentStoragePath(chat, &id, "report.pdf").is_err(),
+                "{chat:?}"
+            );
+        }
+        assert!(chatAttachmentStoragePath("chat-a", "../invalid", "report.pdf").is_err());
+        assert!(chatAttachmentStoragePath("chat-a", &id, "../report.pdf").is_err());
     }
 }

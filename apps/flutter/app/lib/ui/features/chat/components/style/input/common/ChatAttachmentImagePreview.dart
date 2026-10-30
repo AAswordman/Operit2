@@ -117,11 +117,11 @@ Future<Uint8List> _readAttachmentImageBytes(
   return readChatAttachmentFileBytes(attachmentPath);
 }
 
-/// Resolves a temporary VFS attachment through the runtime's actual storage root.
+/// Resolves a persisted VFS attachment through the runtime's actual storage root.
 Future<Uint8List> readChatAttachmentFileBytes(String attachmentPath) async {
-  const prefix = '/app/data/temp/clean_on_exit/';
+  const prefix = '/app/data/data/chat_attachments/';
   if (attachmentPath.startsWith(prefix)) {
-    final root = await _mediaPoolClients.application.cleanOnExitPath();
+    final root = await _mediaPoolClients.application.chatAttachmentsPath();
     attachmentPath = '$root/${attachmentPath.substring(prefix.length)}';
   }
   return XFile(_localPathForAttachment(attachmentPath)).readAsBytes();

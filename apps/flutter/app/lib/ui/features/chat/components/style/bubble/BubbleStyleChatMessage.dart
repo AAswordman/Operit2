@@ -116,6 +116,7 @@ class BubbleStyleChatMessage extends StatelessWidget {
               : () => onDeleteMessage!(message.timestamp),
           onEdit: onEditSummary,
           enableDialog: enableDialogs,
+          splitMarkdownContent: splitMarkdownContent,
         );
     }
     return _SystemMessageComposable(

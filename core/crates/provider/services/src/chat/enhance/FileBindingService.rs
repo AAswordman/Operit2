@@ -203,25 +203,20 @@ impl FileBindingService {
             ));
             for line in hunk.lines {
                 match line {
-                    UnifiedDiffLine::Context { oldLine, text, .. } => {
-                        resultLines.push(format!(" {:<4}|{}", oldLine, text));
+                    UnifiedDiffLine::Context { text, .. } => {
+                        resultLines.push(format!(" {}", text));
                     }
-                    UnifiedDiffLine::Delete { oldLine, text } => {
-                        resultLines.push(format!("-{:<4}|{}", oldLine, text));
+                    UnifiedDiffLine::Delete { text, .. } => {
+                        resultLines.push(format!("-{}", text));
                     }
-                    UnifiedDiffLine::Insert { newLine, text } => {
-                        resultLines.push(format!("+{:<4}|{}", newLine, text));
+                    UnifiedDiffLine::Insert { text, .. } => {
+                        resultLines.push(format!("+{}", text));
                     }
                 }
             }
         }
 
-        format!(
-            "Changes: +{} -{} lines\n{}",
-            additions,
-            deletions,
-            resultLines.join("\n")
-        )
+        resultLines.join("\n")
     }
 
     fn applyFuzzyPatch(&self, originalContent: &str, aiPatchCode: &str) -> (bool, String) {
@@ -720,4 +715,94 @@ fn normalizeWhitespace(value: &str) -> String {
 
 fn trimTrailingNewline(value: &str) -> String {
     value.trim_end_matches(['\n', '\r']).to_string()
+}
+
+fn tokenize_line_for_diff(line: &str) -> Vec<(&str, usize, usize)> {
+    let mut tokens = Vec::new();
+    let mut chars = line.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        let mut end = start + ch.len_utf8();
+        let is_word = ch.is_alphanumeric() || ch == '_';
+        let is_space = ch.is_whitespace();
+        while let Some(&(next_start, next_ch)) = chars.peek() {
+            let next_is_word = next_ch.is_alphanumeric() || next_ch == '_';
+            let next_is_space = next_ch.is_whitespace();
+            if (is_word && next_is_word) || (is_space && next_is_space) {
+                chars.next();
+                end = next_start + next_ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        tokens.push((&line[start..end], start, end));
+    }
+    tokens
+}
+
+pub fn compute_intra_line_spans(
+    old_line: &str,
+    new_line: &str,
+) -> Option<(Vec<(usize, usize)>, Vec<(usize, usize)>)> {
+    if old_line == new_line {
+        return None;
+    }
+    let old_tokens = tokenize_line_for_diff(old_line);
+    let new_tokens = tokenize_line_for_diff(new_line);
+    let max_len = old_tokens.len().max(new_tokens.len());
+    if max_len == 0 {
+        return None;
+    }
+
+    let mut table = vec![vec![0usize; new_tokens.len() + 1]; old_tokens.len() + 1];
+    for i in 0..old_tokens.len() {
+        for j in 0..new_tokens.len() {
+            if old_tokens[i].0 == new_tokens[j].0 {
+                table[i + 1][j + 1] = table[i][j] + 1;
+            } else {
+                table[i + 1][j + 1] = table[i + 1][j].max(table[i][j + 1]);
+            }
+        }
+    }
+    if table[old_tokens.len()][new_tokens.len()] * 5 < max_len {
+        return None;
+    }
+
+    let mut old_indices = Vec::new();
+    let mut new_indices = Vec::new();
+    let mut i = old_tokens.len();
+    let mut j = new_tokens.len();
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && old_tokens[i - 1].0 == new_tokens[j - 1].0 {
+            i -= 1;
+            j -= 1;
+        } else if i > 0 && (j == 0 || table[i - 1][j] >= table[i][j - 1]) {
+            old_indices.push(i - 1);
+            i -= 1;
+        } else {
+            new_indices.push(j - 1);
+            j -= 1;
+        }
+    }
+    old_indices.reverse();
+    new_indices.reverse();
+
+    fn merge_spans(tokens: &[(&str, usize, usize)], indices: &[usize]) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        for &index in indices {
+            let (_, start, end) = tokens[index];
+            if let Some((_, last_end)) = spans.last_mut() {
+                if start <= *last_end {
+                    *last_end = (*last_end).max(end);
+                    continue;
+                }
+            }
+            spans.push((start, end));
+        }
+        spans
+    }
+
+    Some((
+        merge_spans(&old_tokens, &old_indices),
+        merge_spans(&new_tokens, &new_indices),
+    ))
 }

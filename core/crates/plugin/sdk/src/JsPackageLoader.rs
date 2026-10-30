@@ -69,17 +69,18 @@ impl JsPackageLoader {
             .unwrap_or_default();
         let tools = tools_value
             .iter()
-            .filter_map(|value| parse_package_tool(value, script).ok())
-            .collect::<Vec<_>>();
+            .map(|value| parse_package_tool(value, script))
+            .collect::<Result<Vec<_>, _>>()?;
         let states = object
             .get("states")
             .and_then(serde_json::Value::as_array)
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|value| parse_package_state(value, script).ok())
-                    .collect::<Vec<_>>()
+                    .map(|value| parse_package_state(value, script))
+                    .collect::<Result<Vec<_>, _>>()
             })
+            .transpose()?
             .unwrap_or_default();
         let env = object
             .get("env")
@@ -220,6 +221,12 @@ fn parse_package_tool(value: &serde_json::Value, script: &str) -> Result<Package
         })
         .unwrap_or_default();
     Ok(PackageTool {
+        display: object
+            .get("display")
+            .filter(|value| !value.is_null())
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()
+            .map_err(|error| error.to_string())?,
         name: string_field(object, "name"),
         description: localized_text_field(object.get("description")),
         parameters,
@@ -256,9 +263,10 @@ fn parse_package_state(
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| parse_package_tool(item, script).ok())
-                .collect::<Vec<_>>()
+                .map(|item| parse_package_tool(item, script))
+                .collect::<Result<Vec<_>, _>>()
         })
+        .transpose()?
         .unwrap_or_default();
     Ok(ToolPackageState {
         id: string_field(object, "id"),

@@ -25,7 +25,7 @@ struct FailingSession(Arc<AtomicUsize>);
 
 impl RuntimeStorageWriteHost for FailingWriteHost {
     fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        assert!(path.starts_with("runtime/temp/clean_on_exit/"));
+        assert!(path.starts_with("runtime/temp/clean_on_exit/chat_attachment_uploads/"));
         Ok(Box::new(FailingSession(self.0.clone())))
     }
 }
@@ -135,7 +135,7 @@ async fn streamed_attachment_worker() {
     assert_eq!(attachment.fileName, "大文件.apk");
     assert!(
         std::path::Path::new(&attachment.filePath)
-            .starts_with(root.join("runtime/temp/clean_on_exit"))
+            .starts_with(root.join("runtime/temp/clean_on_exit/chat_attachment_uploads"))
     );
     let mut file = std::fs::File::open(&attachment.filePath).unwrap();
     let mut buffer = [0u8; 31];
@@ -248,11 +248,15 @@ async fn streamed_attachment_worker() {
     assert_eq!(discarded.load(Ordering::SeqCst), 1);
 
     // Native write-session staging files must also have been removed on every failure.
-    assert_eq!(
-        std::fs::read_dir(root.join("runtime/temp/clean_on_exit"))
-            .unwrap()
-            .count(),
-        0
-    );
+    let stagingLeftovers = std::fs::read_dir(root.join("runtime/temp/clean_on_exit/chat_attachment_uploads"))
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .map(|entry| entry.file_name() != ".nomedia")
+                .unwrap_or(false)
+        })
+        .count();
+    assert_eq!(stagingLeftovers, 0);
     // The parent removes the directory after this process releases all application singletons.
 }

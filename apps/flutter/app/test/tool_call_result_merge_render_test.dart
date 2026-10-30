@@ -1,10 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
+import 'package:operit2/ui/features/chat/components/part/FileDiffDisplay.dart';
 import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
 import 'package:operit2/ui/features/chat/components/part/ToolCallResultMergeRender.dart';
-import 'package:operit2/ui/features/chat/components/part/XmlCanvasSummaryComponents.dart';
 
 /// Verifies ordered tool/result merging and its interaction with groups.
 void main() {
@@ -191,7 +194,39 @@ void main() {
       expect(match!.endIndexInclusive, 3);
     });
 
-    test('rejects results whose tool names are out of order', () {
+    test('matches a call without any result yet', () {
+      final nodes = <MarkdownNodeStable>[_xml('<tool name="read_file" />')];
+
+      final match = mergeRender.match(
+        nodes: nodes,
+        startIndex: 0,
+        endIndexInclusive: 0,
+      );
+
+      expect(match, isNotNull);
+      expect(match!.startIndex, 0);
+      expect(match.endIndexInclusive, 0);
+    });
+
+    test('matches partial results and keeps later calls pending', () {
+      final nodes = <MarkdownNodeStable>[
+        _xml('<tool name="read_file" />'),
+        _xml('<tool name="grep_code" />'),
+        _xml('<tool_result name="read_file">contents</tool_result>'),
+      ];
+
+      final match = mergeRender.match(
+        nodes: nodes,
+        startIndex: 0,
+        endIndexInclusive: 2,
+      );
+
+      expect(match, isNotNull);
+      expect(match!.startIndex, 0);
+      expect(match.endIndexInclusive, 2);
+    });
+
+    test('stops before results whose tool names are out of order', () {
       final nodes = <MarkdownNodeStable>[
         _xml('<tool_one name="read_file" />'),
         _xml('<tool_two name="grep_code" />'),
@@ -205,10 +240,11 @@ void main() {
         endIndexInclusive: 3,
       );
 
-      expect(match, isNull);
+      expect(match, isNotNull);
+      expect(match!.endIndexInclusive, 1);
     });
 
-    test('rejects a result with a different tool name', () {
+    test('stops before a result with a different tool name', () {
       final nodes = <MarkdownNodeStable>[
         _xml('<tool name="read_file" />'),
         _xml('<tool_result name="grep_code">match</tool_result>'),
@@ -220,7 +256,8 @@ void main() {
         endIndexInclusive: 1,
       );
 
-      expect(match, isNull);
+      expect(match, isNotNull);
+      expect(match!.endIndexInclusive, 0);
     });
 
     test('matches proxy results by their concrete target tool name', () {
@@ -258,6 +295,38 @@ void main() {
 
       expect(match, isNotNull);
     });
+
+    test('tracks only calls without results as pending', () {
+      final nodes = <MarkdownNodeStable>[
+        _xml('<tool name="read_file" />'),
+        _xml('<tool name="grep_code" />'),
+        _xml('<tool_result name="read_file">contents</tool_result>'),
+      ];
+
+      expect(resolvePendingToolName(nodes), 'grep_code');
+      expect(
+        resolvePendingToolName(<MarkdownNodeStable>[
+          ...nodes,
+          _xml('<tool_result name="grep_code">match</tool_result>'),
+        ]),
+        isNull,
+      );
+    });
+
+    test('completes pending proxy calls by concrete target name', () {
+      final call = _xml(
+        '<tool name="proxy"><param name="tool_name">read_file</param></tool>',
+      );
+      final result = _xml(
+        '<tool_result name="read_file">contents</tool_result>',
+      );
+
+      expect(resolvePendingToolName(<MarkdownNodeStable>[call]), 'proxy');
+      expect(
+        resolvePendingToolName(<MarkdownNodeStable>[call, result]),
+        isNull,
+      );
+    });
   });
 
   group('ToolCallResultMergeRender.renderMerge', () {
@@ -292,14 +361,14 @@ void main() {
       );
 
       expect(find.byType(MergedToolCallResultRow), findsOneWidget);
-      expect(find.byType(CanvasToolSummaryRow), findsOneWidget);
-      expect(find.text('read_file'), findsOneWidget);
+      expect(find.text('Read'), findsOneWidget);
       expect(find.text('README.md'), findsOneWidget);
       expect(find.text('contents'), findsNothing);
 
-      await tester.tap(find.text('read_file'));
+      await tester.tap(find.text('Read'));
       await tester.pumpAndSettle();
 
+      expect(find.textContaining('path: README.md'), findsOneWidget);
       expect(find.text('contents'), findsOneWidget);
     });
 
@@ -334,8 +403,197 @@ void main() {
       );
 
       expect(find.byType(MergedToolCallResultRow), findsNWidgets(2));
-      expect(find.text('read_file'), findsOneWidget);
-      expect(find.text('grep_code'), findsOneWidget);
+      expect(find.text('Read'), findsOneWidget);
+      expect(find.text('Grep'), findsOneWidget);
+    });
+
+    testWidgets('renders an edit diff inline without dialog', (tester) async {
+      final nodes = <MarkdownNodeStable>[
+        _xml(
+          '<tool name="edit_file"><param name="path">lib/a.dart</param></tool>',
+        ),
+        _xml(
+          '<tool_result name="edit_file" status="success"><content>'
+          'Successfully applied\n'
+          '<file-diff path="lib/a.dart" details="updated"><![CDATA['
+          '@@ -1,1 +1,1 @@\n-old\n+fresh line\n]]></file-diff>'
+          '</content></tool_result>',
+        ),
+      ];
+      final match = mergeRender.match(
+        nodes: nodes,
+        startIndex: 0,
+        endIndexInclusive: 1,
+      )!;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: mergeRender.renderMerge(
+              match: match,
+              nodes: nodes,
+              rendererId: 'edit',
+              textColor: Colors.black,
+              xmlRenderer: _emptyXmlRenderer,
+              xmlStreamResolver: _emptyStringStreamResolver,
+              xmlMarkdownEventStreamResolver: _emptyObjectStreamResolver,
+              renderInstanceKey: 'edit-pair',
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Edit'), findsWidgets);
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.text('lib/a.dart'), findsWidgets);
+      expect(find.byType(FileDiffDisplay), findsOneWidget);
+      expect(find.text('fresh line'), findsOneWidget);
+      expect(find.textContaining('Successfully applied'), findsNothing);
+      expect(find.textContaining('<file-diff'), findsNothing);
+
+      await tester.tap(find.text('Edit').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FileDiffDisplay), findsNothing);
+    });
+
+    testWidgets(
+      'tapping merged row inside SelectionArea expands inline detail without selection error',
+      (tester) async {
+        final nodes = <MarkdownNodeStable>[
+          _xml(
+            '<tool name="read_file"><param name="path">lib/test.dart</param></tool>',
+          ),
+          _xml(
+            '<tool_result name="read_file" status="success"><content>file content line</content></tool_result>',
+          ),
+        ];
+        final match = mergeRender.match(
+          nodes: nodes,
+          startIndex: 0,
+          endIndexInclusive: 1,
+        )!;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SelectionArea(
+                child: mergeRender.renderMerge(
+                  match: match,
+                  nodes: nodes,
+                  rendererId: 'select-test',
+                  textColor: Colors.black,
+                  xmlRenderer: _emptyXmlRenderer,
+                  xmlStreamResolver: _emptyStringStreamResolver,
+                  xmlMarkdownEventStreamResolver: _emptyObjectStreamResolver,
+                  renderInstanceKey: 'select-pair',
+                ),
+              ),
+            ),
+          ),
+        );
+
+        expect(find.byType(MergedToolCallResultRow), findsOneWidget);
+        expect(find.text('file content line'), findsNothing);
+
+        await tester.tap(find.byType(MergedToolCallResultRow));
+        await tester.pumpAndSettle();
+
+        expect(find.text('file content line'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('renders terminal tool with cleaned and unescaped command', (
+      tester,
+    ) async {
+      final nodes = <MarkdownNodeStable>[
+        _xml(
+          '<tool name="super_admin:bash"><param name="command">cd \'D:/Operit2\' &amp;&amp; git status</param></tool>',
+        ),
+        _xml(
+          '<tool_result name="super_admin:bash" status="success"><content>clean tree</content></tool_result>',
+        ),
+      ];
+      final match = mergeRender.match(
+        nodes: nodes,
+        startIndex: 0,
+        endIndexInclusive: 1,
+      )!;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: mergeRender.renderMerge(
+              match: match,
+              nodes: nodes,
+              rendererId: 'bash-test',
+              textColor: Colors.black,
+              xmlRenderer: _emptyXmlRenderer,
+              xmlStreamResolver: _emptyStringStreamResolver,
+              xmlMarkdownEventStreamResolver: _emptyObjectStreamResolver,
+              renderInstanceKey: 'bash-pair',
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('终端'), findsOneWidget);
+      expect(find.textContaining('git status'), findsOneWidget);
+
+      await tester.tap(find.text('终端'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('command: '), findsOneWidget);
+      expect(find.textContaining('&amp;'), findsNothing);
+    });
+
+    testWidgets('expanded row shows a compact parameter summary and result', (
+      tester,
+    ) async {
+      final nodes = <MarkdownNodeStable>[
+        _xml(
+          '<tool name="read_file"><param name="path">lib/test.dart</param></tool>',
+        ),
+        _xml(
+          '<tool_result name="read_file" status="success"><content>file output content</content></tool_result>',
+        ),
+      ];
+      final match = mergeRender.match(
+        nodes: nodes,
+        startIndex: 0,
+        endIndexInclusive: 1,
+      )!;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: mergeRender.renderMerge(
+              match: match,
+              nodes: nodes,
+              rendererId: 'toggle-test',
+              textColor: Colors.black,
+              xmlRenderer: _emptyXmlRenderer,
+              xmlStreamResolver: _emptyStringStreamResolver,
+              xmlMarkdownEventStreamResolver: _emptyObjectStreamResolver,
+              renderInstanceKey: 'toggle-pair',
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(MergedToolCallResultRow));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('path: lib/test.dart'), findsOneWidget);
+      expect(find.text('file output content'), findsOneWidget);
+      expect(find.textContaining('<param'), findsNothing);
     });
   });
 
@@ -400,13 +658,46 @@ void main() {
       ),
     );
 
-    expect(find.text('工具调用（2）'), findsOneWidget);
+    expect(find.text('已完成 · 2 次调用'), findsOneWidget);
     expect(find.byType(MergedToolCallResultRow), findsNothing);
 
-    await tester.tap(find.text('工具调用（2）'));
+    await tester.tap(find.text('已完成 · 2 次调用'));
     await tester.pumpAndSettle();
 
     expect(find.byType(MergedToolCallResultRow), findsNWidgets(2));
+  });
+
+  test('keeps intermediate Markdown outside thinking and tool groups', () {
+    const grouper = ThinkToolsXmlNodeGrouper(showThinkingProcess: true);
+    final nodes = <MarkdownNodeStable>[
+      _xml('<think>Start round 1</think>'),
+      _xml('<tool name="read_file" />'),
+      _xml('<tool_result name="read_file">ok</tool_result>'),
+      const MarkdownNodeStable(
+        type: MarkdownNodeType.plainText,
+        content: 'Intermediate step 1 note',
+        isStreaming: false,
+      ),
+      _xml('<think>Start round 2</think>'),
+      _xml('<tool name="grep_code" />'),
+      _xml('<tool_result name="grep_code">found</tool_result>'),
+      const MarkdownNodeStable(
+        type: MarkdownNodeType.plainText,
+        content: 'Final answer to user',
+        isStreaming: false,
+      ),
+    ];
+
+    final groups = grouper.group(nodes, 'multi-turn');
+    expect(groups.length, 4);
+    final firstGroup = groups[0] as MarkdownGroupItem;
+    expect(firstGroup.startIndex, 0);
+    expect(firstGroup.endIndexInclusive, 2);
+    expect((groups[1] as MarkdownSingleItem).index, 3);
+    final secondGroup = groups[2] as MarkdownGroupItem;
+    expect(secondGroup.startIndex, 4);
+    expect(secondGroup.endIndexInclusive, 6);
+    expect((groups[3] as MarkdownSingleItem).index, 7);
   });
 }
 
@@ -424,6 +715,38 @@ MarkdownNodeStable _xml(String content) {
     ).allMatches(openingText))
       match.group(1)!: match.group(2)!,
   };
+  final declaredDisplays = <String, Map<String, dynamic>>{
+    'read_file': {
+      'label': {'en': 'Read', 'zh': '读取'},
+      'icon': 'file',
+      'targetParameter': 'path',
+    },
+    'grep_code': {
+      'label': {'en': 'Grep', 'zh': '搜索'},
+      'icon': 'search',
+      'targetParameter': 'pattern',
+    },
+    'edit_file': {
+      'label': {'en': 'Edit', 'zh': '编辑'},
+      'resultRenderer': 'fileDiff',
+      'icon': 'edit',
+      'targetParameter': 'path',
+    },
+    'super_admin:bash': {
+      'label': {'en': 'Terminal', 'zh': '终端'},
+      'icon': 'terminal',
+      'targetParameter': 'command',
+    },
+    'execute_in_terminal_session': {
+      'label': {'en': 'Terminal', 'zh': '终端'},
+      'icon': 'terminal',
+      'targetParameter': 'command',
+    },
+  };
+  final declaredDisplay = declaredDisplays[attributes['name']];
+  if (declaredDisplay != null) {
+    attributes['display'] = jsonEncode(declaredDisplay);
+  }
   final openingEnd = opening?.end ?? 0;
   final selfClosing = trimmed.endsWith('/>');
   final closingStart = tagName == null

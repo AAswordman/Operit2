@@ -18,6 +18,41 @@ fun decodeNullableToolPackage(value: Any?): ToolPackage? = value?.let { decodeTo
 fun decodeNullableToolPkgContainerDetails(value: Any?): ToolPkgContainerDetails? = value?.let { decodeToolPkgContainerDetails(it) }
 fun decodeNullableToolPkgLogoBytes(value: Any?): ToolPkgLogoBytes? = value?.let { decodeToolPkgLogoBytes(it) }
 
+data class ToolDisplayDeclaration(
+    val label: Map<String, String>,
+    val icon: String,
+    val target_parameter: String?,
+    val result_renderer: ToolResultRenderer
+)
+
+fun decodeToolDisplayDeclaration(value: Any?): ToolDisplayDeclaration {
+    val input = value as Map<*, *>
+    return ToolDisplayDeclaration(
+        label = (input["label"] as Map<*, *>).entries.associate { entry -> entry.key as String to entry.value as String } as Map<String, String>,
+        icon = input["icon"] as String as String,
+        target_parameter = input["targetParameter"]?.let { it as String } as String?,
+        result_renderer = decodeToolResultRenderer(input["resultRenderer"]) as ToolResultRenderer,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ToolDisplayDeclaration.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "label" to this.label.entries.associate { entry -> entry.key to entry.value },
+    "icon" to this.icon,
+    "targetParameter" to this.target_parameter?.let { it },
+    "resultRenderer" to this.result_renderer.toMessagePackValue(),
+)
+
+enum class ToolResultRenderer { Directory, FileDiff, Text }
+fun decodeToolResultRenderer(value: Any?): ToolResultRenderer = ToolResultRenderer.valueOf(value.toString())
+
+/** Encodes the declared Link enum scalar. */
+fun ToolResultRenderer.toMessagePackValue(): String = when (this) {
+    ToolResultRenderer.Directory -> "directory"
+    ToolResultRenderer.FileDiff -> "fileDiff"
+    ToolResultRenderer.Text -> "text"
+}
+
 data class EnvVar(
     val name: String,
     val description: LocalizedText,
@@ -60,6 +95,7 @@ fun LocalizedText.toMessagePackValue(): Map<String, Any?> = mapOf(
 )
 
 data class PackageTool(
+    val display: ToolDisplayDeclaration?,
     val name: String,
     val description: LocalizedText,
     val parameters: List<PackageToolParameter>,
@@ -70,6 +106,7 @@ data class PackageTool(
 fun decodePackageTool(value: Any?): PackageTool {
     val input = value as Map<*, *>
     return PackageTool(
+        display = input["display"]?.let { decodeToolDisplayDeclaration(it) } as ToolDisplayDeclaration?,
         name = input["name"] as String as String,
         description = decodeLocalizedText(input["description"]) as LocalizedText,
         parameters = (input["parameters"] as List<*>).map { item -> decodePackageToolParameter(item) } as List<PackageToolParameter>,
@@ -80,6 +117,7 @@ fun decodePackageTool(value: Any?): PackageTool {
 
 /** Encodes a typed SDK model into its Link argument representation. */
 fun PackageTool.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "display" to this.display?.let { it.toMessagePackValue() },
     "name" to this.name,
     "description" to this.description.toMessagePackValue(),
     "parameters" to this.parameters.map { item -> item.toMessagePackValue() },

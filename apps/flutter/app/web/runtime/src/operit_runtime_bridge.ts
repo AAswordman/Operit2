@@ -4487,6 +4487,14 @@ self.onmessage = (event) => {
       toast(message: string): void {
         console.info("[Operit toast]", message);
       },
+      /** Writes clipboard text and reports the accepted text synchronously. */
+      setClipboardText(text: string) {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+          throw new Error("Browser Clipboard API is unavailable");
+        }
+        void navigator.clipboard.writeText(text);
+        return { text };
+      },
       /** Sends a browser system notification and requests the required permission. */
       sendNotification(title: string, message: string, activationJson: string): void {
         if (!("Notification" in globalThis)) {

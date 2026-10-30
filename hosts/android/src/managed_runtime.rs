@@ -130,6 +130,7 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
                 ManagedRuntimeProgram::Python => "/usr/bin/python3".to_string(),
                 ManagedRuntimeProgram::Uv => "/usr/bin/uv".to_string(),
                 ManagedRuntimeProgram::Pnpm => "/usr/bin/pnpm".to_string(),
+                ManagedRuntimeProgram::Command(name) => name,
             },
         };
         validateRootfsExecutable(&executable)?;

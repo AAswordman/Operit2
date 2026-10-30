@@ -78,6 +78,8 @@ class ChatScreenContent extends StatelessWidget {
     required this.onRefreshRequested,
     required this.onSendMessage,
     required this.onQueueMessage,
+    this.onGuideMessage,
+    this.onInterruptAndSendMessage,
     required this.onCancelMessage,
     required this.pendingQueueMessages,
     required this.isPendingQueueExpanded,
@@ -87,6 +89,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onDeletePendingQueueMessage,
     required this.onEditPendingQueueMessage,
     required this.onSendPendingQueueMessage,
+    this.onGuidePendingQueueMessage,
     required this.attachments,
     required this.onAttachImage,
     required this.onTakePhoto,
@@ -156,6 +159,8 @@ class ChatScreenContent extends StatelessWidget {
   final Future<void> Function() onRefreshRequested;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
+  final VoidCallback? onGuideMessage;
+  final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
@@ -171,6 +176,7 @@ class ChatScreenContent extends StatelessWidget {
   final ValueChanged<int> onDeletePendingQueueMessage;
   final ValueChanged<int> onEditPendingQueueMessage;
   final ValueChanged<int> onSendPendingQueueMessage;
+  final ValueChanged<int>? onGuidePendingQueueMessage;
   final List<AttachmentInfo> attachments;
   final VoidCallback onAttachImage;
   final VoidCallback? onTakePhoto;
@@ -200,17 +206,33 @@ class ChatScreenContent extends StatelessWidget {
       context,
     ).themePreferenceSnapshot;
     final inputStyle = themePreferenceSnapshot.inputStyle;
-    final statusLaneInset = _inputProcessingStatusLaneInset(
-      themePreferenceSnapshot,
-    );
+    final isExcludedBottomStatus =
+        inputProcessingState.tag == 'ExecutingTool' ||
+        inputProcessingState.tag == 'ProcessingToolResult' ||
+        inputProcessingState.tag == 'ToolProgress' ||
+        inputProcessingState.tag == 'Receiving' ||
+        inputProcessingState.tag == 'Processing' ||
+        inputProcessingState.tag == 'Summarizing' ||
+        inputProcessingState.tag == 'Connecting' ||
+        inputProcessingState.message == 'chat_compressing_history' ||
+        inputProcessingState.message == 'chat_summarizing_generating' ||
+        inputProcessingState.message == 'enhanced_receiving_tool_result' ||
+        inputProcessingState.message == 'enhanced_receiving_response' ||
+        inputProcessingState.message == 'enhanced_processing_message' ||
+        inputProcessingState.message == 'enhanced_processing_input' ||
+        inputProcessingState.message == 'message_processing';
     final processingStatus = inputProcessingStatusText(
       AppLocalizations.of(context)!,
       inputProcessingState,
     );
-    final showProcessingStatus =
-        statusLaneInset > 0 &&
-        inputProcessingState.isProcessing &&
+    final hasVisibleStatus = inputProcessingState.isProcessing &&
+        !isExcludedBottomStatus &&
         processingStatus.isNotEmpty;
+    final statusLaneInset = _inputProcessingStatusLaneInset(
+      themePreferenceSnapshot,
+      hasVisibleStatus: hasVisibleStatus,
+    );
+    final showProcessingStatus = statusLaneInset > 0 && hasVisibleStatus;
     return Stack(
       alignment: Alignment.topCenter,
       children: <Widget>[
@@ -375,6 +397,8 @@ class ChatScreenContent extends StatelessWidget {
         currentChatId: currentChatId,
         onSendMessage: sendMessage,
         onQueueMessage: onQueueMessage,
+        onGuideMessage: onGuideMessage,
+        onInterruptAndSendMessage: onInterruptAndSendMessage,
         onCancelMessage: onCancelMessage,
         pendingQueueMessages: pendingQueueMessages,
         isPendingQueueExpanded: isPendingQueueExpanded,
@@ -382,6 +406,7 @@ class ChatScreenContent extends StatelessWidget {
         onDeletePendingQueueMessage: onDeletePendingQueueMessage,
         onEditPendingQueueMessage: onEditPendingQueueMessage,
         onSendPendingQueueMessage: onSendPendingQueueMessage,
+        onGuidePendingQueueMessage: onGuidePendingQueueMessage,
         attachments: attachments,
         onAttachImage: onAttachImage,
         onTakePhoto: onTakePhoto,
@@ -411,6 +436,8 @@ class ChatScreenContent extends StatelessWidget {
         currentChatId: currentChatId,
         onSendMessage: sendMessage,
         onQueueMessage: onQueueMessage,
+        onGuideMessage: onGuideMessage,
+        onInterruptAndSendMessage: onInterruptAndSendMessage,
         onCancelMessage: onCancelMessage,
         pendingQueueMessages: pendingQueueMessages,
         isPendingQueueExpanded: isPendingQueueExpanded,
@@ -418,6 +445,7 @@ class ChatScreenContent extends StatelessWidget {
         onDeletePendingQueueMessage: onDeletePendingQueueMessage,
         onEditPendingQueueMessage: onEditPendingQueueMessage,
         onSendPendingQueueMessage: onSendPendingQueueMessage,
+        onGuidePendingQueueMessage: onGuidePendingQueueMessage,
         attachments: attachments,
         onAttachImage: onAttachImage,
         onTakePhoto: onTakePhoto,
@@ -487,10 +515,14 @@ class ChatScreenContent extends StatelessWidget {
   }
 
   /// Resolves the transcript space reserved for the status overlay.
-  double _inputProcessingStatusLaneInset(ThemePreferenceSnapshot snapshot) {
+  double _inputProcessingStatusLaneInset(
+    ThemePreferenceSnapshot snapshot, {
+    bool hasVisibleStatus = true,
+  }) {
     if (isPreparingChatSwitch ||
         isMultiSelectMode ||
-        !snapshot.showInputProcessingStatus) {
+        !snapshot.showInputProcessingStatus ||
+        !hasVisibleStatus) {
       return 0;
     }
     return inputProcessingStatusLaneHeight;

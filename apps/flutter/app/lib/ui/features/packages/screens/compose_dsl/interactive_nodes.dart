@@ -453,6 +453,8 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
       ),
       isError: props['isError'] == true,
       textStyle: _textFieldStyle(context, props['style']),
+      cursorWidth: _number(props['cursorWidth']),
+      cursorHeight: _number(props['cursorHeight']),
       decoration: _textFieldDecoration(context, props['decoration']),
       labelText: labelSlot == null ? _plainSlotText('label') : null,
       label: labelSlot,
@@ -557,6 +559,7 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
       },
       breakpoint: _number(props['breakpoint']) ?? 600,
       defaultWidth: _number(props['defaultWidth']) ?? 360,
+      defaultWidthFraction: _number(props['defaultWidthFraction']),
       minWidth: _number(props['minWidth']) ?? 280,
       minContentWidth: _number(props['minContentWidth']) ?? 320,
       panel: _adaptiveSidePanelSlot('side'),
@@ -588,6 +591,7 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
       axis: axis,
       reverse: props['reverseLayout'] == true,
       autoScrollToEnd: props['autoScrollToEnd'] == true,
+      contentPadding: _edgeInsetsFromValue(props['contentPadding']),
       spacing: _number(props['spacing']) ?? 0,
       alignment: axis == Axis.vertical
           ? Alignment(switch (_normalizeToken(

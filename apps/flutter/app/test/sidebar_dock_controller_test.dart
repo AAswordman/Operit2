@@ -104,4 +104,40 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('round-trips isolated workspace and group directory identities', () {
+    const directories = <SidebarDirectory>[
+      SidebarDirectory.workspace(null),
+      SidebarDirectory.workspace('project:A'),
+      SidebarDirectory.group(workspaceId: null, groupName: null),
+      SidebarDirectory.group(workspaceId: null, groupName: 'Research'),
+      SidebarDirectory.group(
+        workspaceId: 'project:A',
+        groupName: 'Research:west',
+      ),
+      SidebarDirectory.group(workspaceId: 'project:B', groupName: 'Research'),
+    ];
+    for (final directory in directories) {
+      expect(
+        SidebarDirectory.fromPreferenceKey(directory.preferenceKey),
+        directory,
+      );
+    }
+    expect(
+      directories.map((directory) => directory.preferenceKey).toSet(),
+      hasLength(6),
+    );
+    expect(
+      () => SidebarDirectory.fromPreferenceKey(
+        'directory_pinned:{"kind":"group","workspaceId":null,"groupName":" "}',
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => SidebarDirectory.fromPreferenceKey(
+        'directory_pinned:{"kind":"unknown","workspaceId":null,"groupName":null}',
+      ),
+      throwsFormatException,
+    );
+  });
 }

@@ -32,7 +32,6 @@
     "../../types/**/*.d.ts"
   ],
   "exclude": [
-    "node_modules",
-    "thinking_guidance"
+    "node_modules"
   ]
 }

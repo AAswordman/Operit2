@@ -4320,7 +4320,7 @@ mod tests {
                 mutable_shared_stream(usize::MAX),
                 mutable_shared_stream(usize::MAX),
             );
-            let source = coreResponseStreamSource(responseStream.clone(), streamId.to_string());
+            let source = coreResponseStreamSource(responseStream.clone(), streamId.to_string(), None);
             let mut message = ChatMessage::new("ai".to_string());
             message.contentStream =
                 Some(CoreStream::fromSourceWithId(streamId.to_string(), source));

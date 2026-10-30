@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+
 import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
@@ -18,22 +19,29 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
   const ThinkToolsXmlNodeGrouper({
     required this.showThinkingProcess,
     this.forceExpandGroups = false,
+    this.defaultCompletedDuration,
   });
 
   final bool showThinkingProcess;
   final bool forceExpandGroups;
+  final Duration? defaultCompletedDuration;
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         other is ThinkToolsXmlNodeGrouper &&
             other.showThinkingProcess == showThinkingProcess &&
-            other.forceExpandGroups == forceExpandGroups;
+            other.forceExpandGroups == forceExpandGroups &&
+            other.defaultCompletedDuration == defaultCompletedDuration;
   }
 
   @override
   int get hashCode {
-    return Object.hash(showThinkingProcess, forceExpandGroups);
+    return Object.hash(
+      showThinkingProcess,
+      forceExpandGroups,
+      defaultCompletedDuration,
+    );
   }
 
   @override
@@ -41,6 +49,7 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
     List<MarkdownNodeStable> nodes,
     String rendererId,
   ) {
+    // Group bodies render XML only, so visible Markdown is a hard boundary.
     final out = <MarkdownGroupedItem>[];
     var i = 0;
     while (i < nodes.length) {
@@ -229,10 +238,12 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
       nodes: nodes,
       rendererId: rendererId,
       isVisible: isVisible,
+      isLastNode: isLastNode,
       textColor: textColor,
       mergeRender: mergeRender,
       xmlStreamResolver: xmlStreamResolver,
       forceExpandGroups: forceExpandGroups,
+      defaultCompletedDuration: defaultCompletedDuration,
     );
   }
 }
@@ -244,29 +255,105 @@ class _ThinkToolsXmlGroup extends StatefulWidget {
     required this.nodes,
     required this.rendererId,
     required this.isVisible,
+    required this.isLastNode,
     required this.textColor,
     required this.mergeRender,
     required this.xmlStreamResolver,
     required this.forceExpandGroups,
+    this.defaultCompletedDuration,
   });
 
   final MarkdownGroupItem group;
   final List<MarkdownNodeStable> nodes;
   final String rendererId;
   final bool isVisible;
+  final bool isLastNode;
   final Color textColor;
   final MarkdownNodeRangeMergeRender mergeRender;
   final Stream<String>? Function(int index) xmlStreamResolver;
   final bool forceExpandGroups;
+  final Duration? defaultCompletedDuration;
 
   @override
   State<_ThinkToolsXmlGroup> createState() => _ThinkToolsXmlGroupState();
 }
 
 class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
+  static const double _maxBodyHeight = 420;
+  static const double _followBottomThreshold = 80;
+  static final Map<String, Duration> _measuredGroupDurations =
+      <String, Duration>{};
+
   String? _stateKey;
   bool _expanded = false;
   bool? _userOverride;
+  bool _wasExecutionActive = false;
+  bool _followLatest = true;
+  bool _scrollScheduled = false;
+  final ScrollController _bodyScrollController = ScrollController();
+  final Stopwatch _stopwatch = Stopwatch();
+  Timer? _tickerTimer;
+  Duration? _completedDuration;
+  bool _wasStreaming = false;
+
+  void _recordCompletedDuration() {
+    if (_stopwatch.isRunning) {
+      _stopwatch.stop();
+    }
+    if (_wasStreaming && _stopwatch.elapsed.inSeconds > 0) {
+      _completedDuration = _stopwatch.elapsed;
+      final key = '${widget.rendererId}-${widget.group.stableKey}';
+      if (_measuredGroupDurations.length > 500) {
+        _measuredGroupDurations.remove(_measuredGroupDurations.keys.first);
+      }
+      _measuredGroupDurations[key] = _stopwatch.elapsed;
+    }
+    _tickerTimer?.cancel();
+    _tickerTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _recordCompletedDuration();
+    _bodyScrollController.dispose();
+    super.dispose();
+  }
+
+  void _scheduleFollowLatest() {
+    if (_scrollScheduled ||
+        !_expanded ||
+        !_wasExecutionActive ||
+        !_followLatest) {
+      return;
+    }
+    _scrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollScheduled = false;
+      if (!mounted ||
+          !_expanded ||
+          !_wasExecutionActive ||
+          !_followLatest ||
+          !_bodyScrollController.hasClients) {
+        return;
+      }
+      final position = _bodyScrollController.position;
+      _bodyScrollController.jumpTo(position.maxScrollExtent);
+    });
+  }
+
+  bool _handleBodyScrollNotification(ScrollNotification notification) {
+    if (notification is! ScrollUpdateNotification ||
+        notification.dragDetails == null ||
+        !_bodyScrollController.hasClients) {
+      return false;
+    }
+    final position = _bodyScrollController.position;
+    setState(() {
+      _followLatest =
+          position.maxScrollExtent - position.pixels <= _followBottomThreshold;
+    });
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -287,115 +374,209 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
       return node.type == MarkdownNodeType.xmlBlock &&
           _extractXmlTagName(node) == 'search';
     }).length;
-    final l10n = AppLocalizations.of(context)!;
-    final titleText = switch ((
-      widget.group.stableKey.startsWith('tools-only-'),
-      widget.group.stableKey.startsWith('search-only-'),
-      searchCount > 0,
-      toolCount > 0,
-    )) {
-      (true, _, _, _) => l10n.toolsGroupTitleWithCount(toolCount),
-      (_, true, _, _) => l10n.searchGroupTitle,
-      (_, _, true, true) => l10n.thinkingSearchToolsGroupTitleWithCount(
-        toolCount,
-      ),
-      (_, _, true, false) => l10n.thinkingSearchGroupTitle,
-      _ => l10n.thinkingToolsGroupTitleWithCount(toolCount),
-    };
+    final thinkCount = slice.where((node) {
+      if (node.type != MarkdownNodeType.xmlBlock) return false;
+      final tag = _extractXmlTagName(node);
+      return tag == 'think' || tag == 'thinking';
+    }).length;
 
-    final hasLiveXmlStream = List<int>.generate(slice.length, (idx) => idx).any(
-      (idx) => widget.xmlStreamResolver(widget.group.startIndex + idx) != null,
-    );
     final tailStartIndex = (widget.group.endIndexInclusive + 1).clamp(
       0,
       widget.nodes.length,
     );
-    final hasNonConformingAfterGroup = tailStartIndex >= widget.nodes.length
-        ? false
-        : widget.nodes
-              .sublist(tailStartIndex)
-              .any((node) => !_isConformingTailNode(node));
-    final shouldAutoExpand = hasLiveXmlStream && !hasNonConformingAfterGroup;
+    final tailNodes = widget.nodes.sublist(tailStartIndex);
+    final hasNonConformingAfterGroup = tailNodes.any(
+      (node) => !_isConformingTailNode(node),
+    );
+    final hasLiveXmlStream = List<int>.generate(slice.length, (idx) => idx).any(
+      (idx) => widget.xmlStreamResolver(widget.group.startIndex + idx) != null,
+    );
+    // A group can include trailing separators beyond the last visible node.
+    final isLastContentGroup =
+        widget.isLastNode || tailNodes.every(_isToolGroupingSeparatorNode);
+    final isExecutionActive =
+        hasLiveXmlStream && isLastContentGroup && !hasNonConformingAfterGroup;
+
+    if (isExecutionActive) {
+      if (!_wasExecutionActive && _userOverride == null) {
+        _expanded = true;
+        _followLatest = true;
+      }
+      if (!_stopwatch.isRunning) {
+        _stopwatch.start();
+        _tickerTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) {
+            setState(() {});
+          }
+        });
+      }
+      _wasStreaming = true;
+    } else {
+      // Execution finished (body text arrived, a later group took over, or
+      // the stream closed): fold the phase away unless the user opened it.
+      if (_wasExecutionActive &&
+          !widget.forceExpandGroups &&
+          _userOverride == null) {
+        _expanded = false;
+      }
+      if (_wasStreaming && _stopwatch.isRunning) {
+        _recordCompletedDuration();
+      }
+    }
+
+    final l10n =
+        AppLocalizations.of(context) ??
+        lookupAppLocalizations(Localizations.localeOf(context));
+    String buildDynamicTitle() {
+      final counts = <String>[
+        if (thinkCount > 0) l10n.toolGroupThinkingCount(thinkCount),
+        if (toolCount > 0) l10n.toolGroupCallCount(toolCount),
+        if (searchCount > 0 && toolCount == 0)
+          l10n.toolGroupSearchCount(searchCount),
+      ];
+      final countsSummary = counts.isEmpty
+          ? l10n.toolGroupCallCount(toolCount)
+          : counts.join(' · ');
+
+      if (isExecutionActive) {
+        final elapsed = _stopwatch.elapsed.inSeconds;
+        final timeSuffix = elapsed > 0
+            ? ' (${formatExecutionDuration(_stopwatch.elapsed)})'
+            : '';
+        return '${l10n.toolGroupExecuting}$timeSuffix · $countsSummary';
+      }
+
+      final measuredDuration =
+          _completedDuration ??
+          _measuredGroupDurations['${widget.rendererId}-${widget.group.stableKey}'] ??
+          widget.defaultCompletedDuration;
+      final timeSuffix =
+          (measuredDuration != null && measuredDuration.inSeconds > 0)
+          ? ' (${formatExecutionDuration(measuredDuration)})'
+          : '';
+      return '${l10n.toolGroupCompleted}$timeSuffix · $countsSummary';
+    }
+
+    final titleText = buildDynamicTitle();
+
     final nextStateKey =
         '${widget.rendererId}-${widget.group.stableKey}-${widget.forceExpandGroups}';
     if (_stateKey != nextStateKey) {
       _stateKey = nextStateKey;
       _userOverride = null;
-      _expanded = widget.forceExpandGroups || shouldAutoExpand;
+      _expanded = widget.forceExpandGroups || isExecutionActive;
+      _followLatest = true;
     }
     if (widget.forceExpandGroups) {
       _expanded = true;
-    } else if (_userOverride == null) {
-      _expanded = shouldAutoExpand;
     }
+    _wasExecutionActive = isExecutionActive;
+    _scheduleFollowLatest();
 
-    return _ThinkToolsGroupAlpha(
-      visible: widget.forceExpandGroups || widget.isVisible,
-      duration: widget.forceExpandGroups
-          ? _instantDuration
-          : _groupFadeDuration,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            MessagePressShieldRegion(
-              child: InkWell(
-                onTap: () {
-                  setState(() {
-                    final nextExpanded = !_expanded;
-                    _expanded = nextExpanded;
-                    _userOverride = nextExpanded;
-                  });
-                },
-                borderRadius: BorderRadius.circular(6),
+    final bodyChildren = widget.mergeRender(
+      startIndex: widget.group.startIndex,
+      endIndexInclusive: widget.group.endIndexInclusive,
+      renderInstanceKeyPrefix: 'group-${widget.group.stableKey}',
+      shouldRenderNode: _renderToolGroupXmlNode,
+    );
+
+    return SelectionContainer.disabled(
+      child: _ThinkToolsGroupAlpha(
+        visible: widget.forceExpandGroups || widget.isVisible,
+        duration: widget.forceExpandGroups
+            ? _instantDuration
+            : _groupFadeDuration,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              MessagePressShieldRegion(
+                child: InkWell(
+                  onTap: () {
+                    setState(() {
+                      final nextExpanded = !_expanded;
+                      _expanded = nextExpanded;
+                      _userOverride = nextExpanded;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: EdgeInsets.zero,
+                    child: Row(
+                      children: <Widget>[
+                        AnimatedRotation(
+                          turns: _expanded ? 0.25 : 0,
+                          duration: widget.forceExpandGroups
+                              ? _instantDuration
+                              : _arrowRotationDuration,
+                          child: Icon(
+                            Icons.keyboard_arrow_right,
+                            size: 20,
+                            color: widget.textColor.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          titleText,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: isExecutionActive
+                                    ? Theme.of(context).colorScheme.primary
+                                    : widget.textColor.withValues(alpha: 0.7),
+                                fontWeight: FontWeight.w500,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              _ThinkToolsContentVisibility(
+                visible: _expanded,
+                duration: widget.forceExpandGroups
+                    ? _instantDuration
+                    : _contentFadeDuration,
                 child: Padding(
-                  padding: EdgeInsets.zero,
-                  child: Row(
-                    children: <Widget>[
-                      AnimatedRotation(
-                        turns: _expanded ? 0.25 : 0,
-                        duration: widget.forceExpandGroups
-                            ? _instantDuration
-                            : _arrowRotationDuration,
-                        child: Icon(
-                          Icons.keyboard_arrow_right,
-                          size: 20,
-                          color: widget.textColor.withValues(alpha: 0.7),
+                  padding: const EdgeInsets.only(top: 2, bottom: 4, left: 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.outlineVariant.withValues(alpha: 0.55),
+                          width: 1.5,
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        titleText,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.textColor.withValues(alpha: 0.7),
-                          fontWeight: FontWeight.w500,
+                    ),
+                    padding: const EdgeInsets.only(left: 12),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxHeight: _maxBodyHeight,
+                      ),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _handleBodyScrollNotification,
+                        child: Scrollbar(
+                          controller: _bodyScrollController,
+                          child: ListView(
+                            controller: _bodyScrollController,
+                            primary: false,
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.only(right: 14),
+                            children: <Widget>[
+                              for (final child in bodyChildren)
+                                _KeepAliveGroupItem(child: child),
+                            ],
+                          ),
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            _ThinkToolsContentVisibility(
-              visible: _expanded,
-              duration: widget.forceExpandGroups
-                  ? _instantDuration
-                  : _contentFadeDuration,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 2, bottom: 4, left: 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: widget.mergeRender(
-                    startIndex: widget.group.startIndex,
-                    endIndexInclusive: widget.group.endIndexInclusive,
-                    renderInstanceKeyPrefix: 'group-${widget.group.stableKey}',
-                    shouldRenderNode: _renderToolGroupXmlNode,
-                  ),
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -608,7 +789,7 @@ bool _shouldCollapseToolSequence(int toolCount, int xmlToolRelatedCount) {
   if (xmlToolRelatedCount <= 0) {
     return false;
   }
-  return toolCount >= 2 && xmlToolRelatedCount >= 2;
+  return toolCount >= 1 && xmlToolRelatedCount >= 1;
 }
 
 /// Returns whether a thinking-led sequence should render as one group.
@@ -621,4 +802,52 @@ bool _shouldCollapseThinkSequence(
     return false;
   }
   return searchCount > 0 || toolCount > 0;
+}
+
+class _KeepAliveGroupItem extends StatefulWidget {
+  const _KeepAliveGroupItem({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAliveGroupItem> createState() => _KeepAliveGroupItemState();
+}
+
+class _KeepAliveGroupItemState extends State<_KeepAliveGroupItem>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
+/// Formats execution or stopwatch duration into compact human-readable text
+/// with carryover: <60s -> Xs, 60s~59m59s -> Xmin [Ys], >=1h -> Xh [Ymin] [Zs].
+String formatExecutionDuration(Duration duration) {
+  final totalSeconds = duration.inSeconds;
+  if (totalSeconds <= 0) {
+    return '0s';
+  }
+  if (totalSeconds < 60) {
+    return '${totalSeconds}s';
+  }
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    final parts = <String>['${hours}h'];
+    if (minutes > 0) parts.add('${minutes}min');
+    if (seconds > 0) parts.add('${seconds}s');
+    return parts.join(' ');
+  }
+
+  if (seconds > 0) {
+    return '${minutes}min ${seconds}s';
+  }
+  return '${minutes}min';
 }

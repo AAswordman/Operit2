@@ -10,10 +10,10 @@ void main() {
   final viewModel = ChatViewModel();
 
   test(
-    'attachment references retain the actual source and portable temp path',
+    'attachment references retain the actual source and portable tool path',
     () {
       const attachment = AttachmentInfo(
-        filePath: '/device-b/runtime/temp/clean_on_exit/report.pdf',
+        filePath: '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf',
         nodeId: 'core-b',
         fileName: '报价单".pdf',
         mimeType: 'application/pdf',
@@ -24,11 +24,11 @@ void main() {
       expect(reference, contains('node_id="core-b"'));
       expect(
         reference,
-        contains('path="/app/data/temp/clean_on_exit/report.pdf"'),
+        contains('path="/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
       );
       expect(
         reference,
-        contains('id="/app/data/temp/clean_on_exit/report.pdf"'),
+        contains('id="/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
       );
       expect(reference, isNot(contains('/device-b/')));
       expect(reference, contains('filename="报价单&quot;.pdf"'));
@@ -37,7 +37,7 @@ void main() {
 
   test('both message styles still parse location metadata and escaped paths', () {
     const attachment = AttachmentInfo(
-      filePath: '/device-b/runtime/temp/clean_on_exit/report&copy.pdf',
+      filePath: '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report&copy.pdf',
       nodeId: 'core-b',
       fileName: '报价单".pdf',
       mimeType: 'application/pdf',
@@ -49,7 +49,7 @@ void main() {
     final cursorResult = cursor.parseMessageContent(reference);
     expect(bubbleResult.processedText, isEmpty);
     expect(cursorResult.processedText, isEmpty);
-    const toolPath = '/app/data/temp/clean_on_exit/report&copy.pdf';
+    const toolPath = '/app/data/data/chat_attachments/chat-a/attachment-a/report&copy.pdf';
     expect(bubbleResult.trailingAttachments.single.id, toolPath);
     expect(cursorResult.trailingAttachments.single.id, toolPath);
     expect(
@@ -66,9 +66,9 @@ void main() {
     expect(cursorResult.trailingAttachments.single.size, 3);
 
     const paired =
-        '<attachment id="/app/data/temp/clean_on_exit/file.pdf" filename="file.pdf" '
+        '<attachment id="/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf" filename="file.pdf" '
         'type="application/pdf" node_id="core-b" '
-        'path="/app/data/temp/clean_on_exit/file.pdf" size="3">body</attachment>';
+        'path="/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf" size="3">body</attachment>';
     expect(
       bubble.parseMessageContent(paired).trailingAttachments.single.content,
       'body',
@@ -79,9 +79,9 @@ void main() {
     );
   });
 
-  test('Windows temporary paths produce the same file-tool locator', () {
+  test('Windows attachment paths produce the same file-tool locator', () {
     const attachment = AttachmentInfo(
-      filePath: r'C:\runtime\temp\clean_on_exit\report.pdf',
+      filePath: r'C:\runtime\data\chat_attachments\chat-a\attachment-a\report.pdf',
       nodeId: 'core-windows',
       fileName: 'report.pdf',
       mimeType: 'application/pdf',
@@ -90,7 +90,7 @@ void main() {
     );
     expect(
       viewModel.createAttachmentReference(attachment),
-      contains('path="/app/data/temp/clean_on_exit/report.pdf"'),
+      contains('path="/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
     );
   });
 
@@ -113,7 +113,7 @@ void main() {
     'MessagePack preserves a source node and accepts legacy maps without it',
     () {
       final payload = <String, Object?>{
-        'filePath': '/device-b/runtime/temp/clean_on_exit/report.pdf',
+        'filePath': '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf',
         'nodeId': 'core-b',
         'fileName': 'report.pdf',
         'mimeType': 'application/pdf',

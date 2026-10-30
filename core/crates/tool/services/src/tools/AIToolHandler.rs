@@ -630,6 +630,68 @@ impl AIToolHandler {
         self.publishToolExecutor(name, RegisteredToolExecutor::Shared(executor), visibility);
     }
 
+    /// Reads presentation only from the exact built-in or effective package declaration.
+    pub fn toolDisplayDeclaration(
+        &self,
+        name: &str,
+    ) -> Option<operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration> {
+        if let Some(tool) = BuiltinToolName::from_name(name) {
+            return tool.display();
+        }
+        let (package, method) = name.split_once(':')?;
+        self.getOrCreatePackageManager()
+            .lock()
+            .ok()?
+            .selectPackageTool(package, method)
+            .ok()?
+            .display
+    }
+
+    /// Adds authoritative declaration metadata to a chat-owned Markdown projection.
+    pub fn decorateToolDisplayEvent(
+        &self,
+        event: &mut operit_util::MarkdownRenderStream::MarkdownStreamEvent,
+    ) {
+        let Some(xml) = event.xml.as_mut() else {
+            return;
+        };
+        if operit_util::ChatMarkupRegex::ChatMarkupRegex::normalize_tool_like_tag_name(
+            xml.tagName.as_deref(),
+        ) != Some("tool".to_string())
+        {
+            return;
+        }
+        let Some(attributes) = xml.attributes.as_mut() else {
+            return;
+        };
+        let name = attributes.get("name").map(String::as_str);
+        let target = if matches!(name, Some("proxy" | "package_proxy")) {
+            xml.children
+                .iter()
+                .find(|child| {
+                    child.tagName.as_deref() == Some("param")
+                        && child
+                            .attributes
+                            .as_ref()
+                            .and_then(|attrs| attrs.get("name"))
+                            .map(String::as_str)
+                            == Some("tool_name")
+                })
+                .and_then(|child| child.bodyChunk.as_deref())
+                .map(str::trim)
+        } else {
+            name
+        };
+        let declaration = target.and_then(|name| self.toolDisplayDeclaration(name));
+        attributes.remove("display");
+        if let Some(declaration) = declaration {
+            attributes.insert(
+                "display".into(),
+                serde_json::to_string(&declaration).expect("tool display serializes"),
+            );
+        }
+    }
+
     /// Returns the configured visibility for one tool.
     #[allow(non_snake_case)]
     pub fn getToolVisibility(&self, toolName: &str) -> Option<ToolRegistrationVisibility> {
@@ -2104,13 +2166,33 @@ mod tests {
         }
     }
 
+    /// Native projections replace model attributes and resolve only exact declarations.
+    #[test]
+    fn display_events_use_authoritative_declarations_and_explicit_proxy_targets() {
+        use operit_util::MarkdownRenderStream::MarkdownRenderEventStream;
+        let fixture = PipelineFixture::new();
+        for (markup, expected) in [
+            (r#"<tool name="read_file" display="forged"><param name="path">/remote/a</param></tool>"#, BuiltinToolName::ReadFile.display()),
+            (r#"<tool name="proxy"><param name="tool_name">read_file</param><param name="params">{}</param></tool>"#, BuiltinToolName::ReadFile.display()),
+            (r#"<tool name="custom_read_file" display="forged"></tool>"#, None),
+        ] {
+            let mut events = MarkdownRenderEventStream::fromContent(markup.to_string());
+            for event in &mut events { fixture.handler.decorateToolDisplayEvent(event); }
+            let xml = events.iter().filter_map(|event| event.xml.as_ref())
+                .find(|xml| xml.tagName.as_deref() == Some("tool") && xml.isClosed == Some(true)).unwrap();
+            let display = xml.attributes.as_ref().unwrap().get("display")
+                .map(|value| serde_json::from_str::<operit_plugin_sdk::js_sdk::tool_display::ToolDisplayDeclaration>(value).unwrap());
+            assert_eq!(display, expected, "{markup}");
+        }
+    }
+
     /// Package discovery must work without interactive approval in both restricted AI modes.
     #[tokio::test(flavor = "current_thread")]
     async fn package_activation_does_not_require_write_approval() {
         static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
             name: "clock_probe.js", sha256: "", bytes: br#"/* METADATA
             {"name":"clock_probe","description":"Clock query tools","enabledByDefault":true,
-             "tools":[{"name":"get_current_date","description":"Get the current date and time","parameters":[]}]}
+             "tools":[{"name":"get_current_date","description":"Get the current date and time","parameters":[],"display":{"label":{"en":"Clock","fr":"Horloge"},"icon":"time"}}]}
             */"#,
         }];
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
@@ -2155,6 +2237,7 @@ mod tests {
             assert!(manager.lock().unwrap().isPackageActivated("clock_probe"));
             assert_eq!(manager.lock().unwrap().getEnabledPackageNames(), enabled);
             assert!(fixture.handler.hasToolExecutor("clock_probe:get_current_date"));
+            assert_eq!(fixture.handler.toolDisplayDeclaration("clock_probe:get_current_date").unwrap().label["fr"], "Horloge");
             assert_eq!(fixture.handler.getToolVisibility("clock_probe:get_current_date"), Some(ToolRegistrationVisibility::PUBLIC));
         }
     }

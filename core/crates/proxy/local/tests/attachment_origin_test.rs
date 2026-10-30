@@ -19,7 +19,7 @@ use serde_json::json;
 
 /// Exercise the same generated import boundary that Flutter uses, before chat-send routing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
+async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let root = std::env::temp_dir().join(format!(
@@ -61,7 +61,7 @@ async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
             let expected_chat_id = {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
-                holder.coreForTarget(target).unwrap().chatHistoryDelegate.currentChatIdFlow.value()
+                holder.coreForTarget(target).unwrap().createNewChat(true, None, None, None, None).await.unwrap()
             };
             let transfer_target = LocalCoreProxy::generatedTargetForSchema("services.attachmentTransferManager").unwrap();
             let upload_id: String = fromCoreValue(CoreLinkSharedClient::call(
@@ -82,6 +82,8 @@ async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
                 CoreCallRequest::new("complete-file", transfer_target, "completeAttachmentUpload",
                     toCoreValue(json!({"uploadId": upload_id, "fileName": "文档.pdf", "expectedByteLength": 3})).unwrap()),
             ).await.result.unwrap()).unwrap();
+            let staged_path = std::path::PathBuf::from(&imported.filePath);
+            assert!(staged_path.starts_with(runtime_root.join("temp/clean_on_exit/chat_attachment_uploads")));
             CoreLinkSharedClient::call(
                 &proxy,
                 CoreCallRequest::new("attach-file", target, "attachUploadedFile",
@@ -97,14 +99,23 @@ async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
             assert_eq!(attachment.nodeId.as_deref(), Some("core-source-b"));
             assert_eq!(std::fs::read(&attachment.filePath).unwrap(), [0, 1, 255]);
             assert!(std::path::Path::new(&attachment.filePath)
-                .starts_with(runtime_root.join("temp/clean_on_exit")));
+                .starts_with(runtime_root.join("data/chat_attachments").join(&expected_chat_id)));
+            assert_eq!(std::path::Path::new(&attachment.filePath).file_name().unwrap(), "文档.pdf");
+            assert!(!staged_path.exists(), "registration must move the file out of staging");
+            assert!(!staged_path.parent().unwrap().exists(), "registration must remove its staging directory");
             assert!(attachment
                 .fileToolPath()
-                .starts_with("/app/data/temp/clean_on_exit/"));
+                .starts_with(&format!("/app/data/data/chat_attachments/{expected_chat_id}/")));
             assert_eq!(
-                runtimeStorageOwnership("runtime/temp/clean_on_exit/file.pdf").unwrap(),
-                RuntimeStorageOwnership::Ephemeral
+                runtimeStorageOwnership("runtime/data/chat_attachments/chat/attachment/file.pdf").unwrap(),
+                RuntimeStorageOwnership::CoreNode
             );
+            CoreLinkSharedClient::call(
+                &proxy,
+                CoreCallRequest::new("discard-promoted", transfer_target, "discardAttachmentUpload",
+                    toCoreValue(json!({"uploadId": upload_id, "fileName": "文档.pdf"})).unwrap()),
+            ).await.result.expect("discarding staging must never remove a promoted attachment");
+            assert!(std::path::Path::new(&attachment.filePath).exists());
 
             let stale_chat = CoreLinkSharedClient::call(
                 &proxy,
@@ -148,6 +159,20 @@ async fn imported_attachment_keeps_its_actual_node_and_ephemeral_storage() {
             let attachments = holder.coreForTarget(target).unwrap().attachments();
             assert_eq!(attachments[1].nodeId, None);
             assert_eq!(attachments[1].content, "inline content");
+            let source = root.join("report.pdf");
+            std::fs::write(&source, [1, 2, 3]).unwrap();
+            let core = holder.coreForTarget(target).unwrap();
+            core.handleAttachment(source.to_string_lossy().into_owned()).await;
+            core.handleAttachment(source.to_string_lossy().into_owned()).await;
+            let attachments = core.attachments();
+            assert_eq!(attachments.len(), 4);
+            assert_ne!(attachments[2].filePath, attachments[3].filePath);
+            for attachment in &attachments[2..] {
+                assert!(std::path::Path::new(&attachment.filePath).starts_with(
+                    runtime_root.join("data/chat_attachments").join(&expected_chat_id)));
+                assert_eq!(std::path::Path::new(&attachment.filePath).file_name().unwrap(), "report.pdf");
+                assert_eq!(std::fs::read(&attachment.filePath).unwrap(), [1, 2, 3]);
+            }
             let _ = std::fs::remove_dir_all(root);
         })
         .await;

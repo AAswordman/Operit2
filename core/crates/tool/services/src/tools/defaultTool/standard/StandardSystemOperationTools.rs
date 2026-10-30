@@ -3,7 +3,7 @@ use std::sync::Arc;
 use operit_host_api::{
     AppListData as HostAppListData, AppOperationData as HostAppOperationData,
     AppUsageTimeResultData as HostAppUsageTimeResultData, DeviceInfoData as HostDeviceInfoData,
-    LocationData as HostLocationData, NotificationData as HostNotificationData,
+    ClipboardHost, LocationData as HostLocationData, NotificationData as HostNotificationData,
     SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
     SystemSettingData as HostSystemSettingData, ToastHost,
 };
@@ -23,12 +23,14 @@ use operit_tools::ToolExecutionManager::{
 pub struct StandardSystemOperationTools {
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub toastHost: Option<Arc<dyn ToastHost>>,
+    pub clipboardHost: Option<Arc<dyn ClipboardHost>>,
 }
 
 #[derive(Clone, Copy)]
 /// Operations supported by the standard system-operation tool executor.
 pub enum SystemOperationToolOperation {
     Toast,
+    SetClipboardText,
     SendNotification,
     ModifySystemSetting,
     GetSystemSetting,
@@ -56,10 +58,12 @@ impl StandardSystemOperationTools {
     pub fn new(
         systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
         toastHost: Option<Arc<dyn ToastHost>>,
+        clipboardHost: Option<Arc<dyn ClipboardHost>>,
     ) -> Self {
         Self {
             systemOperationHost,
             toastHost,
+            clipboardHost,
         }
     }
 
@@ -73,6 +77,19 @@ impl StandardSystemOperationTools {
         match self.toastHost().and_then(|host| host.toast(&message)) {
             Ok(()) => toolSuccess(tool, "OK".to_string()),
             Err(error) => toolError(tool, format!("Toast failed: {}", error.message)),
+        }
+    }
+
+    #[allow(non_snake_case)]
+    /// Writes text to the system clipboard.
+    pub fn setClipboardText(&self, tool: &AITool) -> ToolResult {
+        let text = parameterValue(tool, "text");
+        if text.is_empty() {
+            return toolError(tool, "Must provide text parameter".to_string());
+        }
+        match self.clipboardHost().and_then(|host| host.setClipboardText(&text)) {
+            Ok(stored) => toolSuccess(tool, stored),
+            Err(error) => toolError(tool, format!("Clipboard write failed: {}", error.message)),
         }
     }
 
@@ -370,6 +387,13 @@ impl StandardSystemOperationTools {
             operit_host_api::HostError::new("ToastHost is not registered for this runtime.")
         })
     }
+
+    /// Returns the clipboard host registered for this runtime.
+    fn clipboardHost(&self) -> Result<&dyn ClipboardHost, operit_host_api::HostError> {
+        self.clipboardHost.as_deref().ok_or_else(|| {
+            operit_host_api::HostError::new("ClipboardHost is not registered for this runtime.")
+        })
+    }
 }
 
 impl ToolExecutor for SystemOperationToolExecutor {
@@ -386,6 +410,7 @@ impl ToolExecutor for SystemOperationToolExecutor {
             | SystemOperationToolOperation::GetDeviceLocation
             | SystemOperationToolOperation::GetDeviceInfo => ToolEffect::READ,
             SystemOperationToolOperation::Toast
+            | SystemOperationToolOperation::SetClipboardText
             | SystemOperationToolOperation::SendNotification
             | SystemOperationToolOperation::ModifySystemSetting
             | SystemOperationToolOperation::InstallApp
@@ -403,6 +428,7 @@ impl ToolExecutor for SystemOperationToolExecutor {
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
         let result = match self.operation {
             SystemOperationToolOperation::Toast => self.tools.toast(tool),
+            SystemOperationToolOperation::SetClipboardText => self.tools.setClipboardText(tool),
             SystemOperationToolOperation::SendNotification => self.tools.sendNotification(tool),
             SystemOperationToolOperation::ModifySystemSetting => {
                 self.tools.modifySystemSetting(tool)
@@ -436,6 +462,11 @@ fn validateSystemOperationTool(
         SystemOperationToolOperation::Toast => {
             if parameterValue(tool, "message").is_empty() {
                 return invalid("message is required.");
+            }
+        }
+        SystemOperationToolOperation::SetClipboardText => {
+            if parameterValue(tool, "text").is_empty() {
+                return invalid("text is required.");
             }
         }
         SystemOperationToolOperation::SendNotification => {

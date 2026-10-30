@@ -7,7 +7,6 @@
 //! byte size and SHA-256 both match.
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -56,22 +55,6 @@ fn sessions() -> &'static Mutex<HashMap<String, TransferSession>> {
 
 fn nowMs() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
-}
-
-/// Drops timed-out sessions (and their partial files) before a new begin.
-fn evictExpiredSessions() {
-    let cutoff = nowMs() - SESSION_TIMEOUT_MS;
-    let mut guard = sessions().lock().expect("transfer sessions mutex poisoned");
-    let expired: Vec<String> = guard
-        .iter()
-        .filter(|(_, session)| session.createdMs < cutoff)
-        .map(|(id, _)| id.clone())
-        .collect();
-    for id in expired {
-        if let Some(session) = guard.remove(&id) {
-            drop(std::fs::remove_file(&session.tempPath));
-        }
-    }
 }
 
 fn takeSession(transferId: &str) -> Result<TransferSession, String> {
@@ -201,10 +184,26 @@ impl operit_tools::ToolExecutionManager::AsyncToolExecutor for FileTransferExecu
 }
 
 impl StandardFileSystemTools {
+    /// Drops timed-out sessions (and their partial files) before a new begin.
+    fn evictExpiredSessions(&self) {
+        let cutoff = nowMs() - SESSION_TIMEOUT_MS;
+        let mut guard = sessions().lock().expect("transfer sessions mutex poisoned");
+        let expired: Vec<String> = guard
+            .iter()
+            .filter(|(_, session)| session.createdMs < cutoff)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            if let Some(session) = guard.remove(&id) {
+                drop(self.host.deleteFile(&session.tempPath.to_string_lossy(), false));
+            }
+        }
+    }
+
     /// Opens a receive session and returns its transfer id.
     #[allow(non_snake_case)]
     pub fn fsTransferBegin(&self, tool: &AITool) -> ToolResult {
-        evictExpiredSessions();
+        self.evictExpiredSessions();
         let destinationPath = parameterValue(tool, "destination_path");
         let expectedSize = match requiredNumber(tool, "expected_size") {
             Ok(value) => value,
@@ -228,7 +227,7 @@ impl StandardFileSystemTools {
             }
         };
         if let Some(parent) = std::path::Path::new(&physicalPath).parent() {
-            if let Err(error) = std::fs::create_dir_all(parent) {
+            if let Err(error) = self.host.makeDirectory(&parent.to_string_lossy(), true) {
                 return toolError(tool, format!("Cannot create destination directory: {error}"));
             }
         }
@@ -240,7 +239,7 @@ impl StandardFileSystemTools {
             Some(path) => path,
             None => return toolError(tool, "Invalid destination parent".to_string()),
         };
-        if let Err(error) = std::fs::File::create(&tempPath) {
+        if let Err(error) = self.host.writeFileBytes(&tempPath.to_string_lossy(), &[]) {
             return toolError(tool, format!("Cannot create transfer temp file: {error}"));
         }
         sessions().lock().expect("transfer sessions mutex poisoned").insert(
@@ -300,10 +299,7 @@ impl StandardFileSystemTools {
                 ),
             );
         }
-        let append = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&session.tempPath)
-            .and_then(|mut file| file.write_all(&bytes).map(|_| file));
+        let append = self.host.appendFileBytes(&session.tempPath.to_string_lossy(), &bytes);
         if let Err(error) = append {
             restoreSession(session);
             return toolError(tool, format!("Cannot append chunk: {error}"));
@@ -328,7 +324,7 @@ impl StandardFileSystemTools {
             let (received, expected) = (session.received, session.expectedSize);
             let partial = session.tempPath.clone();
             restoreSession(session);
-            let _ = std::fs::remove_file(partial);
+            let _ = self.host.deleteFile(&partial.to_string_lossy(), false);
             return toolError(
                 tool,
                 format!("Transfer incomplete: received {received} of {expected} bytes"),
@@ -338,13 +334,16 @@ impl StandardFileSystemTools {
         if actualSha256 != expectedSha256 {
             let partial = session.tempPath.clone();
             restoreSession(session);
-            let _ = std::fs::remove_file(partial);
+            let _ = self.host.deleteFile(&partial.to_string_lossy(), false);
             return toolError(
                 tool,
                 format!("SHA-256 mismatch: expected {expectedSha256}, received {actualSha256}"),
             );
         }
-        if let Err(error) = std::fs::rename(&session.tempPath, &session.destinationPath) {
+        if let Err(error) = self
+            .host
+            .moveFile(&session.tempPath.to_string_lossy(), &session.destinationPath)
+        {
             restoreSession(session);
             return toolError(tool, format!("Cannot publish destination: {error}"));
         }
@@ -387,24 +386,9 @@ impl StandardFileSystemTools {
             Err(error) => return toolError(tool, error),
         };
         let bytes: Result<Vec<u8>, String> = match resolved.nativePath() {
-            Ok(nativePath) => std::fs::File::open(&nativePath)
-                .and_then(|mut file| {
-                    file.seek(SeekFrom::Start(offset as u64))?;
-                    let mut buffer = vec![0u8; length as usize];
-                    let mut read = 0;
-                    loop {
-                        let n = file.read(&mut buffer[read..])?;
-                        if n == 0 {
-                            break;
-                        }
-                        read += n;
-                        if read == buffer.len() {
-                            break;
-                        }
-                    }
-                    buffer.truncate(read);
-                    Ok(buffer)
-                })
+            Ok(nativePath) => self
+                .host
+                .readFileBytesRange(&nativePath, offset as u64, length as usize)
                 .map_err(|error| error.to_string()),
             Err(_) => {
                 // Resource-backed sources have no seekable native path; read once.
@@ -578,17 +562,20 @@ impl StandardFileSystemTools {
         hasher: &mut Sha256,
         pushed: &mut i64,
     ) -> Result<(), String> {
-        let mut file = std::fs::File::open(nativePath).map_err(|error| error.to_string())?;
+        let mut offset: u64 = 0;
         loop {
-            let mut buffer = vec![0u8; TRANSFER_CHUNK_BYTES];
-            let n = file.read(&mut buffer).map_err(|error| error.to_string())?;
-            if n == 0 {
+            let buffer = self
+                .host
+                .readFileBytesRange(nativePath, offset, TRANSFER_CHUNK_BYTES)
+                .map_err(|error| error.to_string())?;
+            if buffer.is_empty() {
                 break;
             }
-            buffer.truncate(n);
+            let chunkBytes = buffer.len();
             self.pushOneChunk(targetNodeId, transferId, *pushed, &buffer).await?;
             hasher.update(&buffer);
-            *pushed += n as i64;
+            *pushed += chunkBytes as i64;
+            offset += chunkBytes as u64;
         }
         Ok(())
     }
@@ -644,7 +631,8 @@ impl StandardFileSystemTools {
     ) -> Result<(i64, String), String> {
         let destination = std::path::Path::new(destinationPhysical);
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
+            self.host
+                .makeDirectory(&parent.to_string_lossy(), true)
                 .map_err(|error| format!("Cannot create destination directory: {error}"))?;
         }
         let tempPath = destination
@@ -666,11 +654,8 @@ impl StandardFileSystemTools {
             .get("totalSize")
             .and_then(serde_json::Value::as_i64)
             .ok_or("Source device returned no total size")?;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tempPath)
+        self.host
+            .writeFileBytes(&tempPath.to_string_lossy(), &[])
             .map_err(|error| format!("Cannot open transfer temp file: {error}"))?;
         let mut hasher = Sha256::new();
         let mut offset: i64 = 0;
@@ -706,22 +691,23 @@ impl StandardFileSystemTools {
                 break;
             }
             hasher.update(&bytes);
-            file.write_all(&bytes)
+            self.host
+                .appendFileBytes(&tempPath.to_string_lossy(), &bytes)
                 .map_err(|error| format!("Cannot write transfer temp file: {error}"))?;
             offset += bytes.len() as i64;
             if offset >= totalSize {
                 break;
             }
         }
-        drop(file);
         if offset != totalSize {
-            let _ = std::fs::remove_file(&tempPath);
+            drop(self.host.deleteFile(&tempPath.to_string_lossy(), false));
             return Err(format!(
                 "Transfer incomplete: received {offset} of {totalSize} bytes"
             ));
         }
         let sha256 = format!("{:x}", hasher.finalize());
-        std::fs::rename(&tempPath, destinationPhysical)
+        self.host
+            .moveFile(&tempPath.to_string_lossy(), destinationPhysical)
             .map_err(|error| format!("Cannot publish destination: {error}"))?;
         Ok((totalSize, sha256))
     }

@@ -13,6 +13,10 @@ import 'package:operit2/ui/features/chat/components/style/ThemedChatMessage.dart
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleStyleChatMessage.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleSurface.dart';
 import 'package:operit2/ui/features/chat/components/style/cursor/CursorStyleChatMessage.dart';
+import 'package:operit2/ui/features/chat/components/style/cursor/AiMessageComposable.dart';
+import 'package:operit2/ui/common/ChatAvatarImage.dart';
+import 'package:operit2/ui/features/chat/components/style/cursor/UserMessageComposable.dart';
+import 'package:operit2/ui/features/chat/components/part/StructuredMessagePartRenderer.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
 import 'package:operit2/ui/features/chat/components/style/input/classic/ClassicChatInputSection.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
@@ -29,7 +33,8 @@ void main() {
         ) async {
           final agent = width == 380;
           final snapshot = _snapshot(<String, Object?>{
-            'chatStyle': style,
+            'userChatStyle': style,
+            'aiChatStyle': style,
             'inputStyle': agent ? 'agent' : 'classic',
             'chatInputFloating': wide,
             'bubbleWideLayoutEnabled': wide,
@@ -98,6 +103,93 @@ void main() {
     }
   }
 
+  for (final width in <double>[280, 760]) {
+    for (final showAvatar in <bool>[false, true]) {
+      for (final fontScale in <double>[1, 1.5]) {
+        testWidgets(
+          'cursor stays avatar-free at $width, bubble avatars=$showAvatar, font=$fontScale',
+          (tester) async {
+            await _pumpPreview(
+              tester,
+              _snapshot(<String, Object?>{
+                'userChatStyle': 'cursor',
+                'aiChatStyle': 'cursor',
+                'bubbleShowAvatar': showAvatar,
+                'bubbleAiContentPaddingLeft': 12.0,
+                'bubbleAiContentPaddingRight': 12.0,
+                'showRoleName': true,
+                'fontScale': fontScale,
+              }),
+              width: width,
+            );
+            await tester.pumpAndSettle();
+            final user = find.byType(UserMessageComposable);
+            final ai = find.byType(AiMessageComposable);
+            final userBody = find.descendant(
+              of: user,
+              matching: find.byType(BubbleSurface),
+            );
+            final aiBody = find.descendant(
+              of: ai,
+              matching: find.byType(StreamingStructuredMessageRenderer),
+            );
+            final rowLeft = tester.getTopLeft(user).dx;
+            final contentLeft = rowLeft + 16;
+            expect(tester.getTopLeft(userBody).dx, closeTo(contentLeft, 0.01));
+            expect(tester.getTopLeft(aiBody).dx, closeTo(contentLeft, 0.01));
+            final title = find.descendant(of: ai, matching: find.text('Operit'));
+            expect(
+              tester.getTopLeft(title).dx,
+              closeTo(contentLeft, 0.01),
+            );
+            expect(find.byType(ChatAvatarImage), findsNothing);
+            expect(find.byIcon(Icons.person), findsNothing);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox.shrink());
+          },
+        );
+      }
+    }
+  }
+
+  testWidgets('bubble avatar changes leave cursor layout and renderer intact', (
+    tester,
+  ) async {
+    await _pumpPreview(
+      tester,
+      _snapshot(<String, Object?>{
+        'userChatStyle': 'cursor',
+        'aiChatStyle': 'cursor',
+        'bubbleShowAvatar': true,
+        'avatarShape': UserPreferencesManager.AVATAR_SHAPE_SQUARE,
+        'avatarCornerRadius': 6.0,
+      }),
+    );
+    await tester.pumpAndSettle();
+    final renderer = find.byType(StreamingStructuredMessageRenderer);
+    final state = tester.state(renderer);
+    final contentLeft = tester.getTopLeft(renderer).dx;
+    final controller = OperitTheme.of(
+      tester.element(find.byType(ChatAppearancePreview)),
+    );
+    for (final showAvatar in <bool>[false, true]) {
+      controller.setInitialThemePreferenceSnapshot(
+        ThemePreferenceSnapshot.fromJson(<String, Object?>{
+          ...controller.themePreferenceSnapshot.toJson(),
+          'bubbleShowAvatar': showAvatar,
+        }),
+      );
+      controller.previewThemeSettings();
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatAvatarImage), findsNothing);
+      expect(find.byIcon(Icons.person), findsNothing);
+      expect(tester.getTopLeft(renderer).dx, closeTo(contentLeft, 0.01));
+      expect(tester.state(renderer), same(state));
+      expect(tester.takeException(), isNull);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('applies font scaling once and updates the live sample', (
     tester,
   ) async {
@@ -122,7 +214,8 @@ void main() {
     tester,
   ) async {
     final snapshot = _snapshot(<String, Object?>{
-      'chatStyle': 'cursor',
+      'userChatStyle': 'cursor',
+      'aiChatStyle': 'cursor',
       'showModelProvider': true,
       'showModelName': true,
       'showRoleName': true,
@@ -152,14 +245,15 @@ void main() {
   ) async {
     await _pumpPreview(
       tester,
-      _snapshot(<String, Object?>{'chatStyle': 'cursor'}),
+      _snapshot(<String, Object?>{'userChatStyle': 'cursor', 'aiChatStyle': 'cursor'}),
     );
     await tester.pumpAndSettle();
     final context = tester.element(find.byType(ChatAppearancePreview));
     final controller = OperitTheme.of(context);
     controller.setInitialThemePreferenceSnapshot(
       _snapshot(<String, Object?>{
-        'chatStyle': 'bubble',
+        'userChatStyle': 'bubble',
+        'aiChatStyle': 'bubble',
         'bubbleWideLayoutEnabled': true,
         'bubbleShowAvatar': false,
       }),
@@ -177,7 +271,7 @@ void main() {
     (tester) async {
       await _pumpPreview(
         tester,
-        _snapshot(<String, Object?>{'chatStyle': 'cursor'}),
+        _snapshot(<String, Object?>{'userChatStyle': 'cursor', 'aiChatStyle': 'cursor'}),
       );
       await tester.pumpAndSettle();
       final message = tester
@@ -186,7 +280,8 @@ void main() {
           )
           .message;
       final snapshot = _snapshot(<String, Object?>{
-        'chatStyle': 'bubble',
+        'userChatStyle': 'bubble',
+        'aiChatStyle': 'bubble',
         'bubbleUserUseImage': true,
         'bubbleAiUseImage': true,
         'bubbleUserImageUri': 'user.png',
@@ -240,7 +335,8 @@ void main() {
   ) async {
     final snapshot = _snapshot(<String, Object?>{
       'transparentSurfaceEnabled': true,
-      'chatStyle': 'bubble',
+      'userChatStyle': 'bubble',
+      'aiChatStyle': 'bubble',
     });
     await _pumpPreview(tester, snapshot);
     await tester.pumpAndSettle();

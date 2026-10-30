@@ -5,30 +5,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
-import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../MessageHeaderMetadata.dart';
-import '../bubble/BubbleSurface.dart';
 import '../../part/StructuredMessagePartRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
 import '../../part/ToolCallResultMergeRender.dart';
 import '../../../viewmodel/ChatViewModel.dart';
+import 'CursorMessageLayout.dart';
 
 class AiMessageComposable extends StatefulWidget {
   const AiMessageComposable({
     super.key,
     required this.message,
-    required this.useBubbleStyle,
     this.avatarImagePath,
     this.onIdentityTap,
     this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
-  final bool useBubbleStyle;
   final String? avatarImagePath;
   final VoidCallback? onIdentityTap;
   final MarkdownContentSplitter? splitMarkdownContent;
@@ -86,92 +83,31 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
   /// Builds either the live event renderer or the persisted part renderer.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
-    final colorScheme = theme.colorScheme;
+    final colorScheme = Theme.of(context).colorScheme;
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
     final nodeGrouper = ThinkToolsXmlNodeGrouper(
       showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
     );
-    final useCardStyle = widget.useBubbleStyle;
-    final aiBubbleColor =
-        _optionalColor(themePreferenceSnapshot.bubbleAiBubbleColor) ??
-        colorScheme.surfaceContainerHighest;
     final aiTextColor =
         _optionalColor(themePreferenceSnapshot.bubbleAiTextColor) ??
         colorScheme.onSurface;
-    final messageFontFamily = useCardStyle
-        ? operitMessageFontFamily(themePreferenceSnapshot, isUser: false)
-        : null;
-    final messageFontFamilyFallback = useCardStyle
-        ? operitMessageFontFamilyFallback(
-            themePreferenceSnapshot,
-            isUser: false,
-          )
-        : null;
-    final messageTheme = useCardStyle
-        ? theme.copyWith(
-            textTheme: theme.textTheme.apply(
-              fontFamily: messageFontFamily,
-              fontFamilyFallback: messageFontFamilyFallback,
-            ),
-          )
-        : theme;
-    final contentPadding = EdgeInsets.fromLTRB(
-      themePreferenceSnapshot.bubbleAiContentPaddingLeft,
-      12,
-      themePreferenceSnapshot.bubbleAiContentPaddingRight,
-      12,
-    );
-    final bubbleBorderRadius = BorderRadius.circular(
-      themePreferenceSnapshot.bubbleAiRoundedCornersEnabled ? 12 : 4,
-    );
-    final aiBubbleImagePath = themePreferenceSnapshot.bubbleAiImageUri;
-    final aiBubbleImageStyle =
-        useCardStyle &&
-            themePreferenceSnapshot.bubbleAiUseImage &&
-            aiBubbleImagePath != null &&
-            aiBubbleImagePath.isNotEmpty
-        ? BubbleImageStyle(
-            imagePath: aiBubbleImagePath,
-            cropLeftRatio: themePreferenceSnapshot.bubbleAiImageCropLeft,
-            cropTopRatio: themePreferenceSnapshot.bubbleAiImageCropTop,
-            cropRightRatio: themePreferenceSnapshot.bubbleAiImageCropRight,
-            cropBottomRatio: themePreferenceSnapshot.bubbleAiImageCropBottom,
-            repeatXStartRatio: themePreferenceSnapshot.bubbleAiImageRepeatStart,
-            repeatXEndRatio: themePreferenceSnapshot.bubbleAiImageRepeatEnd,
-            repeatYStartRatio:
-                themePreferenceSnapshot.bubbleAiImageRepeatYStart,
-            repeatYEndRatio: themePreferenceSnapshot.bubbleAiImageRepeatYEnd,
-            imageScale: themePreferenceSnapshot.bubbleAiImageScale,
-            renderMode: themePreferenceSnapshot.bubbleAiImageRenderMode,
-          )
-        : null;
     final renderIdentity = _messageRenderIdentity(widget.message);
-    final messageBody = Theme(
-      data: messageTheme,
-      child: DefaultTextStyle.merge(
-        style: TextStyle(
-          fontFamily: messageFontFamily,
-          fontFamilyFallback: messageFontFamilyFallback,
-        ),
-        child: KeyedSubtree(
-          key: ValueKey<String>(renderIdentity),
-          child: StreamingStructuredMessageRenderer(
-            parts: widget.message.parts,
-            contentStream: widget.message.contentStream,
-            textColor: aiTextColor,
-            backgroundColor: useCardStyle ? aiBubbleColor : colorScheme.surface,
-            nodeGrouper: nodeGrouper,
-            mergeRender: const ToolCallResultMergeRender(),
-            streamState: _rendererState,
-            rendererId: 'cursor-ai-$renderIdentity',
-            showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
-            splitMarkdownContent: widget.splitMarkdownContent,
-          ),
-        ),
+    final messageBody = KeyedSubtree(
+      key: ValueKey<String>(renderIdentity),
+      child: StreamingStructuredMessageRenderer(
+        parts: widget.message.parts,
+        contentStream: widget.message.contentStream,
+        textColor: aiTextColor,
+        backgroundColor: colorScheme.surface,
+        nodeGrouper: nodeGrouper,
+        mergeRender: const ToolCallResultMergeRender(),
+        streamState: _rendererState,
+        rendererId: 'cursor-ai-$renderIdentity',
+        showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
+        splitMarkdownContent: widget.splitMarkdownContent,
       ),
     );
 
@@ -202,71 +138,32 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
         },
         onPointerUp: (_) => _handlePointerEnd(),
         onPointerCancel: (_) => _handlePointerEnd(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
+        child: CursorMessageLayout(
+          verticalPadding: 2,
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              if (widget.useBubbleStyle &&
-                  themePreferenceSnapshot.bubbleShowAvatar) ...<Widget>[
-                _MessageAvatar(
-                  imagePath: widget.avatarImagePath,
-                  onTap: widget.onIdentityTap,
-                  backgroundColor: aiBubbleColor,
-                  square:
-                      themePreferenceSnapshot.avatarShape ==
-                      UserPreferencesManager.AVATAR_SHAPE_SQUARE,
-                  cornerRadius: themePreferenceSnapshot.avatarCornerRadius,
+              Padding(
+                padding: EdgeInsets.only(
+                  left:
+                      (themePreferenceSnapshot.bubbleAiContentPaddingLeft - 12)
+                          .clamp(0, double.infinity)
+                          .toDouble(),
+                  right:
+                      (themePreferenceSnapshot.bubbleAiContentPaddingRight - 12)
+                          .clamp(0, double.infinity)
+                          .toDouble(),
                 ),
-                const SizedBox(width: 8),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: useCardStyle
-                          ? BubbleSurface(
-                              color: aiBubbleColor,
-                              borderRadius: bubbleBorderRadius,
-                              imageStyle: aiBubbleImageStyle,
-                              transparentSurface: themePreferenceSnapshot
-                                  .transparentSurfaceEnabled,
-                              child: Padding(
-                                padding: contentPadding,
-                                child: messageBody,
-                              ),
-                            )
-                          : Padding(
-                              padding: EdgeInsets.only(
-                                left:
-                                    (themePreferenceSnapshot
-                                                .bubbleAiContentPaddingLeft -
-                                            12)
-                                        .clamp(0, double.infinity)
-                                        .toDouble(),
-                                right:
-                                    (themePreferenceSnapshot
-                                                .bubbleAiContentPaddingRight -
-                                            12)
-                                        .clamp(0, double.infinity)
-                                        .toDouble(),
-                              ),
-                              child: messageBody,
-                            ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                      child: _CursorAiMessageHeader(
-                        message: widget.message,
-                        onTap: widget.onIdentityTap,
-                        snapshot: themePreferenceSnapshot,
-                        l10n: l10n,
-                        externalActive: _isMessageHovered || _isMessageTouched,
-                      ),
-                    ),
-                  ],
+                child: messageBody,
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _CursorAiMessageHeader(
+                  message: widget.message,
+                  onTap: widget.onIdentityTap,
+                  snapshot: themePreferenceSnapshot,
+                  l10n: l10n,
+                  externalActive: _isMessageHovered || _isMessageTouched,
                 ),
               ),
             ],
@@ -284,44 +181,6 @@ String _messageRenderIdentity(ChatUiMessage message) {
 
 Color? _optionalColor(int? value) {
   return value == null ? null : Color(value);
-}
-
-class _MessageAvatar extends StatelessWidget {
-  /// Creates a cursor-style responder avatar from its saved display identity.
-  const _MessageAvatar({
-    required this.imagePath,
-    required this.backgroundColor,
-    required this.square,
-    required this.cornerRadius,
-    this.onTap,
-  });
-
-  final String? imagePath;
-  final Color backgroundColor;
-  final bool square;
-  final double cornerRadius;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8, top: 4),
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          shape: square ? BoxShape.rectangle : BoxShape.circle,
-          borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: GestureDetector(
-          onTap: onTap,
-          child: ChatAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
-        ),
-      ),
-    );
-  }
 }
 
 class _CursorAiMessageHeader extends StatelessWidget {

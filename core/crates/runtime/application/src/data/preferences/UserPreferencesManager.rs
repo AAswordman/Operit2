@@ -33,14 +33,25 @@ impl UserPreferencesManager {
     /// Opens the single versioned owner of global user and appearance preferences.
     pub(crate) fn store(storage: Arc<dyn RuntimeStorageHost>) -> PreferencesDataStore {
         PreferencesDataStore::newWithStorage(storage, OperitPaths::USER_PREFERENCES_PATH)
-            .withMigration(4, Self::migration)
+            .withMigration(5, Self::migration)
     }
 
-    fn migration(from: u32, context: &mut operit_store::Transaction::migration::Context) -> Result<(),PreferencesDataStoreError> {
+    /// Applies user preference migrations through the shared transaction context.
+    fn migration(
+        from: u32,
+        context: &mut operit_store::Transaction::migration::Context,
+    ) -> Result<(), PreferencesDataStoreError> {
         if from == 2 {
-            operit_store::Transaction::Rule::SplitRecords {key:"theme_configs".into(),prefix:THEME_CONFIG_PREFIX.into(),identity:"id".into()}
-                .apply(context).map_err(PreferencesDataStoreError::Message)
-        } else { context.map_preferences(from,&Self::migratePreferences) }
+            operit_store::Transaction::Rule::SplitRecords {
+                key: "theme_configs".into(),
+                prefix: THEME_CONFIG_PREFIX.into(),
+                identity: "id".into(),
+            }
+            .apply(context)
+            .map_err(PreferencesDataStoreError::Message)
+        } else {
+            context.map_preferences(from, &Self::migratePreferences)
+        }
     }
 
     /// Applies each versioned migration owned by the user preferences file.
@@ -73,7 +84,8 @@ impl UserPreferencesManager {
                 }
                 Ok(())
             }
-            2 => operit_store::Transaction::migration::Definition::new(Self::migration).state(2,preferences),
+            2 => operit_store::Transaction::migration::Definition::new(Self::migration)
+                .state(2, preferences),
             3 => {
                 migrateLegacyThemePreferences(preferences)?;
                 let records = preferences
@@ -84,6 +96,37 @@ impl UserPreferencesManager {
                 for (key, value) in records {
                     let mut config: ThemeConfig = serde_json::from_value(value)?;
                     migrateLegacyThemeSnapshot(&mut config.snapshot)?;
+                    validateConfig(&config)?;
+                    preferences.set(&stringPreferencesKey(&key), serde_json::to_value(config)?);
+                }
+                Ok(())
+            }
+            4 => {
+                if let Some(style) =
+                    preferences.getTyped::<String>(&stringPreferencesKey("chat_style"))?
+                {
+                    for name in ["user_chat_style", "ai_chat_style"] {
+                        let key = stringPreferencesKey(name);
+                        if !preferences.contains(&key) {
+                            preferences.set(&key, style.clone());
+                        }
+                    }
+                }
+                let records = preferences
+                    .iterEntries()
+                    .filter(|(key, _)| key.starts_with(THEME_CONFIG_PREFIX))
+                    .map(|(key, value)| (key.to_string(), value.clone()))
+                    .collect::<Vec<_>>();
+                for (key, value) in records {
+                    let mut config: ThemeConfig = serde_json::from_value(value)?;
+                    if let Some(style) = config.snapshot.get("chatStyle").cloned() {
+                        for name in ["userChatStyle", "aiChatStyle"] {
+                            config
+                                .snapshot
+                                .entry(name.to_string())
+                                .or_insert_with(|| style.clone());
+                        }
+                    }
                     validateConfig(&config)?;
                     preferences.set(&stringPreferencesKey(&key), serde_json::to_value(config)?);
                 }

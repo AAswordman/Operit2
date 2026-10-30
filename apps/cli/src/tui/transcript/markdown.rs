@@ -921,15 +921,33 @@ fn render_code_block(content: &str, lines: &mut Vec<Line<'static>>) {
             .fg(theme::TEXT_SUBTLE)
             .add_modifier(Modifier::BOLD),
     )));
+    let is_diff = language.eq_ignore_ascii_case("diff");
     for raw in iter {
         if raw.trim_start().starts_with("```") {
             continue;
         }
+        let style = if is_diff {
+            if raw.starts_with('+') && !raw.starts_with("+++") {
+                Style::default()
+                    .fg(theme::DIFF_ADD_FG)
+                    .bg(theme::DIFF_ADD_BG)
+            } else if raw.starts_with('-') && !raw.starts_with("---") {
+                Style::default()
+                    .fg(theme::DIFF_DELETE_FG)
+                    .bg(theme::DIFF_DELETE_BG)
+            } else if raw.starts_with("@@") {
+                Style::default()
+                    .fg(theme::DIFF_HUNK_FG)
+                    .add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(theme::TEXT).bg(theme::ACCENT_BG)
+            }
+        } else {
+            Style::default().fg(theme::ACCENT_STRONG).bg(theme::ACCENT_BG)
+        };
         lines.push(Line::from(Span::styled(
             format!("  {raw}"),
-            Style::default()
-                .fg(theme::ACCENT_STRONG)
-                .bg(theme::ACCENT_BG),
+            style,
         )));
     }
     lines.push(Line::from(Span::styled(
@@ -1012,6 +1030,12 @@ fn render_xml_block(
     text: TuiText,
 ) {
     let raw_tag = ChatMarkupRegex::extract_opening_tag_name(content);
+    if raw_tag.as_deref() == Some("file-diff") {
+        for file in super::diff::parse_file_diffs_from_text(content) {
+            lines.extend(super::diff::render_inline_diff_card(&file, 25));
+        }
+        return;
+    }
     let tag = ChatMarkupRegex::normalize_tool_like_tag_name(raw_tag.as_deref());
     match tag.as_deref() {
         Some("tool") => render_tool_xml(content, false, content_width, lines),
@@ -1330,7 +1354,13 @@ pub(super) fn render_tool_result_part(
             Style::default().fg(theme::TOOL_RESULT),
         ));
     }
-    vec![Line::from(header)]
+    let mut result_lines = vec![Line::from(header)];
+    if content.contains("<file-diff") {
+        for file in super::diff::parse_file_diffs_from_text(content) {
+            result_lines.extend(super::diff::render_inline_diff_card(&file, 25));
+        }
+    }
+    result_lines
 }
 
 fn render_tool_param_summary(params: &[(String, String)], body: &str) -> String {

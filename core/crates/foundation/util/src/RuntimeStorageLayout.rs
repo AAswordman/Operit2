@@ -313,6 +313,12 @@ pub const RUNTIME_CLEAN_ON_EXIT: RuntimeStoragePathDefinition = RuntimeStoragePa
     RuntimeStorageOwnership::Ephemeral,
 );
 pub const RUNTIME_CLEAN_ON_EXIT_DIR_PATH: &str = RUNTIME_CLEAN_ON_EXIT.path;
+/// Owns persistent attachments grouped by chat and attachment identity.
+pub const RUNTIME_CHAT_ATTACHMENTS: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::tree("runtime/data/chat_attachments", RuntimeStorageOwnership::CoreNode);
+pub const RUNTIME_CHAT_ATTACHMENTS_DIR_PATH: &str = RUNTIME_CHAT_ATTACHMENTS.path;
+pub const RUNTIME_CHAT_ATTACHMENT_UPLOADS_DIR_PATH: &str =
+    "runtime/temp/clean_on_exit/chat_attachment_uploads";
 pub const RUNTIME_SYNC: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree("runtime/sync", RuntimeStorageOwnership::CoreNode);
 pub const RUNTIME_SYNC_DIR_PATH: &str = RUNTIME_SYNC.path;
@@ -505,6 +511,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     EXTENSIONS_PLUGIN_CONFIGS,
     EXTENSIONS_PLUGIN_DATA,
     RUNTIME_CLEAN_ON_EXIT,
+    RUNTIME_CHAT_ATTACHMENTS,
     RUNTIME_SYNC,
     RUNTIME_IMPORTED_OPERIT1_FILES,
     RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES,
@@ -581,6 +588,14 @@ mod tests {
 
     #[test]
     fn resolves_registered_runtime_storage_ownership() {
+        assert_eq!(
+            runtimeStorageOwnership("runtime/data/chat_attachments/chat-a/attachment-a/report.pdf").unwrap(),
+            RuntimeStorageOwnership::CoreNode
+        );
+        assert_eq!(
+            runtimeStorageOwnership("runtime/temp/clean_on_exit/chat_attachment_uploads/upload-a/report.pdf").unwrap(),
+            RuntimeStorageOwnership::Ephemeral
+        );
         assert_eq!(
             runtimeStorageOwnership(RUNTIME_WEBSESSION_BROWSER_BOOKMARKS_PATH).unwrap(),
             RuntimeStorageOwnership::Space
