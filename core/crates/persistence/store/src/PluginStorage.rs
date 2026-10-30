@@ -1508,6 +1508,18 @@ pub fn syncSnapshot(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str) ->
     withSyncDataset(host, path, node, |dataset| dataset.snapshot())
 }
 
+/// Compares synchronized plugin records independently of local materialization bookkeeping.
+pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
+    snapshot.projected_content_digest(|table, value| match table {
+        // Derived reference/name projection may allocate a device-local CAS token.
+        "_operit_values" => crate::Transaction::project_sql_table(value, &["version"], None).map(Some),
+        // A receipt's self mapping and the origin recording an equivalent alias do not change its meaning.
+        // Real aliases remain in the comparison so an identity disagreement still requires correction.
+        "_operit_merge_map" => crate::Transaction::project_sql_table(value, &["origin"], Some(("remote_key", "canonical_key"))).map(Some),
+        _ => Ok(None),
+    })
+}
+
 pub fn repairSyncedSnapshot(host: Arc<dyn RuntimeSqliteHost>, expected: &str, source: &crate::Transaction::Snapshot, node: &str) -> Result<bool, String> {
     withSyncDataset(host, &source.data.owner.path, node, |dataset| dataset.repair(expected, source))
 }

@@ -52,6 +52,8 @@ pub struct Participant<'a> {
     pub apply: Box<dyn Fn(&[SyncOperation], &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> + 'a>,
     pub project: Option<Box<dyn Fn(&BTreeMap<String,String>) -> Result<(),String> + 'a>>,
     pub snapshot: Option<Box<dyn Fn() -> Result<Snapshot, String> + 'a>>,
+    /// Owner-defined business equality; snapshot tokens and transfer contents remain complete.
+    pub content_digest: fn(&Snapshot) -> Result<String, String>,
     pub baseline: Option<Box<dyn Fn() -> Result<String, String> + 'a>>,
     pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>) -> Result<bool, String> + 'a>>,
 }
@@ -222,7 +224,11 @@ impl<'a> Registry<'a> {
         let (snapshots, pending, mut errors) = self.snapshots()?;
         let mut manifests = Vec::new();
         for snapshot in snapshots {
-            match snapshot.manifest() {
+            let manifest = self.owners.get(&snapshot.data.owner.path)
+                .ok_or_else(|| "Unknown transaction owner".to_string())
+                .and_then(|owner| (owner.content_digest)(&snapshot))
+                .and_then(|digest| snapshot.manifest_with_digest(digest));
+            match manifest {
                 Ok(manifest) => manifests.push(manifest),
                 Err(error) => errors.push(format!("{}: {error}", snapshot.data.owner.path)),
             }

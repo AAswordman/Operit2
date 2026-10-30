@@ -794,7 +794,7 @@ extension ChatMessagePresentation on core_proxy.ChatMessage {
   String get editableText {
     return switch (sender) {
       'ai' => assistantProtocolMarkup,
-      'user' => displayText,
+      'user' || 'summary' => displayText,
       _ => throw StateError('Message sender cannot be edited: $sender'),
     };
   }

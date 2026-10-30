@@ -12,11 +12,7 @@ import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import 'MessageHeaderMetadata.dart';
 
-enum _SummaryDisplayPhase {
-  running,
-  streaming,
-  settled,
-}
+enum _SummaryDisplayPhase { running, streaming, settled }
 
 /// Renders a summary with seamless water-bottle inline expansion and streaming lifecycle.
 class SummaryMessageComposable extends StatefulWidget {
@@ -61,17 +57,19 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     super.initState();
     _expandController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 320),
+      duration: const Duration(milliseconds: 200),
+      reverseDuration: const Duration(milliseconds: 160),
     );
     _expandAnimation = CurvedAnimation(
       parent: _expandController,
       curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
+      reverseCurve: const Cubic(0.33, 0, 0.67, 0),
     );
 
     final isTextEmpty = widget.message.displayText.trim().isEmpty;
     final isFreshMessage =
-        (DateTime.now().millisecondsSinceEpoch - widget.message.timestamp).abs() <
+        (DateTime.now().millisecondsSinceEpoch - widget.message.timestamp)
+                .abs() <
             20000 &&
         !_animatedSummaryTimestamps.contains(widget.message.timestamp);
 
@@ -252,13 +250,17 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     }
   }
 
-  String _formatSettledCapsuleTitle(BuildContext context, AppLocalizations l10n) {
+  String _formatSettledCapsuleTitle(
+    BuildContext context,
+    AppLocalizations l10n,
+  ) {
     final hasTiming = widget.message.waitDurationMs > 0 || _elapsedSeconds > 0;
     final durationSeconds = widget.message.waitDurationMs > 0
         ? (widget.message.waitDurationMs / 1000).round()
         : _elapsedSeconds;
 
-    final hasTokens = widget.message.inputTokens > 0 || widget.message.outputTokens > 0;
+    final hasTokens =
+        widget.message.inputTokens > 0 || widget.message.outputTokens > 0;
     final inputStr = formatCompactTokenCount(widget.message.inputTokens);
     final outputStr = formatCompactTokenCount(widget.message.outputTokens);
 
@@ -331,123 +333,17 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
 
     return AnimatedBuilder(
       animation: _expandAnimation,
-      builder: (context, _) {
-        final expandValue = _expandAnimation.value;
-        if (expandValue == 0.0) {
-          return _buildCollapsedDivider(context, theme, l10n, bottleColors);
-        }
-        return _buildWaterBottleCard(context, theme, l10n, bottleColors, expandValue);
-      },
-    );
-  }
-
-  /// Builds the compact collapsed divider with interactive status capsule.
-  Widget _buildCollapsedDivider(
-    BuildContext context,
-    ThemeData theme,
-    AppLocalizations l10n,
-    _BottleColorScheme bottleColors,
-  ) {
-    final colorScheme = theme.colorScheme;
-    final isRunning = _phase == _SummaryDisplayPhase.running;
-
-    final String capsuleTitle;
-    if (isRunning) {
-      capsuleTitle = '${l10n.historyDialogSummary} · 已运行 ${_elapsedSeconds}秒';
-    } else {
-      capsuleTitle = _formatSettledCapsuleTitle(context, l10n);
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Divider(
-              color: bottleColors.dividerLine,
-              thickness: 0.8,
-              height: 1,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: isRunning ? null : _handleManualToggle,
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isRunning
-                        ? colorScheme.primaryContainer.withValues(alpha: 0.25)
-                        : (bottleColors.isDarkSurface
-                            ? bottleColors.cardBackground
-                            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.55)),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: isRunning
-                          ? colorScheme.primary.withValues(alpha: 0.6)
-                          : bottleColors.cardBorder,
-                      width: 0.8,
-                    ),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 3.5,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (isRunning) ...<Widget>[
-                        Container(
-                          width: 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: colorScheme.primary,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                      ],
-                      Text(
-                        capsuleTitle,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: isRunning
-                              ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                      if (!isRunning) ...<Widget>[
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.keyboard_arrow_down,
-                          size: 14,
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.75,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: Divider(
-              color: bottleColors.dividerLine,
-              thickness: 0.8,
-              height: 1,
-            ),
-          ),
-        ],
+      builder: (context, _) => _buildWaterBottleCard(
+        context,
+        theme,
+        l10n,
+        bottleColors,
+        _expandAnimation.value,
       ),
     );
   }
 
-  /// Builds the continuous water-bottle card with smooth height unrolling.
+  /// Morphs one opaque vessel between the status capsule and the full card.
   Widget _buildWaterBottleCard(
     BuildContext context,
     ThemeData theme,
@@ -456,217 +352,317 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     double expandValue,
   ) {
     final colorScheme = theme.colorScheme;
-    final baseTextStyle = theme.textTheme.bodyMedium ?? const TextStyle();
+    final isRunning = _phase == _SummaryDisplayPhase.running;
+    final capsuleTitle = isRunning
+        ? '${l10n.historyDialogSummary} · 已运行 $_elapsedSeconds秒'
+        : _formatSettledCapsuleTitle(context, l10n);
+    final details = capsuleTitle.substring(l10n.historyDialogSummary.length);
+    final collapsedBackground = isRunning
+        ? Color.alphaBlend(
+            colorScheme.primaryContainer.withValues(alpha: 0.25),
+            theme.scaffoldBackgroundColor,
+          )
+        : bottleColors.isDarkSurface
+        ? bottleColors.cardBackground
+        : Color.alphaBlend(
+            colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+            theme.scaffoldBackgroundColor,
+          );
+    final titleStyle = (theme.textTheme.labelSmall ?? const TextStyle())
+        .copyWith(
+          color: isRunning ? colorScheme.primary : colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.2,
+        );
+    final titlePainter = TextPainter(
+      text: TextSpan(text: capsuleTitle, style: titleStyle),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final capsuleWidth = titlePainter.width + 20 + (isRunning ? 10 : 18);
+    final capsuleHeight = math.max(titlePainter.height, 14.0) + 7;
+    titlePainter.text = TextSpan(
+      text: l10n.historyDialogSummary,
+      style: titleStyle,
+    );
+    titlePainter.layout();
+    final expandedNeckWidth = math.max(120.0, titlePainter.width + 38);
+    titlePainter.dispose();
 
-    const neckWidth = 120.0;
-    const neckHeight = 28.0;
-    const neckRadius = 12.0;
-    const shoulderRadius = 10.0;
-    const bodyRadius = 10.0;
+    double morph(double collapsed, double expanded) =>
+        collapsed + (expanded - collapsed) * expandValue;
 
+    final headerHeight = morph(capsuleHeight, 28);
+    final neckHeight = morph(capsuleHeight / 2, 28);
+    final neckRadius = morph(capsuleHeight / 2, 12);
+    final shoulderRadius = 10 * expandValue;
+    final bodyRadius = morph(capsuleHeight / 2, 10);
+    final bodyTopRadius = 10 * expandValue;
     const maxContentHeight = 340.0;
-    final activeBodyHeight = maxContentHeight * expandValue;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: <Widget>[
-          // Horizontal divider line meeting shoulders at y = neckHeight
-          Positioned(
-            left: 0,
-            right: 0,
-            top: neckHeight,
-            child: Divider(
-              color: bottleColors.dividerLine,
-              thickness: 0.8,
-              height: 1,
-            ),
-          ),
-
-          // Water Bottle Integrated Vessel
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: CustomPaint(
-              painter: _BottleCardPainter(
-                backgroundColor: bottleColors.cardBackground,
-                borderColor: bottleColors.cardBorder,
-                shadowColor: bottleColors.shadowColor,
-                elevation: bottleColors.elevation * expandValue,
-                neckWidth: neckWidth,
-                neckHeight: neckHeight,
-                neckRadius: neckRadius,
-                shoulderRadius: shoulderRadius,
-                bodyRadius: bodyRadius,
-              ),
-              child: ClipPath(
-                clipper: _BottleCardClipper(
-                  neckWidth: neckWidth,
-                  neckHeight: neckHeight,
-                  neckRadius: neckRadius,
-                  shoulderRadius: shoulderRadius,
-                  bodyRadius: bodyRadius,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final maxWidth = math.max(0.0, constraints.maxWidth - 20);
+          final collapsedWidth = math.min(capsuleWidth, maxWidth);
+          final vesselWidth = morph(collapsedWidth, maxWidth);
+          final neckWidth = morph(
+            collapsedWidth,
+            math.min(expandedNeckWidth, maxWidth),
+          );
+          // Positioned dividers cannot size a Stack. Reserve the full row
+          // even when the vessel itself contracts under loose chat constraints.
+          return SizedBox(
+            width: constraints.maxWidth,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: neckHeight,
+                  child: Divider(
+                    color: bottleColors.dividerLine,
+                    thickness: 0.8,
+                    height: 1,
+                  ),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    // 1. Bottle Neck (瓶口): Centered interactive capsule
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: _handleManualToggle,
-                        child: SizedBox(
-                          height: neckHeight,
-                          child: Center(
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                Text(
-                                  l10n.historyDialogSummary,
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: colorScheme.onSurface,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.2,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Icon(
-                                  Icons.keyboard_arrow_up,
-                                  size: 14,
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
+                SizedBox(
+                  key: const ValueKey('summary-vessel'),
+                  width: vesselWidth,
+                  child: CustomPaint(
+                    painter: _BottleCardPainter(
+                      backgroundColor: Color.lerp(
+                        collapsedBackground,
+                        bottleColors.cardBackground,
+                        expandValue,
+                      )!,
+                      borderColor: isRunning
+                          ? colorScheme.primary
+                          : bottleColors.cardBorder,
+                      shadowColor: bottleColors.shadowColor,
+                      elevation: bottleColors.elevation * expandValue,
+                      neckWidth: neckWidth,
+                      neckHeight: neckHeight,
+                      neckRadius: neckRadius,
+                      shoulderRadius: shoulderRadius,
+                      bodyRadius: bodyRadius,
+                      bodyTopRadius: bodyTopRadius,
                     ),
-
-                    // 2. Bottle Body (瓶身): Smoothly scaled content container
-                    SizedBox(
-                      height: activeBodyHeight,
-                      child: ClipRect(
-                        child: OverflowBox(
-                          alignment: Alignment.topCenter,
-                          minHeight: maxContentHeight,
-                          maxHeight: maxContentHeight,
-                          child: SizedBox(
-                            height: maxContentHeight,
-                            child: Opacity(
-                              opacity: expandValue.clamp(0.0, 1.0),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: <Widget>[
-                                  // Header Toolbar: "上下文检查点" on left, 4 standard tools on right
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4.5,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.surfaceContainerHighest.withValues(
-                                        alpha: bottleColors.isDarkSurface ? 0.45 : 0.22,
-                                      ),
-                                      border: Border(
-                                        bottom: BorderSide(
-                                          color: bottleColors.cardBorder.withValues(
-                                            alpha: bottleColors.isDarkSurface ? 0.45 : 0.20,
-                                          ),
-                                          width: 0.8,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: <Widget>[
-                                        Text(
-                                          Localizations.localeOf(context).languageCode == 'zh'
-                                              ? '上下文检查点'
-                                              : 'Context checkpoint',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: colorScheme.onSurfaceVariant.withValues(
-                                              alpha: bottleColors.isDarkSurface ? 0.88 : 0.70,
-                                            ),
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                        const Spacer(),
-                                        MessagePressShieldRegion(
-                                          child: _SummaryActionButton(
-                                            icon: _copied
-                                                ? Icons.check_rounded
-                                                : Icons.content_copy_rounded,
-                                            iconColor: _copied
-                                                ? colorScheme.primary
-                                                : colorScheme.onSurfaceVariant,
-                                            tooltip: _copied
-                                                ? (Localizations.localeOf(context).languageCode == 'zh'
-                                                    ? '已复制'
-                                                    : 'Copied')
-                                                : MaterialLocalizations.of(context).copyButtonLabel,
-                                            onPressed: _handleCopy,
-                                          ),
-                                        ),
-                                        if (widget.onEdit != null) ...<Widget>[
-                                          const SizedBox(width: 4),
-                                          MessagePressShieldRegion(
-                                            child: _SummaryActionButton(
-                                              icon: Icons.edit_outlined,
-                                              tooltip: l10n.edit,
-                                              onPressed: () => widget.onEdit!(widget.message),
-                                            ),
-                                          ),
-                                        ],
-                                        if (widget.onDelete != null) ...<Widget>[
-                                          const SizedBox(width: 4),
-                                          MessagePressShieldRegion(
-                                            child: _SummaryActionButton(
-                                              icon: Icons.delete_outline,
-                                              iconColor: colorScheme.error.withValues(
-                                                alpha: 0.85,
+                    child: ClipPath(
+                      clipper: _BottleCardClipper(
+                        neckWidth: neckWidth,
+                        neckHeight: neckHeight,
+                        neckRadius: neckRadius,
+                        shoulderRadius: shoulderRadius,
+                        bodyRadius: bodyRadius,
+                        bodyTopRadius: bodyTopRadius,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          Center(
+                            child: SizedBox(
+                              width: neckWidth,
+                              height: headerHeight,
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  key: const ValueKey('summary-toggle'),
+                                  onTap: isRunning ? null : _handleManualToggle,
+                                  child: ClipRect(
+                                    child: OverflowBox(
+                                      minWidth: 0,
+                                      maxWidth: double.infinity,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          if (isRunning) ...<Widget>[
+                                            Container(
+                                              width: 5,
+                                              height: 5,
+                                              decoration: BoxDecoration(
+                                                color: colorScheme.primary,
+                                                shape: BoxShape.circle,
                                               ),
-                                              tooltip: l10n.delete,
-                                              onPressed: () => _showDeleteConfirmation(context, l10n),
+                                            ),
+                                            const SizedBox(width: 5),
+                                          ],
+                                          Text(
+                                            l10n.historyDialogSummary,
+                                            style: titleStyle,
+                                          ),
+                                          ClipRect(
+                                            child: Align(
+                                              widthFactor: 1 - expandValue,
+                                              child: Text(
+                                                details,
+                                                style: titleStyle,
+                                              ),
                                             ),
                                           ),
+                                          if (!isRunning) ...<Widget>[
+                                            const SizedBox(width: 4),
+                                            Transform.rotate(
+                                              angle: math.pi * expandValue,
+                                              child: Icon(
+                                                Icons.keyboard_arrow_down,
+                                                size: 14,
+                                                color: colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ],
                                         ],
-                                        const SizedBox(width: 4),
-                                        MessagePressShieldRegion(
-                                          child: _SummaryActionButton(
-                                            icon: Icons.keyboard_arrow_up,
-                                            tooltip: MaterialLocalizations.of(context).closeButtonLabel,
-                                            onPressed: _handleUserCollapse,
-                                          ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
                                   ),
-
-                                  // Body Content: Streaming or Markdown
-                                  Expanded(
-                                    child: _buildCardBody(
-                                      context,
-                                      theme,
-                                      baseTextStyle,
-                                      colorScheme,
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          SizedBox(
+                            height: maxContentHeight * expandValue,
+                            child: ClipRect(
+                              child: OverflowBox(
+                                alignment: Alignment.topCenter,
+                                minWidth: maxWidth,
+                                maxWidth: maxWidth,
+                                minHeight: maxContentHeight,
+                                maxHeight: maxContentHeight,
+                                child: expandValue == 0
+                                    ? const SizedBox.shrink()
+                                    : IgnorePointer(
+                                        ignoring: _expandController.isAnimating,
+                                        child: SizedBox(
+                                          height: maxContentHeight,
+                                          child: _buildExpandedContent(
+                                            context,
+                                            theme,
+                                            l10n,
+                                            bottleColors,
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildExpandedContent(
+    BuildContext context,
+    ThemeData theme,
+    AppLocalizations l10n,
+    _BottleColorScheme bottleColors,
+  ) {
+    final colorScheme = theme.colorScheme;
+    final baseTextStyle = theme.textTheme.bodyMedium ?? const TextStyle();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        // Header Toolbar: "上下文检查点" on left, 4 standard tools on right
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4.5),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(
+              alpha: bottleColors.isDarkSurface ? 0.45 : 0.22,
+            ),
+            border: Border(
+              bottom: BorderSide(
+                color: bottleColors.cardBorder.withValues(
+                  alpha: bottleColors.isDarkSurface ? 0.45 : 0.20,
+                ),
+                width: 0.8,
               ),
             ),
           ),
-        ],
-      ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  Localizations.localeOf(context).languageCode == 'zh'
+                      ? '上下文检查点'
+                      : 'Context checkpoint',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colorScheme.onSurfaceVariant.withValues(
+                      alpha: bottleColors.isDarkSurface ? 0.88 : 0.70,
+                    ),
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              MessagePressShieldRegion(
+                child: _SummaryActionButton(
+                  icon: _copied
+                      ? Icons.check_rounded
+                      : Icons.content_copy_rounded,
+                  iconColor: _copied
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  tooltip: _copied
+                      ? (Localizations.localeOf(context).languageCode == 'zh'
+                            ? '已复制'
+                            : 'Copied')
+                      : MaterialLocalizations.of(context).copyButtonLabel,
+                  onPressed: _handleCopy,
+                ),
+              ),
+              if (widget.onEdit != null) ...<Widget>[
+                const SizedBox(width: 4),
+                MessagePressShieldRegion(
+                  child: _SummaryActionButton(
+                    icon: Icons.edit_outlined,
+                    tooltip: l10n.edit,
+                    onPressed: () => widget.onEdit!(widget.message),
+                  ),
+                ),
+              ],
+              if (widget.onDelete != null) ...<Widget>[
+                const SizedBox(width: 4),
+                MessagePressShieldRegion(
+                  child: _SummaryActionButton(
+                    icon: Icons.delete_outline,
+                    iconColor: colorScheme.error.withValues(alpha: 0.85),
+                    tooltip: l10n.delete,
+                    onPressed: () => _showDeleteConfirmation(context, l10n),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 4),
+              MessagePressShieldRegion(
+                child: _SummaryActionButton(
+                  icon: Icons.keyboard_arrow_up,
+                  tooltip: MaterialLocalizations.of(context).closeButtonLabel,
+                  onPressed: _handleUserCollapse,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Body Content: Streaming or Markdown
+        Expanded(
+          child: _buildCardBody(context, theme, baseTextStyle, colorScheme),
+        ),
+      ],
     );
   }
 
@@ -715,10 +711,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
       thumbVisibility: true,
       child: SingleChildScrollView(
         controller: _scrollController,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 10,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: widget.splitMarkdownContent != null
             ? Theme(
                 data: theme.copyWith(
@@ -747,11 +740,8 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
                       fontSize: 12.5,
                       height: 1.5,
                     ),
-                    bodySmall:
-                        (theme.textTheme.bodySmall ?? baseTextStyle).copyWith(
-                      fontSize: 11.5,
-                      height: 1.4,
-                    ),
+                    bodySmall: (theme.textTheme.bodySmall ?? baseTextStyle)
+                        .copyWith(fontSize: 11.5, height: 1.4),
                   ),
                 ),
                 child: StreamMarkdownRenderer(
@@ -845,15 +835,24 @@ Path _buildBottlePath({
   required double neckRadius,
   required double shoulderRadius,
   required double bodyRadius,
+  required double bodyTopRadius,
 }) {
   final path = Path();
   final neckLeft = (size.width - neckWidth) / 2;
   final neckRight = (size.width + neckWidth) / 2;
 
   final effectiveNeckR = math.min(neckRadius, neckWidth / 2);
-  final effectiveShoulderR = math.min(shoulderRadius, math.min(neckLeft, neckHeight));
+  final effectiveShoulderR = math.min(
+    shoulderRadius,
+    math.min(neckLeft, neckHeight),
+  );
   final effectiveBodyR = math.min(
     bodyRadius,
+    math.min(size.width / 2, math.max(0.0, size.height - neckHeight)),
+  );
+
+  final effectiveBodyTopR = math.min(
+    bodyTopRadius,
     math.min(size.width / 2, math.max(0.0, (size.height - neckHeight) / 2)),
   );
 
@@ -879,12 +878,12 @@ Path _buildBottlePath({
   );
 
   // 5. Right shoulder horizontal
-  path.lineTo(size.width - effectiveBodyR, neckHeight);
+  path.lineTo(size.width - effectiveBodyTopR, neckHeight);
 
   // 6. Body top-right corner
   path.arcToPoint(
-    Offset(size.width, neckHeight + effectiveBodyR),
-    radius: Radius.circular(effectiveBodyR),
+    Offset(size.width, neckHeight + effectiveBodyTopR),
+    radius: Radius.circular(effectiveBodyTopR),
     clockwise: true,
   );
 
@@ -909,12 +908,12 @@ Path _buildBottlePath({
   );
 
   // 11. Body left edge up
-  path.lineTo(0, neckHeight + effectiveBodyR);
+  path.lineTo(0, neckHeight + effectiveBodyTopR);
 
   // 12. Body top-left corner
   path.arcToPoint(
-    Offset(effectiveBodyR, neckHeight),
-    radius: Radius.circular(effectiveBodyR),
+    Offset(effectiveBodyTopR, neckHeight),
+    radius: Radius.circular(effectiveBodyTopR),
     clockwise: true,
   );
 
@@ -971,6 +970,7 @@ class _BottleCardPainter extends CustomPainter {
     required this.neckRadius,
     required this.shoulderRadius,
     required this.bodyRadius,
+    required this.bodyTopRadius,
   });
 
   final Color backgroundColor;
@@ -982,6 +982,7 @@ class _BottleCardPainter extends CustomPainter {
   final double neckRadius;
   final double shoulderRadius;
   final double bodyRadius;
+  final double bodyTopRadius;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -992,6 +993,7 @@ class _BottleCardPainter extends CustomPainter {
       neckRadius: neckRadius,
       shoulderRadius: shoulderRadius,
       bodyRadius: bodyRadius,
+      bodyTopRadius: bodyTopRadius,
     );
 
     if (elevation > 0) {
@@ -1020,7 +1022,8 @@ class _BottleCardPainter extends CustomPainter {
         oldDelegate.neckHeight != neckHeight ||
         oldDelegate.neckRadius != neckRadius ||
         oldDelegate.shoulderRadius != shoulderRadius ||
-        oldDelegate.bodyRadius != bodyRadius;
+        oldDelegate.bodyRadius != bodyRadius ||
+        oldDelegate.bodyTopRadius != bodyTopRadius;
   }
 }
 
@@ -1031,6 +1034,7 @@ class _BottleCardClipper extends CustomClipper<Path> {
     required this.neckRadius,
     required this.shoulderRadius,
     required this.bodyRadius,
+    required this.bodyTopRadius,
   });
 
   final double neckWidth;
@@ -1038,6 +1042,7 @@ class _BottleCardClipper extends CustomClipper<Path> {
   final double neckRadius;
   final double shoulderRadius;
   final double bodyRadius;
+  final double bodyTopRadius;
 
   @override
   Path getClip(Size size) {
@@ -1048,6 +1053,7 @@ class _BottleCardClipper extends CustomClipper<Path> {
       neckRadius: neckRadius,
       shoulderRadius: shoulderRadius,
       bodyRadius: bodyRadius,
+      bodyTopRadius: bodyTopRadius,
     );
   }
 
@@ -1057,6 +1063,7 @@ class _BottleCardClipper extends CustomClipper<Path> {
         oldClipper.neckHeight != neckHeight ||
         oldClipper.neckRadius != neckRadius ||
         oldClipper.shoulderRadius != shoulderRadius ||
-        oldClipper.bodyRadius != bodyRadius;
+        oldClipper.bodyRadius != bodyRadius ||
+        oldClipper.bodyTopRadius != bodyTopRadius;
   }
 }

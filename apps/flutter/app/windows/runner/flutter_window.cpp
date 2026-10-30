@@ -1,6 +1,9 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <dwmapi.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
 
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 #include <file_selector_windows/file_selector_windows.h>
@@ -10,6 +13,67 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "operit_runtime_channel.h"
 #include "system_audio_input_channel.h"
+
+namespace {
+
+/// Keeps the system caption controls while joining its color to the sidebar.
+void RegisterWindowChromeChannel(flutter::FlutterEngine* engine, HWND view) {
+  using flutter::EncodableMap;
+  using flutter::EncodableValue;
+  auto channel = std::make_shared<flutter::MethodChannel<EncodableValue>>(
+      engine->messenger(), "operit/window_chrome",
+      &flutter::StandardMethodCodec::GetInstance());
+  channel->SetMethodCallHandler(
+      [view](const auto& call, auto result) {
+        if (call.method_name() != "configure") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* arguments = call.arguments()
+            ? std::get_if<EncodableMap>(call.arguments()) : nullptr;
+        if (!arguments) {
+          result->Error("invalid_arguments", "Window appearance is required");
+          return;
+        }
+        const auto dark_entry = arguments->find(EncodableValue("dark"));
+        const auto background = arguments->find(EncodableValue("backgroundColor"));
+        const auto foreground = arguments->find(EncodableValue("foregroundColor"));
+        if (dark_entry == arguments->end() || background == arguments->end() ||
+            foreground == arguments->end() ||
+            !std::holds_alternative<bool>(dark_entry->second)) {
+          result->Error("invalid_arguments", "Window appearance is incomplete");
+          return;
+        }
+        const auto to_color = [](const EncodableValue& value) -> COLORREF {
+          const auto* wide = std::get_if<int64_t>(&value);
+          const auto* narrow = std::get_if<int32_t>(&value);
+          const auto argb = static_cast<uint32_t>(wide ? *wide : narrow ? *narrow : 0);
+          return RGB((argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff);
+        };
+        const HWND window = GetAncestor(view, GA_ROOT);
+        if (!IsWindow(window)) {
+          result->Error("window_unavailable", "Window is unavailable");
+          return;
+        }
+        const BOOL dark = std::get<bool>(dark_entry->second);
+        const COLORREF caption_color = to_color(background->second);
+        const COLORREF text_color = to_color(foreground->second);
+        DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                              &dark, sizeof(dark));
+        // Windows 11 caption/text colors. Older Windows still uses the native
+        // light/dark caption selected above; its resizing and Snap stay native.
+        DwmSetWindowAttribute(window, static_cast<DWMWINDOWATTRIBUTE>(35),
+                              &caption_color, sizeof(caption_color));
+        DwmSetWindowAttribute(window, static_cast<DWMWINDOWATTRIBUTE>(36),
+                              &text_color, sizeof(text_color));
+        result->Success(EncodableValue(0.0));
+      });
+  RegisterOperitEngineChannelShutdown(engine, [channel]() {
+    channel->SetMethodCallHandler(nullptr);
+  });
+}
+
+}  // namespace
 
 /// Creates a window that owns one Flutter view controller.
 FlutterWindow::FlutterWindow(const flutter::DartProject& project, bool data_rescue)
@@ -44,6 +108,7 @@ bool FlutterWindow::OnCreate() {
   if (!data_rescue_) {
     RegisterOperitCrashChannel(flutter_controller_->engine());
     RegisterSystemAudioInputChannel(flutter_controller_->engine());
+    RegisterWindowChromeChannel(flutter_controller_->engine(), GetHandle());
     DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* flutter_view_controller =
         reinterpret_cast<flutter::FlutterViewController*>(controller);
@@ -52,6 +117,9 @@ bool FlutterWindow::OnCreate() {
         flutter_view_controller->engine(),
         flutter_view_controller->view()->GetNativeWindow());
     RegisterSystemAudioInputChannel(flutter_view_controller->engine());
+    RegisterWindowChromeChannel(
+        flutter_view_controller->engine(),
+        flutter_view_controller->view()->GetNativeWindow());
     });
   }
   SetChildContent(flutter_controller_->view()->GetNativeWindow());

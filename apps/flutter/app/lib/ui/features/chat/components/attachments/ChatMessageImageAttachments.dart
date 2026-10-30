@@ -2,6 +2,9 @@
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../../../../common/components/OperitDialog.dart';
 
 import '../style/input/common/ChatAttachmentImagePreview.dart';
 import 'AttachmentViewerDialog.dart';
@@ -24,23 +27,73 @@ class AttachmentData {
   final String content;
   final String? mediaPoolType;
 
-  /// Reports whether this attachment is an image.
-  bool get isImage {
-    if (mediaPoolType == 'image') {
+  String get _mime => type.toLowerCase().split(';').first.trim();
+
+  String? get _mediaKind {
+    for (final kind in const ['image', 'audio', 'video']) {
+      if (mediaPoolType == kind) return kind;
+    }
+    for (final kind in const ['image', 'audio', 'video']) {
+      if (_mime.startsWith('$kind/')) return kind;
+    }
+    final extension = filename.split('.').last.toLowerCase();
+    if (const {
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'bmp',
+      'heic',
+    }.contains(extension)) {
+      return 'image';
+    }
+    if (const {
+      'mp3',
+      'wav',
+      'm4a',
+      'aac',
+      'ogg',
+      'flac',
+      'opus',
+    }.contains(extension)) {
+      return 'audio';
+    }
+    if (const {'mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v'}.contains(extension)) {
+      return 'video';
+    }
+    return null;
+  }
+
+  bool get isImage => _mediaKind == 'image';
+  bool get isAudio => _mediaKind == 'audio';
+  bool get isVideo => _mediaKind == 'video';
+
+  /// Fallback media extensions must open the same preview as their thumbnails.
+  String get previewMimeType =>
+      _mediaKind == null || _mime.startsWith('$_mediaKind/')
+      ? (_mediaKind == null ? type : _mime)
+      : '$_mediaKind/*';
+
+  /// Inline text with a synthetic identity is context, even when named *.txt.
+  /// File paths and media pool references retain their file/media presentation.
+  bool get isInlineContext {
+    if (isImage || isAudio || isVideo || mediaPoolType != null) return false;
+    final inlineType =
+        _mime.startsWith('text/') ||
+        const {'application/json', 'application/xml'}.contains(_mime) ||
+        _mime.endsWith('+json') ||
+        _mime.endsWith('+xml') ||
+        _mime.endsWith('+plain');
+    if (!inlineType || content.trim().isEmpty) return false;
+    if (id.startsWith('workspace_mention:') ||
+        id.startsWith('package_attach:')) {
       return true;
     }
-    final mime = type.toLowerCase();
-    if (mime.startsWith('image/')) {
-      return true;
-    }
-    final ext = filename.toLowerCase();
-    return ext.endsWith('.png') ||
-        ext.endsWith('.jpg') ||
-        ext.endsWith('.jpeg') ||
-        ext.endsWith('.webp') ||
-        ext.endsWith('.gif') ||
-        ext.endsWith('.bmp') ||
-        ext.endsWith('.heic');
+    // Also handles Windows paths, relative paths, URLs and content/file URIs.
+    return !id.contains('/') &&
+        !id.contains(r'\') &&
+        id.toLowerCase() != filename.toLowerCase();
   }
 }
 
@@ -68,7 +121,7 @@ class ChatMessageAttachments extends StatefulWidget {
 
 /// Backwards compatibility subclass for image-specific call sites.
 class ChatMessageImageAttachments extends ChatMessageAttachments {
-  ChatMessageImageAttachments({
+  const ChatMessageImageAttachments({
     super.key,
     required List<AttachmentData> images,
     required super.enableDialogs,
@@ -83,10 +136,12 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
 
   bool _isExpanded = false;
 
+  List<AttachmentData> get _visualAttachments => widget.attachments
+      .where((attachment) => !attachment.isInlineContext)
+      .toList();
+
   void _openViewer(AttachmentData attachment) {
-    if (!widget.enableDialogs) {
-      return;
-    }
+    if (!widget.enableDialogs) return;
     showDialog<void>(
       context: context,
       barrierColor: Colors.transparent,
@@ -95,7 +150,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
         attachment: ChatAttachment(
           id: attachment.id,
           filename: attachment.filename,
-          mimeType: attachment.type,
+          mimeType: attachment.previewMimeType,
           size: attachment.size,
           content: attachment.content,
           mediaPoolType: attachment.mediaPoolType,
@@ -107,15 +162,10 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.attachments.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    if (!widget.isBubbleMode) {
-      return _buildCommandLineLayout();
-    }
-
-    return _buildBubbleLayout();
+    if (_visualAttachments.isEmpty) return const SizedBox.shrink();
+    return widget.isBubbleMode
+        ? _buildBubbleLayout()
+        : _buildCommandLineLayout();
   }
 
   /// Command line mode: normal left-to-right flow.
@@ -124,7 +174,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
       spacing: _cardSpacing,
       runSpacing: _cardSpacing,
       children: <Widget>[
-        for (final attachment in widget.attachments)
+        for (final attachment in _visualAttachments)
           _AttachmentThumbnailCard(
             attachment: attachment,
             size: _cardSize,
@@ -136,7 +186,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
 
   /// Bubble mode: poker stack when exceeding bubble width, otherwise flat unstacked.
   Widget _buildBubbleLayout() {
-    final count = widget.attachments.length;
+    final count = _visualAttachments.length;
     final unstackedWidth = count * _cardSize + (count - 1) * _cardSpacing;
     final measuredWidth = widget.bubbleWidth;
     final exceedsBubble =
@@ -148,7 +198,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
         spacing: _cardSpacing,
         runSpacing: _cardSpacing,
         children: <Widget>[
-          for (final attachment in widget.attachments)
+          for (final attachment in _visualAttachments)
             _AttachmentThumbnailCard(
               attachment: attachment,
               size: _cardSize,
@@ -168,7 +218,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
 
   /// Poker card stack: layers cards with rotation and offset.
   Widget _buildPokerCardStack() {
-    final count = widget.attachments.length;
+    final count = _visualAttachments.length;
     final visibleCount = math.min(count, 3);
     const stackWidth = _cardSize + 16.0;
     const stackHeight = _cardSize + 8.0;
@@ -190,7 +240,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
                 _buildStackedCard(
                   layerIndex: i,
                   totalVisible: visibleCount,
-                  attachment: widget.attachments[i],
+                  attachment: _visualAttachments[i],
                 ),
               // Count badge on top right of the deck
               Positioned(
@@ -290,7 +340,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
   /// Expanded grid: displays all thumbnails with a collapse toggle.
   Widget _buildExpandedGrid() {
     final theme = Theme.of(context);
-    final count = widget.attachments.length;
+    final count = _visualAttachments.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -337,7 +387,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
           spacing: _cardSpacing,
           runSpacing: _cardSpacing,
           children: <Widget>[
-            for (final attachment in widget.attachments)
+            for (final attachment in _visualAttachments)
               _AttachmentThumbnailCard(
                 attachment: attachment,
                 size: _cardSize,
@@ -508,5 +558,123 @@ String _getAttachmentDisplayLabel(AttachmentData attachment) {
       attachment.filename == 'screen_content.json') {
     return 'Screen';
   }
+  return attachment.filename;
+}
+
+/// Supplementary prompt context is message metadata, separate from attachments.
+/// Its single quiet entry stays the same size regardless of the plugin count.
+class ChatMessageContextMetadata extends StatelessWidget {
+  const ChatMessageContextMetadata({
+    super.key,
+    required this.attachments,
+    required this.enableDialogs,
+  });
+
+  final List<AttachmentData> attachments;
+  final bool enableDialogs;
+
+  @override
+  Widget build(BuildContext context) {
+    final contexts = attachments
+        .where((attachment) => attachment.isInlineContext)
+        .toList();
+    if (contexts.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(3),
+        onTap: enableDialogs ? () => _showDetails(context, contexts) : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+          child: Text(
+            contexts.length == 1 ? '补充信息' : '补充信息 · ${contexts.length}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontSize: 10,
+              height: 1.2,
+              fontWeight: FontWeight.normal,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDetails(BuildContext context, List<AttachmentData> contexts) {
+    final content = contexts.length == 1
+        ? contexts.single.content
+        : contexts
+              .map((entry) => '${_contextLabel(entry)}\n${entry.content}')
+              .join('\n\n');
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => OperitDialogScaffold(
+        title: '补充信息',
+        maxWidth: 520,
+        maxHeight: 360,
+        expandContent: false,
+        showCloseButton: true,
+        actions: <Widget>[
+          TextButton.icon(
+            onPressed: () => Clipboard.setData(ClipboardData(text: content)),
+            icon: const Icon(Icons.copy_outlined, size: 16),
+            label: Text(
+              MaterialLocalizations.of(dialogContext).copyButtonLabel,
+            ),
+          ),
+        ],
+        child: SingleChildScrollView(
+          child: contexts.length == 1
+              ? SelectableText(
+                  content,
+                  style: Theme.of(
+                    dialogContext,
+                  ).textTheme.bodySmall?.copyWith(height: 1.5),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    for (final entry in contexts)
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        title: Text(
+                          _contextLabel(entry),
+                          style: Theme.of(dialogContext).textTheme.bodySmall,
+                        ),
+                        children: <Widget>[
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: SelectableText(
+                              entry.content,
+                              style: Theme.of(
+                                dialogContext,
+                              ).textTheme.bodySmall?.copyWith(height: 1.5),
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+String _contextLabel(AttachmentData attachment) {
+  if (attachment.id.startsWith('message_insert_extra_bundle_')) return '附加信息';
+  if (attachment.id.startsWith('workspace_mention:')) {
+    return '@${attachment.filename}';
+  }
+  if (attachment.id.startsWith('pasted_text')) return '粘贴文本';
+  if (attachment.id.startsWith('screen_ocr_') ||
+      attachment.filename == 'screen_content.json') {
+    return '屏幕内容';
+  }
+  if (attachment.id.startsWith('notifications_')) return '当前通知';
+  if (attachment.id.startsWith('location_')) return '当前位置';
   return attachment.filename;
 }

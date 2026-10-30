@@ -1,8 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:convert';
-import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -36,10 +34,8 @@ class ChatAttachment {
   final String? mediaPoolType;
 }
 
-/// An immersive, modern attachment viewer dialog.
-/// - For images: full-screen frosted glass lightbox with pinch/pan zoom, double-tap zoom,
-///   floating controls, clean title badge, and click-outside/Esc dismiss.
-/// - For other media/documents: sleek centered frosted glass card with preview.
+/// Full-screen attachment overlay with zoomable images or a centered preview card.
+/// The transparent shell keeps the scrim separate from rounded dialog surfaces.
 class AttachmentViewerDialog extends StatelessWidget {
   const AttachmentViewerDialog({
     super.key,
@@ -74,10 +70,10 @@ class AttachmentViewerDialog extends StatelessWidget {
             onDismiss: onDismiss,
           );
 
-    return Dialog(
+    // A regular Dialog inherits the theme's rounded shape and clipping, which
+    // clips a window-sized scrim and leaves the underlying surface at its corners.
+    return Dialog.fullscreen(
       backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: EdgeInsets.zero,
       child: Shortcuts(
         shortcuts: <ShortcutActivator, Intent>{
           const SingleActivator(LogicalKeyboardKey.escape):
@@ -199,16 +195,13 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        // Backdrop with frosted blur - tap to dismiss
+        // Uniform lightbox scrim; tap outside the image to dismiss.
         Positioned.fill(
           child: GestureDetector(
             onTap: widget.onDismiss,
             behavior: HitTestBehavior.opaque,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.84),
-              ),
+            child: ColoredBox(
+              color: Colors.black.withValues(alpha: 0.84),
             ),
           ),
         ),
@@ -438,16 +431,13 @@ class _GeneralAttachmentViewer extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        // Backdrop blur
+        // Dim the chat without blurring it or introducing another surface.
         Positioned.fill(
           child: GestureDetector(
             onTap: onDismiss,
             behavior: HitTestBehavior.opaque,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.72),
-              ),
+            child: ColoredBox(
+              color: Colors.black.withValues(alpha: 0.38),
             ),
           ),
         ),

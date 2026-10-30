@@ -347,6 +347,7 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
                 applyDeclaredOperations(&projection,schema,&[],aliases,retain).map(|_|())
             }) as Box<dyn Fn(&BTreeMap<String,String>)->Result<(),String> + 'a>),
             snapshot: Some(Box::new(move || snapshot.syncSnapshot().map_err(|e|e.to_string()))),
+            content_digest: crate::Transaction::Snapshot::content_digest,
             baseline: Some(Box::new(move ||crate::Transaction::preference::baseline_digest(&baseline).map_err(|e|e.to_string()))),
             repair: Some(Box::new(move |expected, source, file| crate::Transaction::preference::repair_file(&repair,expected,source,file).map_err(|e|e.to_string()))),
         })?;

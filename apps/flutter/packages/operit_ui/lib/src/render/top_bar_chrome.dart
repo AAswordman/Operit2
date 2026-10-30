@@ -76,6 +76,9 @@ class ThemeTopBarChrome extends StatelessWidget {
     this.actions = const <Widget>[],
   });
 
+  /// Shared vertical geometry for the app bar and desktop sidebar headers.
+  static const double toolbarHeight = 64;
+
   final Widget title;
   final IconData? navigationIcon;
   final String? navigationTooltip;
@@ -89,12 +92,13 @@ class ThemeTopBarChrome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final navIcon = navigationIcon;
-    final navigationIconWidget =
-        navIcon != null ? Icon(navIcon, color: contentForeground) : null;
+    final navigationIconWidget = navIcon != null
+        ? Icon(navIcon, color: contentForeground)
+        : null;
     return ColoredBox(
       color: contentColor,
       child: SizedBox(
-        height: topPadding + 64,
+        height: topPadding + toolbarHeight,
         child: Padding(
           padding: EdgeInsets.only(top: topPadding),
           child: Row(
@@ -117,9 +121,7 @@ class ThemeTopBarChrome extends StatelessWidget {
                     tooltip: navigationTooltip,
                   ),
                 ),
-              ] else ...<Widget>[
-                const SizedBox(width: 16),
-              ],
+              ] else ...<Widget>[const SizedBox(width: 16)],
               Expanded(child: title),
               ...actions,
             ],

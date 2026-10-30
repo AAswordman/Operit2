@@ -117,6 +117,15 @@ impl SqlChatSyncStore {
         self.dataset().snapshot().map_err(SqlChatSyncStoreError::Message)
     }
 
+    /// Compares synchronized chat contents independently of local storage identities.
+    pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
+        snapshot.projected_content_digest(|table, value| match table {
+            "messages" => crate::Transaction::project_sql_table(value, &["messageId"], None).map(Some),
+            "message_variants" => crate::Transaction::project_sql_table(value, &["variantId"], None).map(Some),
+            _ => Ok(None),
+        })
+    }
+
     pub fn syncBaselineDigest(&self) -> Result<String, SqlChatSyncStoreError> {
         self.dataset().baseline_digest().map_err(SqlChatSyncStoreError::Message)
     }

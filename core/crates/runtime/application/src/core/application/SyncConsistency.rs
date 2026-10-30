@@ -35,6 +35,7 @@ impl OperitApplication {
         let (prepare,apply,snapshot,repair,receipt,export,inventory) = (chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat);
         let baseline = snapshot.clone();
         registry.register(Participant { validate: None,
+            content_digest: SqlChatSyncStore::snapshotContentDigest,
             path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(),
             prepare: Box::new(move || prepare.as_ref().map(|_|()).map_err(Clone::clone)),
             apply: Box::new(move |operations,_| {
@@ -69,6 +70,7 @@ impl OperitApplication {
             let (snapshot_path,node_snapshot,node_repair,storage) = (path.clone(),node.clone(),node.clone(),storage.clone());
             let (baseline, baseline_path, baseline_node) = (plugin.clone(),path.clone(),node.clone());
             registry.register(Participant { validate: None, path,
+                content_digest: PluginStorage::snapshotContentDigest,
                 prepare: Box::new(||Ok(())),
                 apply: Box::new(move |operations,aliases| {
                     for operation in operations { PluginStorage::applyOperation(apply.clone()?,storage.clone(),operation,aliases).map_err(|e|e.to_string())?; }
@@ -83,7 +85,7 @@ impl OperitApplication {
         for operation in operations.iter().filter(|op|!matches!(op.domain.as_str(),"preferences"|CHAT_SYNC_DOMAIN|PLUGIN_STORAGE_SYNC_DOMAIN)) {
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
-            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, baseline: None, repair: None,
+            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, content_digest: operit_store::Transaction::Snapshot::content_digest, baseline: None, repair: None,
                 apply: Box::new(move |operations,_| {
                     for operation in operations {
                         match operation.domain.as_str() {

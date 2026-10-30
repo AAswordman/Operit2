@@ -767,7 +767,9 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
                 if self.fault == "new-write" && report == 0 {
                     self.inner.control.updatePolicy("async-boundary".into(), "new".into()).unwrap();
                 }
-                operit_link::toCoreValue(serde_json::json!({"manifests":[snapshot.manifest().unwrap()],"pendingOwners":[],"errors":[],"boundary":operit_store::Transaction::digest(&self.inner.gateClock().unwrap()).unwrap()}))
+                let content = operit_store::sync::SqlChatSyncStore::SqlChatSyncStore::snapshotContentDigest(&snapshot).unwrap();
+                let manifest = snapshot.manifest_with_digest(content).unwrap();
+                operit_link::toCoreValue(serde_json::json!({"manifests":[manifest],"pendingOwners":[],"errors":[],"boundary":operit_store::Transaction::digest(&self.inner.gateClock().unwrap()).unwrap()}))
                     .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
             }
             "syncReadSnapshot" | "syncReadCoverage" if request.methodName == self.fault => {
@@ -810,7 +812,7 @@ async fn snapshot_changes_retry_without_publishing_an_error_or_opening_the_sync_
         let (mut routers, _access, peers, _) = gateMesh(&format!("sync-quiet-{fault}"));
         let snapshots = ["z", "a"].map(|node| {
             let mut data = Data::empty(Owner { backend: Backend::Sql,
-                path: "runtime/plugin_data/space/com.operit.test/memory.sqlite".into(), format: 1, layout: 1 });
+                path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(), format: 1, layout: 1 });
             data.values.insert("record".into(), serde_json::json!(node));
             Arc::new(StdMutex::new(Snapshot { node: node.into(), data, covered: BTreeSet::new(), generation: 0 }))
         });
@@ -847,12 +849,18 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
     use operit_store::Transaction::{Backend, Data, Owner, Revision, Snapshot};
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    for scenario in ["metadata", "new-write"] {
+    for scenario in ["metadata", "local-row-ids", "new-write"] {
         let (mut routers, _access, peers, _) = gateMesh(&format!("sync-no-full-{scenario}"));
         let snapshots = ["z", "a"].map(|node| {
             let mut data = Data::empty(Owner { backend: Backend::Sql,
-                path: "runtime/plugin_data/space/com.operit.test/memory.sqlite".into(), format: 1, layout: 1 });
-            data.values.insert("record".into(), serde_json::json!(if scenario == "metadata" { "same" } else { node }));
+                path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(), format: 1, layout: 1 });
+            data.values.insert("record".into(), serde_json::json!(if scenario == "new-write" { node } else { "same" }));
+            if scenario == "local-row-ids" {
+                data.values.insert("messages".into(), serde_json::json!({
+                    "columns":["messageId","chatId","timestamp","sender"],
+                    "rows":[[{"Integer":if node == "z" {1} else {100}}, {"Text":"same-chat"}, {"Integer":1000}, {"Text":"user"}]]
+                }));
+            }
             data.revision = Some(Revision { createdAt: if node == "z" { 900 } else { 100 }, originDeviceId: node.into(), sequence: 1 });
             data.deleted.insert(format!("old-{node}"));
             Arc::new(StdMutex::new(Snapshot { node: node.into(), data,

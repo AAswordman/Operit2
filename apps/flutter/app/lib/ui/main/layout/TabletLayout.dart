@@ -8,6 +8,7 @@ import 'package:operit_ui/operit_ui.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../window/DesktopWindowChrome.dart';
 import '../components/CollapsedDrawerContent.dart';
 import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
@@ -126,19 +127,17 @@ class _TabletLayoutState extends State<TabletLayout> {
           curve: Curves.fastOutSlowIn,
           width: targetSidebarWidth,
           height: double.infinity,
-          decoration: BoxDecoration(
-            border: Border(
-              right: BorderSide(
-                color: appearance.dividerColor,
-                width: 1,
-              ),
-            ),
-          ),
+          decoration: usesDesktopWindowChrome
+              ? null
+              : BoxDecoration(
+                  border: Border(
+                    right: BorderSide(color: appearance.dividerColor, width: 1),
+                  ),
+                ),
           child: RepaintBoundary(
             // Sidebar state and status animations repaint independently of chat.
-            child: ThemeDesktopSidebarSurface(
-              color: appearance.containerColor,
-              transparentSurface: appearance.transparentSurfaceEnabled,
+            child: _sidebarSurface(
+              appearance: appearance,
               child: AnimatedSwitcher(
                 duration: _sidebarContentFadeDuration,
                 child: _isSidebarContentExpanded
@@ -192,8 +191,24 @@ class _TabletLayoutState extends State<TabletLayout> {
             ),
           ),
         ),
-        Expanded(child: RepaintBoundary(child: widget.content)),
+        Expanded(
+          child: DesktopContentPanel(
+            child: RepaintBoundary(child: widget.content),
+          ),
+        ),
       ],
     );
   }
+
+  /// Desktop chrome already paints the same sidebar surface around the panel.
+  Widget _sidebarSurface({
+    required NavigationDrawerAppearance appearance,
+    required Widget child,
+  }) => usesDesktopWindowChrome
+      ? child
+      : ThemeDesktopSidebarSurface(
+          color: appearance.containerColor,
+          transparentSurface: appearance.transparentSurfaceEnabled,
+          child: child,
+        );
 }

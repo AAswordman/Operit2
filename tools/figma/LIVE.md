@@ -32,7 +32,7 @@ node tools/figma/live.mjs --vm-service-file /tmp/operit-design-vm.txt
 - `dist/live-code-layer/`：不含账号、业务数据和连接口令的独立 Web 前端项目。
 - `dist/operit-live-code-layer.zip`：上述项目的候选导入包。
 
-候选项目包含入口、启动和构建脚本；开发服务器读取 `PORT` 环境变量。它不包含 Operit 原生程序。导入真实 Figma Code layer 后，仍需在同一台电脑上运行 Operit，并在客户端粘贴本机连接地址。
+候选项目包含入口、启动和构建脚本，以及 Figma 要求的四个可执行生命周期脚本（`.figma/make/install`、`dev`、`deploy-preview`、`deploy`）。ZIP 保留脚本的 Unix 执行权限。开发服务器读取 `PORT` 和 `FIGMA_DEV_SERVER_HOST` 环境变量。它不包含 Operit 原生程序。导入真实 Figma Code layer 后，仍需在同一台电脑上运行 Operit，并在客户端粘贴本机连接地址。
 
 远程预览来源需要明确允许。确认真实预览 Origin 后重启连接服务：
 
@@ -42,6 +42,12 @@ node tools/figma/live.mjs --vm-service-file /tmp/operit-design-vm.txt \
 ```
 
 该参数只接受精确 Origin，不接受通配符。Figma 的 CSP、HTTPS 页面到本机 HTTP 的访问、浏览器本地网络权限和沙箱限制都需要在真实容器中验证；不能把浏览器 fixture 测试视为 Figma 验收。
+
+## 已验证的 Figma 导入阶段
+
+2026-10-30，通过 Figma 官方远程 MCP 的 `send_code_to_figma`，实际创建了 Make 文件并导入生成的项目。服务返回 `status: imported`；在已登录的 Figma Make 编辑器中，预览显示 `Running`，文件面板中可打开 `index.html`，编辑器显示可写输入区。当前账号未开通 Design Code Layer，因此本次使用独立 Make 文件。
+
+这些结果只证明真实 Figma 中的源码导入和客户端启动。真实 Operit 连接、完整软件交互、Figma 原生可视化编辑与原始源码回写仍需分别验收，不能以导入回执替代。
 
 ## 验证
 

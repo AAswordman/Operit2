@@ -260,7 +260,9 @@ class _UserBubbleWithAttachmentsState
             padding: const EdgeInsets.only(bottom: 4),
             child: _ReplyInfoView(replyInfo: widget.parseResult.replyInfo!),
           ),
-        if (widget.parseResult.attachments.isNotEmpty)
+        if (widget.parseResult.attachments.any(
+          (attachment) => !attachment.isInlineContext,
+        ))
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: ChatMessageAttachments(
@@ -270,25 +272,37 @@ class _UserBubbleWithAttachmentsState
               isBubbleMode: true,
             ),
           ),
-        ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: widget.maxBubbleWidth,
-            minHeight: 44,
-          ),
-          child: Container(
-            key: _bubbleKey,
-            child: _UserBubbleBody(
-              backgroundColor: widget.backgroundColor,
-              textColor: widget.textColor,
-              bubbleShape: widget.bubbleShape,
-              imageStyle: widget.imageStyle,
-              transparentSurface: widget.transparentSurface,
-              contentPadding: widget.contentPadding,
-              isHiddenPlaceholder: widget.isHiddenPlaceholder,
-              textContent: widget.textContent,
+        if (widget.textContent.isNotEmpty ||
+            widget.parseResult.attachments.isEmpty)
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: widget.maxBubbleWidth,
+              minHeight: 44,
+            ),
+            child: Container(
+              key: _bubbleKey,
+              child: _UserBubbleBody(
+                backgroundColor: widget.backgroundColor,
+                textColor: widget.textColor,
+                bubbleShape: widget.bubbleShape,
+                imageStyle: widget.imageStyle,
+                transparentSurface: widget.transparentSurface,
+                contentPadding: widget.contentPadding,
+                isHiddenPlaceholder: widget.isHiddenPlaceholder,
+                textContent: widget.textContent,
+              ),
             ),
           ),
-        ),
+        if (widget.parseResult.attachments.any(
+          (attachment) => attachment.isInlineContext,
+        ))
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: ChatMessageContextMetadata(
+              attachments: widget.parseResult.attachments,
+              enableDialogs: widget.enableDialogs,
+            ),
+          ),
       ],
     );
   }

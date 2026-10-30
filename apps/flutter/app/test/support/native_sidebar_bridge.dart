@@ -10,7 +10,9 @@ class NativeSidebarBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final value = switch (request.methodName) {
       'getPreferences' => <String, String>{},
-      'getToolPkgNavigationEntries' || 'getToolPkgUiRoutes' => <Object?>[],
+      'getToolPkgNavigationEntries' ||
+      'getToolPkgUiRoutes' ||
+      'listWorkspaces' => <Object?>[],
       _ => throw StateError('Unexpected sidebar call: ${request.methodName}'),
     };
     return encodeCoreLink(<Object?>[0, value]);
@@ -18,16 +20,20 @@ class NativeSidebarBridge extends OperitRuntimeBridge {
 
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
-    if (request.propertyName != 'preferencesFlow') {
-      throw StateError('Unexpected sidebar watch: ${request.propertyName}');
-    }
+    final value = switch (request.propertyName) {
+      'preferencesFlow' => <String, String>{},
+      'allWorkspacesFlow' => <Object?>[],
+      _ => throw StateError(
+        'Unexpected sidebar watch: ${request.propertyName}',
+      ),
+    };
     return Stream.value(
       CoreEvent.raw(
         requestId: request.requestId,
         target: request.target,
         propertyName: request.propertyName,
         kind: 'Snapshot',
-        valueBytes: encodeCoreLink(<String, String>{}),
+        valueBytes: encodeCoreLink(value),
         decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
       ),
     );

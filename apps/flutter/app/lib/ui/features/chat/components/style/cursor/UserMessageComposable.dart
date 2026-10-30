@@ -56,7 +56,9 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
         children: <Widget>[
           if (parseResult.replyInfo != null)
             _ReplyInfoView(replyInfo: parseResult.replyInfo!),
-          if (parseResult.attachments.isNotEmpty)
+          if (parseResult.attachments.any(
+            (attachment) => !attachment.isInlineContext,
+          ))
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: ChatMessageAttachments(
@@ -65,23 +67,35 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
                 isBubbleMode: false,
               ),
             ),
-          SizedBox(
-            width: double.infinity,
-            child: BubbleSurface(
-              color: bubbleColor,
-              borderRadius: bubbleBorderRadius,
-              transparentSurface: transparentSurface,
-              child: Padding(
-                padding: contentPadding,
-                child: SelectableText(
-                  parseResult.processedText,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: effectiveTextColor,
+          if (parseResult.processedText.isNotEmpty ||
+              parseResult.attachments.isEmpty)
+            SizedBox(
+              width: double.infinity,
+              child: BubbleSurface(
+                color: bubbleColor,
+                borderRadius: bubbleBorderRadius,
+                transparentSurface: transparentSurface,
+                child: Padding(
+                  padding: contentPadding,
+                  child: SelectableText(
+                    parseResult.processedText,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: effectiveTextColor,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          if (parseResult.attachments.any(
+            (attachment) => attachment.isInlineContext,
+          ))
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: ChatMessageContextMetadata(
+                attachments: parseResult.attachments,
+                enableDialogs: true,
+              ),
+            ),
         ],
       ),
     );

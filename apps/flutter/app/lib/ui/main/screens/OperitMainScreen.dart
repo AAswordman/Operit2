@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:desktop_widgets/desktop_widgets.dart';
 
+import '../../window/DesktopWindowChrome.dart';
 import '../design/SoftwareDesignCatalog.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -810,25 +811,28 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                               });
                             },
                           )
-                        : PhoneLayout(
-                            content: content,
-                            navigationEntries:
-                                _navigationModel.navigationEntries,
-                            pluginSidebarEntries: pluginSidebarEntries,
-                            selectedRouteId: currentRouteEntry.routeId,
-                            drawerConversationState: _drawerConversationState,
-                            drawerWidth: screenSize.width * 0.75,
-                            drawerOpenState: _drawerOpenState,
-                            enableNavigationAnimation: true,
-                            onOpenDrawer: () {
-                              _drawerOpenState.value = true;
-                            },
-                            onCloseDrawer: () {
-                              _drawerOpenState.value = false;
-                            },
-                            onNavigationEntrySelected:
-                                _navigateToNavigationEntry,
-                            onConversationActivated: _activateConversationRoute,
+                        : DesktopContentPanel(
+                            child: PhoneLayout(
+                              content: content,
+                              navigationEntries:
+                                  _navigationModel.navigationEntries,
+                              pluginSidebarEntries: pluginSidebarEntries,
+                              selectedRouteId: currentRouteEntry.routeId,
+                              drawerConversationState: _drawerConversationState,
+                              drawerWidth: screenSize.width * 0.75,
+                              drawerOpenState: _drawerOpenState,
+                              enableNavigationAnimation: true,
+                              onOpenDrawer: () {
+                                _drawerOpenState.value = true;
+                              },
+                              onCloseDrawer: () {
+                                _drawerOpenState.value = false;
+                              },
+                              onNavigationEntrySelected:
+                                  _navigateToNavigationEntry,
+                              onConversationActivated:
+                                  _activateConversationRoute,
+                            ),
                           ),
                   ),
                   builder: (context, drawerOpen, child) {

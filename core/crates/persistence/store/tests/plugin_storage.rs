@@ -1917,3 +1917,34 @@ fn covered_character_history_cannot_rekey_the_copied_file_through_merge_rules() 
     assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, file.data);
     old.dispose(); source.dispose(); target.dispose();
 }
+
+/// Receiving an unchanged identity records a local self mapping, not a changed business file.
+#[test]
+fn incremental_object_merge_bookkeeping_does_not_require_a_full_snapshot() {
+    let source = Fixture::new("digest-source");
+    let handle = open_object_merge_fixture(&source);
+    seed_object_card(&source, &handle, "same-card", "Card", "same content");
+    let target = Fixture::new("digest-target");
+    target.replay(&source.export());
+    let a = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+    let b = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+    assert_eq!(a.data.revision, b.data.revision);
+    assert_ne!(a.data.values["_operit_merge_map"], b.data.values["_operit_merge_map"]);
+    assert_eq!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&b).unwrap());
+    let mut local_cas = b.clone();
+    let values = local_cas.data.values.get_mut("_operit_values").unwrap();
+    let version = values["columns"].as_array().unwrap().iter().position(|column| column == "version").unwrap();
+    values["rows"][0][version] = json!({"Text":"another-local-cas-token"});
+    assert_eq!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&local_cas).unwrap());
+    assert_ne!(b.token().unwrap(), local_cas.token().unwrap());
+    let map = local_cas.data.values.get_mut("_operit_merge_map").unwrap();
+    let canonical = map["columns"].as_array().unwrap().iter().position(|column| column == "canonical_key").unwrap();
+    map["rows"][0][canonical] = json!({"Text":"different-canonical-card"});
+    assert_ne!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&local_cas).unwrap());
+    let mut changed = b.clone();
+    let values = changed.data.values.get_mut("_operit_values").unwrap();
+    let value = values["columns"].as_array().unwrap().iter().position(|column| column == "value").unwrap();
+    values["rows"][0][value] = json!({"Text":"changed business content"});
+    assert_ne!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&changed).unwrap());
+    source.dispose(); target.dispose();
+}

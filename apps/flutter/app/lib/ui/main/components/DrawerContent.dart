@@ -849,8 +849,10 @@ class _DrawerContentState extends State<DrawerContent> {
 
   Widget _sidebarHeader(Widget tabs) {
     final onCollapse = widget.onCollapseSidebar;
-    return Padding(
-      padding: const EdgeInsets.only(top: 26, right: 12),
+    final desktopHeader = useTabletLayoutForContext(context);
+    final topPadding = MediaQuery.paddingOf(context).top;
+    final header = Padding(
+      padding: EdgeInsets.only(top: desktopHeader ? topPadding : 26, right: 12),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -878,6 +880,12 @@ class _DrawerContentState extends State<DrawerContent> {
         ],
       ),
     );
+    return desktopHeader
+        ? SizedBox(
+            height: topPadding + ThemeTopBarChrome.toolbarHeight,
+            child: header,
+          )
+        : header;
   }
 
   /// Adds plugin navigation to the native workspace's existing scrolling surface.

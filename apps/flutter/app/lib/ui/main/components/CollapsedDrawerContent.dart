@@ -44,7 +44,6 @@ class CollapsedDrawerContent extends StatelessWidget {
   final String? currentChatId;
   final List<core_proxy.ChatHistoryListItem> histories;
   final OperitRuntimeBridge bridge;
-  static const double _topBarHeight = 64;
   static const EdgeInsets _collapsedItemPadding = EdgeInsets.symmetric(
     vertical: 2,
   );
@@ -108,7 +107,7 @@ class CollapsedDrawerContent extends StatelessWidget {
             padding: EdgeInsets.zero,
             children: <Widget>[
               SizedBox(
-                height: topPadding + _topBarHeight,
+                height: topPadding + ThemeTopBarChrome.toolbarHeight,
                 child: Padding(
                   padding: EdgeInsets.only(top: topPadding),
                   child: Center(

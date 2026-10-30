@@ -1693,3 +1693,50 @@ fn same_author_chat_changes_follow_sequence_when_its_clock_moves_backwards() {
         AppDatabase::closeDatabase();
     }
 }
+
+/// Stream upserts consume different local auto-increment IDs, but must never require a full snapshot.
+#[test]
+fn incremental_messages_with_different_local_ids_have_equal_content_digests() {
+    let _guard = DATABASE_MUTEX.lock().unwrap_or_else(|error|error.into_inner());
+    let (_, source_database, source) = openTestStore("digest-source");
+    let chat_id = "digest-chat";
+    insertChatMessage(&source_database, chat_id, 1000, "first");
+    let mut delivery = Vec::new();
+    for index in 0..4 {
+        updateMessagePart(&source_database, chat_id, 1000, format!("chunk-{index}"));
+        source.recordMessageSnapshot(chat_id, 1000).unwrap();
+        delivery.extend(source.operationsSince(&SyncClock::empty(), &[], 100).unwrap());
+    }
+    insertChatMessage(&source_database, chat_id, 2000, "second");
+    source.recordMessageSnapshot(chat_id, 2000).unwrap();
+    delivery.extend(source.operationsSince(&SyncClock::empty(), &[], 100).unwrap());
+    let source_snapshot = source.syncSnapshot().unwrap();
+    let (_, target_database, target) = openTestStore("digest-target");
+    for operation in &delivery { target.applyOperation(operation).unwrap(); }
+    let target_snapshot = target.syncSnapshot().unwrap();
+    let source_id = source_database.messageDao().getMessageByTimestamp(chat_id, 2000)
+        .unwrap().unwrap().messageId;
+    let target_id = target_database.messageDao().getMessageByTimestamp(chat_id, 2000)
+        .unwrap().unwrap().messageId;
+    assert_ne!(source_id, target_id, "fixture must expose independently allocated row IDs");
+    assert_eq!(source_snapshot.data.revision, target_snapshot.data.revision);
+    assert_ne!(source_snapshot.content_digest().unwrap(), target_snapshot.content_digest().unwrap());
+
+    let source_digest = SqlChatSyncStore::snapshotContentDigest(&source_snapshot).unwrap();
+    let target_digest = SqlChatSyncStore::snapshotContentDigest(&target_snapshot).unwrap();
+    let source_manifest = source_snapshot.manifest_with_digest(source_digest).unwrap();
+    let target_manifest = target_snapshot.manifest_with_digest(target_digest).unwrap();
+    assert_eq!(source_manifest.digest, target_manifest.digest);
+    assert_eq!(
+        crate::Transaction::compare_manifests(&source_manifest, &target_manifest).unwrap(),
+        crate::Transaction::Source::Equal,
+    );
+    assert_eq!(source_manifest.token, source_snapshot.token().unwrap(), "CAS must still cover physical row IDs");
+    let mut changed = target_snapshot.clone();
+    let parts = changed.data.values.get_mut("message_parts").unwrap();
+    let content = parts["columns"].as_array().unwrap().iter().position(|name| name == "content").unwrap();
+    parts["rows"][0][content] = serde_json::json!({"Text":"different business content"});
+    assert_ne!(SqlChatSyncStore::snapshotContentDigest(&source_snapshot).unwrap(),
+        SqlChatSyncStore::snapshotContentDigest(&changed).unwrap());
+    AppDatabase::closeDatabase();
+}

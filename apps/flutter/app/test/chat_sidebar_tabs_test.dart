@@ -7,6 +7,8 @@ import 'support/compose_session_fixture.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit_ui/operit_ui.dart';
+import 'package:operit2/ui/common/OperitLogoMark.dart';
 import 'package:operit2/core/application/PluginHotReload.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
@@ -127,6 +129,82 @@ void main() {
       await tester.pumpAndSettle();
     },
   );
+
+  for (final topInset in <double>[0, 24]) {
+    for (final pluginTab in <bool>[false, true]) {
+      testWidgets('desktop sidebar header stays aligned with the top bar '
+          '(top inset: $topInset, plugin tab: $pluginTab)', (tester) async {
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        tester.view.padding = FakeViewPadding(top: topInset);
+        tester.view.viewPadding = FakeViewPadding(top: topInset);
+        addTearDown(tester.view.resetPadding);
+        addTearDown(tester.view.resetViewPadding);
+        final bridge = _registry();
+        bridge.preferences[_tabPreference] = pluginTab
+            ? chatSidebarTabIdentity('owner.first', 'history')
+            : UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB;
+        final expanded = ValueNotifier(false);
+        final conversations = ValueNotifier(
+          const DrawerConversationState(loading: false),
+        );
+        addTearDown(expanded.dispose);
+        addTearDown(conversations.dispose);
+        await tester.pumpWidget(
+          _tabletSidebar(
+            bridge,
+            expanded,
+            conversations,
+            content: Column(
+              children: [
+                ThemeTopBarChrome(
+                  title: const Text('Chat title'),
+                  contentColor: Colors.white,
+                  contentForeground: Colors.black,
+                  topPadding: topInset,
+                ),
+                const Expanded(child: SizedBox.expand()),
+              ],
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final title = find.text('Chat title');
+        final centerY = tester.getCenter(title).dy;
+        expect(
+          centerY,
+          closeTo(topInset + ThemeTopBarChrome.toolbarHeight / 2, 0.01),
+        );
+        expect(
+          tester.getCenter(find.byType(OperitLogoMark)).dy,
+          closeTo(centerY, 0.01),
+        );
+
+        expanded.value = true;
+        await tester.pumpAndSettle();
+        expect(
+          tester.getCenter(find.text('Operit')).dy,
+          closeTo(centerY, 0.01),
+        );
+        expect(
+          tester.getCenter(find.byTooltip('收起侧边栏')).dy,
+          closeTo(centerY, 0.01),
+        );
+        expect(tester.getCenter(title).dy, closeTo(centerY, 0.01));
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byTooltip('收起侧边栏'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.getCenter(find.byType(OperitLogoMark)).dy,
+          closeTo(centerY, 0.01),
+        );
+        expect(tester.getCenter(title).dy, closeTo(centerY, 0.01));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      });
+    }
+  }
 
   testWidgets('desktop drawer cancels pending transitions on rapid toggles', (
     tester,
@@ -2417,8 +2495,9 @@ class _PreparationBridge extends OperitRuntimeBridge {
 Widget _tabletSidebar(
   _SidebarRegistryBridge bridge,
   ValueNotifier<bool> expanded,
-  ValueNotifier<DrawerConversationState> conversations,
-) => OperitTheme(
+  ValueNotifier<DrawerConversationState> conversations, {
+  Widget content = const Text('Desktop content'),
+}) => OperitTheme(
   initialThemePreferenceSnapshot:
       UserPreferencesManager.defaultThemePreferenceSnapshot,
   initialThemeIsReady: false,
@@ -2432,7 +2511,7 @@ Widget _tabletSidebar(
         valueListenable: expanded,
         builder: (_, open, _) => TabletLayout(
           bridge: bridge,
-          content: const Text('Desktop content'),
+          content: content,
           navigationEntries: const [
             NavigationEntrySpec(
               entryId: 'main.ai_chat',
@@ -2464,6 +2543,7 @@ Widget _tabletSidebar(
           isTabletSidebarExpanded: open,
           tabletSidebarWidth: 280,
           collapsedTabletSidebarWidth: 56,
+          onCollapseSidebar: () => expanded.value = false,
           onNavigationEntrySelected: (_) {},
           onConversationActivated: () {},
         ),

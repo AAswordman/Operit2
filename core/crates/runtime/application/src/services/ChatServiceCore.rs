@@ -851,53 +851,22 @@ impl ChatServiceCore {
         Ok(())
     }
 
-    /// Compacts the source chat into a checkpoint before its Binding moves to another node.
+    /// Checks execution ownership before the Binding moves, preserving the current context.
     #[operit_route_macros::before_change_route]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn beforeChangeRoute(&mut self, chatId: String) -> Result<(), String> {
         AppLogger::i(
             "ChatServiceCore",
-            &format!("route change compacting chatId={chatId}"),
+            &format!("route change preparing chatId={chatId}"),
         );
         let executionLease = self
             .chatHistoryDelegate
             .chatHistoryManager
             .beginChatExecution(&chatId)
             .map_err(|error| error.to_string())?;
-        let compacted = if self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
-            let Some(mut enhancedAiService) = self.newEnhancedAiServiceForChat(&chatId) else {
-                executionLease
-                    .release()
-                    .map_err(|error| error.to_string())?;
-                return Err("route change requires an initialized AI runtime".to_string());
-            };
-            match self.messageCoordinationDelegate.as_mut() {
-                Some(delegate) => {
-                    delegate
-                        .manuallySummarizeConversationForChat(
-                            &mut enhancedAiService,
-                            chatId.clone(),
-                        )
-                        .await
-                }
-                None => {
-                    executionLease
-                        .release()
-                        .map_err(|error| error.to_string())?;
-                    return Err("route change requires the coordination delegate".to_string());
-                }
-            }
-        } else {
-            false
-        };
         executionLease
             .release()
             .map_err(|error| error.to_string())?;
-        if !compacted && self.chatHistoryDelegate.hasUserMessage(chatId.clone()) {
-            return Err(format!(
-                "route change could not compact the source chat: {chatId}"
-            ));
-        }
         Ok(())
     }
 
@@ -1364,7 +1333,7 @@ impl ChatServiceCore {
                     return false;
                 }
             },
-            "user" => vec![MessagePart::markdown(
+            "user" | "summary" => vec![MessagePart::markdown(
                 "part-0".to_string(),
                 0,
                 editedContent,
@@ -3818,10 +3787,29 @@ mod chat_deletion_tests {
         assert!(database.store().beginChatExecution("route-chat").is_err(), "a late source callback must preserve the resumed generation");
         assert!(core.messageProcessingDelegate.releaseExecutionForRoute("route-chat", 8));
 
-        // A failure inside the lifecycle must also relinquish its compaction lease.
-        core.chatHistoryDelegate.addMessageToChat(
-            ChatMessage::new_with_markdown_timestamp("user".into(), "Needs compaction".into(), 123), Some("route-chat".into()));
-        assert!(core.beforeChangeRoute("route-chat".into()).await.unwrap_err().contains("initialized AI runtime"));
+        // Switching must preserve the full history without requiring an AI runtime for a summary.
+        for (sender, content, timestamp) in [
+            ("user", "Continue on the other Core", 123),
+            ("ai", "Switching Core", 124),
+        ] {
+            core.chatHistoryDelegate.addMessageToChat(
+                ChatMessage::new_with_markdown_timestamp(sender.into(), content.into(), timestamp),
+                Some("route-chat".into()),
+            );
+        }
+        let historyBefore = core.chatHistoryDelegate.getRuntimeChatHistory("route-chat".into());
+        assert_eq!(historyBefore.len(), 2);
+        assert!(core.enhancedAiService.is_none());
+        for _ in 0..2 {
+            core.beforeChangeRoute("route-chat".into()).await.unwrap();
+            let historyAfter = core.chatHistoryDelegate.getRuntimeChatHistory("route-chat".into());
+            assert_eq!(
+                serde_json::to_value(&historyAfter).unwrap(),
+                serde_json::to_value(&historyBefore).unwrap(),
+                "route changes must not summarize or rewrite the conversation",
+            );
+            assert!(core.messageProcessingDelegate.summaryTaskForChat("route-chat").is_none());
+        }
         let retry = database.store().beginChatExecution("route-chat").unwrap();
         retry.release().unwrap();
         other.release().unwrap();

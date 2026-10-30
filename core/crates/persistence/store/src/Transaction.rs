@@ -1156,6 +1156,19 @@ impl Snapshot {
     pub fn content_digest(&self) -> Result<String> {
         digest(&self.data.values)
     }
+    /// Owners may project local SQL bookkeeping out of comparisons while retaining the full CAS/export snapshot.
+    pub fn projected_content_digest(&self, project: impl Fn(&str, &Value) -> Result<Option<Value>>) -> Result<String> {
+        use std::borrow::Cow;
+        let values = self.data.values.iter().map(|(name, value)| {
+            let content = match project(name, value)? {
+                Some(projected) => Cow::Owned(projected),
+                None => Cow::Borrowed(value),
+            };
+            Ok((name, content))
+        }).collect::<Result<BTreeMap<_, _>>>()?;
+        digest(&values)
+    }
+
     pub fn baseline_digest(&self) -> Result<String> {
         digest(&(&self.data, &self.covered))
     }
@@ -1226,12 +1239,17 @@ pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> 
 
 impl Snapshot {
     pub fn manifest(&self) -> Result<Manifest> {
+        self.manifest_with_digest(self.content_digest()?)
+    }
+
+    /// Use the owner's content digest while retaining the complete snapshot token.
+    pub fn manifest_with_digest(&self, digest: String) -> Result<Manifest> {
         Ok(Manifest {
             owner: self.data.owner.clone(),
             node: self.node.clone(),
             revision: self.data.revision.clone(),
             token: self.token()?,
-            digest: self.content_digest()?,
+            digest,
         })
     }
 }
@@ -1309,6 +1327,34 @@ impl From<Cell> for crate::SqliteStore::SqliteValue {
 struct Table {
     columns: Vec<String>,
     rows: Vec<Vec<Cell>>,
+}
+
+/// Projects explicitly declared local columns and identity-only rows out of SQL content comparisons.
+/// Sorting after projection prevents local row IDs from leaking back through row order.
+#[cfg(feature = "full")]
+pub fn project_sql_table(value: &Value, local_columns: &[&str], identity: Option<(&str, &str)>) -> Result<Value> {
+    let mut table: Table = serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+    if table.rows.iter().any(|row| row.len() != table.columns.len()) {
+        return Err("SQL content projection has an invalid row width".into());
+    }
+    if let Some((from, to)) = identity {
+        let from = table.columns.iter().position(|name| name == from)
+            .ok_or("Missing identity source column")?;
+        let to = table.columns.iter().position(|name| name == to)
+            .ok_or("Missing identity destination column")?;
+        table.rows.retain(|row| row[from] != row[to]);
+    }
+    for index in (0..table.columns.len()).rev() {
+        if local_columns.contains(&table.columns[index].as_str()) {
+            table.columns.remove(index);
+            for row in &mut table.rows {
+                row.remove(index);
+            }
+        }
+    }
+    table.rows.sort_by_cached_key(|row| serde_json::to_string(row).expect("SQL cells serialize"));
+    table.rows.dedup();
+    serde_json::to_value(table).map_err(|error| error.to_string())
 }
 
 /// Logical SQL snapshots include only the owner's explicit synchronized tables, never physical pages.
