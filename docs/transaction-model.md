@@ -97,17 +97,24 @@ $$
 
 先合并原文，求有效历史，再排序、转换和重放。已迁移的基线直接使用其当前状态；$R$ 在下表中均使用相同基线、迁移和规则。
 
-**最终强制校正。** 两端迁移及事务处理完成、期间没有新事务时，$C(A')\ne C(B')$ 即为同步错误。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
+**最终强制校正。** 两端迁移及事务处理完成、期间没有新事务时，文件内容或持久基线不一致即为同步错误。记 $b(X)=(C(X_0),K_X)$，包含基线内容及覆盖范围。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
 
 $$
 X^*=\underset{X\in\{A',B'\}}{\arg\max}\;(\rho(X),d(X)),\qquad
 C(A_{\mathrm{final}})=C(B_{\mathrm{final}})=C(X^*).
 $$
 
-两端分别按捕获的快照版本原子保存权威状态及覆盖范围，再次比较；期间写入则重新同步、选源和比较。一致后结束本轮同步。记 $\operatorname{Complete}(A,B)$ 为本轮完成，$\operatorname{ready}(A)$ 包含两种迁移、事务处理及对应校验协议均就绪，则：
+直接复制 $X^*$ 的完整同步文件，并在两端固化共同基线 $A_0^*=X^*$。令 $K_A,K_B$ 为各端校正前已处理事务的身份集合，则：
 
 $$
-\operatorname{Complete}(A,B)\Rightarrow\operatorname{ready}(A)\land\operatorname{ready}(B)\land C(A)=C(B).
+K^*=K_A\cup K_B,\qquad
+A_{\mathrm{next}}=B_{\mathrm{next}}=\operatorname{Apply}_{\mu_1}\!\left(A_0^*,N(\mathcal H_{\mathrm{next}}\setminus K^*)\right).
+$$
+
+$\setminus K^*$ 按事务身份排除已封存历史；其原文继续归档，后续应用以复制后的文件为起点。缺失文件按同一流程补齐。两端分别按捕获版本原子保存文件及基线，再次比较；期间写入则重新同步、选源和比较。一致后结束本轮同步。记 $\operatorname{Complete}(A,B)$ 为本轮完成，$\operatorname{ready}(A)$ 包含两种迁移、事务处理及对应校验协议均就绪，则：
+
+$$
+\operatorname{Complete}(A,B)\Rightarrow\operatorname{ready}(A)\land\operatorname{ready}(B)\land C(A)=C(B)\land b(A)=b(B).
 $$
 
 强制校正保证最终内容相等；迁移等价式与业务合并规则另由业务测试验证。

@@ -2519,3 +2519,130 @@ fn concurrent_control_writes_publish_one_shared_state() {
         state
     );
 }
+
+#[test]
+fn repeated_preference_snapshots_do_not_rewrite_prepared_files() {
+    use crate::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
+    let storage = Arc::new(MemoryStorageHost::default());
+    let stores: Vec<_> = (0..20).map(|index| {
+        let path = format!("runtime/plugin_data/space/com.operit.test/{index}.preferences.json");
+        let store = PreferencesDataStore::newWithStorage(storage.clone(), &path)
+            .withSchema(1, |_, _| Ok(()));
+        store.edit(|values| values.set(&stringPreferencesKey("value"), json!(index))).unwrap();
+        store
+    }).collect();
+    let snapshots: Vec<_> = stores.iter().map(|store| store.syncSnapshot().unwrap()).collect();
+    let writes = storage.writeCount();
+    for _ in 0..5 {
+        for (store, expected) in stores.iter().zip(&snapshots) {
+            assert_eq!(store.syncSnapshot().unwrap(), *expected);
+        }
+    }
+    assert_eq!(storage.writeCount(), writes, "100 unchanged snapshots must perform zero file writes");
+    let upgraded = stores[0].clone().withSchema(2, |_, values| {
+        values.set(&stringPreferencesKey("upgraded"), json!(true));
+        Ok(())
+    });
+    assert!(!upgraded.isSyncPrepared().unwrap());
+    assert_eq!(upgraded.syncSnapshot().unwrap().data.values["upgraded"], json!(true));
+    assert!(upgraded.isSyncPrepared().unwrap());
+    assert!(storage.writeCount() > writes, "a real format migration must still be persisted");
+}
+
+#[test]
+fn preference_replay_reads_only_its_completed_sql_target() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage, "runtime/sync");
+    let path = "runtime/plugin_data/space/com.operit.test/selected.preferences.json";
+    let make = |sequence, path: &str| {
+        let mut op = operationFromOrigin("peer", sequence, "preference", &serde_json::to_string(&(path, "value")).unwrap(),
+            "set", json!({"storagePath":path,"key":"value","value":sequence,"encrypted":false,"formatVersion":1}));
+        op.domain = "preferences".into();
+        op
+    };
+    let selected = make(1, path);
+    let mut completed = vec![selected.clone()];
+    completed.extend((2..1002).map(|sequence| make(sequence, "runtime/plugin_data/space/com.operit.test/other.preferences.json")));
+    store.appendOperations(&completed).unwrap();
+    let pending = make(1002, path);
+    store.receiveOperations(std::slice::from_ref(&pending)).unwrap();
+    // An all-history scan would try to parse these unrelated headers and fail.
+    store.withJournal(|journal| journal.transaction(|tx| {
+        tx.execute("UPDATE originals SET header='not a JSON header' WHERE target<>?1", vec![crate::SqliteStore::SqliteValue::Text(path.into())])?;
+        Ok(())
+    })).unwrap();
+    for _ in 0..3 {
+        assert_eq!(store.archivedPreferenceHistory(path).unwrap(), vec![selected.clone()]);
+    }
+    store.completeOperations(std::slice::from_ref(&pending)).unwrap();
+    assert_eq!(store.archivedPreferenceHistory(path).unwrap(), vec![selected, pending]);
+}
+
+#[test]
+fn empty_preference_preparation_only_initializes_requested_owners() {
+    use crate::{PreferenceMerge::{self, PreferenceMergeSchema, PreferenceMergeStore},
+        PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, PreferencesDataStore}};
+    let storage = Arc::new(MemoryStorageHost::default());
+    PreferencesDataStore::newWithStorage(storage.clone(), "runtime/plugin_data/space/com.operit.test/existing.preferences.json")
+        .edit(|values| values.set(&stringPreferencesKey("value"), json!("existing"))).unwrap();
+    let path = "runtime/config/preferences/requested.preferences.json";
+    CoreNodeStateStore::newWithStorage(storage.clone(), path)
+        .edit(|values| values.set(&stringPreferencesKey("value"), json!("requested"))).unwrap();
+    let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore::values(path, false,
+        |storage, path| PreferencesDataStore::newWithStorage(storage, path))] };
+    let outcomes = PreferenceMerge::applyIndependentOperations(storage.clone(), &schema, &[], &[], |_, _| true);
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].paths, BTreeSet::from([path.into()]));
+    assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+    let writes = storage.writeCount();
+    assert!(PreferenceMerge::applyIndependentOperations(storage.clone(), &schema, &[], &[], |_, _| true).is_empty());
+    assert_eq!(storage.writeCount(), writes);
+}
+
+/// Run explicitly to compare the previous all-header scan with indexed owner replay.
+#[test]
+#[ignore = "manual history query benchmark"]
+fn benchmark_preference_owner_history_queries() {
+    let store = SyncOperationStore::new(Arc::new(MemoryStorageHost::default()), "runtime/sync");
+    let paths: Vec<_> = (0..45).map(|i| format!("runtime/plugin_data/space/com.operit.test/{i}.preferences.json")).collect();
+    let operations: Vec<_> = (1..=15_389).map(|sequence| {
+        let path = &paths[sequence as usize % paths.len()];
+        let mut op = operationFromOrigin("peer", sequence, "preference", &serde_json::to_string(&(path, "value")).unwrap(),
+            "set", json!({"storagePath":path,"key":"value","value":"x".repeat(256),"encrypted":false,"formatVersion":1}));
+        op.domain = "preferences".into();
+        op
+    }).collect();
+    store.appendOperations(&operations).unwrap();
+    let start = std::time::Instant::now();
+    let previous: Vec<Vec<SyncOperation>> = paths.iter().map(|path| {
+        store.withJournal(|journal| journal.headers(Some(false))).unwrap().into_iter()
+            .filter(|header| header.route.storage_path.as_deref() == Some(path))
+            .map(|header| store.original(&header.op_id).unwrap()).collect()
+    }).collect();
+    let before = start.elapsed();
+    let start = std::time::Instant::now();
+    let indexed: Vec<_> = paths.iter().map(|path| store.archivedPreferenceHistory(path).unwrap()).collect();
+    let after = start.elapsed();
+    assert_eq!(indexed, previous);
+    eprintln!("history replay: {} originals / {} owners; all-header scan={before:?}, indexed={after:?}, speedup={:.2}x",
+        operations.len(), paths.len(), before.as_secs_f64() / after.as_secs_f64());
+}
+
+#[test]
+fn empty_preference_preparation_replays_explicit_history_for_a_prepared_dynamic_owner() {
+    use crate::{PreferenceMerge::{self, PreferenceMergeSchema},
+        PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore}};
+    let source = Arc::new(MemoryStorageHost::default());
+    let target = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/plugin_data/space/com.operit.test/history.preferences.json";
+    let remote = PreferencesDataStore::newWithStorage(source.clone(), path);
+    remote.edit(|values| values.set(&stringPreferencesKey("remote"), json!(true))).unwrap();
+    let history = SyncOperationStore::new(source, "runtime/sync").preferenceHistory().unwrap();
+    let local = PreferencesDataStore::newWithStorage(target.clone(), path);
+    local.prepareSync().unwrap();
+    // A caller explicitly supplying history still requests replay, even without incoming work.
+    let outcomes = PreferenceMerge::applyIndependentOperations(target, &PreferenceMergeSchema::default(), &history, &[], |_, _| true);
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+    assert_eq!(local.data().unwrap().get(&stringPreferencesKey("remote")), Some(&json!(true)));
+}

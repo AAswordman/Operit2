@@ -504,3 +504,50 @@ fn shared_declaration_validation_precedes_storage_publication() {
     }
     fixture.dispose();
 }
+
+
+#[test]
+fn file_correction_provisions_an_empty_preference_owner_without_a_transaction() {
+    let source = Fixture::new("space");
+    let store = PreferencesDataStore::newWithStorage(source.host.clone(), &source.path);
+    store.prepareSync().unwrap();
+    let snapshot = store.syncSnapshot().unwrap();
+    let file = operit_store::Transaction::preference::file_snapshot(&store,&snapshot.token().unwrap()).unwrap();
+    assert!(source.history().is_empty());
+    let target = Fixture::new("space");
+    let mut schema = PreferenceMergeSchema::default();
+    let registry = PreferenceMerge::registry(target.host.clone(),&schema,[],|_,_|true).unwrap();
+    assert!(!registry.owners.contains_key(&target.path));
+    drop(registry);
+    schema.stores.push(schema.owner(&target.path).unwrap().unwrap());
+    let registry = PreferenceMerge::registry(target.host.clone(),&schema,[],|_,_|true).unwrap();
+    assert!(registry.repair_file(&snapshot.data.owner,"",&snapshot,Some(&file)).unwrap());
+    assert!(!registry.repair_file(&snapshot.data.owner,"",&snapshot,Some(&file)).unwrap());
+    assert_eq!(target.host.readBytes(&target.path).unwrap(),file.as_bytes());
+    assert!(target.history().is_empty());
+    drop(registry);
+    let schema = PreferenceMergeSchema::default();
+    let registry = PreferenceMerge::registry(target.host.clone(),&schema,[],|_,_|true).unwrap();
+    assert_eq!(registry.snapshot(&snapshot.data.owner).unwrap().data,snapshot.data);
+    source.dispose(); target.dispose();
+}
+
+#[test]
+fn a_file_created_after_inventory_capture_is_preserved_and_discovered() {
+    let source = Fixture::new("space");
+    let source_store = PreferencesDataStore::newWithStorage(source.host.clone(), &source.path);
+    source_store.prepareSync().unwrap();
+    let snapshot = source_store.syncSnapshot().unwrap();
+    let target = Fixture::new("space");
+    let mut schema = PreferenceMergeSchema::default();
+    schema.stores.push(schema.owner(&target.path).unwrap().unwrap());
+    let registry = PreferenceMerge::registry(target.host.clone(),&schema,[],|_,_|true).unwrap();
+    // A local edit lands after the peer captured absence, before file installation.
+    let store = PreferencesDataStore::newWithStorage(target.host.clone(), &target.path);
+    store.edit(|values|values.set(&stringPreferencesKey("local"),"keep")).unwrap();
+    let bytes = target.host.readBytes(&target.path).unwrap();
+    assert!(!registry.repair_file(&snapshot.data.owner,"",&snapshot,None).unwrap());
+    assert_eq!(target.host.readBytes(&target.path).unwrap(),bytes);
+    assert_eq!(store.data().unwrap().get(&stringPreferencesKey("local")),Some(&json!("keep")));
+    source.dispose(); target.dispose();
+}

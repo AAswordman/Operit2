@@ -117,6 +117,10 @@ impl SqlChatSyncStore {
         self.dataset().snapshot().map_err(SqlChatSyncStoreError::Message)
     }
 
+    pub fn syncBaselineDigest(&self) -> Result<String, SqlChatSyncStoreError> {
+        self.dataset().baseline_digest().map_err(SqlChatSyncStoreError::Message)
+    }
+
     pub fn repairSyncedSnapshot(&self, expected: &str, source: &crate::Transaction::Snapshot) -> Result<bool, SqlChatSyncStoreError> {
         self.dataset().repair(expected, source).map_err(SqlChatSyncStoreError::Message)
     }

@@ -76,6 +76,14 @@ impl Journal {
             .map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).transpose()
     }
 
+    /// Replay reads only completed originals for this owner through originals_target.
+    pub(crate) fn preference_originals(&mut self, path: &str) -> Result<Vec<SyncOperation>, Error> {
+        self.0.query(
+            "SELECT original FROM originals WHERE target=?1 AND pending=0 AND domain='preferences' ORDER BY origin,sequence",
+            vec![text(path)],
+        )?.into_iter().map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).collect()
+    }
+
     /// Small headers are enough for export planning; business payloads are read only after selection.
     pub(crate) fn headers(&mut self, pending: Option<bool>) -> Result<Vec<JournalRecord>, Error> {
         let (sql, params) = match pending {

@@ -270,13 +270,23 @@ pub fn applyIndependentOperations<F>(
 ) -> Vec<PreferenceMergeOutcome>
 where F: Fn(&str, &str) -> bool + Copy {
     let result = (|| {
-        let mut registry = registry(storage.clone(), schema, history.iter().chain(incoming), retain)?;
+        let registry = registry(storage.clone(), schema, history.iter().chain(incoming), retain)?;
         registry.journal.appendOperations(history).map_err(|e|e.to_string())?;
         let mut report = registry.receive(incoming)?;
         if incoming.is_empty() {
-            for (path, owner) in &registry.owners {
-                if storage.exists(path).map_err(|e|e.to_string())? {
-                    report.outcomes.insert(path.clone(),(owner.apply)(&[],&report.aliases));
+            // Retry pending work and explicitly supplied history; prepare only requested files.
+            let replay = history.iter().map(|op| registry.target(op)).collect::<Result<BTreeSet<_>, _>>()?;
+            let requested = schema.stores.iter().map(|store| &store.path).chain(replay.iter()).collect::<BTreeSet<_>>();
+            for path in requested {
+                if report.outcomes.contains_key(path)
+                    || !replay.contains(path) && !storage.exists(path).map_err(|e|e.to_string())? {
+                    continue;
+                }
+                let Some(owner) = registry.owners.get(path) else { continue; };
+                let Some(declaration) = schema.owner(path)? else { continue; };
+                let store = (declaration.open)(storage.clone(), path);
+                if replay.contains(path) || !store.isSyncPrepared().map_err(|e|e.to_string())? {
+                    report.outcomes.insert(path.clone(), (owner.apply)(&[], &report.aliases));
                 }
             }
         }
@@ -322,6 +332,7 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
         let application = store.clone();
         let projection = store.clone();
         let snapshot = store.clone();
+        let baseline = store.clone();
         let repair = store;
         registry.register(Participant { validate: Some(Box::new(move |operation| {
                 let entry = PreferencesSyncedEntry::fromOperation(operation).map_err(|e|e.to_string())?;
@@ -336,7 +347,8 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
                 applyDeclaredOperations(&projection,schema,&[],aliases,retain).map(|_|())
             }) as Box<dyn Fn(&BTreeMap<String,String>)->Result<(),String> + 'a>),
             snapshot: Some(Box::new(move || snapshot.syncSnapshot().map_err(|e|e.to_string()))),
-            repair: Some(Box::new(move |expected, source| repair.repairSyncedSnapshot(expected,source).map_err(|e|e.to_string()))),
+            baseline: Some(Box::new(move ||crate::Transaction::preference::baseline_digest(&baseline).map_err(|e|e.to_string()))),
+            repair: Some(Box::new(move |expected, source, file| crate::Transaction::preference::repair_file(&repair,expected,source,file).map_err(|e|e.to_string()))),
         })?;
     }
     Ok(registry)

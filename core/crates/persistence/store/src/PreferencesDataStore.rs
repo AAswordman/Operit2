@@ -3063,7 +3063,9 @@ impl PreferencesDataStore {
     }
 
     pub(crate) fn publishCommitted(&self, preferences: &Preferences) {
-        self.sharedState.preferences.lock().expect("preferences cache mutex").preferences = preferences.clone();
+        let mut loaded = self.sharedState.preferences.lock().expect("preferences cache mutex");
+        loaded.preferences = preferences.clone();
+        loaded.loaded = true;
     }
 
     /// Reads the current preferences snapshot.
@@ -3258,6 +3260,27 @@ impl PreferencesDataStore {
             return Ok(emptyPreferences());
         }
         Ok(serde_json::from_str(&content)?)
+    }
+
+    pub(crate) fn readPlaintextFile(&self) -> Result<String, PreferencesDataStoreError> {
+        let stored = self.storageHost.readBytes(&self.storagePath)?;
+        let bytes = match &self.encryption {
+            Some(encryption) => match classifyStoredEncryptedPreferences(&stored)? {
+                StoredEncryptedPreferences::LegacyPlaintext(_) => stored,
+                StoredEncryptedPreferences::EncryptedEnvelope(content) => encryption.decrypt(&self.storagePath, &content)?,
+            },
+            None => stored,
+        };
+        String::from_utf8(bytes).map_err(|e| PreferencesDataStoreError::Message(e.to_string()))
+    }
+
+    pub(crate) fn writePlaintextFile(&self, content: &str) -> Result<(), PreferencesDataStoreError> {
+        let bytes = match &self.encryption {
+            Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
+            None => content.as_bytes().to_vec(),
+        };
+        self.storageHost.writeBytesAtomically(&self.storagePath, &bytes)?;
+        Ok(())
     }
 
     /// Returns an observed flow of preference snapshots.

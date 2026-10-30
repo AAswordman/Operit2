@@ -8,9 +8,17 @@ use operit_store::SyncOperationStore::{SyncOperation, DEFAULT_SYNC_PAGE_BYTES};
 use std::collections::BTreeMap;
 use operit_store::PreferenceMerge::{self, PreferenceMergeSchema};
 use operit_store::Transaction::{Owner, Snapshot, kernel::{Registry, Participant, Source}};
-use operit_store::RuntimeFileSyncStore::RuntimeFileSyncReference;
+use operit_store::RuntimeFileSyncStore::{FileCorrectionReference, FileCoverage};
 use operit_store::PluginStorage;
 use serde_json::{json, Value};
+
+/// File contents and their durable replay boundary travel together.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BaselineFile {
+    snapshot: Snapshot,
+    content: Option<String>,
+    definition: Option<Value>,
+}
 
 impl OperitApplication {
     /// All synchronization entry points use this same owner/source inventory.
@@ -25,6 +33,7 @@ impl OperitApplication {
         });
         let chat = SqlChatSyncStore::default().map_err(|e|e.to_string());
         let (prepare,apply,snapshot,repair,receipt,export,inventory) = (chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat);
+        let baseline = snapshot.clone();
         registry.register(Participant { validate: None,
             path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(),
             prepare: Box::new(move || prepare.as_ref().map(|_|()).map_err(Clone::clone)),
@@ -34,7 +43,8 @@ impl OperitApplication {
                 Ok(BTreeMap::new())
             }), project: None,
             snapshot: Some(Box::new(move || snapshot.as_ref().map_err(Clone::clone)?.syncSnapshot().map_err(|e|e.to_string()))),
-            repair: Some(Box::new(move |expected,source| repair.as_ref().map_err(Clone::clone)?.repairSyncedSnapshot(expected,source).map_err(|e|e.to_string()))),
+            baseline: Some(Box::new(move ||baseline.as_ref().map_err(Clone::clone)?.syncBaselineDigest().map_err(|e|e.to_string()))),
+            repair: Some(Box::new(move |expected,source,_| repair.as_ref().map_err(Clone::clone)?.repairSyncedSnapshot(expected,source).map_err(|e|e.to_string()))),
         })?;
         registry.sources.push(Source {
             receipt: Box::new(move || receipt.as_ref().map_err(Clone::clone)?.receipt().map(|r|(r,vec![])).map_err(|e|e.to_string())),
@@ -57,6 +67,7 @@ impl OperitApplication {
         for path in paths {
             let (apply,snapshot,repair,project) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
             let (snapshot_path,node_snapshot,node_repair,storage) = (path.clone(),node.clone(),node.clone(),storage.clone());
+            let (baseline, baseline_path, baseline_node) = (plugin.clone(),path.clone(),node.clone());
             registry.register(Participant { validate: None, path,
                 prepare: Box::new(||Ok(())),
                 apply: Box::new(move |operations,aliases| {
@@ -65,13 +76,14 @@ impl OperitApplication {
                 }),
                 project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,aliases).map_err(|e|e.to_string()))),
                 snapshot: Some(Box::new(move ||PluginStorage::syncSnapshot(snapshot.clone()?,&snapshot_path,&node_snapshot))),
-                repair: Some(Box::new(move |expected,source|PluginStorage::repairSyncedSnapshot(repair.clone()?,expected,source,&node_repair))),
+                baseline: Some(Box::new(move ||PluginStorage::syncBaselineDigest(baseline.clone()?,&baseline_path,&baseline_node))),
+                repair: Some(Box::new(move |expected,source,_|PluginStorage::repairSyncedSnapshot(repair.clone()?,expected,source,&node_repair))),
             })?;
         }
         for operation in operations.iter().filter(|op|!matches!(op.domain.as_str(),"preferences"|CHAT_SYNC_DOMAIN|PLUGIN_STORAGE_SYNC_DOMAIN)) {
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
-            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, repair: None,
+            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, baseline: None, repair: None,
                 apply: Box::new(move |operations,_| {
                     for operation in operations {
                         match operation.domain.as_str() {
@@ -101,8 +113,7 @@ impl OperitApplication {
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        let (snapshots,pending,errors) = registry.snapshots()?;
-        let manifests = snapshots.iter().map(Snapshot::manifest).collect::<Result<Vec<_>,_>>()?;
+        let (manifests,pending,errors) = registry.manifests()?;
         Ok(json!({"manifests":manifests,"pendingOwners":pending,"errors":errors}))
     }
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
@@ -110,16 +121,57 @@ impl OperitApplication {
         let schema = PreferenceSpaceMerge::schema();
         let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
-        let bytes = serde_json::to_vec(&snapshot).map_err(|e|e.to_string())?;
+        let content = if owner.backend == operit_store::Transaction::Backend::DataStore {
+            let declaration = schema.owner(&owner.path)?.ok_or("Unknown preference file")?;
+            let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
+            Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
+        } else { None };
+        let definition = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH || owner.backend != operit_store::Transaction::Backend::Sql {
+            None
+        } else { Some(PluginStorage::snapshotDefinition(self.pluginSqliteHost()?, &owner.path).map_err(|e|e.to_string())?) };
+        let bytes = serde_json::to_vec(&BaselineFile { snapshot, content, definition }).map_err(|e|e.to_string())?;
         serde_json::to_value(self.runtimeFileSyncStore()?.storeBlob(&bytes)?).map_err(|e|e.to_string())
     }
-    pub(super) fn repairConsistencySnapshot(&self, owner: Owner, expected: &str, reference: RuntimeFileSyncReference) -> Result<bool,String> {
+    pub(super) fn exportConsistencyCoverage(&self, owner: Owner, token: &str) -> Result<Value,String> {
+        let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
+        let schema = PreferenceSpaceMerge::schema();
+        let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
+        if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
+        let bytes = serde_json::to_vec(&FileCoverage { owner, covered: snapshot.covered }).map_err(|e|e.to_string())?;
+        serde_json::to_value(self.runtimeFileSyncStore()?.storeBlob(&bytes)?).map_err(|e|e.to_string())
+    }
+    pub(super) fn repairConsistencySnapshot(&self, owner: Owner, expected: &str, reference: FileCorrectionReference) -> Result<bool,String> {
         let journal = self.runtimeSyncOperationStore()?;
         let _application = journal.lockApplication().map_err(|e|e.to_string())?;
+        let files = self.runtimeFileSyncStore()?;
+        let mut source: BaselineFile = serde_json::from_slice(&files.readBlob(&reference.source)?).map_err(|e|e.to_string())?;
+        if source.snapshot.data.owner != owner { return Err("Correction file owner differs".into()); }
+        if let Some(reference) = reference.superseded {
+            let superseded: FileCoverage = serde_json::from_slice(&files.readBlob(&reference)?).map_err(|e|e.to_string())?;
+            if superseded.owner != owner { return Err("Superseded file owner differs".into()); }
+            source.snapshot.covered.extend(superseded.covered);
+        }
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
-        let source = serde_json::from_slice(&self.runtimeFileSyncStore()?.readBlob(&reference)?).map_err(|e|e.to_string())?;
-        let schema = PreferenceSpaceMerge::schema();
+        let mut schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        registry.repair(&owner,expected,&source)
+        let missing = !registry.owners.contains_key(&owner.path);
+        if expected.is_empty() != missing { return Ok(false); }
+        drop(registry);
+        // A missing inventory entry is provisioned by the complete file, then committed as a baseline.
+        if missing {
+            match owner.backend {
+                operit_store::Transaction::Backend::DataStore => {
+                    let declaration = schema.owner(&owner.path)?.ok_or("Unknown shared preference file")?;
+                    schema.stores.push(declaration);
+                },
+                operit_store::Transaction::Backend::Sql => {
+                    let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
+                    PluginStorage::installSnapshotDefinition(self.pluginSqliteHost()?,storage,&owner.path,
+                        source.definition.clone().ok_or("Missing database definition")?).map_err(|e|e.to_string())?;
+                },
+            }
+        }
+        let registry = self.transactionRegistry(&schema,&pending)?;
+        registry.repair_file(&owner,expected,&source.snapshot,source.content.as_deref())
     }
 }

@@ -392,7 +392,7 @@ fn production_registry_verifies_replacement_and_rejects_a_stale_capture() {
         PreferenceMerge::registry(target.host.clone(), &schema, &[], |_, _| true).unwrap();
     let authoritative = source.store().syncSnapshot().unwrap();
     let capture = registry.snapshot(&authoritative.data.owner).unwrap();
-    registry.owners.get_mut(CURRENT).unwrap().repair = Some(Box::new(|_, _| Ok(true)));
+    registry.owners.get_mut(CURRENT).unwrap().repair = Some(Box::new(|_, _, _| Ok(true)));
     assert!(registry
         .repair(
             &capture.data.owner,
@@ -942,4 +942,72 @@ fn dynamic_space_owners_only_accept_declared_record_paths() {
     ] {
         assert!(schema.owner(&path).unwrap().is_none(), "{path}");
     }
+}
+
+#[test]
+fn file_correction_seals_both_histories_and_future_edits_start_from_the_copied_file() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let old = authored(CURRENT, 2, 40, |values| values.set(&stringPreferencesKey("discarded"), "old history"));
+    let new = authored(CURRENT, 2, 50, |values| values.set(&stringPreferencesKey("x"), "original"));
+    target.apply(&old);
+    source.apply(&new);
+    // The materialized file is authoritative even when it cannot be reconstructed from history.
+    let bytes = b"{\n  \"x\": \"repaired file\",\n  \"__operit_preferences_schema_version\": 2\n}\n";
+    source.host.writeBytesAtomically(CURRENT, bytes).unwrap();
+    let a = source.store().syncSnapshot().unwrap();
+    let b = target.store().syncSnapshot().unwrap();
+    let file = Transaction::preference::file_snapshot(&source.store(), &a.token().unwrap()).unwrap();
+    let baseline = Transaction::compare(&a, &b).unwrap().unwrap().source;
+    for (fixture, expected) in [(&target, b.token().unwrap()), (&source, a.token().unwrap())] {
+        assert!(Transaction::preference::repair_file(&fixture.store(), &expected, &baseline, Some(&file)).unwrap());
+        assert_eq!(fixture.host.readBytes(CURRENT).unwrap(), bytes);
+        let reopened = current_store(fixture.reopen(), CURRENT);
+        assert_eq!(reopened.syncSnapshot().unwrap().covered, baseline.covered);
+        apply(fixture.reopen(), &old);
+        apply(fixture.reopen(), &new);
+        assert_eq!(reopened.data().unwrap().get(&stringPreferencesKey("x")), Some(&json!("repaired file")));
+        assert!(reopened.data().unwrap().get(&stringPreferencesKey("discarded")).is_none());
+    }
+    let next = authored(CURRENT, 2, 60, |values| values.set(&stringPreferencesKey("y"), "future edit"));
+    for fixture in [&source, &target] { apply(fixture.reopen(), &next); }
+    let a = current_store(source.reopen(), CURRENT).syncSnapshot().unwrap();
+    let b = current_store(target.reopen(), CURRENT).syncSnapshot().unwrap();
+    assert_eq!(a.data, b.data);
+    assert_eq!(a.data.values["x"], json!("repaired file"));
+    assert_eq!(a.data.values["y"], json!("future edit"));
+    assert!(!a.data.values.contains_key("discarded"));
+}
+
+
+#[test]
+fn equal_files_with_a_half_committed_baseline_require_correction_after_restart() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let source_history = authored(CURRENT,2,50,|values|values.set(&stringPreferencesKey("x"),"source"));
+    let target_history = authored(CURRENT,2,40,|values|values.set(&stringPreferencesKey("old"),"superseded"));
+    source.apply(&source_history);
+    target.apply(&target_history);
+    let a = source.store().syncSnapshot().unwrap();
+    let b = target.store().syncSnapshot().unwrap();
+    let baseline = Transaction::compare(&a,&b).unwrap().unwrap().source;
+    assert!(target.store().repairSyncedSnapshot(&b.token().unwrap(),&baseline).unwrap());
+    // Simulate disconnection before the source installs its new baseline.
+    let manifests = |fixture: &Fixture| {
+        let schema = schema();
+        let registry = PreferenceMerge::registry(fixture.reopen(),&schema,[],|_,_|true).unwrap();
+        let manifests = registry.manifests().unwrap().0;
+        manifests.into_iter().find(|m|m.owner.path == CURRENT).unwrap()
+    };
+    let local = manifests(&source);
+    let remote = manifests(&target);
+    assert_eq!(local.digest,remote.digest);
+    assert_ne!(local.baseline,remote.baseline);
+    assert_ne!(Transaction::compare_manifests(&local,&remote).unwrap(),Transaction::Source::Equal);
+    let reopened = current_store(source.reopen(),CURRENT);
+    assert!(reopened.repairSyncedSnapshot(&a.token().unwrap(),&baseline).unwrap());
+    assert_eq!(Transaction::compare_manifests(&manifests(&source),&manifests(&target)).unwrap(),Transaction::Source::Equal);
+    source.apply(&target_history);
+    target.apply(&source_history);
+    assert_eq!(source.store().syncSnapshot().unwrap().data,target.store().syncSnapshot().unwrap().data);
 }

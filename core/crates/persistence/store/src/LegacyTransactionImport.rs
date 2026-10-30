@@ -382,15 +382,6 @@ impl JournalRecord {
         })
     }
 
-    pub(crate) fn preference_path_matches(&self, path: &str) -> bool {
-        if self.route.encrypted && !self.route.resolved {
-            serde_json::from_str::<Vec<serde_json::Value>>(&self.entity_id)
-                .is_ok_and(|identity| identity.first().and_then(|v| v.as_str()) == Some(path))
-        } else {
-            self.route.storage_path.as_deref() == Some(path)
-        }
-    }
-
     pub(crate) fn is_merge_candidate(&self) -> bool {
         self.domain == "preferences"
             && ((self.route.encrypted && !self.route.resolved) || self.operation == "alias" || self.route.merge_metadata)

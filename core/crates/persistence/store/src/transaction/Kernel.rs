@@ -29,6 +29,9 @@ pub struct FileCommit {
     pub additions: BTreeMap<String, Vec<super::Addition>>,
     pub generation: u64,
     pub reset_baseline: bool,
+    /// Exact plaintext file to publish after the checkpoint commits; encrypted locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 #[derive(Default)]
@@ -49,7 +52,8 @@ pub struct Participant<'a> {
     pub apply: Box<dyn Fn(&[SyncOperation], &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> + 'a>,
     pub project: Option<Box<dyn Fn(&BTreeMap<String,String>) -> Result<(),String> + 'a>>,
     pub snapshot: Option<Box<dyn Fn() -> Result<Snapshot, String> + 'a>>,
-    pub repair: Option<Box<dyn Fn(&str, &Snapshot) -> Result<bool, String> + 'a>>,
+    pub baseline: Option<Box<dyn Fn() -> Result<String, String> + 'a>>,
+    pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>) -> Result<bool, String> + 'a>>,
 }
 
 /// Existing SQL business databases expose their originals through the same source contract.
@@ -213,6 +217,23 @@ impl<'a> Registry<'a> {
         Ok((snapshots, pending, errors))
     }
 
+    /// File equality also requires the same durable starting point for future replay.
+    pub fn manifests(&self) -> Result<(Vec<super::Manifest>, BTreeSet<String>, Vec<String>), String> {
+        let (snapshots, pending, mut errors) = self.snapshots()?;
+        let mut manifests = Vec::new();
+        for snapshot in snapshots {
+            let mut manifest = snapshot.manifest()?;
+            if let Some(baseline) = self.owners.get(&manifest.owner.path).and_then(|owner|owner.baseline.as_ref()) {
+                match baseline() {
+                    Ok(digest) => manifest.baseline = Some(digest),
+                    Err(error) => { errors.push(format!("{}: {error}",manifest.owner.path)); continue; },
+                }
+            }
+            manifests.push(manifest);
+        }
+        Ok((manifests,pending,errors))
+    }
+
     pub fn snapshot(&self, owner: &Owner) -> Result<Snapshot, String> {
         if self.pending_owners()?.contains(&owner.path) { return Err("Dataset has pending transactions".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
@@ -224,16 +245,26 @@ impl<'a> Registry<'a> {
 
     /// Authority, version checks, CAS and verification are shared by every backend.
     pub fn repair(&self, owner: &Owner, expected: &str, source: &Snapshot) -> Result<bool, String> {
-        let current = self.snapshot(owner)?;
-        if current.token()? != expected { return Ok(false); }
+        self.repair_file(owner, expected, source, None)
+    }
+
+    pub fn repair_file(&self, owner: &Owner, expected: &str, source: &Snapshot, file: Option<&str>) -> Result<bool, String> {
         if &source.data.owner != owner { return Err("Snapshot owner differs".into()); }
-        if super::compare_manifests(&current.manifest()?, &source.manifest()?)? == super::Source::Local {
-            return Err("Snapshot source is older than the local authority".into());
+        if self.pending_owners()?.contains(&owner.path) { return Err("Dataset has pending transactions".into()); }
+        if !expected.is_empty() {
+            let current = self.snapshot(owner)?;
+            if current.token()? != expected { return Ok(false); }
+            if super::compare_manifests(&current.manifest()?, &source.manifest()?)? == super::Source::Local {
+                return Err("Snapshot source is older than the local authority".into());
+            }
         }
-        let repair = self.owners.get(&owner.path).and_then(|owner| owner.repair.as_ref()).ok_or("Owner cannot replace snapshots")?;
-        if !repair(expected, source)? { return Ok(false); }
+        let repair = self.owners.get(&owner.path).and_then(|owner| owner.repair.as_ref()).ok_or("Owner cannot replace files")?;
+        if !repair(expected, source, file)? { return Ok(false); }
         let verified = self.snapshot(owner)?;
         if verified.content_digest()? != source.content_digest()? { return Err("Snapshot verification failed after replacement".into()); }
+        if let Some(baseline) = self.owners.get(&owner.path).and_then(|owner|owner.baseline.as_ref()) {
+            if baseline()? != verified.baseline_digest()? { return Err("Replacement baseline was not committed".into()); }
+        }
         Ok(true)
     }
 }

@@ -862,7 +862,7 @@ impl OperitApplication {
         }).map_err(|error| error.to_string())?;
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
-        result["consistencyVersion"] = serde_json::json!(1);
+        result["consistencyVersion"] = serde_json::json!(2);
         result["pending"] = serde_json::json!(pending);
         result["pendingOperationIds"] = serde_json::json!(store.pendingOperationIds().map_err(|error| error.to_string())?);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
@@ -878,6 +878,10 @@ impl OperitApplication {
 
     pub fn syncReadSnapshot(&self, owner: serde_json::Value, token: String) -> Result<serde_json::Value, String> {
         self.exportConsistencySnapshot(serde_json::from_value(owner).map_err(|e| e.to_string())?, &token)
+    }
+
+    pub fn syncReadCoverage(&self, owner: serde_json::Value, token: String) -> Result<serde_json::Value, String> {
+        self.exportConsistencyCoverage(serde_json::from_value(owner).map_err(|e| e.to_string())?, &token)
     }
 
     pub fn syncRepairSnapshot(&self, owner: serde_json::Value, expected: String, reference: serde_json::Value) -> Result<bool, String> {

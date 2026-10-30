@@ -1155,6 +1155,9 @@ impl Snapshot {
     pub fn content_digest(&self) -> Result<String> {
         digest(&self.data)
     }
+    pub fn baseline_digest(&self) -> Result<String> {
+        digest(&(&self.data, &self.covered))
+    }
 
     /// Installs the authoritative baseline without allocating a business revision.
     pub fn replace(&mut self, expected: &str, source: &Self) -> Result<bool> {
@@ -1195,6 +1198,8 @@ pub struct Manifest {
     pub revision: Option<Revision>,
     pub token: String,
     pub digest: String,
+    #[serde(default)]
+    pub baseline: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1208,7 +1213,7 @@ pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> 
     if local.owner != remote.owner {
         return Err("Snapshots are not at the same format/layout".into());
     }
-    if local.digest == remote.digest {
+    if local.digest == remote.digest && local.baseline == remote.baseline {
         return Ok(Source::Equal);
     }
     Ok(
@@ -1228,6 +1233,7 @@ impl Snapshot {
             revision: self.data.revision.clone(),
             token: self.token()?,
             digest: self.content_digest()?,
+            baseline: None,
         })
     }
 }
@@ -1405,36 +1411,56 @@ impl SqlDataset<'_> {
             .map_err(|e| e.to_string())
     }
 
+    pub fn baseline_digest(&self) -> Result<String> {
+        self.prepare()?;
+        let row = self.store.queryOne("SELECT snapshot FROM _operit_transaction_checkpoint WHERE id=1", vec![]).map_err(|e|e.to_string())?;
+        match row {
+            Some(row) => serde_json::from_str::<Snapshot>(&row.get::<_, String>(0).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?.baseline_digest(),
+            None => digest(&Option::<u8>::None),
+        }
+    }
+
     /// SQL state, deletion/version facts and correction baseline commit in the same SQL transaction.
     pub fn repair(&self, expected: &str, source: &Snapshot) -> Result<bool> {
         use crate::SqliteStore::SqliteValue;
         self.prepare()?;
+        let mut changed = false;
         let repaired = self.store.transaction(|tx| {
             let mut current = self.snapshot_in(tx)?;
-            if !current.replace(expected, source).map_err(sql_error)? { return Ok(false); }
-            let mut tables = BTreeMap::new();
-            if current.data.values.len() != self.tables.len() { return Err(sql_error("Unexpected SQL snapshot tables")); }
-            for name in self.tables {
-                let table: Table = serde_json::from_value(current.data.values.get(*name).cloned().ok_or_else(|| sql_error("Missing SQL snapshot table"))?).map_err(sql_error)?;
-                let expected = tx.queryRows(&format!("PRAGMA table_info({})", sql_identifier(name)), vec![])?.iter()
-                    .map(|row| row.get::<_, String>("name")).collect::<std::result::Result<Vec<_>, _>>()?;
-                if table.columns != expected || table.rows.iter().any(|row| row.len() != expected.len()) { return Err(sql_error("SQL snapshot schema mismatch")); }
-                tables.insert(*name, table);
+            let expected = if expected.is_empty() {
+                // Provisioning is conditional on an empty database with no committed baseline.
+                let checkpoint = tx.queryOne("SELECT 1 FROM _operit_transaction_checkpoint WHERE id=1", vec![])?.is_some();
+                let occupied = current.data.values.values().any(|table| table["rows"].as_array().is_none_or(|rows| !rows.is_empty()));
+                if checkpoint || !current.covered.is_empty() || occupied { return Ok(false); }
+                current.token().map_err(sql_error)?
+            } else { expected.to_owned() };
+            changed = current.data != source.data;
+            if !current.replace(&expected, source).map_err(sql_error)? { return Ok(false); }
+            if changed {
+                let mut tables = BTreeMap::new();
+                if current.data.values.len() != self.tables.len() { return Err(sql_error("Unexpected SQL snapshot tables")); }
+                for name in self.tables {
+                    let table: Table = serde_json::from_value(current.data.values.get(*name).cloned().ok_or_else(|| sql_error("Missing SQL snapshot table"))?).map_err(sql_error)?;
+                    let expected = tx.queryRows(&format!("PRAGMA table_info({})", sql_identifier(name)), vec![])?.iter()
+                        .map(|row| row.get::<_, String>("name")).collect::<std::result::Result<Vec<_>, _>>()?;
+                    if table.columns != expected || table.rows.iter().any(|row| row.len() != expected.len()) { return Err(sql_error("SQL snapshot schema mismatch")); }
+                    tables.insert(*name, table);
+                }
+                tx.execute("PRAGMA defer_foreign_keys = ON", vec![])?;
+                for name in self.tables.iter().rev() { tx.execute(&format!("DELETE FROM {}", sql_identifier(name)), vec![])?; }
+                for name in self.tables {
+                    let table = tables.remove(name).expect("validated snapshot table");
+                    let query = format!("INSERT INTO {}({}) VALUES({})", sql_identifier(name), table.columns.iter().map(|column| sql_identifier(column)).collect::<Vec<_>>().join(","),
+                        (0..table.columns.len()).map(|_| "?").collect::<Vec<_>>().join(","));
+                    for row in table.rows { tx.execute(&query, row.into_iter().map(Into::into).collect())?; }
+                }
+                if !self.cleanup.is_empty() { tx.execute(self.cleanup, vec![])?; }
             }
-            tx.execute("PRAGMA defer_foreign_keys = ON", vec![])?;
-            for name in self.tables.iter().rev() { tx.execute(&format!("DELETE FROM {}", sql_identifier(name)), vec![])?; }
-            for name in self.tables {
-                let table = tables.remove(name).expect("validated snapshot table");
-                let query = format!("INSERT INTO {}({}) VALUES({})", sql_identifier(name), table.columns.iter().map(|column| sql_identifier(column)).collect::<Vec<_>>().join(","),
-                    (0..table.columns.len()).map(|_| "?").collect::<Vec<_>>().join(","));
-                for row in table.rows { tx.execute(&query, row.into_iter().map(Into::into).collect())?; }
-            }
-            if !self.cleanup.is_empty() { tx.execute(self.cleanup, vec![])?; }
             tx.execute("INSERT INTO _operit_transaction_checkpoint(id,snapshot) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET snapshot=excluded.snapshot",
                 vec![SqliteValue::Text(serde_json::to_string(&current).map_err(sql_error)?)])?;
             Ok(true)
         }).map_err(|e| e.to_string())?;
-        if repaired {
+        if repaired && changed {
             self.store.notifyInvalidated().map_err(|e| e.to_string())?;
         }
         Ok(repaired)

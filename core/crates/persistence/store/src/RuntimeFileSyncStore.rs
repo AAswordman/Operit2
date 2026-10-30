@@ -26,6 +26,22 @@ pub struct RuntimeFileSyncStore {
     syncOperationStore: SyncOperationStore,
 }
 
+/// The losing side supplies coverage without resending its business contents.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileCoverage {
+    pub owner: crate::Transaction::Owner,
+    pub covered: std::collections::BTreeSet<String>,
+}
+
+/// The winning file plus the losing history coverage it supersedes.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileCorrectionReference {
+    pub source: RuntimeFileSyncReference,
+    pub superseded: Option<RuntimeFileSyncReference>,
+}
+
 impl RuntimeFileSyncStore {
     /// Creates a runtime file synchronization store over one host and operation root.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>, syncRootPath: impl Into<String>) -> Self {

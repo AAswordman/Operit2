@@ -214,7 +214,7 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
     router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
         control,
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: Some(1),
+        consistencyVersion: Some(2),
     }));
 }
 
@@ -242,7 +242,7 @@ fn gateMesh(
             router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
                 control,
                 pendingFailure: pendingFailure.clone(),
-                consistencyVersion: Some(1),
+                consistencyVersion: Some(2),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -592,7 +592,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(1),
+                consistencyVersion: Some(2),
             }
             .gateClock()
             .unwrap()
@@ -649,7 +649,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(1),
+                consistencyVersion: Some(2),
             }
             .gateClock()
             .unwrap(),

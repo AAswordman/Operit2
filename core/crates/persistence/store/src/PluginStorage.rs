@@ -1457,6 +1457,47 @@ fn withSyncDataset<R>(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str,
         revisions: "SELECT origin || ':' || sequence,created_at,origin,sequence FROM _operit_log" })
 }
 
+/// A complete dataset declaration lets file correction provision an absent peer database.
+/// It carries schema and ownership, without manufacturing a business transaction.
+pub fn snapshotDefinition(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<Value, SqliteStoreError> {
+    let manifest = manifests(host.clone())?.into_iter().find(|m| m.path == path && m.sync)
+        .ok_or_else(|| failure("Unknown synchronized plugin database"))?;
+    let store = SqliteStore::openWithHost(host, path)?;
+    let tables = store.queryRows("SELECT definition FROM _operit_tables ORDER BY name", vec![])?.iter()
+        .map(|row| serde_json::from_str::<StorageTable>(&row.get::<_, String>(0)?).map_err(|e| failure(e.to_string())))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({"manifest":manifest,"tables":tables}))
+}
+
+pub fn installSnapshotDefinition(host: Arc<dyn RuntimeSqliteHost>, storage: Arc<dyn RuntimeStorageHost>, path: &str, definition: Value) -> Result<(), SqliteStoreError> {
+    let manifest = decodeManifest(definition["manifest"].clone())?;
+    if manifest.path != path || resolveStoragePath(path).map_err(failure)? != path || !manifest.sync
+        || runtimeStorageOwnership(path).map_err(failure)? != RuntimeStorageOwnership::Space
+        || storageNamespace(path).map_err(failure)? != manifest.owner {
+        return Err(failure("Invalid shared snapshot identity"));
+    }
+    let tables: Vec<StorageTable> = serde_json::from_value(definition["tables"].clone()).map_err(|e| failure(e.to_string()))?;
+    if tables.len() > 1000 || manifest.kind != StorageKind::Sqlite && !tables.is_empty() {
+        return Err(failure("Invalid snapshot schema"));
+    }
+    let mut names = BTreeSet::new();
+    for table in &tables {
+        if !names.insert(&table.name) { return Err(failure("Duplicate snapshot table")); }
+        tableSql(table)?;
+    }
+    let database = openDatabase(host.clone(), &manifest, String::new())?;
+    database.store.transaction(|tx| {
+        for table in &tables { defineTable(tx, table)?; }
+        Ok(())
+    })?;
+    registerDatabase(host, &manifest)?;
+    registerFile(storage, &manifest)
+}
+
+pub fn syncBaselineDigest(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str) -> Result<String,String> {
+    withSyncDataset(host,path,node,|dataset|dataset.baseline_digest())
+}
+
 pub fn syncDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
     catalog(host)?.queryRows("SELECT path FROM plugin_databases WHERE sync=1 ORDER BY path", vec![])?.iter().map(|row|row.get(0)).collect()
 }
@@ -2866,52 +2907,54 @@ pub fn applyOperation(
             return Ok(());
         }
         let checkpointCovered = crate::Transaction::covered_by_checkpoint(tx, operation)?;
-        if payload.tables.len() > 1000 {return Err(failure("Remote transaction exceeds table declaration limit"));}
-        let mut tableNames=BTreeSet::new();
-        for table in &payload.tables {
-            if database.kind!=StorageKind::Sqlite {return Err(failure("Remote object database contains a SQL schema"));}
-            if !tableNames.insert(&table.name) {return Err(failure("Duplicate remote table declaration"));}
-            defineTable(tx,table)?;
-        }
-        let mut payload = payload.clone();
-        projectHistoricalRows(tx, &mut payload)?;
-        payload.manifest.merge = database.merge.clone();
-        if payload.manifest.merge.is_some() && !payload.changes.is_empty() {
-            mergePayload(
-                tx,
-                &mut payload,
-                operation,
-                preferences,
-            )?;
-            validatePayload(&payload)?;
-        }
-        let mut seen=BTreeSet::new();
-        if payload.changes.len()>1000 {return Err(failure("Remote transaction exceeds mutation limit"));}
-        for change in &payload.changes {
-            if checkpointCovered { continue; }
-            if change.key.is_empty() || change.key.len() > 2048 || change.key.chars().any(char::is_control) || !seen.insert((&change.collection,&change.key)) {return Err(failure("Invalid or duplicate remote key"));}
-            if let Some(row)=tx.queryOne("SELECT created_at,origin,sequence FROM _operit_versions WHERE collection=?1 AND key=?2",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone())])? {
-                let current = crate::Transaction::Revision { createdAt: row.get(0)?,originDeviceId: row.get(1)?,sequence: row.get(2)? };
-                if !crate::Transaction::newer(&crate::Transaction::Revision::fromOperation(operation),&current) { continue; }
+        // A copied baseline seals every business effect, including merge aliases and schema.
+        if !checkpointCovered {
+            if payload.tables.len() > 1000 {return Err(failure("Remote transaction exceeds table declaration limit"));}
+            let mut tableNames=BTreeSet::new();
+            for table in &payload.tables {
+                if database.kind!=StorageKind::Sqlite {return Err(failure("Remote object database contains a SQL schema"));}
+                if !tableNames.insert(&table.name) {return Err(failure("Duplicate remote table declaration"));}
+                defineTable(tx,table)?;
             }
-            if let Some(descriptor) = &database.merge {
-                rememberPayloadNames(tx, database.kind, descriptor, std::slice::from_ref(change))?;
+            let mut payload = payload.clone();
+            projectHistoricalRows(tx, &mut payload)?;
+            payload.manifest.merge = database.merge.clone();
+            if payload.manifest.merge.is_some() && !payload.changes.is_empty() {
+                mergePayload(
+                    tx,
+                    &mut payload,
+                    operation,
+                    preferences,
+                )?;
+                validatePayload(&payload)?;
             }
-            if database.kind==StorageKind::Sqlite {applyRow(tx,change)?;} else {
-                validateCollection(&database,&change.collection)?;
-                if !change.deleted { let value = &change.value; tx.execute("INSERT INTO _operit_values VALUES(?1,?2,?3,?4) ON CONFLICT(collection,key) DO UPDATE SET value=excluded.value,version=excluded.version",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone()),SqliteValue::Text(serde_json::to_string(value).map_err(|e|failure(e.to_string()))?),SqliteValue::Text(operation.opId.clone())])?;
-                } else { tx.execute("DELETE FROM _operit_values WHERE collection=?1 AND key=?2",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone())])?;
+            let mut seen=BTreeSet::new();
+            if payload.changes.len()>1000 {return Err(failure("Remote transaction exceeds mutation limit"));}
+            for change in &payload.changes {
+                if change.key.is_empty() || change.key.len() > 2048 || change.key.chars().any(char::is_control) || !seen.insert((&change.collection,&change.key)) {return Err(failure("Invalid or duplicate remote key"));}
+                if let Some(row)=tx.queryOne("SELECT created_at,origin,sequence FROM _operit_versions WHERE collection=?1 AND key=?2",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone())])? {
+                    let current = crate::Transaction::Revision { createdAt: row.get(0)?,originDeviceId: row.get(1)?,sequence: row.get(2)? };
+                    if !crate::Transaction::newer(&crate::Transaction::Revision::fromOperation(operation),&current) { continue; }
+                }
+                if let Some(descriptor) = &database.merge {
+                    rememberPayloadNames(tx, database.kind, descriptor, std::slice::from_ref(change))?;
+                }
+                if database.kind==StorageKind::Sqlite {applyRow(tx,change)?;} else {
+                    validateCollection(&database,&change.collection)?;
+                    if !change.deleted { let value = &change.value; tx.execute("INSERT INTO _operit_values VALUES(?1,?2,?3,?4) ON CONFLICT(collection,key) DO UPDATE SET value=excluded.value,version=excluded.version",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone()),SqliteValue::Text(serde_json::to_string(value).map_err(|e|failure(e.to_string()))?),SqliteValue::Text(operation.opId.clone())])?;
+                    } else { tx.execute("DELETE FROM _operit_values WHERE collection=?1 AND key=?2",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone())])?;
+                    }
+                }
+                tx.execute("INSERT INTO _operit_versions VALUES(?1,?2,?3,?4,?5) ON CONFLICT(collection,key) DO UPDATE SET created_at=excluded.created_at,origin=excluded.origin,sequence=excluded.sequence",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone()),SqliteValue::Integer(operation.createdAt),SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence)])?;
+            }
+            if !payload.changes.is_empty() {
+                if let Some(descriptor) = &database.merge {
+                    reconcileLocalReferences(tx, database.kind, descriptor, preferences)?;
+                    reconcileMergeNames(tx, database.kind, descriptor)?;
                 }
             }
-            tx.execute("INSERT INTO _operit_versions VALUES(?1,?2,?3,?4,?5) ON CONFLICT(collection,key) DO UPDATE SET created_at=excluded.created_at,origin=excluded.origin,sequence=excluded.sequence",vec![SqliteValue::Text(change.collection.clone()),SqliteValue::Text(change.key.clone()),SqliteValue::Integer(operation.createdAt),SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence)])?;
+            tx.execute("DELETE FROM _operit_dirty",Vec::new())?;
         }
-        if !checkpointCovered && !payload.changes.is_empty() {
-            if let Some(descriptor) = &database.merge {
-                reconcileLocalReferences(tx, database.kind, descriptor, preferences)?;
-                reconcileMergeNames(tx, database.kind, descriptor)?;
-            }
-        }
-        tx.execute("DELETE FROM _operit_dirty",Vec::new())?;
         tx.execute("INSERT INTO _operit_log(origin,sequence,created_at,payload,outgoing) VALUES(?1,?2,?3,?4,1) ON CONFLICT(origin,sequence) DO NOTHING",vec![SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence),SqliteValue::Integer(operation.createdAt),SqliteValue::Text(serde_json::to_string(&recordedPayload).map_err(|e|failure(e.to_string()))?)])?;
         Ok(())
     })

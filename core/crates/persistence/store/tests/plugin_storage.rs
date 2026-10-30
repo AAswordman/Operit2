@@ -1846,3 +1846,74 @@ fn same_author_sql_changes_follow_sequence_when_its_clock_moves_backwards() {
     }
     source.dispose();
 }
+
+#[test]
+fn complete_file_correction_provisions_missing_plugin_databases_without_business_history() {
+    for kind in ["objects", "sqlite"] {
+        let source = Fixture::new("source");
+        source.open(kind);
+        assert!(source.export().is_empty());
+        let target = Fixture::new("target");
+        assert!(PluginStorage::syncDatasetPaths(target.host.clone()).unwrap().is_empty());
+        let file = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+        let definition = PluginStorage::snapshotDefinition(source.host.clone(), &source.path).unwrap();
+        PluginStorage::installSnapshotDefinition(target.host.clone(), target.host.clone(), &target.path, definition).unwrap();
+        assert!(PluginStorage::repairSyncedSnapshot(target.host.clone(), "", &file, target.device).unwrap());
+        assert!(!PluginStorage::repairSyncedSnapshot(target.host.clone(), "", &file, target.device).unwrap());
+        assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, file.data);
+        assert_eq!(PluginStorage::syncDatasetPaths(target.host.clone()).unwrap(), vec![target.path.clone()]);
+        assert!(target.export().is_empty());
+        let handle = target.open(kind);
+        if kind == "objects" {
+            target.call(json!({"op":"commit","handle":handle,"mutations":[put("new",json!("after baseline"))]})).unwrap();
+            source.replay(&target.export());
+            let handle = source.open(kind);
+            assert_eq!(source.get(&handle,"new")["value"], "after baseline");
+        } else {
+            target.call(json!({"op":"define_table","handle":handle,"table":table()})).unwrap();
+            target.call(json!({"op":"execute","handle":handle,"statement":{"sql":"INSERT INTO records VALUES('new',7,NULL)","params":[]}})).unwrap();
+            source.replay(&target.export());
+            assert_eq!(PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap().data,
+                PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data);
+        }
+        source.dispose(); target.dispose();
+    }
+}
+
+#[test]
+fn file_correction_copies_sql_schema_rows_and_versions_into_a_missing_database() {
+    let source = Fixture::new("source");
+    let handle = source.open("sqlite");
+    source.call(json!({"op":"define_table","handle":handle,"table":table()})).unwrap();
+    source.call(json!({"op":"execute","handle":handle,"statement":{"sql":"INSERT INTO records VALUES('one',9,X'00ff')","params":[]}})).unwrap();
+    let file = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+    let definition = PluginStorage::snapshotDefinition(source.host.clone(), &source.path).unwrap();
+    let target = Fixture::new("target");
+    PluginStorage::installSnapshotDefinition(target.host.clone(), target.host.clone(), &target.path, definition).unwrap();
+    assert!(PluginStorage::repairSyncedSnapshot(target.host.clone(), "", &file, target.device).unwrap());
+    // Resending all archived originals cannot reapply them over the copied baseline.
+    target.replay(&source.export());
+    assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, file.data);
+    source.dispose(); target.dispose();
+}
+
+#[test]
+fn covered_character_history_cannot_rekey_the_copied_file_through_merge_rules() {
+    let old = Fixture::new("old");
+    let handle = open_object_merge_fixture(&old);
+    seed_object_card(&old, &handle, "a", "Persona", "same content");
+    let covered = old.export();
+    let source = Fixture::new("source");
+    let handle = open_object_merge_fixture(&source);
+    seed_object_card(&source, &handle, "z", "Persona", "same content");
+    let mut file = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+    file.covered.extend(covered.iter().map(|op|op.opId.clone()));
+    let target = Fixture::new("target");
+    PluginStorage::installSnapshotDefinition(target.host.clone(), target.host.clone(), &target.path,
+        PluginStorage::snapshotDefinition(source.host.clone(), &source.path).unwrap()).unwrap();
+    let capture = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+    assert!(PluginStorage::repairSyncedSnapshot(target.host.clone(), &capture.token().unwrap(), &file, target.device).unwrap());
+    target.replay(&covered);
+    assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, file.data);
+    old.dispose(); source.dispose(); target.dispose();
+}

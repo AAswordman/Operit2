@@ -447,29 +447,25 @@ where
 }
 
 /// An internal read intent; replay never acquires export publication side effects.
-enum JournalProjection<'a> {
+enum JournalProjection {
     All,
     PreferenceDatasetHistory,
     MergeMetadata,
-    PreferenceDataset(&'a str),
 }
 
-impl JournalProjection<'_> {
+impl JournalProjection {
     fn includes(&self, record: &JournalRecord) -> bool {
         match self {
             Self::All => true,
             Self::PreferenceDatasetHistory => record.domain == "preferences",
             Self::MergeMetadata => record.is_merge_candidate(),
-            Self::PreferenceDataset(path) => {
-                record.domain == "preferences" && record.preference_path_matches(path)
-            }
         }
     }
 }
 
 struct JournalQuery<'a> {
     domains: &'a [String],
-    projection: JournalProjection<'a>,
+    projection: JournalProjection,
     export_floors: bool,
     limit: usize,
     max_bytes: usize,
@@ -875,10 +871,9 @@ impl SyncOperationStore {
         let paths = std::iter::once(path).chain(routes.iter().filter(|(_, target)| target.as_str() == path).map(|(source, _)| source.as_str()));
         let mut history = Vec::new();
         for source in paths {
-            history.extend(self.readJournal(&SyncClock::empty(), JournalQuery {
-                domains: &[], projection: JournalProjection::PreferenceDataset(source),
-                export_floors: false, limit: usize::MAX, max_bytes: usize::MAX, retain: None,
-            })?);
+            let stored = self.withJournal(|journal| journal.preference_originals(source))?;
+            history.extend(stored.into_iter().map(|operation| self.decodeOperationPayload(operation))
+                .collect::<Result<Vec<_>, _>>()?);
         }
         Ok(history)
     }

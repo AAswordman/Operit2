@@ -97,7 +97,10 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
     values.legacy = None;
     values.view = Some(current.data);
     // Failure to remove a finished intent is safe: the next open repeats the same SQL commit.
-    store.writeStoredPreferencesUnlocked(values)?;
+    match commit.file {
+        Some(file) => store.writePlaintextFile(&file)?,
+        None => store.writeStoredPreferencesUnlocked(values)?,
+    }
     store.publishCommitted(values);
     Ok(())
 }
@@ -109,6 +112,13 @@ fn save(
     originals: Vec<SyncOperation>,
     completed: Vec<String>,
     reset: bool,
+) -> Result<(), Error> {
+    save_file(store, values, snapshot, originals, completed, reset, None)
+}
+
+fn save_file(
+    store: &PreferencesDataStore, values: &mut Preferences, snapshot: Snapshot,
+    originals: Vec<SyncOperation>, completed: Vec<String>, reset: bool, file: Option<String>,
 ) -> Result<(), Error> {
     values.view = Some(snapshot.data.clone());
     values.commit = Some(FileCommit {
@@ -123,6 +133,7 @@ fn save(
         additions: snapshot.data.additions,
         generation: snapshot.generation,
         reset_baseline: reset,
+        file,
     });
     values.legacy = None;
     store.writeStoredPreferencesUnlocked(values)?;
@@ -272,20 +283,42 @@ pub(crate) fn move_to(
 }
 
 pub fn is_prepared(store: &PreferencesDataStore) -> Result<bool, Error> {
-    Ok(state(store)?.is_some())
+    let Some(owner) = state(store)? else { return Ok(false); };
+    Ok(owner.current.data.owner.format == store.syncSchemaVersion()?)
 }
 pub fn prepare(store: &PreferencesDataStore) -> Result<(), Error> {
     if store.syncDescriptor.is_none() {
         return Ok(());
     }
     let _lock = store.lockTransaction();
-    store.loadUnlocked()?;
-    let mut values = store.loadedPreferences().expect("loaded file");
-    store.migratePreferencesToCurrentSchema(&mut values)?;
-    initialize(store, &mut values)?;
-    store.writeStoredPreferencesUnlocked(&values)?;
+    snapshot_unlocked(store).map(|_| ())
+}
+
+/// Read and correct the same materialized view under the dataset lock. Missing
+/// projection files recover from SQL; an existing file remains visible to CAS.
+fn snapshot_unlocked(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
+    let exists = store.storageHost.exists(&store.storagePath)?;
+    let mut values = store.readFromStorage()?;
+    let mut restored = false;
+    if !exists {
+        if let Some(owner) = state(store)? {
+            values = preferences(&owner.current);
+            restored = true;
+        }
+    }
+    if values.commit.is_some() {
+        recover(store, &mut values)?;
+    }
+    let migrated = store.migratePreferencesToCurrentSchema(&mut values)?;
+    let mut current = initialize(store, &mut values)?.current;
+    current.data = data(store, &values)?;
+    // An absent, empty owner needs no placeholder. A real business deletion
+    // lives in the SQL checkpoint and must not resurrect the previous record.
+    if (restored || migrated) && (exists || !current.data.values.is_empty()) {
+        store.writeStoredPreferencesUnlocked(&values)?;
+    }
     store.publishCommitted(&values);
-    Ok(())
+    Ok(current)
 }
 
 pub(crate) fn commit_local(
@@ -321,30 +354,77 @@ pub(crate) fn commit_local(
 }
 
 pub fn snapshot(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
-    prepare(store)?;
     let _lock = store.lockTransaction();
-    let mut owner = state(store)?.ok_or_else(|| Error::Message("Owner not initialized".into()))?;
-    // A local file modified outside the transaction API is visible to final convergence checks.
-    let values = store.loadedPreferences().expect("prepared file");
-    owner.current.data.values = data(store, &values)?.values;
-    Ok(owner.current)
+    snapshot_unlocked(store)
 }
-pub fn repair(
-    store: &PreferencesDataStore,
-    expected: &str,
-    source: &Snapshot,
-) -> Result<bool, Error> {
-    prepare(store)?;
+pub fn baseline_digest(store: &PreferencesDataStore) -> Result<String, Error> {
     let _lock = store.lockTransaction();
-    let mut current = state(store)?
-        .ok_or_else(|| Error::Message("Owner not initialized".into()))?
-        .current;
-    if !current.replace(expected, source).map_err(Error::Message)? {
-        return Ok(false);
+    state(store)?.ok_or_else(|| Error::Message("Missing file baseline".into()))?.baseline.baseline_digest().map_err(Error::Message)
+}
+
+/// Export a complete file and its checkpoint under the same dataset lock.
+pub fn file_snapshot(store: &PreferencesDataStore, expected: &str) -> Result<String, Error> {
+    let _lock = store.lockTransaction();
+    let current = snapshot_unlocked(store)?;
+    if current.token().map_err(Error::Message)? != expected {
+        return Err(Error::Message("File changed before export".into()));
     }
-    let mut values = preferences(&current);
-    save(store, &mut values, current, vec![], vec![], true)?;
-    store.notifyChanged();
+    if store.storageHost.exists(&store.storagePath)? {
+        store.readPlaintextFile()
+    } else {
+        let format = current.data.owner.format;
+        let mut entries = current.data.values;
+        entries.insert("__operit_preferences_schema_version".into(), serde_json::json!(format));
+        Ok(serde_json::to_string_pretty(&entries)?)
+    }
+}
+
+pub fn repair(store: &PreferencesDataStore, expected: &str, source: &Snapshot) -> Result<bool, Error> {
+    repair_file(store, expected, source, None)
+}
+
+pub fn repair_file(store: &PreferencesDataStore, expected: &str, source: &Snapshot, file: Option<&str>) -> Result<bool, Error> {
+    let lock = store.lockTransaction();
+    let absent = expected.is_empty() && state(store)?.is_none() && !store.storageHost.exists(&store.storagePath)?;
+    if expected.is_empty() && !absent { return Ok(false); }
+    let mut current = if absent {
+        // A new generic file adopts the source format; it has no old format to migrate.
+        if source.data.owner != file::preferenceOwner(&store.storagePath, source.data.owner.format)
+            || store.schema.as_ref().is_some_and(|schema| schema.currentVersion != source.data.owner.format) {
+            return Err(Error::Message("Source file format/layout is not supported".into()));
+        }
+        Snapshot { node: journal(store)?.localDeviceId()?, data: Data::empty(source.data.owner.clone()),
+            covered: BTreeSet::new(), generation: 0 }
+    } else { snapshot_unlocked(store)? };
+    let expected = if absent { current.token().map_err(Error::Message)? } else { expected.to_owned() };
+    let unchanged = !absent && current.data == source.data && match file {
+        Some(file) => store.storageHost.exists(&store.storagePath)? && store.readPlaintextFile()? == file,
+        None => true,
+    };
+    if !current.replace(&expected, source).map_err(Error::Message)? { return Ok(false); }
+    let mut values = match file {
+        Some(file) => {
+            let values: Preferences = serde_json::from_str(file)?;
+            if values.commit.is_some() || values.legacy.is_some() || data(store, &values)?.values != source.data.values
+                || PreferencesDataStore::readSchemaVersion(&values)? != source.data.owner.format {
+                return Err(Error::Message("File differs from its baseline".into()));
+            }
+            values
+        },
+        None => preferences(&current),
+    };
+    if unchanged {
+        // Only SQL changes when the correct file already exists. No file/SQL handoff is needed.
+        values.view = Some(current.data.clone());
+        let owner = OwnerState { baseline: current.clone(), format_progress: current.data.owner.format,
+            layout_progress: current.data.owner.layout, current };
+        journal(store)?.withJournal(|j| j.transaction(|tx| Journal::save_owner(tx, &owner)))?;
+        store.publishCommitted(&values);
+    } else {
+        save_file(store, &mut values, current, vec![], vec![], true, file.map(str::to_owned))?;
+        drop(lock);
+        store.notifyChanged();
+    }
     Ok(true)
 }
 

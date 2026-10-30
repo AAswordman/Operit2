@@ -14,6 +14,7 @@ pub(crate) enum PeerSyncMethod {
     SyncClockDigest,
     SyncConsistency,
     SyncReadSnapshot,
+    SyncReadCoverage,
     SyncRepairSnapshot,
     SyncOperationsSince,
     SyncApplyOperations,
@@ -28,7 +29,7 @@ impl PeerSyncMethod {
     pub(crate) fn requiresStorageProvider(self) -> bool {
         matches!(self, Self::SyncClock | Self::SyncClockDigest | Self::SyncOperationsSince
             | Self::SyncApplyOperations | Self::SyncBlobExists | Self::SyncReadBlobChunk
-            | Self::SyncConsistency | Self::SyncReadSnapshot | Self::SyncRepairSnapshot)
+            | Self::SyncConsistency | Self::SyncReadSnapshot | Self::SyncReadCoverage | Self::SyncRepairSnapshot)
     }
 
     pub(crate) fn request(self, requestId: String, args: CoreValue) -> CoreCallRequest {
@@ -64,7 +65,7 @@ impl PeerSyncMethod {
             let _operations = args.operations;
         }
         match method {
-            Self::SyncReadSnapshot => { let _: ReadSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
+            Self::SyncReadSnapshot | Self::SyncReadCoverage => { let _: ReadSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
             Self::SyncRepairSnapshot => { let _: RepairSnapshot = operit_link::fromCoreValue(request.args.clone()).map_err(|e| CoreLinkError::new("PEER_SYNC_INVALID_SNAPSHOT", e.to_string()))?; },
             _ => {},
         }
@@ -81,7 +82,7 @@ struct ReadSnapshot { owner: operit_store::Transaction::Owner, token: String }
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
 struct RepairSnapshot { owner: operit_store::Transaction::Owner, expected: String,
-    reference: operit_store::RuntimeFileSyncStore::RuntimeFileSyncReference }
+    reference: operit_store::RuntimeFileSyncStore::FileCorrectionReference }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -135,6 +136,20 @@ mod tests {
             );
             assert_eq!(request.target, NODE_SYNC_TARGET);
             assert_eq!(PeerSyncMethod::fromRequest(&request).unwrap(), method);
+        }
+    }
+
+    #[test]
+    fn coverage_reads_use_the_snapshot_token_and_storage_permission() {
+        let owner = json!({"backend":"DataStore","path":"runtime/config/test.preferences.json","format":1,"layout":1});
+        for method in [PeerSyncMethod::SyncReadSnapshot, PeerSyncMethod::SyncReadCoverage] {
+            assert!(method.requiresStorageProvider());
+            let request = method.request("test".into(), toCoreValue(json!({"owner":owner,"token":"captured"})).unwrap());
+            assert_eq!(PeerSyncMethod::fromRequest(&request).unwrap(), method);
+            for args in [json!({"owner":owner}), json!({"owner":owner,"token":"captured","values":{}})] {
+                let request = method.request("test".into(), toCoreValue(args).unwrap());
+                assert!(PeerSyncMethod::fromRequest(&request).is_err());
+            }
         }
     }
 
