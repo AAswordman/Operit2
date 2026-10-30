@@ -47,7 +47,7 @@ pub(crate) fn observe(service: &dyn NodeSpaceContext, peer: &str,
     let scope = service.spaceStore().space()?.spaceId;
     let mut changed = false;
     for operation in departures {
-        let record = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|error| error.to_string())?;
+        let record = NetworkControlCommandRecord::fromPayload(&operation.payload).map_err(|error| error.to_string())?;
         if operation.originDeviceId != peer || record.issuerNodeId != peer
             || !matches!(record.command, NetworkControlCommand::LeaveSpace) {
             return Err("A paired device can announce only its own Space departure".into());

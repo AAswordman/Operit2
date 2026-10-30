@@ -28,3 +28,5 @@ EMSDK=/path/to/emsdk npm run test:device-budget --prefix edge/boards/esp32/edito
 ```
 
 该入口重建 C/Wasm、Rust 模拟器和本机 CLI，再检查固定堆/栈预算、独立聊天、空间加入、双向消息和重启。Emscripten 与桌面构建环境见 [编辑器说明](boards/esp32/editor/README.md)。验收范围与测量方法见 [验收记录](docs/acceptance.md)。
+
+V1 收尾状态、当前回归结果和真机交付检查见 [收尾记录](docs/v1-closeout.md)。
