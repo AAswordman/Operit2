@@ -2140,7 +2140,7 @@
   "deviceSpaceConnectDirectHint": "This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.",
   "deviceSpaceUpdateEndpoint": "Update direct address",
   "deviceSpaceUpdateEndpointLabel": "Direct address",
-  "deviceSpaceUpdateEndpointHint": "For example ws://192.168.1.20:37195/link",
+  "deviceSpaceUpdateEndpointHint": "e.g. ws://host:port/link or host:port — use the peer's current listen port",
   "deviceSpaceUpdateEndpointSaved": "Direct address updated",
   "deviceSpaceDirectLinkEstablished": "Direct link established: {device}",
   "@deviceSpaceDirectLinkEstablished": {

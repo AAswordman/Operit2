@@ -8,6 +8,7 @@ use ratatui::widgets::{
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use operit_node_runtime::PeerStateStore::PeerHostPortMode;
 use operit_node_runtime::RuntimeRemoteLinkService::{
     RuntimeDeviceSpaceConnectionStatus, RuntimeDeviceSpaceDevice,
 };
@@ -17,8 +18,8 @@ use super::app::{
     hub_member_status_label, join_status_label, network_hub_rows, peer_transport_label,
     space_join_is_active,
     ControlPanelMode, ControlPanelTab, DeviceManagerAction, DeviceManagerMode, DeviceManagerModal,
-    DeviceManagerRow, FocusArea, FullUpdateDownloadState, NetworkHubModal, NetworkHubRow, OperitTui,
-    PairField, PairStage, PAIR_WIZARD_TRANSPORTS, StartupInstallState,
+    DeviceManagerRow, FocusArea, FullUpdateDownloadState, ListenerField, NetworkHubModal,
+    NetworkHubRow, OperitTui, PairField, PairStage, PAIR_WIZARD_TRANSPORTS, StartupInstallState,
 };
 use crate::cli::network_control_ui::{network_device_label_by_id, network_role_summary};
 use super::helpers::{
@@ -143,6 +144,14 @@ impl OperitTui {
 
         if self.join_decision.is_some() {
             self.render_join_decision_modal(frame);
+        }
+
+        if self.listener_settings.is_some() {
+            self.render_listener_settings(frame);
+        }
+
+        if self.endpoint_edit.is_some() {
+            self.render_endpoint_edit(frame);
         }
 
         if let Some(modal) = &self.diff_viewer {
@@ -1945,6 +1954,258 @@ impl OperitTui {
         self.popup_selection_rect = Some(inner);
     }
 
+    /// Listener settings form: the save action restarts the listeners, so
+    /// every field stays on one screen with its current value visible.
+    fn render_listener_settings(&mut self, frame: &mut Frame) {
+        let Some(modal) = self.listener_settings.as_ref() else {
+            return;
+        };
+        let text = self.text();
+        let popup = centered_rect(74, 64, frame.area());
+        frame.render_widget(Clear, popup);
+        let modal_block = Block::default()
+            .title(text.network_listener_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        let focused = |field: ListenerField| modal.field == field;
+        let field_style = |field: ListenerField| {
+            if focused(field) {
+                Style::default()
+                    .fg(theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::TEXT_MUTED)
+            }
+        };
+        let marker = |field: ListenerField| if focused(field) { "▶ " } else { "  " };
+        let mode_value = match modal.portMode {
+            PeerHostPortMode::Automatic => text.network_listener_mode_auto(),
+            PeerHostPortMode::Fixed => text.network_listener_mode_fixed(),
+        };
+        let mut transport_spans = vec![Span::styled(
+            format!("{}: ", text.network_listener_transports()),
+            field_style(ListenerField::Transports),
+        )];
+        for (index, transport) in PAIR_WIZARD_TRANSPORTS.iter().enumerate() {
+            let supported = modal.supportedTransports.contains(transport);
+            let selected = modal.transports.contains(transport);
+            let label = peer_transport_label(transport);
+            let value = if selected {
+                format!("[{label}] ")
+            } else {
+                format!(" {label}  ")
+            };
+            let style = if !supported {
+                Style::default().fg(theme::TEXT_SUBTLE)
+            } else if focused(ListenerField::Transports) && index == modal.transportCursor {
+                Style::default()
+                    .fg(theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD)
+            } else if selected {
+                Style::default().fg(theme::ACCENT_STRONG)
+            } else {
+                Style::default().fg(theme::TEXT_MUTED)
+            };
+            transport_spans.push(Span::styled(value, style));
+        }
+        let discovery_value = if modal.discoveryEnabled {
+            text.config_enabled()
+        } else {
+            text.config_disabled()
+        };
+        let discovery_suffix = if modal.discoverySupported {
+            String::new()
+        } else {
+            format!(" · {}", text.network_listener_discovery_unavailable())
+        };
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(marker(ListenerField::PortMode), field_style(ListenerField::PortMode)),
+                Span::styled(
+                    format!("{}: ", text.network_listener_mode()),
+                    field_style(ListenerField::PortMode),
+                ),
+                Span::styled(
+                    format!("‹ {mode_value} ›"),
+                    field_style(ListenerField::PortMode),
+                ),
+            ]),
+            Line::from(Span::styled(
+                format!("  {}", text.network_listener_mode_help()),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )),
+            blank_line(),
+            Line::from(vec![
+                Span::styled(marker(ListenerField::Host), field_style(ListenerField::Host)),
+                Span::styled(
+                    format!("{}: ", text.network_listener_host()),
+                    field_style(ListenerField::Host),
+                ),
+                Span::styled(
+                    format!("{}▏", modal.bindHost),
+                    field_style(ListenerField::Host),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(marker(ListenerField::Port), field_style(ListenerField::Port)),
+                Span::styled(
+                    format!("{}: ", text.network_listener_port()),
+                    field_style(ListenerField::Port),
+                ),
+                Span::styled(
+                    format!("{}▏", modal.bindPort),
+                    field_style(ListenerField::Port),
+                ),
+            ]),
+            Line::from(Span::styled(
+                format!("  {}", text.network_listener_port_help()),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )),
+            blank_line(),
+            Line::from(vec![
+                Span::styled(
+                    marker(ListenerField::Discovery),
+                    field_style(ListenerField::Discovery),
+                ),
+                Span::styled(
+                    format!("{}: ", text.network_listener_discovery()),
+                    field_style(ListenerField::Discovery),
+                ),
+                Span::styled(
+                    format!("‹ {discovery_value} ›{discovery_suffix}"),
+                    field_style(ListenerField::Discovery),
+                ),
+            ]),
+            Line::from(transport_spans),
+            blank_line(),
+            Line::from(vec![
+                Span::styled(marker(ListenerField::Save), field_style(ListenerField::Save)),
+                Span::styled(
+                    text.network_listener_save(),
+                    field_style(ListenerField::Save),
+                ),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(lines), chunks[0]);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text.network_listener_hint(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))),
+            chunks[2],
+        );
+        if let Some(error) = &modal.error {
+            // Errors take over the footer row so long bind failures stay
+            // readable instead of being clipped by the fixed body.
+            let error_area = Rect {
+                y: chunks[1].y,
+                height: chunks[1].height + chunks[2].height,
+                ..chunks[0]
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    error.clone(),
+                    Style::default().fg(theme::ERROR),
+                )))
+                .wrap(Wrap { trim: false }),
+                error_area,
+            );
+        }
+        self.popup_selection_rect = Some(inner);
+    }
+
+    /// Direct-address editor offered for a paired device whose link fails.
+    fn render_endpoint_edit(&mut self, frame: &mut Frame) {
+        let Some(modal) = self.endpoint_edit.as_ref() else {
+            return;
+        };
+        let text = self.text();
+        let popup = centered_rect(64, 36, frame.area());
+        frame.render_widget(Clear, popup);
+        let modal_block = Block::default()
+            .title(text.network_endpoint_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+        let lines = vec![
+            Line::from(Span::styled(
+                text.network_endpoint_target(&modal.label),
+                Style::default().fg(theme::TEXT_MUTED),
+            )),
+            blank_line(),
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", text.network_endpoint_label()),
+                    Style::default()
+                        .fg(theme::ACCENT_STRONG)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{}▏", modal.input),
+                    Style::default()
+                        .fg(theme::ACCENT_STRONG)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            blank_line(),
+            Line::from(Span::styled(
+                text.network_endpoint_hint(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )),
+            Line::from(Span::styled(
+                text.network_endpoint_port_hint(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text.network_endpoint_footer(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))),
+            chunks[2],
+        );
+        if let Some(error) = &modal.error {
+            let error_area = Rect {
+                y: chunks[1].y,
+                height: chunks[1].height + chunks[2].height,
+                ..chunks[0]
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    error.clone(),
+                    Style::default().fg(theme::ERROR),
+                )))
+                .wrap(Wrap { trim: false }),
+                error_area,
+            );
+        }
+        self.popup_selection_rect = Some(inner);
+    }
+
     fn render_device_manager(&mut self, frame: &mut Frame) {
         let Some(modal) = self.device_manager.as_ref() else {
             return;
@@ -2260,6 +2521,7 @@ fn device_manager_device_label(
 fn device_manager_action_label(text: super::i18n::TuiText, action: DeviceManagerAction) -> &'static str {
     match action {
         DeviceManagerAction::Pair => text.network_devices_menu_pair(),
+        DeviceManagerAction::UpdateEndpoint => text.network_devices_menu_endpoint(),
         DeviceManagerAction::Admit => text.network_devices_menu_admit(),
         DeviceManagerAction::Disconnect => text.network_devices_menu_disconnect(),
         DeviceManagerAction::AssignIdentity => text.network_devices_menu_assign(),

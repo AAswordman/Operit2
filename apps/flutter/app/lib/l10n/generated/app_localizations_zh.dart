@@ -3938,7 +3938,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceUpdateEndpointLabel => '直连地址';
 
   @override
-  String get deviceSpaceUpdateEndpointHint => '例如 ws://192.168.1.20:37195/link';
+  String get deviceSpaceUpdateEndpointHint =>
+      '例如 ws://主机:端口/link 或 主机:端口 —— 填对方当前的监听端口';
 
   @override
   String get deviceSpaceUpdateEndpointSaved => '直连地址已更新';

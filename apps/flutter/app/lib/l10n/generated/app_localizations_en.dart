@@ -4106,7 +4106,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceSpaceUpdateEndpointHint =>
-      'For example ws://192.168.1.20:37195/link';
+      'e.g. ws://host:port/link or host:port — use the peer\'s current listen port';
 
   @override
   String get deviceSpaceUpdateEndpointSaved => 'Direct address updated';

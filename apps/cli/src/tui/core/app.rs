@@ -32,6 +32,7 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_node_runtime::NodeServices::{
     DiscoveredPeer, PairedPeer, PairingPrompt, PeerTransport, PendingPairing,
 };
+use operit_node_runtime::PeerStateStore::{PeerHostConfig, PeerHostPortMode};
 use operit_node_runtime::RuntimeRemoteLinkService::{
     RuntimeDeviceSpaceDevice, RuntimeDeviceSpaceTopology, RuntimePairedDevice,
     RuntimePairedDeviceStatus, RuntimeRemoteLinkService, SpaceJoinRequest, SpaceJoinStatus,
@@ -151,6 +152,10 @@ pub(super) struct OperitTui {
     pub(super) network_hub: Option<NetworkHubModal>,
     /// The pairing wizard; opened from the hub, discovery, or `/network pair`.
     pub(super) pair_wizard: Option<PairWizardModal>,
+    /// Listener settings opened from the hub (`c`) or `/network listen`.
+    pub(super) listener_settings: Option<ListenerSettingsModal>,
+    /// Direct-address editor for one paired device.
+    pub(super) endpoint_edit: Option<EndpointEditModal>,
     /// Discovery candidates behind the current list popup; Enter on the
     /// popup feeds the selected candidate into the pairing wizard.
     pub(super) discovered_peers: Vec<DiscoveredPeer>,
@@ -360,6 +365,7 @@ impl DeviceManagerRow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeviceManagerAction {
     Pair,
+    UpdateEndpoint,
     Admit,
     Disconnect,
     AssignIdentity,
@@ -447,6 +453,11 @@ impl DeviceManagerModal {
         let mut actions = Vec::new();
         if !self.blocked.contains(device_id) && !self.paired.contains(device_id) {
             actions.push(DeviceManagerAction::Pair);
+        }
+        // Rewriting the dial address only makes sense for a device this node
+        // already holds a pairing record for; the runtime rejects it otherwise.
+        if self.paired.contains(device_id) {
+            actions.push(DeviceManagerAction::UpdateEndpoint);
         }
         if self.blocked.contains(device_id) {
             actions.push(DeviceManagerAction::Admit);
@@ -664,6 +675,161 @@ pub(super) struct NetworkHubModal {
     pub(super) selected: usize,
 }
 
+/// Focusable row in the listener settings dialog. Text rows edit in place;
+/// the remaining rows toggle with Left/Right, Space, or Enter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ListenerField {
+    PortMode,
+    Host,
+    Port,
+    Discovery,
+    Transports,
+    Save,
+}
+
+impl ListenerField {
+    const ORDER: [ListenerField; 6] = [
+        ListenerField::PortMode,
+        ListenerField::Host,
+        ListenerField::Port,
+        ListenerField::Discovery,
+        ListenerField::Transports,
+        ListenerField::Save,
+    ];
+
+    /// Moves focus through the form in render order and wraps around.
+    pub(super) fn step(self, forward: bool) -> Self {
+        let index = Self::ORDER
+            .iter()
+            .position(|field| *field == self)
+            .unwrap_or(0);
+        let next = if forward {
+            (index + 1) % Self::ORDER.len()
+        } else {
+            (index + Self::ORDER.len() - 1) % Self::ORDER.len()
+        };
+        Self::ORDER[next]
+    }
+}
+
+/// Node-local listener settings, the TUI counterpart of the desktop
+/// connection dialog: transports, LAN discovery, bind address and port mode
+/// in one form. Saving restarts the listeners with the new configuration.
+pub(super) struct ListenerSettingsModal {
+    pub(super) bindHost: String,
+    pub(super) bindPort: String,
+    pub(super) portMode: PeerHostPortMode,
+    pub(super) transports: BTreeSet<PeerTransport>,
+    pub(super) supportedTransports: Vec<PeerTransport>,
+    pub(super) discoveryEnabled: bool,
+    pub(super) discoverySupported: bool,
+    pub(super) transportCursor: usize,
+    pub(super) field: ListenerField,
+    pub(super) error: Option<String>,
+    /// Opened from the hub, so closing returns there instead of the chat.
+    pub(super) returnToHub: bool,
+}
+
+/// Direct-address editor for one paired device: the TUI counterpart of the
+/// desktop "update direct address" action offered when a direct link fails.
+pub(super) struct EndpointEditModal {
+    pub(super) deviceId: String,
+    pub(super) label: String,
+    pub(super) input: String,
+    pub(super) error: Option<String>,
+    pub(super) returnToHub: bool,
+}
+
+/// Splits a persisted bind address into independently editable host and port
+/// fields, keeping bracketed IPv6 hosts verbatim. Bare IPv6 without brackets
+/// cannot be split unambiguously and is kept in the host field.
+pub(super) fn split_bind_address(address: &str) -> (String, String) {
+    let value = address.trim();
+    if let Some(rest) = value.strip_prefix('[') {
+        if let Some((host, tail)) = rest.split_once(']') {
+            if let Some(port) = tail.strip_prefix(':') {
+                return (host.to_string(), port.to_string());
+            }
+        }
+    }
+    match value.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => (host.to_string(), port.to_string()),
+        _ => (value.trim_matches(|ch| ch == '[' || ch == ']').to_string(), String::new()),
+    }
+}
+
+/// Reassembles the Host-compatible socket address after form validation.
+pub(super) fn compose_bind_address(host: &str, port: &str) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Validated listener settings ready to persist and apply.
+pub(super) struct ListenerPlan {
+    pub(super) bindAddress: String,
+    pub(super) transports: Vec<PeerTransport>,
+    pub(super) discoveryEnabled: bool,
+    pub(super) portMode: PeerHostPortMode,
+}
+
+/// Validates the listener form with the same rules as the desktop dialog:
+/// fixed mode needs a nonzero port, TCP cannot share the bind port with
+/// HTTP/WebSocket, discovery needs at least one transport, and transports
+/// this Host does not support are dropped instead of failing the save.
+pub(super) fn plan_listener_settings(
+    text: TuiText,
+    host: &str,
+    portText: &str,
+    portMode: PeerHostPortMode,
+    discoveryEnabled: bool,
+    discoverySupported: bool,
+    selected: &BTreeSet<PeerTransport>,
+    supported: &[PeerTransport],
+) -> Result<ListenerPlan, String> {
+    let host = host.trim().trim_matches(|ch| ch == '[' || ch == ']');
+    let portText = portText.trim();
+    // Automatic mode treats an empty field as "let the host choose", which is
+    // what the field shows before the first save.
+    let portText = if portMode == PeerHostPortMode::Automatic && portText.is_empty() {
+        "0"
+    } else {
+        portText
+    };
+    let transports = selected
+        .iter()
+        .copied()
+        .filter(|transport| supported.contains(transport))
+        .collect::<Vec<_>>();
+    let portValid = portText
+        .parse::<u16>()
+        .map(|port| portMode != PeerHostPortMode::Fixed || port > 0)
+        .unwrap_or(false);
+    if host.is_empty() {
+        return Err(text.network_listener_address_required().to_string());
+    }
+    if !portValid {
+        return Err(text.network_listener_port_required().to_string());
+    }
+    if transports.contains(&PeerTransport::Tcp)
+        && (transports.contains(&PeerTransport::Http)
+            || transports.contains(&PeerTransport::WebSocket))
+    {
+        return Err(text.network_listener_port_conflict().to_string());
+    }
+    if transports.is_empty() && discoveryEnabled && discoverySupported {
+        return Err(text.network_listener_discovery_needs_transport().to_string());
+    }
+    Ok(ListenerPlan {
+        bindAddress: compose_bind_address(host, portText),
+        transports,
+        discoveryEnabled,
+        portMode,
+    })
+}
+
 /// Stages of the pairing wizard. `Code` and `JoinOffer` are reached
 /// automatically: starting a pairing (command or wizard) jumps straight to
 /// code entry, and a successful confirmation advances to the join offer.
@@ -716,6 +882,15 @@ pub(super) fn peer_transport_label(transport: &PeerTransport) -> &'static str {
         PeerTransport::Serial => "serial",
         PeerTransport::Bluetooth => "bluetooth",
     }
+}
+
+/// Comma-separated listener transports in saved order, for status lines.
+pub(super) fn listener_transport_summary(transports: &[PeerTransport]) -> String {
+    transports
+        .iter()
+        .map(|transport| peer_transport_label(transport))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Pushes one character into the confirmation-code buffer: digits only,
@@ -992,6 +1167,8 @@ impl OperitTui {
             unpair_confirm: None,
             network_hub: None,
             pair_wizard: None,
+            listener_settings: None,
+            endpoint_edit: None,
             discovered_peers: Vec::new(),
             discover_select_pending: false,
             discover_in_flight: false,
@@ -1438,7 +1615,9 @@ impl OperitTui {
             || self.startup_workspace_prompt.is_some()
             || !self.current_tool_permission_requests.is_empty()
             || self.join_decision.is_some()
-            || self.device_manager.is_some();
+            || self.device_manager.is_some()
+            || self.listener_settings.is_some()
+            || self.endpoint_edit.is_some();
         if self.compose.editor.is_some() {
             return Ok(());
         }
@@ -1796,6 +1975,16 @@ impl OperitTui {
 
         if !self.current_tool_permission_requests.is_empty() {
             self.handle_approval_key(key).await;
+            return Ok(());
+        }
+
+        if self.endpoint_edit.is_some() {
+            self.handle_endpoint_edit_key(key).await?;
+            return Ok(());
+        }
+
+        if self.listener_settings.is_some() {
+            self.handle_listener_settings_key(key).await?;
             return Ok(());
         }
 
@@ -2602,7 +2791,7 @@ impl OperitTui {
 
     /// Executes a Space control command through the runtime-owned authorization service.
     async fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
-        const USAGE: &str = "network opens the hub panel; subcommands: <show|bootstrap|audit|doctor|devices|identities|identity|name|admit|remove|disconnect|policy|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
+        const USAGE: &str = "network opens the hub panel; subcommands: <show|bootstrap|audit|doctor|devices|identities|identity|name|listen|endpoint|admit|remove|disconnect|policy|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
         match args.first().map(String::as_str) {
             None if args.is_empty() => {
                 self.open_network_hub().await;
@@ -2646,6 +2835,23 @@ impl OperitTui {
             Some("name") if args.len() == 2 => {
                 self.rename_local_device(&args[1])?;
                 self.status_message = format!("device renamed: {}", args[1]);
+            }
+            Some("listen") if args.len() == 1 => {
+                self.open_listener_settings(false).await;
+            }
+            Some("listen") if args.len() == 2 && args[1] == "show" => {
+                self.network_listener_popup()?;
+            }
+            Some("endpoint") if (2..=3).contains(&args.len()) => {
+                let (device_id, label) = self.resolve_paired_device_argument(&args[1]).await?;
+                if args.len() == 3 {
+                    self.networkControl
+                        .updatePairedDeviceEndpoint(device_id, args[2].clone(), None)
+                        .await?;
+                    self.status_message = self.text().network_endpoint_saved(&label);
+                } else {
+                    self.open_endpoint_edit(device_id, label, false);
+                }
             }
             Some("identity") if args.len() >= 2 => {
                 if args[1] == "list" && args.len() == 2 {
@@ -2965,6 +3171,417 @@ impl OperitTui {
         }
         self.open_list_popup(text.network_peers_title().to_string(), items);
         Ok(())
+    }
+
+    /// Opens the listener settings form, seeded from the persisted config and
+    /// the Host capability declaration so unsupported transports cannot be
+    /// selected and the current bind address can be edited in place.
+    async fn open_listener_settings(&mut self, return_to_hub: bool) {
+        match self.build_listener_settings(return_to_hub) {
+            Ok(()) => self.network_hub = None,
+            Err(error) => self.status_message = error,
+        }
+    }
+
+    fn build_listener_settings(&mut self, return_to_hub: bool) -> Result<(), String> {
+        let config = self
+            .networkControl
+            .localHostConfig()?
+            .ok_or_else(|| self.text().network_listener_unavailable().to_string())?;
+        let capabilities = self.networkControl.listenerCapabilities()?;
+        let (bindHost, bindPort) = split_bind_address(&config.bindAddress);
+        self.listener_settings = Some(ListenerSettingsModal {
+            bindHost,
+            bindPort: if bindPort.is_empty() {
+                "0".to_string()
+            } else {
+                bindPort
+            },
+            portMode: config.portMode,
+            transports: config.transports.into_iter().collect(),
+            supportedTransports: capabilities.transports,
+            discoveryEnabled: config.discoveryEnabled,
+            discoverySupported: capabilities.discoveryAdvertisement,
+            transportCursor: 0,
+            field: ListenerField::PortMode,
+            error: None,
+            returnToHub: return_to_hub,
+        });
+        Ok(())
+    }
+
+    /// Lists the persisted listener configuration without opening the form;
+    /// useful from a scripted session where the form is not wanted.
+    fn network_listener_popup(&mut self) -> Result<(), String> {
+        let text = self.text();
+        let Some(config) = self.networkControl.localHostConfig()? else {
+            self.set_transient_status_message(text.network_listener_show_none().to_string());
+            return Ok(());
+        };
+        let transports = if config.transports.is_empty() {
+            text.network_listener_show_none_transports().to_string()
+        } else {
+            listener_transport_summary(&config.transports)
+        };
+        let mode = match config.portMode {
+            PeerHostPortMode::Automatic => text.network_listener_mode_auto(),
+            PeerHostPortMode::Fixed => text.network_listener_mode_fixed(),
+        };
+        let discovery = if config.discoveryEnabled {
+            text.config_enabled()
+        } else {
+            text.config_disabled()
+        };
+        let items = vec![
+            text.network_listener_show_bind(&config.bindAddress),
+            text.network_listener_show_mode(mode),
+            text.network_listener_show_discovery(discovery),
+            text.network_listener_show_transports(&transports),
+        ];
+        self.open_list_popup(text.network_listener_show_title().to_string(), items);
+        Ok(())
+    }
+
+    async fn handle_listener_settings_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let Some(field) = self
+            .listener_settings
+            .as_ref()
+            .map(|modal| modal.field)
+        else {
+            return Ok(());
+        };
+        match key.code {
+            KeyCode::Esc => {
+                let return_to_hub = self
+                    .listener_settings
+                    .take()
+                    .is_some_and(|modal| modal.returnToHub);
+                if return_to_hub {
+                    self.open_network_hub().await;
+                }
+            }
+            KeyCode::Tab | KeyCode::Down => self.step_listener_field(true),
+            KeyCode::BackTab | KeyCode::Up => self.step_listener_field(false),
+            KeyCode::Left => self.adjust_listener_field(false),
+            KeyCode::Right => self.adjust_listener_field(true),
+            KeyCode::Char(' ') => match field {
+                ListenerField::Host | ListenerField::Port => {}
+                ListenerField::Save => self.apply_listener_settings().await,
+                _ => self.activate_listener_field(),
+            },
+            // The fields are prefilled, so clearing one keystroke at a time is
+            // unusable; Ctrl+U resets the focused text field.
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(modal) = self.listener_settings.as_mut() {
+                    match modal.field {
+                        ListenerField::Host => modal.bindHost.clear(),
+                        ListenerField::Port => modal.bindPort.clear(),
+                        _ => {}
+                    }
+                    modal.error = None;
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(modal) = self.listener_settings.as_mut() {
+                    match modal.field {
+                        ListenerField::Host => {
+                            modal.bindHost.pop();
+                        }
+                        ListenerField::Port => {
+                            modal.bindPort.pop();
+                        }
+                        _ => {}
+                    }
+                    modal.error = None;
+                }
+            }
+            KeyCode::Char(ch)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                if let Some(modal) = self.listener_settings.as_mut() {
+                    match modal.field {
+                        // Hostnames and addresses never contain whitespace;
+                        // swallowing it keeps the form value valid.
+                        ListenerField::Host if !ch.is_whitespace() => {
+                            modal.bindHost.push(ch);
+                            modal.error = None;
+                        }
+                        ListenerField::Port if ch.is_ascii_digit() => {
+                            modal.bindPort.push(ch);
+                            modal.error = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::Enter => match field {
+                ListenerField::Host | ListenerField::Port | ListenerField::Save => {
+                    self.apply_listener_settings().await;
+                }
+                _ => self.activate_listener_field(),
+            },
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn step_listener_field(&mut self, forward: bool) {
+        if let Some(modal) = self.listener_settings.as_mut() {
+            modal.field = modal.field.step(forward);
+            modal.error = None;
+        }
+    }
+
+    /// Left/Right on a choice row: the port mode flips, the transport cursor
+    /// moves. Text rows ignore the arrows, matching the pairing wizard.
+    fn adjust_listener_field(&mut self, forward: bool) {
+        let Some(modal) = self.listener_settings.as_mut() else {
+            return;
+        };
+        match modal.field {
+            ListenerField::PortMode => {
+                modal.portMode = match modal.portMode {
+                    PeerHostPortMode::Automatic => PeerHostPortMode::Fixed,
+                    PeerHostPortMode::Fixed => PeerHostPortMode::Automatic,
+                };
+                if modal.portMode == PeerHostPortMode::Automatic {
+                    modal.bindPort = "0".to_string();
+                }
+                modal.error = None;
+            }
+            ListenerField::Discovery => {
+                if modal.discoverySupported {
+                    modal.discoveryEnabled = !modal.discoveryEnabled;
+                    modal.error = None;
+                }
+            }
+            ListenerField::Transports => {
+                let len = PAIR_WIZARD_TRANSPORTS.len();
+                modal.transportCursor = if forward {
+                    (modal.transportCursor + 1) % len
+                } else {
+                    (modal.transportCursor + len - 1) % len
+                };
+                modal.error = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Space/Enter on a choice row. Transports respect the Host capability
+    /// declaration: an unsupported chip cannot be turned on.
+    fn activate_listener_field(&mut self) {
+        let text = self.text();
+        let Some(modal) = self.listener_settings.as_mut() else {
+            return;
+        };
+        match modal.field {
+            ListenerField::PortMode => {
+                modal.portMode = match modal.portMode {
+                    PeerHostPortMode::Automatic => PeerHostPortMode::Fixed,
+                    PeerHostPortMode::Fixed => PeerHostPortMode::Automatic,
+                };
+                if modal.portMode == PeerHostPortMode::Automatic {
+                    modal.bindPort = "0".to_string();
+                }
+                modal.error = None;
+            }
+            ListenerField::Discovery => {
+                if modal.discoverySupported {
+                    modal.discoveryEnabled = !modal.discoveryEnabled;
+                    modal.error = None;
+                }
+            }
+            ListenerField::Transports => {
+                let transport = PAIR_WIZARD_TRANSPORTS[modal.transportCursor];
+                if modal.supportedTransports.contains(&transport) {
+                    if !modal.transports.remove(&transport) {
+                        modal.transports.insert(transport);
+                    }
+                    modal.error = None;
+                } else {
+                    modal.error = Some(
+                        text.network_listener_unsupported_transport(peer_transport_label(
+                            &transport,
+                        )),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_listener_error(&mut self, error: String) {
+        if let Some(modal) = self.listener_settings.as_mut() {
+            modal.error = Some(error);
+        } else {
+            self.status_message = error;
+        }
+    }
+
+    /// Persists the form and restarts the listeners, mirroring desktop save:
+    /// stop first so the old bind is released, save, then reopen the selected
+    /// transports. A failed start leaves the saved config in place and keeps
+    /// the form open so the address can be corrected.
+    async fn apply_listener_settings(&mut self) {
+        let text = self.text();
+        let Some(modal) = self.listener_settings.as_ref() else {
+            return;
+        };
+        let plan = match plan_listener_settings(
+            text,
+            &modal.bindHost,
+            &modal.bindPort,
+            modal.portMode,
+            modal.discoveryEnabled,
+            modal.discoverySupported,
+            &modal.transports,
+            &modal.supportedTransports,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.set_listener_error(error);
+                return;
+            }
+        };
+        let return_to_hub = modal.returnToHub;
+        let transports = plan.transports.clone();
+        let config = PeerHostConfig {
+            bindAddress: plan.bindAddress.clone(),
+            transports: transports.clone(),
+            discoveryEnabled: plan.discoveryEnabled,
+            portMode: plan.portMode,
+            updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
+        };
+        if let Err(error) = self.networkControl.stopListening().await {
+            self.set_listener_error(error);
+            return;
+        }
+        if let Err(error) = self.networkControl.saveLocalHostConfig(config.clone()) {
+            self.set_listener_error(error);
+            return;
+        }
+        if !transports.is_empty() {
+            if let Err(error) = self.networkControl.startListening(transports.clone()).await {
+                self.set_listener_error(error);
+                return;
+            }
+        }
+        // Automatic mode may replace the requested port with the bound one.
+        let address = self
+            .networkControl
+            .localHostConfig()
+            .ok()
+            .flatten()
+            .map(|config| config.bindAddress)
+            .unwrap_or_else(|| config.bindAddress.clone());
+        self.listener_settings = None;
+        self.status_message = if transports.is_empty() {
+            text.network_listener_stopped().to_string()
+        } else {
+            text.network_listener_saved(&address, listener_transport_summary(&transports))
+        };
+        if return_to_hub {
+            self.open_network_hub().await;
+        }
+    }
+
+    /// Opens the direct-address editor for one paired device. The address is
+    /// deliberately empty: the runtime stores the dial record but does not
+    /// expose it, so the operator types the replacement (same as desktop).
+    fn open_endpoint_edit(&mut self, device_id: String, label: String, return_to_hub: bool) {
+        self.network_hub = None;
+        self.device_manager = None;
+        self.endpoint_edit = Some(EndpointEditModal {
+            deviceId: device_id,
+            label,
+            input: String::new(),
+            error: None,
+            returnToHub: return_to_hub,
+        });
+    }
+
+    async fn handle_endpoint_edit_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        match key.code {
+            KeyCode::Esc => {
+                let return_to_hub = self
+                    .endpoint_edit
+                    .take()
+                    .is_some_and(|modal| modal.returnToHub);
+                if return_to_hub {
+                    self.open_network_hub().await;
+                }
+            }
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(modal) = self.endpoint_edit.as_mut() {
+                    modal.input.clear();
+                    modal.error = None;
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(modal) = self.endpoint_edit.as_mut() {
+                    modal.input.pop();
+                    modal.error = None;
+                }
+            }
+            KeyCode::Char(ch)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                if let Some(modal) = self.endpoint_edit.as_mut() {
+                    if !ch.is_whitespace() {
+                        modal.input.push(ch);
+                        modal.error = None;
+                    }
+                }
+            }
+            KeyCode::Enter => self.submit_endpoint_edit().await,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn submit_endpoint_edit(&mut self) {
+        let text = self.text();
+        let Some((device_id, label, endpoint, return_to_hub)) =
+            self.endpoint_edit.as_ref().map(|modal| {
+                (
+                    modal.deviceId.clone(),
+                    modal.label.clone(),
+                    modal.input.trim().to_string(),
+                    modal.returnToHub,
+                )
+            })
+        else {
+            return;
+        };
+        if endpoint.is_empty() {
+            if let Some(modal) = self.endpoint_edit.as_mut() {
+                modal.error = Some(text.network_endpoint_address_required().to_string());
+            }
+            return;
+        }
+        match self
+            .networkControl
+            .updatePairedDeviceEndpoint(device_id, endpoint, None)
+            .await
+        {
+            Ok(()) => {
+                self.endpoint_edit = None;
+                self.status_message = text.network_endpoint_saved(&label);
+                if return_to_hub {
+                    self.open_network_hub().await;
+                }
+            }
+            Err(error) => {
+                if let Some(modal) = self.endpoint_edit.as_mut() {
+                    modal.error = Some(error);
+                }
+            }
+        }
     }
 
     /// Removes one pairing credential without touching Space membership;
@@ -3383,6 +4000,9 @@ impl OperitTui {
             .localHostConfig()
             .ok()
             .flatten()
+            // An empty transport list means the operator stopped listening;
+            // the saved bind address alone would read as a live listener.
+            .filter(|config| !config.transports.is_empty())
             .map(|config| {
                 format!(
                     "{} · {}",
@@ -3495,6 +4115,31 @@ impl OperitTui {
                     self.network_unpair_confirm(&deviceId, &label);
                 }
             }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.open_listener_settings(true).await;
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => match selected_row {
+                Some(NetworkHubRow::Peer {
+                    deviceId, label, ..
+                }) => self.open_endpoint_edit(deviceId, label, true),
+                Some(NetworkHubRow::Member(device)) => {
+                    let paired = self
+                        .network_hub
+                        .as_ref()
+                        .is_some_and(|hub| hub.paired.contains_key(&device.deviceId));
+                    if paired {
+                        self.open_endpoint_edit(
+                            device.deviceId.clone(),
+                            device.deviceName.clone(),
+                            true,
+                        );
+                    } else {
+                        self.status_message =
+                            self.text().network_endpoint_no_pairing(&device.deviceName);
+                    }
+                }
+                None => {}
+            },
             KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.is_empty() => {
                 self.open_pair_wizard(String::new(), 0, false, None);
             }
@@ -4255,6 +4900,25 @@ impl OperitTui {
     /// admit feedback deliberately avoids promising a reconnection: admit
     /// only lifts the policy restriction, the link returns on its own.
     async fn run_device_manager_action(&mut self, device_id: &str, action: DeviceManagerAction) {
+        // The address editor takes over the screen, so close the window it
+        // was launched from instead of stacking two keyboard surfaces.
+        if action == DeviceManagerAction::UpdateEndpoint {
+            let label = self
+                .device_manager
+                .as_ref()
+                .and_then(|modal| {
+                    modal
+                        .topology
+                        .devices
+                        .iter()
+                        .find(|device| device.deviceId == device_id)
+                })
+                .map(|device| device.deviceName.clone())
+                .unwrap_or_else(|| device_id.to_string());
+            self.device_manager = None;
+            self.open_endpoint_edit(device_id.to_string(), label, false);
+            return;
+        }
         let result = match action {
             DeviceManagerAction::Pair => self.network_pair_device(device_id).await,
             DeviceManagerAction::Admit => self.network_admit_device(device_id).await,
@@ -4264,6 +4928,7 @@ impl OperitTui {
             DeviceManagerAction::ClearIdentity => {
                 self.network_clear_device_identity(device_id).await
             }
+            DeviceManagerAction::UpdateEndpoint => return,
             DeviceManagerAction::AssignIdentity => return,
         };
         if let Some(modal) = self.device_manager.as_mut() {
@@ -8047,6 +8712,135 @@ mod tests {
             "javascript",
             "time.js"
         ));
+    }
+
+    /// The bind address editor must round-trip IPv4 and bracketed IPv6
+    /// without corrupting the socket address the listener expects.
+    #[test]
+    fn bind_address_round_trips_ipv4_and_ipv6() {
+        assert_eq!(
+            split_bind_address("0.0.0.0:37195"),
+            ("0.0.0.0".to_string(), "37195".to_string())
+        );
+        assert_eq!(
+            split_bind_address("[::]:37195"),
+            ("::".to_string(), "37195".to_string())
+        );
+        assert_eq!(
+            split_bind_address("[fe80::1]:0"),
+            ("fe80::1".to_string(), "0".to_string())
+        );
+        assert_eq!(compose_bind_address("::", "37195"), "[::]:37195");
+        assert_eq!(compose_bind_address("127.0.0.1", "0"), "127.0.0.1:0");
+    }
+
+    /// Listener save applies the desktop rules before touching the runtime:
+    /// automatic mode owns port 0, TCP cannot share a port with HTTP/WS,
+    /// unsupported transports are dropped, and discovery needs a transport.
+    #[test]
+    fn listener_plan_enforces_desktop_rules() {
+        let text = TuiLanguage::English.text();
+        let supported = PAIR_WIZARD_TRANSPORTS.to_vec();
+        let selected = |transports: &[PeerTransport]| {
+            transports.iter().copied().collect::<BTreeSet<_>>()
+        };
+        let plan = |mode, discovery, transports: &[PeerTransport], supported: &[PeerTransport]| {
+            plan_listener_settings(
+                text,
+                "0.0.0.0",
+                if mode == PeerHostPortMode::Automatic {
+                    "0"
+                } else {
+                    "37195"
+                },
+                mode,
+                discovery,
+                true,
+                &selected(transports),
+                supported,
+            )
+        };
+        assert!(plan(
+            PeerHostPortMode::Automatic,
+            false,
+            &[PeerTransport::Http],
+            &supported
+        )
+        .is_ok());
+        assert!(plan(
+            PeerHostPortMode::Fixed,
+            false,
+            &[PeerTransport::Http],
+            &supported
+        )
+        .is_ok());
+        assert!(plan(
+            PeerHostPortMode::Fixed,
+            false,
+            &[PeerTransport::Tcp, PeerTransport::Http],
+            &supported
+        )
+        .is_err());
+        let dropped = plan(
+            PeerHostPortMode::Fixed,
+            false,
+            &[PeerTransport::Bluetooth],
+            &[PeerTransport::Http],
+        )
+        .expect("an unsupported transport must be dropped, not rejected");
+        assert!(dropped.transports.is_empty());
+        assert!(plan(
+            PeerHostPortMode::Fixed,
+            true,
+            &[PeerTransport::Bluetooth],
+            &[PeerTransport::Http],
+        )
+        .is_err());
+    }
+
+    /// Fixed mode must reject port zero before the runtime reports it.
+    #[test]
+    fn listener_plan_rejects_zero_in_fixed_mode() {
+        let text = TuiLanguage::English.text();
+        let selected = BTreeSet::from([PeerTransport::Http]);
+        let error = plan_listener_settings(
+            text,
+            "0.0.0.0",
+            "0",
+            PeerHostPortMode::Fixed,
+            false,
+            true,
+            &selected,
+            &[PeerTransport::Http],
+        )
+        .err()
+        .expect("fixed mode must reject port zero");
+        assert!(error.contains("1-65535"), "unexpected error: {error}");
+    }
+
+    /// Updating a dial address is only possible for a device this node holds
+    /// a pairing for, and never for the local device.
+    #[test]
+    fn endpoint_action_requires_a_pairing_record() {
+        let mut modal = device_manager_fixture();
+        assert!(!modal
+            .menu_actions("phone")
+            .contains(&DeviceManagerAction::UpdateEndpoint));
+        modal.paired = ["phone".to_string()].into_iter().collect();
+        assert!(modal
+            .menu_actions("phone")
+            .contains(&DeviceManagerAction::UpdateEndpoint));
+        modal.paired.insert("self".to_string());
+        assert!(modal.menu_actions("self").is_empty());
+    }
+
+    /// Focus order matches the rendered form so Tab never skips or repeats a
+    /// row; wrapping keeps Enter save reachable from the first keypress.
+    #[test]
+    fn listener_field_cycles_in_render_order() {
+        assert_eq!(ListenerField::PortMode.step(true), ListenerField::Host);
+        assert_eq!(ListenerField::Save.step(true), ListenerField::PortMode);
+        assert_eq!(ListenerField::PortMode.step(false), ListenerField::Save);
     }
 
     #[test]

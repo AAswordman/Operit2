@@ -309,6 +309,24 @@ const COMMAND_SPECS: &[TuiCommandSpec] = &[
         options: &[],
     },
     TuiCommandSpec {
+        name: "network listen",
+        usage: "/network listen",
+        description_key: TuiTextKey::CommandNetworkListenDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network listen show",
+        usage: "/network listen show",
+        description_key: TuiTextKey::CommandNetworkListenShowDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network endpoint",
+        usage: "/network endpoint <node-id|name> [address]",
+        description_key: TuiTextKey::CommandNetworkEndpointDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
         name: "network leave",
         usage: "/network leave",
         description_key: TuiTextKey::CommandNetworkLeaveDescription,
@@ -829,6 +847,21 @@ mod tests {
         assert_eq!(
             builtin_names("/language ZH"),
             vec!["language zh-cn".to_string()]
+        );
+    }
+
+    #[test]
+    fn network_listener_settings_commands_are_suggested() {
+        assert_eq!(
+            builtin_names("/network listen"),
+            vec![
+                "network listen".to_string(),
+                "network listen show".to_string()
+            ]
+        );
+        assert_eq!(
+            builtin_names("/network endpoint"),
+            vec!["network endpoint".to_string()]
         );
     }
 
