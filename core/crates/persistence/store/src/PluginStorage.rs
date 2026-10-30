@@ -16,14 +16,16 @@ pub use operit_util::PluginStoragePaths::resolveStoragePath;
 use operit_util::PluginStoragePaths::storageNamespace;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlparser::{
-    ast::{Ident, Statement, Visit, Visitor},
-    dialect::SQLiteDialect,
-    parser::Parser,
-};
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex};
+use turso_parser::{
+    ast::{
+        fmt::{BlankContext, ToTokens, TokenStream},
+        Cmd, Name, Stmt,
+    },
+    parser::Parser,
+    token::TokenType,
+};
 use uuid::Uuid;
 
 pub const PLUGIN_STORAGE_SYNC_DOMAIN: &str = "plugin_storage";
@@ -255,16 +257,19 @@ fn validateStatement(
     if statement.sql.len() > 1_000_000 || statement.params.len() > 32766 {
         return Err(failure("SQLite statement exceeds request limits"));
     }
-    let dialect = SQLiteDialect {};
-    let parsed = Parser::parse_sql(&dialect, &statement.sql).map_err(|e| failure(e.to_string()))?;
-    if parsed.len() != 1 {
+    let mut parser = Parser::new(statement.sql.as_bytes());
+    let parsed = parser.next_cmd().map_err(|e| failure(e.to_string()))?;
+    let Some(Cmd::Stmt(parsed)) = parsed else {
+        return Err(failure("SQL statement is not permitted by this storage contract"));
+    };
+    if parser.next_cmd().map_err(|e| failure(e.to_string()))?.is_some() {
         return Err(failure("Exactly one SQL statement is required"));
     }
-    let allowed = match &parsed[0] {
-        Statement::Query(_) => query,
-        Statement::Insert(_) | Statement::Update { .. } | Statement::Delete(_) => !query,
-        Statement::CreateTable(_) => !query && !sync,
-        Statement::CreateIndex(index) => !query && (!sync || !index.unique),
+    let allowed = match &parsed {
+        Stmt::Select(_) => query,
+        Stmt::Insert { .. } | Stmt::Update(_) | Stmt::Delete { .. } => !query,
+        Stmt::CreateTable { .. } => !query && !sync,
+        Stmt::CreateIndex { unique, .. } => !query && (!sync || !unique),
         _ => false,
     };
     if !allowed {
@@ -272,19 +277,22 @@ fn validateStatement(
             "SQL statement is not permitted by this storage contract",
         ));
     }
-    if let ControlFlow::Break(error) = parsed.visit(&mut SqlAccessValidator) {
-        return Err(error);
-    }
-    Ok(())
+    parsed.to_tokens(&mut SqlAccessValidator, &BlankContext)
 }
 
-/// Checks resolved identifiers, including quoted relations and function names.
+/// Visits the parsed AST's identifier tokens without rendering or rewriting executable SQL.
 struct SqlAccessValidator;
-impl Visitor for SqlAccessValidator {
-    type Break = SqliteStoreError;
-    /// Rejects internal tables, SQLite introspection and external filesystem functions in the AST.
-    fn pre_visit_ident(&mut self, ident: &Ident) -> ControlFlow<Self::Break> {
-        let name = ident.value.to_ascii_lowercase();
+impl TokenStream for SqlAccessValidator {
+    type Error = SqliteStoreError;
+
+    /// Rejects protected names in every nested AST node while leaving string literals untouched.
+    fn append(&mut self, ty: TokenType, value: Option<&str>) -> Result<(), Self::Error> {
+        if ty != TokenType::TK_ID {
+            return Ok(());
+        }
+        let name = Name::from_string(value.ok_or_else(|| failure("SQL identifier is missing"))?)
+            .as_str()
+            .to_ascii_lowercase();
         if name.starts_with("_operit_")
             || name.starts_with("sqlite_")
             || name.starts_with("pragma_")
@@ -293,9 +301,9 @@ impl Visitor for SqlAccessValidator {
                 "load_extension" | "readfile" | "writefile" | "eval"
             )
         {
-            return ControlFlow::Break(failure("SQL references a protected storage capability"));
+            return Err(failure("SQL references a protected storage capability"));
         }
-        ControlFlow::Continue(())
+        Ok(())
     }
 }
 

@@ -350,21 +350,103 @@ fn sql_cannot_reach_private_tables_or_external_functions() {
         "SELECT * FROM _operit_log",
         "SELECT * FROM '_operit_log'",
         "SELECT * FROM main.\"_operit_log\"",
+        "SELECT * FROM [_OPERIT_log]",
+        "SELECT * FROM `_operit_log`",
         "SELECT * FROM pragma_table_info('records')",
         "SELECT readfile('secret')",
         "SELECT * FROM sqlite_master",
-        "PRAGMA journal_mode",
-        "ATTACH DATABASE 'other' AS other",
+        "SELECT 1 IS NOT CASE WHEN 1 THEN readfile('secret') ELSE NULL END",
+        "SELECT 1 IS CASE WHEN 1 THEN (SELECT sequence FROM '_operit_log') END",
+        "WITH hidden AS (SELECT * FROM main.[_operit_log]) SELECT * FROM hidden",
+        "SELECT count(*) FILTER (WHERE eval('secret') IS NOT NULL) OVER ()",
+        "SELECT 1 IN pragma_table_info('records')",
+        "SELECT 1 ORDER BY writefile('secret','data')",
+        "SELECT \"load_extension\"('secret')",
     ] {
-        assert!(
-            f.call(json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":[]}}))
-                .is_err(),
-            "{sql}"
-        );
+        let error = f.call(json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":[]}}))
+            .unwrap_err();
+        assert!(error.contains("protected storage capability"), "{sql}: {error}");
     }
     let rows=f.call(json!({"op":"query","handle":handle,"statement":{"sql":"SELECT '_operit_log' AS literal","params":[]}})).unwrap();
     assert_eq!(rows[0]["values"][0]["value"], "_operit_log");
     f.dispose();
+}
+
+/// Keeps statement count, read/write separation and privileged commands enforced by the new AST.
+#[test]
+fn sql_parser_preserves_storage_statement_restrictions() {
+    let f = Fixture::withScope("first", "device");
+    let handle = f.open("sqlite");
+    for sql in [
+        "",
+        ";",
+        "SELECT 1; SELECT 2",
+        "SELECT 1; SELECT CASE WHEN",
+        "SELECT 1 IS NOT CASE WHEN 1 THEN",
+        "PRAGMA journal_mode",
+        "ATTACH DATABASE 'other' AS other",
+        "EXPLAIN SELECT 1",
+        "EXPLAIN QUERY PLAN SELECT 1",
+        "CREATE TABLE forbidden(id TEXT)",
+        "DELETE FROM _operit_log",
+    ] {
+        assert!(f.call(json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":[]}})).is_err(), "{sql}");
+    }
+    assert!(f.call(json!({"op":"execute","handle":handle,"statement":{"sql":"SELECT 1","params":[]}})).is_err());
+    f.dispose();
+}
+
+/// Executes SQLite binary IS operators with parameters, NULLs and CASE through object-query validation.
+#[test]
+fn memory_embedding_validation_accepts_sqlite_is_not_case() {
+    let f = Fixture::new("first");
+    let handle = f.open("objects");
+    f.call(json!({"op":"commit","handle":handle,"mutations":[
+        put("source", json!({"record":{"content":"source"},"embedding":{"text":"source","space":"model","vector":[1,0]}})),
+        put("document", json!({"record":{"title":"document","content":"body","isDocumentNode":true},"embedding":{"text":"document","space":"model","vector":[0,1]}})),
+        put("stale", json!({"record":{"content":"new"},"embedding":{"text":"old","space":"model","vector":[1,0]}})),
+        put("missing", json!({"record":{"content":"missing"}}))
+    ]})).unwrap();
+    let sql = r#"WITH units AS MATERIALIZED (
+        SELECT value FROM plugin_objects WHERE collection=?1
+    ) SELECT count(*) AS invalid FROM units WHERE
+        json_extract(value,'$.embedding.text') IS NOT CASE
+            WHEN json_extract(value,'$.record.isDocumentNode')=1
+            THEN json_extract(value,'$.record.title') ELSE json_extract(value,'$.record.content') END
+        OR json_extract(value,'$.embedding.space') IS NOT ?2
+        OR json_array_length(value,'$.embedding.vector') IS NOT json_array_length(?3)"#;
+    let rows = f.call(json!({"op":"query","handle":handle,"statement":{"sql":sql,"params":[
+        {"kind":"text","value":"keys"},{"kind":"text","value":"model"},{"kind":"text","value":"[1,0]"}
+    ]}})).unwrap();
+    assert_eq!(rows[0]["values"][0]["value"], "2");
+    let rows = f.call(json!({"op":"query","handle":handle,"statement":{
+        "sql":"SELECT ?1 IS ?2, ?1 IS NOT ?2, NULL IS NULL, NULL IS NOT NULL, 2 IS TRUE, 2 IS (TRUE), 2 IS +TRUE, 1 IS DISTINCT FROM 2, 1 IS NOT DISTINCT FROM 1",
+        "params":[{"kind":"null"},{"kind":"null"}]
+    }})).unwrap();
+    let actual: Vec<_> = rows[0]["values"].as_array().unwrap().iter().map(|value| value["value"].as_str().unwrap()).collect();
+    assert_eq!(actual, ["1", "0", "1", "0", "1", "1", "0", "1", "1"]);
+    f.dispose();
+}
+
+/// Preserves the different schema permissions of synchronized and device-local SQL databases.
+#[test]
+fn sql_parser_preserves_schema_permissions() {
+    for scope in ["space", "device"] {
+        let f = Fixture::withScope("first", scope);
+        let handle = f.open("sqlite");
+        f.call(json!({"op":"define_table","handle":handle,"table":table()})).unwrap();
+        f.call(json!({"op":"execute","handle":handle,"statement":{
+            "sql":"CREATE INDEX counts ON records(count)","params":[]
+        }})).unwrap();
+        for sql in [
+            "CREATE TABLE extra(id TEXT)",
+            "CREATE UNIQUE INDEX identities ON records(id)",
+        ] {
+            let result = f.call(json!({"op":"execute","handle":handle,"statement":{"sql":sql,"params":[]}}));
+            assert_eq!(result.is_ok(), scope == "device", "{scope}: {sql}: {result:?}");
+        }
+        f.dispose();
+    }
 }
 
 /// Rejects adopting an unrelated database and leaves its original schema intact.
@@ -1597,7 +1679,6 @@ fn object_queries_rank_vectors_after_sync_replay() {
         put("source", json!({"record":{"content":"source"},"embedding":{"vector":[1.0,0.0]}})),
         put("other", json!({"record":{"content":"other"},"embedding":{"vector":[0.0,1.0]}}))
     ]})).unwrap();
-    // SQLiteDialect rejects AS MATERIALIZED before SQLite sees the statement.
     let sql = "WITH query_vector AS (SELECT CAST(key AS INTEGER) AS dimension,value FROM json_each(?1)) SELECT key,(SELECT sum(q.value*v.value) FROM json_each(o.value,'$.embedding.vector') v JOIN query_vector q ON q.dimension=v.key) AS score FROM plugin_objects o WHERE collection='keys' ORDER BY score DESC LIMIT 1";
     let second = Fixture::new("second");
     second.replay(&first.export());
