@@ -21,10 +21,25 @@ edge/
 
 SDK 默认没有第三方依赖。`space`、`http-agent`、`scene` 分别提供设备空间接入、模型工具调用和可选显示能力。SDK 不要求 SQL、JavaScript、工具包执行器或本地模型引擎。
 
-运行完整模拟器验收：
+从仓库根目录运行完整模拟器验收，`EMSDK` 指向本机 Emscripten SDK 目录：
 
 ```sh
 EMSDK=/path/to/emsdk npm run test:device-budget --prefix edge/boards/esp32/editor
 ```
+
+Windows PowerShell：
+
+```powershell
+$env:EMSDK = 'D:\tools\emsdk'
+npm run test:device-budget --prefix edge/boards/esp32/editor
+```
+
+需要同时检查 ESP32 固件编译、链接和镜像导出时，先设置 `EMSDK` 环境变量并准备好 ESP-IDF 与 Xtensa 工具链，再运行：
+
+```sh
+npm run test:device-budget --prefix edge/boards/esp32/editor -- --firmware
+```
+
+固件验收还需检查应用分区及 `.flash.text` 映射区余量；该命令不执行烧录，实际音频、网络与持续运行需要另做真机验收。
 
 该入口重建 C/Wasm、Rust 模拟器和本机 CLI，再检查固定堆/栈预算、独立聊天、空间加入、双向消息和重启。Emscripten 与桌面构建环境见 [编辑器说明](boards/esp32/editor/README.md)。验收范围与测量方法见 [验收记录](docs/acceptance.md)。
