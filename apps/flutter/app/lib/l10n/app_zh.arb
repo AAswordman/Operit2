@@ -2125,7 +2125,7 @@
   "deviceSpaceConnectDirectHint": "该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。",
   "deviceSpaceUpdateEndpoint": "更新直连地址",
   "deviceSpaceUpdateEndpointLabel": "直连地址",
-  "deviceSpaceUpdateEndpointHint": "例如 ws://192.168.1.20:37195/link",
+  "deviceSpaceUpdateEndpointHint": "例如 ws://主机:端口/link 或 主机:端口 —— 填对方当前的监听端口",
   "deviceSpaceUpdateEndpointSaved": "直连地址已更新",
   "deviceSpaceDirectLinkEstablished": "已建立直连：{device}",
   "@deviceSpaceDirectLinkEstablished": {

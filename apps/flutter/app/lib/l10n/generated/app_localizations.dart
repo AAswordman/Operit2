@@ -7253,7 +7253,7 @@ abstract class AppLocalizations {
   /// No description provided for @deviceSpaceUpdateEndpointHint.
   ///
   /// In en, this message translates to:
-  /// **'For example ws://192.168.1.20:37195/link'**
+  /// **'e.g. ws://host:port/link or host:port — use the peer\'s current listen port'**
   String get deviceSpaceUpdateEndpointHint;
 
   /// No description provided for @deviceSpaceUpdateEndpointSaved.
