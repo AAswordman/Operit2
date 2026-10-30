@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
+import 'package:operit2/ui/features/packages/screens/compose_dsl/lazy_viewport.dart';
 
 typedef _Range = ({int firstIndex, int lastIndex});
 
@@ -15,6 +16,7 @@ Widget _harness({
   Axis axis = Axis.vertical,
   bool reverse = false,
   double textScale = 1,
+  bool variableExtent = false,
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
@@ -36,7 +38,9 @@ Widget _harness({
               'viewport': {
                 'firstIndex': range.value.firstIndex,
                 'itemCount': count.value,
-                'itemExtent': 40,
+                'itemExtent': variableExtent ? 22 : 40,
+                'variableExtent': variableExtent,
+                'contentRevision': 0,
                 'onRangeChanged': {'__actionId': 'range'},
               },
             },
@@ -48,7 +52,11 @@ Widget _harness({
               )
                 {
                   'type': 'Box',
-                  'props': {'key': 'item:$index', 'height': 40, 'width': 40},
+                  'props': {
+                    'key': 'item:$index',
+                    'height': variableExtent ? (index % 7 == 0 ? 96 : 22) : 40,
+                    'width': 40,
+                  },
                   'children': [
                     {
                       'type': 'Text',
@@ -75,6 +83,55 @@ Widget _harness({
 
 /// Exercises fixed extents, native Flutter scrolling, action ordering and catalog replacement.
 void main() {
+  testWidgets(
+    'variable windows preserve tall rows and materialize a bounded cache in both directions',
+    (tester) async {
+      final range = ValueNotifier<_Range>((firstIndex: 0, lastIndex: 20));
+      final count = ValueNotifier(1000);
+      addTearDown(range.dispose);
+      addTearDown(count.dispose);
+      var requests = 0;
+      await tester.pumpWidget(
+        _harness(
+          range: range,
+          count: count,
+          variableExtent: true,
+          onAction: (id, [payload]) async {
+            requests++;
+            final values = payload! as Map;
+            range.value = (
+              firstIndex: values['firstIndex'] as int,
+              lastIndex: values['lastIndex'] as int,
+            );
+            return null;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      final firstRow = find.byWidgetPredicate(
+        (widget) => widget is ComposeDslLazyListItem && widget.itemIndex == 0,
+      );
+      expect(tester.getSize(firstRow).height, 96);
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position;
+      position.jumpTo(8000);
+      await tester.pumpAndSettle();
+      expect(range.value.firstIndex, greaterThan(100));
+      expect(range.value.lastIndex - range.value.firstIndex, lessThan(50));
+      for (var pass = 0; pass < 4; pass++) {
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('999'), findsOneWidget);
+      position.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(find.text('0'), findsOneWidget);
+      expect(tester.getSize(firstRow).height, 96);
+      expect(requests, lessThan(20));
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final axis in Axis.values) {
     for (final reverse in [false, true]) {
       testWidgets(

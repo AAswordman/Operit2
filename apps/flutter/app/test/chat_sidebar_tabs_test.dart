@@ -1556,10 +1556,82 @@ void main() {
       expect(find.byType(ToolPkgUiLauncherScreen), findsNothing);
     },
   );
+  for (final width in <double>[320, 520]) {
+    testWidgets(
+      'workspace preview arrow aligns with the group icon at width $width',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final bridge = _registry();
+        final histories = List.generate(
+          6,
+          (index) => core.ChatHistoryListItem.fromJson({
+            ..._chat('preview-$index').toJson(),
+            'pinned': false,
+          }),
+        );
+        await tester.pumpWidget(
+          _nativeDrawer(
+            bridge,
+            expanded: true,
+            currentChatId: null,
+            histories: histories,
+            onActivated: () {},
+          ),
+        );
+        await tester.pumpAndSettle();
+        final preview = find.byKey(
+          const ValueKey(
+            'history-limit:workspace:workspace-a::group:legacy-native-folder',
+          ),
+        );
+        final group = find.byKey(
+          const ValueKey(
+            'workspace-group:workspace:workspace-a::group:legacy-native-folder',
+          ),
+        );
+        final folder = find.byIcon(Icons.folder_outlined);
+        expect(tester.getSize(preview).width, tester.getSize(group).width);
+        expect(find.text('展开更多 2'), findsOneWidget);
+        expect(
+          tester
+              .getCenter(
+                find.descendant(
+                  of: preview,
+                  matching: find.byIcon(Icons.expand_more),
+                ),
+              )
+              .dx,
+          tester.getCenter(folder).dx,
+        );
+
+        await tester.tap(find.text('展开更多 2'));
+        await tester.pumpAndSettle();
+        expect(find.text('Title preview-5'), findsOneWidget);
+        expect(
+          tester
+              .getCenter(
+                find.descendant(
+                  of: preview,
+                  matching: find.byIcon(Icons.expand_less),
+                ),
+              )
+              .dx,
+          tester.getCenter(folder).dx,
+        );
+        await tester.tap(find.text('收起'));
+        await tester.pumpAndSettle();
+        expect(find.text('Title preview-5'), findsNothing);
+        expect(find.text('展开更多 2'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final expanded in <bool>[true, false]) {
-    for (final source in <String?>['chat-a', null]) {
+    for (final source in <String?>['chat-a', 'chat-b', 'missing-chat', null]) {
       testWidgets(
-        '${expanded ? 'expanded' : 'collapsed'} native create stays unbound without inheriting $source',
+        '${expanded ? 'expanded' : 'collapsed'} native create inherits only the selected workspace for $source',
         (tester) async {
           final bridge = _registry();
           var activations = 0;
@@ -1568,6 +1640,11 @@ void main() {
               bridge,
               expanded: expanded,
               currentChatId: source,
+              histories: [
+                _chat('other-chat', workspaceId: 'workspace-other'),
+                _chat('chat-a'),
+                _chat('chat-b', workspaceId: null),
+              ],
               onActivated: () => activations++,
             ),
           );
@@ -1585,7 +1662,7 @@ void main() {
             'setAsCurrentChat': true,
             'sourceChatId': null,
             'parentChatId': null,
-            'workspaceId': null,
+            'workspaceId': source == 'chat-a' ? 'workspace-a' : null,
             'input': null,
           });
           expect(activations, 1);
@@ -1631,6 +1708,40 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'collapsed creation respects committed plugin and workspace tab changes',
+    (tester) async {
+      final bridge = _registry();
+      bridge.preferences[_tabPreference] = chatSidebarTabIdentity(
+        'owner.first',
+        'history',
+      );
+      await tester.pumpWidget(
+        _nativeDrawer(
+          bridge,
+          expanded: false,
+          currentChatId: 'chat-a',
+          histories: [_chat('chat-a')],
+          onActivated: () {},
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.add_comment_outlined));
+      await tester.pumpAndSettle();
+      bridge.commitPreferences({
+        _tabPreference: UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB,
+      });
+      await tester.tap(find.byIcon(Icons.add_comment_outlined));
+      await tester.pumpAndSettle();
+      final requests = bridge.calls
+          .where((call) => call.methodName == 'createNewChat')
+          .toList();
+      expect(requests, hasLength(2));
+      expect((requests[0].args as Map)['workspaceId'], isNull);
+      expect((requests[1].args as Map)['workspaceId'], 'workspace-a');
+    },
+  );
 
   testWidgets(
     'native row reordering uses only the approved generic canonical order arguments',
@@ -1734,6 +1845,7 @@ Widget _nativeDrawer(
                   ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat),
               appearance: _appearance,
               currentChatId: currentChatId,
+              histories: histories,
               bridge: bridge,
               onNavigationEntrySelected: (_) {},
               onConversationActivated: onActivated,
@@ -1861,21 +1973,24 @@ core.ToolPkgUiRoute _route(String owner) => core.ToolPkgUiRoute(
 );
 
 /// Decodes the generated canonical DTO while proving legacy metadata never enters tab state.
-core.ChatHistoryListItem _chat(String id, {String? title}) =>
-    core.ChatHistoryListItem.fromJson({
-      'id': id,
-      'title': title ?? 'Title $id',
-      'updatedAt': '2026-10-08T12:00:00Z',
-      'displayOrder': 3,
-      'workspaceId': 'workspace-a',
-      'workspaceName': 'Workspace A',
-      'locked': true,
-      'pinned': true,
-      'group': 'legacy-native-folder',
-      'parentChatId': null,
-      'characterCardName': 'legacy-card-not-forwarded',
-      'characterGroupId': 'legacy-subject-not-forwarded',
-    });
+core.ChatHistoryListItem _chat(
+  String id, {
+  String? title,
+  String? workspaceId = 'workspace-a',
+}) => core.ChatHistoryListItem.fromJson({
+  'id': id,
+  'title': title ?? 'Title $id',
+  'updatedAt': '2026-10-08T12:00:00Z',
+  'displayOrder': 3,
+  'workspaceId': workspaceId,
+  'workspaceName': workspaceId == null ? null : 'Workspace A',
+  'locked': true,
+  'pinned': true,
+  'group': 'legacy-native-folder',
+  'parentChatId': null,
+  'characterCardName': 'legacy-card-not-forwarded',
+  'characterGroupId': 'legacy-subject-not-forwarded',
+});
 
 /// Exercises generated catalog, preference, watch, and Compose render codecs.
 class _SidebarRegistryBridge extends OperitRuntimeBridge {

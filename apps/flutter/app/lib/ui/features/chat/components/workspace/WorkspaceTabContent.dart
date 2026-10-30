@@ -14,15 +14,14 @@ import 'browser/automation/WorkspaceWebVisitContent.dart';
 import 'WorkspaceFileBrowserContent.dart';
 import 'WorkspaceFilePreviewContent.dart';
 import 'WorkspaceHomeContent.dart';
-import 'WorkspaceDiffContent.dart';
 import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceTabModels.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'terminal/WorkspaceTerminalContent.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
 import '../WorkspaceShell.dart';
-import 'WorkspaceDiffReview.dart';
 import '../../../../main/screens/OperitScreens.dart';
+import '../../../../common/contributions/PluginWorkspacePageHost.dart';
 
 class WorkspaceTabContent extends StatelessWidget {
   const WorkspaceTabContent({
@@ -59,7 +58,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onChooseExistingWorkspace,
     required this.onUnbindWorkspace,
     required this.splitMarkdownContent,
-    this.onOpenDiff,
+    this.pluginHomeContent = const SizedBox.shrink(),
   });
 
   final WorkspaceTab tab;
@@ -104,7 +103,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final VoidCallback onChooseExistingWorkspace;
   final VoidCallback onUnbindWorkspace;
   final MarkdownContentSplitter splitMarkdownContent;
-  final VoidCallback? onOpenDiff;
+  final Widget pluginHomeContent;
 
   /// Builds the selected tab with shared workspace capability callbacks.
   @override
@@ -131,7 +130,7 @@ class WorkspaceTabContent extends StatelessWidget {
           onCloseTerminalSession: onCloseTerminalSession,
           onSelectBrowserTab: onSelectBrowserTab,
           onCloseBrowserSession: onCloseBrowserSession,
-          onOpenDiff: onOpenDiff,
+          pluginContent: pluginHomeContent,
         );
       case WorkspaceTabKind.workspacePicker:
         return WorkspaceFileBrowserContent(
@@ -218,20 +217,16 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenBrowser: onOpenBrowser,
           splitMarkdownContent: splitMarkdownContent,
         );
-      case WorkspaceTabKind.diff:
-        final review = tab.diffReview ??
-            WorkspaceShell.session.latestDiffReview ??
-            const WorkspaceDiffReview(files: <WorkspaceDiffFile>[]);
-        return WorkspaceDiffContent(
-          key: ValueKey<String>(
-            'diff:${tab.identityToken ?? ''}:${workspacePath ?? ''}:${review.files.map((file) => '${file.path}:${file.diffContent.length}').join('|')}',
-          ),
-          review: review,
-          workspacePath: workspacePath,
-          onListWorkspaceFiles: onListWorkspaceFiles,
-          onReadWorkspaceTextFile: onReadWorkspaceTextFile,
-        );
       case WorkspaceTabKind.plugin:
+        if (tab.pluginPresentation case final presentation?) {
+          return PluginWorkspacePageHost(
+            key: ValueKey(presentation.identity),
+            presentation: presentation,
+            workspacePath: workspacePath,
+            hostState: WorkspaceShell.session.pluginHostState,
+            onOpen: WorkspaceShell.session.openPluginPage,
+          );
+        }
         final packageName = tab.pluginPackageName;
         final moduleId = tab.pluginUiModuleId;
         if (packageName == null || moduleId == null) {

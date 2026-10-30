@@ -93,6 +93,7 @@ void main() {
       await tester.pumpWidget(_renderGroup([_tool, ...trailing]));
       expect(find.textContaining('Executing'), findsOneWidget);
       expect(find.textContaining('Completed'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.text('Tool body'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     });

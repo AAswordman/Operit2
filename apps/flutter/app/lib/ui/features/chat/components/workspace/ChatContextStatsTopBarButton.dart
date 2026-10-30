@@ -245,7 +245,7 @@ class _ChatContextStatsTopBarButtonState
                         children: <Widget>[
                           Expanded(
                             child: Text(
-                              '上下文与设备',
+                              '上下文占用',
                               style: Theme.of(context).textTheme.titleSmall,
                             ),
                           ),
@@ -281,7 +281,26 @@ class _ChatContextStatsTopBarButtonState
                           label: '输出 Token',
                           value: '${_summary!.outputTokenCount}',
                         ),
-                        const Divider(height: 16),
+                      ],
+                      const Divider(height: 16),
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              '设备',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '添加设备',
+                            onPressed: _openDeviceSpaceSettings,
+                            icon: const Icon(Icons.add_rounded, size: 18),
+                            color: colorScheme.onSurfaceVariant,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                      if (!_loading && !_loadFailed) ...<Widget>[
                         for (final device in _topology!.devices)
                           _DeviceRow(
                             device: device,
@@ -303,19 +322,6 @@ class _ChatContextStatsTopBarButtonState
                             style: TextStyle(color: colorScheme.error),
                           ),
                       ],
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: AlignmentDirectional.centerEnd,
-                        child: TextButton.icon(
-                          onPressed: _openDeviceSpaceSettings,
-                          icon: const Icon(Icons.add_rounded, size: 14),
-                          label: const Text('添加设备'),
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(0, 28),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                 ),

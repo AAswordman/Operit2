@@ -20,7 +20,10 @@ import 'MessageCopyPreview.dart';
 import 'ChatScrollNavigator.dart';
 import 'NewChatIntro.dart';
 import 'style/ThemedChatMessage.dart';
-import 'part/TurnDiffSummary.dart';
+import '../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
+import '../../../common/contributions/PluginWorkspacePresentation.dart';
+import 'ChatMessageSlotHost.dart';
+import 'WorkspaceShell.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
 const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
@@ -128,6 +131,7 @@ class _ChatAreaState extends State<ChatArea>
   final Map<int, _CachedMessageRow> _messageRowCache =
       <int, _CachedMessageRow>{};
   late final ValueNotifier<bool> _chatBusyNotifier;
+  late EmbeddedPluginSurfaceCatalog _messageContributions;
   Timer? _navigatorHideTimer;
   Timer? _viewportResizeTimer;
   bool _userScrollSessionActive = false;
@@ -159,6 +163,10 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void initState() {
     super.initState();
+    _messageContributions = EmbeddedPluginSurfaceCatalog(
+      clients: widget.clients,
+      surfaces: const {'chat_message_after'},
+    );
     _chatBusyNotifier = ValueNotifier<bool>(widget.isLoading);
     _layoutScrollController = _ChatLayoutScrollController(
       delegate: widget.scrollController,
@@ -166,6 +174,49 @@ class _ChatAreaState extends State<ChatArea>
       shouldInitiallyAlignBottom: _ownsBottomScroll,
     );
     _bottomFollowTicker = createTicker(_tickBottomFollow);
+  }
+
+  /// Updates localized declarations without opening a catalog per transcript row.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _messageContributions.setLanguage(Localizations.localeOf(context).languageCode);
+  }
+
+  /// Binds message actions to the mounted chat and exact answer revision, not plugin-supplied ids.
+  Future<void> _handleMessageContribution(
+    String chatId,
+    ChatUiMessage message,
+    EmbeddedPluginSurfaceEntry entry,
+    Object? value,
+  ) async {
+    if (!mounted || widget.currentChatId != chatId) return;
+    final current = widget.messages.firstWhereOrNull((item) => item.timestamp == message.timestamp);
+    if (current == null || current.selectedVariantIndex != message.selectedVariantIndex) return;
+    if (!_messageContributions.entries.any((item) => item.mountIdentity == entry.mountIdentity)) return;
+    try {
+      if (value is Map && value['type'] == 'toolpkg.message.rollback') {
+        widget.onRollbackToMessage(message.timestamp);
+        return;
+      }
+      final request = PluginWorkspaceRequest.fromActionResult(value);
+      if (request == null) return;
+      final presentation = await PluginWorkspacePresentation.resolve(
+        clients: widget.clients,
+        sourceOwnerPackageName: entry.route.containerPackageName,
+        request: request,
+        language: Localizations.localeOf(context).languageCode,
+        hostState: {'chatId': chatId},
+      );
+      if (mounted && widget.currentChatId == chatId && widget.messages.any((item) =>
+          item.timestamp == message.timestamp && item.selectedVariantIndex == message.selectedVariantIndex)) {
+        WorkspaceShell.session.openPluginPage(presentation);
+      }
+    } catch (error) {
+      if (mounted && widget.currentChatId == chatId) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      }
+    }
   }
 
   /// Builds the scrollable message area and its navigation overlay.
@@ -859,6 +910,7 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void didUpdateWidget(ChatArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _messageContributions.bindClients(widget.clients);
     _chatBusyNotifier.value = widget.isLoading;
     _layoutScrollController.delegate = widget.scrollController;
     final chatChanged = oldWidget.currentChatId != widget.currentChatId;
@@ -936,6 +988,7 @@ class _ChatAreaState extends State<ChatArea>
   /// Releases timers, cached rows, and navigation state.
   @override
   void dispose() {
+    _messageContributions.dispose();
     _navigatorHideTimer?.cancel();
     _viewportResizeTimer?.cancel();
     _layoutScrollController.dispose();
@@ -994,9 +1047,6 @@ class _ChatAreaState extends State<ChatArea>
       onEditSummary: widget.onSelectMessageToEdit,
       enableDialogs: !selectionMode,
     );
-    final turnReview = !isStreaming && message.sender == 'ai'
-        ? reviewForMessage(message)
-        : null;
     final messageContent = _SelectableMessageFrame(
       selected: selected,
       selectionMode: selectionMode,
@@ -1004,12 +1054,16 @@ class _ChatAreaState extends State<ChatArea>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           chatMessage,
-          if (turnReview != null &&
-              turnReview.files.isNotEmpty &&
-              !selectionMode)
-            TurnDiffSummary(
-              review: turnReview,
-              onUndo: () => widget.onRollbackToMessage(message.timestamp),
+          if (!selectionMode)
+          if (widget.currentChatId case final chatId?)
+            ChatMessageSlotHost(
+              catalog: _messageContributions,
+              chatId: chatId,
+              message: message,
+              isStreaming: isStreaming,
+              onActionResult: (entry, value) => unawaited(
+                _handleMessageContribution(chatId, message, entry, value),
+              ),
             ),
           if (message.sender == 'ai' && message.variantCount > 1)
             _MessageVariantSwitcher(

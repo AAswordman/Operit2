@@ -163,6 +163,19 @@ impl PathMapper {
         ))
     }
 
+    /// Resolves an absolute resource locator or a path relative to a bound workspace.
+    #[allow(non_snake_case)]
+    pub fn resolveWorkspaceResourcePath(base: &str, path: &str) -> Result<String, String> {
+        let text = path.replace('\\', "/");
+        if text.starts_with('/') {
+            return Self::normalizeWorkspaceBindingPath(&text);
+        }
+        match normalizeWindowsHostWorkspacePath(&text)? {
+            Some(absolute) => Ok(absolute),
+            None => Self::joinVfsPath(base, &text),
+        }
+    }
+
     /// Normalizes a path relative to an existing VFS root.
     #[allow(non_snake_case)]
     pub fn normalizeRelativePath(path: &str) -> Result<String, String> {
@@ -689,6 +702,30 @@ fn macosRootMounted() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resolves relative, mounted and native resource paths at one runtime boundary.
+    #[test]
+    fn workspace_resource_locators_keep_absolute_and_relative_ownership() {
+        let base = "/app/workspaces/chat-a";
+        assert_eq!(
+            PathMapper::resolveWorkspaceResourcePath(base, "src/a file.ts").unwrap(),
+            "/app/workspaces/chat-a/src/a file.ts"
+        );
+        assert_eq!(
+            PathMapper::resolveWorkspaceResourcePath(base, "D:\\repo\\a.ts").unwrap(),
+            "/mnt/windows/d/repo/a.ts"
+        );
+        assert_eq!(
+            PathMapper::resolveWorkspaceResourcePath("", "D:\\repo\\a.ts").unwrap(),
+            "/mnt/windows/d/repo/a.ts"
+        );
+        assert!(PathMapper::resolveWorkspaceResourcePath("", "src/a.ts").is_err());
+        assert_eq!(
+            PathMapper::resolveWorkspaceResourcePath(base, "/mnt/linux/home/repo/a.ts").unwrap(),
+            "/mnt/linux/home/repo/a.ts"
+        );
+        assert!(PathMapper::resolveWorkspaceResourcePath(base, "../other/a.ts").is_err());
+    }
 
     fn mapper() -> PathMapper {
         PathMapper::builtinOnly(

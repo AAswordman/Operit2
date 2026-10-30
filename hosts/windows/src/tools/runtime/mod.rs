@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use operit_host_api::{
     HostError, HostResult, ManagedRuntimeHost, ManagedRuntimeProcess, ManagedRuntimeProgram,
-    RuntimeCommandOutput, RuntimeProcessRequest,
+    RuntimeCommandOutput, RuntimeProcessRequest, RuntimePathAction,
 };
 
 const MANAGED_RUNTIME_STDIO_BUFFER_BYTES: usize = 64 * 1024;
@@ -109,6 +109,41 @@ impl ManagedRuntimeProcess for NativeManagedRuntimeProcess {
 }
 
 impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
+    /// Launches external file, editor and terminal intents without constructing shell commands.
+    fn openPath(&self, path: &str, action: RuntimePathAction) -> HostResult<()> {
+        use std::os::windows::process::CommandExt;
+        let is_terminal = matches!(&action, RuntimePathAction::Terminal);
+        let target = Path::new(path);
+        let directory = if target.is_dir() { target } else {
+            target.parent().ok_or_else(|| HostError::new("The target has no parent directory"))?
+        };
+        let mut command = match action {
+            RuntimePathAction::Reveal => {
+                let mut command = background_command("explorer.exe");
+                if !target.is_dir() { command.arg("/select,"); }
+                command.arg(path);
+                command
+            }
+            RuntimePathAction::Terminal => {
+                let mut command = std::process::Command::new("cmd.exe");
+                command.arg("/k").current_dir(directory).creation_flags(0x00000010);
+                command
+            }
+            RuntimePathAction::Application { program, args } => {
+                let executable = self.resolveRuntimeExecutable(ManagedRuntimeProgram::Command(program), None)?;
+                let mut command = background_command(executable);
+                command.args(args).arg(path).current_dir(directory);
+                command
+            }
+        };
+        if is_terminal {
+            command.spawn()?;
+        } else {
+            command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+        }
+        Ok(())
+    }
+
     /// Returns the persistent Windows managed runtime workspace directory.
     fn runtimeWorkspaceDir(&self) -> HostResult<String> {
         let localAppData = env::var_os("LOCALAPPDATA").ok_or_else(|| {
@@ -140,6 +175,7 @@ impl ManagedRuntimeHost for WindowsManagedRuntimeHost {
             ManagedRuntimeProgram::Python => vec!["python.exe"],
             ManagedRuntimeProgram::Uv => vec!["uv.exe"],
             ManagedRuntimeProgram::Pnpm => vec!["pnpm.cmd"],
+            ManagedRuntimeProgram::Command(ref name) => vec![name.as_str()],
         };
         findExecutable(&names).ok_or_else(|| {
             HostError::new(format!(
@@ -306,6 +342,16 @@ fn findExecutable(names: &[&str]) -> Option<String> {
             let candidate = dir.join(name);
             if isExecutableCandidate(&candidate) {
                 return Some(candidate.to_string_lossy().to_string());
+            }
+            if candidate.extension().is_none() {
+                if let Some(extensions) = env::var_os("PATHEXT") {
+                    for extension in extensions.to_string_lossy().split(';') {
+                        let executable = dir.join(format!("{name}{extension}"));
+                        if isExecutableCandidate(&executable) {
+                            return Some(executable.to_string_lossy().to_string());
+                        }
+                    }
+                }
             }
         }
     }

@@ -629,7 +629,7 @@ export type ComposeArrangement = "start" | "center" | "end" | "spaceBetween" | "
 /**
  * Cross-axis placement for children inside a layout container.
  */
-export type ComposeAlignment = "start" | "center" | "end";
+export type ComposeAlignment = "topStart" | "topCenter" | "topEnd" | "start" | "center" | "end" | "bottomStart" | "bottomCenter" | "bottomEnd";
 
 /**
  * Geometry used to clip or outline a Compose component.
@@ -709,6 +709,22 @@ export interface ComposeBorder {
  */
 export interface ComposePadding {
   /**
+   * Overrides the top inset independently of symmetric padding.
+   */
+  top?: number;
+  /**
+   * Overrides the bottom inset independently of symmetric padding.
+   */
+  bottom?: number;
+  /**
+   * Overrides the leading inset independently of symmetric padding.
+   */
+  start?: number;
+  /**
+   * Overrides the trailing inset independently of symmetric padding.
+   */
+  end?: number;
+  /**
    * Inset applied to the start and end edges.
    */
   horizontal?: number;
@@ -716,6 +732,28 @@ export interface ComposePadding {
    * Inset applied to the top and bottom edges.
    */
   vertical?: number;
+}
+
+/**
+ * Independently styled edges of a rectangular border.
+ */
+export interface ComposeBorderSides {
+  /**
+   * Leading vertical edge.
+   */
+  start?: ComposeBorder;
+  /**
+   * Trailing vertical edge.
+   */
+  end?: ComposeBorder;
+  /**
+   * Upper horizontal edge.
+   */
+  top?: ComposeBorder;
+  /**
+   * Lower horizontal edge.
+   */
+  bottom?: ComposeBorder;
 }
 
 /**
@@ -817,6 +855,10 @@ export interface ComposeColorToken {
    */
   alpha?: number;
   /**
+   * Optional background used for native alpha compositing.
+   */
+  over?: ComposeColor;
+  /**
    * Derives the same theme color with a different opacity multiplier.
    */
   copy(options: ComposeColorTokenMethodsCopyOptions): ComposeColorToken;
@@ -825,7 +867,25 @@ export interface ComposeColorToken {
 /**
  * Color supplied either as a concrete CSS-style value or a theme token.
  */
-export type ComposeColor = string | ComposeColorToken;
+export type ComposeColor = string | ComposeColorToken | ComposeColorValue;
+
+/**
+ * A concrete color with native floating-point opacity.
+ */
+export interface ComposeColorValue {
+  /**
+   * CSS-style hexadecimal color.
+   */
+  value: string;
+  /**
+   * Optional opacity replacing the color's original alpha channel.
+   */
+  alpha?: number;
+  /**
+   * Optional background used for native alpha compositing.
+   */
+  over?: ComposeColor;
+}
 
 /**
  * Named semantic colors available from the active Material theme.
@@ -2485,6 +2545,14 @@ export interface ComposeModifierProxyApi {
    */
   border(width: number, value: ComposeCanvasBrush, shape?: ComposeShape): ComposeModifierProxy;
   /**
+   * Paints independent rectangular edges without changing child constraints.
+   */
+  borderSides(sides: ComposeBorderSides): ComposeModifierProxy;
+  /**
+   * Selects a cross-platform native mouse cursor for this node's bounds.
+   */
+  cursor(name: string): ComposeModifierProxy;
+  /**
    * Clips the node and descendant drawing to the supplied shape.
    */
   clip(shape: ComposeShape): ComposeModifierProxy;
@@ -2566,6 +2634,10 @@ export interface ComposeModifierProxyApi {
  * Typography and color overrides applied to editable text.
  */
 export interface ComposeTextFieldStyle {
+  /**
+   * Applies only explicit overrides without importing Material role metrics.
+   */
+  inheritStyle?: boolean;
   /**
    * Font size used for the entered value.
    */
@@ -2785,6 +2857,10 @@ export interface ComposeBoxAnimation {
    * Easing curve, defaulting to linear.
    */
   curve?: ComposeAnimationCurve;
+  /**
+   * Anchor kept fixed when intrinsic child size changes.
+   */
+  alignment?: ComposeAlignment;
 }
 
 /**
@@ -2858,6 +2934,10 @@ export interface TextProps extends ComposeCommonProps {
    */
   style?: ComposeTextStyle;
   /**
+   * Inherits ambient native text metrics instead of a Material typography role.
+   */
+  inheritStyle?: boolean;
+  /**
    * Foreground color of rendered glyphs.
    */
   color?: ComposeColor;
@@ -2873,6 +2953,18 @@ export interface TextProps extends ComposeCommonProps {
    * Font family override used to resolve glyphs.
    */
   fontFamily?: string;
+  /**
+   * Ordered font families used when the primary family has no glyph.
+   */
+  fontFamilyFallback?: string[];
+  /**
+   * Multiplier for native line metrics.
+   */
+  lineHeight?: number;
+  /**
+   * Extra logical pixels between adjacent glyphs.
+   */
+  letterSpacing?: number;
   /**
    * Maximum number of lines before overflow handling.
    */
@@ -2893,6 +2985,226 @@ export interface TextProps extends ComposeCommonProps {
    * Share of remaining main-axis space when placed in a row or column.
    */
   weight?: number;
+}
+
+/**
+ * One native inline text run, retaining typography and color within one layout.
+ */
+export interface ComposeTextRun {
+  /**
+   * Literal content of this run.
+   */
+  text: string;
+  /**
+   * Foreground paint for this run.
+   */
+  color?: ComposeColor;
+  /**
+   * Background paint for changed inline ranges.
+   */
+  textBackgroundColor?: ComposeColor;
+  /**
+   * Material typography role supplying default metrics.
+   */
+  style?: ComposeTextStyle;
+  /**
+   * Font size in logical pixels.
+   */
+  fontSize?: number;
+  /**
+   * Font weight understood by the native typography adapter.
+   */
+  fontWeight?: string;
+  /**
+   * Font family override.
+   */
+  fontFamily?: string;
+  /**
+   * Multiplier for native line metrics.
+   */
+  lineHeight?: number;
+  /**
+   * Extra logical pixels between adjacent glyphs.
+   */
+  letterSpacing?: number;
+}
+
+/**
+ * Styled inline runs sharing native wrapping, overflow and baseline layout.
+ */
+export interface RichTextProps extends ComposeCommonProps {
+  /**
+   * Ordered text spans rendered in one native paragraph.
+   */
+  spans: ComposeTextRun[];
+  /**
+   * Maximum paragraph line count.
+   */
+  maxLines?: number;
+  /**
+   * Whether the paragraph wraps at soft break opportunities.
+   */
+  softWrap?: boolean;
+  /**
+   * Overflow behavior at the paragraph bounds.
+   */
+  overflow?: ComposeTextOverflow;
+}
+
+/**
+ * A styled interval in an otherwise unchanged source-code line.
+ */
+export interface ComposeCodeEmphasis {
+  /**
+   * Inclusive UTF-16 start offset.
+   */
+  start: number;
+  /**
+   * Exclusive UTF-16 end offset.
+   */
+  end: number;
+  /**
+   * Background paint for the interval.
+   */
+  color: ComposeColor;
+  /**
+   * Font weight override for the interval.
+   */
+  fontWeight?: string;
+}
+
+/**
+ * Native syntax typography for any plugin-owned source line, without domain parsing.
+ */
+export interface CodeTextProps extends TextProps {
+  /**
+   * Filename used solely to select a syntax grammar.
+   */
+  filePath: string;
+  /**
+   * Plugin-supplied styled intervals, independent of the syntax grammar.
+   */
+  emphasis?: ComposeCodeEmphasis[];
+}
+
+/**
+ * Native tooltip around arbitrary plugin-owned content.
+ */
+export interface TooltipProps extends ComposeCommonProps {
+  /**
+   * Tooltip text shown on hover or long press.
+   */
+  message: string;
+  /**
+   * Delay before showing the tooltip, in milliseconds.
+   */
+  waitMillis?: number;
+  /**
+   * Child content.
+   */
+  content?: ComposeChildren;
+}
+
+/**
+ * A native scroll viewport with an independently owned scrollbar controller.
+ */
+export interface ScrollAreaProps extends ComposeCommonProps {
+  /**
+   * Keeps the native scrollbar track visible with an explicitly visible thumb.
+   */
+  trackVisibility?: boolean;
+  /**
+   * Scroll direction: vertical or horizontal.
+   */
+  axis?: string;
+  /**
+   * Keeps the scrollbar thumb visible while content can scroll.
+   */
+  thumbVisibility?: boolean;
+  /**
+   * Child content.
+   */
+  content?: ComposeChildren;
+}
+
+/**
+ * A native popup whose anchor and menu items are supplied by the plugin.
+ */
+export interface MenuAnchorProps extends ComposeCommonProps {
+  /**
+   * Composed anchor content, independent of the menu entries.
+   */
+  anchor: ComposeChildren;
+  /**
+   * Composed entries selected by their zero-based index.
+   */
+  content?: ComposeChildren;
+  /**
+   * Tooltip for the menu anchor.
+   */
+  tooltip?: string;
+  /**
+   * Native menu item height.
+   */
+  itemHeight?: number;
+  /**
+   * Per-entry interaction and separator metadata, indexed like content.
+   */
+  items?: ComposeMenuItem[];
+  /**
+   * Receives the selected item index.
+   */
+  onSelect: (arg0: number) => void;
+}
+
+/**
+ * Native popup entry behavior independent of its plugin-owned presentation.
+ */
+export interface ComposeMenuItem {
+  /**
+   * Whether this entry accepts selection.
+   */
+  enabled?: boolean;
+  /**
+   * Renders a native separator instead of the entry content.
+   */
+  divider?: boolean;
+  /**
+   * Optional native height overriding the menu default.
+   */
+  height?: number;
+}
+
+/**
+ * A native Material ink response with plugin-owned content and action.
+ */
+export interface InkWellProps extends ComposeCommonProps {
+  /**
+   * Rounded boundary for hover, focus and ink paint.
+   */
+  shape?: ComposeShape;
+  /**
+   * Completed tap action.
+   */
+  onClick?: () => ButtonPropsOnClickOutput;
+  /**
+   * Child content.
+   */
+  content?: ComposeChildren;
+}
+
+/**
+ * Plugin-owned inline SVG rendered through the shared native vector adapter.
+ */
+export interface SvgProps extends ComposeCommonProps {
+  /**
+   * SVG document source.
+   */
+  source: string;
+  /**
+   * Optional monochrome tint.
+   */
+  tint?: ComposeColor;
 }
 
 /**
@@ -2925,6 +3237,10 @@ export interface MarkdownProps extends ComposeCommonProps {
  * Optional native input decoration overrides; omitted fields inherit the host theme.
  */
 export interface ComposeTextFieldDecoration {
+  /**
+   * Suppresses all native input border geometry and painting.
+   */
+  borderless?: boolean;
   /**
    * Uses compact vertical layout for the input decoration.
    */
@@ -3001,6 +3317,11 @@ export interface InputDecoratorProps extends ComposeCommonProps {
  * State, decoration, validation, and typography for an editable text field.
  */
 export interface TextFieldProps extends ComposeCommonProps {
+  /**
+   * Explicit cursor geometry in logical pixels.
+   */
+  cursorWidth?: number;
+  cursorHeight?: number;
   /**
    * Optional native input decoration overrides.
    */
@@ -3254,6 +3575,10 @@ export interface CheckboxProps extends ComposeCommonProps {
  */
 export interface ButtonProps extends ComposeCommonProps {
   /**
+   * Removes native minimum size and uses a compact tap target and density.
+   */
+  compact?: boolean;
+  /**
    * Arbitrary composed content rendered inside the button.
    */
   content?: ComposeChildren;
@@ -3281,6 +3606,14 @@ export interface ButtonProps extends ComposeCommonProps {
    * Foreground color used by the shared Material button renderer.
    */
   contentColor?: ComposeColor;
+  /**
+   * Background color used by the Material button renderer.
+   */
+  containerColor?: ComposeColor;
+  /**
+   * Optional outline drawn around the button shape.
+   */
+  border?: ComposeBorder;
 }
 
 /**
@@ -3359,6 +3692,10 @@ export type ComposeThemeSurfaceLayer = "panel" | "card" | "control";
  */
 export interface CardProps extends ComposeCommonProps {
   /**
+   * Wraps themed content in Material; true retains the normal card behavior.
+   */
+  material?: boolean;
+  /**
    * Child nodes rendered inside the card container.
    */
   content?: ComposeChildren;
@@ -3431,6 +3768,14 @@ export interface SurfaceProps extends ComposeCommonProps {
  */
 export interface IconProps extends ComposeCommonProps {
   /**
+   * Animated absolute rotation in turns.
+   */
+  turns?: number;
+  /**
+   * Duration of an absolute rotation transition in milliseconds.
+   */
+  durationMillis?: number;
+  /**
    * Material icon name resolved by the host icon registry.
    */
   name?: string;
@@ -3456,6 +3801,10 @@ export interface IconProps extends ComposeCommonProps {
  * Fixed-extent item generation owned by one keyed list in a bounded viewport.
  */
 export interface ComposeLazyItemOptions {
+  /**
+   * Uses natural row heights; itemExtent then estimates only unloaded placeholders.
+   */
+  variableExtent?: boolean;
   /**
    * Stable list identity within the owning page.
    */
@@ -3492,6 +3841,14 @@ export interface ComposeLazyRange {
  * Total extent and range action delivered through the existing node protocol.
  */
 export interface ComposeLazyViewport {
+  /**
+   * Uses natural item measurement instead of constraining every row to itemExtent.
+   */
+  variableExtent?: boolean;
+  /**
+   * Invalidates measured placeholder sizes when plugin content changes.
+   */
+  contentRevision?: number;
   /**
    * Absolute index of the first delivered child.
    */
@@ -3532,6 +3889,10 @@ export interface ComposeLazyItems {
  * Vertically scrolling list whose child content is hosted by a lazy column.
  */
 export interface LazyColumnProps extends ComposeCommonProps {
+  /**
+   * Insets that scroll together with list items rather than shrinking the viewport.
+   */
+  contentPadding?: ComposePadding;
   /**
    * Optional viewport protocol supplied by lazyItems for generated content.
    */
@@ -4021,6 +4382,34 @@ export interface AlertDialogProps extends ComposeCommonProps {
  */
 export interface ComposeUiFactoryRegistry {
   /**
+   * Creates one native paragraph with individually styled spans.
+   */
+  RichText: ComposeNodeFactory<RichTextProps>;
+  /**
+   * Renders source text using the shared native syntax palette and font metrics.
+   */
+  CodeText: ComposeNodeFactory<CodeTextProps>;
+  /**
+   * Wraps content in a native tooltip.
+   */
+  Tooltip: ComposeNodeFactory<TooltipProps>;
+  /**
+   * Creates one independently controlled native scroll viewport.
+   */
+  ScrollArea: ComposeNodeFactory<ScrollAreaProps>;
+  /**
+   * Opens a native popup with plugin-composed anchor and entries.
+   */
+  MenuAnchor: ComposeNodeFactory<MenuAnchorProps>;
+  /**
+   * Adds a native Material ink response without imposing button geometry.
+   */
+  InkWell: ComposeNodeFactory<InkWellProps>;
+  /**
+   * Renders an inline SVG resource without a WebView.
+   */
+  Svg: ComposeNodeFactory<SvgProps>;
+  /**
    * Creates a text-only Material button.
    */
   TextButton: ComposeNodeFactory<ButtonProps>;
@@ -4084,6 +4473,10 @@ export interface ComposeUiFactoryRegistry {
    * Creates a plain text element.
    */
   Text: ComposeNodeFactory<TextProps>;
+  /**
+   * Native selectable literal text with the same typography properties as Text.
+   */
+  SelectableText: ComposeNodeFactory<TextProps>;
   /**
    * Creates a Markdown-rendering element.
    */

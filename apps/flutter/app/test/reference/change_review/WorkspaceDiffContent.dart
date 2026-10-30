@@ -1,3 +1,4 @@
+// Frozen pre-plugin UI oracle; never imported by production.
 // ignore_for_file: file_names
 
 import 'dart:async';
@@ -7,10 +8,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../../viewmodel/WorkspaceFileModels.dart';
+import 'package:operit2/ui/features/chat/viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceDiffReview.dart';
 import 'WorkspaceGitChanges.dart';
-import 'WorkspaceInlineDiff.dart';
+import 'package:operit2/ui/features/chat/components/workspace/WorkspaceInlineDiff.dart';
 
 enum _ChangeSource {
   git,

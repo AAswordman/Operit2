@@ -249,10 +249,7 @@ class _ComposeCanvasPainter extends CustomPainter {
       if (colors is List<Object?> && colors.isNotEmpty) {
         return _canvasColor(colors.first);
       }
-      final token = raw['__colorToken']?.toString();
-      final tokenColor = _colorToken(colorScheme, token ?? '');
-      final alpha = _number(raw['alpha']);
-      return alpha == null ? tokenColor : tokenColor?.withValues(alpha: alpha);
+      return _colorForScheme(colorScheme, raw);
     }
     if (raw is String && raw.trim().startsWith('#')) {
       final hex = raw.trim().substring(1);

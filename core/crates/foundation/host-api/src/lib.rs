@@ -1594,6 +1594,8 @@ pub enum ManagedRuntimeProgram {
     Python,
     Uv,
     Pnpm,
+    /// Selects a caller-specified executable through the host's command resolver.
+    Command(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1628,6 +1630,11 @@ pub trait ManagedRuntimeProcess: Send {
 }
 
 pub trait ManagedRuntimeHost: Send + Sync {
+    /// Opens a resolved native path using an explicit desktop integration action.
+    fn openPath(&self, path: &str, action: RuntimePathAction) -> HostResult<()> {
+        let _ = (path, action);
+        Err(HostError::new("This host does not expose external path launch actions"))
+    }
     fn runtimeWorkspaceDir(&self) -> HostResult<String>;
     fn resolveRuntimeExecutable(
         &self,
@@ -1640,6 +1647,15 @@ pub trait ManagedRuntimeHost: Send + Sync {
     ) -> HostResult<Box<dyn ManagedRuntimeProcess>>;
     fn runRuntimeCommand(&self, request: RuntimeProcessRequest)
         -> HostResult<RuntimeCommandOutput>;
+}
+
+/// Platform-neutral intent for an external native path action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuntimePathAction {
+    Reveal,
+    Terminal,
+    /// Passes arguments followed by the resolved path to the named executable.
+    Application { program: String, args: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

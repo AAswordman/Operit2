@@ -2,8 +2,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import '../../../../common/contributions/PluginWorkspacePresentation.dart';
 import 'file_preview/WorkspaceTextDocument.dart';
-import 'WorkspaceDiffReview.dart';
 
 enum WorkspaceTabKind {
   home,
@@ -13,7 +13,6 @@ enum WorkspaceTabKind {
   browser,
   webVisit,
   filePreview,
-  diff,
   plugin,
 }
 
@@ -54,8 +53,8 @@ class WorkspaceTab {
     this.pluginEntryId,
     this.pluginPackageName,
     this.pluginUiModuleId,
+    this.pluginPresentation,
     this.identityToken = '',
-    this.diffReview,
   });
 
   final WorkspaceTabKind kind;
@@ -78,8 +77,8 @@ class WorkspaceTab {
   final String? pluginEntryId;
   final String? pluginPackageName;
   final String? pluginUiModuleId;
+  final PluginWorkspacePresentation? pluginPresentation;
   final String identityToken;
-  final WorkspaceDiffReview? diffReview;
 }
 
 /// Carries a regular workspace tab through an internal pane drag operation.

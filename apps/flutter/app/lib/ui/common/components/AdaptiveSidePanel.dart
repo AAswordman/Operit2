@@ -134,7 +134,8 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
           // their non-positioned overlays and then be vertically centered.
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Expanded(child: content),
+            // Primary menus must use this pane's bounds, not the full window.
+            Expanded(child: Overlay.wrap(child: content)),
             AnimatedContainer(
               duration: _animationDuration,
               curve: Curves.easeOutCubic,

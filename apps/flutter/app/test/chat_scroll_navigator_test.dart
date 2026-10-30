@@ -86,6 +86,65 @@ void main() {
     }
   }
 
+  testWidgets('scroll boundaries highlight endpoints instead of the viewport center', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    await _pumpNavigator(
+      tester,
+      jumps: <int>[],
+      scrollController: scroll,
+      messageAnchors: <int, ChatScrollMessageAnchor>{
+        for (var index = 0; index < 20; index++)
+          index: ChatScrollMessageAnchor(
+            timestamp: index,
+            index: index,
+            key: GlobalKey(),
+            absoluteTopPx: index * 100.0,
+            heightPx: 100,
+          ),
+      },
+    );
+    expect(_activeRailIndex(tester), 0);
+    scroll.jumpTo(500);
+    await tester.pump();
+    expect(_activeRailIndex(tester), 7);
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pump();
+    expect(_activeRailIndex(tester), 19);
+    scroll.jumpTo(scroll.position.minScrollExtent);
+    await tester.pump();
+    expect(_activeRailIndex(tester), 0);
+  });
+
+  testWidgets('boundary highlights do not depend on collected message anchors', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    await _pumpNavigator(tester, jumps: <int>[], scrollController: scroll);
+    expect(_activeRailIndex(tester), 0);
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pump();
+    expect(_activeRailIndex(tester), 19);
+  });
+
+  testWidgets('a transcript without scroll range keeps its latest message active', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    await _pumpNavigator(
+      tester,
+      jumps: <int>[],
+      scrollController: scroll,
+      contentHeight: 100,
+    );
+    expect(scroll.position.minScrollExtent, scroll.position.maxScrollExtent);
+    expect(_activeRailIndex(tester), 19);
+  });
+
   testWidgets('mouse contact previews immediately without jumping or rebuilding per move', (
     tester,
   ) async {
@@ -185,16 +244,28 @@ void main() {
   });
 }
 
+/// Reads the production painter's active bucket without involving hover state.
+int? _activeRailIndex(WidgetTester tester) {
+  final dynamic painter = tester.widget<CustomPaint>(
+    find.byKey(const ValueKey<String>('chat-scroll-rail-paint')),
+  ).painter;
+  return painter.activeIndex as int?;
+}
+
 /// Mounts the real navigator with in-memory previews and no native runtime.
 Future<void> _pumpNavigator(
   WidgetTester tester, {
   int count = 20,
   required List<int> jumps,
   VoidCallback? onTranscriptTap,
+  ScrollController? scrollController,
+  double contentHeight = 2000,
+  Map<int, ChatScrollMessageAnchor> messageAnchors =
+      const <int, ChatScrollMessageAnchor>{},
 }) async {
   final messages = List<ChatMessage>.generate(count, _message);
-  final scroll = ScrollController();
-  addTearDown(scroll.dispose);
+  final scroll = scrollController ?? ScrollController();
+  if (scrollController == null) addTearDown(scroll.dispose);
   await tester.pumpWidget(MaterialApp(
     locale: const Locale('zh'),
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -206,16 +277,24 @@ Future<void> _pumpNavigator(
         child: Stack(
           fit: StackFit.expand,
           children: <Widget>[
-            GestureDetector(
+            if (scrollController != null)
+              SingleChildScrollView(
+                controller: scroll,
+                child: SizedBox(height: contentHeight),
+              )
+            else
+              GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: onTranscriptTap,
               child: const SizedBox.expand(),
             ),
-            ChatScrollNavigator(
+            AnimatedBuilder(
+              animation: scroll,
+              builder: (context, _) => ChatScrollNavigator(
               messages: messages,
               currentChatId: 'rail-test',
               scrollController: scroll,
-              messageAnchors: const <int, ChatScrollMessageAnchor>{},
+              messageAnchors: messageAnchors,
               viewportHeight: 500,
               autoScrollToBottom: true,
               hasNewerDisplayHistory: false,
@@ -239,6 +318,7 @@ Future<void> _pumpNavigator(
               onRequestScrollToBottom: () {},
               showNavigatorChip: true,
               onNavigatorChipHidden: () {},
+              ),
             ),
           ],
         ),

@@ -180,6 +180,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                             selectedRouteId: widget.selectedRouteId,
                             appearance: appearance,
                             currentChatId: drawerState.currentChatId,
+                            histories: drawerState.histories,
                             onNavigationEntrySelected:
                                 widget.onNavigationEntrySelected,
                             onConversationActivated:

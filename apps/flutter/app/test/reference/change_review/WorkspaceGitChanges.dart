@@ -1,3 +1,4 @@
+// Frozen pre-plugin UI oracle; never imported by production.
 // ignore_for_file: file_names
 
 import 'dart:convert';

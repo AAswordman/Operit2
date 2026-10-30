@@ -517,17 +517,6 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        if (isExecutionActive) ...<Widget>[
-                          SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
                         Text(
                           titleText,
                           style: Theme.of(context).textTheme.bodySmall

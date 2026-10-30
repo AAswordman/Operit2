@@ -32,7 +32,7 @@ import '../components/ChatRuntimeScope.dart';
 import '../components/MessageEditorDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
-import '../components/part/TurnDiffSummary.dart';
+import '../components/ChatMessageSlotHost.dart';
 import '../components/style/input/common/MentionSuggestionPanel.dart';
 import '../components/style/input/common/MentionTokenUtils.dart';
 import '../components/style/input/common/PendingQueueMessageItem.dart';
@@ -1637,7 +1637,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           _clearChatFlowError();
           _loading = false;
           _messages.clear();
-          WorkspaceShell.session.latestDiffReview = null;
+          WorkspaceShell.session.pluginHostState = const {};
           _currentChatId = null;
           _inputProcessingState = core_proxy.InputProcessingState.idle();
         });
@@ -1707,10 +1707,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _messages
       ..clear()
       ..addAll(messages);
-    final latestReview =
-        latestReviewInMessages(messages) ?? reviewForMessages(messages);
-    WorkspaceShell.session.latestDiffReview =
-        latestReview.files.isNotEmpty ? latestReview : null;
+    WorkspaceShell.session.pluginHostState = {
+      'chatId': _currentChatId,
+      'messages': [for (final message in messages) pluginMessageState(message)],
+    };
     if (_selectedMessageTimestamps.isNotEmpty) {
       final selectableTimestamps = messages
           .where((message) {
@@ -1768,6 +1768,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (chatChanged) {
       _saveCurrentInputDraft();
       _currentChatId = state.currentChatId;
+      WorkspaceShell.session.pluginHostState = {
+        'chatId': state.currentChatId,
+        'messages': const <Object?>[],
+      };
       _isMultiSelectMode = false;
       _selectedMessageTimestamps = const <int>{};
       _restoreInputDraftForChat(state.currentChatId);

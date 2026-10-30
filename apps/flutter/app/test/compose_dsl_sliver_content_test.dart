@@ -97,6 +97,78 @@ void main() {
   setUpAll(ClientLogger.initialize);
 
   testWidgets(
+    'variable sliver windows measure cached rows instead of dividing by an estimated height',
+    (tester) async {
+      final controller = ScrollController();
+      final range = ValueNotifier((firstIndex: 0, lastIndex: 24));
+      addTearDown(controller.dispose);
+      addTearDown(range.dispose);
+      var requests = 0;
+      await tester.pumpWidget(
+        ValueListenableBuilder(
+          valueListenable: range,
+          builder: (context, value, _) => _surface(
+            {
+              'type': 'LazyColumn',
+              'props': {
+                'viewport': {
+                  'firstIndex': value.firstIndex,
+                  'itemCount': 1000,
+                  'itemExtent': 22,
+                  'variableExtent': true,
+                  'contentRevision': 0,
+                  'onRangeChanged': {'__actionId': 'range'},
+                },
+              },
+              'children': [
+                for (
+                  var index = value.firstIndex;
+                  index < value.lastIndex;
+                  index++
+                )
+                  {
+                    'type': 'Text',
+                    'props': {
+                      'key': 'row-$index',
+                      'text': 'Chat $index',
+                      'height': index % 7 == 0 ? 96 : 22,
+                    },
+                  },
+              ],
+            },
+            controller,
+            onAction: (id, [payload]) async {
+              requests++;
+              final values = payload! as Map;
+              range.value = (
+                firstIndex: values['firstIndex'] as int,
+                lastIndex: values['lastIndex'] as int,
+              );
+              return null;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Chat 0'), findsOneWidget);
+      controller.jumpTo(8000);
+      await tester.pumpAndSettle();
+      expect(range.value.firstIndex, greaterThan(100));
+      expect(range.value.lastIndex - range.value.firstIndex, lessThan(60));
+      for (var pass = 0; pass < 4; pass++) {
+        controller.jumpTo(controller.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('Chat 999'), findsOneWidget);
+      controller.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(find.text('Chat 0'), findsOneWidget);
+      expect(requests, lessThan(20));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'the sliver cache is not buffered twice before requesting more JS rows',
     (tester) async {
       final controller = ScrollController();

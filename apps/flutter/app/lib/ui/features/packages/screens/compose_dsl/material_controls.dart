@@ -79,7 +79,7 @@ extension _ComposeMaterialControls on _ComposeProgramExecutorState {
         layer: layer,
         borderRadius: radius ?? BorderRadius.zero,
         border: borderSide == null ? null : Border.fromBorderSide(borderSide),
-        material: true,
+        material: props['material'] as bool? ?? true,
         child: child,
       );
     }
@@ -213,10 +213,18 @@ extension _ComposeMaterialControls on _ComposeProgramExecutorState {
         disabledContentColor == null &&
         radius == null &&
         padding == null &&
-        borderSide == null) {
+        borderSide == null &&
+        !_bool(props['compact'])) {
       return null;
     }
     return ButtonStyle(
+      minimumSize: _bool(props['compact'])
+          ? const WidgetStatePropertyAll<Size>(Size.zero)
+          : null,
+      tapTargetSize: _bool(props['compact'])
+          ? MaterialTapTargetSize.shrinkWrap
+          : null,
+      visualDensity: _bool(props['compact']) ? VisualDensity.compact : null,
       backgroundColor: _buttonStateColor(
         enabled: containerColor,
         disabled: disabledContainerColor,

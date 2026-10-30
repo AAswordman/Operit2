@@ -29,6 +29,7 @@ import '../../common/components/M3LoadingIndicator.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
 import 'SidebarMoreMenu.dart';
+import 'SidebarChatCreation.dart';
 
 part 'DrawerContentGroups.dart';
 
@@ -299,13 +300,23 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  /// Creates through the generic hook using the displayed chat as the nullable source.
-  Future<void> _createConversation({String? workspaceId}) async {
+  /// Creates in an explicit workspace or inherits the native tab's selected binding.
+  Future<void> _createConversation({
+    String? workspaceId,
+    bool inheritWorkspace = false,
+  }) async {
     final chatCore = _chatCoreProxy;
     final onActivated = widget.onConversationActivated;
     newChatIntroArmed.value = true;
     if (mounted) setState(() => _errorMessage = null);
     try {
+      if (inheritWorkspace) {
+        workspaceId = await sidebarNewChatWorkspaceId(
+          clients: _clients,
+          histories: widget.histories,
+          currentChatId: widget.currentChatId,
+        );
+      }
       await chatCore.createNewChat(
         setAsCurrentChat: true,
         sourceChatId: null,
@@ -879,6 +890,7 @@ class _DrawerContentState extends State<DrawerContent> {
     final groups = _nativeGroups(section);
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (final group in groups) ...<Widget>[
           _GroupSectionHeader(
@@ -964,8 +976,9 @@ class _DrawerContentState extends State<DrawerContent> {
                     children: <Widget>[
                       Expanded(
                         child: _WorkspaceCreateBar(
-                          onCreateConversation: () =>
-                              unawaited(_createConversation()),
+                          onCreateConversation: () => unawaited(
+                            _createConversation(inheritWorkspace: true),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1429,7 +1442,7 @@ class _HistoryLimitButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsetsDirectional.only(
-        start: workspaceStyle ? 51 : 56,
+        start: workspaceStyle ? 50 : 56,
         end: 12,
         top: 2,
       ),
@@ -1442,6 +1455,7 @@ class _HistoryLimitButton extends StatelessWidget {
         ),
         label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
         style: TextButton.styleFrom(
+          padding: EdgeInsets.zero,
           alignment: Alignment.centerLeft,
           foregroundColor: appearance.itemColor.withValues(alpha: 0.72),
           textStyle: Theme.of(

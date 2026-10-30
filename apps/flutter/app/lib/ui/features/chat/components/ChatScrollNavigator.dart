@@ -196,16 +196,25 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     );
   }
 
-  /// Finds the message nearest the viewport center without changing scrolling.
+  /// Pins boundary highlights to endpoint messages and tracks the center between them.
   int? _resolveActiveTimestamp() {
     final scroll = widget.scrollController;
     if (!scroll.hasClients ||
         scroll.positions.length != 1 ||
         !scroll.position.hasPixels ||
         widget.viewportHeight <= 0 ||
-        !widget.viewportHeight.isFinite ||
-        widget.messageAnchors.isEmpty) {
+        !widget.viewportHeight.isFinite) {
       return widget.messages.lastOrNull?.timestamp;
+    }
+    final position = scroll.position;
+    if (position.hasContentDimensions) {
+      // A transcript that fits entirely in the viewport stays on its latest message.
+      if (position.pixels >= position.maxScrollExtent) {
+        return widget.messages.lastOrNull?.timestamp;
+      }
+      if (position.pixels <= position.minScrollExtent) {
+        return widget.messages.firstOrNull?.timestamp;
+      }
     }
     final viewportCenter = scroll.offset + widget.viewportHeight / 2;
     ChatScrollMessageAnchor? centeredAnchor;

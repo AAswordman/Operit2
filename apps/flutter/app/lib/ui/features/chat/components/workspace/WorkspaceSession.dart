@@ -3,7 +3,8 @@
 import 'package:flutter/material.dart';
 
 import 'WorkspaceTabModels.dart';
-import 'WorkspaceDiffReview.dart';
+import '../../../../common/contributions/PluginWorkspacePresentation.dart';
+import '../../../../common/icons/MaterialIconNameResolver.dart';
 
 /// Describes the orientation of the two workspace panes.
 enum WorkspaceSplitAxis { horizontal, vertical }
@@ -32,49 +33,46 @@ class WorkspaceSession extends ChangeNotifier {
   bool secondaryPaneFirst = false;
   int tabIdentitySequence = 0;
 
-  /// The most recently seen diff review from conversation messages.
-  WorkspaceDiffReview? latestDiffReview;
+  /// Semantic conversation context forwarded opaquely to independently owned plugin pages.
+  Map<String, Object?> _pluginHostState = const {};
 
-  /// Replaces the workspace diff tab with one turn and asks the shell to open.
-  void showDiffReview(WorkspaceDiffReview review) {
-    latestDiffReview = review;
-    final tab = WorkspaceTab(
-      kind: WorkspaceTabKind.diff,
-      title: '变更',
-      icon: Icons.difference_outlined,
-      diffReview: review,
-    );
-    final index = tabs.indexWhere((item) => item.kind == WorkspaceTabKind.diff);
-    if (index >= 0) {
-      tabs[index] = tab;
-      selectedIndex = index;
-    } else {
-      tabs.add(tab);
-      selectedIndex = tabs.length - 1;
-    }
+  /// Exposes the latest opaque conversation context to all mounted plugin tabs.
+  Map<String, Object?> get pluginHostState => _pluginHostState;
+
+  /// Updates live plugin input independently of the navigation that opened a tab.
+  set pluginHostState(Map<String, Object?> value) {
+    _pluginHostState = Map<String, Object?>.unmodifiable(value);
     notifyListeners();
-    onOpenRequested?.call();
   }
 
-  /// Opens or activates the workspace diff tab.
-  void openDiffTab({WorkspaceDiffReview? review}) {
-    final index = tabs.indexWhere((item) => item.kind == WorkspaceTabKind.diff);
-    final effectiveReview = review ??
-        (index >= 0 ? tabs[index].diffReview : null) ??
-        latestDiffReview ??
-        const WorkspaceDiffReview(files: <WorkspaceDiffFile>[]);
+  /// Opens or updates a plugin-owned page without duplicating a docked sidebar view.
+  void openPluginPage(PluginWorkspacePresentation presentation) {
     final tab = WorkspaceTab(
-      kind: WorkspaceTabKind.diff,
-      title: '变更',
-      icon: Icons.difference_outlined,
-      diffReview: effectiveReview,
+      kind: WorkspaceTabKind.plugin,
+      title: presentation.route.title,
+      icon: presentation.icon == null
+          ? Icons.extension_outlined
+          : MaterialIconNameResolver.resolve(presentation.icon!),
+      pluginPresentation: presentation,
+      identityToken: presentation.identity,
     );
-    if (index >= 0) {
-      tabs[index] = tab;
-      selectedIndex = index;
+    final secondaryIndex = secondaryTabs.indexWhere(
+      (item) => item.pluginPresentation?.identity == presentation.identity,
+    );
+    if (secondaryIndex >= 0) {
+      secondaryTabs[secondaryIndex] = tab;
+      secondarySelectedIndex = secondaryIndex;
     } else {
-      tabs.add(tab);
-      selectedIndex = tabs.length - 1;
+      final index = tabs.indexWhere(
+        (item) => item.pluginPresentation?.identity == presentation.identity,
+      );
+      if (index >= 0) {
+        tabs[index] = tab;
+        selectedIndex = index;
+      } else {
+        tabs.add(tab);
+        selectedIndex = tabs.length - 1;
+      }
     }
     notifyListeners();
     onOpenRequested?.call();

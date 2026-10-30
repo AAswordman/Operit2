@@ -1,17 +1,17 @@
+// Frozen pre-plugin UI oracle; never imported by production.
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
 
-import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
-import '../../../../../l10n/generated/app_localizations.dart';
-import '../../../../theme/OperitGlassSurface.dart';
-import '../../viewmodel/ChatViewModel.dart';
-import '../WorkspaceShell.dart';
-import '../workspace/WorkspaceDiffContent.dart';
-import '../workspace/WorkspaceDiffReview.dart';
-import 'FileDiffDisplay.dart';
-import 'ToolDisplayComponents.dart'
+import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/theme/OperitGlassSurface.dart';
+import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
+import 'WorkspaceDiffContent.dart';
+import 'WorkspaceDiffReview.dart';
+import 'package:operit2/ui/features/chat/components/part/FileDiffDisplay.dart';
+import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.dart'
     show fileDiffsForResult, decodeToolMetadata, toolDisplayFromAttributes;
 
 /// Collects the file diffs applied by one completed assistant turn.
@@ -128,10 +128,12 @@ class TurnDiffSummary extends StatefulWidget {
     super.key,
     required this.review,
     required this.onUndo,
+    this.onOpenReview,
   });
 
   final WorkspaceDiffReview review;
   final VoidCallback onUndo;
+  final ValueChanged<WorkspaceDiffReview>? onOpenReview;
 
   @override
   State<TurnDiffSummary> createState() => _TurnDiffSummaryState();
@@ -148,7 +150,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
   }
 
   void _openSingleFileDiff(WorkspaceDiffFile file) {
-    WorkspaceShell.session.showDiffReview(
+    widget.onOpenReview?.call(
       WorkspaceDiffReview(
         files: <WorkspaceDiffFile>[
           file,
@@ -251,7 +253,7 @@ class _TurnDiffSummaryState extends State<TurnDiffSummary> {
                         color: Colors.transparent,
                         child: InkWell(
                           onTap: () {
-                            WorkspaceShell.session.showDiffReview(review);
+                            widget.onOpenReview?.call(review);
                           },
                           borderRadius: BorderRadius.circular(16),
                           child: Container(

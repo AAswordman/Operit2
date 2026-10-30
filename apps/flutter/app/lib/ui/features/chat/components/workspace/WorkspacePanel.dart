@@ -16,6 +16,9 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import '../../../../common/components/RetainedPage.dart';
 import '../../../../common/contributions/ToolPkgChatUiCatalog.dart';
+import '../../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
+import '../../../../common/contributions/EmbeddedPluginSurfaceHost.dart';
+import '../../../../common/contributions/PluginWorkspacePresentation.dart';
 import '../../../../main/layout/SidebarDockController.dart';
 import '../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
@@ -106,10 +109,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
   final ValueNotifier<List<WorkspaceTerminalSessionInfo>>
-  _terminalSessionsNotifier =
-      ValueNotifier<List<WorkspaceTerminalSessionInfo>>(
-        const <WorkspaceTerminalSessionInfo>[],
-      );
+  _terminalSessionsNotifier = ValueNotifier<List<WorkspaceTerminalSessionInfo>>(
+    const <WorkspaceTerminalSessionInfo>[],
+  );
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
   final ValueNotifier<int> _browserSessionCount = ValueNotifier<int>(0);
   List<core_proxy.ChatHistoryListItem>? _workspaceOverviewHistories;
@@ -118,6 +120,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   bool? _workspaceOverviewUseEnglish;
   final WorkspaceOverviewContributionCatalog _workspaceOverviewContributions =
       WorkspaceOverviewContributionCatalog();
+  final EmbeddedPluginSurfaceCatalog _embeddedContributions = EmbeddedPluginSurfaceCatalog(
+    clients: _coreClients,
+    surfaces: const {'workspace_home'},
+  );
   List<WorkspaceFileEntry> _workspaceOverviewMountedFolders =
       const <WorkspaceFileEntry>[];
   bool _workspaceOverviewMountedFoldersLoading = false;
@@ -175,6 +181,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _embeddedContributions.setLanguage(Localizations.localeOf(context).languageCode);
     final useEnglish = Localizations.localeOf(context).languageCode == 'en';
     if (_workspaceOverviewUseEnglish != useEnglish) {
       _workspaceOverviewUseEnglish = useEnglish;
@@ -213,6 +220,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   /// Releases subscriptions and invalidates every asynchronous overview request.
   @override
   void dispose() {
+    _embeddedContributions.dispose();
     _session.removeListener(_handleSessionChanged);
     widget.sidebarDockController?.removeListener(_handleSidebarDockChanged);
     _webVisitSessionRegistry.clearControls();
@@ -276,11 +284,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _session.tabs.removeWhere(
       (tab) =>
           tab.kind == WorkspaceTabKind.plugin &&
+          tab.pluginPresentation == null &&
           !dockedById.containsKey(tab.pluginEntryId),
     );
     _session.secondaryTabs.removeWhere(
       (tab) =>
           tab.kind == WorkspaceTabKind.plugin &&
+          tab.pluginPresentation == null &&
           !dockedById.containsKey(tab.pluginEntryId),
     );
     final existingIds = <String>{
@@ -1132,8 +1142,27 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     return 'visit_web';
   }
 
-  void _openDiffTab() {
-    _session.openDiffTab();
+  /// Resolves workspace surface actions only under their live authenticated owner.
+  Future<void> _handleEmbeddedAction(EmbeddedPluginSurfaceEntry entry, Object? value) async {
+    final workspace = widget.workspacePath;
+    final chatId = widget.currentChatId;
+    if (!_embeddedContributions.entries.any((item) => item.mountIdentity == entry.mountIdentity)) return;
+    try {
+      final request = PluginWorkspaceRequest.fromActionResult(value);
+      if (request == null) return;
+      final presentation = await PluginWorkspacePresentation.resolve(
+        clients: _coreClients,
+        sourceOwnerPackageName: entry.route.containerPackageName,
+        request: request,
+        language: Localizations.localeOf(context).languageCode,
+        hostState: {..._session.pluginHostState, 'workspacePath': workspace},
+      );
+      if (mounted && widget.workspacePath == workspace && widget.currentChatId == chatId) {
+        _session.openPluginPage(presentation);
+      }
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+    }
   }
 
   /// Builds one tab's content with callbacks bound to its physical pane.
@@ -1164,7 +1193,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onCloseTerminalSession: _handleCloseTerminalSession,
       onSelectBrowserTab: _openBrowserSessionTab,
       onCloseBrowserSession: _handleCloseBrowserSession,
-      onOpenDiff: _openDiffTab,
+      pluginHomeContent: EmbeddedPluginSurfaceHost(
+        catalog: _embeddedContributions,
+        surface: 'workspace_home',
+        instanceIdentity: (widget.currentChatId, widget.workspacePath),
+        hostState: {..._session.pluginHostState, 'workspacePath': widget.workspacePath},
+        entryPadding: const EdgeInsets.only(bottom: 12),
+        onActionResult: (entry, value) => unawaited(_handleEmbeddedAction(entry, value)),
+      ),
       onFinishWebVisit: (tab, response) =>
           _finishWebVisitTab(tab, response, paneIndex: paneIndex),
       onActivateCurrentTab: () =>
@@ -1573,8 +1609,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
             final newTitle = sessionState.title.trim().isNotEmpty
                 ? sessionState.title.trim()
                 : (sessionState.siteHost.isNotEmpty
-                    ? sessionState.siteHost
-                    : '浏览器');
+                      ? sessionState.siteHost
+                      : '浏览器');
             if (tab.title != newTitle || tab.url != sessionState.url) {
               tabs[i] = WorkspaceTab(
                 kind: tab.kind,
@@ -1858,9 +1894,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       case WorkspaceTabKind.filePreview:
         final path = tab.absolutePath ?? tab.filePath;
         return 'filePreview-${path != null && path.isNotEmpty ? path : tab.identityToken}';
-      case WorkspaceTabKind.diff:
-        return 'diff-${tab.identityToken.isNotEmpty ? tab.identityToken : 'default'}';
       case WorkspaceTabKind.plugin:
+        if (tab.pluginPresentation != null) {
+          return 'plugin-page-${tab.identityToken}';
+        }
         final pluginId = tab.pluginEntryId ?? tab.pluginUiModuleId;
         return 'plugin-${pluginId != null && pluginId.isNotEmpty ? pluginId : tab.identityToken}';
     }

@@ -210,6 +210,7 @@ Offset _offset(List<Object?> args) {
 
 /// Resolves text style for the Compose DSL renderer.
 TextStyle? _textStyle(BuildContext context, Map<String, Object?> props) {
+  if (props['inheritStyle'] == true) return _inlineTextStyle(context, props);
   final theme = Theme.of(context).textTheme;
   final style = switch (_string(props['style'])) {
     'headlineSmall' => theme.headlineSmall,
@@ -227,15 +228,35 @@ TextStyle? _textStyle(BuildContext context, Map<String, Object?> props) {
   return _scaledTextStyle(style!, _number(props['fontSize'])).copyWith(
     color: _color(context, props['color']),
     fontWeight: _fontWeight(_string(props['fontWeight'])),
+    fontFamily: props['fontFamily'] as String?,
+    fontFamilyFallback: (props['fontFamilyFallback'] as List?)?.cast<String>(),
+    height: _number(props['lineHeight']),
+    backgroundColor: _color(context, props['textBackgroundColor']),
     letterSpacing: _number(props['letterSpacing']),
   );
 }
+
+/// Applies only explicit overrides, retaining the enclosing native text metrics.
+TextStyle _inlineTextStyle(BuildContext context, Map<String, Object?> props) =>
+    TextStyle(
+      color: _color(context, props['color']),
+      fontSize: _number(props['fontSize']),
+      fontWeight: _fontWeight(_string(props['fontWeight'])),
+      fontFamily: props['fontFamily'] as String?,
+      fontFamilyFallback: (props['fontFamilyFallback'] as List?)
+          ?.cast<String>(),
+      height: _number(props['lineHeight']),
+      backgroundColor: _color(context, props['textBackgroundColor']),
+      letterSpacing: _number(props['letterSpacing']),
+    );
 
 /// Resolves text field style for the Compose DSL renderer.
 TextStyle? _textFieldStyle(BuildContext context, Object? raw) {
   if (raw is! Map) {
     return null;
   }
+  if (raw['inheritStyle'] == true)
+    return _inlineTextStyle(context, _stringMap(raw));
   final style = Theme.of(context).textTheme.bodyMedium!;
   return _scaledTextStyle(style, _number(raw['fontSize'])).copyWith(
     color: _color(context, raw['color']),
@@ -252,7 +273,9 @@ InputDecoration? _textFieldDecoration(BuildContext context, Object? raw) {
   final radius = _number(raw['cornerRadius']);
   final borderColor = _color(context, raw['borderColor']);
   final focusedColor = _color(context, raw['focusedBorderColor']);
-  final border = radius == null && borderColor == null && focusedColor == null
+  final border = raw['borderless'] == true
+      ? InputBorder.none
+      : radius == null && borderColor == null && focusedColor == null
       ? null
       : OutlineInputBorder(
           borderRadius: BorderRadius.circular(radius ?? 4),
@@ -364,7 +387,11 @@ OutlinedBorder? _shapeBorder(Object? raw, {BorderRadius? defaultBorderRadius}) {
 
 /// Resolves color for the Compose DSL renderer.
 Color? _color(BuildContext context, Object? raw) {
-  final colorScheme = Theme.of(context).colorScheme;
+  return _colorForScheme(Theme.of(context).colorScheme, raw);
+}
+
+/// Shares concrete colors, theme tokens and alpha composition with native canvas paint.
+Color? _colorForScheme(ColorScheme colorScheme, Object? raw) {
   if (raw is String && raw.trim().isNotEmpty) {
     final value = raw.trim();
     if (value.startsWith('#')) {
@@ -375,10 +402,19 @@ Color? _color(BuildContext context, Object? raw) {
     return _colorToken(colorScheme, value);
   }
   if (raw is Map) {
-    final token = raw['__colorToken']?.toString();
-    final color = _colorToken(colorScheme, token ?? '');
+    final color = raw['value'] is String
+        ? _colorForScheme(colorScheme, raw['value'])
+        : _colorToken(colorScheme, _string(raw['__colorToken']));
     final alpha = _number(raw['alpha']);
-    return alpha == null ? color : color?.withValues(alpha: alpha);
+    final foreground = alpha == null ? color : color?.withValues(alpha: alpha);
+    if (raw['over'] == null) return foreground;
+    final background = _colorForScheme(colorScheme, raw['over']);
+    if (foreground == null || background == null) {
+      throw const FormatException(
+        'Color compositing requires two valid colors',
+      );
+    }
+    return Color.alphaBlend(foreground, background);
   }
   return null;
 }
@@ -437,6 +473,7 @@ WidgetStateProperty<Color?>? _buttonStateColor({
 /// Resolves color token for the Compose DSL renderer.
 Color? _colorToken(ColorScheme scheme, String token) {
   return switch (token) {
+    'transparent' => Colors.transparent,
     'primary' => scheme.primary,
     'onPrimary' => scheme.onPrimary,
     'primaryContainer' => scheme.primaryContainer,

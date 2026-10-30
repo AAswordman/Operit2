@@ -19,6 +19,8 @@ import '../../../../common/markdown/XmlRenderPluginRegistry.dart';
 import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../ChatRuntimeScope.dart';
+import 'ChatActivityDisclosure.dart';
+import 'ChatActivityRowStyle.dart';
 import 'DetailsTagRenderer.dart';
 import 'DialogComponents.dart';
 import 'FontTagRenderer.dart';
@@ -709,7 +711,6 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     final bodyScrollPhysics = renderFullHeight
         ? const NeverScrollableScrollPhysics()
         : null;
-    const switchDuration = Duration(milliseconds: 220);
     return SelectionContainer.disabled(
       child: Semantics(
         label: contentText.isEmpty
@@ -727,20 +728,20 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                     onTap: _handleHeaderTap,
                     borderRadius: BorderRadius.circular(4),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      padding: ChatActivityRowStyle.headerPadding,
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: <Widget>[
                           Icon(
                             Icons.psychology_outlined,
-                            size: 16,
+                            size: ChatActivityRowStyle.iconSize,
                             color: widget.isStreaming
                                 ? theme.colorScheme.primary
                                 : theme.colorScheme.onSurfaceVariant.withValues(
                                     alpha: 0.8,
                                   ),
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: ChatActivityRowStyle.iconGap),
                           _ThinkingTitle(
                             text: thinkingTitle,
                             color: widget.isStreaming
@@ -755,9 +756,9 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                               ),
                               child: Text(
                                 '·',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
+                                style: ChatActivityRowStyle.textStyle(
+                                  context,
+                                ).copyWith(
                                   color: theme.colorScheme.outlineVariant,
                                 ),
                               ),
@@ -777,18 +778,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                   ),
                 ),
               ),
-              AnimatedSwitcher(
-                duration: switchDuration,
-                reverseDuration: switchDuration,
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeOutCubic,
-                transitionBuilder: (child, animation) {
-                  return SizeTransition(
-                    sizeFactor: animation,
-                    axisAlignment: -1.0,
-                    child: FadeTransition(opacity: animation, child: child),
-                  );
-                },
+              ChatActivityDisclosure(
                 child: shouldRenderBody
                     ? Padding(
                         key: ValueKey<int>(_expandSession),
@@ -809,7 +799,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                             ),
                             Padding(
                               padding: const EdgeInsetsDirectional.only(
-                                start: 24,
+                                start: ChatActivityRowStyle.contentInset,
                               ),
                               child: MessagePressShieldRegion(
                                 child: GestureDetector(
@@ -859,7 +849,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                           ],
                         ),
                       )
-                    : const SizedBox.shrink(key: ValueKey<String>('empty')),
+                    : null,
               ),
             ],
           ),
@@ -977,15 +967,14 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final style = theme.textTheme.bodySmall?.copyWith(
+    final style = ChatActivityRowStyle.textStyle(context).copyWith(
       color: widget.color,
-      fontWeight: FontWeight.w500,
     );
     final text = Text(widget.text, style: style);
     if (!widget.streaming) {
       return text;
     }
-    final highlightStyle = style?.copyWith(color: Colors.white);
+    final highlightStyle = style.copyWith(color: Colors.white);
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
@@ -1114,11 +1103,8 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
               widget.text,
               maxLines: 1,
               softWrap: false,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'monospace',
+              style: ChatActivityRowStyle.textStyle(context).copyWith(
                 color: widget.textColor,
-                letterSpacing: -0.2,
               ),
             ),
             if (widget.isStreaming) ...<Widget>[

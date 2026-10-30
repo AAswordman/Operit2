@@ -52,11 +52,7 @@ class WorkspaceTabStrip extends StatelessWidget {
             start: 0,
             end: 0,
             bottom: 0,
-            child: Divider(
-              height: 1,
-              thickness: 1,
-              color: dividerColor,
-            ),
+            child: Divider(height: 1, thickness: 1, color: dividerColor),
           ),
           Center(
             child: SizedBox(
@@ -402,8 +398,6 @@ String _tabTitle(AppLocalizations l10n, WorkspaceTab tab) {
       return 'visit_web';
     case WorkspaceTabKind.filePreview:
       return l10n.filePreview;
-    case WorkspaceTabKind.diff:
-      return '变更';
     case WorkspaceTabKind.plugin:
       return '插件';
   }

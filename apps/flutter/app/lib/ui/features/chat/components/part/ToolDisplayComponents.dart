@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
+import 'ChatActivityDisclosure.dart';
+import 'ChatActivityRowStyle.dart';
 import 'FileDiffDisplay.dart';
 
 class CompactToolDisplay extends StatelessWidget {
@@ -405,6 +407,7 @@ class _ToolCallRowState extends State<ToolCallRow> {
         ? theme.colorScheme.error
         : theme.colorScheme.onSurfaceVariant;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
@@ -415,12 +418,16 @@ class _ToolCallRowState extends State<ToolCallRow> {
                 })
               : null,
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
+            padding: ChatActivityRowStyle.headerPadding,
             child: Row(
               children: [
-                Icon(presentation.icon, size: 16, color: color),
-                const SizedBox(width: 8),
-                Text(title, style: theme.textTheme.bodySmall),
+                Icon(
+                  presentation.icon,
+                  size: ChatActivityRowStyle.iconSize,
+                  color: color,
+                ),
+                const SizedBox(width: ChatActivityRowStyle.iconGap),
+                Text(title, style: ChatActivityRowStyle.textStyle(context)),
                 if (presentation.target.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Expanded(
@@ -428,7 +435,7 @@ class _ToolCallRowState extends State<ToolCallRow> {
                       presentation.target,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
+                      style: ChatActivityRowStyle.textStyle(context),
                     ),
                   ),
                 ] else
@@ -447,59 +454,68 @@ class _ToolCallRowState extends State<ToolCallRow> {
                     ),
                   ),
                 if (presentation.hasDetails)
-                  Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 16,
+                  AnimatedRotation(
+                    turns: _expanded ? 0.25 : 0,
+                    duration: ChatActivityDisclosure.duration,
+                    curve: ChatActivityDisclosure.curve,
+                    child: const Icon(Icons.chevron_right, size: 16),
                   ),
               ],
             ),
           ),
         ),
-        if (_expanded && presentation.hasDetails)
-          Padding(
-            padding: const EdgeInsets.only(left: 24, bottom: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (presentation.parameterSummary.isNotEmpty)
-                  ToolInlineDetailSurface(
-                    title: l10n.toolParametersLabel,
-                    text: presentation.parameterSummary,
+        ChatActivityDisclosure(
+          child: _expanded && presentation.hasDetails
+              ? Padding(
+                  key: const ValueKey('tool-details'),
+                  padding: const EdgeInsets.only(
+                    left: ChatActivityRowStyle.contentInset,
+                    bottom: 8,
                   ),
-                for (final diff in presentation.fileDiffs)
-                  FileDiffDisplay(diff: diff, actionTitle: title),
-                if (presentation.hasDirectoryListing)
-                  DirectoryListingDisplay(data: presentation.resultData!),
-                if (presentation.result.isNotEmpty)
-                  if (presentation.fileDiffs.isNotEmpty ||
-                      presentation.hasDirectoryListing)
-                    ExpansionTile(
-                      title: Text(l10n.toolResultLabel),
-                      children: [
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (presentation.parameterSummary.isNotEmpty)
+                        ToolInlineDetailSurface(
+                          title: l10n.toolParametersLabel,
+                          text: presentation.parameterSummary,
+                          initiallyCollapsed: true,
+                        ),
+                      for (final diff in presentation.fileDiffs)
+                        FileDiffDisplay(diff: diff, actionTitle: title),
+                      if (presentation.hasDirectoryListing)
+                        DirectoryListingDisplay(
+                          data: presentation.resultData!,
+                          showPath:
+                              presentation.resultData!['path'] !=
+                              presentation.target,
+                        ),
+                      if (presentation.result.isNotEmpty)
                         ToolInlineDetailSurface(
                           title: l10n.toolResultLabel,
                           text: presentation.result,
                           isSuccess: presentation.isSuccess,
+                          initiallyCollapsed:
+                              presentation.fileDiffs.isNotEmpty ||
+                              presentation.hasDirectoryListing,
                         ),
-                      ],
-                    )
-                  else
-                    ToolInlineDetailSurface(
-                      title: l10n.toolResultLabel,
-                      text: presentation.result,
-                      isSuccess: presentation.isSuccess,
-                    ),
-                if (presentation.result.isEmpty &&
-                    presentation.resultData != null)
-                  ToolInlineDetailSurface(
-                    title: l10n.toolResultLabel,
-                    text: const JsonEncoder.withIndent(
-                      '  ',
-                    ).convert(presentation.resultData),
+                      if (presentation.result.isEmpty &&
+                          presentation.resultData != null)
+                        ToolInlineDetailSurface(
+                          title: l10n.toolResultLabel,
+                          text: const JsonEncoder.withIndent(
+                            '  ',
+                          ).convert(presentation.resultData),
+                          initiallyCollapsed:
+                              presentation.fileDiffs.isNotEmpty ||
+                              presentation.hasDirectoryListing,
+                        ),
+                    ],
                   ),
-              ],
-            ),
-          ),
+                )
+              : null,
+        ),
       ],
     );
   }
@@ -507,68 +523,214 @@ class _ToolCallRowState extends State<ToolCallRow> {
 
 /// Renders the native directory result schema, including empty directories.
 class DirectoryListingDisplay extends StatelessWidget {
-  const DirectoryListingDisplay({super.key, required this.data});
+  const DirectoryListingDisplay({
+    super.key,
+    required this.data,
+    this.showPath = true,
+  });
+
   final Map<String, dynamic> data;
+  final bool showPath;
+
+  /// Uses chat-sized rows instead of Material list tiles and bounds long listings.
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      SelectableText(data['path'] as String? ?? ''),
-      for (final entry in data['entries'] as List? ?? const [])
-        if (entry is Map)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(
-              entry['isDirectory'] == true
-                  ? Icons.folder_outlined
-                  : Icons.description_outlined,
-              size: 16,
-            ),
-            title: SelectableText(entry['name'] as String? ?? ''),
-            trailing: Text('${entry['size'] ?? 0} B'),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = ChatActivityRowStyle.textStyle(context);
+    final entries = data['entries'] as List;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 240),
+        child: SingleChildScrollView(
+          primary: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (showPath)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: SelectableText(
+                    data['path'] as String,
+                    style: style.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              if (entries.isEmpty)
+                Text(
+                  (AppLocalizations.of(context) ??
+                          lookupAppLocalizations(
+                            Localizations.localeOf(context),
+                          ))
+                      .emptyFolder,
+                  style: style.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              for (final entry in entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        entry['isDirectory'] as bool
+                            ? Icons.folder_outlined
+                            : Icons.description_outlined,
+                        size: ChatActivityRowStyle.iconSize,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: ChatActivityRowStyle.iconGap),
+                      Expanded(
+                        child: SelectableText(
+                          entry['name'] as String,
+                          style: style,
+                        ),
+                      ),
+                      if (entry['isDirectory'] == false) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          '${entry['size']} B',
+                          style: style.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
           ),
-    ],
-  );
+        ),
+      ),
+    );
+  }
 }
 
-class ToolInlineDetailSurface extends StatelessWidget {
+/// Compact, independently expandable tool payload with complete copyable text.
+class ToolInlineDetailSurface extends StatefulWidget {
   const ToolInlineDetailSurface({
     super.key,
     required this.title,
     required this.text,
     this.isSuccess,
+    this.initiallyCollapsed = false,
   });
   final String title;
   final String text;
   final bool? isSuccess;
+  final bool initiallyCollapsed;
+
+  /// Keeps disclosure state local so streaming updates do not reopen details.
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(title, style: Theme.of(context).textTheme.labelSmall),
-          ),
-          IconButton(
-            tooltip: MaterialLocalizations.of(context).copyButtonLabel,
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.copy, size: 14),
-            onPressed: () => Clipboard.setData(ClipboardData(text: text)),
-          ),
-        ],
-      ),
-      SelectableText(
-        text,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: isSuccess == false
-              ? Theme.of(context).colorScheme.error
+  State<ToolInlineDetailSurface> createState() =>
+      _ToolInlineDetailSurfaceState();
+}
+
+class _ToolInlineDetailSurfaceState extends State<ToolInlineDetailSurface> {
+  late bool _expanded;
+
+  /// Applies the initial disclosure choice only when this payload first appears.
+  @override
+  void initState() {
+    super.initState();
+    _expanded = !widget.initiallyCollapsed;
+  }
+
+  /// Renders a small disclosure header and a bounded, selectable payload body.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = widget.isSuccess == false
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      AnimatedRotation(
+                        turns: _expanded ? 0.25 : 0,
+                        duration: ChatActivityDisclosure.duration,
+                        curve: ChatActivityDisclosure.curve,
+                        child: Icon(
+                          Icons.chevron_right,
+                          size: 14,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: color,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: MaterialLocalizations.of(context).copyButtonLabel,
+              constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.copy, size: 14, color: color),
+              onPressed: () =>
+                  Clipboard.setData(ClipboardData(text: widget.text)),
+            ),
+          ],
+        ),
+        ChatActivityDisclosure(
+          child: _expanded
+              ? Container(
+                  key: const ValueKey('tool-payload'),
+                  margin: const EdgeInsets.only(top: 2, bottom: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
+                    ),
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    child: SingleChildScrollView(
+                      primary: false,
+                      child: SelectableText(
+                        widget.text,
+                        style: ChatActivityRowStyle.textStyle(context).copyWith(
+                          color: widget.isSuccess == false
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
               : null,
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class ToolDisplayData {

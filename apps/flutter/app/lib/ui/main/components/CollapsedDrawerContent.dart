@@ -18,6 +18,7 @@ import '../screens/ScreenRouteRegistry.dart';
 import '../../common/components/SwipeActions.dart';
 import 'NavigationDrawerAppearance.dart';
 import 'SidebarMoreMenu.dart';
+import 'SidebarChatCreation.dart';
 
 class CollapsedDrawerContent extends StatelessWidget {
   /// Receives the real nullable chat source without decoding plugin configuration.
@@ -30,6 +31,7 @@ class CollapsedDrawerContent extends StatelessWidget {
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
     required this.currentChatId,
+    required this.histories,
     this.bridge = const ProxyCoreRuntimeBridge(),
   });
 
@@ -40,23 +42,28 @@ class CollapsedDrawerContent extends StatelessWidget {
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
   final String? currentChatId;
+  final List<core_proxy.ChatHistoryListItem> histories;
   final OperitRuntimeBridge bridge;
   static const double _topBarHeight = 64;
   static const EdgeInsets _collapsedItemPadding = EdgeInsets.symmetric(
     vertical: 2,
   );
 
-  /// Creates through the generic hook without reading any role or grouping preference.
+  /// Inherits the selected workspace only when the native sidebar tab is active.
   Future<void> _createConversation(BuildContext context) async {
     newChatIntroArmed.value = true;
     try {
-      await GeneratedCoreProxyClients(
-        bridge,
-      ).chatRuntimeHolderMain.createNewChat(
+      final clients = GeneratedCoreProxyClients(bridge);
+      final workspaceId = await sidebarNewChatWorkspaceId(
+        clients: clients,
+        histories: histories,
+        currentChatId: currentChatId,
+      );
+      await clients.chatRuntimeHolderMain.createNewChat(
         setAsCurrentChat: true,
         sourceChatId: null,
         parentChatId: null,
-        workspaceId: null,
+        workspaceId: workspaceId,
         input: null,
       );
       onConversationActivated();

@@ -15,6 +15,8 @@ class _ComposeLazyWindow {
     this.itemExtent,
     this.actionId,
     this.staticItemCount,
+    this.variableExtent,
+    this.contentRevision,
   );
 
   final int firstIndex;
@@ -22,6 +24,8 @@ class _ComposeLazyWindow {
   final double itemExtent;
   final String actionId;
   final int staticItemCount;
+  final bool variableExtent;
+  final int? contentRevision;
 
   /// Refills in batches while keeping nearby scrolling inside the delivered nodes.
   ({int firstIndex, int lastIndex})? rangeToRequest(
@@ -84,6 +88,8 @@ class _ComposeLazyWindow {
       extent.toDouble(),
       _requiredActionId(raw['onRangeChanged'], 'viewport.onRangeChanged'),
       staticCount.toInt(),
+      raw['variableExtent'] == true,
+      _int(raw['contentRevision']),
     );
   }
 }
@@ -95,6 +101,7 @@ class _ComposeLazyList extends StatefulWidget {
     required this.axis,
     required this.reverse,
     required this.autoScrollToEnd,
+    required this.contentPadding,
     required this.spacing,
     required this.alignment,
     required this.nodes,
@@ -106,6 +113,7 @@ class _ComposeLazyList extends StatefulWidget {
   final Axis axis;
   final bool reverse;
   final bool autoScrollToEnd;
+  final EdgeInsetsGeometry contentPadding;
   final double spacing;
   final Alignment alignment;
   final List<_ComposeProgramNode> nodes;
@@ -123,6 +131,8 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   bool _layoutScheduled = false;
   bool _rangeInFlight = false;
   ({int firstIndex, int lastIndex})? _lastRequested;
+  ({int firstIndex, int lastIndex})? _laidOutRange;
+  final Map<int, double> _measuredExtents = {};
 
   /// Observes scrolling with one listener owned by this mounted list.
   @override
@@ -135,8 +145,15 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   @override
   void didUpdateWidget(_ComposeLazyList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.window?.contentRevision != widget.window?.contentRevision ||
+        oldWidget.window?.itemCount != widget.window?.itemCount) {
+      _measuredExtents.clear();
+      _laidOutRange = null;
+    }
     if (oldWidget.window?.itemCount != widget.window?.itemCount ||
         oldWidget.window?.actionId != widget.window?.actionId ||
+        oldWidget.window?.contentRevision != widget.window?.contentRevision ||
+        oldWidget.window?.variableExtent != widget.window?.variableExtent ||
         oldWidget.window?.itemExtent != widget.window?.itemExtent ||
         oldWidget.window?.staticItemCount != widget.window?.staticItemCount) {
       _lastRequested = null;
@@ -166,6 +183,17 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   double _itemExtent(_ComposeLazyWindow window) =>
       window.itemExtent * MediaQuery.textScalerOf(context).scale(14) / 14;
 
+  /// Tracks actual cached item indices rather than dividing pixels by an estimated row height.
+  void _observeItems(Map<int, double> items) {
+    if (items.isEmpty) return;
+    _measuredExtents.addAll(items);
+    _laidOutRange = (
+      firstIndex: items.keys.reduce(math.min),
+      lastIndex: items.keys.reduce(math.max) + 1,
+    );
+    _scheduleLayout();
+  }
+
   /// Serializes range actions and preloads a buffered interval around the viewport.
   Future<void> _requestRange() async {
     final window = widget.window;
@@ -181,7 +209,14 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
       window.itemCount,
       ((offset + position.viewportDimension) / extent).ceil(),
     );
-    final range = window.rangeToRequest(first, last, widget.nodes.length);
+    final measured = _laidOutRange;
+    if (window.variableExtent && measured == null) return;
+    final range = window.rangeToRequest(
+      window.variableExtent ? measured!.firstIndex : first,
+      window.variableExtent ? measured!.lastIndex : last,
+      widget.nodes.length,
+      rangeIncludesCache: window.variableExtent,
+    );
     if (range == null || range == _lastRequested) return;
     _lastRequested = range;
     _rangeInFlight = true;
@@ -208,11 +243,22 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
     final window = widget.window;
     final local = window == null ? index : index - window.firstIndex;
     if (local < 0 || local >= widget.nodes.length) {
-      return SizedBox(key: ValueKey(('compose-lazy-extent', index)));
+      final extent = _measuredExtents[index] ?? _itemExtent(window!);
+      return ComposeDslLazyListItem(
+        key: ValueKey(('compose-lazy-extent', index)),
+        itemIndex: index,
+        axis: widget.axis,
+        alignment: widget.alignment,
+        child: SizedBox(
+          width: widget.axis == Axis.horizontal ? extent : null,
+          height: widget.axis == Axis.vertical ? extent : null,
+        ),
+      );
     }
     final child = widget.itemBuilder(context, local);
     return ComposeDslLazyListItem(
       key: child.key,
+      itemIndex: index,
       axis: widget.axis,
       alignment: widget.alignment,
       child: Padding(
@@ -270,7 +316,13 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
             scrollDirection: widget.axis,
             reverse: widget.reverse,
             shrinkWrap: !bounded,
-            itemExtent: window == null ? null : _itemExtent(window),
+            padding: widget.contentPadding,
+            itemExtent: window == null || window.variableExtent
+                ? null
+                : _itemExtent(window),
+            onLayoutItems: window?.variableExtent == true
+                ? _observeItems
+                : null,
             cacheExtent: window == null
                 ? null
                 : _itemExtent(window) * _composeLazyPrefetchItems,

@@ -2757,7 +2757,7 @@ export namespace ToolPkg {
   /**
    * Enumerates supported navigation surface values.
    */
-  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs" | "chat_input_menu" | "chat_input_menu_sections";
+  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs" | "chat_input_menu" | "chat_input_menu_sections" | "chat_message_after" | "workspace" | "workspace_home";
 
   /**
    * Describes a plugin action exposed through a host navigation surface.
@@ -2768,8 +2768,8 @@ export namespace ToolPkg {
      */
     id: string;
     /**
-     * Provides this package's registered UI route; required for chat_attachments, chat_sidebar_tabs, chat_input_menu and chat_input_menu_sections.
-     * Embedded sidebar and input-menu surfaces require one owned Compose DSL route registered before the navigation entry.
+     * Provides this package's registered UI route; required for attachment and embedded UI surfaces.
+     * Embedded surfaces require one owned Compose DSL route registered before the navigation entry.
      */
     route?: string;
     /**
@@ -2781,7 +2781,7 @@ export namespace ToolPkg {
      */
     surface: NavigationSurface;
     /**
-     * Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments, chat_sidebar_tabs, chat_input_menu and chat_input_menu_sections.
+     * Supplies navigation callbacks on other surfaces; attachment and embedded UI surfaces require routes instead.
      */
     action?: NavigationEntryActionHookHandler;
     /**

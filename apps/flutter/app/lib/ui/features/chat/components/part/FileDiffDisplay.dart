@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../workspace/WorkspaceDiffContent.dart';
+import '../workspace/WorkspaceFileIcon.dart';
 import '../workspace/WorkspaceInlineDiff.dart';
 import 'ToolDisplayComponents.dart' show cleanToolPath;
 
