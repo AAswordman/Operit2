@@ -160,13 +160,6 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       setState(() => _error = l10n.settingsPeerDiscoveryNeedsTransport);
       return false;
     }
-    // TCP and the shared HTTP/WS server currently bind the same configured port.
-    if (activeTransports.contains(PeerTransport.tcp) &&
-        (activeTransports.contains(PeerTransport.http) ||
-            activeTransports.contains(PeerTransport.webSocket))) {
-      setState(() => _error = l10n.settingsPeerPortConflict);
-      return false;
-    }
     final host = _bindHost.text.trim().replaceAll(RegExp(r'^\[|\]$'), '');
     final automatic = _portMode == PeerHostPortMode.automatic;
     final portText = _bindPort.text.trim();

@@ -269,7 +269,7 @@ void main() {
     expect(find.byType(PeerListenerSettingsDialog), findsNothing);
   });
 
-  testWidgets('HTTP and WS multi-select saves both; TCP conflict is explicit', (
+  testWidgets('HTTP, WS and TCP multi-select saves one shared port', (
     tester,
   ) async {
     final bridge = TestBridge();
@@ -284,10 +284,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilterChip, 'TCP'));
     await tester.pumpAndSettle();
-    final count = bridge.calls.length;
+    bridge.selectedAddress = '0.0.0.0:48123';
     await save(tester);
-    expect(bridge.calls.length, count);
-    expect(find.textContaining('TCP cannot currently'), findsOneWidget);
+    expect(bridge.config!['transports'], ['http', 'webSocket', 'tcp']);
+    expect(bridge.startedTransports.last, ['http', 'webSocket', 'tcp']);
+    expect(bridge.config!['bindAddress'], '0.0.0.0:48123');
+    expect(find.byType(PeerListenerSettingsDialog), findsNothing);
   });
   testWidgets('fixed mode keeps the configured address and port', (
     tester,

@@ -25,6 +25,56 @@ impl HttpServerHost for NativeHttpServerHost {
         true
     }
 
+    fn supportsAcceptedConnections(&self) -> bool {
+        true
+    }
+
+    async fn serveConnection(
+        &self,
+        connection: Arc<dyn operit_host_api::TcpConnection>,
+        handler: HttpServerHandler,
+        shutdown: ServerFuture<()>,
+    ) -> HostResult<()> {
+        use hyper::{server::conn::http1, service::service_fn};
+        use hyper_util::rt::TokioIo;
+        use tower::ServiceExt;
+        let remote = connection.remote_address();
+        let (upgrade, mut upgraded) = tokio::sync::watch::channel(UpgradeState::Pending);
+        let router = Router::new().fallback(dispatchAccepted).with_state(handler);
+        let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+            let router = router.clone();
+            let upgrade = UpgradeCompletion(upgrade.clone());
+            async move {
+                let mut request = request.map(Body::new);
+                request.extensions_mut().insert(upgrade);
+                if let Some(remote) = remote {
+                    request.extensions_mut().insert(RemoteAddress(remote));
+                }
+                router.oneshot(request).await
+            }
+        });
+        let serving = http1::Builder::new()
+            .serve_connection(
+                TokioIo::new(super::stream::HostStream::new(connection.clone())),
+                service,
+            )
+            .with_upgrades();
+        tokio::pin!(serving, shutdown);
+        tokio::select! {
+            result = &mut serving => result.map_err(error)?,
+            _ = &mut shutdown => { connection.close().await; return Ok(()); }
+        }
+        // Host schedulers may own a runtime per task. Keep this task alive until
+        // the upgraded WS ends, rather than destroying its executor after 101.
+        if *upgraded.borrow() == UpgradeState::Running {
+            tokio::select! {
+                _ = async { let _ = upgraded.wait_for(|state| *state == UpgradeState::Finished).await; } => {},
+                _ = &mut shutdown => connection.close().await,
+            }
+        }
+        Ok(())
+    }
+
     /// Binds the Host-owned HTTP and WebSocket server socket.
     async fn bind(&self, address: &str) -> HostResult<Arc<dyn HttpServerListener>> {
         let listener = TcpListener::bind(address).await.map_err(error)?;
@@ -65,15 +115,49 @@ async fn dispatch(
     ConnectInfo(remote): ConnectInfo<std::net::SocketAddr>,
     request: axum::extract::Request,
 ) -> axum::response::Response {
+    let mut request = request;
+    request.extensions_mut().insert(RemoteAddress(remote));
+    dispatchAccepted(State(handler), request).await
+}
+#[derive(Clone, Copy, PartialEq)]
+enum UpgradeState {
+    Pending,
+    Running,
+    Finished,
+}
+#[derive(Clone)]
+struct UpgradeCompletion(tokio::sync::watch::Sender<UpgradeState>);
+struct UpgradeFinished(Option<UpgradeCompletion>);
+impl Drop for UpgradeFinished {
+    fn drop(&mut self) {
+        if let Some(done) = &self.0 {
+            done.0.send_replace(UpgradeState::Finished);
+        }
+    }
+}
+async fn dispatchAccepted(
+    State(handler): State<HttpServerHandler>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
     let (mut parts, body) = request.into_parts();
-    parts.extensions.insert(RemoteAddress(remote));
     if let Ok(upgrade) = AxumUpgrade::from_request_parts(&mut parts, &()).await {
+        let completion = parts.extensions.remove::<UpgradeCompletion>();
         parts
             .extensions
             .insert(WebSocketUpgrade(Arc::new(Mutex::new(Some(Box::new(
                 move |handler| {
+                    if let Some(done) = &completion {
+                        done.0.send_replace(UpgradeState::Running);
+                    }
+                    let failed = completion.clone();
                     upgrade
-                        .on_upgrade(move |socket| handler(Box::new(Socket(socket))))
+                        .on_failed_upgrade(move |_| {
+                            let _finished = UpgradeFinished(failed);
+                        })
+                        .on_upgrade(move |socket| async move {
+                            let _finished = UpgradeFinished(completion);
+                            handler(Box::new(Socket(socket))).await;
+                        })
                         .into_response()
                         .map(|body| body.map_err(error).boxed_unsync())
                 },
@@ -123,10 +207,10 @@ impl ServerWebSocket for Socket {
 
 #[cfg(test)]
 mod tests {
-    use tokio_tungstenite::tungstenite;
     use super::*;
     use axum::body::Bytes;
     use http_body_util::Full;
+    use tokio_tungstenite::tungstenite;
     fn response(bytes: Vec<u8>) -> ServerResponse {
         ServerResponse::new(
             Full::new(Bytes::from(bytes))

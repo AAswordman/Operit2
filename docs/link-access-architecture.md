@@ -164,6 +164,15 @@ HTTP 在同一连接标识下用持续 GET 响应体接收字节、用 POST 发�
 关联 HTTP 请求，不证明节点身份。WebSocket 同样收发统一 framing 的二进制数据。
 监听能力由安装的 Host API 能力决定。
 
+HTTP、WebSocket、TCP 使用同一个网络监听端口。`peer-link/transport/network.rs`
+按 Host 实例和实际绑定地址管理共享监听；每种 transport 只注册自己的处理器。
+原生 Host 的 `TcpHost` 负责绑定和接收，Core 有界读取连接前缀并完整回放，
+HTTP/WS 通过 `HttpServerHost::serveConnection` 使用已接收的 Host 字节流。
+HTTP 解析、WebSocket 升级和原生 socket 均留在 Host，TCP framing、配对和鉴权不变。
+仅开启 TCP 时直接接收，无需协议探测。端口为 0 时只分配一次，后续 transport
+使用实际端口；移除一种 transport 保留其它处理器，最后一种关闭后才释放端口。
+未提供已接收连接能力的 HTTP Host 仍可使用原有独立 HTTP/WS 监听接口。
+
 `PeerConnection` 对外提供 `send`、`receive`、`close`；`PeerLink` 提供 `connect`、
 `listen`。三个基础操作是这些 I/O 接口承载的协议，不是五种 transport 各自实现
 三套业务方法。

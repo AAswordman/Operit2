@@ -22,7 +22,7 @@ operit2 cli link session tcp
 ```
 
 `session` 同时运行监听和后台同步。下列命令始终使用**同一个运行中的应用实例**，不会逐条重启，退出用 `quit` 或 Ctrl-C。
-也可以选择 `http`、`ws` 或 `http,ws`；TCP 不能与 HTTP/WS 共用同一监听端口。
+也可以选择 `http`、`ws` 或任意组合（例如 `http,ws,tcp`）；HTTP、WebSocket 和 TCP 共用同一个监听端口。
 需要固定端口时，使用 `--fixed-port --bind 0.0.0.0:37195`；仅替换传输不会覆盖已保存的固定策略，`--automatic-port` 可切回系统分配。
 
 终端内输入：

@@ -1036,9 +1036,6 @@ impl RuntimePeerService for HostRuntimePeerService {
         let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.clone().ok_or_else(|| error("Host scheduler is not installed"))?;
         let mut listeners = self.state.listeners.lock().await;
         let requested: BTreeSet<_> = listeners.keys().copied().chain(transports.iter().copied()).collect();
-        if requested.contains(&PeerTransport::Tcp) && (requested.contains(&PeerTransport::Http) || requested.contains(&PeerTransport::WebSocket)) {
-            return Err(error("TCP cannot share a listener port with HTTP/WebSocket"));
-        }
         let mut opened = BTreeMap::<PeerTransport, Arc<dyn PeerListener>>::new();
         let previousAddress = config.bindAddress.clone();
         let result = async {

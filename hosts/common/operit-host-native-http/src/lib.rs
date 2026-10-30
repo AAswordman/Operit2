@@ -1709,3 +1709,5 @@ mod tests {
 
 #[cfg(test)]
 mod response_stream_tests;
+
+mod stream;

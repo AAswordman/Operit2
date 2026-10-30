@@ -141,7 +141,7 @@ impl ByteConnection for Server {
 }
 /// Builds WebSocket connection endpoints from the actual shared Host binding.
 pub(super) async fn listen(
-    registry: &super::http::ServerRegistry,
+    registry: &super::network::ServerRegistry,
     host: &HostManager,
     source: PeerEndpoint,
     maxMessageBytes: usize,
@@ -208,13 +208,13 @@ pub(super) async fn listen(
         handler
     };
     // bind address belongs to the listener, not a remote websocket URL.
-    super::http::serve(
+    super::network::serve(
         registry,
         host,
         &address,
         PeerTransport::WebSocket,
         rx,
-        handler,
+        |address| super::network::Handler::Http(handler(address)),
     )
     .await
 }

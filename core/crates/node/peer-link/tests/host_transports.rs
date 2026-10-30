@@ -72,6 +72,7 @@ fn host() -> Arc<HostManager> {
         httpHost: Some(network.clone()),
         webSocketHost: Some(network),
         httpServerHost: Some(Arc::new(NativeHttpServerHost)),
+        tcpHost: Some(Arc::new(operit_host_native_common::NativeTcpHost)),
         hostRuntimeTaskSchedulerHost: Some(Arc::new(Scheduler)),
         ..HostManager::default()
     })
@@ -345,3 +346,6 @@ async fn automatic_http_listeners_are_independent_and_websocket_shares_resolved_
     ws.close().await;
     second.close().await;
 }
+
+#[path = "host_transports/mixed_port.rs"]
+mod mixed_port;

@@ -2048,14 +2048,13 @@
       }
     }
   },
-  "settingsPeerTransportHelp": "Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.",
+  "settingsPeerTransportHelp": "Listener transports (multiple selections). HTTP, WebSocket and TCP share one listening port and can be combined freely. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.",
   "settingsPeerBindAddress": "Listen IP address",
   "settingsPeerBindAddressHelp": "Example: 0.0.0.0 for LAN access; IPv6 addresses are also supported.",
   "settingsPeerBindPort": "Listen port",
   "settingsPeerBindPortHelp": "The port used by fixed listener mode.",
   "settingsPeerBindPortAutomaticHelp": "The system assigns an available port. The actual port appears after startup.",
   "settingsPeerDiscoveryNeedsTransport": "Select at least one transport before enabling discovery.",
-  "settingsPeerPortConflict": "TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.",
   "settingsPeerAddressRequired": "Enter a listen IP address.",
   "settingsPeerPortRequired": "Enter a port from 1 to 65535.",
   "settingsPeerApplied": "Listener settings applied.",

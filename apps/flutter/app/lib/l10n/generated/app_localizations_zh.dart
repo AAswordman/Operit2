@@ -3745,7 +3745,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsPeerTransportHelp =>
-      '暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。';
+      '暴露方式（可多选）。HTTP、WebSocket 和 TCP 共用同一个监听端口，可自由组合。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。';
 
   @override
   String get settingsPeerBindAddress => '监听 IP 地址';
@@ -3764,10 +3764,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsPeerDiscoveryNeedsTransport => '开启允许被搜索前，请至少选择一种暴露方式。';
-
-  @override
-  String get settingsPeerPortConflict =>
-      '当前 TCP 不能与 HTTP/WebSocket 共用监听端口，请选择 TCP 或 HTTP/WebSocket。';
 
   @override
   String get settingsPeerAddressRequired => '请输入监听 IP 地址。';

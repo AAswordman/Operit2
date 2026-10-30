@@ -58,4 +58,22 @@ pub trait HttpServerHost: Send + Sync {
     /// Declares whether this server supplies WebSocket upgrade handles.
     fn supportsWebSocketUpgrade(&self) -> bool;
     async fn bind(&self, address: &str) -> HostResult<Arc<dyn HttpServerListener>>;
+    /// Whether HTTP/WS can run on an already accepted Host byte stream.
+    /// This lets Core share one TCP listener without owning platform sockets.
+    fn supportsAcceptedConnections(&self) -> bool {
+        false
+    }
+    /// Serves HTTP and any accepted upgrades until they end or shutdown fires.
+    /// Upgrade work must remain alive on the Host executor until this returns.
+    /// The caller closes the stream after completion or failure.
+    async fn serveConnection(
+        &self,
+        _connection: Arc<dyn crate::TcpConnection>,
+        _handler: HttpServerHandler,
+        _shutdown: ServerFuture<()>,
+    ) -> HostResult<()> {
+        Err(HostError::new(
+            "HTTP Host cannot serve accepted connections",
+        ))
+    }
 }

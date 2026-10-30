@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Mutex as StdMutex, Weak},
     task::{Context, Poll},
 };
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 const CONNECTION_HEADER: &str = "x-operit-link-connection";
 fn request(url: String, method: &str, id: &str, body: Vec<u8>) -> HttpRequestData {
@@ -234,7 +234,7 @@ pub(super) fn response(status: u16) -> ServerResponse {
 }
 /// Builds HTTP connection endpoints from the actual shared Host binding.
 pub(super) async fn listen(
-    registry: &ServerRegistry,
+    registry: &super::network::ServerRegistry,
     host: &HostManager,
     source: PeerEndpoint,
     maxMessageBytes: usize,
@@ -333,7 +333,10 @@ pub(super) async fn listen(
         });
         browserHttpHandler(handler)
     };
-    serve(registry, host, &address, PeerTransport::Http, rx, handler).await
+    super::network::serve(
+        registry, host, &address, PeerTransport::Http, rx,
+        |address| super::network::Handler::Http(handler(address)),
+    ).await
 }
 
 /// Allows credential-free browser Link requests without bypassing runtime authentication.
@@ -387,166 +390,6 @@ fn browserPreflight(request: &ServerRequest) -> ServerResponse {
         http::HeaderValue::from_static("content-type, x-operit-link-connection"),
     );
     result
-}
-
-// One Host listener for HTTP + WS at the same address. Owned by the PeerLink instance;
-// no global server registry and no second socket when exposing both carriers.
-pub(super) type ServerRegistry = Mutex<BTreeMap<(usize, String), Weak<SharedServer>>>;
-pub(super) struct SharedServer {
-    address: String,
-    handlers: Arc<StdMutex<BTreeMap<PeerTransport, HttpServerHandler>>>,
-    stop: watch::Sender<bool>,
-    done: watch::Receiver<Option<Result<(), String>>>,
-}
-impl Drop for SharedServer {
-    fn drop(&mut self) {
-        self.stop.send_replace(true);
-    }
-}
-struct Listener {
-    incoming: Mutex<mpsc::Receiver<Arc<dyn PeerConnection>>>,
-    stop: watch::Sender<bool>,
-    server: Arc<SharedServer>,
-    transport: PeerTransport,
-}
-impl Listener {
-    fn unregister(&self) {
-        if !self.stop.send_replace(true) {
-            let mut handlers = self.server.handlers.lock().unwrap();
-            handlers.remove(&self.transport);
-            if handlers.is_empty() {
-                self.server.stop.send_replace(true);
-            }
-        }
-    }
-}
-impl Drop for Listener {
-    fn drop(&mut self) {
-        self.unregister();
-    }
-}
-#[async_trait]
-impl PeerListener for Listener {
-    fn localAddress(&self) -> Option<String> { Some(self.server.address.clone()) }
-    async fn accept(&self) -> Result<Option<Arc<dyn PeerConnection>>, String> {
-        let mut rx = self.incoming.lock().await;
-        let mut stop = self.stop.subscribe();
-        let mut done = self.server.done.clone();
-        if *stop.borrow() {
-            return Ok(None);
-        }
-        if let Some(result) = done.borrow().clone() {
-            return result.map(|_| None);
-        }
-        tokio::select! {
-            biased;
-            _ = stop.wait_for(|closed| *closed) => Ok(None),
-            result = done.wait_for(|result| result.is_some()) => match result {
-                Ok(state) => state.clone().unwrap_or(Ok(())).map(|_| None),
-                Err(_) => Err("HTTP Host server task stopped".into()),
-            },
-            value = rx.recv() => Ok(value),
-        }
-    }
-    async fn close(&self) {
-        self.unregister();
-        self.incoming.lock().await.close();
-    }
-}
-/// Binds once and installs each carrier handler using the actual bound address.
-pub(super) async fn serve(
-    registry: &ServerRegistry,
-    host: &HostManager,
-    address: &str,
-    transport: PeerTransport,
-    incoming: mpsc::Receiver<Arc<dyn PeerConnection>>,
-    makeHandler: impl FnOnce(&str) -> HttpServerHandler + Send,
-) -> Result<Arc<dyn PeerListener>, String> {
-    let provider = host
-        .httpServerHost
-        .as_ref()
-        .ok_or("HTTP server Host is not installed")?;
-    let scheduler = host
-        .hostRuntimeTaskSchedulerHost
-        .as_ref()
-        .ok_or("Host task scheduler is not installed")?;
-    let key = (
-        Arc::as_ptr(provider) as *const () as usize,
-        address.to_string(),
-    );
-    let mut registry = registry.lock().await;
-    registry.retain(|_, value| value.strong_count() != 0);
-    let server = match registry.get(&key).and_then(Weak::upgrade) {
-        Some(server) if !*server.stop.borrow() => server,
-        _ => {
-            let socket = provider.bind(address).await.map_err(|e| e.to_string())?;
-            let boundAddress = socket.localAddress().map_err(|e| e.to_string())?.to_string();
-            let (stop, mut stopped) = watch::channel(false);
-            let (done, finished) = watch::channel(None);
-            let handlers = Arc::new(StdMutex::new(
-                BTreeMap::<PeerTransport, HttpServerHandler>::new(),
-            ));
-            let dispatchHandlers = handlers.clone();
-            let dispatch: HttpServerHandler = Arc::new(move |request| {
-                let transport = if request.extensions().get::<WebSocketUpgrade>().is_some() {
-                    PeerTransport::WebSocket
-                } else {
-                    PeerTransport::Http
-                };
-                let handler = dispatchHandlers.lock().unwrap().get(&transport).cloned();
-                Box::pin(async move {
-                    match handler {
-                        Some(handler) => handler(request).await,
-                        None => response(404),
-                    }
-                })
-            });
-            scheduler
-                .scheduleHostRuntimeAsyncTask(
-                    "peer-web-server",
-                    Box::new(move || {
-                        Box::pin(async move {
-                            let result = socket
-                                .serve(
-                                    dispatch,
-                                    Box::pin(async move {
-                                        let _ = stopped.wait_for(|stopped| *stopped).await;
-                                    }),
-                                )
-                                .await
-                                .map_err(|e| e.to_string());
-                            done.send_replace(Some(result));
-                        })
-                    }),
-                )
-                .map_err(|e| e.to_string())?;
-            let server = Arc::new(SharedServer {
-                address: boundAddress.clone(),
-                handlers,
-                stop,
-                done: finished,
-            });
-            // Register the concrete socket so HTTP and WebSocket share the
-            // same server after a port-zero bind. Port zero never reuses one.
-            registry.insert((key.0, boundAddress), Arc::downgrade(&server));
-            server
-        }
-    };
-    {
-        let mut handlers = server.handlers.lock().unwrap();
-        if handlers.contains_key(&transport) {
-            return Err(format!(
-                "{transport:?} listener already active at {address}"
-            ));
-        }
-        handlers.insert(transport, makeHandler(&server.address));
-    }
-    Ok(Arc::new(Listener {
-        incoming: Mutex::new(incoming),
-        stop: watch::channel(false).0,
-        server,
-        transport,
-    }))
 }
 
 #[cfg(test)]

@@ -3899,7 +3899,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsPeerTransportHelp =>
-      'Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.';
+      'Listener transports (multiple selections). HTTP, WebSocket and TCP share one listening port and can be combined freely. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.';
 
   @override
   String get settingsPeerBindAddress => 'Listen IP address';
@@ -3922,10 +3922,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsPeerDiscoveryNeedsTransport =>
       'Select at least one transport before enabling discovery.';
-
-  @override
-  String get settingsPeerPortConflict =>
-      'TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.';
 
   @override
   String get settingsPeerAddressRequired => 'Enter a listen IP address.';

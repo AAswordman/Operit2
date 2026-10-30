@@ -6935,7 +6935,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPeerTransportHelp.
   ///
   /// In en, this message translates to:
-  /// **'Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.'**
+  /// **'Listener transports (multiple selections). HTTP, WebSocket and TCP share one listening port and can be combined freely. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.'**
   String get settingsPeerTransportHelp;
 
   /// No description provided for @settingsPeerBindAddress.
@@ -6973,12 +6973,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Select at least one transport before enabling discovery.'**
   String get settingsPeerDiscoveryNeedsTransport;
-
-  /// No description provided for @settingsPeerPortConflict.
-  ///
-  /// In en, this message translates to:
-  /// **'TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.'**
-  String get settingsPeerPortConflict;
 
   /// No description provided for @settingsPeerAddressRequired.
   ///

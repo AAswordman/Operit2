@@ -3,23 +3,29 @@ use super::*;
 /// One TCP pairing carries both directions before and after admission, with no second carrier.
 #[tokio::test]
 async fn real_tcp_single_pairing_uses_one_bidirectional_channel() {
-    tcpAdmissionSingleChannel("127.0.0.1:0").await;
+    tcpAdmissionSingleChannel("127.0.0.1:0", false).await;
 }
 
 /// An IPv6 listener does not require a separate reverse connection.
 #[tokio::test]
 async fn real_tcp_single_channel_with_ipv6_listener() {
-    tcpAdmissionSingleChannel("[::1]:0").await;
+    tcpAdmissionSingleChannel("[::1]:0", false).await;
 }
 
 /// A wildcard listener uses the same authenticated carrier in both directions.
 #[tokio::test]
 async fn real_tcp_single_channel_with_wildcard_listener() {
-    tcpAdmissionSingleChannel("0.0.0.0:0").await;
+    tcpAdmissionSingleChannel("0.0.0.0:0", false).await;
 }
 
-/// Exercises admission, bidirectional calls and reconnection on a single authenticated carrier.
-async fn tcpAdmissionSingleChannel(macBind: &str) {
+/// The same TCP admission contract holds while HTTP and WS share its port.
+#[tokio::test]
+async fn mixed_port_preserves_tcp_pairing_and_bidirectional_admission() {
+    tcpAdmissionSingleChannel("127.0.0.1:0", true).await;
+}
+
+/// Exercises admission, bidirectional calls and reconnection on one authenticated carrier.
+async fn tcpAdmissionSingleChannel(macBind: &str, mixed: bool) {
     use crate::HostRuntimePeerService::HostRuntimePeerService;
     use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
     use operit_host_api::HostManager::HostManager;
@@ -35,6 +41,7 @@ async fn tcpAdmissionSingleChannel(macBind: &str) {
         Arc::new(HostManager {
             runtimeStorageHost: Some(router.localCore.runtimeStorageHost()),
             tcpHost: Some(Arc::new(NativeTcpHost)),
+            httpServerHost: mixed.then(|| Arc::new(operit_host_native_common::NativeHttpServerHost) as Arc<dyn operit_host_api::HttpServer::HttpServerHost>),
             hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
             ..HostManager::default()
         })
@@ -82,13 +89,14 @@ async fn tcpAdmissionSingleChannel(macBind: &str) {
             .saveHostConfig(&PeerHostConfig {
                 bindAddress: bind.into(),
 
-                transports: vec![PeerTransport::Tcp],
+                transports: if mixed { vec![PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Tcp] } else { vec![PeerTransport::Tcp] },
                 discoveryEnabled: false,
                 portMode: PeerHostPortMode::Automatic,
                 updatedAt: 1,
             })
             .unwrap();
-        peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+        let transports = if mixed { vec![PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Tcp] } else { vec![PeerTransport::Tcp] };
+        peer.startListening(&transports).await.unwrap();
     }
     let address = PeerStateStore::new(iosRouter.localCore.runtimeStorageHost())
         .hostConfig()
@@ -654,6 +662,15 @@ async fn real_tcp_listener_gate_reports_revocation_to_dialer() {
 /// Exercises shared pairing with client-only Host capabilities and no TCP or listener on the initiator.
 #[tokio::test]
 async fn outbound_only_hosts_pair_over_http_and_websocket() {
+    outboundOnlyPairing(false).await;
+}
+
+#[tokio::test]
+async fn mixed_port_preserves_http_and_websocket_pairing_for_client_only_hosts() {
+    outboundOnlyPairing(true).await;
+}
+
+async fn outboundOnlyPairing(mixed: bool) {
     use crate::HostRuntimePeerService::HostRuntimePeerService;
     use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
     use operit_host_api::HostManager::HostManager;
@@ -684,6 +701,7 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
         let serverHost = Arc::new(HostManager {
             runtimeStorageHost: Some(serverRouter.localCore.runtimeStorageHost()),
             httpServerHost: Some(Arc::new(NativeHttpServerHost)),
+            tcpHost: mixed.then(|| Arc::new(operit_host_native_common::NativeTcpHost) as Arc<dyn operit_host_api::TcpHost>),
             hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
             ..HostManager::default()
         });
@@ -719,7 +737,7 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
                 updatedAt: 1,
             })
             .unwrap();
-        server.startListening(vec![transport]).await.unwrap();
+        server.startListening(if mixed { vec![PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Tcp] } else { vec![transport] }).await.unwrap();
         let address = PeerStateStore::new(serverRouter.localCore.runtimeStorageHost())
             .hostConfig()
             .unwrap()
@@ -1162,6 +1180,7 @@ async fn automatic_default_listener_advertises_its_actual_shared_port() {
     let host = Arc::new(HostManager {
         runtimeStorageHost: Some(router.localCore.runtimeStorageHost()),
         httpServerHost: Some(Arc::new(NativeHttpServerHost)),
+        tcpHost: Some(Arc::new(operit_host_native_common::NativeTcpHost)),
         serviceDiscoveryHost: Some(discovery.clone()),
         hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
         ..HostManager::default()
@@ -1192,10 +1211,17 @@ async fn automatic_default_listener_advertises_its_actual_shared_port() {
     assert!(std::net::TcpListener::bind(address).is_err());
     let expected = format!("http://192.168.1.44:{}", address.port());
     assert!(peer.pairingAddresses().await.unwrap().contains(&expected));
+    peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+    assert_eq!(store.hostConfig().unwrap().unwrap().bindAddress, bound.bindAddress);
+    let records = discovery.0.lock().unwrap().clone();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].port, address.port());
+    assert_eq!(records[1].properties["transports"], "http,ws,tcp");
     peer.stop().await.unwrap();
     assert!(peer.pairingAddresses().await.is_err(), "stopped listeners cannot produce a code");
     let mut config = store.hostConfig().unwrap().unwrap();
     config.discoveryEnabled = false;
+    config.transports = vec![PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Tcp];
     store.saveHostConfig(&config).unwrap();
     peer.startListening(&config.transports).await.unwrap();
     let current: std::net::SocketAddr = store.hostConfig().unwrap().unwrap().bindAddress.parse().unwrap();
@@ -1206,7 +1232,7 @@ async fn automatic_default_listener_advertises_its_actual_shared_port() {
     let code = crate::PeerConnectionCode::encode(&info).unwrap();
     let decoded = crate::PeerConnectionCode::decode(&code, "scanner").unwrap();
     assert!(decoded.addresses.contains(&format!("http://192.168.1.44:{}", current.port())));
-    assert_eq!(discovery.0.lock().unwrap().len(), 1, "QR generation does not advertise or browse");
+    assert_eq!(discovery.0.lock().unwrap().len(), 2, "QR generation does not advertise or browse");
     peer.stop().await.unwrap();
 }
 

@@ -68,10 +68,25 @@ pub(super) async fn connect(
     ))
 }
 pub(super) async fn listen(
+    registry: &super::network::ServerRegistry,
     host: &HostManager,
     mut source: PeerEndpoint,
     maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
+    if super::network::canShare(host) {
+        let address = source.address.clone();
+        let (sender, incoming) = tokio::sync::mpsc::channel(32);
+        return super::network::serve(registry, host, &address, PeerTransport::Tcp, incoming, move |bound| {
+            source.address = bound.to_owned();
+            super::network::Handler::Tcp(Arc::new(move |connection| {
+                let peer = FramedPeerConnection::new(
+                    source.clone(), PeerEndpoint { nodeId: String::new(), address: String::new() },
+                    PeerTransport::Tcp, Arc::new(TcpBytes(connection)), maxMessageBytes,
+                );
+                sender.try_send(peer).map_err(|_| "TCP accept queue is full or closed".to_string())
+            }))
+        }).await;
+    }
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
     let listener = provider
         .bind(&source.address)
