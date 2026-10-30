@@ -19,6 +19,20 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Release builds resolve the patched Android engine from the static Maven
+// repository published by flutter-ohos-engine-maven.
+repositories {
+    maven { url = uri("https://h4rm00n.github.io/flutter-ohos-engine-maven") }
+}
+configurations.configureEach {
+    if (!name.contains("release", ignoreCase = true)) return@configureEach
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.flutter") {
+            useVersion("1.0.0-42d3d75a-operit.9.2")
+        }
+    }
+}
+
 /** Stages ordinary assets and only the runtime ABIs selected for this build. */
 abstract class StageOperitAndroidAssets : DefaultTask() {
     @get:InputDirectory
