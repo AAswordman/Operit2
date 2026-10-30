@@ -79,6 +79,12 @@ fn deleted_selected_chat_is_cleared_after_upgrade_without_hiding_unknown_missing
         values.set(&untouchedKey, "keep-setting".to_string());
     }).unwrap();
 
+    let journal = operit_store::SyncOperationStore::SyncOperationStore::native(paths.clone());
+    let selectionHistory = || journal.preferenceHistory().unwrap().into_iter()
+        .filter(|operation| operation.payload["storagePath"] == operit_util::RuntimeStorageLayout::CURRENT_CHAT_ID_PREFERENCES_PATH)
+        .collect::<Vec<_>>();
+    let originalSelectionHistory = selectionHistory();
+
     let mut delegate = ChatHistoryDelegate::new(ChatSelectionMode::FOLLOW_GLOBAL);
     delegate.initialize().unwrap();
     assert!(delegate.isInitialized);
@@ -90,6 +96,7 @@ fn deleted_selected_chat_is_cleared_after_upgrade_without_hiding_unknown_missing
     assert!(delegate.chatHistoryManager.chatExists("live-chat".into()).unwrap());
     assert_eq!(AppDatabase::getDatabase(paths.clone()).unwrap().store().getUserVersion().unwrap(), DATABASE_VERSION);
     assert_eq!(preferences.dataFlow().first().unwrap().get(&untouchedKey), Some(&serde_json::json!("keep-setting")));
+    assert_eq!(selectionHistory(), originalSelectionHistory);
     let clearedBytes = fs::read(paths.current_chat_id_preferences_path()).unwrap();
     let mut restarted = ChatHistoryDelegate::new(ChatSelectionMode::FOLLOW_GLOBAL);
     restarted.initialize().unwrap();

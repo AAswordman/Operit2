@@ -32,16 +32,13 @@ pub(crate) fn prepare(storage: Arc<dyn RuntimeStorageHost>) -> Result<(), String
     if marker["complete"] != true || marker["cleanupComplete"] != true {
         return Ok(());
     }
-    for path in marker["cleanupPaths"]
-        .as_array()
-        .ok_or("Character cleanup paths are missing")?
+    // Cleanup commits its marker before deleting the final startup trigger.
+    // Retained or recreated documents under old memory directories do not delay retirement.
+    if storage
+        .exists(CHARACTER_CARDS_PREFERENCES_PATH)
+        .map_err(|e| e.to_string())?
     {
-        if storage
-            .exists(path.as_str().ok_or("Invalid character cleanup path")?)
-            .map_err(|e| e.to_string())?
-        {
-            return Ok(());
-        }
+        return Ok(());
     }
     for name in ["cards.preferences.json", "memory.sqlite"] {
         if !storage

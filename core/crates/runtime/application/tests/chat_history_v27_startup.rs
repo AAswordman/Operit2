@@ -55,6 +55,11 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
         })
         .unwrap();
     let preferenceBytes = fs::read(paths.current_chat_id_preferences_path()).unwrap();
+    let journal = operit_store::SyncOperationStore::SyncOperationStore::native(paths.clone());
+    let selectionHistory = || journal.preferenceHistory().unwrap().into_iter()
+        .filter(|operation| operation.payload["storagePath"] == operit_util::RuntimeStorageLayout::CURRENT_CHAT_ID_PREFERENCES_PATH)
+        .collect::<Vec<_>>();
+    let originalSelectionHistory = selectionHistory();
 
     // This integration test process installs no plugin API, hook or AI runtime; startup must only read real history.
     let mut delegate = ChatHistoryDelegate::new(ChatSelectionMode::FOLLOW_GLOBAL);
@@ -170,4 +175,5 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
         .chatExists("missing-chat".to_string())
         .unwrap());
     assert!(delegate.chatConfigurationsFlow.value().is_empty());
+    assert_eq!(selectionHistory(), originalSelectionHistory);
 }

@@ -490,6 +490,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_SPACE_REMOVAL_EFFECTS,
     RUNTIME_SPACE_RECONCILE_CAPS,
     RUNTIME_SPACE_DOCTOR_COUNTERS,
+    RuntimeStoragePathDefinition::exact(CURRENT_CHAT_ID_PREFERENCES_PATH, RuntimeStorageOwnership::CoreNode),
     CLIENT_RUNTIME_BOOTSTRAP,
     RUNTIME_APPLICATION_ZOOM,
     // Model weights, native runtimes and installation inventories belong to this node.

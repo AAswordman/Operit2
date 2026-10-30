@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::CoreNodeBindingStore::CoreNodeBindingStore;
 use crate::PreferencesDataStore::{
-    combine2, stringPreferencesKey, CoroutineScope, PreferencesDataStore, PreferencesDataStoreError,
+    combine2, stringPreferencesKey, CoroutineScope, CoreNodeStateStore, PreferencesDataStoreError,
     PreferencesKey, SharingStarted, StateFlow,
 };
 use crate::RuntimeStorePaths::RuntimeStorePaths;
@@ -214,7 +214,7 @@ pub struct ChatHistoryManager {
     syncStore: SqlChatSyncStore,
     bindingStore: CoreNodeBindingStore,
     chatHistoriesFlow: StateFlow<Vec<ChatHistory>>,
-    currentChatIdDataStore: PreferencesDataStore,
+    currentChatIdDataStore: CoreNodeStateStore,
     pub currentChatIdFlow: StateFlow<Option<String>>,
 }
 
@@ -263,8 +263,10 @@ impl ChatHistoryManager {
 
     /// Opens database handles and the persisted current-chat selection flow.
     fn create(paths: RuntimeStorePaths) -> ChatHistoryManagerResult<Self> {
-        let currentChatIdDataStore =
-            PreferencesDataStore::new(paths.current_chat_id_preferences_path());
+        let currentChatIdDataStore = CoreNodeStateStore::newWithStorage(
+            crate::RuntimeStorageHost::defaultRuntimeStorageHost(),
+            crate::RuntimeStorageHost::runtimeStoragePath(&paths.current_chat_id_preferences_path()),
+        );
         let database = AppDatabase::getDatabase(paths.clone())?;
         let chatDao = database.chatDao();
         let workspaceStore = WorkspacePreferenceStore::new(paths.clone());

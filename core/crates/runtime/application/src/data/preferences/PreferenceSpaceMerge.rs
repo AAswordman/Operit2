@@ -186,13 +186,14 @@ pub(crate) fn layout(
 ) -> operit_store::PreferenceLayout::PreferenceLayout {
     use operit_store::PreferencesDataStore::PreferencesDataStoreError;
     use operit_util::RuntimeStorageLayout::{
-        PACKAGE_MANAGER_PREFERENCES_PATH, SKILL_VISIBILITY_PREFERENCES_PATH,
+        CURRENT_CHAT_ID_PREFERENCES_PATH, PACKAGE_MANAGER_PREFERENCES_PATH,
+        SKILL_VISIBILITY_PREFERENCES_PATH,
     };
     operit_store::PreferenceLayout::PreferenceLayout::new(
         storage,
         operit_util::RuntimeStorageLayout::RUNTIME_SYNC_PREFERENCE_LAYOUT_PATH,
     )
-    .withSchema(1, |from, migration| match from {
+    .withSchema(2, |from, migration| match from {
         0 => {
             let extensions =
                 operit_store::ExtensionStore::ExtensionStore::new(migration.storage.clone());
@@ -210,6 +211,11 @@ pub(crate) fn layout(
                 &operit_store::ExtensionStore::legacySettingsDirectory("space")
                     .map_err(PreferencesDataStoreError::Message)?,
             );
+            Ok(())
+        }
+        1 => {
+            // Selection belongs to this device; historical shared writes have no local effect.
+            migration.retireFile(CURRENT_CHAT_ID_PREFERENCES_PATH);
             Ok(())
         }
         from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
@@ -314,6 +320,59 @@ mod tests {
         fn drop(&mut self) {
             assert_eq!(self.root.parent().unwrap(), std::env::temp_dir());
             std::fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+
+    /// Upgrades existing layouts and acknowledges shared selection history without changing either device.
+    #[test]
+    fn current_chat_selection_stays_local_while_legacy_transactions_complete() {
+        use operit_store::PreferencesDataStore::CoreNodeStateStore;
+        use operit_store::SyncOperationStore::{SyncOperationKnowledge, SyncOperationStore};
+        let path = RuntimeStorageLayout::CURRENT_CHAT_ID_PREFERENCES_PATH;
+        let key = stringPreferencesKey("current_chat_id");
+        let devices = [Fixture::new(), Fixture::new()];
+        let mut originals = Vec::new();
+        for (index, device) in devices.iter().enumerate() {
+            // One device upgrades a v1 layout; the other starts with no layout progress.
+            if index == 0 {
+                CoreNodeStateStore::newWithStorage(device.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_PREFERENCE_LAYOUT_PATH)
+                    .withSchema(1, |_, _| Ok(())).data().unwrap();
+            }
+            PreferencesDataStore::newWithStorage(device.host.clone(), path)
+                .edit(|values| values.set(&key, format!("local-{index}"))).unwrap();
+            let journal = SyncOperationStore::new(device.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+            originals.extend(journal.preferenceHistory().unwrap());
+        }
+        assert_eq!(originals.len(), 2);
+        for (index, device) in devices.iter().enumerate() {
+            let journal = SyncOperationStore::new(device.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
+            journal.receiveOperations(&originals).unwrap();
+            let selection = CoreNodeStateStore::newWithStorage(device.host.clone(), path);
+            let saved = device.host.readBytes(path).unwrap();
+            assert_eq!(RuntimeStorageLayout::runtimeStorageOwnership(path).unwrap(), RuntimeStorageLayout::RuntimeStorageOwnership::CoreNode);
+            assert!(operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::new(device.host.clone(), RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
+                .writeBytes(path, b"remote selection").is_err());
+            prepareLayout(device.host.clone()).unwrap();
+            let declarations = schema();
+            let registry = operit_store::PreferenceMerge::registry(device.host.clone(), &declarations, [], |_, _| true).unwrap();
+            let report = registry.receive(&[]).unwrap();
+            assert!(report.errors.is_empty(), "{:?}", report.errors);
+            assert!(report.pending.is_empty());
+            assert_eq!(report.retired, 1);
+            assert!(prepare(device.host.clone()).is_empty());
+            assert_eq!(device.host.readBytes(path).unwrap(), saved);
+            assert_eq!(selection.data().unwrap().get(&key), Some(&json!(format!("local-{index}"))));
+            selection.edit(|values| values.set(&key, format!("next-{index}"))).unwrap();
+            assert!(journal.publishPreferenceOutboxes().unwrap().is_empty());
+            assert_eq!(journal.preferenceHistory().unwrap().len(), originals.len());
+            assert!(registry.receive(&[]).unwrap().pending.is_empty());
+            assert!(registry.snapshots().unwrap().0.iter().all(|snapshot| snapshot.data.owner.path != path));
+            let history = journal.preferenceHistory().unwrap();
+            let receipt = journal.receipt().unwrap();
+            for original in &originals {
+                assert!(history.contains(original));
+                assert!(receipt.containsSequence(&original.originDeviceId, original.sequence));
+            }
         }
     }
 

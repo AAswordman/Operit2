@@ -660,6 +660,13 @@ impl Operit1SnapshotImportManager {
                         .map_err(|error| error.to_string())?;
                     (*GitHubAuthPreferences::store(self.storageHost.clone())).clone()
                 }
+                "payload/files/datastore/current_chat_id.preferences_pb" => {
+                    use operit_store::PreferencesDataStore::CoreNodeStateStore;
+                    (*CoreNodeStateStore::newWithStorage(
+                        self.storageHost.clone(),
+                        operit_util::RuntimeStorageLayout::CURRENT_CHAT_ID_PREFERENCES_PATH,
+                    )).clone()
+                }
                 _ => PreferencesDataStore::new(filePath),
             };
             for (key, value) in preferences

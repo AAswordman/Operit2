@@ -2757,13 +2757,23 @@ fn cleanup_completion_marker_does_not_skip_the_remaining_startup_trigger() {
     let mut marker = fixture.writer().get("imports", "operit2-v27").unwrap().unwrap()["value"].clone();
     marker["cleanupComplete"] = json!(true);
     fixture.writer().commit(vec![fixture.writer().mutation("imports", "operit2-v27", marker).unwrap()]).unwrap();
+    crate::data::backup::CharacterPluginLayout::prepare(fixture.host.clone()).unwrap();
+    assert!(operit_store::PreferenceLayout::retirements(fixture.host.clone()).unwrap().is_empty());
     cleanupLegacyCharacters(fixture.writer()).unwrap();
     assert!(!fixture.host.exists(CHARACTER_CARDS_PREFERENCES_PATH).unwrap());
+    assert!(operit_store::PreferenceLayout::retirements(fixture.host.clone()).unwrap().contains(CHARACTER_CARDS_PREFERENCES_PATH));
 }
 
 /// A completed layout consumes retired originals without rewriting the plugin's current values.
 #[test]
 fn character_layout_retires_old_transactions_only_after_import_and_cleanup() {
+    for retained_document in [false, true] {
+        assert_character_layout_retirement(retained_document);
+    }
+}
+
+/// Exercises fresh cleanup and an existing installation with a retained legacy document.
+fn assert_character_layout_retirement(retained_document: bool) {
     use operit_store::{
         PreferenceMerge,
         SyncOperationStore::{SyncOperation, SyncOperationKnowledge, SyncOperationSemantics},
@@ -2800,7 +2810,7 @@ fn character_layout_retires_old_transactions_only_after_import_and_cleanup() {
         .unwrap();
     fixture.host.writeBytes(&settings, b"{}").unwrap();
     let mut source = data();
-    source.cleanup_paths = vec![CHARACTER_CARDS_PREFERENCES_PATH.into(), memory_root];
+    source.cleanup_paths = vec![CHARACTER_CARDS_PREFERENCES_PATH.into(), memory_root.clone()];
     fixture.writer().import("operit2-v27", source).unwrap();
     crate::data::backup::CharacterPluginLayout::prepare(fixture.host.clone()).unwrap();
     let registry =
@@ -2809,7 +2819,18 @@ fn character_layout_retires_old_transactions_only_after_import_and_cleanup() {
     assert_eq!(before.pending.len(), originals.len());
     assert_eq!(before.retired, 0);
     assert_eq!(before.errors.len(), originals.len());
-    cleanupLegacyCharacters(fixture.writer()).unwrap();
+    let document = format!("{memory_root}/USER.md");
+    if retained_document {
+        // Reproduce an already-cleaned installation before the new layout has ever run.
+        fixture.host.delete(CHARACTER_CARDS_PREFERENCES_PATH, false).unwrap();
+        fixture.host.delete(&memory_root, true).unwrap();
+        fixture.host.writeBytes(&document, b"retained user document").unwrap();
+        let mut marker = fixture.writer().get("imports", "operit2-v27").unwrap().unwrap()["value"].clone();
+        marker["cleanupComplete"] = json!(true);
+        fixture.writer().commit(vec![fixture.writer().mutation("imports", "operit2-v27", marker).unwrap()]).unwrap();
+    } else {
+        cleanupLegacyCharacters(fixture.writer()).unwrap();
+    }
     let card = fixture.writer().get("cards", "legacy").unwrap();
     let owner = fixture.writer().get("owners", "character:legacy").unwrap();
     let active = fixture.writer().get("meta", "state").unwrap();
@@ -2839,6 +2860,9 @@ fn character_layout_retires_old_transactions_only_after_import_and_cleanup() {
             owner
         );
         assert_eq!(fixture.writer().get("meta", "state").unwrap(), active);
+        if retained_document {
+            assert_eq!(fixture.host.readBytes(&document).unwrap(), b"retained user document");
+        }
         for path in &paths {
             assert!(!fixture.host.exists(path).unwrap());
         }
