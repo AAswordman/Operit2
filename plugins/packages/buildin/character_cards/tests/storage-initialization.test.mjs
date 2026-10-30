@@ -3,7 +3,7 @@ import test from "node:test";
 import { createDiskHarness } from "./disk-files.mjs";
 import { fixture } from "./fixtures.mjs";
 import { openPlugin } from "./plugin-entry-harness.mjs";
-import { plain } from "./runtime.mjs";
+import { loadModule, plain } from "./runtime.mjs";
 
 const display = {
   purpose: "display", chatId: "legacy-chat", chatExtension: null, participantId: null,
@@ -166,4 +166,38 @@ test("first-install lifecycle and chat display create one repository", async t =
   assert.equal(metadataOpens, 1);
   const cards = await app.api("character.list", {});
   assert.equal(cards.length, 1);
+});
+
+/** Opening the real repository against the same disk simulates the next application start. */
+function repositoryOpener(disk) {
+  return () => loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
+}
+
+test("an interrupted first install resumes from the persisted default card", async t => {
+  const disk = await createDiskHarness(t);
+  const open = repositoryOpener(disk);
+  disk.failNext("write", new Error("Injected first-install interruption"));
+  await assert.rejects(open(), /Injected first-install interruption/);
+  assert.equal(disk.storage.inspectPreferences("cards", values =>
+    Object.keys(values).filter(key => key.startsWith("record_")).length), 1);
+  assert.equal(disk.storage.inspectPreferences("meta", values => values.state), undefined);
+  const repository = await open();
+  const cards = await repository.listCharacters();
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].name, "Operit");
+  const state = disk.readState();
+  assert.equal(state.owners.length, 1);
+  assert.equal(String(state.owners[0].ownerKey), "character:" + String(cards[0].id));
+  assert.equal((await disk.files.exists(disk.directory + "/" + state.owners[0].userDocumentPath)).exists, true);
+});
+
+test("records without database metadata are rejected unless they match the default install", async t => {
+  const disk = await createDiskHarness(t);
+  const open = repositoryOpener(disk);
+  await open();
+  disk.storage.inspectPreferences("cards", values => {
+    for (const [key, value] of Object.entries(values)) if (key.startsWith("record_")) value.name = "用户角色";
+  });
+  disk.storage.inspectPreferences("meta", values => { delete values.state; });
+  await assert.rejects(open(), /character card without database metadata/);
 });

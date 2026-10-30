@@ -90,6 +90,91 @@ function boundedCommitBatches(mutations: ObjectMutation[]): ObjectMutation[][] {
   return batches;
 }
 
+/** Returns one card's authored content without the generated identity or timestamps. */
+function initialCardShape(card: Card): Storage.Value {
+  const content = { ...card } as unknown as Record<string, Storage.Value>;
+  delete content.id;
+  delete content.createdAt;
+  delete content.updatedAt;
+  return content as Storage.Value;
+}
+
+/** Returns one fresh memory space's metadata without the empty owned collections. */
+function initialOwnerMetadata(space: CharacterState["owners"][number]): Storage.Value {
+  const metadata = { ...space } as unknown as Record<string, Storage.Value>;
+  for (const collection of ["memories", "links", "chunks", "candidates", "embeddings"]) delete metadata[collection];
+  return metadata as Storage.Value;
+}
+
+/**
+ * Builds the state a first install should publish. An earlier attempt can have
+ * written the default card, its memory owner and USER.md before losing its
+ * execution context; those exact defaults are resumable, while any other
+ * records without database metadata still fail instead of being adopted.
+ */
+async function firstInstallState(storage: CharacterStorage): Promise<CharacterState> {
+  const state = createInitialState(Date.now());
+  const configuration = await storage.data();
+  for (const name of configurationNames) {
+    if (name === "cards") continue;
+    if (configuration[name].entries().length !== 0)
+      throw new Error("Character initialization found existing configuration: " + name);
+  }
+  const cards = configuration.cards.entries();
+  if (cards.length === 0) return state;
+  if (cards.length !== 1)
+    throw new Error("Character initialization found existing configuration: cards");
+  const [key, value] = cards[0];
+  if (!key.startsWith(recordPrefix))
+    throw new Error("Character initialization found existing configuration: cards");
+  const card = readCharacter(value, key.slice(recordPrefix.length));
+  if (!equal(initialCardShape(card), initialCardShape(state.cards[0])))
+    throw new Error("Character initialization found a character card without database metadata");
+  const ownerKey = "character:" + card.id;
+  const expectedOwner = createMemorySpace(ownerKey);
+  const owners = await storage.memory.read("owners");
+  if (owners.length > 1
+    || (owners.length === 1
+      && (String(owners[0].key) !== ownerKey || !equal(owners[0].value, initialOwnerMetadata(expectedOwner)))))
+    throw new Error("Character initialization found memory owners without database metadata");
+  state.cards = [card];
+  state.active = { CharacterCard: { id: card.id } };
+  state.owners = [expectedOwner];
+  return state;
+}
+
+/**
+ * Completes a first install. Every step is idempotent so a previous attempt
+ * interrupted by an engine cancellation resumes instead of trapping all later
+ * startups behind the existing-configuration guard.
+ */
+async function initializeFirstInstall(storage: CharacterStorage, directory: string): Promise<void> {
+  const state = await firstInstallState(storage);
+  for (const name of configurationNames) {
+    await storage.configuration[name].edit(preferences => {
+      // Keep complete collections from the interrupted attempt; seed only those it never reached.
+      if (preferences.entries().length !== 0) return;
+      for (const value of state[name]) preferences.set(recordPrefix + value.id, storedValue(value));
+    });
+  }
+  const initialMemory = records(state).filter(row => !configurationNames.some(name => name === row.collection));
+  if (initialMemory.length !== 0) {
+    const existingOwners = new Set((await storage.memory.read("owners")).map(entry => String(entry.key)));
+    const missing = initialMemory.filter(row => row.collection !== "owners" || !existingOwners.has(row.key));
+    if (missing.length !== 0) await storage.memory.commit(missing.map(row => ({ op: "put", ...row, expectedVersion: null })));
+  }
+  for (const owner of state.owners) {
+    const path = directory + "/" + owner.userDocumentPath;
+    if ((await Tools.Files.exists(path)).exists) continue;
+    completed(await Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true));
+    completed(await Tools.Files.write(path, "", false));
+  }
+  await storage.metadata.edit(preferences => {
+    if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
+    preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
+  });
+}
+
 /** Owns record transactions in the persistent synchronized plugin data namespace. */
 export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
   readonly chatBindings: CharacterChatStore;
@@ -111,26 +196,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     const storage = await CharacterStorage.open();
     const repository = new DatabaseCharacterRepository(storage, directory, directories);
     const existing = (await storage.metadata.data()).get<Storage.Value>("state");
-    if (existing === undefined) {
-      const state = createInitialState(Date.now());
-      for (const name of configurationNames) {
-        await storage.configuration[name].edit(preferences => {
-          if (preferences.entries().length !== 0) throw new Error("Character initialization found existing configuration: " + name);
-          for (const value of state[name]) preferences.set(recordPrefix + value.id, storedValue(value));
-        });
-      }
-      const initialMemory = records(state).filter(row => !configurationNames.some(name => name === row.collection));
-      if (initialMemory.length !== 0) await storage.memory.commit(initialMemory.map(row => ({ op: "put", ...row, expectedVersion: null })));
-      for (const owner of state.owners) {
-        const path = directory + "/" + owner.userDocumentPath;
-        completed(await Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true));
-        completed(await Tools.Files.write(path, "", false));
-      }
-      await storage.metadata.edit(preferences => {
-        if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
-        preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
-      });
-    }
+    if (existing === undefined) await initializeFirstInstall(storage, directory);
     await repository.readMetadata();
     return repository;
   }

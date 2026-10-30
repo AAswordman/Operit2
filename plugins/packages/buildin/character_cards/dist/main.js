@@ -4808,6 +4808,75 @@ function boundedCommitBatches(mutations) {
   if (batch.length > 0) batches.push(batch);
   return batches;
 }
+function initialCardShape(card) {
+  const content = { ...card };
+  delete content.id;
+  delete content.createdAt;
+  delete content.updatedAt;
+  return content;
+}
+function initialOwnerMetadata(space) {
+  const metadata = { ...space };
+  for (const collection of ["memories", "links", "chunks", "candidates", "embeddings"]) delete metadata[collection];
+  return metadata;
+}
+function firstInstallState(storage) {
+  return __async(this, null, function* () {
+    const state = createInitialState(Date.now());
+    const configuration = yield storage.data();
+    for (const name of configurationNames) {
+      if (name === "cards") continue;
+      if (configuration[name].entries().length !== 0)
+        throw new Error("Character initialization found existing configuration: " + name);
+    }
+    const cards = configuration.cards.entries();
+    if (cards.length === 0) return state;
+    if (cards.length !== 1)
+      throw new Error("Character initialization found existing configuration: cards");
+    const [key2, value] = cards[0];
+    if (!key2.startsWith(recordPrefix))
+      throw new Error("Character initialization found existing configuration: cards");
+    const card = readCharacter(value, key2.slice(recordPrefix.length));
+    if (!equal(initialCardShape(card), initialCardShape(state.cards[0])))
+      throw new Error("Character initialization found a character card without database metadata");
+    const ownerKey = "character:" + card.id;
+    const expectedOwner = createMemorySpace(ownerKey);
+    const owners = yield storage.memory.read("owners");
+    if (owners.length > 1 || owners.length === 1 && (String(owners[0].key) !== ownerKey || !equal(owners[0].value, initialOwnerMetadata(expectedOwner))))
+      throw new Error("Character initialization found memory owners without database metadata");
+    state.cards = [card];
+    state.active = { CharacterCard: { id: card.id } };
+    state.owners = [expectedOwner];
+    return state;
+  });
+}
+function initializeFirstInstall(storage, directory) {
+  return __async(this, null, function* () {
+    const state = yield firstInstallState(storage);
+    for (const name of configurationNames) {
+      yield storage.configuration[name].edit((preferences) => {
+        if (preferences.entries().length !== 0) return;
+        for (const value of state[name]) preferences.set(recordPrefix + value.id, storedValue(value));
+      });
+    }
+    const initialMemory = records(state).filter((row) => !configurationNames.some((name) => name === row.collection));
+    if (initialMemory.length !== 0) {
+      const existingOwners = new Set((yield storage.memory.read("owners")).map((entry) => String(entry.key)));
+      const missing = initialMemory.filter((row) => row.collection !== "owners" || !existingOwners.has(row.key));
+      if (missing.length !== 0) yield storage.memory.commit(missing.map((row) => ({ op: "put", ...row, expectedVersion: null })));
+    }
+    for (const owner2 of state.owners) {
+      const path = directory + "/" + owner2.userDocumentPath;
+      if ((yield Tools.Files.exists(path)).exists) continue;
+      completed2(yield Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true));
+      completed2(yield Tools.Files.write(path, "", false));
+    }
+    yield storage.metadata.edit((preferences) => {
+      if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
+      preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
+    });
+  });
+}
 var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   /** Retains the host database handle and the explicit external directory readers. */
   constructor(storage, directory, directories2) {
@@ -4825,26 +4894,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
       const storage = yield CharacterStorage.open();
       const repository2 = new _DatabaseCharacterRepository(storage, directory, directories2);
       const existing = (yield storage.metadata.data()).get("state");
-      if (existing === void 0) {
-        const state = createInitialState(Date.now());
-        for (const name of configurationNames) {
-          yield storage.configuration[name].edit((preferences) => {
-            if (preferences.entries().length !== 0) throw new Error("Character initialization found existing configuration: " + name);
-            for (const value of state[name]) preferences.set(recordPrefix + value.id, storedValue(value));
-          });
-        }
-        const initialMemory = records(state).filter((row) => !configurationNames.some((name) => name === row.collection));
-        if (initialMemory.length !== 0) yield storage.memory.commit(initialMemory.map((row) => ({ op: "put", ...row, expectedVersion: null })));
-        for (const owner2 of state.owners) {
-          const path = directory + "/" + owner2.userDocumentPath;
-          completed2(yield Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true));
-          completed2(yield Tools.Files.write(path, "", false));
-        }
-        yield storage.metadata.edit((preferences) => {
-          if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
-          preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
-        });
-      }
+      if (existing === void 0) yield initializeFirstInstall(storage, directory);
       yield repository2.readMetadata();
       return repository2;
     });
