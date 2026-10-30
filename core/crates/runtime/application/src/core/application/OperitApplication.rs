@@ -862,7 +862,7 @@ impl OperitApplication {
         }).map_err(|error| error.to_string())?;
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
-        result["consistencyVersion"] = serde_json::json!(2);
+        result["consistencyVersion"] = serde_json::json!(3);
         result["pending"] = serde_json::json!(pending);
         result["pendingOperationIds"] = serde_json::json!(store.pendingOperationIds().map_err(|error| error.to_string())?);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())

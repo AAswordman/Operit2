@@ -1,11 +1,13 @@
 //! Final materialized-content comparison after the ordinary history exchange is empty.
 use super::*;
-use operit_store::Transaction::{compare_manifests, Manifest, Source};
+use operit_store::Transaction::{compare_manifests, digest, Manifest, Source};
 use operit_store::RuntimeFileSyncStore::FileCorrectionReference;
+use operit_store::SyncOperationStore::SyncReceipt;
 
 #[derive(Deserialize)]
 struct Report {
     manifests: Vec<Manifest>,
+    boundary: String,
     #[serde(default)]
     errors: Vec<String>,
     #[serde(default)]
@@ -15,7 +17,7 @@ struct Report {
 /// Exchanging every known original does not prove equal contents on an older peer.
 pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result<(), String> {
     for (side, clock) in [("Local", local), ("Remote", remote)] {
-        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(2) {
+        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(3) {
             return Err(format!(
                 "{side} peer cannot verify synchronized contents; a compatible version is required"
             ));
@@ -38,21 +40,33 @@ impl SpacePersistenceSyncService {
         Ok((local?, remote?))
     }
 
-    pub(super) async fn synchronizeConsistency(&self, target: &str) -> Result<bool, String> {
+    pub(super) async fn synchronizeConsistency(&self, target: &str, local_clock: &Value, remote_clock: &Value) -> Result<bool, String> {
         let (local, remote) = self.consistencyReports(target).await?;
+        let local_receipt = serde_json::from_value(local_clock.clone()).map_err(|e|e.to_string())?;
+        let remote_receipt = serde_json::from_value(remote_clock.clone()).map_err(|e|e.to_string())?;
+        if !reportsAtExchange(&local, &remote, &local_receipt, &remote_receipt)? {
+            if !local.errors.is_empty() || !remote.errors.is_empty() { return Err("Consistency check has owner errors".into()); }
+            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace",
+                &format!("sync_consistency.retry target={target} reason=new_transactions"));
+            return Ok(false);
+        }
         let plans = correctionPlans(&local, &remote);
         let mut changed = BTreeSet::new();
         if plans.is_empty() { return verifyReports(&local, &remote, &changed); }
         let mut transfers = Vec::new();
         for (a, b, choice) in plans {
+            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                "sync_consistency.correct target={target} owner={} source={choice:?} local={} remote={}",
+                a.or(b).expect("file exists").owner.path,
+                a.map_or("missing", |m|m.digest.as_str()), b.map_or("missing", |m|m.digest.as_str())));
             let result = async {
                 let source = if choice == Source::Local { a } else { b }.expect("source exists");
-                let source_file = self.transferSnapshot(target, source, choice == Source::Local, false).await?;
                 let other = if choice == Source::Local { b } else { a };
                 let superseded = match other {
                     Some(manifest) => Some(self.transferSnapshot(target, manifest, choice != Source::Local, true).await?),
                     None => None,
                 };
+                let source_file = self.transferSnapshot(target, source, choice == Source::Local, false).await?;
                 Ok::<_, String>(FileCorrectionReference { source: source_file, superseded })
             }.await;
             match result {
@@ -90,7 +104,8 @@ impl SpacePersistenceSyncService {
         // Edits can also arrive after a successful CAS and before this final comparison.
         changed.extend(changedOwners(&local, &latest_local));
         changed.extend(changedOwners(&remote, &latest_remote));
-        verifyReports(&latest_local, &latest_remote, &changed)
+        let complete = verifyReports(&latest_local, &latest_remote, &changed)?;
+        Ok(complete && reportsAtExchange(&latest_local, &latest_remote, &local_receipt, &remote_receipt)?)
     }
 
     async fn transferSnapshot(&self, target: &str, source: &Manifest, local: bool, coverage_only: bool) -> Result<RuntimeFileSyncReference, String> {
@@ -110,6 +125,11 @@ fn snapshotChanged(error: &str) -> bool {
     let reason = error.lines().next().unwrap_or_default();
     ["Snapshot changed; synchronize again", "File changed before export"].iter()
         .any(|message| reason == *message || reason.ends_with(&format!(": {message}")))
+}
+
+/// Each peer must still be at its own empty-export boundary. Their histories may differ.
+fn reportsAtExchange(local: &Report, remote: &Report, local_receipt: &SyncReceipt, remote_receipt: &SyncReceipt) -> Result<bool, String> {
+    Ok(local.boundary == digest(local_receipt)? && remote.boundary == digest(remote_receipt)?)
 }
 
 /// The union of inventories includes files that exist on only one endpoint.
@@ -149,7 +169,7 @@ fn changedOwners(before: &Report, after: &Report) -> BTreeSet<String> {
         .chain(before.pendingOwners.symmetric_difference(&after.pendingOwners).cloned()).collect()
 }
 
-/// Changed owners retry quietly; completion still requires every file and baseline to match.
+/// Changed owners retry quietly; completion requires equal synchronized contents.
 fn verifyReports(local: &Report, remote: &Report, changed: &BTreeSet<String>) -> Result<bool, String> {
     if !local.errors.is_empty() || !remote.errors.is_empty() {
         return Err("Consistency check has owner errors".into());
@@ -188,6 +208,7 @@ mod tests {
     fn report(snapshot: &Snapshot) -> Report {
         Report {
             manifests: vec![snapshot.manifest().unwrap()],
+            boundary: Default::default(),
             errors: vec![],
             pendingOwners: BTreeSet::new(),
         }
@@ -232,18 +253,46 @@ mod tests {
     }
 
     #[test]
-    fn equal_contents_with_different_baselines_are_not_complete() {
-        let snapshot = Snapshot { node: "a".into(), data: Data::empty(Owner {
+    fn equal_contents_with_different_replay_state_need_no_correction() {
+        let a = Snapshot { node: "a".into(), data: Data::empty(Owner {
             backend: Backend::DataStore,path: "file".into(),format: 0,layout: 1,
         }),covered: BTreeSet::new(),generation: 0 };
-        let mut a = report(&snapshot);
-        let mut b = report(&snapshot);
-        a.manifests[0].baseline = Some("before correction".into());
-        b.manifests[0].baseline = Some("copied file".into());
-        assert_eq!(correctionPlans(&a,&b).len(),1);
-        assert!(verifyReports(&a,&b).is_err());
-        a.manifests[0].baseline = b.manifests[0].baseline.clone();
-        assert!(verifyReports(&a,&b).is_ok());
+        let mut b = a.clone();
+        b.node = "b".into();
+        b.covered.insert("other-history:1".into());
+        b.generation += 1;
+        b.data.revision = Some(operit_store::Transaction::Revision {
+            createdAt: 42, originDeviceId: "b".into(), sequence: 1,
+        });
+        b.data.deleted.insert("old".into());
+        assert_ne!(a.token().unwrap(), b.token().unwrap());
+        assert_ne!(a.baseline_digest().unwrap(), b.baseline_digest().unwrap());
+        assert!(correctionPlans(&report(&a),&report(&b)).is_empty());
+        assert_eq!(verifyReports(&report(&a),&report(&b)), Ok(true));
+    }
+
+    #[test]
+    fn correction_uses_each_peers_export_boundary_without_equal_histories_or_wall_clocks() {
+        let mut a = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
+        let mut b = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
+        let mut a_exported = SyncReceipt::default();
+        let mut b_exported = SyncReceipt::default();
+        a_exported.observe("a", 17);
+        b_exported.observe("b", 29);
+        a.boundary = digest(&a_exported).unwrap();
+        b.boundary = digest(&b_exported).unwrap();
+        assert_eq!(reportsAtExchange(&a, &b, &a_exported, &b_exported), Ok(true));
+        for local in [true, false] {
+            let mut current = if local { a_exported.clone() } else { b_exported.clone() };
+            current.observe("new-write", 1);
+            if local { a.boundary = digest(&current).unwrap(); } else { b.boundary = digest(&current).unwrap(); }
+            assert_eq!(reportsAtExchange(&a, &b, &a_exported, &b_exported), Ok(false));
+            a.boundary = digest(&a_exported).unwrap();
+            b.boundary = digest(&b_exported).unwrap();
+        }
+        b.errors.push("broken database".into());
+        assert_eq!(reportsAtExchange(&a, &b, &a_exported, &b_exported), Ok(true));
+        assert!(verifyReports(&a, &b).is_err());
     }
 
     #[test]
@@ -252,7 +301,7 @@ mod tests {
             backend: Backend::DataStore, path: "file.preferences.json".into(), format: 0, layout: 1,
         }), covered: BTreeSet::new(), generation: 0 };
         let present = report(&snapshot);
-        let empty = Report { manifests: vec![], errors: vec![], pendingOwners: BTreeSet::new() };
+        let empty = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
         for (a,b,choice) in [(&present,&empty,Source::Local),(&empty,&present,Source::Remote)] {
             let plans = correctionPlans(a,b);
             assert_eq!(plans.len(),1);
@@ -353,7 +402,7 @@ mod tests {
         assert_eq!(retry, BTreeSet::from(["memory.sqlite".into()]));
         assert_eq!(super::verifyReports(&before, &after, &retry), Ok(false));
         assert_eq!(super::verifyReports(&after, &after, &retry), Ok(true));
-        let empty = Report { manifests: vec![], errors: vec![], pendingOwners: BTreeSet::new() };
+        let empty = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
         assert_eq!(changedOwners(&before, &empty), retry);
         assert_eq!(changedOwners(&empty, &after), retry);
         assert!(changedOwners(&before, &before).is_empty());
@@ -361,14 +410,15 @@ mod tests {
 
     #[test]
     fn completion_requires_a_supported_consistency_protocol_on_both_peers() {
-        let current = json!({"consistencyVersion":2});
+        let current = json!({"consistencyVersion":3});
         assert!(requireConsistencySupport(&current, &current).is_ok());
         for unsupported in [
             Value::Null,
             json!({}),
             json!({"consistencyVersion":0}),
             json!({"consistencyVersion":1}),
-            json!({"consistencyVersion":3}),
+            json!({"consistencyVersion":2}),
+            json!({"consistencyVersion":4}),
         ] {
             assert!(requireConsistencySupport(&unsupported, &current).is_err());
             assert!(requireConsistencySupport(&current, &unsupported).is_err());

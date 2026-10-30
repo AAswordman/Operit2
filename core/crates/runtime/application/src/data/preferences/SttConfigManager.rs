@@ -28,12 +28,7 @@ impl SttConfigManager {
         path: impl Into<String>,
     ) -> PreferencesDataStore {
         PreferencesDataStore::newEncryptedWithStorage(storage, path)
-            .withMigration(Self::PREFERENCES_VERSION, |from,context| {
-                if from == 1 {
-                    operit_store::Transaction::Rule::DropKey {key:"stt_config_list".into()}.apply(context).map_err(PreferencesDataStoreError::Message)?;
-                }
-                context.map_preferences(from,&Self::migratePreferences)
-            })
+            .withMigration(Self::PREFERENCES_VERSION, Self::migration)
     }
 
     const PREFERENCES_VERSION: u32 = 2;
@@ -185,11 +180,18 @@ impl SttConfigManager {
     }
 
     /// Initializes schema bookkeeping and migrates encoded STT records in version one.
-    fn migratePreferences(
-        version: u32,
-        preferences: &mut Preferences,
+    fn migration(
+        from: u32,
+        context: &mut operit_store::Transaction::migration::Context,
     ) -> Result<(), PreferencesDataStoreError> {
-        match version {
+        if from == 1 {
+            operit_store::Transaction::Rule::DropKey {
+                key: "stt_config_list".into(),
+            }
+            .apply(context)
+            .map_err(PreferencesDataStoreError::Message)?;
+        }
+        context.map_preferences(from, &|version, preferences| match version {
             0 => Ok(()),
             1 => {
                 let records = preferences
@@ -214,11 +216,10 @@ impl SttConfigManager {
                     }
                     preferences.set(&stringPreferencesKey(&key), record);
                 }
-                preferences.remove(&Self::configListKey());
                 Ok(())
             }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
-        }
+        })
     }
 
     /// Returns every built-in STT provider catalog entry.

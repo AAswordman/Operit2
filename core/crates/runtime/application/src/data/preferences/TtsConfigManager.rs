@@ -30,12 +30,7 @@ impl TtsConfigManager {
         path: impl Into<String>,
     ) -> PreferencesDataStore {
         PreferencesDataStore::newEncryptedWithStorage(storage, path)
-            .withMigration(Self::PREFERENCES_VERSION, |from,context| {
-                if from == 1 {
-                    operit_store::Transaction::Rule::DropKey {key:"tts_config_list".into()}.apply(context).map_err(PreferencesDataStoreError::Message)?;
-                }
-                context.map_preferences(from,&Self::migratePreferences)
-            })
+            .withMigration(Self::PREFERENCES_VERSION, Self::migration)
     }
 
     const PREFERENCES_VERSION: u32 = 3;
@@ -413,11 +408,18 @@ impl TtsConfigManager {
     }
 
     /// Migrates legacy TTS preferences and creates the default system profile once.
-    fn migratePreferences(
-        version: u32,
-        preferences: &mut Preferences,
+    fn migration(
+        from: u32,
+        context: &mut operit_store::Transaction::migration::Context,
     ) -> Result<(), PreferencesDataStoreError> {
-        match version {
+        if from == 1 {
+            operit_store::Transaction::Rule::DropKey {
+                key: "tts_config_list".into(),
+            }
+            .apply(context)
+            .map_err(PreferencesDataStoreError::Message)?;
+        }
+        context.map_preferences(from, &|version, preferences| match version {
             0 => {
                 let hasCurrentConfig = preferences
                     .getTyped::<String>(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())?
@@ -465,7 +467,6 @@ impl TtsConfigManager {
                     }
                     preferences.set(&stringPreferencesKey(&key), record);
                 }
-                preferences.remove(&Self::TTS_CONFIG_LIST());
                 Ok(())
             }
             2 => {
@@ -482,7 +483,7 @@ impl TtsConfigManager {
                 Ok(())
             }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
-        }
+        })
     }
 }
 

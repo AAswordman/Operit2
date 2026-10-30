@@ -236,6 +236,7 @@ class _ChatContextStatsTopBarButtonState
                   maxHeight: math.min(440.0, mediaQuery.size.height - 24),
                 ),
                 child: SingleChildScrollView(
+                  primary: false,
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -341,7 +342,7 @@ class _StatRow extends StatelessWidget {
   final String label;
   final String value;
 
-  /// Allows values to wrap on narrow screens and with enlarged text.
+  /// Aligns values to the trailing edge while allowing narrow-screen wrapping.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -358,7 +359,7 @@ class _StatRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Flexible(
+          Expanded(
             child: Text(
               value,
               textAlign: TextAlign.end,
@@ -385,7 +386,7 @@ class _DeviceRow extends StatelessWidget {
   final bool isExecuting;
   final bool online;
 
-  /// Keeps device identity and status together instead of splitting them across cards.
+  /// Keeps device names and trailing statuses aligned across every device row.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -418,7 +419,7 @@ class _DeviceRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Flexible(
+          Expanded(
             child: Text(
               status,
               textAlign: TextAlign.end,

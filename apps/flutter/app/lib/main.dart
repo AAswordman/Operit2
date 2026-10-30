@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:desktop_widgets/desktop_widgets.dart';
 import 'package:operit_keep_alive/operit_keep_alive.dart';
-import 'package:operit_ui/operit_ui.dart' show prepareLiquidGlass;
+import 'package:operit_ui/operit_ui.dart'
+    show prepareLiquidGlass, OperitDesignCaptureScope;
 
 import 'core/application/CoreApplicationService.dart';
 import 'core/bridge/PlatformCoreProxy.dart';
@@ -43,8 +44,11 @@ void main(List<String> arguments) async {
         hostRequested: launch['rescue'] == true,
       )) {
         runApp(
-          DataRescueApp(
-            canStopNormalProcess: launch['canStopNormalProcess'] == true,
+          OperitDesignCaptureScope(
+            name: 'Operit Data Rescue',
+            child: DataRescueApp(
+              canStopNormalProcess: launch['canStopNormalProcess'] == true,
+            ),
           ),
         );
         applicationStarted = true;
@@ -107,7 +111,10 @@ void main(List<String> arguments) async {
         arguments: arguments,
         widgetBuilder: (launch) {
           applicationStarted = true;
-          return DesktopWidgetWindowApp(launch: launch);
+          return OperitDesignCaptureScope(
+            name: 'Operit Desktop Widget',
+            child: DesktopWidgetWindowApp(launch: launch),
+          );
         },
         application: () async {
           final windowStopwatch = Stopwatch()..start();
@@ -164,7 +171,12 @@ void main(List<String> arguments) async {
           stackTrace: stackTrace,
         );
         if (!applicationStarted) {
-          runApp(const StartupErrorApplication());
+          runApp(
+            const OperitDesignCaptureScope(
+              name: 'Operit Startup Error',
+              child: StartupErrorApplication(),
+            ),
+          );
         }
       });
     },
@@ -191,7 +203,7 @@ void _runMainWindow() {
     tag: _appStartupLogTag,
     verboseLevel: VerboseLevel.level1,
   );
-  runApp(const OperitApp());
+  runApp(const OperitDesignCaptureScope(child: OperitApp()));
 }
 
 /// Starts a detached chat window after runtime configuration is loaded.
@@ -201,7 +213,12 @@ void _runDetachedChatWindow(DetachedChatWindowArguments arguments) {
     tag: _appStartupLogTag,
     verboseLevel: VerboseLevel.level1,
   );
-  runApp(DetachedChatWindowApp(arguments: arguments));
+  runApp(
+    OperitDesignCaptureScope(
+      name: 'Operit Detached Chat',
+      child: DetachedChatWindowApp(arguments: arguments),
+    ),
+  );
 }
 
 /// Routes Flutter framework diagnostics through the client logger.

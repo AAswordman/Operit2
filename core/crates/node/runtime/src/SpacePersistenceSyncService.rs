@@ -916,7 +916,7 @@ impl SpacePersistenceSyncService {
                     return Ok(false);
                 }
                 consistency::requireConsistencySupport(&localClock, &remoteClock)?;
-                if !self.synchronizeConsistency(targetNodeId).await? {
+                if !self.synchronizeConsistency(targetNodeId, &localClock, &remoteClock).await? {
                     // A concurrent edit invalidates the captured file, not the synchronization service.
                     self.state.peerGates.lock().map_err(|error| error.to_string())?
                         .entry(targetNodeId.to_owned()).or_default().pendingWork = true;

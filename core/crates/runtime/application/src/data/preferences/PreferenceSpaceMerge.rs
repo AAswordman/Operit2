@@ -400,6 +400,156 @@ mod tests {
         }
     }
 
+    /// State upgrades and historical atomic transactions use the actual owners' same migration.
+    #[test]
+    fn catalog_migrations_commute_for_state_and_atomic_history() {
+        use operit_store::{PreferenceMerge::applyOperations, SyncOperationStore::SyncOperationStore};
+
+        fn legacy_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
+            let store = if path == RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH {
+                PreferencesDataStore::newWithStorage(host, path)
+            } else {
+                PreferencesDataStore::newEncryptedWithStorage(host, path)
+            };
+            store.withSchema(1, |_, _| Ok(()))
+        }
+
+        let tts = json!({"id":"remote-tts","name":"Remote TTS","providerType":"HTTP_TTS",
+            "endpoint":"https://example.test/tts","apiKey":"","model":"voice","voice":"a",
+            "responseFormat":"mp3","speed":1.0,"createdAt":1,"updatedAt":2});
+        let stt = json!({"id":"remote-stt","name":"Remote STT","providerType":"HTTP_STT",
+            "endpoint":"https://example.test/stt","apiKey":"","model":"speech",
+            "fileFieldName":"file","modelFieldName":"model","languageFieldName":"language",
+            "responseTextJsonPath":"text","headers":[],"createdAt":1,"updatedAt":2});
+        let workspace = json!({"id":"remote-workspace","name":"Remote workspace",
+            "folders":[{"name":"Root","path":"/app/workspaces/remote"}],"createdAt":1,"updatedAt":2});
+        for (path, index, key, record) in [
+            (
+                RuntimeStorageLayout::TTS_CONFIGS_PREFERENCES_PATH,
+                "tts_config_list",
+                "tts_config_remote-tts_json",
+                tts,
+            ),
+            (
+                RuntimeStorageLayout::STT_CONFIGS_PREFERENCES_PATH,
+                "stt_config_list",
+                "stt_config_remote-stt_json",
+                stt,
+            ),
+            (
+                RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH,
+                "workspace_list",
+                "workspace_remote-workspace_data",
+                workspace,
+            ),
+        ] {
+            let state = Fixture::new();
+            let replay = Fixture::new();
+            let legacy = legacy_store(state.host.clone(), path);
+            legacy
+                .edit(|values| {
+                    values.set(
+                        &stringPreferencesKey(index),
+                        json!([record["id"]]).to_string(),
+                    );
+                    values.set(&stringPreferencesKey(key), record.to_string());
+                })
+                .unwrap();
+            let originals = SyncOperationStore::new(
+                state.host.clone(),
+                RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            )
+            .preferenceHistory()
+            .unwrap();
+            assert_eq!(originals.len(), 1);
+            assert_eq!(originals[0].semantics, SyncOperationSemantics::Transaction);
+            let baseline = legacy.syncSnapshot().unwrap();
+            assert!(legacy
+                .repairSyncedSnapshot(&baseline.token().unwrap(), &baseline)
+                .unwrap());
+            let migrated = open(state.host.clone(), path)
+                .unwrap()
+                .syncSnapshot()
+                .unwrap();
+
+            // Both sides start at schema one; schema-zero TTS initialization is a separate step.
+            legacy_store(replay.host.clone(), path).data().unwrap();
+            open(replay.host.clone(), path)
+                .unwrap()
+                .syncSnapshot()
+                .unwrap();
+            for _ in 0..2 {
+                applyOperations(replay.host.clone(), &schema(), &[], &originals, |_, _| true).unwrap();
+                let replayed = open(replay.host.clone(), path)
+                    .unwrap()
+                    .syncSnapshot()
+                    .unwrap();
+                assert_eq!(replayed.data, migrated.data, "{path}");
+                assert_eq!(replayed.covered, migrated.covered, "{path}");
+                assert_eq!(replayed.data.values.get(key), Some(&record));
+                assert!(!replayed.data.values.contains_key(index));
+            }
+            let history = SyncOperationStore::new(
+                replay.host.clone(),
+                RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            )
+            .preferenceHistory()
+            .unwrap();
+            assert_eq!(
+                history, originals,
+                "original identity and atomic boundary: {path}"
+            );
+
+            let first = &originals[0];
+            let mut deletion = historical(
+                path,
+                key,
+                Value::Null,
+                1,
+                path != RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH,
+                first.sequence + 1,
+            );
+            deletion.originDeviceId = first.originDeviceId.clone();
+            deletion.opId = format!("{}:{}", deletion.originDeviceId, deletion.sequence);
+            deletion.createdAt = first.createdAt + 1;
+            deletion.operation = "delete".into();
+            let mut index_write = historical(
+                path,
+                index,
+                json!([record["id"]]).to_string().into(),
+                1,
+                path != RuntimeStorageLayout::WORKSPACES_PREFERENCES_PATH,
+                first.sequence + 2,
+            );
+            index_write.originDeviceId = first.originDeviceId.clone();
+            index_write.opId = format!("{}:{}", index_write.originDeviceId, index_write.sequence);
+            index_write.createdAt = first.createdAt + 2;
+            let incoming = [index_write, deletion, first.clone()];
+            for _ in 0..2 {
+                for host in [state.host.clone(), replay.host.clone()] {
+                    applyOperations(host.clone(), &schema(), &[], &incoming, |_, _| true).unwrap();
+                    let data = open(host, path).unwrap().syncSnapshot().unwrap().data;
+                    assert!(!data.values.contains_key(key));
+                    assert!(!data.values.contains_key(index));
+                    assert!(data.deleted.contains(key));
+                    assert!(!data.deleted.contains(index));
+                }
+            }
+            assert_eq!(
+                open(state.host.clone(), path)
+                    .unwrap()
+                    .syncSnapshot()
+                    .unwrap()
+                    .data,
+                open(replay.host.clone(), path)
+                    .unwrap()
+                    .syncSnapshot()
+                    .unwrap()
+                    .data
+            );
+        }
+    }
+
     /// Migrates released catalog files on the sender before replaying their current-version operations.
     #[test]
     fn owners_prepare_migrated_catalogs_before_peer_replay() {

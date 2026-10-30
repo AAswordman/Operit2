@@ -30,3 +30,9 @@ export 'src/render/top_bar_chrome.dart';
 export 'src/render/composer_chrome.dart';
 export 'src/render/composer_surface.dart';
 export 'src/render/prepared_theme_visual.dart';
+
+export 'src/design/design_capture.dart';
+export 'src/design/design_dom_capture.dart';
+export 'src/design/design_scenarios.dart';
+
+export 'src/design/design_dom_runtime.dart';

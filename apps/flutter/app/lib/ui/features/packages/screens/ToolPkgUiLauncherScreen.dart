@@ -9,6 +9,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart'
     show listEquals, debugPrintSynchronously;
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart'
+    show operitDesignBridgeEnabled, OperitDesignSource;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';

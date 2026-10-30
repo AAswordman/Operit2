@@ -1,0 +1,30 @@
+{
+  "name": "operit-figma-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts test/*.test.mjs",
+    "capture": "node capture.mjs",
+    "test:dom": "node test/dom_runtime.browser.mjs",
+    "test:runtime": "node --experimental-strip-types test/runtime_roundtrip.ts",
+    "format:check": "prettier --check src test *.mjs *.json README.md",
+    "package": "node --experimental-strip-types package.mjs",
+    "test:package": "npm run package && node --experimental-strip-types test/package_roundtrip.ts"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.119.0",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.25.0",
+    "fflate": "^0.8.3",
+    "prettier": "^3.9.10",
+    "typescript": "^5.7.2",
+    "ws": "^8.22.0"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

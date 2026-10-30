@@ -1152,8 +1152,9 @@ impl Snapshot {
     pub fn token(&self) -> Result<String> {
         digest(self)
     }
+    /// Compare the materialized file values/tables, independently of replay bookkeeping.
     pub fn content_digest(&self) -> Result<String> {
-        digest(&self.data)
+        digest(&self.data.values)
     }
     pub fn baseline_digest(&self) -> Result<String> {
         digest(&(&self.data, &self.covered))
@@ -1198,8 +1199,6 @@ pub struct Manifest {
     pub revision: Option<Revision>,
     pub token: String,
     pub digest: String,
-    #[serde(default)]
-    pub baseline: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1213,7 +1212,7 @@ pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> 
     if local.owner != remote.owner {
         return Err("Snapshots are not at the same format/layout".into());
     }
-    if local.digest == remote.digest && local.baseline == remote.baseline {
+    if local.digest == remote.digest {
         return Ok(Source::Equal);
     }
     Ok(
@@ -1233,7 +1232,6 @@ impl Snapshot {
             revision: self.data.revision.clone(),
             token: self.token()?,
             digest: self.content_digest()?,
-            baseline: None,
         })
     }
 }

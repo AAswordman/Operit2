@@ -113,8 +113,11 @@ impl OperitApplication {
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        let (manifests,pending,errors) = registry.manifests()?;
-        Ok(json!({"manifests":manifests,"pendingOwners":pending,"errors":errors}))
+        let (manifests,pending,mut errors) = registry.manifests()?;
+        // Captured after the snapshots: a new commit since the empty export invalidates this comparison.
+        let (receipt, failures) = registry.receipt()?;
+        errors.extend(failures);
+        Ok(json!({"manifests":manifests,"pendingOwners":pending,"errors":errors,"boundary":operit_store::Transaction::digest(&receipt)?}))
     }
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;

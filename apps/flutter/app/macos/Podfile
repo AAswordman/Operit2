@@ -1,4 +1,4 @@
-platform :osx, '12.0'
+platform :osx, '13.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -39,7 +39,7 @@ post_install do |installer|
     # Xcode 27 no longer accepts the older deployment targets emitted by
     # some transitive pods. Keep every pod aligned with the app target.
     target.build_configurations.each do |config|
-      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '12.0'
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '13.0'
     end
   end
 end

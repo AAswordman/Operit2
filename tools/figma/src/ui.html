@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  />
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 20px;
+      font:
+        13px/1.6 Inter,
+        system-ui,
+        sans-serif;
+      color: var(--figma-color-text, #20252e);
+      background: var(--figma-color-bg, #fff);
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 8px;
+    }
+    p {
+      margin: 8px 0 16px;
+    }
+    button {
+      font: inherit;
+      border: 1px solid var(--figma-color-border, #ccd1dc);
+      border-radius: 6px;
+      padding: 9px 12px;
+      background: var(--figma-color-bg-secondary, #f5f6f8);
+      color: inherit;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #36618e;
+      color: white;
+      border-color: transparent;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: wait;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+    textarea {
+      width: 100%;
+      height: 190px;
+      font: 11px/1.6 monospace;
+      padding: 10px;
+      background: var(--figma-color-bg-secondary, #f5f6f8);
+      color: inherit;
+      border: 1px solid var(--figma-color-border, #ccd1dc);
+      border-radius: 6px;
+    }
+    details {
+      margin-top: 18px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    output {
+      display: block;
+      white-space: pre-wrap;
+      padding: 12px;
+      border-radius: 6px;
+      background: var(--figma-color-bg-secondary, #f5f6f8);
+      overflow-wrap: anywhere;
+    }
+    small {
+      display: block;
+      opacity: 0.75;
+      margin: 10px 0;
+    }
+    a {
+      color: inherit;
+    }
+    input[type="file"] {
+      display: none;
+    }
+    .error {
+      color: #cf3939;
+    }
+  </style>
+  <h1>Operit · UI Design Bridge</h1>
+  <p>
+    导入界面的静态可编辑图层，保留代码来源。当前插件不运行应用，页面跳转、输入和插件事件不会随图层导入。
+  </p>
+  <div class="row">
+    <button id="import" class="primary">导入静态图层包 / 场景</button
+    ><button id="inspect">读取所选画板</button>
+  </div>
+  <input
+    id="file"
+    type="file"
+    accept=".zip,.json,application/zip,application/json"
+  />
+  <small
+    >来源：tools/figma/software.mjs 批量采集的软件 UI
+    包，或单独补录的运行时场景。文件在本地处理。</small
+  >
+  <output id="status" aria-live="polite"
+    >导入静态图层 ZIP 或 .operit-design.json 后，可在 Figma
+    中修改文字、颜色、尺寸、图层及图片。</output
+  >
+  <div class="row">
+    <button id="export-software" class="primary">导出整包修改</button>
+    <button id="export">导出当前画板</button>
+  </div>
+  <small
+    >选中软件包里的一个画板或其内部图层，可导出同一软件包的全部界面修改。文字、布局、工具与插件修改均附带来源和变更记录。</small
+  >
+  <output id="coverage">整包采集会列出覆盖情况；未采集的状态需要补录。</output>
+  <details>
+    <summary>附加：主题参数（仅主题稿）</summary>
+    <p>
+      配色也可直接在 Figma 的 Variables
+      中编辑。这里可编辑完整主题字段，保留图片切片、字体路径等参数。
+    </p>
+    <textarea
+      id="theme"
+      aria-label="主题 JSON"
+      spellcheck="false"
+      placeholder="运行时采集通过图层编辑；主题稿在此显示参数"
+    ></textarea>
+    <div class="row"><button id="apply">更新主题参数</button></div>
+  </details>
+  <details open>
+    <summary>采集与映射说明</summary>
+    <output id="warnings"
+      >文字和常见容器为独立图层。Canvas、shader、图标字体等可能保留为可替换图片；具体限制随文件列出。</output
+    >
+  </details>
+  <script>
+    /* OPERIT_UI_SCRIPT */
+  </script>
+</html>

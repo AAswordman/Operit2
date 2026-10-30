@@ -239,7 +239,16 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
         modifierScope: modifierScope,
       );
       _dispatchOnLoad();
-      return content;
+      return operitDesignBridgeEnabled
+          ? OperitDesignSource(source: {
+              'kind': 'plugin-compose',
+              'package': webViewHostContext.packageName,
+              'route': webViewHostContext.routeInstanceId,
+              'composeNode': node.type,
+              'composeId': node.id,
+              'composeMount': nodePath,
+            }, child: content)
+          : content;
     });
   }
 

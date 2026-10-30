@@ -3,6 +3,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart'
+    show operitDesignBridgeEnabled, OperitDesignSource;
 import 'package:flutter/services.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
@@ -406,7 +408,7 @@ class _ToolCallRowState extends State<ToolCallRow> {
     final color = presentation.isSuccess == false
         ? theme.colorScheme.error
         : theme.colorScheme.onSurfaceVariant;
-    return Column(
+    final content = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -518,6 +520,16 @@ class _ToolCallRowState extends State<ToolCallRow> {
         ),
       ],
     );
+    return operitDesignBridgeEnabled
+        ? OperitDesignSource(
+            source: {
+              'kind': 'tool-result',
+              'tool': presentation.toolName,
+              'expanded': _expanded,
+            },
+            child: content,
+          )
+        : content;
   }
 }
 

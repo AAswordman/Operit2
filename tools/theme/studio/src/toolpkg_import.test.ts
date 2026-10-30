@@ -293,3 +293,23 @@ test("retains agreement whitespace and original author spelling", async () => {
   assert.deepEqual(output.source!.manifest.author,data.author);
   assert.equal(output.metadata!.themeLicenseText,agreement);
 });
+
+/** Figma round trips retain the original package, sibling templates and all assets. */
+test("Figma design round trip preserves package capabilities and complete theme parameters", async () => {
+  const { exportFigmaDocument, importFigmaDocument } = await import("./figma_bridge.ts");
+  const { default: fixture } = await import("../../../../apps/flutter/packages/operit_ui/assets/fixtures/theme-v1.json", { with: { type: "json" } });
+  const original = (await parseImportedThemeFile(archiveFile(manifest([night, day]), {
+    ...resources, [night.path]: JSON.stringify(fixture), "extra/private.txt": "unrelated content",
+  }), async () => "night")).source!;
+  const doc = exportFigmaDocument(structuredClone(fixture), [], { "display-name": "Design edit", "theme-id": "org.operit.fixture" }, original);
+  (doc.theme!.palette as Record<string, any>).dark.primary = "#123456FF";
+  const imported = await importFigmaDocument(JSON.stringify(doc));
+  assert.equal((JSON.parse(imported.bundle.themeJson).palette.dark.primary), "#123456FF");
+  assert.equal(imported.metadata?.["display-name"], "Design edit");
+  assert.deepEqual(imported.bundle.source!.bytes, original.bytes);
+  assert.deepEqual(imported.bundle.source!.manifest, original.manifest);
+  assert.equal(new TextDecoder().decode(imported.bundle.source!.entries.get("main.js")), resources["main.js"]);
+  assert.equal(new TextDecoder().decode(imported.bundle.source!.entries.get("extra/private.txt")), "unrelated content");
+  const runtime = {format:"operit-design",version:1,name:"runtime",origin:"flutter-runtime",assets:[],scenes:[],warnings:[]};
+  await assert.rejects(importFigmaDocument(JSON.stringify(runtime)), /运行时设计交接稿/);
+});

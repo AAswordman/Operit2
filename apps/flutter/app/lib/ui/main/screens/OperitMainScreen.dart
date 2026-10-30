@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:desktop_widgets/desktop_widgets.dart';
 
+import '../design/SoftwareDesignCatalog.dart';
+
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../common/contributions/ChatSidebarTabHost.dart'
     show ChatSidebarPreparation, ChatSidebarPreparationScope;
@@ -62,6 +64,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
   late AppNavigationModel _navigationModel;
   late final AppRouterState _routerState;
+  late final SoftwareDesignCatalog _softwareDesignCatalog;
   late final TopBarController _topBarController;
   late final MainLayoutController _mainLayoutController;
   late final SidebarDockController _sidebarDockController;
@@ -97,6 +100,11 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _drawerConversationState.addListener(_prepareSidebarData);
     _drawerOpenState = ValueNotifier<bool>(false);
     AppRouterGateway.install(handler: _navigateToRoute, reset: _resetToRoute);
+    _softwareDesignCatalog = SoftwareDesignCatalog(
+      router: _routerState,
+      routes: () => _navigationModel.routes,
+      navigate: _navigateToRoute,
+    );
     NotificationActivationService.instance.installChatHandler(
       _activateNotificationChat,
     );
@@ -276,6 +284,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       toolPkgNavigationEntries: _toolPkgNavigationEntries,
     );
     AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
+    _softwareDesignCatalog.install();
     _synchronizeSidebarDock();
     if (!_requestedInitialToolPkgNavigationRefresh) {
       _requestedInitialToolPkgNavigationRefresh = true;
@@ -287,6 +296,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   void dispose() {
     unawaited(DesktopWidgets.setActionHandler(null));
     unawaited(DesktopWidgets.setSnapshotRenderer(null));
+    _softwareDesignCatalog.dispose();
     AppRouterGateway.clear();
     AppRouteDiscoveryGateway.clear();
     NotificationActivationService.instance.clearChatHandler();

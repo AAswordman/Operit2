@@ -37,3 +37,9 @@ Running `npm run build` inside `tools/theme/studio` verifies the pinned preview 
 The production editor is published at `web.operit.app/theme/`. Pass `--base-prefix /theme` to `tools/theme/build_preview.py` and set `OPERIT_STUDIO_BASE_PREFIX=/theme` during `npm run build`. The preview's Flutter base href and the editor's build prefix must match.
 
 The single publishing workflow is [Deploy Web Experience](../../.github/workflows/deploy-web-experience.yml). Run it manually from `main` to build and publish both the main application at `/` and Theme Studio at `/theme/`. Deployment runs share the `github-pages` concurrency group and do not cancel a running deployment. The workflow updates the existing `gh-pages` branch with a regular push, preserving its history, then explicitly requests a GitHub Pages build with `pages: write` permission. GitHub Pages must already use that branch as its publishing source and have `web.operit.app` configured as its custom domain.
+
+## Figma Design Handoff
+
+Theme Studio's **导出 Figma** button creates editable native component boards and preserves the full theme, assets and original ToolPkg context. Import the returned `.operit-design.json` through **导入 / Figma 回传** to preview with Flutter and export through the existing Rust validator.
+
+For actual pages, expanded tool results, Compose DSL plugin screens and WebView UI, use the opt-in runtime capture tool. See [Figma bridge](../figma/README.md) for plugin installation, capture commands and the mapping boundaries.

@@ -217,19 +217,15 @@ impl<'a> Registry<'a> {
         Ok((snapshots, pending, errors))
     }
 
-    /// File equality also requires the same durable starting point for future replay.
+    /// Only materialized contents decide whether a dataset needs correction.
     pub fn manifests(&self) -> Result<(Vec<super::Manifest>, BTreeSet<String>, Vec<String>), String> {
         let (snapshots, pending, mut errors) = self.snapshots()?;
         let mut manifests = Vec::new();
         for snapshot in snapshots {
-            let mut manifest = snapshot.manifest()?;
-            if let Some(baseline) = self.owners.get(&manifest.owner.path).and_then(|owner|owner.baseline.as_ref()) {
-                match baseline() {
-                    Ok(digest) => manifest.baseline = Some(digest),
-                    Err(error) => { errors.push(format!("{}: {error}",manifest.owner.path)); continue; },
-                }
+            match snapshot.manifest() {
+                Ok(manifest) => manifests.push(manifest),
+                Err(error) => errors.push(format!("{}: {error}", snapshot.data.owner.path)),
             }
-            manifests.push(manifest);
         }
         Ok((manifests,pending,errors))
     }
@@ -254,14 +250,14 @@ impl<'a> Registry<'a> {
         if !expected.is_empty() {
             let current = self.snapshot(owner)?;
             if current.token()? != expected { return Ok(false); }
-            if super::compare_manifests(&current.manifest()?, &source.manifest()?)? == super::Source::Local {
+            if (&current.data.revision, &current.node) > (&source.data.revision, &source.node) {
                 return Err("Snapshot source is older than the local authority".into());
             }
         }
         let repair = self.owners.get(&owner.path).and_then(|owner| owner.repair.as_ref()).ok_or("Owner cannot replace files")?;
         if !repair(expected, source, file)? { return Ok(false); }
         let verified = self.snapshot(owner)?;
-        if verified.content_digest()? != source.content_digest()? { return Err("Snapshot verification failed after replacement".into()); }
+        if verified.data != source.data { return Err("Snapshot verification failed after replacement".into()); }
         if let Some(baseline) = self.owners.get(&owner.path).and_then(|owner|owner.baseline.as_ref()) {
             if baseline()? != verified.baseline_digest()? { return Err("Replacement baseline was not committed".into()); }
         }

@@ -1,4 +1,5 @@
 import "./main.css";
+import { exportFigmaDocument, importFigmaDocument } from "./figma_bridge.ts";
 import {
   ThemeStudioMessagePort,
   exportWithContract,
@@ -92,6 +93,7 @@ class ThemeStudioApp {
   private readonly redoButton = document.createElement("button");
   private readonly resetDefaultButton = document.createElement("button");
   private readonly importButton = document.createElement("button");
+  private readonly figmaButton = document.createElement("button");
   private readonly saveButton = document.createElement("button");
   private readonly loadButton = document.createElement("button");
   private readonly renderButton = document.createElement("button");
@@ -553,6 +555,7 @@ class ThemeStudioApp {
       this.redoButton,
       this.resetDefaultButton,
       this.importButton,
+      this.figmaButton,
       this.saveButton,
       this.loadButton,
       this.renderButton,
@@ -576,7 +579,11 @@ class ThemeStudioApp {
     this.resetDefaultButton.title = "将当前主题视觉参数恢复为官方默认主题";
 
     this.importButton.className = "secondary";
-    this.importButton.textContent = "导入";
+    this.importButton.textContent = "导入 / Figma 回传";
+    this.figmaButton.className = "secondary";
+    this.figmaButton.textContent = "导出 Figma";
+    this.figmaButton.title = "导出可编辑主题组件、素材与原包上下文；在 tools/figma 的 Figma 插件中导入";
+    this.figmaButton.onclick = () => void this.exportForFigma();
     this.importButton.title = "读取 ToolPkg 中的 theme 声明或主题 JSON 为草稿；导出生成新的 ToolPkg，不改写原包的其他能力";
 
     this.saveButton.className = "ghost-btn save-status-btn";
@@ -598,6 +605,7 @@ class ThemeStudioApp {
       this.redoButton,
       this.resetDefaultButton,
       this.importButton,
+      this.figmaButton,
       this.saveButton,
       this.loadButton,
       this.renderButton,
@@ -977,11 +985,30 @@ class ThemeStudioApp {
     });
   }
 
+  private async exportForFigma(): Promise<void> {
+    try {
+      const theme = JSON.parse(this.themeJson.value);
+      const assets = await this.assetInputs();
+      const metadata = Object.fromEntries(METADATA_IDS.map(id => [id, this.metadataValue(id)]));
+      const doc = exportFigmaDocument(theme, assets, metadata, this.importedToolPkg);
+      const bytes = new TextEncoder().encode(JSON.stringify(doc, null, 2));
+      if (bytes.length > 64 * 1024 * 1024) throw new Error("设计文件超过 64 MiB；请减少素材或拆分原包");
+      download(bytes, "operit-theme.operit-design.json", "application/json");
+      this.setStatus("已导出 Figma 可编辑主题组件稿。用 tools/figma 的插件导入；实际工具和插件页面请用运行时采集。", "ok");
+    } catch (error) {
+      this.setStatus(`Figma 导出失败：${String(error)}`, "error");
+    }
+  }
+
   /** Imports a selected ToolPkg theme declaration or a visual JSON draft. */
   private async importToolPkgTemplateFile(file: File): Promise<void> {
     try {
       this.setStatus(`正在解析导入文件 ${file.name}…`, "warning");
-      const bundle = await parseImportedThemeFile(file, async (themes) => this.selectToolPkgTheme(themes));
+      if (file.size > 64 * 1024 * 1024) throw new Error("导入文件超过 64 MiB");
+      const json = file.name.toLowerCase().endsWith(".json") ? await file.text() : null;
+      const isDesign = json != null && JSON.parse(json)?.format === "operit-design";
+      const design = isDesign ? await importFigmaDocument(json!) : null;
+      const bundle = design?.bundle ?? await parseImportedThemeFile(file, async (themes) => this.selectToolPkgTheme(themes));
       this.importedToolPkg = bundle.source;
 
       if (bundle.metadata != null) {
@@ -1001,7 +1028,7 @@ class ThemeStudioApp {
         this.updateLiveThemeBadge();
       }
 
-      if (bundle.kind === "toolpkg") {
+      if (bundle.kind === "toolpkg" || design != null) {
         this.rows.splice(0, this.rows.length);
         this.nextAssetId = 1;
         const referenced = referencedAssetPaths(bundle.themeJson);
@@ -1025,6 +1052,13 @@ class ThemeStudioApp {
         }
       }
 
+      if (design?.metadata) {
+        for (const id of METADATA_IDS) {
+          const field = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`);
+          if (field && Object.hasOwn(design.metadata, id)) field.value = design.metadata[id]!;
+        }
+      }
+      this.updateLiveThemeBadge();
       this.visualEditor.setJson(bundle.themeJson, false);
       this.themeJson.value = this.visualEditor.json;
       this.pushHistorySnapshot(this.themeJson.value);
@@ -1032,7 +1066,9 @@ class ThemeStudioApp {
       this.renderAssetRows();
       await this.saveLocalDraft();
       this.setStatus(
-        bundle.kind === "toolpkg"
+        design != null
+          ? `已导入 Figma 主题与素材，设计稿另含 ${design.changes} 处图层变更；布局和交互请按交接稿实施。正在渲染 Flutter 预览…`
+          : bundle.kind === "toolpkg"
           ? `已读取 ToolPkg ${file.name} 的 theme 声明（含 ${this.rows.length} 个引用素材）；导出将生成新的 ToolPkg。正在渲染预览…`
           : `已导入主题声明 ${file.name}；正在渲染预览…`,
         "ok",

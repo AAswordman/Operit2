@@ -254,6 +254,7 @@ fn correction_preserves_tombstones_while_unrelated_older_writes_apply() {
     source.apply(&deletion);
     assert_eq!(source.value("x"), None);
     let target = Fixture::new();
+    target.apply(&create);
     correct(&source, &target);
     let late = authored(CURRENT, 2, 40, |state| {
         state.set(&stringPreferencesKey("x"), "stale resurrection");
@@ -981,7 +982,7 @@ fn file_correction_seals_both_histories_and_future_edits_start_from_the_copied_f
 
 
 #[test]
-fn equal_files_with_a_half_committed_baseline_require_correction_after_restart() {
+fn equal_files_with_a_half_committed_baseline_do_not_require_another_full_transfer() {
     let source = Fixture::new();
     let target = Fixture::new();
     let source_history = authored(CURRENT,2,50,|values|values.set(&stringPreferencesKey("x"),"source"));
@@ -1002,12 +1003,32 @@ fn equal_files_with_a_half_committed_baseline_require_correction_after_restart()
     let local = manifests(&source);
     let remote = manifests(&target);
     assert_eq!(local.digest,remote.digest);
-    assert_ne!(local.baseline,remote.baseline);
-    assert_ne!(Transaction::compare_manifests(&local,&remote).unwrap(),Transaction::Source::Equal);
+    assert_ne!(Transaction::preference::baseline_digest(&source.store()).unwrap(),
+        Transaction::preference::baseline_digest(&target.store()).unwrap());
+    assert_eq!(Transaction::compare_manifests(&local,&remote).unwrap(),Transaction::Source::Equal);
+    // Resuming the already captured correction still commits its exact coverage.
     let reopened = current_store(source.reopen(),CURRENT);
     assert!(reopened.repairSyncedSnapshot(&a.token().unwrap(),&baseline).unwrap());
     assert_eq!(Transaction::compare_manifests(&manifests(&source),&manifests(&target)).unwrap(),Transaction::Source::Equal);
     source.apply(&target_history);
     target.apply(&source_history);
     assert_eq!(source.store().syncSnapshot().unwrap().data,target.store().syncSnapshot().unwrap().data);
+}
+
+
+#[test]
+fn independent_preference_histories_with_equal_file_values_need_no_correction() {
+    let a = Fixture::new();
+    let b = Fixture::new();
+    a.apply(&authored(CURRENT, 2, 20, |values| values.set(&stringPreferencesKey("x"), "same")));
+    b.apply(&authored(CURRENT, 2, 40, |values| values.set(&stringPreferencesKey("x"), "same")));
+    let a_snapshot = a.store().syncSnapshot().unwrap();
+    let b_snapshot = b.store().syncSnapshot().unwrap();
+    assert_eq!(a_snapshot.data.values, b_snapshot.data.values);
+    assert_ne!(a_snapshot.data.revision, b_snapshot.data.revision);
+    assert_ne!(a_snapshot.covered, b_snapshot.covered);
+    assert!(Transaction::compare(&a_snapshot, &b_snapshot).unwrap().is_none());
+    // Only an actual difference in the persisted values makes this a correction target.
+    b.store().edit(|values| values.set(&stringPreferencesKey("x"), "different")).unwrap();
+    assert!(Transaction::compare(&a_snapshot, &b.store().syncSnapshot().unwrap()).unwrap().is_some());
 }

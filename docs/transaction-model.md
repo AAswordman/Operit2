@@ -11,7 +11,7 @@ $\operatorname{Tx}(X)$ 是以 X 为目标的事务记录集合。事务的 SQL �
 
 | 记号 | 含义 |
 | --- | --- |
-| $A,B;\ C(A)$ | 两端完整业务状态；$C(A)$ 是确定序列化的同步内容，含业务修订、删除事实及身份映射。本机账本单独保存。 |
+| $A,B;\ C(A)$ | 两端完整业务状态；$C(A)$ 是确定序列化的文件值或同步 SQL 表结构及记录；完整重放状态及旧基线另行保存。 |
 | $T_a;\ \mathcal T_A=(T_{a_1},\ldots,T_{a_n})$ | 单个事务；A 端的一组事务，序列可以为空。$\rho(T_a)$ 是业务修改顺序，$\rho(A)$ 是文件最后业务修改的顺序。 |
 | $\operatorname{Apply}_\mu(A,\mathcal T)$ | 按序列逐个原子应用事务；$\mu$ 是目标数据所属模块的 merge rule。 |
 | $[];\ \Vert;\ \pi$ | 空序列；序列拼接；任意到达顺序的排列。 |
@@ -22,6 +22,8 @@ $\operatorname{Tx}(X)$ 是以 X 为目标的事务记录集合。事务的 SQL �
 | $P,E;\ \operatorname{ready}(T)$ | 按身份识别的待处理、已应用事务集合；事务有效，所需格式、归属、上下文和依赖均已就绪。 |
 | $X[k]=(x,r);\ \dagger$ | 位置 k 的值为 x，业务修订为 r；$\dagger$ 表示保留删除事实。 |
 | $\alpha;\ \nu_X;\ \leadsto$ | 记录 ID 到规范 ID 的持久映射；X 的快照版本；经处理后到达的状态。快照版本用于发现期间写入，包括写回相同值。 |
+
+$e_X$ 表示 X 端本轮空增量导出时的接收范围，$\widehat e_X$ 为读取最终内容后的接收范围；各端只与自己的范围比较。
 
 完整状态写为 $A=(O,V,\rho,D,\alpha,\sigma,\Delta)$：归属与版本、值、业务修订、删除事实、身份映射、各修改范围的优先级、尚需保留的增量贡献。检查点另保存精确的历史覆盖集合 $K$。迁移等价式比较这些分量；例如 `name@50 → displayName@50` 同时转换值与范围版本，迁移后收到 `name@40` 仍由 50 生效。
 
@@ -97,7 +99,13 @@ $$
 
 先合并原文，求有效历史，再排序、转换和重放。已迁移的基线直接使用其当前状态；$R$ 在下表中均使用相同基线、迁移和规则。
 
-**最终强制校正。** 两端迁移及事务处理完成、期间没有新事务时，文件内容或持久基线不一致即为同步错误。记 $b(X)=(C(X_0),K_X)$，包含基线内容及覆盖范围。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
+**最终强制校正。** 两端迁移和本轮增量交换完成后，以各自导出范围判断比较是否过期；新事务进入下一轮增量。全量校正的前提为：
+
+$$
+(\widehat e_A=e_A)\land(\widehat e_B=e_B)\land C(A')\ne C(B').
+$$
+
+该前提允许 $e_A\ne e_B$，无需两端同时采样。旧基线差异本身不触发全量。记 $b(X)=(X_0,K_X)$，包含完整基线状态及覆盖范围。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
 
 $$
 X^*=\underset{X\in\{A',B'\}}{\arg\max}\;(\rho(X),d(X)),\qquad
@@ -114,7 +122,13 @@ $$
 $\setminus K^*$ 按事务身份排除已封存历史；其原文继续归档，后续应用以复制后的文件为起点。缺失文件按同一流程补齐。两端分别按捕获版本原子保存文件及基线，再次比较；期间写入则重新同步、选源和比较。一致后结束本轮同步。记 $\operatorname{Complete}(A,B)$ 为本轮完成，$\operatorname{ready}(A)$ 包含两种迁移、事务处理及对应校验协议均就绪，则：
 
 $$
-\operatorname{Complete}(A,B)\Rightarrow\operatorname{ready}(A)\land\operatorname{ready}(B)\land C(A)=C(B)\land b(A)=b(B).
+\operatorname{Complete}(A,B)\Rightarrow\operatorname{ready}(A)\land\operatorname{ready}(B)\land C(A)=C(B).
+$$
+
+全量校正还需验证共同基线已落盘：
+
+$$
+\operatorname{CorrectedComplete}(A,B)\Rightarrow\operatorname{Complete}(A,B)\land b(A)=b(B).
 $$
 
 强制校正保证最终内容相等；迁移等价式与业务合并规则另由业务测试验证。
