@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.deepseek_dafeiyu",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "大肥鱼桌宠",
+    "en": "DeepSeek Dafeiyu Pet"
+  },
+  "description": {
+    "zh": "DeepSeek 社区二创大肥鱼：透明悬浮窗、呼吸与互动动画、拖动、输入穿透和独立设置页。",
+    "en": "Unofficial DeepSeek Dafeiyu with floating UI, breathing and interaction animations, dragging and settings."
+  },
+  "enabled_by_default": false,
+  "subpackages": [],
+  "resources": [
+    {
+      "key": "dafeiyu_idle",
+      "path": "resources/idle.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "dafeiyu_happy",
+      "path": "resources/happy.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "dafeiyu_eat",
+      "path": "resources/eat.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "dafeiyu_walk",
+      "path": "resources/walk.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "dafeiyu_still",
+      "path": "resources/still.png",
+      "mime": "image/png"
+    }
+  ]
+}

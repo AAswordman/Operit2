@@ -14,6 +14,7 @@
     "tools": [
         {
             "name": "search_by_doi",
+            "display": {"label": {"zh": "按 DOI 查找文献", "en": "Find publication by DOI"}, "icon": "search", "targetParameter": "doi"},
             "description": { "zh": "通过 DOI (Digital Object Identifier) 查询文章的详细信息", "en": "Query article details by DOI (Digital Object Identifier)." },
             "parameters": [
                 {
@@ -26,6 +27,7 @@
         },
         {
             "name": "search_by_keyword",
+            "display": {"label": {"zh": "搜索文献", "en": "Search publications"}, "icon": "search", "targetParameter": "query"},
             "description": { "zh": "通过关键词搜索学术文章", "en": "Search scholarly articles by keyword." },
             "parameters": [
                 {
@@ -56,6 +58,7 @@
         },
         {
             "name": "search_by_author",
+            "display": {"label": {"zh": "按作者查找文献", "en": "Find publications by author"}, "icon": "search", "targetParameter": "author"},
             "description": { "zh": "通过作者名字搜索文章", "en": "Search articles by author name." },
             "parameters": [
                 {
@@ -74,6 +77,7 @@
         },
         {
             "name": "search_by_title",
+            "display": {"label": {"zh": "按标题查找文献", "en": "Find publications by title"}, "icon": "search", "targetParameter": "title"},
             "description": { "zh": "通过文章标题搜索", "en": "Search articles by title." },
             "parameters": [
                 {
@@ -92,6 +96,7 @@
         },
         {
             "name": "search_by_issn",
+            "display": {"label": {"zh": "按 ISSN 查找文献", "en": "Find publications by ISSN"}, "icon": "search", "targetParameter": "issn"},
             "description": { "zh": "通过期刊 ISSN 查询该期刊发表的文章", "en": "Search articles published in a journal by ISSN." },
             "parameters": [
                 {

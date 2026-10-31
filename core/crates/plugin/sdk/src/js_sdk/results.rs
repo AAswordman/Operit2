@@ -379,6 +379,8 @@ pub enum TerminalType {
     Powershell,
     #[serde(rename = "bash")]
     Bash,
+    #[serde(rename = "zsh")]
+    Zsh,
     #[serde(rename = "shell")]
     Shell,
 }
@@ -388,6 +390,7 @@ impl TerminalType {
         match self {
             Self::Powershell => "powershell",
             Self::Bash => "bash",
+            Self::Zsh => "zsh",
             Self::Shell => "shell",
         }
     }
@@ -405,6 +408,7 @@ impl TryFrom<&str> for TerminalType {
         match value {
             "powershell" => Ok(Self::Powershell),
             "bash" => Ok(Self::Bash),
+            "zsh" => Ok(Self::Zsh),
             "shell" => Ok(Self::Shell),
             _ => Err(format!("invalid terminal type: {value}")),
         }
@@ -3079,5 +3083,29 @@ impl WebSocketResultData {
             Self::Send => "WebSocket message sent".into(),
             Self::Close => "WebSocket closed".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod terminal_type_tests {
+    use super::TerminalType;
+
+    #[test]
+    fn terminal_type_literals_round_trip() {
+        for literal in ["powershell", "bash", "zsh", "shell"] {
+            let terminal_type = TerminalType::try_from(literal).unwrap();
+            assert_eq!(terminal_type.as_str(), literal);
+            assert_eq!(terminal_type.to_string(), literal);
+            let json = serde_json::to_string(&terminal_type).unwrap();
+            assert_eq!(json, format!("\"{literal}\""));
+            let decoded: TerminalType = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded.as_str(), literal);
+        }
+    }
+
+    #[test]
+    fn unknown_terminal_type_is_rejected() {
+        assert!(TerminalType::try_from("unknown-shell").is_err());
+        assert!(serde_json::from_str::<TerminalType>("\"unknown-shell\"").is_err());
     }
 }

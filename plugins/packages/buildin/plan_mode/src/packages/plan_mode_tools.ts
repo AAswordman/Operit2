@@ -13,6 +13,7 @@
     "tools": [
         {
             "name": "get_plan",
+            "display": {"label": {"zh": "读取当前计划", "en": "Read current plan"}, "icon": "file"},
             "description": {
                 "zh": "读取当前计划内容。",
                 "en": "Read the current plan content."
@@ -21,6 +22,7 @@
         },
         {
             "name": "complete_plan",
+            "display": {"label": {"zh": "完成当前计划", "en": "Complete current plan"}, "icon": "edit"},
             "description": {
                 "zh": "在所有计划项都真正完成后，完成当前计划。",
                 "en": "Complete the current plan after every planned item is truly done."

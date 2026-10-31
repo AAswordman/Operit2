@@ -1,0 +1,16 @@
+group 'dev.floating_windows'
+version '1.0'
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath 'com.android.tools.build:gradle:8.13.1' }
+}
+apply plugin: 'com.android.library'
+android {
+    namespace 'dev.floating_windows'
+    compileSdk 36
+    defaultConfig { minSdk 23 }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

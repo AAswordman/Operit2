@@ -108,6 +108,8 @@ dependencies:
     path: ../thirdparty/liquid_glass_widgets
   desktop_drop: ^0.7.1
   desktop_multi_window: ^0.3.0
+  floating_windows:
+    path: ../thirdparty/floating_windows
   desktop_widgets:
     path: ../thirdparty/desktop_widgets
   operit_keep_alive:
@@ -139,6 +141,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 dependency_overrides:
+  desktop_multi_window:
+    path: ../thirdparty/desktop_multi_window
   webview_all_linux:
     path: ../thirdparty/webview_all_linux
   image_picker_ios:

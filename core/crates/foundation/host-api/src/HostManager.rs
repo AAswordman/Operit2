@@ -145,6 +145,7 @@ pub struct HostManager {
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
     pub browserAutomationHost: Option<Arc<dyn BrowserAutomationHost>>,
     pub browserSessionHost: Option<Arc<dyn BrowserSessionHost>>,
+    pub floatingWindowHost: Option<Arc<dyn crate::FloatingWindowHost>>,
     pub composeDslWebViewHost: Option<Arc<dyn ComposeDslWebViewHost>>,
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub webSocketHost: Option<Arc<dyn WebSocketHost>>,
@@ -188,6 +189,7 @@ impl HostManager {
             webVisitHost: None,
             browserAutomationHost: None,
             browserSessionHost: None,
+            floatingWindowHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
@@ -231,6 +233,7 @@ impl HostManager {
             webVisitHost: None,
             browserAutomationHost: None,
             browserSessionHost: None,
+            floatingWindowHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
@@ -277,6 +280,7 @@ impl HostManager {
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
             browserSessionHost: None,
+            floatingWindowHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
@@ -324,6 +328,7 @@ impl HostManager {
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
             browserSessionHost: None,
+            floatingWindowHost: None,
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
@@ -382,6 +387,7 @@ impl HostManager {
             webVisitHost: Some(webVisitHost),
             browserAutomationHost: None,
             browserSessionHost: None,
+            floatingWindowHost: None,
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             webSocketHost: None,
@@ -643,6 +649,14 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withPluginSdkIpcHost(mut self, pluginSdkIpcHost: Arc<dyn PluginSdkIpcHost>) -> Self {
         self.pluginSdkIpcHost = Some(pluginSdkIpcHost);
+        self
+    }
+}
+
+impl HostManager {
+    /// Registers the owner responsible for creating and controlling floating surfaces.
+    pub fn withFloatingWindowHost(mut self, host: Arc<dyn crate::FloatingWindowHost>) -> Self {
+        self.floatingWindowHost = Some(host);
         self
     }
 }

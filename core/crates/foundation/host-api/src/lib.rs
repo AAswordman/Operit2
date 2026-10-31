@@ -2943,6 +2943,16 @@ where
     }
 }
 
+/// Owns application-independent floating surfaces requested by authenticated plugins.
+pub trait FloatingWindowHost: Send + Sync {
+    fn command(&self, request: Value) -> HostResult<Value>;
+}
+
+impl<F> FloatingWindowHost for F
+where F: Fn(Value) -> HostResult<Value> + Send + Sync {
+    fn command(&self, request: Value) -> HostResult<Value> { self(request) }
+}
+
 pub trait SystemOperationHost: Send + Sync {
     fn getSystemLanguageCode(&self) -> HostResult<String>;
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()>;

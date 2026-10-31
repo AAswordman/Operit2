@@ -72,6 +72,14 @@ part 'compose_dsl/image.dart';
 part 'compose_dsl/pager.dart';
 part 'compose_dsl/presentation_nodes.dart';
 
+/// Allows a secondary surface to drain its session before destroying its engine.
+class ToolPkgUiSessionController {
+  Future<void> Function()? _close;
+  Future<void> close() async {
+    await _close?.call();
+  }
+}
+
 class ToolPkgUiLauncherScreen extends StatefulWidget {
   /// Creates a routable or embedded screen using the existing Compose host.
   const ToolPkgUiLauncherScreen({
@@ -79,6 +87,7 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     required this.clients,
     required this.plugin,
     this.initialRouteId,
+    this.sessionController,
     this.embeddedScreenPath,
     this.showLauncherChrome = true,
     this.showLoadingIndicator = true,
@@ -98,6 +107,7 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
   final String? embeddedScreenPath;
   final bool showLauncherChrome;
   final bool showLoadingIndicator;
+  final ToolPkgUiSessionController? sessionController;
 
   /// Places session-owned content into the embedding surface.
   final ToolPkgUiContentBuilder contentBuilder;
@@ -220,6 +230,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     if (const bool.fromEnvironment('OPERIT_PROFILE_PLUGIN_UI')) {
       _firstTreeWatch.start();
     }
+    widget.sessionController?._close = _closeSession;
     ComposeDslWebViewHostRegistry.ensureHostInteractionRegistered();
     PluginHotReload.revision.addListener(_reloadDevelopmentPackage);
   }
@@ -851,9 +862,23 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     }
   }
 
+  /// Stops new render ownership and awaits stream/engine release before host teardown.
+  Future<void> _closeSession() async {
+    _reloading = true;
+    _routeLoadGeneration++;
+    _actionOwnerGeneration++;
+    await _renderTail;
+    final executionContext = _activeExecutionContext;
+    _activeExecutionContext = null;
+    if (executionContext != null) {
+      await _releaseExecutionContext(executionContext);
+    }
+  }
+
   /// Releases the active ToolPkg context when this page leaves the widget tree.
   @override
   void dispose() {
+    widget.sessionController?._close = null;
     PluginHotReload.revision.removeListener(_reloadDevelopmentPackage);
     _programStore.dispose();
     _routeLoadGeneration += 1;

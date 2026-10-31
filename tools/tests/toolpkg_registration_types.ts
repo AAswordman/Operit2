@@ -150,3 +150,21 @@ function verifyRegistrationNamespace(): void {
 }
 
 void verifyRegistrationNamespace;
+
+/** Keeps presentation services grouped separately from runtime primitives. */
+function verifyFloatingWindowNamespace(): void {
+  const ui: ToolPkg.UiApi = ToolPkg.ui;
+  const windows: ToolPkg.FloatingWindowApi = ui.floatingWindows;
+  const opened: Promise<ToolPkg.FloatingWindowInfo> = windows.open({
+    id: "pet", route: "toolpkg:com.example.pet:ui:pet",
+    options: { width: 208, height: 240, clickThrough: false },
+  });
+  void opened;
+  void windows.capabilities();
+  void ToolPkg.ipc;
+  void ToolPkg.wasm;
+  // @ts-expect-error Floating windows belong to the UI presentation domain.
+  void ToolPkg.windows;
+  // @ts-expect-error The UI domain does not expose a generic window manager.
+  void ui.windows;
+}

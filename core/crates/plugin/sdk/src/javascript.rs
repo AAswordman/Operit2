@@ -310,6 +310,11 @@ pub trait JsExecutionHost: Send + Sync {
     /// Opens one Compose DSL file picker through the embedding application's host UI.
     fn open_compose_file_picker(&self, payload: &Value) -> Result<Value, String>;
 
+    /// Controls a floating surface with identity supplied by the authenticated engine.
+    fn floating_window_command(&self, _payload: &Value) -> Result<Value, String> {
+        Err("Floating windows are unavailable on this host".into())
+    }
+
     /// Saves a UTF-8 export through the embedding application's file selector.
     fn save_compose_file(&self, payload: &Value) -> Result<Value, String>;
 

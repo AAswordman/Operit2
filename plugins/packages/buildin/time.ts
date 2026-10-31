@@ -15,6 +15,7 @@
   tools: [
     {
       name: get_time
+      display: {"label": {"zh": "获取当前时间", "en": "Get current time"}, "icon": "time"}
       description: {
         zh: "获取当前时间。当使用此包时，AI已经自动获取了当前的时间信息。"
         en: "Get the current time. When using this package, the AI may already have the current time context."
@@ -23,6 +24,7 @@
     },
     {
       name: format_time
+      display: {"label": {"zh": "格式化时间", "en": "Format time"}, "icon": "time"}
       description: {
         zh: "格式化时间。提供各种时间格式化选项。"
         en: "Format time. Provides various time formatting options."

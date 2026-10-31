@@ -280,7 +280,7 @@
       }
     }
   },
-  "desktopWidgetsCount": "桌面组件 {count}",
+  "desktopWidgetsCount": "桌面小部件 {count}",
   "@desktopWidgetsCount": {
     "placeholders": {
       "count": {

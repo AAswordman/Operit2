@@ -1575,6 +1575,34 @@ impl JsExecutionHost for AIToolHandler {
             .map_err(|error| error.to_string())
     }
 
+    /// Authenticates surface ownership and resolves only this package's enabled UI routes.
+    fn floating_window_command(&self, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let owner = self.authenticatedExtensionOwner.as_ref()
+            .ok_or("Floating windows require an authenticated plugin engine")?;
+        let mut request = payload.as_object().cloned().ok_or("Expected a window request object")?;
+        let operation = request.get("operation").and_then(|v| v.as_str()).unwrap_or("");
+        if !["capabilities", "requestPermission", "open", "update", "show", "hide", "close", "list"].contains(&operation) {
+            return Err("Unknown floating window operation".into());
+        }
+        let manager = self.getOrCreatePackageManager();
+        let registry = manager.lock().map_err(|_| "Package registry is unavailable")?;
+        let plugin = registry.getEnabledToolPkgContainerRuntimes().into_iter()
+            .find(|plugin| &plugin.packageName == owner).ok_or("Floating window owner is disabled or removed")?;
+        if operation == "open" {
+            let route_id = request.get("route").and_then(|v| v.as_str()).ok_or("Window route is required")?;
+            if !registry.getToolPkgUiRoutes("compose_dsl", false).iter()
+                .any(|route| &route.containerPackageName == owner && route.routeId == route_id) {
+                return Err("Floating window route must belong to the executing enabled package".into());
+            }
+            request.insert("plugin".into(), serde_json::to_value(plugin).map_err(|e| e.to_string())?);
+        }
+        drop(registry);
+        request.insert("packageName".into(), serde_json::json!(owner));
+        self.getContext().floatingWindowHost.as_ref()
+            .ok_or("Floating window host is not registered")?
+            .command(serde_json::Value::Object(request)).map_err(|error| error.to_string())
+    }
+
     /// Validates and forwards an export to the registered host file-save owner.
     fn save_compose_file(&self, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
         let request = operit_host_api::ComposeDslFileSaveRequest::fromValue(payload.clone())
@@ -2309,6 +2337,28 @@ mod tests {
         }
         let manager = RuntimePackageManager::readySnapshot(shared).await.unwrap();
         assert!(manager.getToolPkgLoadIssues().is_empty(), "{:?}", manager.getToolPkgLoadIssues());
+        // Window requests authenticate the bound engine even when JavaScript
+        // supplies a forged package name; foreign/unregistered UI routes fail.
+        fixture.handler.inner.lock().unwrap().context.floatingWindowHost = Some(Arc::new(
+            |request: serde_json::Value| Ok(request),
+        ));
+        assert!(fixture.handler.floating_window_command(&serde_json::json!({"operation":"list"}))
+            .unwrap_err().contains("authenticated"));
+        let bound = fixture.handler.for_toolpkg_execution_context(
+            &operit_plugin_sdk::javascript::ToolPkgExecutionContext {
+                context_key: "window-ownership-test".into(),
+                api_version: "2.0.0".into(),
+                text_resource_host: Arc::new(manager.toolPkgManager().clone()),
+                container_package_name: "configuration_probe".into(),
+            },
+        ).unwrap();
+        let response = bound.floating_window_command(&serde_json::json!({
+            "operation":"list", "packageName":"foreign-plugin",
+        })).unwrap();
+        assert_eq!(response["packageName"], "configuration_probe");
+        assert!(bound.floating_window_command(&serde_json::json!({
+            "operation":"open", "id":"pet", "route":"toolpkg:foreign:ui:pet",
+        })).unwrap_err().contains("executing enabled package"));
         for (mode, expected_error) in [("ready", None), ("error", Some("missing provider")), ("loop", Some("timed out")), ("ready", None)] {
             let started = std::time::Instant::now();
             let result = manager.invokeToolPkgPublicApiWithTimeoutMillis(

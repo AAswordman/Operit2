@@ -1399,3 +1399,7 @@ PackageBuilder 的示例路径为 `examples/packages/`，不是旧版根目录 `
 - 支持多语言
 - 提供 Compose DSL UI 框架
 
+
+## 桌面小部件与通用悬浮窗
+
+`ToolPkg.registerDesktopWidget` 是桌面小部件注册接口。桌宠和其他实时悬浮工具使用独立的 `ToolPkg.ui.floatingWindows` 窗口控制接口，内容复用已注册的 Compose UI 路由。方法、平台能力、权限与生命周期见 [通用悬浮窗](../FLOATING_WINDOWS.md)。

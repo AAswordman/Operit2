@@ -18,6 +18,7 @@ import '../proxy/generated/CoreProxyModels.g.dart';
 import '../web_visit/WebVisitBridge.dart';
 import '../web_visit/WebVisitModels.dart';
 import 'AppToastController.dart';
+import 'RuntimeFloatingWindowController.dart';
 import 'ComposeDslFilePickerService.dart';
 import 'ComposeDslFileSaveService.dart';
 import 'ComposeWebViewControllerBridge.dart';
@@ -543,6 +544,16 @@ class RuntimeHostInteractionSubscriber {
   static Future<RuntimeHostInteractionResponse> _handleSystemOperation(
     RuntimeHostInteractionSystemOperationPayload payload,
   ) async {
+    if (payload.operation == 'floating_window') {
+      final result = await RuntimeFloatingWindowController.command(
+        (jsonDecode(payload.paramsJson) as Map).cast<String, Object?>(),
+      );
+      return _response(
+        systemOperation: RuntimeHostInteractionSystemOperationResponse(
+          resultJson: jsonEncode(result),
+        ),
+      );
+    }
     if (payload.operation == 'toast') {
       return _handleToastOperation(payload);
     }
