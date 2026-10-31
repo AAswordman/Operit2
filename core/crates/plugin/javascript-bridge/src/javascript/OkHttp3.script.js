@@ -102,13 +102,18 @@ class OkHttpClient {
             url: modifiedRequest.url,
             method: modifiedRequest.method,
             headers: JSON.stringify(modifiedRequest.headers),
-            body: modifiedRequest.body,
             body_type: modifiedRequest.bodyType || 'text',
             follow_redirects: this._config.followRedirects,
             connect_timeout: Math.max(1, Math.ceil((this._config.timeouts.connect || 10000) / 1000)),
             read_timeout: Math.max(1, Math.ceil((this._config.timeouts.read || 30000) / 1000)),
             write_timeout: Math.max(1, Math.ceil((this._config.timeouts.write || 30000) / 1000))
         };
+
+        // The structured tool-request walker rejects undefined values, so
+        // bodyless requests must omit the field instead of carrying undefined.
+        if (modifiedRequest.body !== undefined && modifiedRequest.body !== null) {
+            params.body = modifiedRequest.body;
+        }
 
         if (options && typeof options.onIntermediateResult === 'function') {
             params.stream = true;
