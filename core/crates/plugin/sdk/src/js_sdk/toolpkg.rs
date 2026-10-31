@@ -3071,6 +3071,8 @@ pub struct ToolPkgFloatingWindowOptions {
     pub clickThrough: Option<bool>,
     /// Allows the surface to accept keyboard focus; defaults to false.
     pub focusable: Option<bool>,
+    /// Moves directly in the host using pointer-down screen/window anchors; defaults to false.
+    pub draggable: Option<bool>,
 }
 /// Opens a transparent live UI surface owned by the executing plugin.
 pub struct ToolPkgFloatingWindowOpenOptions {
@@ -3114,8 +3116,8 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     fn requestPermission(&self) -> JsFuture<bool>;
     /// Creates a transparent live route session. IDs are local to the executing plugin.
     fn open(&self, options: ToolPkgFloatingWindowOpenOptions) -> JsFuture<ToolPkgFloatingWindowInfo>;
-    /// Applies a partial geometry/interaction update.
-    fn update(&self, id: String, options: ToolPkgFloatingWindowOptions) -> JsFuture<ToolPkgFloatingWindowInfo>;
+    /// Applies partial window options and shallow-merges optional UI state without recreating the session.
+    fn update(&self, id: String, options: ToolPkgFloatingWindowOptions, state: Option<ToolPkgJsonObject>) -> JsFuture<ToolPkgFloatingWindowInfo>;
     /// Shows an owned window without resetting its UI session.
     fn show(&self, id: String) -> JsFuture<ToolPkgFloatingWindowInfo>;
     /// Hides an owned window while retaining its UI session.

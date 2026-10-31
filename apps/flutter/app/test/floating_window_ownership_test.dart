@@ -22,6 +22,7 @@ void main() {
           final args = call.arguments as Map;
           invoked.add(args);
           if (args['method'] == 'ready') return true;
+          if (args['method'] == 'getBounds') return {'x': 100, 'y': 120, 'width': 240, 'height': 240};
           if (args['method'] == 'close') live.remove(args['id']);
           return null;
         default: throw StateError('Unexpected host operation: ${call.method}');
@@ -37,7 +38,7 @@ void main() {
       final alpha = await command('alpha', 'list') as List;
       expect(alpha.single['route'], 'route-alpha');
       await command('beta', 'hide', {'id': 'pet'});
-      expect(invoked.last, {'id': 'host-2', 'method': 'hide', 'arguments': null});
+      expect(invoked.where((call) => call['method'] == 'hide').last, {'id': 'host-2', 'method': 'hide', 'arguments': null});
       await expectLater(command('gamma', 'close', {'id': 'pet'}), throwsStateError);
       await command('alpha', 'close', {'id': 'pet'});
       expect(await command('alpha', 'list'), isEmpty);

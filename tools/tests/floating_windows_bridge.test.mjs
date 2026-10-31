@@ -25,6 +25,7 @@ test('UI floatingWindows namespace sends structured commands without modifying r
   await vm.runInContext(`(async () => {
     await ToolPkg.ui.floatingWindows.open({id:'pet', route:'pet-route', options:{width:64}, operation:'forged'});
     await ToolPkg.ui.floatingWindows.update('pet', {x:-20, clickThrough:true});
+    await ToolPkg.ui.floatingWindows.update('pet', {width:128}, {settings:{animated:false}});
     await ToolPkg.ui.floatingWindows.hide('pet'); await ToolPkg.ui.floatingWindows.show('pet');
     await ToolPkg.ui.floatingWindows.close('pet'); await ToolPkg.ui.floatingWindows.list();
     await ToolPkg.ui.floatingWindows.capabilities(); await ToolPkg.ui.floatingWindows.requestPermission();
@@ -32,6 +33,7 @@ test('UI floatingWindows namespace sends structured commands without modifying r
   assert.deepEqual(calls, [
     {id:'pet',route:'pet-route',options:{width:64},operation:'open'},
     {id:'pet',options:{x:-20,clickThrough:true},operation:'update'},
+    {id:'pet',options:{width:128},state:{settings:{animated:false}},operation:'update'},
     {id:'pet',operation:'hide'}, {id:'pet',operation:'show'}, {id:'pet',operation:'close'},
     {operation:'list'}, {operation:'capabilities'}, {operation:'requestPermission'},
   ]);

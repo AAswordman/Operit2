@@ -32,10 +32,11 @@ await ToolPkg.ui.floatingWindows.open({
     alwaysOnTop: true,
     clickThrough: false,
     focusable: false,
+    draggable: true,
   },
 });
 
-await ToolPkg.ui.floatingWindows.update("pet", { x: 180, y: 120 });
+await ToolPkg.ui.floatingWindows.update("pet", { width: 240 }, { mood: "happy" });
 await ToolPkg.ui.floatingWindows.hide("pet");
 await ToolPkg.ui.floatingWindows.show("pet");
 const ownedWindows = await ToolPkg.ui.floatingWindows.list();
@@ -45,7 +46,9 @@ await ToolPkg.ui.floatingWindows.close("pet");
 - `id` 是插件内的窗口 ID，长度为 1–128，不能有首尾空白。同一插件重复打开同一个 ID 会报错；不同插件可以使用相同 ID。每个插件最多同时拥有 16 个窗口。
 - `route` 必须是当前启用插件注册的完整 Compose UI 路由，不是注册项的短 `id`。`state` 是该 UI 会话的初始状态对象。
 - 默认大小为 `240 × 240`，透明、无边框、置顶、不抢键盘焦点。宽高范围为 16–4096 逻辑像素。`x/y` 在系统范围使用主屏幕左上角坐标，允许负数；应用范围使用应用视图左上角坐标，显示时约束在当前视图内，随视图尺寸变化重新约束。
-- `update` 只更新提供的字段，支持位置、大小、置顶、整窗输入穿透和键盘焦点。隐藏、显示和更新窗口不重建 UI 会话。
+- `update(id, options, state?)` 只更新提供的窗口选项；可选的第三个参数按顶层键合并 UI 状态，并在原有 UI 会话中重新渲染。隐藏、显示和更新窗口不重建 UI 会话。
+- `draggable: true` 由宿主处理整窗拖动：按下时记录指针屏幕坐标和窗口位置，移动时使用「窗口起点 + 当前屏幕坐标 − 按下屏幕坐标」，松手结束。系统窗口在原生输入线程移动，应用内窗口在 Flutter 宿主直接移动，中途不经过 JS/Rust，也不累加局部 delta。默认不启用。
+- `list()` 读取宿主当前几何信息，包含拖动后的实际位置。修改外观时省略 `x/y` 可保留当前位置。
 - `clickThrough` 是整个矩形窗口的输入穿透，不是按透明像素自动计算点击区域。开启后，插件需要从其他 UI 或运行时入口恢复交互。
 - `capabilities` 中的 `alwaysOnTop` 表示是否可切换置顶状态；Android 系统悬浮窗固定在普通应用之上，应用内悬浮层固定在应用内容之上；这两种情况该字段为 `false`，且 `alwaysOnTop: false` 会报错。
 - `scope` 为 `system`、`application` 或 `unsupported`；`systemOverlay` 和 `applicationOverlay` 分别报告系统和应用层支持。应用范围无需系统悬浮授权，`requestPermission()` 直接返回 `true`；Android 授权仍必须由用户操作触发。

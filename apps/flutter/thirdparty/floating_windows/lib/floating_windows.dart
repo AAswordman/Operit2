@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 
 part 'src/application_windows.dart';
+part 'src/drag_surface.dart';
 
 /// A partial update, expressed in logical pixels. Input passes through the whole
 /// rectangle when clickThrough is true; alpha-based hit testing is not implied.
@@ -18,9 +20,10 @@ class FloatingWindowOptions {
     this.alwaysOnTop,
     this.clickThrough,
     this.focusable,
+    this.draggable,
   });
   final double? x, y, width, height;
-  final bool? alwaysOnTop, clickThrough, focusable;
+  final bool? alwaysOnTop, clickThrough, focusable, draggable;
 
   factory FloatingWindowOptions.fromMap(Map<String, Object?> value) {
     const keys = {
@@ -31,6 +34,7 @@ class FloatingWindowOptions {
       'alwaysOnTop',
       'clickThrough',
       'focusable',
+      'draggable',
     };
     if (value.keys.any((key) => !keys.contains(key))) {
       throw ArgumentError('Unknown floating window option');
@@ -41,7 +45,12 @@ class FloatingWindowOptions {
         throw ArgumentError('$key must be a finite number');
       }
     }
-    for (final key in ['alwaysOnTop', 'clickThrough', 'focusable']) {
+    for (final key in [
+      'alwaysOnTop',
+      'clickThrough',
+      'focusable',
+      'draggable',
+    ]) {
       if (value[key] != null && value[key] is! bool) {
         throw ArgumentError('$key must be a boolean');
       }
@@ -54,6 +63,7 @@ class FloatingWindowOptions {
       alwaysOnTop: value['alwaysOnTop'] as bool?,
       clickThrough: value['clickThrough'] as bool?,
       focusable: value['focusable'] as bool?,
+      draggable: value['draggable'] as bool?,
     );
   }
 
@@ -77,6 +87,7 @@ class FloatingWindowOptions {
       if (alwaysOnTop != null) 'alwaysOnTop': alwaysOnTop,
       if (clickThrough != null) 'clickThrough': clickThrough,
       if (focusable != null) 'focusable': focusable,
+      if (draggable != null) 'draggable': draggable,
     };
   }
 
@@ -89,6 +100,7 @@ class FloatingWindowOptions {
     alwaysOnTop: true,
     clickThrough: false,
     focusable: false,
+    draggable: false,
   );
 }
 
@@ -299,6 +311,8 @@ class FloatingWindows {
       await application();
       return;
     }
+    final content = ValueNotifier<FloatingWindowLaunch>(launch);
+    final dragPointers = <int>{};
     var ready = false;
     Object? startupError;
     var closing = false;
@@ -341,12 +355,37 @@ class FloatingWindows {
         return null;
       }
       if (closing) throw StateError('Floating window is closing');
+      if (call.method == 'update') {
+        final args = (call.arguments as Map).cast<String, Object?>();
+        final payload = args['payload'] as Map?;
+        final options = Map<String, Object?>.of(args)..remove('payload');
+        await channel.invokeMethod<void>('update', options);
+        final previous = content.value;
+        content.value = FloatingWindowLaunch(
+          payload: {
+            ...previous.payload,
+            if (payload != null) ...payload.cast<String, Object?>(),
+          },
+          options: previous.options.merge(
+            FloatingWindowOptions.fromMap(options),
+          ),
+        );
+        return null;
+      }
       return channel.invokeMethod<Object?>(call.method, call.arguments);
     }
 
-    if (_android) {
-      channel.setMethodCallHandler(receive);
-    } else {
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'dragStarted') {
+        for (final pointer in dragPointers.toList()) {
+          GestureBinding.instance.cancelPointer(pointer);
+        }
+        return null;
+      }
+      if (_android) return receive(call);
+      throw MissingPluginException();
+    });
+    if (!_android) {
       await (await WindowController.fromCurrentEngine()).setWindowMethodHandler(
         receive,
       );
@@ -356,7 +395,17 @@ class FloatingWindows {
         'role': _kind,
         ...launch.options.toMap(),
       });
-      runApp(windowBuilder(launch));
+      runApp(
+        Listener(
+          onPointerDown: (event) => dragPointers.add(event.pointer),
+          onPointerUp: (event) => dragPointers.remove(event.pointer),
+          onPointerCancel: (event) => dragPointers.remove(event.pointer),
+          child: ValueListenableBuilder<FloatingWindowLaunch>(
+            valueListenable: content,
+            builder: (_, current, _) => windowBuilder(current),
+          ),
+        ),
+      );
       await WidgetsBinding.instance.endOfFrame;
       await channel.invokeMethod<void>('show');
       ready = true;
@@ -401,8 +450,17 @@ class FloatingWindow {
     ).invokeMethod<Object?>(method, arguments);
   }
 
-  Future<void> update(FloatingWindowOptions options) async =>
-      _command('update', options.toMap());
+  Future<void> update(
+    FloatingWindowOptions options, {
+    Map<String, Object?>? payload,
+  }) async => _command('update', {
+    ...options.toMap(),
+    if (payload != null) 'payload': payload,
+  });
+  Future<FloatingWindowOptions> getBounds() async =>
+      FloatingWindowOptions.fromMap(
+        Map<String, Object?>.from((await _command('getBounds')) as Map),
+      );
   Future<void> show() async => _command('show');
   Future<void> hide() async => _command('hide');
 

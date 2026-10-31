@@ -21,6 +21,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import 'package:operit2/ui/window/FloatingWindowApp.dart';
+import 'package:operit2/ui/features/packages/screens/ComposeDslImageSource.dart';
 
 const _package = 'com.operit.deepseek_dafeiyu';
 const _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
@@ -32,6 +33,7 @@ final _petCapture = GlobalKey();
 const _applicationScope = bool.fromEnvironment(
   'OPERIT_FLOATING_SMOKE_APPLICATION',
 );
+const _pointerSmoke = bool.fromEnvironment('OPERIT_FLOATING_SMOKE_POINTER');
 var _petProbeScheduled = false;
 
 Widget _buildPet(FloatingWindowLaunch launch) {
@@ -63,7 +65,9 @@ bool _hasText(String text) => _elements().any(
 );
 
 Future<void> _until(String description, FutureOr<bool> Function() ready) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 45));
+  final deadline = DateTime.now().add(
+    Duration(seconds: _pointerSmoke ? 180 : 45),
+  );
   while (!await ready()) {
     if (DateTime.now().isAfter(deadline)) {
       final text = _elements()
@@ -150,9 +154,37 @@ Future<void> _checkPet() async {
     gestures.first.onDoubleTap!();
     await _until('feeding state from JavaScript', () => _hasText('小鱼干！再来一份！'));
     await _screenshot('pet-feeding', capture: _petCapture);
+    final sessionElement = _elements(
+      _petCapture.currentContext! as Element,
+    ).firstWhere((element) => element.widget is ToolPkgUiLauncherScreen);
     await File(
       '${_root.path}/pet-passed',
     ).writeAsString('decoded image; feeding action; rerender');
+    await _until('live settings size and static sprite', () {
+      final context = _petCapture.currentContext!;
+      final image = _elements(
+        context as Element,
+      ).map((e) => e.widget).whereType<Image>();
+      return context.size!.width == 256 &&
+          image.any(
+            (widget) =>
+                widget.image is ComposeDslVfsImage &&
+                (widget.image as ComposeDslVfsImage).path.endsWith(
+                  '/still.png',
+                ),
+          );
+    });
+    if (!identical(
+      _elements(
+        _petCapture.currentContext! as Element,
+      ).firstWhere((element) => element.widget is ToolPkgUiLauncherScreen),
+      sessionElement,
+    )) {
+      throw StateError('Settings recreated the live UI session');
+    }
+    await File(
+      '${_root.path}/live-settings-passed',
+    ).writeAsString('same session; width=256; static image');
     debugPrint('DAFEIYU_PET_SMOKE_PASSED');
   } catch (error, stack) {
     await File('${_root.path}/pet-failed').writeAsString('$error\n$stack');
@@ -258,6 +290,108 @@ Future<void> main(List<String> arguments) async {
           }
           return File('${_root.path}/pet-passed').exists();
         });
+        if (_pointerSmoke) {
+          debugPrint('DAFEIYU_DRAG_READY root=${_root.path}');
+          await _until(
+            'native forward drag follows screen pointer 1:1',
+            () async {
+              final options =
+                  ((await _windows()).single as Map)['options'] as Map;
+              return ((options['x'] as num) - 300).abs() <= 1 &&
+                  ((options['y'] as num) - 200).abs() <= 1;
+            },
+          );
+          debugPrint('DAFEIYU_DRAG_FORWARD_PASSED');
+          await _until(
+            'native reverse drag uses a fresh pointer-down anchor',
+            () async {
+              final options =
+                  ((await _windows()).single as Map)['options'] as Map;
+              return ((options['x'] as num) - 140).abs() <= 1 &&
+                  ((options['y'] as num) - 240).abs() <= 1;
+            },
+          );
+          debugPrint('DAFEIYU_DRAG_REVERSE_PASSED');
+        } else {
+          await RuntimeFloatingWindowController.command({
+            'packageName': _package,
+            'operation': 'update',
+            'id': 'dafeiyu',
+            'options': {'x': 330, 'y': 140},
+          });
+        }
+        final positionBefore =
+            ((await _windows()).single as Map)['options'] as Map;
+        final identityBefore = await FloatingWindows.liveIds();
+        for (final element in _elements().toList()) {
+          if (element is StatefulElement && element.state is ScrollableState) {
+            final position = (element.state as ScrollableState).position;
+            if (position.hasContentDimensions) {
+              position.jumpTo(position.maxScrollExtent);
+            }
+          }
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        final slider = _elements()
+            .map((e) => e.widget)
+            .whereType<Slider>()
+            .firstWhere((widget) => widget.onChanged != null);
+        slider.onChanged!(256);
+        await _until(
+          'size autosaved and applied without clicking Apply',
+          () async =>
+              (((await _windows()).single as Map)['options'] as Map)['width'] ==
+              256,
+        );
+        // The settings row owns exactly one switch, identified by its label.
+        final animationRow = _elements().firstWhere(
+          (e) =>
+              e.widget is Row &&
+              _elements(e).any(
+                (child) =>
+                    child.widget is Text &&
+                    (child.widget as Text).data == '播放动画',
+              ),
+        );
+        final animation = _elements(
+          animationRow,
+        ).map((e) => e.widget).whereType<Switch>().single;
+        animation.onChanged!(false);
+        await _until('pet verified live settings', () async {
+          final failure = File('${_root.path}/pet-failed');
+          if (await failure.exists()) {
+            throw StateError(await failure.readAsString());
+          }
+          return File('${_root.path}/live-settings-passed').exists();
+        });
+        final throughRow = _elements().firstWhere(
+          (e) =>
+              e.widget is Row &&
+              _elements(e).any(
+                (child) =>
+                    child.widget is Text &&
+                    (child.widget as Text).data == '鼠标 / 触摸穿透',
+              ),
+        );
+        _elements(
+          throughRow,
+        ).map((e) => e.widget).whereType<Switch>().single.onChanged!(true);
+        await _until(
+          'input passthrough applied live',
+          () async =>
+              (((await _windows()).single as Map)['options']
+                  as Map)['clickThrough'] ==
+              true,
+        );
+        final after = ((await _windows()).single as Map)['options'] as Map;
+        if (after['x'] != positionBefore['x'] ||
+            after['y'] != positionBefore['y'] ||
+            !setEquals(await FloatingWindows.liveIds(), identityBefore)) {
+          throw StateError(
+            'Live settings reset position or recreated the native window',
+          );
+        }
+        debugPrint('DAFEIYU_LIVE_SETTINGS_PASSED');
         await _press('隐藏');
         await _until('hidden window retained', () async {
           final windows = await _windows();

@@ -74,3 +74,16 @@ is an experimental local package, not a published release.
 
 The local desktop_multi_window 0.3.1 fork preserves its upstream Apache-2.0 license;
 see its OPERIT_PATCHES.md for owner-initiated close and transparent-visual changes.
+
+
+`FloatingWindowOptions(draggable: true)` enables host-owned whole-surface dragging.
+Native hosts record the pointer screen position and window origin on down, then
+set the window origin to the original origin plus the latest absolute screen
+displacement until release. Local coordinates and accumulated deltas are never
+used. The application renderer uses the same anchors in its shared Flutter view.
+Recognized drags cancel click recognition.
+
+`window.update(options, payload: patch)` shallow-merges content data in the
+existing surface and calls the builder with a new launch value. The engine and
+widget identity are preserved. `window.getBounds()` reads actual host geometry,
+including pointer-driven movement.

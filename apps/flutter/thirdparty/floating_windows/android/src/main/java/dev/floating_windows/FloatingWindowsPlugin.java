@@ -11,6 +11,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,8 +48,48 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         FlutterView view;
         WindowManager manager;
         WindowManager.LayoutParams params;
-        boolean attached, configured, closed;
+        boolean attached, configured, closed, draggable, pointerDown, dragging;
+        float downX, downY;
+        int windowX, windowY;
         float opacity = 1.0f;
+    }
+    private final class DragFlutterView extends FlutterView {
+        private final Surface surface;
+        DragFlutterView(Context context, FlutterTextureView texture, Surface surface) {
+            super(context, texture); this.surface = surface;
+        }
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
+            Surface s = surface;
+            if (!s.configured || !s.draggable) return super.dispatchTouchEvent(event);
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                s.pointerDown = true; s.dragging = false;
+                s.downX = event.getRawX(); s.downY = event.getRawY();
+                s.windowX = s.params.x; s.windowY = s.params.y;
+            }
+            if (event.getPointerCount() != 1 || action == MotionEvent.ACTION_CANCEL) {
+                boolean consumed = s.dragging;
+                s.pointerDown = false; s.dragging = false;
+                return consumed || super.dispatchTouchEvent(event);
+            }
+            if (s.pointerDown && (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_UP)) {
+                float dx = event.getRawX() - s.downX, dy = event.getRawY() - s.downY;
+                if (!s.dragging && Math.hypot(dx, dy) >= ViewConfiguration.get(getContext()).getScaledTouchSlop()) {
+                    s.dragging = true;
+                    MotionEvent cancel = MotionEvent.obtain(event);
+                    cancel.setAction(MotionEvent.ACTION_CANCEL);
+                    super.dispatchTouchEvent(cancel); cancel.recycle();
+                }
+                if (s.dragging) {
+                    s.params.x = s.windowX + Math.round(dx); s.params.y = s.windowY + Math.round(dy);
+                    s.manager.updateViewLayout(s.view, s.params);
+                }
+                boolean consumed = s.dragging;
+                if (action == MotionEvent.ACTION_UP) { s.pointerDown = false; s.dragging = false; }
+                if (consumed) return true;
+            }
+            return super.dispatchTouchEvent(event);
+        }
     }
     @Override public void onAttachedToEngine(FlutterPluginBinding binding) {
         context = binding.getApplicationContext(); messenger = binding.getBinaryMessenger();
@@ -86,6 +128,8 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
     }
     private void apply(Surface surface, Map<?, ?> args) {
         if (!flag(args,"alwaysOnTop",true)) throw new UnsupportedOperationException("Android overlays are always above applications");
+        surface.draggable = flag(args, "draggable", surface.draggable);
+        if (!surface.draggable) { surface.pointerDown = false; surface.dragging = false; }
         float density = context.getResources().getDisplayMetrics().density;
         WindowManager.LayoutParams next = new WindowManager.LayoutParams();
         next.copyFrom(surface.params);
@@ -143,7 +187,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 surface.manager=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
                 FlutterTextureView texture = new FlutterTextureView(context);
                 texture.setOpaque(false);
-                surface.view=new FlutterView(context,texture);
+                surface.view=new DragFlutterView(context,texture,surface);
                 surface.view.setBackgroundColor(Color.TRANSPARENT);
                 surface.params=new WindowManager.LayoutParams(pixels(240),pixels(240),
                     Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
@@ -185,6 +229,13 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 }
                 if (!surface.configured) throw new IllegalStateException("Configure the floating window first");
                 switch (call.method) {
+                case "getBounds": {
+                    float density = context.getResources().getDisplayMetrics().density;
+                    Map<String,Object> bounds = new HashMap<>();
+                    bounds.put("x",surface.params.x / density); bounds.put("y",surface.params.y / density);
+                    bounds.put("width",surface.params.width / density); bounds.put("height",surface.params.height / density);
+                    result.success(bounds); return;
+                }
                 case "update": apply(surface,(Map<?,?>)call.arguments); result.success(null); return;
                 case "show": show(surface); result.success(null); return;
                 case "hide":

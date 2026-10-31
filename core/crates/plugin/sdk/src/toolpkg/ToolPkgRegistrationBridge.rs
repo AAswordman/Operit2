@@ -518,7 +518,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 capabilities: function() { return windowCommand('capabilities', {}); },
                 requestPermission: function() { return windowCommand('requestPermission', {}); },
                 open: function(options) { return windowCommand('open', options); },
-                update: function(id, options) { return windowCommand('update', {id:id, options:options}); },
+                update: function(id, options, state) { var request = {id:id, options:options}; if (state !== undefined) request.state = state; return windowCommand('update', request); },
                 show: function(id) { return windowCommand('show', {id:id}); },
                 hide: function(id) { return windowCommand('hide', {id:id}); },
                 close: function(id) { return windowCommand('close', {id:id}); },

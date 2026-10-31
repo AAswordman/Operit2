@@ -14,6 +14,12 @@ struct WidgetHost {
   guint32 time = 0;
   double root_x = 0;
   double root_y = 0;
+  bool draggable = false;
+  bool dragging = false;
+  int window_x = 0, window_y = 0;
+  FlMethodChannel* channel = nullptr;
+  guint motion_signal = 0;
+  gulong motion_hook = 0;
   guint press_signal = 0;
   guint release_signal = 0;
   gulong press_hook = 0;
@@ -60,15 +66,28 @@ gboolean PointerEvent(GSignalInvocationHint*, guint, const GValue* values, gpoin
     host->time = event->button.time;
     host->root_x = event->button.x_root;
     host->root_y = event->button.y_root;
-  } else if (event->type == GDK_BUTTON_RELEASE) {
-    host->pointer_down = false;
+    host->dragging = false;
+    gtk_window_get_position(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(host->view))), &host->window_x, &host->window_y);
   }
+  if (host->configured && host->draggable && host->pointer_down && host->button == 1 &&
+      (event->type == GDK_MOTION_NOTIFY || event->type == GDK_BUTTON_RELEASE)) {
+    double x, y; gdk_event_get_root_coords(event, &x, &y);
+    const double dx = x - host->root_x, dy = y - host->root_y;
+    if (!host->dragging && std::hypot(dx, dy) >= 4) {
+      host->dragging = true;
+      fl_method_channel_invoke_method(host->channel, "dragStarted", nullptr, nullptr, nullptr, nullptr);
+    }
+    if (host->dragging) gtk_window_move(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(host->view))),
+      host->window_x + std::lround(dx), host->window_y + std::lround(dy));
+  }
+  if (event->type == GDK_BUTTON_RELEASE) { host->pointer_down = false; host->dragging = false; }
   return TRUE;
 }
 
 /// Releases the per-view host after GTK disconnects the owning view's signals.
 void DestroyHost(gpointer data) {
   auto* host = static_cast<WidgetHost*>(data);
+  g_signal_remove_emission_hook(host->motion_signal, host->motion_hook);
   g_signal_remove_emission_hook(host->press_signal, host->press_hook);
   g_signal_remove_emission_hook(host->release_signal, host->release_hook);
   delete host;
@@ -83,6 +102,11 @@ gboolean CloseWindow(gpointer data) {
 /// Applies explicit geometry and input policy to this GTK surface.
 void Apply(WidgetHost* host, GtkWindow* window, FlValue* args) {
   if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) throw std::invalid_argument("Expected window options");
+  if (FlValue* value = fl_value_lookup_string(args, "draggable")) {
+    if (fl_value_get_type(value) != FL_VALUE_TYPE_BOOL) throw std::invalid_argument("draggable must be boolean");
+    host->draggable = fl_value_get_bool(value);
+    if (!host->draggable) { host->pointer_down = false; host->dragging = false; }
+  }
   int width, height, x, y;
   gtk_window_get_size(window, &width, &height);
   gtk_window_get_position(window, &x, &y);
@@ -132,6 +156,16 @@ void HandleMethod(FlMethodChannel*, FlMethodCall* call, gpointer data) {
     } else if (strcmp(method, "requestPermission") == 0) {
       g_autoptr(FlValue) yes = fl_value_new_bool(TRUE);
       fl_method_call_respond_success(call,yes,nullptr); return;
+    } else if (strcmp(method, "getBounds") == 0) {
+      if (!host->configured) throw std::runtime_error("Configure the floating window first");
+      int x, y, width, height;
+      gtk_window_get_position(window, &x, &y); gtk_window_get_size(window, &width, &height);
+      g_autoptr(FlValue) bounds = fl_value_new_map();
+      fl_value_set_string_take(bounds,"x",fl_value_new_int(x));
+      fl_value_set_string_take(bounds,"y",fl_value_new_int(y));
+      fl_value_set_string_take(bounds,"width",fl_value_new_int(width));
+      fl_value_set_string_take(bounds,"height",fl_value_new_int(height));
+      fl_method_call_respond_success(call,bounds,nullptr); return;
     } else if (strcmp(method, "configure") == 0) {
       const int width = Dimension(args, "width");
       const int height = Dimension(args, "height");
@@ -199,6 +233,9 @@ void floating_windows_plugin_register_with_registrar(FlPluginRegistrar* registra
   FlView* view = fl_plugin_registrar_get_view(registrar);
   auto* host = new WidgetHost{view};
   g_object_set_data_full(G_OBJECT(view), "floating-windows-host", host, DestroyHost);
+  gtk_widget_add_events(GTK_WIDGET(view), GDK_POINTER_MOTION_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
+  host->motion_signal = g_signal_lookup("motion-notify-event", GTK_TYPE_WIDGET);
+  host->motion_hook = g_signal_add_emission_hook(host->motion_signal, 0, PointerEvent, host, nullptr);
   host->press_signal = g_signal_lookup("button-press-event", GTK_TYPE_WIDGET);
   host->release_signal = g_signal_lookup("button-release-event", GTK_TYPE_WIDGET);
   host->press_hook = g_signal_add_emission_hook(host->press_signal, 0, PointerEvent, host, nullptr);
@@ -206,6 +243,7 @@ void floating_windows_plugin_register_with_registrar(FlPluginRegistrar* registra
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   FlMethodChannel* channel = fl_method_channel_new(fl_plugin_registrar_get_messenger(registrar),
       "floating_windows/window", FL_METHOD_CODEC(codec));
+  host->channel = channel;
   fl_method_channel_set_method_call_handler(channel, HandleMethod, host, nullptr);
   g_object_set_data_full(G_OBJECT(view), "floating-windows-channel", channel, DestroyChannel);
 }

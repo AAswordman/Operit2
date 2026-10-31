@@ -52,6 +52,7 @@ void main() {
         'alwaysOnTop': true,
         'clickThrough': false,
         'focusable': false,
+        'draggable': false,
       });
       expect(
         () => const FloatingWindowOptions(width: 15).toMap(),

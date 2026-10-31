@@ -5,6 +5,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
+#include <commctrl.h>
 
 #include <cmath>
 #include <memory>
@@ -23,8 +24,41 @@ struct WidgetWindow {
   bool configured = false;
   bool topmost = true;
   bool focusable = false;
+  bool draggable = false;
+  bool pointer_down = false;
+  bool dragging = false;
+  POINT pointer_start{};
+  RECT window_start{};
   std::unique_ptr<flutter::MethodChannel<Value>> channel;
 };
+
+/// Uses physical screen coordinates for both anchors, independent of window DPI.
+LRESULT CALLBACK DragInput(HWND view, UINT message, WPARAM wparam, LPARAM lparam,
+    UINT_PTR id, DWORD_PTR data) {
+  auto* owner = reinterpret_cast<WidgetWindow*>(data);
+  if (message == WM_NCDESTROY) RemoveWindowSubclass(view, DragInput, id);
+  if (owner->configured && owner->draggable) {
+    if (message == WM_LBUTTONDOWN) {
+      owner->pointer_down = true; owner->dragging = false;
+      GetCursorPos(&owner->pointer_start); GetWindowRect(owner->window, &owner->window_start);
+    } else if ((message == WM_MOUSEMOVE || message == WM_LBUTTONUP) && owner->pointer_down) {
+      POINT current; GetCursorPos(&current);
+      const int dx = current.x - owner->pointer_start.x;
+      const int dy = current.y - owner->pointer_start.y;
+      if (!owner->dragging && (std::abs(dx) >= GetSystemMetrics(SM_CXDRAG) || std::abs(dy) >= GetSystemMetrics(SM_CYDRAG))) {
+        owner->dragging = true;
+        owner->channel->InvokeMethod("dragStarted", nullptr);
+      }
+      if (owner->dragging) SetWindowPos(owner->window, nullptr,
+        owner->window_start.left + dx, owner->window_start.top + dy, 0, 0,
+        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      if (message == WM_LBUTTONUP) { owner->pointer_down = false; owner->dragging = false; }
+    } else if (message == WM_CAPTURECHANGED || message == WM_CANCELMODE) {
+      owner->pointer_down = false; owner->dragging = false;
+    }
+  }
+  return DefSubclassProc(view, message, wparam, lparam);
+}
 
 /// Converts an explicit logical dimension to physical pixels at the window DPI.
 int Dimension(const Map& arguments, const char* key, HWND window) {
@@ -99,6 +133,8 @@ void Apply(WidgetWindow& owner, const Map& args) {
   int height = has("height") ? Dimension(args, "height", owner.window) : rect.bottom - rect.top;
   owner.topmost = flag("alwaysOnTop", owner.topmost);
   owner.focusable = flag("focusable", owner.focusable);
+  owner.draggable = flag("draggable", owner.draggable);
+  if (!owner.draggable) { owner.pointer_down = false; owner.dragging = false; }
   auto style = GetWindowLongPtr(owner.window, GWL_EXSTYLE);
   style = owner.focusable ? style & ~WS_EX_NOACTIVATE : style | WS_EX_NOACTIVATE;
   if (has("clickThrough")) {
@@ -176,7 +212,13 @@ class FloatingWindowsPlugin : public flutter::Plugin {
             result->Success(); return;
           }
           if (!current->configured) throw std::runtime_error("Configure the floating window first");
-          if (method == "show") {
+          if (method == "getBounds") {
+            RECT bounds; GetWindowRect(current->window, &bounds);
+            const double scale = GetDpiForWindow(current->window) / 96.0;
+            result->Success(Value(Map{{Value("x"),Value(bounds.left / scale)},
+              {Value("y"),Value(bounds.top / scale)}, {Value("width"),Value((bounds.right - bounds.left) / scale)},
+              {Value("height"),Value((bounds.bottom - bounds.top) / scale)}}));
+          } else if (method == "show") {
             ShowWindow(current->window, current->focusable ? SW_SHOW : SW_SHOWNOACTIVATE);
             result->Success();
           } else if (method == "hide") {
@@ -188,11 +230,16 @@ class FloatingWindowsPlugin : public flutter::Plugin {
           result->Error("FLOATING_WINDOW_ERROR", error.what());
         }
       });
+  if (!SetWindowSubclass(owner->view, DragInput, 1, reinterpret_cast<DWORD_PTR>(owner.get()))) {
+    throw std::runtime_error("Unable to install floating window input handler");
+  }
   owner_ = std::move(owner);
   }
 
   /// Releases ownership while engine teardown clears its detached messenger.
-  ~FloatingWindowsPlugin() override = default;
+  ~FloatingWindowsPlugin() override {
+    if (owner_ && IsWindow(owner_->view)) RemoveWindowSubclass(owner_->view, DragInput, 1);
+  }
 
  private:
   std::shared_ptr<WidgetWindow> owner_;

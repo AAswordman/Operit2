@@ -16,7 +16,7 @@ class FloatingWindowsHost extends StatefulWidget {
 
 class _ApplicationWindow {
   _ApplicationWindow(this.payload, this.options);
-  final Map<String, Object?> payload;
+  Map<String, Object?> payload;
   FloatingWindowOptions options;
   Future<void> Function()? beforeClose;
   bool visible = true;
@@ -53,16 +53,28 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
     switch (method) {
       case 'ready':
         return true;
+      case 'getBounds':
+        return {
+          'x': window.options.x ?? 24,
+          'y': window.options.y ?? 80,
+          'width': window.options.width,
+          'height': window.options.height,
+        };
       case 'update':
-        final patch = FloatingWindowOptions.fromMap(
-          (arguments as Map).cast<String, Object?>(),
-        );
+        final args = Map<String, Object?>.from(arguments as Map);
+        final payload = args.remove('payload') as Map?;
+        final patch = FloatingWindowOptions.fromMap(args);
         if (patch.alwaysOnTop == false)
           throw UnsupportedError(
             'Application surfaces remain above application content',
           );
         setState(() {
           window.options = window.options.merge(patch);
+          if (payload != null)
+            window.payload = {
+              ...window.payload,
+              ...payload.cast<String, Object?>(),
+            };
         });
       case 'show':
         setState(() {
@@ -149,13 +161,31 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
             ignoring: options.clickThrough!,
             child: ExcludeFocus(
               excluding: !options.focusable!,
-              child: widget.windowBuilder(
-                FloatingWindowLaunch(
-                  payload: window.payload,
-                  options: options,
-                  onBeforeCloseChanged: (callback) {
-                    window.beforeClose = callback;
-                  },
+              child: _ApplicationDragSurface(
+                enabled: options.draggable == true,
+                origin: Offset(
+                  (options.x ?? 24).clamp(0.0, bounds.maxWidth - width),
+                  (options.y ?? 80).clamp(0.0, bounds.maxHeight - height),
+                ),
+                onMove: (position) {
+                  if (!mounted || window.closing) return;
+                  setState(() {
+                    window.options = window.options.merge(
+                      FloatingWindowOptions(
+                        x: position.dx.clamp(0.0, bounds.maxWidth - width),
+                        y: position.dy.clamp(0.0, bounds.maxHeight - height),
+                      ),
+                    );
+                  });
+                },
+                child: widget.windowBuilder(
+                  FloatingWindowLaunch(
+                    payload: window.payload,
+                    options: options,
+                    onBeforeCloseChanged: (callback) {
+                      window.beforeClose = callback;
+                    },
+                  ),
                 ),
               ),
             ),

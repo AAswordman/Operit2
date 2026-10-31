@@ -8,17 +8,21 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 
 class _OwnedFloatingWindow {
-  _OwnedFloatingWindow(this.window, this.route, this.options);
+  _OwnedFloatingWindow(this.window, this.route, this.options, this.state);
   final FloatingWindow window;
   final String route;
   FloatingWindowOptions options;
+  Map<String, Object?> state;
   bool visible = true;
-  Map<String, Object?> info(String id) => {
-    'id': id,
-    'route': route,
-    'visible': visible,
-    'options': options.toMap(),
-  };
+  Future<Map<String, Object?>> info(String id) async {
+    options = options.merge(await window.getBounds());
+    return {
+      'id': id,
+      'route': route,
+      'visible': visible,
+      'options': options.toMap(),
+    };
+  }
 }
 
 /// The owner engine serializes lifecycle changes and indexes plugin-local IDs.
@@ -51,7 +55,8 @@ class RuntimeFloatingWindowController {
     if (operation == 'list') {
       return [
         for (final entry in _windows.entries)
-          if (_owners[entry.key] == owner) entry.value.info(_ids[entry.key]!),
+          if (_owners[entry.key] == owner)
+            await entry.value.info(_ids[entry.key]!),
       ];
     }
     final id = request['id'];
@@ -95,7 +100,12 @@ class RuntimeFloatingWindowController {
         },
         options: options,
       );
-      final owned = _OwnedFloatingWindow(window, route, options);
+      final owned = _OwnedFloatingWindow(
+        window,
+        route,
+        options,
+        Map<String, Object?>.from((request['state'] as Map?) ?? {}),
+      );
       _windows[key] = owned;
       _owners[key] = owner;
       _ids[key] = id;
@@ -111,8 +121,19 @@ class RuntimeFloatingWindowController {
         final patch = FloatingWindowOptions.fromMap(
           (request['options'] as Map).cast<String, Object?>(),
         );
-        await owned.window.update(patch);
+        final rawState = request['state'];
+        if (rawState != null && rawState is! Map) {
+          throw ArgumentError('Window state must be an object');
+        }
+        final state = rawState == null
+            ? null
+            : {...owned.state, ...Map<String, Object?>.from(rawState as Map)};
+        await owned.window.update(
+          patch,
+          payload: state == null ? null : {'state': state},
+        );
         owned.options = owned.options.merge(patch);
+        if (state != null) owned.state = state;
       case 'show':
         await owned.window.show();
         owned.visible = true;

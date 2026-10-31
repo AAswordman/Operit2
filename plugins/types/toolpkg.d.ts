@@ -4019,6 +4019,10 @@ export namespace ToolPkg {
      * Allows the surface to accept keyboard focus; defaults to false.
      */
     focusable?: boolean;
+    /**
+     * Moves directly in the host using pointer-down screen/window anchors; defaults to false.
+     */
+    draggable?: boolean;
   }
 
   /**
@@ -4088,9 +4092,9 @@ export namespace ToolPkg {
      */
     open(options: FloatingWindowOpenOptions): Promise<FloatingWindowInfo>;
     /**
-     * Applies a partial geometry/interaction update.
+     * Applies partial window options and shallow-merges optional UI state without recreating the session.
      */
-    update(id: string, options: FloatingWindowOptions): Promise<FloatingWindowInfo>;
+    update(id: string, options: FloatingWindowOptions, state?: JsonObject): Promise<FloatingWindowInfo>;
     /**
      * Shows an owned window without resetting its UI session.
      */
