@@ -20,9 +20,22 @@ operit-edge-sdk = { path = "../../sdk", features = ["space"] }
 
 `device`、`contract`、`proxy`、`host`、`link`、`runtime`、`storage` 为共享实现的命名入口。产品首先使用 SDK 装配接口；底层模块用于需要精细配置的场景。内部子 crate 继续复用 Core 的协议、存储与权限实现，避免维护两套配对协议。
 
+从仓库根目录执行 SDK 测试和依赖检查：
+
 ```sh
-cargo test --manifest-path edge/sdk/Cargo.toml --workspace --all-features
+cargo test --locked --manifest-path edge/sdk/Cargo.toml --workspace --all-features
 python3 edge/tools/check-sdk-dependencies.py
 ```
+
+Windows PowerShell 可将第二条命令替换为：
+
+```powershell
+python -X utf8 edge/tools/check-sdk-dependencies.py
+```
+
+依赖脚本分别检查默认、`space`、`http-agent` 和 `scene` 的正常及构建依赖，
+确认默认入口没有外部依赖，并阻止完整 Core、SQL 和模型引擎等依赖进入设备侧。
+这些检查覆盖 SDK 测试和依赖边界；ESP32 产品的堆栈预算、固件和端到端场景使用
+[Edge 首页](../README.md)中的产品验收入口。
 
 这不是 `no_std` SDK。启用空间接入需要 Rust `std`、持久化、熵源和异步 Host；ESP32 产品使用 ESP-IDF。默认零依赖不意味着启用网络与认证也零成本。见 [厂商指南](../docs/manufacturer-guide.md)。
