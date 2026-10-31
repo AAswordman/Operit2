@@ -195,6 +195,14 @@ impl<'a> Registry<'a> {
                 report.outcomes.insert(path, Ok(BTreeMap::new()));
                 continue;
             }
+            let first = &operations[0];
+            if first.domain == "preferences" && !self.owners.contains_key(&path)
+                || first.domain == crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN
+                    && operit_util::RuntimeStorageLayout::runtimeStorageOwnership(&first.entityId) != Ok(operit_util::RuntimeStorageLayout::RuntimeStorageOwnership::Space) {
+                self.journal.ignoreFileOperations(&first.domain, if first.domain == "preferences" { &path } else { &first.entityId }).map_err(|e|e.to_string())?;
+                report.skipped += operations.len();
+                continue;
+            }
             let operations = self.uncovered(&path,operations)?;
             if operations.is_empty() { continue; }
             if skipped.contains_key(&path) && !operations.iter().any(|operation|
@@ -205,11 +213,6 @@ impl<'a> Registry<'a> {
                 continue;
             }
             let Some(owner) = self.owners.get(&path) else {
-                if operations[0].domain == "preferences" {
-                    self.journal.ignoreFileOperations("preferences", &path).map_err(|e|e.to_string())?;
-                    report.skipped += operations.len();
-                    continue;
-                }
                 self.failure(&path, &operations, format!("Unknown transaction owner: {path}"), &mut report)?;
                 continue;
             };

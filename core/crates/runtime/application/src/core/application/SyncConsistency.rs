@@ -62,7 +62,8 @@ impl OperitApplication {
                 PluginStorage::operationIdsSince(inventory.clone()?,receipt).map_err(|e|e.to_string())
             }),
         });
-        let mut paths = plugin.clone().and_then(|host|PluginStorage::syncDatasetPaths(host).map_err(|e|e.to_string())).unwrap_or_default().into_iter().collect::<std::collections::BTreeSet<_>>();
+        let installed = plugin.clone().and_then(|host|PluginStorage::syncDatasetPaths(host).map_err(|e|e.to_string())).unwrap_or_default().into_iter().collect::<std::collections::BTreeSet<_>>();
+        let mut paths = installed.clone();
         for operation in operations.iter().filter(|op|op.domain==PLUGIN_STORAGE_SYNC_DOMAIN) { paths.insert(PluginStorage::syncDatasetPath(operation).map_err(|e|e.to_string())?); }
         let node = registry.journal.localDeviceId().map_err(|e|e.to_string())?;
         for path in paths {
@@ -76,7 +77,7 @@ impl OperitApplication {
                     Ok(BTreeMap::new())
                 }),
                 project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,aliases).map_err(|e|e.to_string()))),
-                snapshot: Some(Box::new(move ||PluginStorage::syncSnapshot(snapshot.clone()?,&snapshot_path,&node_snapshot))),
+                snapshot: if installed.contains(&snapshot_path) { Some(Box::new(move ||PluginStorage::syncSnapshot(snapshot.clone()?,&snapshot_path,&node_snapshot))) } else { None },
                 repair: Some(Box::new(move |expected,source,_|PluginStorage::repairSyncedSnapshot(repair.clone()?,expected,source,&node_repair))),
             })?;
         }
@@ -166,7 +167,7 @@ impl OperitApplication {
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let mut schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        let missing = !registry.owners.contains_key(&owner.path);
+        let missing = registry.owners.get(&owner.path).is_none_or(|owner|owner.snapshot.is_none());
         if expected.is_empty() != missing { return Ok(false); }
         drop(registry);
         // A missing inventory entry is provisioned by the complete file, then committed as a baseline.

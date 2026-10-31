@@ -65,26 +65,26 @@ fn state(store: &PreferencesDataStore) -> Result<Option<OwnerState>, Error> {
 }
 
 fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format: u32) -> Result<Snapshot,Error> {
-    let mut selected: Option<(&SyncOperation,super::compaction::Initialization)> = None;
-    for operation in history {
-        let Some(initialization) = super::compaction::Initialization::decode(operation).map_err(Error::Message)? else { continue; };
-        if selected.as_ref().is_none_or(|(previous,data)| initialization.covered.contains(&previous.opId)
-            || (!data.covered.contains(&operation.opId) && (&initialization.data.revision,&operation.opId) > (&data.data.revision,&previous.opId))) {
-            selected = Some((operation,initialization));
+    let initializations = history.iter().filter_map(|operation|
+        super::compaction::Initialization::decode(operation).transpose().map(|result| result.map(|initialization| (operation, initialization))))
+        .collect::<Result<Vec<_>, _>>().map_err(Error::Message)?;
+    let mut snapshot = Snapshot { node:journal(store)?.localDeviceId()?,data:Data::empty(file::preferenceOwner(&store.storagePath,format)),covered:BTreeSet::new(),generation:0 };
+    snapshot.covered = initializations.iter().flat_map(|(operation, initialization)|
+        initialization.covered.iter().chain(std::iter::once(&operation.opId)))
+        .cloned().collect();
+    for (index, (_, initialization)) in initializations.iter().filter(|(original, _)|
+        !initializations.iter().any(|(_, other)| other.covered.contains(&original.opId))).enumerate() {
+        let mut current = initialization.snapshot(&snapshot.node, 0);
+        current.data.relocate(&store.storagePath).map_err(Error::Message)?;
+        let source = current.data.clone();
+        let mut values = preferences(&current);
+        store.migratePreferencesToCurrentSchema(&mut values)?;
+        current.data = data(store,&values)?;
+        if source.owner.format != current.data.owner.format {
+            journal(store)?.withJournal(|j|j.transaction(|tx|format::save_source(tx,&source)))?;
         }
-    }
-    let Some((original,initialization)) = selected else {
-        return Ok(Snapshot { node:journal(store)?.localDeviceId()?,data:Data::empty(file::preferenceOwner(&store.storagePath,format)),covered:BTreeSet::new(),generation:0 });
-    };
-    let mut snapshot = initialization.snapshot(&journal(store)?.localDeviceId()?,0);
-    snapshot.covered.insert(original.opId.clone());
-    snapshot.data.relocate(&store.storagePath).map_err(Error::Message)?;
-    let source = snapshot.data.clone();
-    let mut values = preferences(&snapshot);
-    store.migratePreferencesToCurrentSchema(&mut values)?;
-    snapshot.data = data(store,&values)?;
-    if source.owner.format != snapshot.data.owner.format {
-        journal(store)?.withJournal(|j|j.transaction(|tx|format::save_source(tx,&source)))?;
+        if index == 0 { snapshot.data = current.data; }
+        else { snapshot.data.merge(&current.data).map_err(Error::Message)?; }
     }
     Ok(snapshot)
 }
@@ -116,7 +116,13 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
     if commit.legacy_reset && !originals.iter().any(|op|op.operation == "initialize") {
         originals.push(initialization(store,&current)?);
     }
-    journal(store)?.appendOperations(&originals)?;
+    if let Err(error) = journal(store)?.appendOperations(&originals) {
+        // Recover only this device's unfinished legacy import through a complete initialization.
+        if !commit.completed.is_empty() || originals.is_empty() || !originals.iter().all(|op|op.originDeviceId.starts_with("~import:"))
+            || !error.to_string().contains("Conflicting immutable operation") { return Err(error.into()); }
+        originals = vec![initialization(store,&current)?];
+        journal(store)?.appendOperations(&originals)?;
+    }
     current.covered.extend(history_initialization_ids(&originals));
     let owner = OwnerState {
         legacy_baseline: None,
@@ -218,49 +224,30 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
         return Ok(existing);
     }
     let history = journal(store)?.archivedPreferenceHistory(&store.storagePath)?;
-    let imported = data(store, values)?;
     let mut baseline = Snapshot {
         node: journal(store)?.localDeviceId()?,
-        data: imported.clone(),
-        covered: if imported.values.is_empty() {
-            BTreeSet::new()
-        } else {
-            history.iter().map(|op| op.opId.clone()).collect()
-        },
+        data: data(store, values)?,
+        covered: BTreeSet::new(),
         generation: 0,
     };
-    for revision in history.iter().map(Revision::fromOperation) {
-        if baseline
-            .data
-            .revision
-            .as_ref()
-            .is_none_or(|previous| super::newer(&revision, previous))
-        {
-            baseline.data.revision = Some(revision);
-        }
+    if !baseline.data.values.is_empty() {
+        baseline.covered = history.iter().map(|op| op.opId.clone()).collect();
     }
-    if !imported.values.is_empty() {
+    baseline.data.revision = history.iter().map(Revision::fromOperation)
+        .chain(baseline.data.revision).max();
+    let originals = if !baseline.data.values.is_empty() {
         // One immutable import carries a legacy file to an empty peer. Its business
         // time comes from the imported history, never from this device's migration time.
-        use sha2::{Digest, Sha256};
         let mutation = file::local_mutation(store, &file::emptyPreferences(), values)?
             .ok_or_else(|| Error::Message("Nonempty import has no mutation".into()))?;
-        let identity = format!(
-            "~import:{:x}",
-            Sha256::digest(serde_json::to_vec(&(
-                &imported.owner,
-                &imported.values,
-                &baseline.covered
-            ))?)
-        );
         let mut payload = mutation.payload;
         payload["importCoverage"] = serde_json::to_value(&baseline.covered)?;
         payload["contractVersion"] = serde_json::json!(1);
         payload["logicalTime"] =
             serde_json::json!(baseline.data.revision.as_ref().map_or(1, |r| r.createdAt));
-        let original = SyncOperation {
-            opId: format!("{identity}:1"),
-            originDeviceId: identity,
+        let mut original = SyncOperation {
+            opId: String::new(),
+            originDeviceId: String::new(),
             sequence: 1,
             domain: mutation.domain,
             entityType: mutation.entityType,
@@ -271,22 +258,15 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
             createdAt: baseline.data.revision.as_ref().map_or(1, |r| r.createdAt),
             schemaVersion: 1,
         };
+        original.originDeviceId = format!("~import:{}", super::digest(&original).map_err(Error::Message)?);
+        original.opId = format!("{}:1", original.originDeviceId);
         baseline.covered.insert(original.opId.clone());
         baseline
             .data
             .apply(&PreferencesSyncedEntry::fromOperation(&original)?.transaction()?)
             .map_err(Error::Message)?;
-        let owner = OwnerState {
-            legacy_baseline: None,
-            current: baseline.clone(),
-            format_progress: baseline.data.owner.format,
-            layout_progress: 1,
-        };
-        // Publish the import through the same recoverable file/SQL handoff as edits.
-        journal(store)?.withJournal(|j| j.transaction(|tx| Journal::save_owner(tx, &owner)))?;
-        save(store, values, baseline, vec![original], vec![], false)?;
-        return Ok(owner);
-    }
+        vec![original]
+    } else { vec![] };
     let owner = OwnerState {
         legacy_baseline: None,
         current: baseline,
@@ -294,7 +274,8 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
         layout_progress: 1,
     };
     journal(store)?.withJournal(|j| j.transaction(|tx| Journal::save_owner(tx, &owner)))?;
-    values.view = Some(owner.current.data.clone());
+    if originals.is_empty() { values.view = Some(owner.current.data.clone()); }
+    else { save(store, values, owner.current.clone(), originals, vec![], false)?; }
     Ok(owner)
 }
 
@@ -308,8 +289,7 @@ pub(crate) fn declare_format(store: &PreferencesDataStore, key: &str, value: ser
     }
     let migrated = store.migratePreferencesToCurrentSchema(&mut values)?;
     let mut current = initialize(store,&mut values)?.current;
-    if !migrated && values.get(&stringPreferencesKey(key)) == Some(&value)
-        && current.data.owner.format == PreferencesDataStore::readSchemaVersion(&values)? { return Ok(()); }
+    if !migrated && values.get(&stringPreferencesKey(key)) == Some(&value) { return Ok(()); }
     values.set(&stringPreferencesKey(key),value);
     current.data = data(store,&values)?;
     current.generation += 1;

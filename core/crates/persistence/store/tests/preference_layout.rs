@@ -139,9 +139,9 @@ fn retirement_keeps_neighboring_paths_and_future_layout_waits() {
     let mut pending = incoming.clone();
     assert_eq!(manager.prepareOperations(&mut Vec::new(), &mut pending).unwrap(), 0);
     assert_eq!(original_map(&pending), original_map(&incoming));
-    assert!(applyOperations(target.host.clone(), &schema(), &[], &incoming, |_, _| true).is_err());
+    assert!(applyOperations(target.host.clone(), &schema(), &[], &incoming, |_, _| true).is_ok());
     assert!(target.journal().pendingOperations().unwrap().is_empty());
-    assert_eq!(target.journal().skippedOperations().unwrap(), incoming);
+    assert!(target.journal().skippedOperations().unwrap().is_empty());
     let old_layout = PreferenceLayout::new(target.host.clone(), STATE).withSchema(1, |_, _| Ok(()));
     assert!(old_layout.prepareOperations(&mut Vec::new(), &mut pending).is_err());
     assert_eq!(original_map(&pending), original_map(&incoming));

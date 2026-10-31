@@ -85,6 +85,7 @@ pub(crate) fn declare(store: &PreferencesDataStore, schema: StoragePreferencesSc
     let store = configure(store.clone(),schema.clone())?;
     let value = serde_json::to_value(&schema)?;
     if store.syncOperationStore.is_some() {
+        crate::PreferenceMerge::applyDeclaredOperations(&store, &Default::default(), &[], &Default::default(), |_, _| true).map_err(failure)?;
         crate::Transaction::preference::declare_format(&store,KEY,value)
     } else {
         store.edit(|preferences| preferences.set(&stringPreferencesKey(KEY),value.clone()))?;

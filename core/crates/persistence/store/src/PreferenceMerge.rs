@@ -279,7 +279,7 @@ where F: Fn(&str, &str) -> bool + Copy {
             // Retry pending work and explicitly supplied history; prepare only requested files.
             let replay = history.iter().map(|op| registry.target(op)).collect::<Result<BTreeSet<_>, _>>()?;
             let skipped = registry.skipped()?;
-            let requested = schema.stores.iter().map(|store| &store.path).chain(replay.iter()).collect::<BTreeSet<_>>();
+            let requested = registry.owners.keys().chain(replay.iter()).collect::<BTreeSet<_>>();
             for path in requested {
                 if report.outcomes.contains_key(path) || skipped.contains_key(path)
                     || !replay.contains(path) && !storage.exists(path).map_err(|e|e.to_string())? {
@@ -464,14 +464,13 @@ fn declaredAliases(
 }
 
 /// Replays one dataset and commits its business state, original identities and archive intent together.
-fn applyDeclaredOperations<F>(
+pub(crate) fn applyDeclaredOperations<F>(
     store: &PreferencesDataStore, schema: &PreferenceMergeSchema,
     incoming: &[SyncOperation], externalAliases: &BTreeMap<String,String>, retain: F,
 ) -> Result<BTreeMap<String,String>,String>
 where F: Fn(&str,&str)->bool {
     let path = store.path().to_str().ok_or("Invalid preference path")?;
-    let owner = schema.owner(path)?.ok_or("Preference owner is not registered")?;
-    let encrypted = owner.encrypted;
+    let encrypted = schema.owner(path)?.ok_or("Preference owner is not registered")?.encrypted;
     let version = store.syncSchemaVersion().map_err(|e|e.to_string())?;
     crate::Transaction::preference::apply(store, incoming,
         |preferences, originals| {

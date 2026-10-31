@@ -700,7 +700,7 @@ fn unregistered_preference_is_ignored_without_opening_or_syncing_its_file() {
     assert!(report.errors.is_empty() && report.pending.is_empty());
     assert!(target.journal().skippedOperations().unwrap().is_empty());
     assert!(registry.manifests().unwrap().0.is_empty());
-    assert!(target.journal().operationsSince(&Default::default(), &[], usize::MAX).unwrap().is_empty());
+    assert!(target.journal().operationsSince(&operit_store::SyncOperationStore::SyncReceipt::default(), &[], usize::MAX).unwrap().is_empty());
     assert_eq!(target.host.readBytes(path).unwrap(),b"user file; not preference JSON");
 }
 
@@ -1325,4 +1325,28 @@ fn registering_an_existing_plain_preference_owner_compacts_its_old_sql_payloads(
     fixture.apply(&[]);
     assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), 1);
     assert_eq!(fixture.store().syncSnapshot().unwrap().data, original);
+}
+
+#[test]
+fn unfinished_legacy_import_conflict_is_sealed_without_relaxing_identity_checks() {
+    let source = Fixture::new();
+    source.host.writeBytesAtomically(CURRENT, br#"{"x":"original"}"#).unwrap();
+    let snapshot = PreferencesDataStore::newWithStorage(source.host.clone(), CURRENT).syncSnapshot().unwrap();
+    let original = source.journal().preferenceHistory().unwrap().remove(0);
+    let target = Fixture::new();
+    target.journal().appendOperations(std::slice::from_ref(&original)).unwrap();
+    let mut conflicting = original.clone();
+    conflicting.payload["value"] = json!("recovered");
+    let intent = json!({"x":"recovered", "__operit_preferences_schema_version":snapshot.data.owner.format,
+        "__operit_transaction_commit":{"id":"interrupted-import", "originals":[conflicting.clone()],
+            "completed":[], "covered":snapshot.covered, "aliases":{}, "deleted":[],
+            "revision":snapshot.data.revision, "versions":snapshot.data.versions, "generation":0}});
+    target.host.writeBytesAtomically(CURRENT, &serde_json::to_vec(&intent).unwrap()).unwrap();
+    let restored = PreferencesDataStore::newWithStorage(target.host.clone(), CURRENT).syncSnapshot().unwrap();
+    assert_eq!(restored.data.values["x"], json!("recovered"));
+    assert!(restored.covered.contains(&original.opId));
+    let history = target.journal().preferenceHistory().unwrap();
+    assert_eq!(history.len(), 1);
+    assert!(Transaction::compaction::Initialization::decode(&history[0]).unwrap().is_some());
+    assert!(target.journal().appendOperations(&[conflicting]).is_err());
 }

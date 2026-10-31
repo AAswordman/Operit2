@@ -239,44 +239,7 @@ pub(crate) fn prepare(storage: Arc<dyn RuntimeStorageHost>) -> Vec<String> {
     if let Err(error) = prepareLayout(storage.clone()) {
         errors.push(format!("preference layout: {error}"));
     }
-    let journal = operit_store::SyncOperationStore::SyncOperationStore::new(storage.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH);
-    let mut schema = schema();
-    match journal.preferenceDatasets() {
-        Ok(paths) => for path in paths.keys() {
-            if schema.stores.iter().any(|owner| &owner.path == path) { continue; }
-            match schema.owner(path) {
-                Ok(Some(owner)) => schema.stores.push(owner),
-                Ok(None) => {},
-                Err(error) => errors.push(error),
-            }
-        },
-        Err(error) => errors.push(error.to_string()),
-    }
-    schema.stores.retain(|owner| {
-        let required = operit_link::isolation::sync(
-            &format!("preference preparation path={}", owner.path),
-            || {
-                if !storage
-                    .exists(&owner.path)
-                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?
-                {
-                    return Ok(false);
-                }
-                let store = (owner.open)(storage.clone(), &owner.path);
-                store
-                    .isSyncPrepared()
-                    .map(|ready| !ready)
-                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
-            },
-        );
-        match required {
-            Ok(required) => required,
-            Err(error) => {
-                errors.push(format!("preference migration path={}: {error}", owner.path));
-                false
-            }
-        }
-    });
+    let schema = schema();
     for outcome in applyIndependentOperations(storage, &schema, &[], &[], |_, _| true) {
         if let Err(error) = outcome.result {
             errors.push(format!(

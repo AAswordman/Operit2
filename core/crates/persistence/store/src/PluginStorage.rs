@@ -2893,7 +2893,7 @@ pub fn applyOperation(
     if operation.domain == PLUGIN_STORAGE_SYNC_DOMAIN {
         if let Some(initialization) = crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)? {
             let path = initialization.data.owner.path.clone();
-            let definition = initialization.definition.ok_or_else(||failure("Initialization lacks database definition"))?;
+            let definition = initialization.definition.ok_or_else(||failure("Missing database definition for initialization"))?;
             installSnapshotDefinition(host.clone(),storage,&path,definition.clone())?;
             let manifest = decodeManifest(definition["manifest"].clone())?;
             let database = openDatabase(host.clone(),&manifest,String::new())?;

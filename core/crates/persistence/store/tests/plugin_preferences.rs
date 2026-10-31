@@ -708,7 +708,7 @@ fn portable_format_and_layout_migrations_compose_for_unopened_owners() {
 #[test]
 fn character_merge_extension_preserves_old_data_and_rejects_changed_rules() {
     let source = Fixture::new("space");
-    let receiver = Fixture::new("space");
+    let mut receiver = Fixture::new("space");
     let current = serde_json::from_str::<Value>(include_str!("../../../../../plugins/packages/buildin/character_cards/src/storage/merge.json")).unwrap()["meta"].clone();
     let mut old = current.clone(); old["references"].as_array_mut().unwrap().truncate(2);
     let open = |fixture: &Fixture, merge: &Value| fixture.call(json!({"op":"open_preferences","path":fixture.path,"merge":merge}));
@@ -722,8 +722,27 @@ fn character_merge_extension_preserves_old_data_and_rejects_changed_rules() {
     let handle = open(&receiver, &old).unwrap()["handle"].as_str().unwrap().to_owned();
     PreferenceMerge::applyOperations(receiver.host.clone(), &PreferenceMergeSchema::default(), &[], &history, |_,_|true).unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&receiver.host.readBytes(&receiver.path).unwrap()).unwrap()["__operit_preferences_merge"], current);
-    assert_eq!(receiver.data(&handle)["values"]["state"]["retained"], true);
     assert_eq!(source.history(), history);
+    // Old installs retained both a complete checkpoint and a newer schema-only checkpoint.
+    receiver.schema(&handle, json!([[]])).unwrap();
+    let complete = PreferencesDataStore::newWithStorage(receiver.host.clone(), &receiver.path).syncSnapshot().unwrap();
+    let mut incomplete = complete.clone();
+    incomplete.data.values.remove("state");
+    incomplete.data.versions.remove("[\"state\",[]]");
+    incomplete.covered.clear();
+    incomplete.data.revision.as_mut().unwrap().sequence += 1;
+    let checkpoints = [&complete, &incomplete].map(|snapshot| operit_store::Transaction::compaction::Initialization::from_snapshot(snapshot).operation("preferences", false).unwrap());
+    SyncOperationStore::new(receiver.host.clone(), "runtime/sync").appendOperations(&checkpoints).unwrap();
+    rusqlite::Connection::open(receiver.root.join("runtime/sync/transactions.sqlite")).unwrap().execute(
+        "UPDATE transaction_owners SET state=json_set(state,'$.current.data',json(?1),'$.current.covered',json('[]')) WHERE path=?2", rusqlite::params![serde_json::to_string(&incomplete.data).unwrap(), receiver.path]).unwrap();
+    incomplete.data.values.insert("__operit_preferences_schema_version".into(), json!(1));
+    receiver.host.writeBytes(&receiver.path, &serde_json::to_vec(&incomplete.data.values).unwrap()).unwrap();
+    receiver.host = Arc::new(NativeRuntimeStorageHost::new(receiver.root.join("runtime"), receiver.root.join("workspaces")));
+    let handle = receiver.open();
+    receiver.schema(&handle, json!([[]])).unwrap();
+    assert_eq!(receiver.data(&handle)["values"]["state"]["retained"], true);
+    receiver.schema(&handle, json!([[]])).unwrap();
+    assert_eq!(receiver.data(&handle)["values"]["state"]["retained"], true);
     let mut changed = current.clone(); changed["references"][0]["target"] = json!(source.path);
     assert!(open(&source, &changed).is_err());
     changed = current.clone(); changed["references"][2]["key"]["key"] = json!("state");
