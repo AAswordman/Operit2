@@ -80,6 +80,16 @@ var CryptoJS = (function () {
 
     // --- Export Public API ---
     return {
+        binary: {
+            /** Generates cryptographically secure bytes encoded as hexadecimal. */
+            randomHex: function (length) { return _nativeCrypto('binary', 'randomHex', [String(length)]); },
+            /** Hashes base64-encoded binary contents with MD5. */
+            md5: function (data) { return _nativeCrypto('binary', 'md5', [data]); },
+            /** Encrypts base64 bytes using AES-128-ECB and PKCS#7 padding. */
+            encryptAesEcb: function (data, key) { return _nativeCrypto('binary', 'encryptAesEcb', [data, key]); },
+            /** Decrypts base64 bytes and validates every PKCS#7 padding byte. */
+            decryptAesEcb: function (data, key) { return _nativeCrypto('binary', 'decryptAesEcb', [data, key]); }
+        },
         MD5: MD5,
         AES: AES,
         enc: enc,

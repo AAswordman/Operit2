@@ -1519,6 +1519,11 @@ pub fn syncSnapshot(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str) ->
     withSyncDataset(host, path, node, |dataset| dataset.snapshot())
 }
 
+/// Reads applied identities without materializing plugin records.
+pub fn syncCoverage(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<BTreeSet<String>, String> {
+    withSyncDataset(host, path, "", |dataset| dataset.coverage())
+}
+
 /// Compares synchronized plugin records independently of local materialization bookkeeping.
 pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
     snapshot.projected_content_digest(|table, value| match table {
@@ -2764,61 +2769,32 @@ fn reconcileLocalReferences(
     Ok(())
 }
 
-/// Reconciles every registered shared database after preference identity canonicalization.
+/// Reconciles one registered owner after preference identity canonicalization.
 pub fn reconcilePreferenceReferences(
     host: Arc<dyn RuntimeSqliteHost>,
+    path: &str,
     preferenceReferences: &BTreeMap<String, String>,
 ) -> Result<(), SqliteStoreError> {
     if preferenceReferences.is_empty() {
         return Ok(());
     }
-    let mut errors = Vec::new();
-    for row in catalog(host.clone())?.queryRows(
-        "SELECT path,owner,kind,sync,merge FROM plugin_databases WHERE sync=1",
-        Vec::new(),
-    )? {
-        let path: String = row.get(0)?;
-        let result = (|| -> Result<(), SqliteStoreError> {
-            let kind = match row.get::<_, String>(2)?.as_str() {
-                "sqlite" => StorageKind::Sqlite,
-                "objects" => StorageKind::Objects,
-                _ => return Err(failure("Unknown registered storage kind")),
-            };
-            let descriptor = row
-                .get::<_, Option<String>>(4)?
-                .map(|value| {
-                    serde_json::from_str(&value)
-                        .map_err(|error| failure(error.to_string()))
-                        .and_then(decodeMergeDescriptor)
-                })
-                .transpose()?;
-            let manifest = Manifest {
-                path: path.clone(),
-                owner: row.get(1)?,
-                kind,
-                sync: true,
-                merge: descriptor,
-            };
-            if let Some(descriptor) = manifest.merge {
-                let store = SqliteStore::openWithHost(host.clone(), &manifest.path)?;
-                store.transaction(|tx| {
-                    reconcileLocalReferences(tx, manifest.kind, &descriptor, preferenceReferences)?;
-                    recordPreferenceAliases(tx, preferenceReferences)?;
-                    tx.execute("DELETE FROM _operit_dirty", Vec::new())?;
-                    Ok(())
-                })?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            errors.push(format!("reconcile path={path}: {error}"));
-        }
-    }
-    if errors.is_empty() {
+    let row = catalog(host.clone())?.queryOne(
+        "SELECT kind,merge FROM plugin_databases WHERE path=?1 AND sync=1",
+        vec![SqliteValue::Text(path.into())],
+    )?.ok_or_else(|| failure("Unknown synchronized plugin database"))?;
+    let kind = match row.get::<_, String>(0)?.as_str() {
+        "sqlite" => StorageKind::Sqlite,
+        "objects" => StorageKind::Objects,
+        _ => return Err(failure("Unknown registered storage kind")),
+    };
+    let Some(descriptor) = row.get::<_, Option<String>>(1)? else { return Ok(()); };
+    let descriptor = decodeMergeDescriptor(serde_json::from_str(&descriptor).map_err(|e|failure(e.to_string()))?)?;
+    SqliteStore::openWithHost(host, path)?.transaction(|tx| {
+        reconcileLocalReferences(tx, kind, &descriptor, preferenceReferences)?;
+        recordPreferenceAliases(tx, preferenceReferences)?;
+        tx.execute("DELETE FROM _operit_dirty", Vec::new())?;
         Ok(())
-    } else {
-        Err(failure(errors.join("; ")))
-    }
+    })
 }
 
 /// Heals rows written under identities that a completed merge aliased away.

@@ -95,6 +95,7 @@ pub fn decompress(data: &str, algorithm: &str) -> Result<String, String> {
 #[allow(non_snake_case)]
 pub fn crypto(algorithm: &str, operation: &str, args: &[String]) -> Result<String, String> {
     match algorithm.to_ascii_lowercase().as_str() {
+        "binary" => super::JsBinaryCrypto::execute(operation, args),
         "md5" => {
             let [input] = args else {
                 return Err("MD5 hash requires exactly one input string".to_string());

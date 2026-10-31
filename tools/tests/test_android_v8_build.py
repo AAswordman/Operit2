@@ -90,10 +90,32 @@ class AndroidV8BuildTests(unittest.TestCase):
     def test_build_failure_emits_no_environment_and_never_falls_back_to_download(self):
         env_file = self.root / "v8.env"
         with patch.object(v8, "version_from_lock", return_value="152.2.0"), \
+             patch.object(v8, "find_ndk", return_value=None), \
              patch.object(v8, "build", side_effect=RuntimeError("source build failed")):
             with self.assertRaisesRegex(RuntimeError, "source build failed"):
                 v8.prepare(self.config["target"], env_file, self.cache)
         self.assertFalse(env_file.exists())
+
+    def test_gradle_passes_its_selected_ndk_to_v8_preparation(self):
+        """Keep V8 preparation on the same NDK selected for the Android app."""
+        gradle = (v8.REPO_ROOT / "apps/flutter/app/android/app/build.gradle.kts").read_text()
+        preparation = gradle.split("val prepareOperitAndroidV8Tasks =", 1)[1].split(
+            "val syncOperitPlugins =", 1)[0]
+        self.assertIn(
+            'environment("OPERIT_ANDROID_V8_NDK", android.ndkDirectory.absolutePath)', preparation)
+        self.assertIn(
+            'inputs.property("androidNdkDirectory", android.ndkDirectory.absolutePath)', preparation)
+
+    def test_explicit_gradle_ndk_is_used_without_sdk_environment(self):
+        """Resolve the supplied Windows NDK without ambient SDK discovery or downloads."""
+        ndk = self.root / "Android SDK/ndk/28.2.13676358"
+        clang = ndk / "toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android24-clang++"
+        clang.parent.mkdir(parents=True)
+        clang.touch()
+        with patch.dict(os.environ, {"OPERIT_ANDROID_V8_NDK": str(ndk)}, clear=True), \
+             patch.object(v8, "HOST_TAG", "windows-x86_64"), \
+             patch.object(v8, "download_fallback_ndk", side_effect=AssertionError("must use Gradle NDK")):
+            self.assertEqual(v8.find_ndk(self.cache), ndk.resolve())
 
     def test_version_is_taken_from_the_app_lockfile(self):
         lock = self.root / "Cargo.lock"

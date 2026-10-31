@@ -28,6 +28,9 @@ pub mod JsInitRuntimeScriptBuilder;
 #[path = "JsHostOperations.rs"]
 pub mod JsHostOperations;
 
+#[path = "JsBinaryCrypto.rs"]
+mod JsBinaryCrypto;
+
 #[path = "JsJavaBridge.rs"]
 pub mod JsJavaBridge;
 

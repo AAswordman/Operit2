@@ -102,7 +102,7 @@ impl Daemon {
                                 Some(error.to_string());
                             6
                         }
-                        _ => 4,
+                        _ => 2,
                     };
                     operit_host_api::tryLogHostConsole(
                         priority,
@@ -186,7 +186,7 @@ fn record(info: &ServiceInfo) -> DiscoveredService {
 fn applyEvent(state: &Mutex<BrowserState>, event: ServiceEvent) {
     match event {
         ServiceEvent::SearchStarted(search) => {
-            operit_host_api::tryLogHostConsole(4, "ServiceDiscovery", &search);
+            operit_host_api::tryLogHostConsole(2, "ServiceDiscovery", &search);
             state
                 .lock()
                 .expect("discovery browser state poisoned")
@@ -195,7 +195,7 @@ fn applyEvent(state: &Mutex<BrowserState>, event: ServiceEvent) {
         ServiceEvent::ServiceResolved(info) => {
             let resolved = record(&info);
             operit_host_api::tryLogHostConsole(
-                4,
+                2,
                 "ServiceDiscovery",
                 &format!(
                     "resolved service={} addresses={:?} port={}",
@@ -409,7 +409,7 @@ impl ServiceDiscoveryHost for ServiceDiscoveryProvider {
         let state = browser.state.lock().map_err(hostError)?;
         let records = state.snapshot()?;
         operit_host_api::tryLogHostConsole(
-            4,
+            2,
             "ServiceDiscovery",
             &format!(
                 "scan complete service={serviceType} records={} search={:?}",

@@ -5084,6 +5084,58 @@ fn native_bootstrap_libraries_preserve_globals_and_initialize_once() {
     ]));
 }
 
+/// Exercises the binary media facade through the real JavaScript-to-Rust crypto binding.
+#[test]
+fn wechat_binary_crypto_round_trip_in_native_engine() {
+    let mut state = newTestJsEngineState(None);
+    let output = state.evalJavaScriptString(r#"
+        var key = CryptoJS.binary.randomHex(16);
+        var source = 'AP+A/w==';
+        var encrypted = CryptoJS.binary.encryptAesEcb(source, key);
+        JSON.stringify({
+            decrypted: CryptoJS.binary.decryptAesEcb(encrypted, key),
+            digest: CryptoJS.binary.md5('aGVsbG8='),
+            keyLength: key.length,
+            distinctKeys: key !== CryptoJS.binary.randomHex(16)
+        });
+    "#).expect("native binary media crypto");
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output["decrypted"], "AP+A/w==");
+    assert_eq!(output["digest"], "5d41402abc4b2a76b9719d911017c592");
+    assert_eq!(output["keyLength"], 32);
+    assert_eq!(output["distinctKeys"], true);
+}
+
+/// Registers the complete WeChat module graph in the real package engine without logging in.
+#[test]
+fn register_wechat_bot_toolpkg_main() {
+    ensure_test_runtime_root();
+    let engine = newTestToolPkgRegistrationEngine();
+    let dist = testRepositoryRoot().join("plugins/packages/external/wechat/dist");
+    let script = std::fs::read_to_string(dist.join("main.js")).expect("WeChat main.js");
+    let mut resources = BTreeMap::new();
+    collect_message_insert_text_resources(&dist, &dist, &mut resources);
+    let mut params = testParams();
+    for (key, value) in [
+        ("toolPkgId", "com.operit.wechat_bot"),
+        ("__operit_registration_config_scope", "device"),
+        ("__operit_ui_package_name", "com.operit.wechat_bot"),
+        ("__operit_script_screen", "dist/main.js"),
+    ] {
+        params.insert(key.into(), Value::String(value.into()));
+    }
+    let capture = engine
+        .execute_toolpkg_main_registration_function_with_text_resources(
+            &script,
+            "registerToolPkg",
+            &params,
+            Some(Arc::new(resources)),
+        )
+        .expect("WeChat native package registration");
+    assert_eq!(capture.toolboxUiModules.len(), 1);
+    assert_eq!(capture.appLifecycleHooks.len(), 3);
+}
+
 /// Compares initialization policies in fresh native contexts without business queries or Flutter.
 #[test]
 #[ignore = "Run explicitly to measure native bootstrap bytecode reuse"]

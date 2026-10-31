@@ -5,6 +5,16 @@
  */
 
 declare namespace CryptoJS {
+    namespace binary {
+        /** Generates 1..64 cryptographically secure bytes as hexadecimal. */
+        function randomHex(length: number): string;
+        /** Computes MD5 over base64-encoded bytes, not over their textual representation. */
+        function md5(base64: string): string;
+        /** Encrypts base64 bytes with a 32-character hexadecimal AES-128 key and PKCS#7 padding. */
+        function encryptAesEcb(base64: string, keyHex: string): string;
+        /** Decrypts AES-128-ECB base64 bytes and returns base64 plaintext. */
+        function decryptAesEcb(base64: string, keyHex: string): string;
+    }
     /**
      * A result object that mimics CryptoJS's WordArray, primarily providing a `toString` method.
      */
@@ -52,4 +62,4 @@ declare namespace CryptoJS {
     const mode: {
         ECB: any;
     };
-} 
+}

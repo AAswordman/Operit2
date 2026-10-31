@@ -226,6 +226,9 @@ impl StandardHttpTools {
         let mut body = Vec::new();
         if method != "GET" && method != "HEAD" && !bodyParam.trim().is_empty() {
             match bodyType.as_str() {
+                "base64" => {
+                    body = decodeBinaryRequestBody(&bodyParam)?;
+                }
                 "json" => {
                     headers.push((
                         "Content-Type".to_string(),
@@ -837,4 +840,30 @@ fn optionalParameterValue(tool: &AITool, name: &str) -> Option<String> {
         .iter()
         .find(|parameter| parameter.name == name)
         .map(|parameter| parameter.value.clone())
+}
+
+/// Decodes an explicitly selected binary request body without adding a textual content type.
+#[allow(non_snake_case)]
+fn decodeBinaryRequestBody(value: &str) -> Result<Vec<u8>, String> {
+    STANDARD
+        .decode(value)
+        .map_err(|error| format!("Invalid base64 request body: {error}"))
+}
+
+#[cfg(test)]
+mod binary_body_tests {
+    use super::decodeBinaryRequestBody;
+
+    /// Preserves non-UTF-8 bytes instead of uploading their base64 text representation.
+    #[test]
+    fn decodes_exact_binary_body() {
+        assert_eq!(decodeBinaryRequestBody("AP+A/w==").unwrap(), [0, 255, 128, 255]);
+        assert!(decodeBinaryRequestBody("").unwrap().is_empty());
+    }
+
+    /// Rejects invalid binary input before any HTTP host request is executed.
+    #[test]
+    fn rejects_malformed_binary_body() {
+        assert!(decodeBinaryRequestBody("not base64?").is_err());
+    }
 }

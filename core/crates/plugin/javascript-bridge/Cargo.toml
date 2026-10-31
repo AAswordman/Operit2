@@ -9,6 +9,7 @@ publish.workspace = true
 aes = "0.8"
 base64.workspace = true
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+getrandom = { workspace = true, features = ["js"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 md-5 = "0.10"
 operit-host-api = { path = "../../foundation/host-api" }

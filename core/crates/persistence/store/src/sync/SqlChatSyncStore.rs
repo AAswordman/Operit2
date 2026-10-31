@@ -131,6 +131,9 @@ impl SqlChatSyncStore {
         self.dataset().snapshot().map_err(SqlChatSyncStoreError::Message)
     }
 
+    /// Returns exact applied identities independently of the chat table contents.
+    pub fn syncCoverage(&self) -> Result<BTreeSet<String>, String> { self.dataset().coverage() }
+
     /// Compares synchronized chat contents independently of local storage identities.
     pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
         snapshot.projected_content_digest(|table, value| match table {

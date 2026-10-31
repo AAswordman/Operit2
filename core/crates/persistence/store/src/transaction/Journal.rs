@@ -116,6 +116,29 @@ impl Journal {
         self.0.query(sql, params)?.into_iter().map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).collect()
     }
 
+    /// Uses origin/sequence indexes and exact intervals without decoding already received headers.
+    pub(crate) fn headers_since<K: crate::SyncOperationStore::SyncOperationKnowledge>(
+        &mut self, clock: &K, domains: &[String], projection: &str, export: bool, floors: &BTreeMap<String,i64>,
+    ) -> Result<Vec<JournalRecord>, Error> {
+        let mut headers = Vec::new();
+        let domains = serde_json::to_string(domains)?;
+        let sql = format!("SELECT header FROM originals WHERE origin=?1 AND sequence>=?2
+            AND (?3 OR pending=0) AND (?4='[]' OR domain IN (SELECT value FROM json_each(?4)))
+            AND ({projection}) AND NOT EXISTS (SELECT 1 FROM json_each(?5) r
+                WHERE sequence BETWEEN json_extract(r.value,'$[0]') AND json_extract(r.value,'$[1]'))
+            ORDER BY sequence");
+        for row in self.0.query("SELECT origin,MAX(sequence) FROM originals GROUP BY origin", vec![])? {
+            let origin = row.valueAt(0)?.asString()?;
+            let Some(next) = clock.nextMissingSequence(&origin, floors.get(&origin).copied().unwrap_or(0)) else { continue; };
+            if next > row.valueAt(1)?.asI64()? { continue; }
+            for row in self.0.query(&sql, vec![text(&origin),SqliteValue::Integer(next),
+                SqliteValue::Integer(i64::from(export)),text(&domains),text(&serde_json::to_string(&clock.knownRanges(&origin))?)])? {
+                headers.push(serde_json::from_str(&row.valueAt(0)?.asString()?)?);
+            }
+        }
+        Ok(headers)
+    }
+
     pub(crate) fn pending_ids(&mut self) -> Result<Vec<String>, Error> {
         self.0.query("SELECT id FROM originals WHERE pending=1 ORDER BY id", vec![])?.into_iter()
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()

@@ -27,7 +27,7 @@ export interface HttpRequest {
     method: string;
     headers: Record<string, string>;
     body?: any;
-    bodyType?: 'text' | 'json' | 'form' | 'multipart';
+    bodyType?: 'text' | 'json' | 'form' | 'multipart' | 'base64';
     formParams?: Record<string, string>;
     multipartParams?: Array<{ name: string; value: string; contentType?: string }>;
     execute(options?: OkHttpExecuteOptions): Promise<OkHttpResponse>;
@@ -218,7 +218,7 @@ export declare class RequestBuilder {
     /**
      * Set the request body
      */
-    body(body: any, type?: 'text' | 'json' | 'form' | 'multipart'): RequestBuilder;
+    body(body: any, type?: 'text' | 'json' | 'form' | 'multipart' | 'base64'): RequestBuilder;
 
     /**
      * Set the request body as JSON

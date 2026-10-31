@@ -200,6 +200,18 @@ python3 -m unittest discover -s tools/tests -p test_apple_plugin_build.py -v
 
 ## Android V8 runtime
 
+Android Cargo tasks use the Android SDK's `cmake;3.22.1` package for CMake and
+Ninja. Install it through Android Studio's SDK Manager (SDK Tools > CMake >
+3.22.1), or run `sdkmanager "cmake;3.22.1"`. Gradle sets `CMAKE` and adds that
+package's `bin` directory to the Cargo task's `PATH`; no global PATH change is
+needed for the embedded local inference engines.
+
+Local inference CMake work trees live under `target/local-llm/<build-id>/` at
+the repository root. The build ID hashes the full Cargo `OUT_DIR`, keeping
+targets, profiles and feature configurations isolated without carrying Cargo's
+deep directory prefix into MNN and KleidiAI source/object paths. Shared engines
+still land beside Cargo's bridge artifacts for the existing packaging tasks.
+
 rusty_v8 publishes no prebuilt static libraries for Android targets, so the
 crate's default GitHub download fails with a 404. The Android Gradle build
 therefore runs `prepare_android_v8.py` before compiling Rust. Like the iOS
@@ -217,7 +229,10 @@ published source crate omits its Rust vendor dependencies. The NDK API level
 defaults to 24 (matching the app's minSdkVersion) and can be raised with
 `OPERIT_ANDROID_V8_API_LEVEL`; the value is part of the cache identity.
 
-An NDK r23+ installation is required and detected from `OPERIT_ANDROID_V8_NDK`,
+The Gradle task passes its selected `android.ndkDirectory` to the helper as
+`OPERIT_ANDROID_V8_NDK`, so V8 and the Rust bridge use the app's configured NDK
+even when the SDK is configured only in `local.properties`.
+For standalone invocations, an NDK r23+ installation is required and detected from `OPERIT_ANDROID_V8_NDK`,
 `ANDROID_NDK_HOME`, `$ANDROID_HOME/ndk` or `~/Android/ndk` (newest match wins).
 On Linux, the helper falls back to downloading the NDK that rusty_v8's build
 script pins. The detected NDK is exposed inside the crate source where both the

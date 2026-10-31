@@ -330,7 +330,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         output.push_str(&format!(
             "        {} => {{\n{}{}        }}\n",
             format!("{:?}", object.object_id),
-            render_object_constructor(object, DispatchMode::Call),
+            render_object_constructor(object),
             render_constructed_dispatch(object, DispatchMode::Call)
         ));
     }
@@ -367,15 +367,6 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             format!("{:?}", application.object_id), application.dispatch_name
         ));
     }
-    for object in objects
-        .iter()
-        .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
-    {
-        output.push_str(&render_async_factory_watch(
-            object,
-            DispatchMode::WatchSnapshot,
-        ));
-    }
     output.push_str("    generated_dispatch_core_proxy_watch_snapshot(proxy, request)\n");
     output.push_str("}\n\n");
 
@@ -407,12 +398,6 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             "    if request.target == {} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_watch_async(&mut application, request, proxy.streamAttachmentAdopter()).await;\n    }}\n",
             format!("{:?}", application.object_id), application.dispatch_name
         ));
-    }
-    for object in objects
-        .iter()
-        .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
-    {
-        output.push_str(&render_async_factory_watch(object, DispatchMode::Watch));
     }
     output.push_str("    generated_dispatch_core_proxy_watch(proxy, request)\n");
     output.push_str("}\n\n");
@@ -472,7 +457,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         output.push_str(&format!(
             "        {} => {{\n{}{}        }}\n",
             format!("{:?}", object.object_id),
-            render_object_constructor(object, DispatchMode::WatchSnapshot),
+            render_object_constructor(object),
             render_constructed_dispatch(object, DispatchMode::WatchSnapshot)
         ));
     }
@@ -536,7 +521,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         output.push_str(&format!(
             "        {} => {{\n{}{}        }}\n",
             format!("{:?}", object.object_id),
-            render_object_constructor(object, DispatchMode::Watch),
+            render_object_constructor(object),
             render_constructed_dispatch(object, DispatchMode::Watch)
         ));
     }
@@ -596,27 +581,8 @@ fn render_string_constructible_dispatch(object: &SourceObject, mode: DispatchMod
     format!(
         "        {} => {{\n{}{}        }}\n",
         format!("{:?}", object.object_id),
-        render_object_constructor(object, mode),
+        render_object_constructor(object),
         dispatch
-    )
-}
-
-/// Resolves factory parents asynchronously before establishing a synchronous watch.
-fn render_async_factory_watch(object: &SourceObject, mode: DispatchMode) -> String {
-    let constructor = render_object_constructor(object, DispatchMode::Call);
-    let dispatch = render_constructed_dispatch(object, mode);
-    let body = match mode {
-        DispatchMode::WatchSnapshot => format!(
-            "        let propertyName = request.propertyName.clone();\n        let value = {{\n{dispatch}        }};\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), target: request.target.clone(), propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n"
-        ),
-        DispatchMode::Watch => format!(
-            "        let attachmentAdopter = proxy.streamAttachmentAdopter();\n        return {{\n{dispatch}        }};\n"
-        ),
-        DispatchMode::Call => unreachable!("factory watch requires a watch dispatch mode"),
-    };
-    format!(
-        "    if request.target == {} {{\n{constructor}{body}    }}\n",
-        format!("{:?}", object.object_id)
     )
 }
 
@@ -629,12 +595,13 @@ fn render_factory_constructible_dispatch(object: &SourceObject, mode: DispatchMo
     format!(
         "        {} => {{\n{}{}        }}\n",
         format!("{:?}", object.object_id),
-        render_object_constructor(object, mode),
+        render_object_constructor(object),
         dispatch
     )
 }
 
-fn render_object_constructor(object: &SourceObject, mode: DispatchMode) -> String {
+/// Constructs service objects independently of the protocol dispatch operation.
+fn render_object_constructor(object: &SourceObject) -> String {
     match &object.access {
         ObjectAccess::DefaultConstruct => {
             format!(
@@ -742,12 +709,12 @@ fn render_object_constructor(object: &SourceObject, mode: DispatchMode) -> Strin
             factory_arg_types,
             *returns_result,
             *returns_arc_mutex,
-            mode,
         ),
         ObjectAccess::Application | ObjectAccess::ResolvedHolder { .. } => String::new(),
     }
 }
 
+/// Resolves factories through their original shared service owner.
 fn render_factory_object_constructor(
     object: &SourceObject,
     parent_full_type: &str,
@@ -756,7 +723,6 @@ fn render_factory_object_constructor(
     factory_arg_types: &[String],
     returns_result: bool,
     returns_arc_mutex: bool,
-    mode: DispatchMode,
 ) -> String {
     let mut output = String::new();
     for (index, _) in factory_arg_types.iter().enumerate() {
@@ -778,7 +744,6 @@ fn render_factory_object_constructor(
         "__core_parent_object",
         parent_full_type,
         parent_access,
-        mode,
     ));
     let factory_args = factory_arg_types
         .iter()
@@ -805,21 +770,16 @@ fn render_factory_object_constructor(
     output
 }
 
+/// Uses the shared service view only for factories, not application operations.
 fn render_object_constructor_for_access(
     variable_name: &str,
     full_type: &str,
     access: &ObjectAccess,
-    mode: DispatchMode,
 ) -> String {
     match access {
-        ObjectAccess::Application => match mode {
-            DispatchMode::Call => format!(
-                "            let mut __core_application = proxy.application.lock().await;\n            let {variable_name} = &mut *__core_application;\n"
-            ),
-            DispatchMode::WatchSnapshot | DispatchMode::Watch => format!(
-                "            let mut __core_application = proxy.application.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Application is busy\"))?;\n            let {variable_name} = &mut *__core_application;\n"
-            ),
-        },
+        ObjectAccess::Application => format!(
+            "            let {variable_name} = proxy.applicationServices.as_ref();\n"
+        ),
         ObjectAccess::DefaultConstruct => {
             format!("            let mut {variable_name} = {full_type}::default();\n")
         }

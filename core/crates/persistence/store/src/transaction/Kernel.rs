@@ -40,7 +40,6 @@ pub struct FileCommit {
 
 #[derive(Default)]
 pub struct ApplyReport {
-    pub received: usize,
     pub applied: Vec<SyncOperation>,
     pub skipped: usize,
     pub errors: Vec<String>,
@@ -75,6 +74,7 @@ pub struct Participant<'a> {
     pub apply: Box<dyn Fn(&[SyncOperation], &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> + 'a>,
     pub project: Option<Box<dyn Fn(&BTreeMap<String,String>) -> Result<(),String> + 'a>>,
     pub snapshot: Option<Box<dyn Fn() -> Result<Snapshot, String> + 'a>>,
+    pub coverage: Box<dyn Fn() -> Result<BTreeSet<String>, String> + 'a>,
     /// Owner-defined business equality; snapshot tokens and transfer contents remain complete.
     pub content_digest: fn(&Snapshot) -> Result<String, String>,
     pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>) -> Result<bool, String> + 'a>>,
@@ -121,13 +121,13 @@ impl<'a> Registry<'a> {
     }
 
     /// Coverage, rather than the reception status, determines what still needs application.
-    fn uncovered(&self, path: &str, operations: Vec<SyncOperation>) -> Result<Vec<SyncOperation>,String> {
-        if operations.is_empty() { return Ok(operations); }
-        let covered = self.owners.get(path).and_then(|owner|owner.snapshot.as_ref())
-            .and_then(|snapshot|snapshot().ok()).map(|snapshot|snapshot.covered).unwrap_or_default();
-        let (retired,pending): (Vec<_>,Vec<_>) = operations.into_iter().partition(|op|covered.contains(&op.opId));
+    fn discard_covered(&self, path: &str, operations: &mut Vec<SyncOperation>) -> Result<(),String> {
+        if operations.is_empty() { return Ok(()); }
+        let covered = match self.owners.get(path) { Some(owner) => (owner.coverage)()?, None => BTreeSet::new() };
+        let retired = operations.iter().filter(|op|covered.contains(&op.opId)).cloned().collect::<Vec<_>>();
         if !retired.is_empty() { self.journal.retireCoveredOperations(&retired).map_err(|e|e.to_string())?; }
-        Ok(pending)
+        operations.retain(|op| !covered.contains(&op.opId));
+        Ok(())
     }
 
     pub fn pending_owners(&self) -> Result<BTreeSet<String>, String> {
@@ -136,8 +136,9 @@ impl<'a> Registry<'a> {
             groups.entry(self.target(&operation)?).or_default().push(operation);
         }
         let mut pending = BTreeSet::new();
-        for (path,operations) in groups {
-            if !self.uncovered(&path,operations)?.is_empty() { pending.insert(path); }
+        for (path,mut operations) in groups {
+            self.discard_covered(&path,&mut operations)?;
+            if !operations.is_empty() { pending.insert(path); }
         }
         Ok(pending)
     }
@@ -165,11 +166,21 @@ impl<'a> Registry<'a> {
         Ok(())
     }
 
+    /// Receives originals once before applying their durable pending work.
     pub fn receive(&self, incoming: &[SyncOperation]) -> Result<ApplyReport, String> {
         self.journal.receiveOperations(incoming).map_err(|e| e.to_string())?;
+        let mut report = self.apply_pending()?;
+        for operation in incoming.iter().filter(|op| !report.pending.contains(&op.opId)) {
+            if let Ok(path) = self.target(operation) { report.outcomes.entry(path).or_insert_with(|| Ok(BTreeMap::new())); }
+        }
+        Ok(report)
+    }
+
+    /// Retries originals already received before owner discovery and layout preparation.
+    pub fn apply_pending(&self) -> Result<ApplyReport, String> {
         let pending = self.journal.pendingOperations().map_err(|e| e.to_string())?;
         let pending = super::ordered(pending, |op| &op.opId, Revision::fromOperation)?;
-        let mut report = ApplyReport { received: incoming.len(), ..ApplyReport::default() };
+        let mut report = ApplyReport::default();
         let mut skipped = self.skipped()?;
         for (path, operations) in &skipped {
             if self.is_retired(path) {
@@ -188,7 +199,7 @@ impl<'a> Registry<'a> {
         // Reference owners consume only alias decisions from committed owners.
         let mut groups = groups.into_iter().collect::<Vec<_>>();
         groups.sort_by_key(|(path, operations)| (operations[0].domain != "preferences", path.clone()));
-        for (path, operations) in groups {
+        for (path, mut operations) in groups {
             if self.is_retired(&path) {
                 self.journal.completeOperations(&operations).map_err(|e| e.to_string())?;
                 report.skipped += operations.len();
@@ -203,7 +214,10 @@ impl<'a> Registry<'a> {
                 report.skipped += operations.len();
                 continue;
             }
-            let operations = self.uncovered(&path,operations)?;
+            if let Err(error) = self.discard_covered(&path,&mut operations) {
+                self.failure(&path, &operations, error, &mut report)?;
+                continue;
+            }
             if operations.is_empty() { continue; }
             if skipped.contains_key(&path) && !operations.iter().any(|operation|
                 operation.operation == "initialize" && operation.entityType == "initialization") {
@@ -255,9 +269,6 @@ impl<'a> Registry<'a> {
             }
         }
         report.pending = self.journal.pendingOperationIds().map_err(|e| e.to_string())?;
-        for operation in incoming.iter().filter(|op| !report.pending.contains(&op.opId)) {
-            if let Ok(path) = self.target(operation) { report.outcomes.entry(path).or_insert_with(|| Ok(BTreeMap::new())); }
-        }
         Ok(report)
     }
 
@@ -340,9 +351,9 @@ impl<'a> Registry<'a> {
         if &source.data.owner != owner { return Err("Snapshot owner differs".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
         if !self.skipped()?.contains_key(&owner.path) { (participant.prepare)()?; }
-        let pending = self.journal.pendingOperations().map_err(|e|e.to_string())?.into_iter()
+        let mut pending = self.journal.pendingOperations().map_err(|e|e.to_string())?.into_iter()
             .filter(|operation|self.target(operation).as_ref() == Ok(&owner.path)).collect::<Vec<_>>();
-        let pending = self.uncovered(&owner.path,pending)?;
+        self.discard_covered(&owner.path,&mut pending)?;
         if pending.iter().any(|operation|!source.covered.contains(&operation.opId)) {
             return Err("Dataset has uncovered pending transactions".into());
         }

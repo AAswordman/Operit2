@@ -937,9 +937,9 @@ async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_str
         .await;
 }
 
-/// Verifies concurrent Application child calls wait for the shared application lock.
+/// Verifies concurrent Application child calls use the same shared services.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn shared_core_serializes_application_child_access() {
+async fn shared_core_handles_concurrent_application_child_access() {
     let _testGuard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
     tokio::task::LocalSet::new()
         .run_until(async {

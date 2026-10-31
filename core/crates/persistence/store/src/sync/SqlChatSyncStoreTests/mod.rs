@@ -1648,6 +1648,7 @@ fn chat_correction_keeps_scoped_versions_after_restart() {
     newest.createdAt = 50;
     source.applyOperation(&newest).unwrap();
     let authoritative = source.syncSnapshot().unwrap();
+    assert_eq!(source.syncCoverage().unwrap(), authoritative.covered);
     drop(source);drop(source_database);AppDatabase::closeDatabase();
 
     let (target_paths, database, target) = openTestStore("correction-target");
@@ -1657,6 +1658,7 @@ fn chat_correction_keeps_scoped_versions_after_restart() {
     drop(target);drop(database);AppDatabase::closeDatabase();
     let database = AppDatabase::getDatabase(target_paths.clone()).unwrap();
     let target = SqlChatSyncStore::new(target_paths, &database).unwrap();
+    assert_eq!(target.syncCoverage().unwrap(), target.syncSnapshot().unwrap().covered);
     let mut older_x = upsertOperation(1, "stale");
     older_x.originDeviceId = "delayed-device".into();
     older_x.opId = "delayed-device:1".into();

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.wechat_bot",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "微信 Bot", "en": "WeChat Bot" },
+  "description": {
+    "zh": "扫码连接微信，支持消息与媒体收发、独立聊天记录、角色卡和 Waifu 自动回复。",
+    "en": "Connect WeChat with QR login, messaging, encrypted media, persistent conversations and character/Waifu replies."
+  },
+  "enabled_by_default": false,
+  "installation_scope": "device",
+  "subpackages": [{ "id": "wechat", "entry": "dist/tools.js" }],
+  "resources": [],
+  "requires": [
+    { "id": "com.operit.waifu", "min_version": "1.0.0" },
+    { "id": "com.operit.character_cards", "min_version": "0.1.0" }
+  ]
+}

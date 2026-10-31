@@ -88,6 +88,21 @@ fn main() {
         let windows = os == "windows";
         let shared = windows || os == "android" || target_env == "ohos";
         let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+        // Keep fetched sources and object paths below Windows' native tool limits.
+        // Hash the full Cargo output path to isolate targets, profiles and features.
+        let mut build_id = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&out_dir, &mut build_id);
+        let manifest_dir =
+            std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+        let repo_root = manifest_dir
+            .ancestors()
+            .nth(4)
+            .expect("Local models must be built from core/crates/provider/local-model");
+        config.out_dir(
+            repo_root
+                .join("target/local-llm")
+                .join(format!("{:016x}", std::hash::Hasher::finish(&build_id))),
+        );
         let profile_dir = out_dir
             .ancestors()
             .nth(3)

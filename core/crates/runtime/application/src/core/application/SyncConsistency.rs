@@ -34,7 +34,7 @@ impl OperitApplication {
             _ => Ok(format!("{}:{}",op.domain,synchronizationDataset(op)?)),
         });
         let chat = SqlChatSyncStore::default().map_err(|e|e.to_string());
-        let (prepare,apply,snapshot,repair,receipt,export,inventory) = (chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat);
+        let (prepare,apply,snapshot,coverage,repair,receipt,export,inventory) = (chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat);
         registry.register(Participant { validate: None,
             content_digest: SqlChatSyncStore::snapshotContentDigest,
             path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(),
@@ -45,6 +45,7 @@ impl OperitApplication {
                 Ok(BTreeMap::new())
             }), project: None,
             snapshot: Some(Box::new(move || snapshot.as_ref().map_err(Clone::clone)?.syncSnapshot().map_err(|e|e.to_string()))),
+            coverage: Box::new(move || coverage.as_ref().map_err(Clone::clone)?.syncCoverage()),
             repair: Some(Box::new(move |expected,source,_| repair.as_ref().map_err(Clone::clone)?.repairSyncedSnapshot(expected,source).map_err(|e|e.to_string()))),
         })?;
         registry.sources.push(Source {
@@ -67,8 +68,8 @@ impl OperitApplication {
         for operation in operations.iter().filter(|op|op.domain==PLUGIN_STORAGE_SYNC_DOMAIN) { paths.insert(PluginStorage::syncDatasetPath(operation).map_err(|e|e.to_string())?); }
         let node = registry.journal.localDeviceId().map_err(|e|e.to_string())?;
         for path in paths {
-            let (apply,snapshot,repair,project) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
-            let (snapshot_path,node_snapshot,node_repair,storage) = (path.clone(),node.clone(),node.clone(),storage.clone());
+            let (apply,snapshot,coverage,repair,project) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
+            let (snapshot_path,coverage_path,project_path,node_snapshot,node_repair,storage) = (path.clone(),path.clone(),path.clone(),node.clone(),node.clone(),storage.clone());
             registry.register(Participant { validate: None, path,
                 content_digest: PluginStorage::snapshotContentDigest,
                 prepare: Box::new(||Ok(())),
@@ -76,8 +77,9 @@ impl OperitApplication {
                     for operation in operations { PluginStorage::applyOperation(apply.clone()?,storage.clone(),operation,aliases).map_err(|e|e.to_string())?; }
                     Ok(BTreeMap::new())
                 }),
-                project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,aliases).map_err(|e|e.to_string()))),
+                project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,&project_path,aliases).map_err(|e|e.to_string()))),
                 snapshot: if installed.contains(&snapshot_path) { Some(Box::new(move ||PluginStorage::syncSnapshot(snapshot.clone()?,&snapshot_path,&node_snapshot))) } else { None },
+                coverage: if installed.contains(&coverage_path) { Box::new(move || PluginStorage::syncCoverage(coverage.clone()?,&coverage_path)) } else { Box::new(||Ok(Default::default())) },
                 repair: Some(Box::new(move |expected,source,_|PluginStorage::repairSyncedSnapshot(repair.clone()?,expected,source,&node_repair))),
             })?;
         }
@@ -89,7 +91,7 @@ impl OperitApplication {
             }
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
-            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
+            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
                 apply: Box::new(move |operations,_| {
                     for operation in operations {
                         match operation.domain.as_str() {

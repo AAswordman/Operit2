@@ -849,7 +849,7 @@ impl OperitApplication {
         let registry = self.transactionRegistry(&schema,&pending_owners)?;
         let (receipt,failures) = registry.receipt()?;
         errors.extend(failures);
-        let pending = store.pendingOperationCount().map_err(|error| error.to_string())?;
+        let pending = store.pendingOperationIds().map_err(|error| error.to_string())?;
         let mut blobs = BTreeMap::new();
         store.visitPendingOperations(&[RUNTIME_FILE_SYNC_DOMAIN], |operation| {
             match RuntimeFileSyncStore::requiredBlob(operation) {
@@ -863,8 +863,8 @@ impl OperitApplication {
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
         result["consistencyVersion"] = serde_json::json!(5);
-        result["pending"] = serde_json::json!(pending);
-        result["pendingOperationIds"] = serde_json::json!(store.pendingOperationIds().map_err(|error| error.to_string())?);
+        result["pending"] = serde_json::json!(pending.len());
+        result["pendingOperationIds"] = serde_json::json!(pending);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
             .map_err(|error| error.to_string())?;
         result["errors"] = serde_json::json!(errors);
@@ -1002,7 +1002,7 @@ impl OperitApplication {
         if let Err(error) = PreferenceSpaceMerge::prepareLayout(storage.clone()) { errors.push(format!("layout: {error}")); }
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        let mut report = registry.receive(&operations)?;
+        let mut report = registry.apply_pending()?;
         errors.append(&mut report.errors);
         drop(application);
         operit_store::SyncAppliedChanges::publish(&storage,&report.applied);

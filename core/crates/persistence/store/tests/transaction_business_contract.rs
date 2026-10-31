@@ -676,7 +676,7 @@ fn temporary_apply_failure_stays_pending_and_retries_once_per_batch() {
         Err("database is locked".into())
     });
     for expected in 1..=2 {
-        let report = registry.receive(&operations).unwrap();
+        let report = if expected == 1 { registry.receive(&operations) } else { registry.apply_pending() }.unwrap();
         assert!(!report.errors.is_empty());
         assert_eq!(attempts.load(Ordering::SeqCst), expected);
         assert_eq!(target.journal().pendingOperations().unwrap(), operations);

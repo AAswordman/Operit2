@@ -91,9 +91,16 @@ pub trait SyncOperationKnowledge {
     fn containsSequence(&self, origin: &str, sequence: i64) -> bool;
     /// Finds the next missing sequence after a cursor, skipping known intervals.
     fn nextMissingSequence(&self, origin: &str, after: i64) -> Option<i64>;
+    /// Returns exact received intervals for SQL-side export filtering.
+    fn knownRanges(&self, origin: &str) -> Vec<[i64; 2]>;
 }
 
 impl SyncOperationKnowledge for SyncClock {
+    /// Converts a contiguous clock prefix into exact intervals.
+    fn knownRanges(&self, origin: &str) -> Vec<[i64; 2]> {
+        let end = self.sequenceFor(origin);
+        if end > 0 { vec![[1, end]] } else { vec![] }
+    }
     /// Reads the contiguous observation boundary used by store callers.
     fn sequenceFor(&self, origin: &str) -> i64 {
         SyncClock::sequenceFor(self, origin)
@@ -161,6 +168,10 @@ impl SyncReceipt {
 }
 
 impl SyncOperationKnowledge for SyncReceipt {
+    /// Preserves sparse holes when planning exports in SQL.
+    fn knownRanges(&self, origin: &str) -> Vec<[i64; 2]> {
+        self.ranges.get(origin).cloned().unwrap_or_default()
+    }
     /// Returns only an actually received prefix, leaving sparse gaps requestable.
     fn sequenceFor(&self, origin: &str) -> i64 {
         match self.ranges.get(origin).and_then(|ranges| ranges.first()) {
@@ -454,11 +465,12 @@ enum JournalProjection {
 }
 
 impl JournalProjection {
-    fn includes(&self, record: &JournalRecord) -> bool {
+    /// Filters indexed headers before allocating or decoding their JSON.
+    fn predicate(&self) -> &'static str {
         match self {
-            Self::All => true,
-            Self::PreferenceDatasetHistory => record.domain == "preferences",
-            Self::MergeMetadata => record.is_merge_candidate(),
+            Self::All => "1",
+            Self::PreferenceDatasetHistory => "domain='preferences'",
+            Self::MergeMetadata => "domain='preferences' AND (json_extract(header,'$.route.encrypted')=1 OR json_extract(header,'$.operation')='alias' OR json_extract(header,'$.route.merge_metadata')=1)",
         }
     }
 }
@@ -753,22 +765,7 @@ impl SyncOperationStore {
         domains: &[String],
         limit: usize,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        // Preference outboxes can only contribute to the preferences domain.
-        // Policy and other domain reads must not open unrelated encrypted stores.
-        if domains.is_empty() || domains.iter().any(|domain| domain == "preferences") {
-            self.publishPreferenceOutboxes()?;
-        }
-        self.readJournal(
-            clock,
-            JournalQuery {
-                domains,
-                projection: JournalProjection::All,
-                export_floors: true,
-                limit,
-                max_bytes: usize::MAX,
-                retain: None,
-            },
-        )
+        self.operationsSinceWithInventory(clock, domains, limit, usize::MAX, None, None)
     }
 
     /// Filters before compaction and bounds the combined archived/pending page.
@@ -781,35 +778,20 @@ impl SyncOperationStore {
         maxBytes: usize,
         retain: impl Fn(&SyncOperation) -> bool,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        // Preference outboxes can only contribute to the preferences domain.
-        // Policy and other domain reads must not open unrelated encrypted stores.
-        if domains.is_empty() || domains.iter().any(|domain| domain == "preferences") {
-            self.publishPreferenceOutboxes()?;
-        }
-        self.readJournal(
-            clock,
-            JournalQuery {
-                domains,
-                projection: JournalProjection::All,
-                export_floors: true,
-                limit,
-                max_bytes: maxBytes,
-                retain: Some(&retain),
-            },
-        )
+        self.operationsSinceWithInventory(clock, domains, limit, maxBytes, None, Some(&retain))
     }
 
     /// Plans the normal bounded export and optionally inventories its compacted missing identities.
     pub fn operationsSinceWithInventory<K: SyncOperationKnowledge>(
         &self, clock: &K, domains: &[String], limit: usize, maxBytes: usize,
-        inventory: Option<&mut BTreeSet<String>>, retain: impl Fn(&SyncOperation) -> bool,
+        inventory: Option<&mut BTreeSet<String>>, retain: Option<&dyn Fn(&SyncOperation) -> bool>,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         if domains.is_empty() || domains.iter().any(|domain| domain == "preferences") {
             self.publishPreferenceOutboxes()?;
         }
         self.readJournalWithInventory(clock, JournalQuery {
             domains, projection: JournalProjection::All, export_floors: true,
-            limit, max_bytes: maxBytes, retain: Some(&retain),
+            limit, max_bytes: maxBytes, retain,
         }, inventory)
     }
 
@@ -1941,30 +1923,23 @@ impl SyncOperationStore {
             let mut state = lockSyncState(&self.sharedState.exportFloors, "export floors")?;
             self.loadCachedJson(&mut state, &self.exportFloorsPath())?.clone()
         } else { BTreeMap::new() };
-        let headers = self.withJournal(|journal| journal.headers(if query.export_floors { None } else { Some(false) }))?;
+        let headers = self.withJournal(|journal| journal.headers_since(clock, query.domains, query.projection.predicate(), query.export_floors, &floors))?;
         let mut selected = Vec::new();
         for record in headers {
             let floor = floors.get(&record.origin_device_id).copied().unwrap_or(0);
             let control = record.domain == NETWORK_CONTROL_SYNC_DOMAIN && record.sequence <= clock.sequenceFor(&networkControlClockKey(&record.origin_device_id));
-            if record.sequence <= floor || control || clock.containsSequence(&record.origin_device_id, record.sequence)
-                || (!query.domains.is_empty() && !query.domains.contains(&record.domain)) || !query.projection.includes(&record) { continue; }
+            if record.sequence <= floor || control { continue; }
             selected.push((record.order()?, record));
         }
         // Filter before choosing a replaceable entity's latest original.
-        let mut winners = BTreeMap::new();
-        for (_, record) in &selected {
-            if record.domain != "preferences" && record.semantics == SyncOperationSemantics::EntityState {
-                winners.entry((&record.origin_device_id, &record.domain, &record.entity_type, &record.entity_id))
-                    .or_insert_with(Vec::new).push(record);
-            }
-        }
+        let mut winners = BTreeSet::new();
         let mut winnerIds = BTreeSet::new();
-        for group in winners.values_mut() {
-            group.sort_by_key(|record| std::cmp::Reverse(record.sequence));
-            for record in group {
-                if query.retain.map(|retain| self.original(&record.op_id).map(|op| retain(&op))).transpose()?.unwrap_or(true) {
-                    winnerIds.insert(record.op_id.clone()); break;
-                }
+        // SQL supplies ascending source sequences; reverse traversal finds each entity's winner once.
+        for (_, record) in selected.iter().rev().filter(|(_, r)| r.domain != "preferences" && r.semantics == SyncOperationSemantics::EntityState) {
+            let key = (&record.origin_device_id, &record.domain, &record.entity_type, &record.entity_id);
+            if !winners.contains(&key) && query.retain.map(|retain| self.original(&record.op_id).map(|op| retain(&op))).transpose()?.unwrap_or(true) {
+                winners.insert(key);
+                winnerIds.insert(record.op_id.clone());
             }
         }
         selected.sort_by(|a, b| a.0.cmp(&b.0));

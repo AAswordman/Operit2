@@ -845,13 +845,18 @@ fn preference_aliases_reconcile_existing_rows_without_rewriting_history() {
     let references = std::collections::BTreeMap::from([
         ("models\u{001f}old-provider".to_string(),"retained-provider".to_string()),
         ("voices\u{001f}old-voice".to_string(),"retained-voice".to_string())]);
-    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(),&references).unwrap();
-    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(),&references).unwrap();
+    let other_path = format!("{}.independent.sqlite", fixture.path);
+    let other = fixture.call(json!({"op":"open","path":other_path,"kind":"sqlite","merge":descriptor})).unwrap()["handle"].as_str().unwrap().to_owned();
+    fixture.call(json!({"op":"define_table","handle":other,"table":schema})).unwrap();
+    fixture.call(json!({"op":"execute","handle":other,"statement":{"sql":"INSERT INTO records VALUES('same','old-provider','old-voice')","params":[]}})).unwrap();
+    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &fixture.path,&references).unwrap();
+    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &fixture.path,&references).unwrap();
     let rows = fixture.call(json!({"op":"query","handle":handle,"statement":{
         "sql":"SELECT provider,voice FROM records WHERE id='same'","params":[]}})).unwrap();
     assert_eq!(rows[0]["values"][0],json!({"kind":"text","value":"retained-provider"}));
     assert_eq!(rows[0]["values"][1],json!({"kind":"text","value":"retained-voice"}));
-    assert_eq!(fixture.export().iter().map(|op|serde_json::to_value(op).unwrap()).collect::<Vec<_>>(),original);
+    assert_eq!(fixture.call(json!({"op":"query","handle":other,"statement":{"sql":"SELECT provider FROM records","params":[]}})).unwrap()[0]["values"][0],json!({"kind":"text","value":"old-provider"}));
+    assert_eq!(fixture.export().iter().filter(|op|PluginStorage::syncDatasetPath(op).unwrap()==fixture.path).map(|op|serde_json::to_value(op).unwrap()).collect::<Vec<_>>(),original);
     fixture.dispose();
 }
 
@@ -1179,7 +1184,7 @@ fn object_preference_aliases_rewrite_nested_json_without_new_operations() {
     seed_object_card(&fixture, &handle, id, "Role", "Complete original JSON");
     let history = serde_json::to_value(fixture.export()).unwrap();
     let references = std::collections::BTreeMap::from([("models\u{001f}remote-provider".to_string(), "canonical-provider".to_string())]);
-    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &references).unwrap();
+    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &fixture.path, &references).unwrap();
     let result = fixture.call(json!({"op":"get","handle":handle,"collection":"cards","key":id})).unwrap();
     assert_eq!(result["value"]["id"], id);
     assert_eq!(result["value"]["providerId"], "canonical-provider");
@@ -1208,7 +1213,7 @@ fn character_memory_contract_uses_native_preference_owner_aliases() {
     let references = std::collections::BTreeMap::from([(
         format!("runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json\u{001f}{old}"), canonical.to_owned()
     )]);
-    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &references).unwrap();
+    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &fixture.path, &references).unwrap();
     let owners = fixture.call(json!({"op":"list","handle":handle,"collection":"owners","limit":100})).unwrap();
     assert_eq!(owners.as_array().unwrap().len(), 1);
     assert_eq!(owners[0]["key"], format!("character:{canonical}"));
@@ -1303,7 +1308,7 @@ fn seed_aliased_owner(fixture: &Fixture, handle: &str, oldId: &str, newId: &str)
         put_in("owners", &oldKey, json!({"ownerKey": oldKey, "document": format!("owners/character%3A{oldId}/USER.md")})),
         put_in("memories", &format!("{oldKey}/m1"), json!({"owner": oldKey, "title": "kept"}))
     ]})).unwrap();
-    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &std::collections::BTreeMap::from([
+    PluginStorage::reconcilePreferenceReferences(fixture.host.clone(), &fixture.path, &std::collections::BTreeMap::from([
         (format!("runtime/config/preferences/cards.preferences.json\u{001f}{oldId}"), newId.to_string()),
     ])).unwrap();
 }
@@ -1801,8 +1806,10 @@ fn snapshot_correction_preserves_plugin_scope_versions_and_uncovered_late_rows()
     let target = Fixture::new("target");
     let target_handle = target.open("objects");
     let authoritative = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+    assert_eq!(PluginStorage::syncCoverage(source.host.clone(), &source.path).unwrap(), authoritative.covered);
     let capture = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
     assert!(PluginStorage::repairSyncedSnapshot(target.host.clone(), &capture.token().unwrap(), &authoritative, target.device).unwrap());
+    assert_eq!(PluginStorage::syncCoverage(target.host.clone(), &target.path).unwrap(), PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().covered);
     assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, authoritative.data);
     target.call(json!({"op":"close","handle":target_handle})).unwrap();
 

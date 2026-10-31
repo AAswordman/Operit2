@@ -231,6 +231,7 @@ val operitPluginSyncPython = if (System.getProperty("os.name").lowercase().conta
 }
 val operitBridgeJniLibs = project.layout.projectDirectory.dir("src/main/jniLibs").asFile
 val operitIsWindows = System.getProperty("os.name").lowercase().contains("windows")
+val operitCmakeBin = android.sdkDirectory.resolve("cmake/3.22.1/bin")
 val operitLibclangDir = when {
     System.getenv("OPERIT_LIBCLANG_DIR") != null ->
         file(System.getenv("OPERIT_LIBCLANG_DIR"))
@@ -274,6 +275,7 @@ val prepareOperitAndroidV8Tasks = selectedOperitRustTargets.associateWith { targ
         group = "operit"
         val envFile = operitV8EnvFile(target.rustTarget)
         inputs.files(operitV8PrepareScript, operitV8BridgeLock)
+        inputs.property("androidNdkDirectory", android.ndkDirectory.absolutePath)
         outputs.file(envFile)
         workingDir = operitRepoRoot
         commandLine(
@@ -284,6 +286,8 @@ val prepareOperitAndroidV8Tasks = selectedOperitRustTargets.associateWith { targ
             "--env-file",
             envFile.absolutePath,
         )
+        // Share Gradle's selected NDK with V8 instead of rediscovering the SDK.
+        environment("OPERIT_ANDROID_V8_NDK", android.ndkDirectory.absolutePath)
         // Windows source builds locate libclang for the bindings generation.
         environment("OPERIT_LIBCLANG_DIR", operitLibclangDir.absolutePath)
     }
@@ -348,6 +352,9 @@ androidComponents {
                 val bindgenClangArgs =
                     "--target=${target.rustTarget} --sysroot=${ndkToolchain.parentFile.resolve("sysroot").clangPath()} -resource-dir=${clangResourceDir.clangPath()}"
                 val ccEnvTarget = target.rustTarget.replace("-", "_")
+                // CMake's Ninja generator needs the SDK's build tools in the Cargo process.
+                environment("CMAKE", operitCmakeBin.resolve("cmake${if (operitIsWindows) ".exe" else ""}").absolutePath)
+                environment("PATH", "${operitCmakeBin.absolutePath}${File.pathSeparator}${System.getenv("PATH")}")
                 environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
                 environment("CC_$ccEnvTarget", linker.absolutePath)
                 environment("CXX_$ccEnvTarget", ndkToolchain.resolve("${linkerPrefix}${apiLevel}-clang++${if (operitIsWindows) ".cmd" else ""}").absolutePath)

@@ -1402,6 +1402,15 @@ impl SqlDataset<'_> {
         self.store.transaction(compaction::initialization).map_err(|e|e.to_string())
     }
 
+    /// Reads committed identities without loading initialization payloads or business tables.
+    pub fn coverage(&self) -> Result<BTreeSet<String>> {
+        self.prepare()?;
+        self.store.queryRows(&format!("WITH revisions(id,time,origin,sequence) AS ({})
+            SELECT id FROM revisions UNION SELECT id FROM _operit_initialization_coverage
+            UNION SELECT operation_id FROM _operit_transaction_initialization", self.revisions),vec![])
+            .map_err(|e|e.to_string())?.iter().map(|row|row.get(0).map_err(|e|e.to_string())).collect()
+    }
+
     fn snapshot_in(
         &self,
         tx: &mut crate::SqliteStore::SqliteTransaction<'_>,
