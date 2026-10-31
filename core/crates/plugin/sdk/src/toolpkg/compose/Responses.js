@@ -14,12 +14,14 @@ function profileComposeStage(bundle, sink, stage, started, revision) {
 }
 
 function wrapComposeResponse(bundle, tree, actionResult, includeNavigation, responseSink) {
-  var navigation = includeNavigation ? bundle.takeNavigationCommands() : [], update = null;
+  // Active UI commands retain navigation until their final response; idle effects
+  // use the same session stream without waiting for another click or state write.
+  var navigation = includeNavigation || bundle.activeCommands === 0 ? bundle.takeNavigationCommands() : [], update = null;
   if (typeof tree !== 'undefined') {
     var commitStarted = bundle.profileStages ? Date.now() : 0;
     update = bundle.composition.finish(tree, !includeNavigation);
-    if (update === null) return null;
-    profileComposeStage(bundle, responseSink, 'js-transaction', commitStarted, update.revision);
+    if (update === null && navigation.length === 0) return null;
+    if (update !== null) profileComposeStage(bundle, responseSink, 'js-transaction', commitStarted, update.revision);
   }
   var phase = includeNavigation ? 'final' : 'intermediate';
   var frame = update ? update.seal(phase, actionResult, navigation) : bundle.composition.response(phase, actionResult, navigation);

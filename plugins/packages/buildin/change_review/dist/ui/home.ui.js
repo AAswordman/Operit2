@@ -16,6 +16,26 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var __async = (__this, __arguments, generator) => {
+  return new Promise((resolve, reject) => {
+    var fulfilled = (value) => {
+      try {
+        step(generator.next(value));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    var rejected = (value) => {
+      try {
+        step(generator.throw(value));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+    step((generator = generator.apply(__this, __arguments)).next());
+  });
+};
 
 // src/ui/home.ui.ts
 var home_ui_exports = {};
@@ -28,7 +48,9 @@ function Home(ctx) {
   const [locale] = ctx.useState("locale", "zh");
   const en = locale.startsWith("en");
   function open() {
-    return { type: "toolpkg.ui.open", placement: "workspace", routeId: "toolpkg:com.operit.change_review:ui:workspace", instanceKey: "change-review", input: {} };
+    return __async(this, null, function* () {
+      yield ctx.navigate("toolpkg:com.operit.change_review:ui:workspace");
+    });
   }
   return UI.InkWell(
     { onClick: open, shape: { cornerRadius: 8 } },

@@ -358,7 +358,7 @@ mod tests {
             let report = registry.receive(&[]).unwrap();
             assert!(report.errors.is_empty(), "{:?}", report.errors);
             assert!(report.pending.is_empty());
-            assert_eq!(report.retired, 1);
+            assert_eq!(report.skipped, 1);
             assert!(prepare(device.host.clone()).is_empty());
             assert_eq!(device.host.readBytes(path).unwrap(), saved);
             assert_eq!(selection.data().unwrap().get(&key), Some(&json!(format!("local-{index}"))));
@@ -1103,7 +1103,7 @@ mod tests {
         let report = registry.receive(&[]).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         assert!(report.pending.is_empty());
-        assert_eq!(report.retired, 16);
+        assert_eq!(report.skipped, 16);
         assert_eq!(extensions.record("package", "demo").unwrap().settings["order"], 9);
         assert_eq!(journal.preferenceHistory().unwrap().len(), 16);
     }

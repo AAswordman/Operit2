@@ -24,7 +24,9 @@ impl OperitApplication {
     /// All synchronization entry points use this same owner/source inventory.
     pub(super) fn transactionRegistry<'a>(&'a self, schema: &'a PreferenceMergeSchema, operations: &[SyncOperation]) -> Result<Registry<'a>,String> {
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
-        let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter(), |_,_|true)?;
+        let skipped = self.runtimeSyncOperationStore()?.skippedOperations().map_err(|e|e.to_string())?;
+        let operations = operations.iter().chain(&skipped).collect::<Vec<_>>();
+        let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter().copied(), |_,_|true)?;
         registry.locate = Box::new(|op| match op.domain.as_str() {
             "preferences" => op.payload["storagePath"].as_str().map(str::to_owned).ok_or("Preference path is missing".into()),
             CHAT_SYNC_DOMAIN => Ok(operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into()),
@@ -115,7 +117,10 @@ impl OperitApplication {
         // Captured after the snapshots: a new commit since the empty export invalidates this comparison.
         let (receipt, failures) = registry.receipt()?;
         errors.extend(failures);
-        Ok(json!({"manifests":manifests,"pendingOwners":pending,"errors":errors,"boundary":operit_store::Transaction::digest(&receipt)?}))
+        let skipped = registry.skipped()?.into_iter().map(|(path,operations)|
+            (path,operations.into_iter().map(|operation|operation.opId).collect::<std::collections::BTreeSet<_>>()))
+            .collect::<BTreeMap<_,_>>();
+        Ok(json!({"manifests":manifests,"pendingOwners":pending,"skipped":skipped,"errors":errors,"boundary":operit_store::Transaction::digest(&receipt)?}))
     }
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
@@ -123,8 +128,8 @@ impl OperitApplication {
         let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
         let content = if owner.backend == operit_store::Transaction::Backend::DataStore {
-            let declaration = schema.owner(&owner.path)?.ok_or("Unknown preference file")?;
             let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
+            let declaration = schema.correctionOwner(storage.clone(), &owner.path)?.ok_or("Unknown preference file")?;
             Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
         } else { None };
         let definition = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH || owner.backend != operit_store::Transaction::Backend::Sql {
@@ -147,6 +152,7 @@ impl OperitApplication {
         let files = self.runtimeFileSyncStore()?;
         let mut source: CorrectionFile = serde_json::from_slice(&files.readBlob(&reference.source)?).map_err(|e|e.to_string())?;
         if source.snapshot.data.owner != owner { return Err("Correction file owner differs".into()); }
+        source.snapshot.covered.extend(reference.skipped);
         if let Some(reference) = reference.superseded {
             let superseded: FileCoverage = serde_json::from_slice(&files.readBlob(&reference)?).map_err(|e|e.to_string())?;
             if superseded.owner != owner { return Err("Superseded file owner differs".into()); }
@@ -162,7 +168,8 @@ impl OperitApplication {
         if missing {
             match owner.backend {
                 operit_store::Transaction::Backend::DataStore => {
-                    let declaration = schema.owner(&owner.path)?.ok_or("Unknown shared preference file")?;
+                    let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
+                    let declaration = schema.correctionOwner(storage, &owner.path)?.ok_or("Unknown shared preference file")?;
                     schema.stores.push(declaration);
                 },
                 operit_store::Transaction::Backend::Sql => {

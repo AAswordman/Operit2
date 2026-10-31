@@ -1883,6 +1883,17 @@ impl SyncOperationStore {
         self.pendingOperationIds()?.iter().map(|id| self.original(id)).collect()
     }
 
+    /// Skipped originals still relay normally, but no longer block file correction as pending work.
+    pub fn skippedOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.withJournal(|journal| journal.skipped_ids())?.iter().map(|id| self.original(id)).collect()
+    }
+
+    pub(crate) fn skipOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        self.withJournal(|journal| journal.skip(operations))?;
+        publishSyncMutation();
+        Ok(())
+    }
+
     pub fn visitPendingOperations(&self, domains: &[&str], mut visit: impl FnMut(&SyncOperation)) -> Result<(), SyncOperationStoreError> {
         for header in self.withJournal(|journal| journal.headers(Some(true)))? {
             if domains.is_empty() || domains.contains(&header.domain.as_str()) { visit(&self.original(&header.op_id)?); }

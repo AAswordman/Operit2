@@ -153,6 +153,7 @@ var OperitComposeState = function () {
           return current.value;
         }
       },
+      notify: notifyStateChanged,
       subscribe: subscribeStateChange,
       flush: flushPendingStateChanges
     };

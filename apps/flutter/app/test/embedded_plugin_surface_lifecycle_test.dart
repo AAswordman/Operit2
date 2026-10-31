@@ -9,6 +9,7 @@ import 'package:operit2/ui/common/contributions/EmbeddedPluginSurfaceCatalog.dar
 import 'package:operit2/ui/common/contributions/EmbeddedPluginSurfaceHost.dart';
 import 'package:operit2/ui/common/contributions/PluginWorkspacePageHost.dart';
 import 'package:operit2/ui/common/contributions/PluginWorkspacePresentation.dart';
+import 'package:operit2/ui/features/chat/components/WorkspaceShell.dart';
 import 'package:operit2/ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 
 import 'plugin_workspace_presentation_test.dart' as catalog_test;
@@ -18,7 +19,7 @@ import 'support/compose_session_fixture.dart';
 class SurfaceBridge extends catalog_test.CatalogBridge {
   int opened = 0;
   int released = 0;
-  final fixture = ComposeSessionFixture(
+  late final ComposeSessionFixture fixture = ComposeSessionFixture(
     render: (state) => {
       'type': 'Button',
       'props': {
@@ -34,12 +35,12 @@ class SurfaceBridge extends catalog_test.CatalogBridge {
       ],
       'slots': <String, Object?>{},
     },
-    action: (state, action) async => {
-      'type': 'toolpkg.ui.open',
-      'placement': 'workspace',
-      'routeId': 'route',
-      'instanceKey': 'shared-key',
-      'input': {'revision': state['revision']},
+    action: (state, action) async {
+      if (surface != 'workspace') return {'revision': state['revision']};
+      fixture.publishNavigation(fixture.commands.last.requestId, 'route', {
+        'revision': state['revision'],
+      });
+      return null;
     },
   );
 
@@ -124,7 +125,7 @@ void main() {
       expect(bridge.opened, 1);
       await tester.tap(find.text('revision-2'));
       await flush(tester);
-      expect((result as Map)['input'], {'revision': 2});
+      expect(result, {'revision': 2});
       ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
       await flush(tester);
       expect(bridge.opened, 1);
@@ -145,18 +146,27 @@ void main() {
   );
 
   testWidgets(
-    'workspace follows live host context and authenticates nested page actions',
+    'workspace follows live host context and routes ordinary navigation without an action result',
     (tester) async {
       final bridge = SurfaceBridge();
       final clients = GeneratedCoreProxyClients(bridge);
-      final presentation = await PluginWorkspacePresentation.resolve(
+      final presentation = (await PluginWorkspacePresentation.fromNavigation(
         clients: clients,
         sourceOwnerPackageName: 'owner',
-        request: catalog_test.request(),
+        routeId: 'route',
+        args: const {},
         language: 'en',
         hostState: const {'revision': 0},
-      );
-      PluginWorkspacePresentation? opened;
+      ))!;
+      final session = WorkspaceShell.session;
+      final previousOpen = session.onOpenRequested;
+      var openRequests = 0;
+      session.onOpenRequested = () => openRequests++;
+      addTearDown(() {
+        session.onOpenRequested = previousOpen;
+        session.tabs.removeWhere((tab) => tab.pluginPresentation != null);
+        session.selectedIndex = 0;
+      });
 
       /// Retains the page identity while supplying the current workspace session state.
       Widget host(int revision) => MaterialApp(
@@ -165,7 +175,6 @@ void main() {
             presentation: presentation,
             workspacePath: '/workspace',
             hostState: {'revision': revision},
-            onOpen: (value) => opened = value,
           ),
         ),
       );
@@ -179,13 +188,31 @@ void main() {
       expect(bridge.opened, 1);
       await tester.tap(find.text('revision-3'));
       await flush(tester);
-      expect(opened?.request.input, {'revision': 3});
-      expect(opened?.hostState['revision'], 3);
+      final opened = session.tabs.last.pluginPresentation!;
+      expect(opened.input, {'revision': 3});
+      expect(opened.hostState['revision'], 3);
+      expect(openRequests, 1);
+      // The same route updates the existing tab and also works after the UI command ends.
+      final lastCommand = bridge.fixture.commands.last;
+      final tabCount = session.tabs.length;
+      bridge.fixture.publishNavigation(lastCommand.requestId, 'route', {
+        'revision': 4,
+      });
+      await flush(tester);
+      expect(session.tabs.length, tabCount);
+      expect(session.tabs.last.pluginPresentation!.input, {'revision': 4});
+      expect(openRequests, 2);
       bridge.enabled = false;
       ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
       await flush(tester);
       expect(find.text('revision-3'), findsNothing);
       expect(bridge.released, 1);
+      bridge.fixture.publishNavigation(lastCommand.requestId, 'route', {
+        'revision': 5,
+      });
+      await flush(tester);
+      expect(openRequests, 2);
+      expect(session.tabs.last.pluginPresentation!.input, {'revision': 4});
       await tester.pumpWidget(const SizedBox.shrink());
       await flush(tester);
       await bridge.fixture.close();

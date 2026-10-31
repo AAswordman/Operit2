@@ -643,7 +643,7 @@ fn portable_contracts_are_durable_append_only_and_not_user_editable() {
     }
 }
 
-/// A newer engine's unknown migration stays pending without blocking another plugin owner.
+/// An unknown migration skips its owner without blocking file correction or another owner.
 #[test]
 fn unknown_portable_schema_is_isolated_to_its_owner() {
     let source=Fixture::new("space");let receiver=Fixture::new("space");
@@ -658,8 +658,9 @@ fn unknown_portable_schema_is_isolated_to_its_owner() {
     let schema=PreferenceMergeSchema::default();
     let registry=PreferenceMerge::registry(receiver.host.clone(),&schema,history.iter(),|_,_|true).unwrap();
     let report=registry.receive(&history).unwrap();
-    assert!(!report.pending.is_empty());
-    assert!(report.errors.iter().any(|error|error.contains("future_rule")));
+    assert!(report.pending.is_empty());
+    assert!(report.errors.is_empty());
+    assert!(registry.skipped().unwrap().contains_key(&receiver.path));
     assert_eq!(PreferencesDataStore::newWithStorage(receiver.host.clone(),healthy).data().unwrap().get(&stringPreferencesKey("value")),Some(&json!(42)));
     source.dispose();receiver.dispose();
 }

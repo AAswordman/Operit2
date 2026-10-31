@@ -68,6 +68,7 @@ var OperitComposeHost = function () {
           route: routeId,
           args: OperitComposeNodes.serialize(payload, runtime, [])
         });
+        if (runtime.activeCommands === 0) runtime.notifyStateChanged();
         return Promise.resolve();
       },
       showToast: function (message) {

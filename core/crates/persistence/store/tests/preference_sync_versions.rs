@@ -109,7 +109,7 @@ fn unversioned_supported_history_is_converted_and_archived_originals_remain_exac
 }
 
 #[test]
-fn future_data_waits_and_applies_after_owner_upgrade() {
+fn future_data_skips_until_an_initialization_after_owner_upgrade() {
     let source = Fixture::new();
     let incoming = write(&source, 3, "future", json!(true), 40);
     let target = Fixture::new();
@@ -119,8 +119,13 @@ fn future_data_waits_and_applies_after_owner_upgrade() {
     let outcomes = apply(&target, &incoming, 2);
     assert!(outcomes.iter().all(|o| !o.skipped && o.result.is_err()));
     assert_eq!(target.host.readBytes(PATH).unwrap(), before);
-    assert_eq!(target.journal().pendingOperations().unwrap(), incoming);
-    assert!(apply(&target, &incoming, 3).iter().all(|o| o.result.is_ok()));
+    assert!(target.journal().pendingOperations().unwrap().is_empty());
+    assert_eq!(target.journal().skippedOperations().unwrap(), incoming);
+    let mut source_snapshot = source.store(PATH,3).syncSnapshot().unwrap();
+    source_snapshot.covered.extend(incoming.iter().map(|operation|operation.opId.clone()));
+    let initialization = Transaction::compaction::Initialization::from_snapshot(&source_snapshot).operation("preferences",false).unwrap();
+    assert!(apply(&target, &[initialization], 3).iter().all(|o|o.result.is_ok()));
+    assert!(target.journal().skippedOperations().unwrap().is_empty());
     assert_eq!(target.store(PATH, 3).data().unwrap().get(&stringPreferencesKey("future")), Some(&json!(true)));
 }
 
@@ -134,13 +139,17 @@ fn an_undeclared_converter_retains_old_transactions_for_recovery() {
     let outcomes = applyIndependentOperations(target.host.clone(), &schema, &[], &incoming, |_, _| true);
     assert!(outcomes.iter().any(|o| o.result.as_ref().is_err_and(|e| e.contains("missing preferences migration"))));
     assert_eq!(target.value("displayName"), None);
-    successful(&target, &incoming);
+    let mut source_snapshot = source.store(PATH,2).syncSnapshot().unwrap();
+    source_snapshot.covered.extend(incoming.iter().map(|operation|operation.opId.clone()));
+    let initialization = Transaction::compaction::Initialization::from_snapshot(&source_snapshot).operation("preferences",false).unwrap();
+    successful(&target, &[initialization]);
+    assert!(target.journal().skippedOperations().unwrap().is_empty());
     assert_eq!(target.value("displayName"), Some(json!("甲")));
 }
 
 
 #[test]
-fn unknown_owners_stay_pending_while_an_independent_owner_commits() {
+fn unknown_owners_skip_while_an_independent_owner_commits() {
     let source = Fixture::new();
     source.store(PATH, 2).edit(|p| p.set(&stringPreferencesKey("healthy"), true)).unwrap();
     source.store("runtime/config/preferences/unknown.preferences.json", 2).edit(|p| p.set(&stringPreferencesKey("unknown"), true)).unwrap();

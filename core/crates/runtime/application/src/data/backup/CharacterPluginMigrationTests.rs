@@ -2816,9 +2816,9 @@ fn assert_character_layout_retirement(retained_document: bool) {
     let registry =
         PreferenceMerge::registry(fixture.host.clone(), &schema, [], |_, _| true).unwrap();
     let before = registry.receive(&[]).unwrap();
-    assert_eq!(before.pending.len(), originals.len());
-    assert_eq!(before.retired, 0);
-    assert_eq!(before.errors.len(), originals.len());
+    assert!(before.pending.is_empty());
+    assert_eq!(before.skipped, originals.len());
+    assert!(before.errors.is_empty());
     let document = format!("{memory_root}/USER.md");
     if retained_document {
         // Reproduce an already-cleaned installation before the new layout has ever run.
@@ -2845,7 +2845,7 @@ fn assert_character_layout_retirement(retained_document: bool) {
         assert!(report.pending.is_empty());
         assert!(report.applied.is_empty());
         assert_eq!(
-            report.retired,
+            report.skipped,
             if attempt == 0 { originals.len() } else { 0 }
         );
         let (snapshots, pending, errors) = registry.snapshots().unwrap();

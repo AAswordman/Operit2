@@ -491,6 +491,7 @@ pub fn repair_file(store: &PreferencesDataStore, expected: &str, source: &Snapsh
         },
         None => preferences(&current),
     };
+    journal(store)?.registerPreferenceOutbox(&store.storagePath, store.encryption.is_some())?;
     if unchanged {
         // Only SQL changes when the correct file already exists. No file/SQL handoff is needed.
         values.view = Some(current.data.clone());

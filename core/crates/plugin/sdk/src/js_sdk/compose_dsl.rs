@@ -3609,7 +3609,8 @@ pub trait ComposeDslContextMethods: Send + Sync {
     fn getEnv(&self, key: String) -> Option<String>;
     /// Writes one runtime environment value for subsequent screen operations.
     fn setEnv(&self, key: String, value: String) -> ComposeDslContextMethodsSetEnvReturn;
-    /// Requests navigation to a route with optional destination arguments.
+    /// Requests navigation using optional destination arguments; workspace routes open in the side workspace.
+    /// May be called from callbacks and composition-owned effects without returning a navigation object.
     fn navigate(
         &self,
         route: String,

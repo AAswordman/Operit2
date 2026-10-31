@@ -145,6 +145,26 @@ class ComposeSessionFixture {
     );
   }
 
+  /// Publishes navigation through the retained session stream, without an action result or tree update.
+  void publishNavigation(
+    String requestId,
+    String route,
+    Map<String, Object?> args,
+  ) {
+    _requestSessions[requestId]!.emit(
+      core.ToolPkgComposeDslEvent(
+        requestId: requestId,
+        phase: 'intermediate',
+        update: null,
+        actionResult: null,
+        navigationCommands: [
+          {'route': route, 'args': args},
+        ],
+        error: null,
+      ),
+    );
+  }
+
   /// Releases streams after all widget owners have been disposed.
   Future<void> close() async {
     for (final session in _sessions.values) {

@@ -1,7 +1,5 @@
 // ignore_for_file: file_names
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
@@ -14,13 +12,11 @@ class PluginWorkspacePageHost extends StatefulWidget {
   const PluginWorkspacePageHost({
     super.key,
     required this.presentation,
-    required this.onOpen,
     required this.workspacePath,
     this.hostState = const {},
   });
 
   final PluginWorkspacePresentation presentation;
-  final ValueChanged<PluginWorkspacePresentation> onOpen;
   final String? workspacePath;
   final Map<String, Object?> hostState;
 
@@ -71,31 +67,6 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
     super.dispose();
   }
 
-  /// Resolves nested page requests under the current authenticated source owner.
-  Future<void> _onAction(Object? value) async {
-    final origin = widget.presentation;
-    try {
-      final request = PluginWorkspaceRequest.fromActionResult(value);
-      if (request == null) return;
-      final presentation = await PluginWorkspacePresentation.resolve(
-        clients: origin.clients,
-        sourceOwnerPackageName: origin.route.containerPackageName,
-        request: request,
-        language: Localizations.localeOf(context).languageCode,
-        hostState: {...origin.hostState, ...widget.hostState},
-      );
-      if (mounted && identical(widget.presentation, origin)) {
-        widget.onOpen(presentation);
-      }
-    } catch (error) {
-      if (mounted && identical(widget.presentation, origin)) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$error')));
-      }
-    }
-  }
-
   /// Renders only a currently enabled exact route, never a cached disabled owner.
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -126,9 +97,8 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
           ...widget.hostState,
           'workspacePath': widget.workspacePath,
           'locale': Localizations.localeOf(context).languageCode,
-          'input': requested.request.input,
+          'input': requested.input,
         },
-        onActionResult: (value) => unawaited(_onAction(value)),
       );
     },
   );

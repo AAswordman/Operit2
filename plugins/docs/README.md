@@ -17,3 +17,5 @@ Notes for Operit2 plugin authors live here.
 - [WebSocket (v2)](WEBSOCKET.md): engine-owned text connections through the shared networking Host, including ordered events and resource disposal.
 
 - [Waifu plugin](../packages/external/waifu/README.md): reusable sentence streaming, emotion images and prompt profiles through declared plugin dependencies.
+
+- [Plugin page navigation](UI_NAVIGATION.md): use `ctx.navigate` for application pages and workspace tabs, including composition-owned asynchronous callbacks.

@@ -4849,7 +4849,8 @@ export interface ComposeDslContext {
    */
   setEnv(key: string, value: string): ComposeDslContextMethodsSetEnvReturn;
   /**
-   * Requests navigation to a route with optional destination arguments.
+   * Requests navigation using optional destination arguments; workspace routes open in the side workspace.
+   * May be called from callbacks and composition-owned effects without returning a navigation object.
    */
   navigate(route: string, args?: Record<string, unknown>): ComposeDslContextMethodsNavigateReturn;
   /**

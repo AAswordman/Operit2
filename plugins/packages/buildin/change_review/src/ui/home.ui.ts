@@ -5,8 +5,8 @@ export default function Home(ctx: ComposeDslContext): ComposeNode {
   const { UI, Modifier: M } = ctx, c = ctx.MaterialTheme.colorScheme;
   const [locale] = ctx.useState('locale', 'zh');
   const en = locale.startsWith('en');
-  function open(): ToolPkg.JsonValue {
-    return { type: 'toolpkg.ui.open', placement: 'workspace', routeId: 'toolpkg:com.operit.change_review:ui:workspace', instanceKey: 'change-review', input: {} };
+  async function open(): Promise<void> {
+    await ctx.navigate('toolpkg:com.operit.change_review:ui:workspace');
   }
   return UI.InkWell({ onClick: open, shape: { cornerRadius: 8 } },
     UI.Row({ modifier: M.padding(12, 16), verticalAlignment: 'center' }, [

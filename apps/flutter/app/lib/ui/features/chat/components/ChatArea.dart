@@ -21,9 +21,7 @@ import 'ChatScrollNavigator.dart';
 import 'NewChatIntro.dart';
 import 'style/ThemedChatMessage.dart';
 import '../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
-import '../../../common/contributions/PluginWorkspacePresentation.dart';
 import 'ChatMessageSlotHost.dart';
-import 'WorkspaceShell.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
 const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
@@ -199,41 +197,16 @@ class _ChatAreaState extends State<ChatArea>
       (item) => item.timestamp == message.timestamp,
     );
     if (current == null ||
-        current.selectedVariantIndex != message.selectedVariantIndex)
+        current.selectedVariantIndex != message.selectedVariantIndex) {
       return;
+    }
     if (!_messageContributions.entries.any(
       (item) => item.mountIdentity == entry.mountIdentity,
-    ))
+    )) {
       return;
-    try {
-      if (value is Map && value['type'] == 'toolpkg.message.rollback') {
-        widget.onRollbackToMessage(message.timestamp);
-        return;
-      }
-      final request = PluginWorkspaceRequest.fromActionResult(value);
-      if (request == null) return;
-      final presentation = await PluginWorkspacePresentation.resolve(
-        clients: widget.clients,
-        sourceOwnerPackageName: entry.route.containerPackageName,
-        request: request,
-        language: Localizations.localeOf(context).languageCode,
-        hostState: {'chatId': chatId},
-      );
-      if (mounted &&
-          widget.currentChatId == chatId &&
-          widget.messages.any(
-            (item) =>
-                item.timestamp == message.timestamp &&
-                item.selectedVariantIndex == message.selectedVariantIndex,
-          )) {
-        WorkspaceShell.session.openPluginPage(presentation);
-      }
-    } catch (error) {
-      if (mounted && widget.currentChatId == chatId) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$error')));
-      }
+    }
+    if (value is Map && value['type'] == 'toolpkg.message.rollback') {
+      widget.onRollbackToMessage(message.timestamp);
     }
   }
 

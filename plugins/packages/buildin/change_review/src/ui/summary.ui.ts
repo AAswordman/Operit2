@@ -21,14 +21,11 @@ export default function Summary(ctx: ComposeDslContext): ComposeNode {
   const totals = files.reduce((sum, file) => ({ additions: sum.additions + file.additions, deletions: sum.deletions + file.deletions }), { additions: 0, deletions: 0 });
 
   /** Opens the same plugin's full review with the selected file ordered first. */
-  function open(file?: ReviewFile): ToolPkg.JsonValue {
-    return {
-      type: "toolpkg.ui.open", placement: "workspace", routeId: ROUTE,
-      instanceKey: "change-review", input: {
-        chatId, messageTimestamp: message!.timestamp, variantIndex: message!.variantIndex,
-        files: file === undefined ? files : [file, ...files.filter(item => item.path !== file.path)],
-      },
-    };
+  async function open(file?: ReviewFile): Promise<void> {
+    await ctx.navigate(ROUTE, {
+      chatId, messageTimestamp: message!.timestamp, variantIndex: message!.variantIndex,
+      files: file === undefined ? files : [file, ...files.filter(item => item.path !== file.path)],
+    });
   }
 
   /** Preserves both counts, including zero, with color confined to the numbers. */

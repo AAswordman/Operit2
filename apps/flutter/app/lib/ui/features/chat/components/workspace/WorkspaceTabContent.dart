@@ -224,7 +224,6 @@ class WorkspaceTabContent extends StatelessWidget {
             presentation: presentation,
             workspacePath: workspacePath,
             hostState: WorkspaceShell.session.pluginHostState,
-            onOpen: WorkspaceShell.session.openPluginPage,
           );
         }
         final packageName = tab.pluginPackageName;

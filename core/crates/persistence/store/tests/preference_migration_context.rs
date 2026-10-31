@@ -288,7 +288,7 @@ fn structural_rules_apply_to_an_old_transaction_after_receiving_only_a_canonical
 }
 
 #[test]
-fn an_opaque_migration_keeps_missing_source_context_pending_instead_of_using_a_false_preimage() {
+fn an_opaque_migration_skips_missing_source_context_instead_of_using_a_false_preimage() {
     fn current(host: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
         PreferencesDataStore::newWithStorage(host, path)
             .withMigration(1, |version, context| convert(version, context, true))
@@ -321,8 +321,6 @@ fn an_opaque_migration_keeps_missing_source_context_pending_instead_of_using_a_f
         receiver.host.clone(),
         "runtime/sync",
     );
-    assert!(journal
-        .pendingOperationIds()
-        .unwrap()
-        .contains(&incoming.opId));
+    assert!(journal.pendingOperationIds().unwrap().is_empty());
+    assert!(journal.skippedOperations().unwrap().contains(&incoming));
 }

@@ -22,6 +22,8 @@ import '../../../../core/theme/PluginThemeSnapshot.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/AdaptiveSidePanel.dart';
+import '../../../common/contributions/PluginWorkspacePresentation.dart';
+import '../../chat/components/WorkspaceShell.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/icons/MaterialIconNameResolver.dart';
@@ -191,6 +193,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   final _actionScheduler = ComposeDslActionScheduler();
   Future<void>? _renderTail;
   Future<void> _reloadTail = Future<void>.value();
+  Future<void> _navigationTail = Future<void>.value();
   int _reloadGeneration = 0;
   bool _reloading = false;
   final _ComposeProgramStore _programStore = _ComposeProgramStore();
@@ -1094,12 +1097,49 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   void _navigateCommands(
     List<({String routeId, Map<String, Object?> args})> commands,
   ) {
-    for (final command in commands) {
-      AppRouterGateway.navigate(
-        routeId: command.routeId,
-        args: command.args,
-        source: RouteEntrySource.script,
-      );
+    if (commands.isEmpty) return;
+    final generation = _actionOwnerGeneration;
+    _navigationTail = _navigationTail.then(
+      (_) => _applyNavigationCommands(commands, generation),
+    );
+  }
+
+  /// Routes through the declared surface without requiring a special action return value.
+  Future<void> _applyNavigationCommands(
+    List<({String routeId, Map<String, Object?> args})> commands,
+    int generation,
+  ) async {
+    try {
+      for (final command in commands) {
+        if (!_isCurrentActionOwner(generation)) return;
+        final hostState = Map<String, Object?>.of(widget.initialState)
+          ..remove('input');
+        final presentation = await PluginWorkspacePresentation.fromNavigation(
+          clients: widget.clients,
+          sourceOwnerPackageName: widget.plugin.packageName,
+          routeId: command.routeId,
+          args: command.args,
+          language: Localizations.localeOf(context).languageCode,
+          hostState: hostState,
+        );
+        if (!_isCurrentActionOwner(generation)) return;
+        if (presentation != null) {
+          WorkspaceShell.session.openPluginPage(presentation);
+        } else {
+          AppRouterGateway.navigate(
+            routeId: command.routeId,
+            args: command.args,
+            source: RouteEntrySource.script,
+          );
+        }
+      }
+    } catch (error, stackTrace) {
+      if (_isCurrentActionOwner(generation)) {
+        _printComposeError('navigate', error, stackTrace);
+        setState(() {
+          _error = error.toString();
+        });
+      }
     }
   }
 

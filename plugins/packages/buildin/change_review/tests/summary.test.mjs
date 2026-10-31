@@ -67,20 +67,20 @@ test('Undo targets the host-bound message and View changes carries the exact ans
   assert.deepEqual(JSON.parse(JSON.stringify(undoResult.actionResult)), { type: 'toolpkg.message.rollback' });
   const open = page.nodes().filter(node => node.type === 'InkWell')[1];
   const result = await page.click(open);
-  const action = JSON.parse(JSON.stringify(result.actionResult));
-  assert.equal(action.placement, 'workspace');
-  assert.equal(action.routeId, 'toolpkg:com.operit.change_review:ui:workspace');
-  assert.equal(action.input.chatId, 'chat-a');
-  assert.equal(action.input.messageTimestamp, 123);
-  assert.equal(action.input.variantIndex, 1);
-  assert.equal(action.input.files[0].path, 'src/a.ts');
+  assert.equal(result.actionResult, undefined);
+  const [navigation] = JSON.parse(JSON.stringify(result.navigationCommands));
+  assert.equal(navigation.route, 'toolpkg:com.operit.change_review:ui:workspace');
+  assert.equal(navigation.args.chatId, 'chat-a');
+  assert.equal(navigation.args.messageTimestamp, 123);
+  assert.equal(navigation.args.variantIndex, 1);
+  assert.equal(navigation.args.files[0].path, 'src/a.ts');
 });
 
 test('file click orders the chosen file first without dropping the rest of the turn', async () => {
   const page = await screen('../src/ui/summary.ui.ts', { message: message([toolResult('a.ts', '+a'), toolResult('b.rs', '-b')]) });
   const rows = page.nodes().filter(node => node.type === 'InkWell');
   const result = await page.click(rows[3]);
-  assert.deepEqual(JSON.parse(JSON.stringify(result.actionResult.input.files)).map(file => file.path), ['b.rs', 'a.ts']);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.navigationCommands[0].args.files)).map(file => file.path), ['b.rs', 'a.ts']);
 });
 
 test('collapse preserves local state across revision updates and then uses the new semantic input', async () => {
@@ -110,4 +110,14 @@ test('file rows preserve visible paths and both line counts with bounded scrolli
   assert.ok(nodes.some(node => node.props.animation?.durationMillis === 220));
   assert.ok(nodes.some(node => node.props.durationMillis === 200));
   assert.ok(nodes.some(node => node.props.modifier?.__modifierOps.some(op => op.name === 'heightIn' && op.args[1] === 240)));
+});
+
+
+test('workspace home uses ordinary page navigation without presentation parameters', async () => {
+  const page = await screen('../src/ui/home.ui.ts', { locale: 'zh' });
+  const result = await page.click(page.nodes().find(node => node.type === 'InkWell'));
+  assert.equal(result.actionResult, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.navigationCommands)), [{
+    route: 'toolpkg:com.operit.change_review:ui:workspace', args: {},
+  }]);
 });

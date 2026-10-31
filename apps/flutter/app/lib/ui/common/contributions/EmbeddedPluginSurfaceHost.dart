@@ -14,7 +14,7 @@ class EmbeddedPluginSurfaceHost extends StatelessWidget {
     required this.surface,
     required this.instanceIdentity,
     required this.hostState,
-    required this.onActionResult,
+    this.onActionResult,
     this.entryPadding = EdgeInsets.zero,
   });
 
@@ -22,7 +22,7 @@ class EmbeddedPluginSurfaceHost extends StatelessWidget {
   final String surface;
   final Object instanceIdentity;
   final Map<String, Object?> hostState;
-  final void Function(EmbeddedPluginSurfaceEntry entry, Object? result)
+  final void Function(EmbeddedPluginSurfaceEntry entry, Object? result)?
   onActionResult;
   final EdgeInsetsGeometry entryPadding;
 
@@ -66,7 +66,9 @@ class EmbeddedPluginSurfaceHost extends StatelessWidget {
                   ...hostState,
                   'locale': Localizations.localeOf(context).languageCode,
                 },
-                onActionResult: (result) => onActionResult(entry, result),
+                onActionResult: onActionResult == null
+                    ? null
+                    : (result) => onActionResult!(entry, result),
               ),
             ),
         ],

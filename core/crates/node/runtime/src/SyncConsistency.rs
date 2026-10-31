@@ -12,12 +12,14 @@ struct Report {
     errors: Vec<String>,
     #[serde(default)]
     pendingOwners: BTreeSet<String>,
+    #[serde(default)]
+    skipped: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Exchanging every known original does not prove equal contents on an older peer.
 pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result<(), String> {
     for (side, clock) in [("Local", local), ("Remote", remote)] {
-        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(4) {
+        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(5) {
             return Err(format!(
                 "{side} peer cannot verify synchronized contents; a compatible version is required"
             ));
@@ -57,7 +59,11 @@ impl SpacePersistenceSyncService {
         let correctionCount = plans.len();
         let mut transfers = Vec::new();
         for (a, b, choice) in plans {
+            let path = &a.or(b).expect("file exists").owner.path;
+            let skipped = local.skipped.get(path).into_iter().chain(remote.skipped.get(path))
+                .flat_map(|ids|ids.iter().cloned()).collect::<BTreeSet<_>>();
             let reason = match (a, b) {
+                (Some(a), Some(b)) if a.digest == b.digest => "seal_skipped_transactions",
                 (Some(_), Some(_)) => "content_digest_mismatch",
                 (None, _) => "local_file_missing",
                 (_, None) => "remote_file_missing",
@@ -75,7 +81,7 @@ impl SpacePersistenceSyncService {
                     None => None,
                 };
                 let source_file = self.transferSnapshot(target, source, choice == Source::Local, false).await?;
-                Ok::<_, String>(FileCorrectionReference { source: source_file, superseded })
+                Ok::<_, String>(FileCorrectionReference { source: source_file, superseded, skipped })
             }.await;
             match result {
                 Ok(reference) => transfers.push((a, b, choice, reference)),
@@ -179,6 +185,10 @@ fn correctionPlans<'a>(local: &'a Report, remote: &'a Report) -> Vec<(Option<&'a
             (None,Some(_)) => Source::Remote,
             _ => unreachable!(),
         };
+        let choice = if choice == Source::Equal && (local.skipped.contains_key(path) || remote.skipped.contains_key(path)) {
+            let (a,b) = (a?,b?);
+            if (&a.revision,&a.node) >= (&b.revision,&b.node) { Source::Local } else { Source::Remote }
+        } else { choice };
         (choice != Source::Equal).then_some((a,b,choice))
     }).collect()
 }
@@ -211,7 +221,8 @@ fn verifyReports(local: &Report, remote: &Report, changed: &BTreeSet<String>) ->
     if local.pendingOwners.union(&remote.pendingOwners).any(|path| !changed.contains(path)) {
         return Err("Consistency check has pending owners".into());
     }
-    let mut complete = local.pendingOwners.is_empty() && remote.pendingOwners.is_empty();
+    let mut complete = local.pendingOwners.is_empty() && remote.pendingOwners.is_empty()
+        && local.skipped.is_empty() && remote.skipped.is_empty();
     for (a,b) in [(local,remote),(remote,local)] {
         for manifest in &a.manifests {
             let comparison = match b.manifests.iter().find(|other|other.owner.path == manifest.owner.path && other.owner.backend == manifest.owner.backend) {
@@ -244,7 +255,7 @@ mod tests {
             manifests: vec![snapshot.manifest().unwrap()],
             boundary: Default::default(),
             errors: vec![],
-            pendingOwners: BTreeSet::new(),
+            pendingOwners: BTreeSet::new(), skipped: BTreeMap::new(),
         }
     }
 
@@ -307,8 +318,8 @@ mod tests {
 
     #[test]
     fn correction_uses_each_peers_export_boundary_without_equal_histories_or_wall_clocks() {
-        let mut a = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
-        let mut b = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
+        let mut a = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new(), skipped: BTreeMap::new() };
+        let mut b = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new(), skipped: BTreeMap::new() };
         let mut a_exported = SyncReceipt::default();
         let mut b_exported = SyncReceipt::default();
         a_exported.observe("a", 17);
@@ -335,7 +346,7 @@ mod tests {
             backend: Backend::DataStore, path: "file.preferences.json".into(), format: 0, layout: 1,
         }), covered: BTreeSet::new(), generation: 0 };
         let present = report(&snapshot);
-        let empty = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
+        let empty = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new(), skipped: BTreeMap::new() };
         for (a,b,choice) in [(&present,&empty,Source::Local),(&empty,&present,Source::Remote)] {
             let plans = correctionPlans(a,b);
             assert_eq!(plans.len(),1);
@@ -436,15 +447,30 @@ mod tests {
         assert_eq!(retry, BTreeSet::from(["memory.sqlite".into()]));
         assert_eq!(super::verifyReports(&before, &after, &retry), Ok(false));
         assert_eq!(super::verifyReports(&after, &after, &retry), Ok(true));
-        let empty = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new() };
+        let empty = Report { manifests: vec![], boundary: Default::default(), errors: vec![], pendingOwners: BTreeSet::new(), skipped: BTreeMap::new() };
         assert_eq!(changedOwners(&before, &empty), retry);
         assert_eq!(changedOwners(&empty, &after), retry);
         assert!(changedOwners(&before, &before).is_empty());
     }
 
     #[test]
+    fn skipped_originals_require_sealing_even_when_contents_already_match() {
+        let snapshot = Snapshot { node: "node".into(), data: Data::empty(Owner {
+            backend: Backend::DataStore, path: "preferences".into(), format: 1, layout: 1,
+        }), covered: BTreeSet::new(), generation: 0 };
+        let mut local = report(&snapshot);
+        let remote = report(&snapshot);
+        local.skipped.insert("preferences".into(), BTreeSet::from(["origin:1".into()]));
+        assert_eq!(correctionPlans(&local,&remote).len(), 1);
+        assert_eq!(verifyReports(&local,&remote), Ok(false));
+        local.skipped.clear();
+        assert!(correctionPlans(&local,&remote).is_empty());
+        assert_eq!(verifyReports(&local,&remote), Ok(true));
+    }
+
+    #[test]
     fn completion_requires_a_supported_consistency_protocol_on_both_peers() {
-        let current = json!({"consistencyVersion":4});
+        let current = json!({"consistencyVersion":5});
         assert!(requireConsistencySupport(&current, &current).is_ok());
         for unsupported in [
             Value::Null,
@@ -453,7 +479,7 @@ mod tests {
             json!({"consistencyVersion":1}),
             json!({"consistencyVersion":2}),
             json!({"consistencyVersion":3}),
-            json!({"consistencyVersion":5}),
+            json!({"consistencyVersion":4}),
         ] {
             assert!(requireConsistencySupport(&unsupported, &current).is_err());
             assert!(requireConsistencySupport(&current, &unsupported).is_err());

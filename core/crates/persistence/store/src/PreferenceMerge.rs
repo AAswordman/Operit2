@@ -94,6 +94,30 @@ impl PreferenceMergeSchema {
         }))
     }
 
+    /// Recovery may copy an unknown Space preference file without executing its business transactions.
+    pub fn correctionOwner(&self, storage: Arc<dyn RuntimeStorageHost>, path: &str) -> Result<Option<PreferenceMergeStore>, String> {
+        if let Some(owner) = self.owner(path)? { return Ok(Some(owner)); }
+        use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_SYNC_DIR_PATH};
+        if !path.ends_with(".preferences.json") || runtimeStorageOwnership(path)? != RuntimeStorageOwnership::Space {
+            return Ok(None);
+        }
+        let routes = crate::PreferenceLayout::routes(storage.clone())?;
+        let journal = crate::SyncOperationStore::SyncOperationStore::new(storage, RUNTIME_SYNC_DIR_PATH);
+        let encrypted = match journal.preferenceDatasets().map_err(|e|e.to_string())?.get(path).copied() {
+            Some(encrypted) => encrypted,
+            None => {
+                let operation = journal.skippedOperations().map_err(|e|e.to_string())?.into_iter().find(|operation|
+                    operation.domain == "preferences" && PreferencesSyncedEntry::operationPath(operation).ok()
+                        .and_then(|source|crate::Transaction::Migrations::resolve_path(&routes,source).ok()).as_deref() == Some(path));
+                let Some(operation) = operation else { return Ok(None); };
+                operation.payload["encrypted"] == true
+            }
+        };
+        Ok(Some(PreferenceMergeStore::values(path, encrypted, if encrypted {
+            |storage,path| PreferencesDataStore::newEncryptedWithStorage(storage,path)
+        } else { |storage,path| PreferencesDataStore::newWithStorage(storage,path) })))
+    }
+
     /// Iterates the catalogs together with their explicit storage ownership.
     fn catalogs(&self) -> impl Iterator<Item = (&PreferenceMergeStore, &StoragePreferencesMergeCatalog)> {
         self.stores.iter().filter_map(|store| store.merge.catalog.as_ref().map(|catalog| (store, catalog)))
@@ -282,9 +306,10 @@ where F: Fn(&str, &str) -> bool + Copy {
         if incoming.is_empty() {
             // Retry pending work and explicitly supplied history; prepare only requested files.
             let replay = history.iter().map(|op| registry.target(op)).collect::<Result<BTreeSet<_>, _>>()?;
+            let skipped = registry.skipped()?;
             let requested = schema.stores.iter().map(|store| &store.path).chain(replay.iter()).collect::<BTreeSet<_>>();
             for path in requested {
-                if report.outcomes.contains_key(path)
+                if report.outcomes.contains_key(path) || skipped.contains_key(path)
                     || !replay.contains(path) && !storage.exists(path).map_err(|e|e.to_string())? {
                     continue;
                 }
@@ -333,7 +358,16 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
         locate: Box::new(|op| PreferencesSyncedEntry::operationPath(op).map(str::to_owned).map_err(|e|e.to_string())) };
     for path in paths {
         if registry.is_retired(&path) { continue; }
-        let Some(owner) = schema.owner(&path)? else { continue; };
+        let declared = schema.owner(&path)?;
+        let snapshot_only = declared.is_none();
+        let owner = match declared {
+            Some(owner) => owner,
+            None if storage.exists(&path).map_err(|e|e.to_string())? => {
+                let Some(owner) = schema.correctionOwner(storage.clone(), &path)? else { continue; };
+                owner
+            }
+            None => continue,
+        };
         let mut store = (owner.open)(storage.clone(),&path);
         let contract = if path.starts_with("runtime/plugin_data/") {
             (|| {
@@ -351,7 +385,7 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
         let mut contract_error = match contract {
             Ok(configured) => { store = configured; None }, Err(error) => Some(error.to_string()),
         };
-        let safe = independentHistory(&store, std::iter::once(&owner));
+        let safe = !snapshot_only && independentHistory(&store, std::iter::once(&owner));
         if let Some(format) = contract_error.is_none().then(||store.syncSchemaVersion().ok()).flatten() {
             let changed = registry.journal.withJournal(|journal| journal.set_compaction(&path,format,safe)).map_err(|e|e.to_string())?;
             if changed && safe && (storage.exists(&path).map_err(|error| error.to_string())?

@@ -40,6 +40,9 @@ pub struct FileCoverage {
 pub struct FileCorrectionReference {
     pub source: RuntimeFileSyncReference,
     pub superseded: Option<RuntimeFileSyncReference>,
+    /// Exact failed originals accepted by this correction, never a time cutoff.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub skipped: std::collections::BTreeSet<String>,
 }
 
 impl RuntimeFileSyncStore {

@@ -68,6 +68,7 @@ var OperitComposeDslRuntime = function () {
     runtime.invokeAction = function (actionId, payload) {
       return runtime.actions.invoke(actionId, payload);
     };
+    runtime.notifyStateChanged = state.notify;
     runtime.subscribeStateChange = state.subscribe;
     runtime.flushStateChanges = state.flush;
     runtime.setCallRuntime = function (callRuntime) {

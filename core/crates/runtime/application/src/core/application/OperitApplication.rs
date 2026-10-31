@@ -862,7 +862,7 @@ impl OperitApplication {
         }).map_err(|error| error.to_string())?;
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
-        result["consistencyVersion"] = serde_json::json!(4);
+        result["consistencyVersion"] = serde_json::json!(5);
         result["pending"] = serde_json::json!(pending);
         result["pendingOperationIds"] = serde_json::json!(store.pendingOperationIds().map_err(|error| error.to_string())?);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
@@ -1008,7 +1008,7 @@ impl OperitApplication {
         operit_store::SyncAppliedChanges::publish(&storage,&report.applied);
         let chats = report.applied.iter().filter_map(synchronizedChatId).collect();
         if let Err(error) = self.refreshSynchronizedChatFlows(&chats) { errors.push(format!("chat refresh: {error}")); }
-        Ok(serde_json::json!({"received":operations.len(),"applied":report.applied.len(),"skipped":report.retired,"pending":report.pending.len(),
+        Ok(serde_json::json!({"received":operations.len(),"applied":report.applied.len(),"skipped":report.skipped,"pending":report.pending.len(),
             "pendingOperationIds":report.pending,"errors":errors}))
     }
 

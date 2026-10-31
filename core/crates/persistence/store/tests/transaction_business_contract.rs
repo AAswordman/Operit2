@@ -596,7 +596,7 @@ fn invalid_migration_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> Pre
 }
 
 #[test]
-fn invalid_migration_keeps_whole_original_pending_and_other_owners_continue() {
+fn invalid_migration_skips_owner_until_initialization_and_other_owners_continue() {
     let target = Fixture::new();
     target.apply(&authored(CURRENT, 2, 10, |state| {
         state.set(&stringPreferencesKey("x"), "committed")
@@ -631,7 +631,8 @@ fn invalid_migration_keeps_whole_original_pending_and_other_owners_continue() {
         .is_err_and(|error| error.contains("violates"))));
     assert_eq!(target.host.readBytes(CURRENT).unwrap(), bytes);
     assert_eq!(target.store().syncSnapshot().unwrap(), before);
-    assert_eq!(target.journal().pendingOperations().unwrap(), invalid);
+    assert!(target.journal().pendingOperations().unwrap().is_empty());
+    assert_eq!(target.journal().skippedOperations().unwrap(), invalid);
     assert_eq!(
         current_store(target.host.clone(), independent)
             .data()
@@ -639,12 +640,76 @@ fn invalid_migration_keeps_whole_original_pending_and_other_owners_continue() {
             .get(&stringPreferencesKey("ready")),
         Some(&json!(true))
     );
-    declarations.stores[0].open = current_store;
-    PreferenceMerge::applyOperations(target.host.clone(), &declarations, &[], &[], |_, _| true)
-        .unwrap();
+    // A later page for this owner is skipped too, without running the failing migration again.
+    let later = authored(CURRENT, 2, 40, |state| state.set(&stringPreferencesKey("z"), "later"));
+    PreferenceMerge::applyIndependentOperations(target.host.clone(), &declarations, &[], &later, |_,_|true);
     assert!(target.journal().pendingOperations().unwrap().is_empty());
-    assert_eq!(target.value("x"), Some(json!("rejected")));
-    assert_eq!(target.value("y"), Some(json!("atomic sibling")));
+    let skipped = target.journal().skippedOperations().unwrap();
+    assert_eq!(skipped.len(), invalid.len() + later.len());
+    let exported = target.journal().operationsSince(&operit_store::SyncOperationStore::SyncReceipt::default(), &[], usize::MAX).unwrap();
+    assert!(skipped.iter().all(|operation|exported.contains(operation)), "skip still relays original identity and order");
+    let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
+    let capture = registry.snapshot(&before.data.owner).unwrap();
+    let mut authoritative = before.clone();
+    authoritative.covered.extend(skipped.iter().map(|operation|operation.opId.clone()));
+    assert!(registry.repair(&capture.data.owner, &capture.token().unwrap(), &authoritative).unwrap());
+    assert!(target.journal().skippedOperations().unwrap().is_empty());
+    assert_eq!(target.value("x"), Some(json!("committed")));
+    assert_eq!(target.value("y"), None);
+    assert_eq!(target.value("z"), None);
+    let history = target.journal().preferenceHistory().unwrap();
+    assert!(!history.iter().any(|operation|skipped.contains(operation)));
+    assert_history_represented(&skipped, &history);
+}
+
+#[test]
+fn temporary_apply_failure_stays_pending_and_retries_once_per_batch() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let target = Fixture::new();
+    let declarations = schema();
+    let operations = authored(CURRENT, 2, 10, |state|state.set(&stringPreferencesKey("x"), 1));
+    let mut registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let calls = attempts.clone();
+    registry.owners.get_mut(CURRENT).unwrap().apply = Box::new(move |_,_| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Err("database is locked".into())
+    });
+    for expected in 1..=2 {
+        let report = registry.receive(&operations).unwrap();
+        assert!(!report.errors.is_empty());
+        assert_eq!(attempts.load(Ordering::SeqCst), expected);
+        assert_eq!(target.journal().pendingOperations().unwrap(), operations);
+        assert!(target.journal().skippedOperations().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn unknown_preference_owner_recovers_as_a_file_and_remains_in_inventory() {
+    let source = Fixture::new();
+    let target = Fixture::new();
+    let path = "runtime/config/preferences/unknown.preferences.json";
+    let source_store = PreferencesDataStore::newWithStorage(source.host.clone(),path);
+    source_store.edit(|state|state.set(&stringPreferencesKey("x"), "authority")).unwrap();
+    let mut authoritative = source_store.syncSnapshot().unwrap();
+    let operations = source.journal().operationsSince(
+        &operit_store::SyncOperationStore::SyncReceipt::default(), &[], usize::MAX).unwrap();
+    let mut declarations = PreferenceMergeSchema::default();
+    let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
+    let report = registry.receive(&operations).unwrap();
+    assert!(report.errors.is_empty());
+    assert!(report.pending.is_empty());
+    assert!(!target.journal().skippedOperations().unwrap().is_empty());
+    authoritative.covered.extend(operations.iter().map(|operation|operation.opId.clone()));
+    drop(registry);
+    declarations.stores.push(declarations.correctionOwner(target.host.clone(),path).unwrap().unwrap());
+    let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
+    assert!(registry.repair(&authoritative.data.owner, "", &authoritative).unwrap());
+    assert!(target.journal().skippedOperations().unwrap().is_empty());
+    let empty = PreferenceMergeSchema::default();
+    let registry = PreferenceMerge::registry(target.host.clone(), &empty, &[], |_,_|true).unwrap();
+    assert!(registry.manifests().unwrap().0.iter().any(|manifest|manifest.owner.path == path));
+    assert_eq!(registry.snapshot(&authoritative.data.owner).unwrap().data, authoritative.data);
 }
 
 fn old_schema() -> PreferenceMergeSchema {

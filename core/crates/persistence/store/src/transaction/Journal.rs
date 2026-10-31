@@ -114,6 +114,21 @@ impl Journal {
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
     }
 
+    // 0 = applied, 1 = retryable, 2 = skipped until file correction. All retain their receipts.
+    pub(crate) fn skip(&mut self, operations: &[SyncOperation]) -> Result<(), Error> {
+        self.transaction(|tx| {
+            for operation in operations {
+                tx.execute("UPDATE originals SET pending=2 WHERE id=?1 AND pending=1", vec![text(&operation.opId)])?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn skipped_ids(&mut self) -> Result<Vec<String>, Error> {
+        self.0.query("SELECT id FROM originals WHERE pending=2 ORDER BY id", vec![])?.into_iter()
+            .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
+    }
+
     pub(crate) fn complete(&mut self, operations: &[SyncOperation]) -> Result<(), Error> {
         self.transaction(|tx| {
             for operation in operations {
@@ -224,7 +239,7 @@ impl Journal {
     }
 
     pub(crate) fn owner_paths(&mut self) -> Result<Vec<String>, Error> {
-        self.0.query("SELECT path FROM transaction_owners UNION SELECT target FROM originals WHERE pending=1 AND domain='preferences' ORDER BY path", vec![])?.iter()
+        self.0.query("SELECT path FROM transaction_owners UNION SELECT target FROM originals WHERE pending<>0 AND domain='preferences' ORDER BY path", vec![])?.iter()
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
     }
 

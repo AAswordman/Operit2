@@ -1,4 +1,4 @@
-//! Layout routes active originals and confirms explicit retirements; unknown owners remain pending.
+//! Layout routes active originals and confirms explicit retirements; unknown owners skip incremental apply until file correction.
 use std::{path::PathBuf, sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}}};
 use operit_host_api::{RuntimeStorageHost, PluginStorage::StoragePreferencesMergeDescriptor};
 use operit_host_native_storage::NativeRuntimeStorageHost;
@@ -88,9 +88,9 @@ fn moved_owner_applies_and_ten_retired_namespace_originals_are_confirmed() {
     let registry = operit_store::PreferenceMerge::registry(target.host.clone(), &declarations, incoming.iter(), |_, _| true).unwrap();
     let report = registry.receive(&incoming).unwrap();
     assert!(report.errors.is_empty(), "{:?}", report.errors);
-    assert_eq!(report.retired, 10);
+    assert_eq!(report.skipped, 10);
     assert!(report.pending.is_empty());
-    assert_eq!(registry.receive(&incoming).unwrap().retired, 0);
+    assert_eq!(registry.receive(&incoming).unwrap().skipped, 0);
     let (snapshots, pending, errors) = registry.snapshots().unwrap();
     assert!(pending.is_empty());
     assert!(errors.is_empty(), "{errors:?}");
@@ -140,7 +140,8 @@ fn retirement_keeps_neighboring_paths_and_future_layout_waits() {
     assert_eq!(manager.prepareOperations(&mut Vec::new(), &mut pending).unwrap(), 0);
     assert_eq!(original_map(&pending), original_map(&incoming));
     assert!(applyOperations(target.host.clone(), &schema(), &[], &incoming, |_, _| true).is_err());
-    assert_eq!(target.journal().pendingOperations().unwrap(), incoming);
+    assert!(target.journal().pendingOperations().unwrap().is_empty());
+    assert_eq!(target.journal().skippedOperations().unwrap(), incoming);
     let old_layout = PreferenceLayout::new(target.host.clone(), STATE).withSchema(1, |_, _| Ok(()));
     assert!(old_layout.prepareOperations(&mut Vec::new(), &mut pending).is_err());
     assert_eq!(original_map(&pending), original_map(&incoming));
@@ -164,7 +165,7 @@ fn original_map(operations: &[SyncOperation]) -> std::collections::BTreeMap<Stri
 }
 
 #[test]
-fn retired_file_is_confirmed_while_a_neighbor_stays_pending_after_reopen() {
+fn retired_file_is_confirmed_while_a_neighbor_stays_skipped_after_reopen() {
     use operit_store::SyncOperationStore::SyncOperationKnowledge;
     let source = Fixture::new();
     let neighbor = format!("{OLD}.other.preferences.json");
@@ -192,12 +193,13 @@ fn retired_file_is_confirmed_while_a_neighbor_stays_pending_after_reopen() {
         let registry =
             operit_store::PreferenceMerge::registry(host, &schema, [], |_, _| true).unwrap();
         let report = registry.receive(&incoming).unwrap();
-        assert_eq!(report.retired, usize::from(attempt == 0));
+        assert_eq!(report.skipped, 2 * usize::from(attempt == 0));
         assert!(report.applied.is_empty());
-        assert_eq!(report.errors.len(), 1);
-        let pending = target.journal().pendingOperations().unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].payload["storagePath"], neighbor);
+        assert!(report.errors.is_empty());
+        assert!(target.journal().pendingOperations().unwrap().is_empty());
+        let skipped = target.journal().skippedOperations().unwrap();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].payload["storagePath"], neighbor);
         let receipt = target.journal().receipt().unwrap();
         for op in &incoming {
             // Receipt acknowledges durable reception; pending separately tracks application.
