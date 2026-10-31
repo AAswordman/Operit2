@@ -16,6 +16,10 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("wasm32") {
         let mut config = cmake::Config::new("native");
         config.profile("Release").build_target("operit_local_llm");
+        // cmake-rs copies cc's LC_ALL=C compiler delta onto the native build;
+        // C.UTF-8 keeps FetchContent archives with non-ASCII entry names
+        // extractable on hosts without generated locales (Debian 12).
+        config.env("LC_ALL", "C.UTF-8");
         // Prevent nested native builds from exhausting memory on large CI workers.
         if std::env::var_os("CMAKE_BUILD_PARALLEL_LEVEL").is_none() {
             let threads = std::thread::available_parallelism()
