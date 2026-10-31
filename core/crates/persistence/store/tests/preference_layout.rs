@@ -1,4 +1,4 @@
-//! Layout routes active originals and confirms explicit retirements; unknown owners skip incremental apply until file correction.
+//! Layout routes active originals and confirms explicit retirements; unregistered files are ignored.
 use std::{path::PathBuf, sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}}};
 use operit_host_api::{RuntimeStorageHost, PluginStorage::StoragePreferencesMergeDescriptor};
 use operit_host_native_storage::NativeRuntimeStorageHost;
@@ -165,7 +165,7 @@ fn original_map(operations: &[SyncOperation]) -> std::collections::BTreeMap<Stri
 }
 
 #[test]
-fn retired_file_is_confirmed_while_a_neighbor_stays_skipped_after_reopen() {
+fn retired_file_is_confirmed_while_an_unregistered_neighbor_is_ignored_after_reopen() {
     use operit_store::SyncOperationStore::SyncOperationKnowledge;
     let source = Fixture::new();
     let neighbor = format!("{OLD}.other.preferences.json");
@@ -197,9 +197,7 @@ fn retired_file_is_confirmed_while_a_neighbor_stays_skipped_after_reopen() {
         assert!(report.applied.is_empty());
         assert!(report.errors.is_empty());
         assert!(target.journal().pendingOperations().unwrap().is_empty());
-        let skipped = target.journal().skippedOperations().unwrap();
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(skipped[0].payload["storagePath"], neighbor);
+        assert!(target.journal().skippedOperations().unwrap().is_empty());
         let receipt = target.journal().receipt().unwrap();
         for op in &incoming {
             // Receipt acknowledges durable reception; pending separately tracks application.

@@ -325,6 +325,7 @@ impl RuntimeFileSyncStore {
         if operation.domain != RUNTIME_FILE_SYNC_DOMAIN {
             return Ok(None);
         }
+        if runtimeStorageOwnership(&operation.entityId) != Ok(RuntimeStorageOwnership::Space) { return Ok(None); }
         if operation.entityType != RUNTIME_FILE_SYNC_ENTITY_TYPE {
             return Err(format!(
                 "unsupported runtime file entity type: {}",

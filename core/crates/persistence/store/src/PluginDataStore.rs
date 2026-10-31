@@ -57,15 +57,13 @@ impl DataStore {
         snapshot(&result.preferences()?.data()?)?;
         if let Some(merge) = merge {
             crate::PreferenceMerge::validatePluginDeclaration(path, merge).map_err(failure)?;
-            let value = serde_json::to_value(merge).map_err(|error| failure(error.to_string()))?;
             result.preferences()?.try_edit_result::<_, _, SqliteStoreError>(|preferences| {
                 let key = stringPreferencesKey(crate::PreferenceMerge::PLUGIN_MERGE_DECLARATION_KEY);
-                match preferences.get(&key) {
-                    Some(existing) if *existing != value => return Err(failure("Preference merge declaration differs from its persisted contract")),
-                    Some(_) => return Ok(()),
-                    None => {}
-                }
-                preferences.set(&key, value);
+                let combined = match preferences.get(&key) {
+                    Some(existing) => crate::PreferenceMerge::combineDeclarations(&serde_json::from_value(existing.clone()).map_err(|error| failure(error.to_string()))?, merge).map_err(failure)?,
+                    None => merge.clone(),
+                };
+                preferences.set(&key, serde_json::to_value(combined).map_err(|error| failure(error.to_string()))?);
                 Ok(())
             })?;
         }

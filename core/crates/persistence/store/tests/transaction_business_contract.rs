@@ -685,31 +685,23 @@ fn temporary_apply_failure_stays_pending_and_retries_once_per_batch() {
 }
 
 #[test]
-fn unknown_preference_owner_recovers_as_a_file_and_remains_in_inventory() {
+fn unregistered_preference_is_ignored_without_opening_or_syncing_its_file() {
     let source = Fixture::new();
     let target = Fixture::new();
     let path = "runtime/config/preferences/unknown.preferences.json";
-    let source_store = PreferencesDataStore::newWithStorage(source.host.clone(),path);
-    source_store.edit(|state|state.set(&stringPreferencesKey("x"), "authority")).unwrap();
-    let mut authoritative = source_store.syncSnapshot().unwrap();
+    PreferencesDataStore::newWithStorage(source.host.clone(),path)
+        .edit(|state|state.set(&stringPreferencesKey("x"), "authority")).unwrap();
     let operations = source.journal().operationsSince(
         &operit_store::SyncOperationStore::SyncReceipt::default(), &[], usize::MAX).unwrap();
-    let mut declarations = PreferenceMergeSchema::default();
+    target.host.writeBytesAtomically(path,b"user file; not preference JSON").unwrap();
+    let declarations = PreferenceMergeSchema::default();
     let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
     let report = registry.receive(&operations).unwrap();
-    assert!(report.errors.is_empty());
-    assert!(report.pending.is_empty());
-    assert!(!target.journal().skippedOperations().unwrap().is_empty());
-    authoritative.covered.extend(operations.iter().map(|operation|operation.opId.clone()));
-    drop(registry);
-    declarations.stores.push(declarations.correctionOwner(target.host.clone(),path).unwrap().unwrap());
-    let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
-    assert!(registry.repair(&authoritative.data.owner, "", &authoritative).unwrap());
+    assert!(report.errors.is_empty() && report.pending.is_empty());
     assert!(target.journal().skippedOperations().unwrap().is_empty());
-    let empty = PreferenceMergeSchema::default();
-    let registry = PreferenceMerge::registry(target.host.clone(), &empty, &[], |_,_|true).unwrap();
-    assert!(registry.manifests().unwrap().0.iter().any(|manifest|manifest.owner.path == path));
-    assert_eq!(registry.snapshot(&authoritative.data.owner).unwrap().data, authoritative.data);
+    assert!(registry.manifests().unwrap().0.is_empty());
+    assert!(target.journal().operationsSince(&Default::default(), &[], usize::MAX).unwrap().is_empty());
+    assert_eq!(target.host.readBytes(path).unwrap(),b"user file; not preference JSON");
 }
 
 fn old_schema() -> PreferenceMergeSchema {

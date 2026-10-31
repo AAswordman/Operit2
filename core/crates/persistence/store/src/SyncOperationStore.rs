@@ -1874,6 +1874,23 @@ impl SyncOperationStore {
 
     pub fn pendingOperationCount(&self) -> Result<usize, SyncOperationStoreError> { Ok(self.pendingOperationIds()?.len()) }
 
+    /// Retains receipts and identity checks while dropping synchronization work outside declared ownership.
+    pub fn ignoreFileOperations(&self, domain: &str, path: &str) -> Result<(), SyncOperationStoreError> {
+        let routes = crate::PreferenceLayout::routes(self.storageHost.clone()).map_err(SyncOperationStoreError::Message)?;
+        self.withJournal(|journal| journal.transaction(|tx| {
+            for path in std::iter::once(path).chain(routes.iter().filter(|(_,target)| target.as_str() == path).map(|(source,_)|source.as_str())) {
+                let ids = tx.query("SELECT id FROM originals WHERE domain=?1 AND target=?2", vec![crate::Transaction::text(domain),crate::Transaction::text(path)])?
+                    .iter().map(|row|row.valueAt(0)?.asString()).collect::<Result<Vec<_>,_>>()?;
+                crate::Transaction::Journal::retire_ids(tx, ids)?;
+                tx.execute("DELETE FROM transaction_files WHERE path=?1", vec![crate::Transaction::text(path)])?;
+                tx.execute("DELETE FROM transaction_owners WHERE path=?1", vec![crate::Transaction::text(path)])?;
+            }
+            Ok(())
+        }))?;
+        operit_util::AppLogger::AppLogger::i("TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=unregistered"));
+        Ok(())
+    }
+
     /// Discovers committed and pending preference owners without decoding transaction payloads.
     pub fn preferenceOwnerPaths(&self) -> Result<Vec<String>, SyncOperationStoreError> {
         self.withJournal(|journal| journal.owner_paths())

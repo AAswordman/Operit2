@@ -81,6 +81,11 @@ impl OperitApplication {
             })?;
         }
         for operation in operations.iter().filter(|op|!matches!(op.domain.as_str(),"preferences"|CHAT_SYNC_DOMAIN|PLUGIN_STORAGE_SYNC_DOMAIN)) {
+            if operation.domain == operit_store::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN
+                && operit_util::RuntimeStorageLayout::runtimeStorageOwnership(&operation.entityId) != Ok(operit_util::RuntimeStorageLayout::RuntimeStorageOwnership::Space) {
+                registry.journal.ignoreFileOperations(&operation.domain, &operation.entityId).map_err(|e|e.to_string())?;
+                continue;
+            }
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
             registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
@@ -129,7 +134,7 @@ impl OperitApplication {
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
         let content = if owner.backend == operit_store::Transaction::Backend::DataStore {
             let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
-            let declaration = schema.correctionOwner(storage.clone(), &owner.path)?.ok_or("Unknown preference file")?;
+            let declaration = schema.owner(&owner.path)?.ok_or("Unknown preference file")?;
             Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
         } else { None };
         let definition = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH || owner.backend != operit_store::Transaction::Backend::Sql {
@@ -168,8 +173,7 @@ impl OperitApplication {
         if missing {
             match owner.backend {
                 operit_store::Transaction::Backend::DataStore => {
-                    let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
-                    let declaration = schema.correctionOwner(storage, &owner.path)?.ok_or("Unknown shared preference file")?;
+                    let declaration = schema.owner(&owner.path)?.ok_or("Unknown shared preference file")?;
                     schema.stores.push(declaration);
                 },
                 operit_store::Transaction::Backend::Sql => {

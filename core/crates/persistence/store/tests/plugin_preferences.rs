@@ -703,3 +703,31 @@ fn portable_format_and_layout_migrations_compose_for_unopened_owners() {
     assert!(!receiver.host.exists(&receiver.path).unwrap());
     source.dispose(); offline.dispose(); receiver.dispose();
 }
+
+/// Exercises the released character contract against native open, downgrade prevention and synchronization.
+#[test]
+fn character_merge_extension_preserves_old_data_and_rejects_changed_rules() {
+    let source = Fixture::new("space");
+    let receiver = Fixture::new("space");
+    let current = serde_json::from_str::<Value>(include_str!("../../../../../plugins/packages/buildin/character_cards/src/storage/merge.json")).unwrap()["meta"].clone();
+    let mut old = current.clone(); old["references"].as_array_mut().unwrap().truncate(2);
+    let open = |fixture: &Fixture, merge: &Value| fixture.call(json!({"op":"open_preferences","path":fixture.path,"merge":merge}));
+    let handle = open(&source, &old).unwrap()["handle"].as_str().unwrap().to_owned();
+    source.edit(&handle, json!([set("state", json!({"version":1,"active":null,"retained":true}))]));
+    open(&source, &current).unwrap();
+    open(&source, &old).unwrap();
+    assert_eq!(source.data(&handle)["values"]["state"]["retained"], true);
+    assert_eq!(serde_json::from_slice::<Value>(&source.host.readBytes(&source.path).unwrap()).unwrap()["__operit_preferences_merge"], current);
+    let history = source.history();
+    let handle = open(&receiver, &old).unwrap()["handle"].as_str().unwrap().to_owned();
+    PreferenceMerge::applyOperations(receiver.host.clone(), &PreferenceMergeSchema::default(), &[], &history, |_,_|true).unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&receiver.host.readBytes(&receiver.path).unwrap()).unwrap()["__operit_preferences_merge"], current);
+    assert_eq!(receiver.data(&handle)["values"]["state"]["retained"], true);
+    assert_eq!(source.history(), history);
+    let mut changed = current.clone(); changed["references"][0]["target"] = json!(source.path);
+    assert!(open(&source, &changed).is_err());
+    changed = current.clone(); changed["references"][2]["key"]["key"] = json!("state");
+    assert!(open(&source, &changed).is_err());
+    source.dispose();
+    receiver.dispose();
+}

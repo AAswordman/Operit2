@@ -1,5 +1,5 @@
 //! Executes the shared preference merge declarations for Rust owners and plugins.
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
@@ -83,39 +83,23 @@ impl PreferenceMergeSchema {
         }
         use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership};
         if runtimeStorageOwnership(path)? != RuntimeStorageOwnership::Space {
-            return Err("Synchronized preferences require Space-owned storage".into());
-        }
-        Ok(Some(PreferenceMergeStore {
-            path: path.to_owned(), encrypted: false,
-            open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
-            merge: StoragePreferencesMergeDescriptor {
-                version: 1, catalog: None, references: Vec::new(), projection: None,
-            },
-        }))
-    }
-
-    /// Recovery may copy an unknown Space preference file without executing its business transactions.
-    pub fn correctionOwner(&self, storage: Arc<dyn RuntimeStorageHost>, path: &str) -> Result<Option<PreferenceMergeStore>, String> {
-        if let Some(owner) = self.owner(path)? { return Ok(Some(owner)); }
-        use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_SYNC_DIR_PATH};
-        if !path.ends_with(".preferences.json") || runtimeStorageOwnership(path)? != RuntimeStorageOwnership::Space {
             return Ok(None);
         }
-        let routes = crate::PreferenceLayout::routes(storage.clone())?;
-        let journal = crate::SyncOperationStore::SyncOperationStore::new(storage, RUNTIME_SYNC_DIR_PATH);
-        let encrypted = match journal.preferenceDatasets().map_err(|e|e.to_string())?.get(path).copied() {
-            Some(encrypted) => encrypted,
-            None => {
-                let operation = journal.skippedOperations().map_err(|e|e.to_string())?.into_iter().find(|operation|
-                    operation.domain == "preferences" && PreferencesSyncedEntry::operationPath(operation).ok()
-                        .and_then(|source|crate::Transaction::Migrations::resolve_path(&routes,source).ok()).as_deref() == Some(path));
-                let Some(operation) = operation else { return Ok(None); };
-                operation.payload["encrypted"] == true
-            }
-        };
-        Ok(Some(PreferenceMergeStore::values(path, encrypted, if encrypted {
-            |storage,path| PreferencesDataStore::newEncryptedWithStorage(storage,path)
-        } else { |storage,path| PreferencesDataStore::newWithStorage(storage,path) })))
+        Ok(Some(PreferenceMergeStore::values(path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path))))
+    }
+
+    /// Uses the same validated declaration for local snapshots and historical transactions.
+    fn declarePlugin(&mut self, path: &str, merge: StoragePreferencesMergeDescriptor) -> Result<(), String> {
+        validatePluginDeclaration(path, &merge)?;
+        if let Some(owner) = self.stores.iter_mut().find(|owner| owner.path == path) {
+            if owner.encrypted { return Err("Plugin preference declarations require an unencrypted plugin store".into()); }
+            owner.merge = combineDeclarations(&owner.merge, &merge)?;
+        } else {
+            let mut owner = PreferenceMergeStore::values(path, false, |storage, path| PreferencesDataStore::newWithStorage(storage, path));
+            owner.merge = merge;
+            self.stores.push(owner);
+        }
+        Ok(())
     }
 
     /// Iterates the catalogs together with their explicit storage ownership.
@@ -256,32 +240,20 @@ pub(crate) fn validatePluginDeclaration(path: &str, descriptor: &StoragePreferen
     validateDeclaration(descriptor)
 }
 
-/// Recovers immutable plugin contracts from already decoded preference history.
-fn pluginDeclarations(entries: &[PreferencesSyncedEntry]) -> Result<BTreeMap<String, StoragePreferencesMergeDescriptor>, String> {
-    let mut declarations = BTreeMap::new();
-    for entry in entries {
-        if !entry.keys().contains(&PLUGIN_MERGE_DECLARATION_KEY) { continue; }
-        let path = entry.storagePath().to_owned();
-        if entry.encrypted() { return Err("Plugin preference declarations require an unencrypted plugin store".into()); }
-        let mut extracted = false;
-        entry.clone().rewriteRootEntries(|key, value| {
-            if key != PLUGIN_MERGE_DECLARATION_KEY { return Ok(()); }
-            let value = value.ok_or_else(|| PreferencesDataStoreError::Message("Preference merge declarations cannot be removed".into()))?;
-            let descriptor: StoragePreferencesMergeDescriptor = serde_json::from_value(value.clone())?;
-            validatePluginDeclaration(&path, &descriptor).map_err(PreferencesDataStoreError::Message)?;
-            match declarations.entry(path.clone()) {
-                Entry::Vacant(entry) => { entry.insert(descriptor); }
-                Entry::Occupied(entry) if entry.get() != &descriptor =>
-                    return Err(PreferencesDataStoreError::Message("Conflicting preference merge declarations".into())),
-                Entry::Occupied(_) => {}
-            }
-            extracted = true;
-            Ok(())
-        }).map_err(|error| error.to_string())?;
-        if !extracted && entry.identityAlias().is_none() { return Err("Preference merge declarations must be complete immutable records".into()); }
+/// Retains the fuller contract only when existing rules are unchanged and new keys are appended.
+pub(crate) fn combineDeclarations(a: &StoragePreferencesMergeDescriptor, b: &StoragePreferencesMergeDescriptor) -> Result<StoragePreferencesMergeDescriptor, String> {
+    validateDeclaration(a)?;
+    validateDeclaration(b)?;
+    let (short, long) = if a.references.len() <= b.references.len() { (a, b) } else { (b, a) };
+    if short.version != long.version || short.catalog != long.catalog || short.projection != long.projection
+        || !long.references.starts_with(&short.references)
+        || long.references[short.references.len()..].iter().any(|reference| match &reference.key {
+            StoragePreferencesMergeKey::Exact { key } => short.references.iter().any(|existing| existing.key.matches(key)),
+            StoragePreferencesMergeKey::Records { .. } => true,
+        }) {
+        return Err("Conflicting preference merge declarations".into());
     }
-    if declarations.len() > 64 { return Err("Plugin preference merge declaration limit exceeded".into()); }
-    Ok(declarations)
+    Ok(long.clone())
 }
 
 /// Reports a dataset commit or terminal skip without sharing failure boundaries with other datasets.
@@ -352,22 +324,21 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
             paths.insert(crate::Transaction::Migrations::resolve_path(&routes,path)?);
         }
     }
-    let metadata = journal.preferenceMergeHistory().map_err(|e|e.to_string())?;
     let retired = crate::PreferenceLayout::retirements(storage.clone())?;
     let mut registry = Registry { journal,owners: BTreeMap::new(),sources: vec![],routes,retired,
         locate: Box::new(|op| PreferencesSyncedEntry::operationPath(op).map(str::to_owned).map_err(|e|e.to_string())) };
+    let mut owners = Vec::new();
     for path in paths {
         if registry.is_retired(&path) { continue; }
-        let declared = schema.owner(&path)?;
-        let snapshot_only = declared.is_none();
-        let owner = match declared {
-            Some(owner) => owner,
-            None if storage.exists(&path).map_err(|e|e.to_string())? => {
-                let Some(owner) = schema.correctionOwner(storage.clone(), &path)? else { continue; };
-                owner
-            }
-            None => continue,
+        let Some(owner) = schema.owner(&path)? else {
+            registry.journal.ignoreFileOperations("preferences", &path).map_err(|e|e.to_string())?;
+            continue;
         };
+        owners.push(owner);
+    }
+    let metadata = registry.journal.preferenceMergeHistory().map_err(|e|e.to_string())?;
+    for owner in owners {
+        let path = owner.path.clone();
         let mut store = (owner.open)(storage.clone(),&path);
         let contract = if path.starts_with("runtime/plugin_data/") {
             (|| {
@@ -385,7 +356,7 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
         let mut contract_error = match contract {
             Ok(configured) => { store = configured; None }, Err(error) => Some(error.to_string()),
         };
-        let safe = !snapshot_only && independentHistory(&store, std::iter::once(&owner));
+        let safe = independentHistory(&store, std::iter::once(&owner));
         if let Some(format) = contract_error.is_none().then(||store.syncSchemaVersion().ok()).flatten() {
             let changed = registry.journal.withJournal(|journal| journal.set_compaction(&path,format,safe)).map_err(|e|e.to_string())?;
             if changed && safe && (storage.exists(&path).map_err(|error| error.to_string())?
@@ -462,41 +433,6 @@ where
     }
 }
 
-/// Decodes historical representations with the owner contract before staging a single dataset.
-fn prepareOwner(
-    schema: &PreferenceMergeSchema,
-    path: &str,
-    history: &[SyncOperation],
-) -> Result<(PreferenceMergeSchema, Vec<PreferencesSyncedEntry>), String> {
-    let mut entries = crate::Transaction::ordered(history.iter().cloned(), |op| &op.opId, crate::Transaction::Revision::fromOperation)?
-        .iter().map(PreferencesSyncedEntry::fromOperation).collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    for entry in &mut entries { entry.routeTo(path); }
-    let declarations = pluginDeclarations(&entries)?;
-    let mut owner = PreferenceMergeSchema {
-        stores: schema
-            .stores
-            .iter()
-            .filter(|store| store.path == path)
-            .cloned()
-            .collect(),
-    };
-    for (path, merge) in declarations {
-        if let Some(existing) = owner.stores.iter().find(|owner|owner.path == path) {
-            if existing.encrypted || existing.merge != merge { return Err("Conflicting preference merge declarations".into()); }
-            continue;
-        }
-        owner.stores.push(PreferenceMergeStore {
-            path,
-            encrypted: false,
-            open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
-            merge,
-        });
-    }
-    validateSchema(&owner)?;
-    Ok((owner, entries))
-}
-
 /// Resolves only explicitly recorded alias decisions, never inferring identity from content.
 fn declaredAliases(
     schema: &PreferenceMergeSchema,
@@ -539,35 +475,45 @@ where F: Fn(&str,&str)->bool {
     let version = store.syncSchemaVersion().map_err(|e|e.to_string())?;
     crate::Transaction::preference::apply(store, incoming,
         |preferences, originals| {
-        let (mut owner, mut entries) = prepareOwner(schema, path, originals).map_err(PreferencesDataStoreError::Message)?;
-        if !owner.stores.iter().any(|store| store.path == path) {
-            if let Some(value) = preferences.get(&stringPreferencesKey(PLUGIN_MERGE_DECLARATION_KEY)) {
-                let merge: StoragePreferencesMergeDescriptor = serde_json::from_value(value.clone())?;
-                validatePluginDeclaration(path, &merge).map_err(PreferencesDataStoreError::Message)?;
-                owner.stores.push(PreferenceMergeStore {
-                    path: path.into(), encrypted, open: |storage, path| PreferencesDataStore::newWithStorage(storage, path), merge,
-                });
-            }
+        let mut owner = PreferenceMergeSchema { stores: schema.stores.iter().filter(|store| store.path == path).cloned().collect() };
+        if let Some(value) = preferences.get(&stringPreferencesKey(PLUGIN_MERGE_DECLARATION_KEY)) {
+            owner.declarePlugin(path, serde_json::from_value(value.clone())?).map_err(PreferencesDataStoreError::Message)?;
         }
-        for entry in &mut entries { entry.routeTo(path); }
-        for owner in &mut owner.stores { owner.path = path.into(); }
+        let mut entries = crate::Transaction::ordered(originals.iter().cloned(), |op| &op.opId, crate::Transaction::Revision::fromOperation).map_err(PreferencesDataStoreError::Message)?
+            .iter().map(PreferencesSyncedEntry::fromOperation).collect::<Result<Vec<_>, _>>()?;
+        for entry in &mut entries {
+            entry.routeTo(path);
+            if !entry.keys().contains(&PLUGIN_MERGE_DECLARATION_KEY) { continue; }
+            if entry.encrypted() { return Err(PreferencesDataStoreError::Message("Plugin preference declarations require an unencrypted plugin store".into())); }
+            let mut extracted = false;
+            entry.clone().rewriteRootEntries(|key, value| {
+                if key == PLUGIN_MERGE_DECLARATION_KEY {
+                    let value = value.ok_or_else(||PreferencesDataStoreError::Message("Preference merge declarations cannot be removed".into()))?;
+                    owner.declarePlugin(path, serde_json::from_value(value.clone())?).map_err(PreferencesDataStoreError::Message)?;
+                    extracted = true;
+                }
+                Ok(())
+            })?;
+            if !extracted && entry.identityAlias().is_none() { return Err(PreferencesDataStoreError::Message("Preference merge declarations must be complete immutable records".into())); }
+        }
+        validateSchema(&owner).map_err(PreferencesDataStoreError::Message)?;
         let mut contract = crate::PluginPreferenceSchema::contract(originals.iter())?;
         if let Some(value) = preferences.get(&stringPreferencesKey(crate::PluginPreferenceSchema::KEY)) {
             let local = serde_json::from_value(value.clone())?;
             contract = Some(match contract { Some(incoming) => crate::PluginPreferenceSchema::combine(&local,&incoming)?,None => local });
         }
-        if let Some(contract) = &contract {
-            for entry in &mut entries {
-                entry.rewriteRootEntries(|key,value| {
-                    if key == crate::PluginPreferenceSchema::KEY {
-                        let value = value.ok_or_else(||PreferencesDataStoreError::Message("A migration contract cannot be deleted".into()))?;
-                        let incoming = serde_json::from_value(value.clone())?;
-                        crate::PluginPreferenceSchema::combine(contract,&incoming)?;
-                        *value = serde_json::to_value(contract)?;
-                    }
-                    Ok(())
-                })?;
-            }
+        for entry in &mut entries {
+            entry.rewriteRootEntries(|key, value| {
+                let canonical = if key == PLUGIN_MERGE_DECLARATION_KEY {
+                    owner.stores.iter().find(|owner| owner.path == path).map(|owner| serde_json::to_value(&owner.merge)).transpose()?
+                } else if key == crate::PluginPreferenceSchema::KEY {
+                    contract.as_ref().map(serde_json::to_value).transpose()?
+                } else { None };
+                if let Some(canonical) = canonical {
+                    *value.ok_or_else(||PreferencesDataStoreError::Message("Preference contracts cannot be deleted".into()))? = canonical;
+                }
+                Ok(())
+            })?;
         }
         store.migrateSyncedEntries(version, preferences, &mut entries)?;
         let schema = &owner;

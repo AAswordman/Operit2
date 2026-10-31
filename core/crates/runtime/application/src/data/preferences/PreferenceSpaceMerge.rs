@@ -193,7 +193,7 @@ pub(crate) fn layout(
         storage,
         operit_util::RuntimeStorageLayout::RUNTIME_SYNC_PREFERENCE_LAYOUT_PATH,
     )
-    .withSchema(2, |from, migration| match from {
+    .withSchema(3, |from, migration| match from {
         0 => {
             let extensions =
                 operit_store::ExtensionStore::ExtensionStore::new(migration.storage.clone());
@@ -216,6 +216,10 @@ pub(crate) fn layout(
         1 => {
             // Selection belongs to this device; historical shared writes have no local effect.
             migration.retireFile(CURRENT_CHAT_ID_PREFERENCES_PATH);
+            Ok(())
+        }
+        2 => {
+            migration.retireFile("runtime/config/preferences/application_zoom.preferences.json");
             Ok(())
         }
         from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),

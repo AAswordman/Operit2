@@ -205,6 +205,11 @@ impl<'a> Registry<'a> {
                 continue;
             }
             let Some(owner) = self.owners.get(&path) else {
+                if operations[0].domain == "preferences" {
+                    self.journal.ignoreFileOperations("preferences", &path).map_err(|e|e.to_string())?;
+                    report.skipped += operations.len();
+                    continue;
+                }
                 self.failure(&path, &operations, format!("Unknown transaction owner: {path}"), &mut report)?;
                 continue;
             };
