@@ -1393,16 +1393,16 @@ fn normalize_tool_display_for_strict_proxy(
     let raw_proxied_params = params
         .iter()
         .find(|(name, _)| name == "params")
-        .map(|(_, value)| value.as_str())
+        .map(|(_, value)| value.trim())
         .unwrap_or("");
 
     let display_tool_name = normalize_escaped_text_for_display(raw_target_tool_name);
     let display_params = if raw_proxied_params.is_empty() {
         params.to_vec()
     } else {
-        // Parse the raw payload first so code containing backslash-quotes is not rewritten.
-        parse_proxy_params(raw_proxied_params)
-            .or_else(|| parse_proxy_params(&normalize_escaped_text_for_display(raw_proxied_params)))
+        // Decode JSON before display normalization can rewrite escaped quotes in scripts.
+        parse_proxy_json_params(raw_proxied_params)
+            .or_else(|| parse_proxy_json_params(normalize_escaped_text_for_display(raw_proxied_params).trim()))
             .unwrap_or_else(|| params.to_vec())
     };
 
@@ -1428,11 +1428,28 @@ fn normalize_escaped_text_for_display(input: &str) -> String {
     }
 }
 
-fn parse_proxy_params(input: &str) -> Option<Vec<(String, String)>> {
-    let parameters = operit_util::ProxyParameters::parse_proxy_parameters(
-        &serde_json::Value::String(input.to_string()),
-    ).ok()?;
-    Some(parameters.into_iter().map(|(name, value)| (name, json_value_to_param_text(value))).collect())
+fn parse_proxy_json_params(input: &str) -> Option<Vec<(String, String)>> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    match value {
+        serde_json::Value::Object(object) => Some(
+            object
+                .into_iter()
+                .map(|(name, value)| (name, json_value_to_param_text(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(array) => Some(
+            array
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| (index.to_string(), json_value_to_param_text(value)))
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 fn json_value_to_param_text(value: serde_json::Value) -> String {
@@ -1511,8 +1528,7 @@ fn extract_param_pairs(content: &str) -> Vec<(String, String)> {
         .into_iter()
         .filter_map(|block| {
             let name = attr_value(block.opening_tag, "name")?;
-            let body = if name == "params" { block.body } else { block.body.trim() };
-            Some((name, xml_unescape(body)))
+            Some((name, xml_unescape(block.body.trim())))
         })
         .collect()
 }
@@ -1874,29 +1890,20 @@ mod tests {
     use crate::tui::fold::TranscriptFoldState;
     use operit_util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStreamOperators;
 
-    /// YAML and historical JSON proxy calls expose the same concrete parameter summary.
+    /// JSON scripts preserve quotes, backslashes, entities, and final newlines in both proxies.
     #[test]
-    fn renders_yaml_and_historical_json_proxy_parameters() {
-        for payload in ["path: /tmp/demo.py\ncontent: |+\n  print(\"\\d+\")\n\n", r#"{"path":"/tmp/demo.py","content":"print(\"\\d+\")\n\n"}"#] {
-            let (name, params) = normalize_tool_display_for_strict_proxy("package_proxy", &[
-                ("tool_name".into(), "files:write".into()),
-                ("params".into(), payload.into()),
-            ]);
-            assert_eq!(name, "files:write");
+    fn proxy_json_parameters_preserve_script_text() {
+        let content = "print(\"&lt;tag&gt; \\\"quoted\\\"\")  \n\n";
+        let payload = serde_json::json!({"path": "/tmp/demo.py", "content": content}).to_string();
+        for name in ["package_proxy", "proxy"] {
+            let escaped = payload.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let markup = format!("<param name=\"tool_name\">files:write</param><param name=\"params\">{escaped}</param>");
+            let (target, params) = normalize_tool_display_for_strict_proxy(name, &extract_param_pairs(&markup));
+            assert_eq!(target, "files:write");
             let params = params.into_iter().collect::<std::collections::BTreeMap<_, _>>();
             assert_eq!(params["path"], "/tmp/demo.py");
-            assert_eq!(params["content"], "print(\"\\d+\")\n\n");
+            assert_eq!(params["content"], content);
         }
-    }
-
-    /// Extracted YAML is decoded once, retaining literal entities and final blank lines in code.
-    #[test]
-    fn yaml_proxy_markup_preserves_entities_and_trailing_newlines() {
-        let yaml = "content: |+\n  print(\"&lt;tag&gt; \\\"quoted\\\"\")  \n\n";
-        let escaped = yaml.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-        let markup = format!("<param name=\"tool_name\">files:write</param><param name=\"params\">{escaped}</param>");
-        let (_, params) = normalize_tool_display_for_strict_proxy("package_proxy", &extract_param_pairs(&markup));
-        assert_eq!(params, vec![("content".into(), "print(\"&lt;tag&gt; \\\"quoted\\\"\")  \n\n".into())]);
     }
 
     /// Verifies that a generated switch_core tool card renders successfully.

@@ -103,7 +103,7 @@ impl ToolCall {
         }
         for key in self.parameters.keys() {
             if !matches!(key.as_str(), "tool_name" | "params" | PACKAGE_CALLER_NAME_PARAM | PACKAGE_CHAT_ID_PARAM | PACKAGE_CALLER_PARTICIPANT_ID_PARAM | PACKAGE_CALLER_OWNER_PARAM) {
-                return Err(format!("Unexpected proxy parameter: {key}. Put target tool parameters inside params as YAML mapping text."));
+                return Err(format!("Unexpected proxy parameter: {key}. Put target tool parameters inside params as a JSON object."));
             }
         }
         let name = self.parameters.get("tool_name").and_then(serde_json::Value::as_str)
@@ -117,7 +117,11 @@ impl ToolCall {
             }
         }
         let value = self.parameters.get("params").ok_or("Proxy params is required")?;
-        let object = operit_util::ProxyParameters::parse_proxy_parameters(value)?;
+        let object = match value {
+            serde_json::Value::String(text) => serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text).map_err(|error| error.to_string())?,
+            serde_json::Value::Object(object) => object.clone(),
+            _ => return Err("Proxy params must be a JSON object or its legacy text encoding".into()),
+        };
         let mut parameters = object.into_iter().collect::<BTreeMap<_, _>>();
         for key in [PACKAGE_CALLER_NAME_PARAM, PACKAGE_CHAT_ID_PARAM, PACKAGE_CALLER_PARTICIPANT_ID_PARAM, PACKAGE_CALLER_OWNER_PARAM] {
             parameters.remove(key);

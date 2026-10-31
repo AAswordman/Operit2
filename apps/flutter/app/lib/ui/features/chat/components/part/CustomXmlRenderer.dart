@@ -1029,6 +1029,7 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
   late final ScrollController _controller;
   final GlobalKey _textKey = GlobalKey();
   bool _scrollScheduled = false;
+  bool _scrollAwaitingDimensions = false;
   double _pendingScrollCorrection = 0;
 
   @override
@@ -1074,19 +1075,27 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
     _scrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollScheduled = false;
+      if (!mounted || !_controller.hasClients) return;
+      final position = _controller.position;
+      // Attaching a scroll position does not mean its viewport was laid out.
+      // Keep pending corrections until the metrics notification retries this.
+      if (!position.hasContentDimensions) {
+        _scrollAwaitingDimensions = true;
+        return;
+      }
+      _scrollAwaitingDimensions = false;
       final correction = _pendingScrollCorrection;
       _pendingScrollCorrection = 0;
-      if (!mounted || !_controller.hasClients) return;
-      final target = _controller.position.maxScrollExtent;
+      final target = position.maxScrollExtent;
       if (correction > 0) {
-        _controller.jumpTo(
-          (_controller.offset - correction)
-              .clamp(_controller.position.minScrollExtent, target)
+        position.jumpTo(
+          (position.pixels - correction)
+              .clamp(position.minScrollExtent, target)
               .toDouble(),
         );
       }
-      if (_controller.offset == target) return;
-      _controller.animateTo(
+      if (position.pixels == target) return;
+      position.animateTo(
         target,
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
@@ -1112,27 +1121,33 @@ class _ThinkingPreviewTickerState extends State<_ThinkingPreviewTicker> {
         ).createShader(bounds);
       },
       blendMode: BlendMode.dstIn,
-      child: SingleChildScrollView(
-        controller: _controller,
-        scrollDirection: Axis.horizontal,
-        physics: const ClampingScrollPhysics(),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              widget.text,
-              key: _textKey,
-              maxLines: 1,
-              softWrap: false,
-              style: ChatActivityRowStyle.textStyle(
-                context,
-              ).copyWith(color: widget.textColor),
-            ),
-            if (widget.isStreaming) ...<Widget>[
-              const SizedBox(width: 4),
-              const StreamingCursor(),
+      child: NotificationListener<ScrollMetricsNotification>(
+        onNotification: (notification) {
+          if (_scrollAwaitingDimensions) _scrollToEnd();
+          return false;
+        },
+        child: SingleChildScrollView(
+          controller: _controller,
+          scrollDirection: Axis.horizontal,
+          physics: const ClampingScrollPhysics(),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                widget.text,
+                key: _textKey,
+                maxLines: 1,
+                softWrap: false,
+                style: ChatActivityRowStyle.textStyle(
+                  context,
+                ).copyWith(color: widget.textColor),
+              ),
+              if (widget.isStreaming) ...<Widget>[
+                const SizedBox(width: 4),
+                const StreamingCursor(),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

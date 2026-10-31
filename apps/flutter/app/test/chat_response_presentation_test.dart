@@ -22,26 +22,128 @@ void main() {
         expect(find.text('第一句。', findRichText: true), findsOneWidget);
         expect(find.text('第二句。', findRichText: true), findsOneWidget);
         expect(find.textContaining('canonical'), findsNothing);
-        if (style == 'bubble')
+        if (style == 'bubble') {
           expect(find.byType(BubbleAiMessageComposable), findsNWidgets(2));
+        }
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },
     );
   }
+  for (final style in ['cursor', 'bubble']) {
+    for (final showThinking in [false, true]) {
+      testWidgets(
+        '$style only creates a thinking bubble when thinking is visible ($showThinking)',
+        (tester) async {
+          final thinking = part(
+            'private reasoning',
+            kind: MessagePartKind.thinking,
+          );
+          final original = message(['第一句。', '第二句。'], structural: [thinking]);
+          await pumpMessage(
+            tester,
+            original,
+            style,
+            showThinking: showThinking,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('response-structure')),
+            showThinking ? findsOneWidget : findsNothing,
+          );
+          expect(find.text('第一句。', findRichText: true), findsOneWidget);
+          expect(find.text('第二句。', findRichText: true), findsOneWidget);
+          if (style == 'bubble') {
+            expect(
+              find.byType(BubbleAiMessageComposable),
+              findsNWidgets(showThinking ? 3 : 2),
+            );
+          }
+          expect(original.parts.first, same(thinking));
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
+  }
+  testWidgets(
+    'hidden thinking does not create a bubble before the first sentence',
+    (tester) async {
+      await pumpMessage(
+        tester,
+        message(
+          [],
+          pending: true,
+          structural: [
+            part('private reasoning', kind: MessagePartKind.thinking),
+          ],
+        ),
+        'bubble',
+        showThinking: false,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('response-structure')), findsNothing);
+      expect(find.byType(BubbleAiMessageComposable), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+  testWidgets('hiding thinking preserves visible status content', (
+    tester,
+  ) async {
+    await pumpMessage(
+      tester,
+      message(
+        ['第一句。'],
+        structural: [
+          part('private reasoning', kind: MessagePartKind.thinking),
+          part('visible status', kind: MessagePartKind.status),
+        ],
+      ),
+      'bubble',
+      showThinking: false,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('response-structure')), findsOneWidget);
+    expect(find.text('visible status', findRichText: true), findsOneWidget);
+    expect(find.byType(BubbleAiMessageComposable), findsNWidgets(2));
+    final structure = tester.widget<BubbleAiMessageComposable>(
+      find.byType(BubbleAiMessageComposable).first,
+    );
+    expect(structure.message.parts.map((part) => part.kind), [
+      MessagePartKind.status,
+    ]);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets(
     'streamed delivery retains the first bubble and does not attach the original full-response stream',
     (tester) async {
       final source = StreamController<MarkdownStreamEvent>.broadcast();
+      final thinking = part(
+        'private reasoning',
+        kind: MessagePartKind.thinking,
+      );
       await pumpMessage(
         tester,
-        message(['第一句。'], pending: true, stream: source.stream),
+        message(
+          ['第一句。'],
+          pending: true,
+          stream: source.stream,
+          structural: [thinking],
+        ),
         'bubble',
+        showThinking: false,
       );
       await tester.pumpAndSettle();
       final first = tester.state(find.byType(BubbleAiMessageComposable).first);
       expect(source.hasListener, false);
-      await pumpMessage(tester, message(['第一句。', '第二句。']), 'bubble');
+      await pumpMessage(
+        tester,
+        message(['第一句。', '第二句。'], structural: [thinking]),
+        'bubble',
+        showThinking: false,
+      );
       await tester.pumpAndSettle();
       expect(
         identical(
@@ -86,11 +188,14 @@ void main() {
   );
 }
 
-/// Creates one exact semantic Markdown part for both native and presentation content.
-MessagePart part(String content) => MessagePart(
+/// Creates a semantic part for canonical or presented response content.
+MessagePart part(
+  String content, {
+  MessagePartKind kind = MessagePartKind.markdown,
+}) => MessagePart(
   partId: content,
   sequence: 0,
-  kind: MessagePartKind.markdown,
+  kind: kind,
   content: content,
   toolCallId: null,
   toolName: null,
@@ -101,10 +206,14 @@ MessagePart part(String content) => MessagePart(
 ChatMessage message(
   List<String> bubbles, {
   bool pending = false,
+  List<MessagePart> structural = const [],
   Stream<MarkdownStreamEvent>? stream,
 }) => ChatMessage(
   sender: 'ai',
-  parts: [part('canonical model response with <emotion>happy</emotion>')],
+  parts: [
+    ...structural,
+    part('canonical model response with <emotion>happy</emotion>'),
+  ],
   timestamp: 10,
   roleName: 'Alice',
   pluginExtensions: {
@@ -133,11 +242,14 @@ ChatMessage message(
 Future<void> pumpMessage(
   WidgetTester tester,
   ChatMessage message,
-  String style,
-) async {
+  String style, {
+  bool showThinking = true,
+}) async {
   final snapshot = ThemePreferenceSnapshot.fromJson({
     ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
-    'chatStyle': style,
+    'userChatStyle': style,
+    'aiChatStyle': style,
+    'showThinkingProcess': showThinking,
     'showRoleName': false,
     'showModelName': false,
     'showModelProvider': false,

@@ -31,7 +31,12 @@ Widget buildThemedChatMessage({
   final presentation = readChatResponsePresentation(message);
   if (presentation != null) {
     final structural = message.parts
-        .where((part) => part.kind != core_proxy.MessagePartKind.markdown)
+        .where(
+          (part) =>
+              part.kind != core_proxy.MessagePartKind.markdown &&
+              (part.kind != core_proxy.MessagePartKind.thinking ||
+                  snapshot.showThinkingProcess),
+        )
         .toList(growable: false);
     final groups = <({String key, List<core_proxy.MessagePart> parts})>[
       if (structural.isNotEmpty) (key: 'response-structure', parts: structural),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/part/CustomXmlRenderer.dart';
@@ -62,6 +63,34 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+  testWidgets('waits for layout before scrolling the thinking preview', (
+    tester,
+  ) async {
+    final source = 'planning more work ' * 100;
+    await tester.pumpWidget(_surface(source, deferLayout: true));
+    final controller = tester
+        .widget<SingleChildScrollView>(
+          find.byType(SingleChildScrollView, skipOffstage: false),
+        )
+        .controller!;
+    expect(controller.hasClients, isTrue);
+    expect(controller.position.hasContentDimensions, isFalse);
+    expect(tester.takeException(), isNull);
+
+    // No new text arrives when the previously deferred subtree is laid out.
+    await tester.pumpWidget(_surface(source));
+    await tester.pump(); // Retry after the scroll metrics become available.
+    await tester.pump(); // Start the scroll animation's ticker.
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(controller.position.maxScrollExtent, greaterThan(0));
+    expect(
+      controller.offset,
+      closeTo(controller.position.maxScrollExtent, 0.01),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
   for (final (sourceLength, addition) in [
     (990, 'bcdefghijklm'),
     (1000, 'bcdefghijklm'),
@@ -103,20 +132,77 @@ void main() {
   }
 }
 
-Widget _surface(String body, {bool streaming = true}) => MaterialApp(
+Widget _surface(
+  String body, {
+  bool streaming = true,
+  bool deferLayout = false,
+}) => MaterialApp(
   locale: const Locale('en'),
   localizationsDelegates: AppLocalizations.localizationsDelegates,
   supportedLocales: AppLocalizations.supportedLocales,
   home: Scaffold(
-    body: SizedBox(
-      width: 360,
-      child: CustomXmlRenderer(
-        xmlContent: '<think>$body${streaming ? '' : '</think>'}',
-        isStreaming: streaming,
-        xmlStream: streaming ? const Stream<String>.empty() : null,
-        textColor: Colors.black,
-        splitMarkdownContent: (_) async => [],
+    body: _DeferredLayout(
+      deferred: deferLayout,
+      child: SizedBox(
+        width: 360,
+        child: CustomXmlRenderer(
+          xmlContent: '<think>$body${streaming ? '' : '</think>'}',
+          isStreaming: streaming,
+          xmlStream: streaming ? const Stream<String>.empty() : null,
+          textColor: Colors.black,
+          splitMarkdownContent: (_) async => [],
+        ),
       ),
     ),
   ),
 );
+
+// Models a built scrollable whose parent has not laid out its subtree yet.
+class _DeferredLayout extends SingleChildRenderObjectWidget {
+  const _DeferredLayout({required this.deferred, required super.child});
+
+  final bool deferred;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderDeferredLayout(deferred);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderDeferredLayout renderObject,
+  ) {
+    if (renderObject.deferred == deferred) return;
+    renderObject.deferred = deferred;
+    renderObject.markNeedsLayout();
+  }
+}
+
+class _RenderDeferredLayout extends RenderProxyBox {
+  _RenderDeferredLayout(this.deferred);
+
+  bool deferred;
+
+  @override
+  void performLayout() {
+    if (deferred) {
+      size = constraints.smallest;
+      return;
+    }
+    super.performLayout();
+  }
+
+  @override
+  void visitChildrenForSemantics(RenderObjectVisitor visitor) {
+    if (!deferred) super.visitChildrenForSemantics(visitor);
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (!deferred) super.paint(context, offset);
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      !deferred && super.hitTestChildren(result, position: position);
+}

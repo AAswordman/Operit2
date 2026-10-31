@@ -3326,8 +3326,8 @@ fn buildPackageProxyToolPrompt() -> ToolPrompt {
             },
             crate::chat::config::SystemToolPrompts::ToolParameterSchema {
                 name: "params".to_string(),
-                value_type: "string".to_string(),
-                description: operit_util::ProxyParameters::PROXY_PARAMS_DESCRIPTION_EN.to_string(),
+                value_type: "object".to_string(),
+                description: "JSON object of parameters to forward to the target tool".to_string(),
                 required: true,
                 default: None,
             },
@@ -3344,8 +3344,8 @@ fn buildPackageProxyToolPrompt() -> ToolPrompt {
             },
             ToolParameterSchema {
                 name: "params".to_string(),
-                r#type: "string".to_string(),
-                description: operit_util::ProxyParameters::PROXY_PARAMS_DESCRIPTION_EN.to_string(),
+                r#type: "object".to_string(),
+                description: "JSON object of parameters to forward to the target tool".to_string(),
                 required: true,
                 default: None,
             },
@@ -4051,18 +4051,17 @@ mod guidance_tests {
 }
 
 #[cfg(test)]
-mod package_proxy_yaml_tests {
+mod package_proxy_json_tests {
     use super::buildPackageProxyToolPrompt;
 
     #[test]
-    fn package_proxy_advertises_yaml_text_in_both_schema_representations() {
+    fn package_proxy_advertises_json_objects_in_both_schema_representations() {
         let prompt = buildPackageProxyToolPrompt();
         let schema: serde_json::Value = serde_json::from_str(&prompt.parameters).unwrap();
-        assert_eq!(schema["properties"]["params"]["type"], "string");
+        assert_eq!(schema["properties"]["params"]["type"], "object");
         let parameter = prompt.parametersStructured.unwrap().into_iter().find(|p| p.name == "params").unwrap();
-        assert_eq!(parameter.r#type, "string");
-        assert!(parameter.description.contains("YAML"));
-        assert!(parameter.description.contains("|-"));
-        assert!(!parameter.description.contains("JSON"));
+        assert_eq!(parameter.r#type, "object");
+        assert!(parameter.description.contains("JSON"));
+        assert!(!parameter.description.contains("YAML"));
     }
 }

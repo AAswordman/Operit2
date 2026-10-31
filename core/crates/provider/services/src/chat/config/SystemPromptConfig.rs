@@ -56,9 +56,7 @@ const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_EN: &str = r#"PACKAGE SYSTEM
 - If use_package for a package has appeared earlier in this chat, treat that package as activated
 - For package tools, call package_proxy:
   - Set tool_name to the actual package tool name (e.g. packageName:toolName)
-  - Put target tool arguments in params as YAML mapping text
-  - Use indented literal blocks (|, |-, |+) for code and multiline text; choose the final newline behavior explicitly
-  - Quote strings that look like numbers, booleans, or null"#;
+  - Put target tool arguments in params as a JSON object"#;
 
 const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_CN: &str = r#"包系统：
 - 一些额外功能通过包提供
@@ -66,9 +64,7 @@ const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_CN: &str = r#"包系统：
 - 只要本次聊天中该包曾出现过 use_package，就视为该包已激活
 - 调用包工具请使用 package_proxy：
   - tool_name 填写真实工具名（例如 packageName:toolName）
-  - 将目标工具参数写入 params（YAML 映射文本）
-  - 代码和多行文本使用缩进的原文块（|、|-、|+），明确选择末尾换行的保留方式
-  - 看起来像数字、布尔值或 null 的字符串需加引号"#;
+  - 将目标工具参数放入 params（JSON对象）"#;
 
 pub const SYSTEM_PROMPT_TEMPLATE: &str = r#"BEGIN_SELF_INTRODUCTION_SECTION
 
@@ -686,14 +682,13 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn native_package_guidelines_advertise_yaml_in_both_languages() {
+    async fn native_package_guidelines_advertise_json_objects_in_both_languages() {
         for english in [true, false] {
             let mut options = packagePromptOptions(true);
             options.use_english = english;
             let prompt = SystemPromptConfig::getSystemPrompt(options).await.unwrap();
-            assert!(prompt.contains("YAML"));
-            assert!(!prompt.contains("JSON object"));
-            assert!(!prompt.contains("JSON对象"));
+            assert!(prompt.contains("JSON"));
+            assert!(!prompt.contains("YAML"));
         }
     }
 

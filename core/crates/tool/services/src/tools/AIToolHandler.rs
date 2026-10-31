@@ -2784,12 +2784,11 @@ mod tests {
         assert!(fixture.handler.hasToolExecutor("tts_set_current_config_id"));
     }
 
-    /// Both proxy entry points accept new YAML and both historical JSON forms without changing routing.
+    /// Both proxy entry points preserve typed JSON objects and legacy JSON text.
     #[tokio::test]
-    async fn proxy_yaml_and_legacy_json_resolve_to_identical_parameters() {
+    async fn proxy_json_objects_and_legacy_text_resolve_to_identical_parameters() {
         let fixture = PipelineFixture::new();
         let expected = json!({"content": "print(\"\\d+\")\n\n", "enabled": true, "nested": {"items": [1, null]}});
-        let yaml = operit_util::ProxyParameters::format_proxy_parameters(expected.as_object().unwrap());
         for name in ["package_proxy", "proxy"] {
             let turn = ToolRuntimeContext {
                 callerChatId: Some("chat".into()), callerParticipantId: None,
@@ -2797,7 +2796,7 @@ mod tests {
                 toolExposureMode: if name == "proxy" { ToolExposureMode::CLI } else { ToolExposureMode::FULL },
                 extensionOwner: "config-owner".into(), executionData: Default::default(),
             };
-            for payload in [Value::String(yaml.clone()), expected.clone(), Value::String(expected.to_string())] {
+            for payload in [expected.clone(), Value::String(expected.to_string())] {
                 let request = ToolCall { name: name.into(), parameters: BTreeMap::from([
                     ("tool_name".into(), json!("files:write")), ("params".into(), payload),
                 ]) };
@@ -2810,9 +2809,9 @@ mod tests {
         }
     }
 
-    /// Returns invalid proxy envelopes as tool results and accepts a corrected YAML call afterward.
+    /// Returns invalid proxy envelopes as tool results and accepts a corrected JSON call afterward.
     #[tokio::test]
-    async fn proxy_validation_errors_are_results_and_allow_corrected_yaml_calls() {
+    async fn proxy_validation_errors_are_results_and_allow_corrected_json_calls() {
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
         ));
@@ -2841,9 +2840,9 @@ mod tests {
             (json!({"params": "{}"}), "Proxy tool_name must be text"),
             (json!({"tool_name": " fixture:probe", "params": "{}"}), "Proxy tool_name must be exact nonblank text"),
             (json!({"tool_name": "fixture:probe"}), "Proxy params is required"),
-            (json!({"tool_name": "fixture:probe", "params": "command: [unfinished"}), "Invalid proxy params YAML mapping"),
-            (json!({"tool_name": "fixture:probe", "params": "- item"}), "Proxy params must contain a YAML mapping"),
-            (json!({"tool_name": "fixture:probe", "params": null}), "Proxy params must be YAML mapping text"),
+            (json!({"tool_name": "fixture:probe", "params": "command: [unfinished"}), "expected value"),
+            (json!({"tool_name": "fixture:probe", "params": "[]"}), "invalid type: sequence"),
+            (json!({"tool_name": "fixture:probe", "params": null}), "Proxy params must be a JSON object or its legacy text encoding"),
             (json!({"tool_name": "proxy", "params": "{}"}), "Proxy cannot target another proxy"),
         ];
         for name in ["package_proxy", "proxy"] {
@@ -2880,7 +2879,7 @@ mod tests {
 
                     let corrected = ToolCall { name: name.into(), parameters: BTreeMap::from([
                         ("tool_name".into(), json!("fixture:probe")),
-                        ("params".into(), json!("command: |-\n  git status\ntimeoutMs: \"120000\"\n")),
+                        ("params".into(), json!({"command": "git status", "timeoutMs": "120000"})),
                     ]) };
                     let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(),
                         fixture.handler.executeToolInvocation(&corrected, policy.clone())).await.unwrap();
@@ -2897,6 +2896,77 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Invalid proxy parameters reach the model as a tool result and do not abort the batch.
+    #[tokio::test]
+    async fn malformed_proxy_parameters_return_tool_error_and_continue_batch() {
+        use crate::ToolExecutionManager::ToolInvocation;
+        use operit_store::RuntimeStorageHost::{setDefaultRuntimeStorageHost, setDefaultRuntimeSqliteHost};
+
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let command = "python3 - <<'PY'\nimport json\nprint(json.dumps({}))\nPY";
+        let malformed = format!("command: |-\n  {}", command);
+        let corrected = json!({"command": command}).to_string();
+        for (name, exposure) in [
+            ("package_proxy", ToolExposureMode::FULL),
+            ("proxy", ToolExposureMode::CLI),
+        ] {
+            let mut fixture = PipelineFixture::new();
+            let probe = Arc::new(SharedProbe::default());
+            fixture.handler.registerSharedTool(
+                "pipeline:probe".into(), probe.clone(), ToolRegistrationVisibility::PUBLIC,
+            );
+            fixture.handler.getToolPermissionSystem().setAsyncPermissionRequester(|_, _, _| async {
+                crate::tools::ToolPermissionSystem::PermissionRequestResult::ALLOW
+            });
+            operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
+                operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(
+                    fixture.root.join("runtime"), fixture.root.join("workspaces"),
+                ),
+            );
+            let context = fixture.handler.getContext();
+            setDefaultRuntimeStorageHost(context.runtimeStorageHost.clone().unwrap());
+            setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.clone().unwrap());
+            let manager = RuntimePackageManager::new(
+                RuntimeStorePaths::new(fixture.root.join("runtime"), fixture.root.join("workspaces")),
+                fixture.handler.clone(),
+            );
+            let invocations = [malformed.clone(), "{\"command\":".into(), corrected.clone()].into_iter().map(|params| {
+                ToolInvocation {
+                    tool: AITool {
+                        name: name.into(),
+                        parameters: vec![
+                            ToolParameter { name: "tool_name".into(), value: "pipeline:probe".into() },
+                            ToolParameter { name: "params".into(), value: params },
+                        ],
+                    },
+                    rawText: String::new(),
+                    responseLocation: (0, 0),
+                }
+            }).collect::<Vec<_>>();
+            let batch = ToolExecutionManager::executeInvocations(
+                &invocations, &mut fixture.handler, &manager,
+                None, Some("chat".into()), None, None, Vec::new(), exposure,
+                "config-owner".into(), Default::default(),
+            ).await.expect("Malformed model parameters must not terminate the chat round");
+
+            assert_eq!(batch.results.len(), 3);
+            for result in &batch.results[..2] {
+                assert!(!result.success);
+                let error = result.error.as_deref().unwrap();
+                assert!(error.starts_with("Invalid tool invocation:"), "{error}");
+            }
+            assert!(batch.message.contains("<error>"));
+            assert!(batch.message.contains("Invalid tool invocation:"));
+            assert!(batch.results[2].success);
+            let value: Value = serde_json::from_str(&batch.results[2].result.toString()).unwrap();
+            assert_eq!(value["parameters"]["command"], command);
+            assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(probe.accessCalls.load(Ordering::SeqCst), 1);
         }
     }
 
