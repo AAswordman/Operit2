@@ -78,6 +78,7 @@ pub trait FilesHost: Send + Sync {
     ) -> JsFuture<FilePartContentData>;
     ///
     ///Write content to file
+    ///Returns the write operation together with its generated diff.
     ///@param path - VFS file path
     ///@param content - Content to write
     ///@param append - Whether to append to file
@@ -87,7 +88,7 @@ pub trait FilesHost: Send + Sync {
         path: String,
         content: String,
         append: Option<bool>,
-    ) -> JsFuture<FileOperationData>;
+    ) -> JsFuture<FileApplyResultData>;
     ///
     ///Write base64 encoded content to a binary file
     ///@param path - VFS file path

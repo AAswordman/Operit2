@@ -7,6 +7,34 @@ The package owns character cards and memory in one ToolPkg
 The offline Material UI is present, but passing Node or browser tests does **not**
 mean the application is connected or the original feature has been fully extracted.
 
+## First installation
+
+Before writing business records, initialization saves its versioned payload in
+`meta.preferences.json` under `initialization`. The plan fixes the card UUID,
+template content and initial memory settings; interrupted attempts reuse those
+exact values rather than identifying records by the current default template.
+Publishing `state` and removing `initialization` happen in one metadata edit.
+
+Only absent records or exact planned records are accepted while resuming. Existing
+USER.md bytes are retained. Configuration or memory records without metadata and
+without an initialization plan are rejected, including old default-looking
+partial installs; they require explicit data recovery, not automatic adoption.
+This is a recoverable multi-owner operation, not a transaction spanning JSON,
+SQLite and files. Concurrent edits fail explicitly. The space-owned plan declares
+its card references for normal identity remapping during space merges.
+
+For an old interrupted installation without a plan, open character management in
+the plugin and select **检查初始化数据**. Inspection shows the actual saved card
+and does not adopt it automatically. After reviewing the preservation notice,
+check the confirmation box and select **修复初始化**. This explicitly retains
+the card ID/content, existing owner settings and USER.md, and supplies missing
+initial metadata with the documented initial global settings. Recovery supports
+exactly one complete card, at most its matching owner, and no other configuration
+or memory records; incompatible data is rejected rather than cleared or guessed.
+The recovery channel remains available after service initialization fails, and
+successful repair revives that same runtime without restarting the application.
+An interrupted repair retains its plan and can be continued from the same panel.
+
 ## Compose route entries
 
 Each of the nine UI routes has its own default-exported entry at

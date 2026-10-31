@@ -1483,6 +1483,70 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
   }, panel);
 }
 
+// src/ui-initialization-recovery.ts
+function initializationRecoveryUi(ctx, onRecovered) {
+  const [state, setState] = ctx.useState("initialization-recovery", { failure: "", inspection: null, busy: false, confirmed: false });
+  const live = ctx.useRef("initialization-recovery-live", state);
+  live.current = state;
+  function update(patch) {
+    live.current = { ...live.current, ...patch };
+    setState(live.current);
+  }
+  function reportFailure(failure) {
+    update({ failure: String(failure), inspection: null, confirmed: false });
+  }
+  function run(repair) {
+    return __async(this, null, function* () {
+      if (live.current.busy) return;
+      const inspection2 = live.current.inspection;
+      let request2 = { action: "inspect" };
+      if (repair) {
+        if (!live.current.confirmed) throw new Error("请先确认修复说明。");
+        if (inspection2?.status === "repairable") request2 = { action: "repair", source: inspection2.source };
+        else if (inspection2?.status === "planned") request2 = { action: "resume" };
+        else throw new Error("请先检查初始化数据。");
+      }
+      update({ busy: true, confirmed: false });
+      try {
+        const result = yield ToolPkg.ipc.call("character-memory.initialization", request2, { targetRuntime: "main" });
+        if (repair) {
+          if (result.status !== "ready") throw new Error("初始化修复未完成。");
+          update({ failure: "", inspection: null });
+          onRecovered();
+        } else update({ inspection: result });
+      } catch (failure) {
+        update({ failure: String(failure) });
+      } finally {
+        update({ busy: false });
+      }
+    });
+  }
+  if (state.failure === "") return { panel: null, reportFailure };
+  const inspection = state.inspection;
+  const repairable = inspection?.status === "repairable" || inspection?.status === "planned";
+  const lines = [
+    ctx.UI.Text({ text: "角色卡初始化未完成", style: "titleLarge" }),
+    ctx.UI.Text({ text: state.failure, style: "bodyMedium" }),
+    ctx.UI.TextButton({ key: "initialization-inspect", text: state.busy ? "正在处理…" : "检查初始化数据", enabled: !state.busy, onClick: () => run(false) })
+  ];
+  if (inspection?.status === "ready") lines.push(ctx.UI.Text({ text: "初始化元数据已存在。当前错误不属于缺失首次初始化信息，不会修改现有数据。" }));
+  if (inspection?.status === "repairable") lines.push(
+    ctx.UI.Text({ text: "检测到旧版首次安装中断。将保留此角色的 ID 和全部内容，并将其设为当前角色：" }),
+    ctx.UI.Text({ text: inspection.source.card.name, fontWeight: "700" }),
+    ctx.UI.Text({ text: inspection.source.card.id, style: "bodySmall" }),
+    ctx.UI.Text({ text: "仅补齐缺失的初始化信息、记忆空间和 USER.md。已有记忆设置与文件保持不变；缺失的全局记忆开关及召回设置使用初始值。不会删除或重置角色卡。" })
+  );
+  if (inspection?.status === "planned") lines.push(ctx.UI.Text({ text: `已有“${inspection.cardName}”的初始化计划。将继续这份计划，保留原 ID 和已有文件，不重新安装。` }));
+  if (repairable) lines.push(
+    ctx.UI.Row({ spacing: 8, verticalAlignment: "center" }, [
+      ctx.UI.Checkbox({ key: "initialization-confirm", checked: state.confirmed, enabled: !state.busy, onCheckedChange: (checked) => update({ confirmed: checked }) }),
+      ctx.UI.Text({ text: "我已核对上述角色，确认按说明修复初始化", weight: 1 })
+    ]),
+    ctx.UI.Button({ key: "initialization-repair", text: "修复初始化", enabled: state.confirmed && !state.busy, onClick: () => run(true) })
+  );
+  return { panel: ctx.UI.Column({ key: "initialization-recovery-panel", fillMaxSize: true, padding: 20, spacing: 16 }, lines), reportFailure };
+}
+
 // src/ui-editor.ts
 function webArguments(value, expected) {
   if (value.length !== 1 || !Array.isArray(value[0]) || value[0].length !== expected) throw new Error(`CharacterMemoryHost expects ${expected} arguments`);
@@ -1492,6 +1556,10 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
   const controller = ctx.createWebViewController("character-memory-web");
   const [path, setPath] = ctx.useState("character-memory-html", "");
   const [error, setError] = ctx.useState("character-memory-error", "");
+  const recovery = initializationRecoveryUi(ctx, () => {
+    dispose();
+    setPath("");
+  });
   const ready = ctx.useRef("character-memory-ready", false);
   const unsubscribe = ctx.useRef("character-memory-theme-subscription", null);
   const [presentation] = ctx.useState("presentation", null);
@@ -1524,9 +1592,14 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
             webArguments(args, 0);
             const current = screenSession.currentScreen();
             const screen = current.input.mode === "manage" && managementView === "memory" ? { ...current, input: { mode: "manage", view: "memory" } } : current;
-            const snapshot = yield ToolPkg.ipc.call("character-memory.request", { action: "snapshot" }, { targetRuntime: "main" });
-            ready.current = true;
-            return { theme: ctx.Theme.getCurrent(), screen, snapshot };
+            try {
+              const snapshot = yield ToolPkg.ipc.call("character-memory.request", { action: "snapshot" }, { targetRuntime: "main" });
+              ready.current = true;
+              return { theme: ctx.Theme.getCurrent(), screen, snapshot };
+            } catch (failure) {
+              if (screen.input.mode === "manage" && managementView === "characters") recovery.reportFailure(failure);
+              throw failure;
+            }
           }),
           /** Routes all editing operations through this package's main runtime. */
           request: (...args) => __async(null, null, function* () {
@@ -1596,7 +1669,8 @@ function renderScreen(ctx, definition2, requiredMode = null, managementView = "c
       unsubscribe.current = null;
     }
   }
-  return ctx.UI.Box({ fillMaxSize: true, onLoad: initialize }, [path === "" ? ctx.UI.Text({ text: error === "" ? `正在加载${managementView === "memory" ? "记忆" : definition2.title}…` : error }) : ctx.UI.WebView({
+  if (recovery.panel !== null) return recovery.panel;
+  return ctx.UI.Box({ key: "character-memory-editor", fillMaxSize: true, onLoad: initialize }, [path === "" ? ctx.UI.Text({ text: error === "" ? `正在加载${managementView === "memory" ? "记忆" : definition2.title}…` : error }) : ctx.UI.WebView({
     key: "character-memory-web",
     controller,
     fillMaxSize: true,

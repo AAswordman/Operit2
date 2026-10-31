@@ -288,6 +288,135 @@
           }
         ],
         "target": "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "id"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "chatProviderId"
+          }
+        ],
+        "target": "runtime/config/preferences/model_configs.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "ttsConfigId"
+          }
+        ],
+        "target": "runtime/config/preferences/tts_configs.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "themeConfigId"
+          }
+        ],
+        "target": "runtime/config/preferences/user_preferences.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "sharedMemoryId"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "attachedTagIds"
+          },
+          {
+            "kind": "array_values"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/tags.preferences.json"
+      },
+      {
+        "key": {
+          "kind": "exact",
+          "key": "initialization"
+        },
+        "path": [
+          {
+            "kind": "field",
+            "name": "card"
+          },
+          {
+            "kind": "field",
+            "name": "sharedMemoryMounts"
+          },
+          {
+            "kind": "array_values"
+          },
+          {
+            "kind": "field",
+            "name": "sharedMemoryId"
+          }
+        ],
+        "target": "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
       }
     ],
     "projection": null

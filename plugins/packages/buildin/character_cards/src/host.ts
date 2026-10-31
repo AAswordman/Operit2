@@ -1,7 +1,8 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { Definition, Request, RequestOutput } from "./model";
 import type { DomainOperation, DomainOutput } from "./api";
-import { dispatch, dispatchDomain, initializeService } from "./service-runtime";
+import { dispatch, dispatchDomain, initializeService, recoverService } from "./service-runtime";
+import { inspectCharacterInitialization, type InitializationRecoveryRequest, type InitializationInspection } from "./storage/initialization";
 import { record } from "./domain";
 import type { DomainMessage } from "./ui-contributions";
 import { parseDomainMessage } from "./ui-contributions";
@@ -51,6 +52,20 @@ export async function receiveDomainRequest(value: unknown): Promise<DomainOutput
 export function registerUiRequestChannel(): void {
   ToolPkg.ipc.on<Request, RequestOutput>("character-memory.request", receiveUiRequest);
   ToolPkg.ipc.on<DomainMessage, DomainOutput<DomainOperation>>("character-memory.domain", receiveDomainRequest);
+  ToolPkg.ipc.on<InitializationRecoveryRequest, InitializationInspection>("character-memory.initialization", receiveInitializationRecovery);
+}
+
+/** Keeps recovery reachable without dispatching through the failed domain service. */
+export async function receiveInitializationRecovery(value: unknown): Promise<InitializationInspection> {
+  const request = record(value, "character-memory.initialization");
+  if (request.action === "inspect") return inspectCharacterInitialization();
+  if (request.action === "repair") {
+    const source = record(request.source, "initialization recovery source");
+    if (!("card" in source) || !("owner" in source)) throw new Error("Missing inspected initialization source");
+    await recoverService(source as unknown as Extract<InitializationInspection, { status: "repairable" }>["source"]);
+  } else if (request.action === "resume") await recoverService(null);
+  else throw new Error("Unknown initialization recovery action");
+  return { status: "ready" };
 }
 
 /** Declares a lifecycle callback that initializes only when the host dispatches the event. */

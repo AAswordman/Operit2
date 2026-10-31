@@ -343,7 +343,7 @@ export async function migrateCharacterStorage(storage: CharacterStorage, directo
           const document = absolute(directory, move.destination + "/USER.md");
           if (!(await Tools.Files.exists(document)).exists) {
             completed(await Tools.Files.mkdir(document.slice(0, document.lastIndexOf("/")), true));
-            completed(await Tools.Files.write(document, ""));
+            completed((await Tools.Files.write(document, "")).operation);
           }
         }
         plan.phase = "authors"; plan.cursor = 0; await publish(); break;

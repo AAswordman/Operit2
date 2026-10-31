@@ -22,7 +22,8 @@ import type {
   CharacterRepositoryOwner,
 } from "../canonical";
 import { RepositorySession } from "../repository";
-import { createInitialState, createMemorySpace, normalizeMemoryRecallSettings } from "./state";
+import { createMemorySpace, normalizeMemoryRecallSettings } from "./state";
+import { initializeCharacterStorage } from "./initialization";
 import {
   clone,
   equal,
@@ -110,29 +111,15 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
       throw new Error("Plugin data directory is unavailable");
     const storage = await CharacterStorage.open();
     const repository = new DatabaseCharacterRepository(storage, directory, directories);
-    const existing = (await storage.metadata.data()).get<Storage.Value>("state");
-    if (existing === undefined) {
-      const state = createInitialState(Date.now());
-      for (const name of configurationNames) {
-        await storage.configuration[name].edit(preferences => {
-          if (preferences.entries().length !== 0) throw new Error("Character initialization found existing configuration: " + name);
-          for (const value of state[name]) preferences.set(recordPrefix + value.id, storedValue(value));
-        });
-      }
-      const initialMemory = records(state).filter(row => !configurationNames.some(name => name === row.collection));
-      if (initialMemory.length !== 0) await storage.memory.commit(initialMemory.map(row => ({ op: "put", ...row, expectedVersion: null })));
-      for (const owner of state.owners) {
-        const path = directory + "/" + owner.userDocumentPath;
-        completed(await Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true));
-        completed(await Tools.Files.write(path, "", false));
-      }
-      await storage.metadata.edit(preferences => {
-        if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
-        preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
-      });
+    try {
+      await initializeCharacterStorage(storage, directory);
+      await repository.readMetadata();
+      return repository;
+    } catch (error) {
+      try { await storage.close(); }
+      catch (cleanupError) { throw Object.assign(new Error("Character initialization and handle cleanup failed"), { cause: error, cleanupError }); }
+      throw error;
     }
-    await repository.readMetadata();
-    return repository;
   }
 
   /** Combines complete JSON preferences with independently stored memory records for a domain session. */
@@ -449,7 +436,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
         );
       }
       const stagedPath = document.path + ".pending";
-      completed(await Tools.Files.write(stagedPath, document.content, false));
+      completed((await Tools.Files.write(stagedPath, document.content, false)).operation);
       stagedDocuments.push({ path: document.path, stagedPath });
     }
     for (const name of configurationNames) {

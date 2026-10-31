@@ -92,7 +92,8 @@ function adapter(version = '1.0.0', respond) {
         /** Returns a real-shaped host result for the unchanged canonical request. */
         Tools.Files[method] = async function(...args) {
           canonicalCalls.push([method, ...args]);
-          return { path: typeof args[0] === 'object' ? args[0].path : args[0], contentBase64: 'AP8=', successful: true };
+          var receipt = { path: typeof args[0] === 'object' ? args[0].path : args[0], contentBase64: 'AP8=', successful: true };
+          return method === 'write' ? { operation: receipt, aiDiffInstructions: '' } : receipt;
         };
       })(name);
     }
@@ -254,12 +255,15 @@ test('legacy Files routes exact Linux addresses and transfers resource bytes acr
   const written = await vm.runInContext("Tools.Files.write('/root/phone.json','{}',false,'linux')", runtime.context);
   assert.equal(written.path, '/root/phone.json');
   assert.equal(written.env, 'linux');
+  assert.equal(written.successful, true);
   assert.deepEqual(runtime.calls.at(-1).params, { operation:'write',args:{path:'/root/phone.json',content:'{}',append:false} });
   await vm.runInContext("Tools.Files.copy('/app/data/resource.zip','/root/resource.zip',false,'android','linux')", runtime.context);
   assert.deepEqual(runtime.calls.at(-1).params, { operation:'writeBinary',args:{path:'/root/resource.zip',contentBase64:'AP8='} });
   await vm.runInContext("Tools.Files.copy('/root/resource.zip','/app/data/export.zip',false,'linux','android')", runtime.context);
   assert.deepEqual(Array.from(runtime.canonicalCalls.at(-1)), ['writeBinary','/app/data/export.zip','AP8=']);
-  await vm.runInContext("Tools.Files.write('/sdcard/a.txt','text',false)", runtime.context);
+  const androidWrite = await vm.runInContext("Tools.Files.write('/sdcard/a.txt','text',false)", runtime.context);
+  assert.equal(androidWrite.successful, true);
+  assert.equal(androidWrite.path, '/sdcard/a.txt');
   assert.equal(runtime.canonicalCalls.at(-1)[1], '/sdcard/a.txt');
   runtime.context.version = '2.0.0';
   await vm.runInContext("Tools.Files.read('/mnt/linux/current.txt')", runtime.context);

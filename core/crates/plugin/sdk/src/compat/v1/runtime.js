@@ -217,6 +217,8 @@ function __operitInstallV1Runtime(runtime) {
     async function file(operation, args) {
         var value = await invoke('file', { operation: operation, args: args });
         value.path = '/mnt/linux' + (value.path === '/' ? '' : value.path);
+        // The managed runtime returns a flat receipt; the canonical text-write contract wraps it.
+        if (operation === 'write') return { operation: value, aiDiffInstructions: '' };
         return value;
     }
     var files = Object.assign({}, canonical.Files);

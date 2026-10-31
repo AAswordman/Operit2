@@ -98,7 +98,10 @@ export async function createDiskHarness(testContext, { legacyIdentity = null } =
       const target = confined(file); attempted("write", [file, content, append]);
       if (typeof content !== "string") throw new Error("Disk harness requires string file content");
       await writeFile(target, content, { encoding: "utf8", flag: append ? "a" : "w" });
-      return operationResult("write", file);
+      return { operation: operationResult("write", file), aiDiffInstructions: "", diffContent: "",
+        /** Formats the nested operation without changing the write result envelope. */
+        toString() { return this.operation.details; },
+      };
     },
     /** Publishes the actual source file with native rename after validating both absolute paths. */
     async move(source, destination) {

@@ -211,11 +211,12 @@ export namespace Files {
   function unzip(source: string, destination: string): Promise<FileOperationData>;
   /**
    * Write content to file
+   * Returns the write operation together with its generated diff.
    * @param path - VFS file path
    * @param content - Content to write
    * @param append - Whether to append to file
    */
-  function write(path: string, content: string, append?: boolean): Promise<FileOperationData>;
+  function write(path: string, content: string, append?: boolean): Promise<FileApplyResultData>;
   /**
    * Write base64 encoded content to a binary file
    * @param path - VFS file path

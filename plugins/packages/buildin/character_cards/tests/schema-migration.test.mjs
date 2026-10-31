@@ -118,7 +118,7 @@ test("released-data import retains repeated candidate sources with independent I
 
 test("TS released-data import into v1 converts every owned identity and reference and preserves user content", async t => {
   const { disk, state: old, chat } = await seed(t), database = await open(disk, chat), state = plain(disk.readState());
-  assert.equal(state.version, 1); assert.equal(disk.storage.inspectPreferences("migration", values => values.plan), undefined);
+  assert.equal(state.version, 1); assert.equal(disk.storage.inspectPreferences("local/migration", values => values.plan), undefined);
   for (const collection of ["cards", "groups", "tags", "stores", "conversationGroups"])
     for (const record of state[collection]) assert.match(record.id, uuidPattern);
   const first = state.cards.find(card => card.name === old.cards[0].name), second = state.cards.find(card => card.name === old.cards[1].name);
@@ -177,7 +177,7 @@ test("released-data conversion commits bounded atomic key swaps and resumes with
     };
   };
   await assert.rejects(open(disk, chat), error => error === failure);
-  const pending = disk.storage.inspectPreferences("migration", values => values.plan), identities = structuredClone(pending.identities);
+  const pending = disk.storage.inspectPreferences("local/migration", values => values.plan), identities = structuredClone(pending.identities);
   assert.equal(metadata(disk).version, 1); assert.equal(pending.phase, "records"); assert.ok(pending.cursor > 0);
   disk.storage.objects.open = originalOpen;
   await open(disk, chat);
@@ -197,7 +197,7 @@ test("owner copy interruption retains source bytes and resumes with the same UUI
   const { disk, chat } = await seed(t), failure = new Error("Injected owner copy failure");
   disk.failNext("copy", failure);
   await assert.rejects(open(disk, chat), error => error === failure);
-  const pending = disk.storage.inspectPreferences("migration", values => values.plan), id = pending.identities[JSON.stringify(["cards", "operit"])];
+  const pending = disk.storage.inspectPreferences("local/migration", values => values.plan), id = pending.identities[JSON.stringify(["cards", "operit"])];
   assert.equal(pending.phase, "files");
   assert.equal((await bytes(disk, "owners/character%3Aoperit/USER.md")).toString(), "# Original USER character:operit\nUnicode 用户资料");
   await open(disk, chat); assert.ok(disk.readState().cards.some(card => card.id === id));
@@ -206,7 +206,7 @@ test("owner copy interruption retains source bytes and resumes with the same UUI
 test("conflicting owner destination bytes stop migration and retain the original records", async t => {
   const { disk, chat } = await seed(t);
   disk.failNext("copy", new Error("Pause after persisted plan")); await assert.rejects(open(disk, chat));
-  const pending = disk.storage.inspectPreferences("migration", values => values.plan), file = pending.files[0], target = disk.directory.replaceAll("\\", "/") + "/" + file.destination;
+  const pending = disk.storage.inspectPreferences("local/migration", values => values.plan), file = pending.files[0], target = disk.directory.replaceAll("\\", "/") + "/" + file.destination;
   await disk.files.mkdir(target.slice(0, target.lastIndexOf("/")), true); await disk.files.write(target, "Conflicting data");
   await assert.rejects(open(disk, chat), /resource verification failed/);
   assert.equal(metadata(disk).version, 1);
@@ -276,7 +276,7 @@ test("file-copy response interruption verifies the existing destination without 
     return { successful: true, details: "Native copy completed" };
   };
   await assert.rejects(open(disk, chat), /Copy response interrupted/);
-  const plan = disk.storage.inspectPreferences("migration", values => values.plan), file = plan.files[0]; assert.equal(plan.cursor, 0);
+  const plan = disk.storage.inspectPreferences("local/migration", values => values.plan), file = plan.files[0]; assert.equal(plan.cursor, 0);
   assert.deepEqual(await bytes(disk, file.source), await bytes(disk, file.destination));
   disk.files.copy = originalCopy; disk.clearCalls(); await open(disk, chat);
   assert.equal(disk.calls.some(call => call.method === "copy" && call.args[0].endsWith("/" + file.source)), false);
@@ -289,9 +289,9 @@ test("cleanup response interruption resumes after the already retired source own
     await originalDelete(...args); throw new Error("Cleanup response interrupted");
   };
   await assert.rejects(open(disk, chat), /Cleanup response interrupted/);
-  assert.equal(disk.storage.inspectPreferences("migration", values => values.plan).phase, "cleanup");
+  assert.equal(disk.storage.inspectPreferences("local/migration", values => values.plan).phase, "cleanup");
   disk.files.deleteFile = originalDelete; await open(disk, chat);
-  assert.equal(disk.readState().version, 1); assert.equal(disk.storage.inspectPreferences("migration", values => values.plan), undefined);
+  assert.equal(disk.readState().version, 1); assert.equal(disk.storage.inspectPreferences("local/migration", values => values.plan), undefined);
 });
 
 /** Keeps released cards usable after one of their group's members was deleted. */
@@ -313,7 +313,7 @@ test("released-data migration removes a deleted group member and retains its gro
 
 test("malformed persisted migration work fails before filesystem or record changes", async t => {
   const { disk, chat } = await seed(t);
-  disk.storage.inspectPreferences("migration", values => { values.plan = { from: "released", to: 1, phase: "records", cursor: 99, identities: {}, files: [], directories: [], authors: [], changes: [] }; });
+  disk.storage.inspectPreferences("local/migration", values => { values.plan = { from: "released", to: 1, phase: "records", cursor: 99, identities: {}, files: [], directories: [], authors: [], changes: [] }; });
   disk.clearCalls(); await assert.rejects(open(disk, chat), /cursor exceeds its work/);
   assert.equal(disk.calls.some(call => call.method === "storage.commit" || call.method === "deleteFile"), false);
 });
@@ -428,7 +428,7 @@ test("released-data audit still rejects malformed chat selections before migrati
     await handle.edit(preferences => { preferences.set("binding_core-chat", { version: 1, selection }); });
     await handle.close(); disk.clearCalls();
     await assert.rejects(open(disk, chat), /Invalid.*selection/);
-    assert.equal(disk.storage.inspectPreferences("migration", values => values.plan), undefined);
+    assert.equal(disk.storage.inspectPreferences("local/migration", values => values.plan), undefined);
     assert.equal(disk.calls.some(call => ["storage.commit", "copy", "deleteFile"].includes(call.method)), false);
   }
 });

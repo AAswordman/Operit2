@@ -78,6 +78,8 @@ export function openPlugin(disk) {
     },
     /** Invokes the actual registered UI handler through the existing IPC loop, not a browser data fixture. */
     web(request) { return registry.ipc.call("character-memory.request", request, { targetRuntime: "main" }); },
+    /** Uses the independent real recovery channel even when domain initialization has failed. */
+    recovery(request) { return registry.ipc.call("character-memory.initialization", request, { targetRuntime: "main" }); },
     /** Calls the actual sidebar catalog handler with neutral host metadata. */
     sidebar(request) { return registry.ipc.call("character-sidebar.catalog", request, { targetRuntime: "main" }); },
     /** Calls only the genuine registered group-control IPC handler with its exact retained identity. */

@@ -12,7 +12,8 @@ import { requireId } from "./validation";
 import type { IndependentConfigurationAccess } from "./selection-application";
 import { createSelectionApplication, readSelectionReferences, readThemeChoices, domainSelection, editorSelection, isSelectionOperation, isSelectionRequest } from "./selection-application";
 import { independentConfigurations } from "./selection-settings";
-import { getRepository } from "./repository-runtime";
+import { getRepository, recoverRepository } from "./repository-runtime";
+import type { InitializationRecoverySource } from "./storage/initialization";
 export { connectDirectorySources } from "./repository-runtime";
 
 export interface CharacterCardsService extends ChatConfigurationService {
@@ -244,6 +245,12 @@ export function getService(): Promise<CharacterCardsService> {
 /** Initializes the same service used by first calls when the application lifecycle is dispatched. */
 export async function initializeService(): Promise<void> {
   await getService();
+}
+
+/** Replaces the failed service promise only for explicit repair or persisted-plan resumption. */
+export async function recoverService(source: InitializationRecoverySource | null): Promise<void> {
+  const owner = await recoverRepository(source);
+  service = Promise.resolve(createCharacterCardsService(owner));
 }
 
 /** Dispatches a UI operation only after the retained initialization has succeeded. */

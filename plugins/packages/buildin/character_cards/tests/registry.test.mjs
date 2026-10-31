@@ -195,11 +195,12 @@ test("one character-and-memory package registers native selection, embedded side
   assert.deepEqual(plain(attachments[0]), { id: "memory-attachment", route: attachmentRoute, surface: "chat_attachments", title: { zh: "记忆附件", en: "Memory attachment" }, icon: "Memory", order: 150, params: { mode: "memory-attachment", ownerKey: null, folderPath: null } });
   assert.equal(Object.hasOwn(attachments[0], "action"), false);
   assert.deepEqual(ipc.map(
-    /** Requires both current UI and domain channels exactly once, without a separate memory plugin. */
+    /** Requires UI, domain and independent initialization recovery channels exactly once. */
     entry => entry.name,
-  ), ["character-memory.request", "character-memory.domain"]);
+  ), ["character-memory.request", "character-memory.domain", "character-memory.initialization"]);
   assert.equal(ipc[0].handler, api.receiveUiRequest);
   assert.equal(ipc[1].handler, api.receiveDomainRequest);
+  assert.equal(ipc[2].handler, api.receiveInitializationRecovery);
 });
 
 /** Executes registered negative paths without installing production data, business globals, or a successful host. */

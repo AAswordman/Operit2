@@ -80,6 +80,16 @@ Goal's UI consumes `GoalService.watch(chatId)`. Its clock exists only while the 
 
 All public route, cancellation, storage facade, and Compose lifecycle declarations originate in the Rust SDK. Regenerate `plugins/types/*.d.ts` using `operit-plugin-sdk-codegen`; do not edit those generated files by hand.
 
+## Text file write results
+
+`Tools.Files.write(path, content, append)` returns `FileApplyResultData`, identical
+to `toolCall("write_file", ...)`: `operation` contains the `FileOperationData`
+receipt, alongside `aiDiffInstructions` and optional `diffContent`. Read
+`result.operation.successful` and `result.operation.details`, not top-level receipt
+fields. `writeBinary`, `mkdir`, and `move` return `FileOperationData` directly.
+The existing v1 adapter retains its declared flat write receipt; v2 does not
+unwrap or accept alternate result shapes.
+
 ## Registration and configuration directories
 
 `ToolPkg.getConfigDir()` is available at module top level, inside

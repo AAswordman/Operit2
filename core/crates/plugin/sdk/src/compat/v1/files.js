@@ -131,7 +131,7 @@ function __operitCreateV1Files(current) {
         },
         /** Writes text in the declared legacy environment. */
         async write(path, content, append, environment = 'android') {
-            return result(await current.write(address(path, environment), content, append), path, environment);
+            return result((await current.write(address(path, environment), content, append)).operation, path, environment);
         },
         /** Writes Base64 bytes in the declared legacy environment. */
         async writeBinary(path, base64Content, environment = 'android') {

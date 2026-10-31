@@ -2244,6 +2244,135 @@ var merge_default = {
           }
         ],
         target: "runtime/plugin_data/space/com.operit.character_cards/groups.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "id"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/cards.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "chatProviderId"
+          }
+        ],
+        target: "runtime/config/preferences/model_configs.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "ttsConfigId"
+          }
+        ],
+        target: "runtime/config/preferences/tts_configs.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "themeConfigId"
+          }
+        ],
+        target: "runtime/config/preferences/user_preferences.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "sharedMemoryId"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "attachedTagIds"
+          },
+          {
+            kind: "array_values"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/tags.preferences.json"
+      },
+      {
+        key: {
+          kind: "exact",
+          key: "initialization"
+        },
+        path: [
+          {
+            kind: "field",
+            name: "card"
+          },
+          {
+            kind: "field",
+            name: "sharedMemoryMounts"
+          },
+          {
+            kind: "array_values"
+          },
+          {
+            kind: "field",
+            name: "sharedMemoryId"
+          }
+        ],
+        target: "runtime/plugin_data/space/com.operit.character_cards/stores.preferences.json"
       }
     ],
     projection: null
@@ -2979,7 +3108,7 @@ function migrateCharacterStorage(storage, directory) {
             const document2 = absolute(directory, move.destination + "/USER.md");
             if (!(yield Tools.Files.exists(document2)).exists) {
               completed(yield Tools.Files.mkdir(document2.slice(0, document2.lastIndexOf("/")), true));
-              completed(yield Tools.Files.write(document2, ""));
+              completed((yield Tools.Files.write(document2, "")).operation);
             }
           }
           plan.phase = "authors";
@@ -3353,8 +3482,8 @@ var CharacterStorage = class _CharacterStorage {
     this.migration = migration;
     this.memory = memory;
   }
-  /** Opens JSON configuration owners and upgrades the plugin schema before business reads. */
-  static open() {
+  /** Opens the real owners for explicit inspection without migrating or initializing business data. */
+  static openForRecovery() {
     return __async(this, null, function* () {
       const directory = ToolPkg.getSpaceDataDir();
       if (typeof directory !== "string" || directory.trim() === "") throw new Error("Plugin data directory is unavailable");
@@ -3374,8 +3503,21 @@ var CharacterStorage = class _CharacterStorage {
         const migration = yield Tools.Storage.dataStore.open({ path: ToolPkg.getLocalDataDir() + "/migration.preferences.json" });
         handles.push(migration);
         memory = yield CharacterMemoryDatabase.open();
-        const storage = new _CharacterStorage(configuration, metadata, chats, migration, memory);
-        metadata.withSchema(1, (version, preferences) => {
+        return new _CharacterStorage(configuration, metadata, chats, migration, memory);
+      } catch (error) {
+        const closed = yield Promise.allSettled([...handles.map((handle) => handle.close()), ...memory === void 0 ? [] : [memory.close()]]);
+        const failures = closed.filter((result2) => result2.status === "rejected").map((result2) => result2.reason);
+        if (failures.length !== 0) throw Object.assign(new Error("Character storage open and handle cleanup failed"), { cause: error, cleanupErrors: failures });
+        throw error;
+      }
+    });
+  }
+  /** Opens JSON configuration owners and upgrades the plugin schema before business reads. */
+  static open() {
+    return __async(this, null, function* () {
+      const storage = yield _CharacterStorage.openForRecovery();
+      try {
+        storage.metadata.withSchema(1, (version, preferences) => {
           if (version !== 0) throw new Error("Missing character schema migration: " + version);
           const state = preferences.get("state");
           if (state !== void 0) {
@@ -3383,14 +3525,16 @@ var CharacterStorage = class _CharacterStorage {
             preferences.set("state", { ...state, legacyImportPending: true });
           }
         });
-        yield metadata.data();
-        yield migrateCharacterStorage(storage, directory);
-        yield memory.retireLegacyEmbeddings();
+        yield storage.metadata.data();
+        yield migrateCharacterStorage(storage, ToolPkg.getSpaceDataDir());
+        yield storage.memory.retireLegacyEmbeddings();
         return storage;
       } catch (error) {
-        const closed = yield Promise.allSettled([...handles.map((handle) => handle.close()), ...memory === void 0 ? [] : [memory.close()]]);
-        const failures = closed.filter((result2) => result2.status === "rejected").map((result2) => result2.reason);
-        if (failures.length !== 0) throw Object.assign(new Error("Character storage open and handle cleanup failed"), { cause: error, cleanupErrors: failures });
+        try {
+          yield storage.close();
+        } catch (cleanupError) {
+          throw Object.assign(new Error("Character storage open and handle cleanup failed"), { cause: error, cleanupError });
+        }
         throw error;
       }
     });
@@ -3401,6 +3545,20 @@ var CharacterStorage = class _CharacterStorage {
       const result2 = {};
       for (const name of configurationNames) result2[name] = yield this.configuration[name].data();
       return result2;
+    });
+  }
+  /** Releases every retained host handle after an unsuccessful repository initialization. */
+  close() {
+    return __async(this, null, function* () {
+      const closed = yield Promise.allSettled([
+        ...Object.values(this.configuration).map((handle) => handle.close()),
+        this.metadata.close(),
+        this.chats.close(),
+        this.migration.close(),
+        this.memory.close()
+      ]);
+      const failures = closed.filter((result2) => result2.status === "rejected").map((result2) => result2.reason);
+      if (failures.length !== 0) throw Object.assign(new Error("Character storage handle cleanup failed"), { cleanupErrors: failures });
     });
   }
 };
@@ -4784,6 +4942,171 @@ var RepositorySession = class extends DatabaseMemoryRepository {
   }
 };
 
+// src/storage/initialization.ts
+function recoveryPlan(source) {
+  const plan = createPlan();
+  plan.card = source.card;
+  if (source.owner !== null) {
+    assertObject(source.owner, "existing memory owner");
+    const { ownerKey, userDocumentPath: userDocumentPath2, ...memory } = source.owner;
+    plan.memory = { ...memory, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
+  }
+  assertPlan(plan);
+  return plan;
+}
+function recoverySource(storage) {
+  return __async(this, null, function* () {
+    const entries = (yield storage.configuration.cards.data()).entries();
+    if (entries.length !== 1 || !entries[0][0].startsWith(recordPrefix))
+      throw new Error("\u6B64\u4FEE\u590D\u4EC5\u5904\u7406\u9996\u6B21\u5B89\u88C5\u4E2D\u65AD\uFF0C\u9700\u8981\u4FDD\u7559\u6070\u597D\u4E00\u5F20\u89D2\u8272\u5361\uFF1B\u4E0D\u4F1A\u6E05\u7A7A\u6216\u63A5\u7BA1\u5176\u4ED6\u6570\u636E\u3002");
+    const [key2, value] = entries[0];
+    const card = readCharacter(value, key2.slice(recordPrefix.length));
+    if (key2 !== recordPrefix + card.id || !equal(card, value)) throw new Error("\u89D2\u8272\u5361\u683C\u5F0F\u4E0D\u5B8C\u6574\uFF0C\u4E0D\u80FD\u4F5C\u4E3A\u9996\u6B21\u521D\u59CB\u5316\u4FEE\u590D\u6765\u6E90\u3002");
+    const owner2 = yield storage.memory.get("owners", "character:" + card.id);
+    const source = { card, owner: owner2 === null ? null : owner2.value };
+    yield validateRecords(storage, recoveryPlan(source));
+    return source;
+  });
+}
+function inspectCharacterInitialization() {
+  return __async(this, null, function* () {
+    const storage = yield CharacterStorage.openForRecovery();
+    try {
+      const metadata = yield storage.metadata.data();
+      if (metadata.contains("state")) return { status: "ready" };
+      const pending = metadata.get("initialization");
+      if (pending !== void 0) {
+        assertPlan(pending);
+        return { status: "planned", cardName: pending.card.name };
+      }
+      return { status: "repairable", source: yield recoverySource(storage) };
+    } finally {
+      yield storage.close();
+    }
+  });
+}
+function repairCharacterInitialization(expected) {
+  return __async(this, null, function* () {
+    const storage = yield CharacterStorage.openForRecovery();
+    try {
+      storage.metadata.withSchema(1, (version, preferences) => {
+        if (version !== 0 || preferences.contains("state")) throw new Error("\u73B0\u6709\u5143\u6570\u636E\u4E0D\u5C5E\u4E8E\u7F3A\u5931\u9996\u6B21\u521D\u59CB\u5316\u4FE1\u606F\uFF0C\u4E0D\u80FD\u6267\u884C\u6B64\u4FEE\u590D\u3002");
+      });
+      const source = yield recoverySource(storage);
+      if (!equal(source, expected)) throw new Error("\u6570\u636E\u5DF2\u5728\u68C0\u67E5\u540E\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u518D\u786E\u8BA4\u4FEE\u590D\u3002");
+      const plan = recoveryPlan(source);
+      yield storage.metadata.edit((preferences) => {
+        if (preferences.contains("state") || preferences.contains("initialization"))
+          throw new Error("\u521D\u59CB\u5316\u72B6\u6001\u5DF2\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u3002");
+        preferences.set("initialization", storedValue(plan));
+      });
+      yield initializeCharacterStorage(storage, ToolPkg.getSpaceDataDir());
+    } finally {
+      yield storage.close();
+    }
+  });
+}
+function createPlan() {
+  const state = createInitialState(Date.now());
+  const { ownerKey, userDocumentPath: userDocumentPath2, ...memory } = state.owners[0];
+  return { version: 1, card: state.cards[0], memory, memoryPreferences: state.memoryPreferences, memoryRecall: state.memoryRecall };
+}
+function plannedOwner(plan) {
+  const ownerKey = "character:" + plan.card.id;
+  return { ...plan.memory, ownerKey, userDocumentPath: userDocumentPath(ownerKey) };
+}
+function plannedOwnerMetadata(plan) {
+  const { memories, links, chunks, candidates, embeddings, ...metadata } = plannedOwner(plan);
+  return metadata;
+}
+function assertPlan(value) {
+  assertObject(value, "character initialization plan");
+  if (value.version !== 1) throw new Error("Unsupported character initialization plan");
+  assertObject(value.card, "initial character");
+  if (!equal(readCharacter(value.card, requireId(value.card.id, "initial character id")), value.card))
+    throw new Error("Invalid character initialization card");
+  assertObject(value.memory, "initial memory space");
+  const owner2 = plannedOwner(value);
+  assertMemorySpace(owner2);
+  for (const name of ["memories", "links", "chunks", "candidates", "embeddings"])
+    if (owner2[name].length !== 0) throw new Error("Character initialization plan contains memory records");
+  if (owner2.rebuildTask !== null) throw new Error("Character initialization plan contains a memory job");
+  assertObject(value.memoryPreferences, "initial memory preferences");
+  assertBoolean(value.memoryPreferences.userDescriptionEnabled, "user description enabled");
+  assertBoolean(value.memoryPreferences.autoUpdateEnabled, "memory auto update enabled");
+  if (!equal(normalizeMemoryRecallSettings(value.memoryRecall), value.memoryRecall))
+    throw new Error("Character initialization plan has incomplete recall settings");
+}
+function validateRecords(storage, plan) {
+  return __async(this, null, function* () {
+    const configuration = yield storage.data();
+    for (const name of configurationNames) {
+      const entries = configuration[name].entries();
+      if (entries.length === 0) continue;
+      if (plan === void 0 || name !== "cards" || entries.length !== 1 || entries[0][0] !== recordPrefix + plan.card.id || !equal(entries[0][1], plan.card))
+        throw new Error("Character initialization found unplanned configuration: " + name);
+    }
+    const rows = yield storage.memory.query("SELECT collection,key,value FROM plugin_objects LIMIT 2");
+    if (rows.length === 0) return;
+    if (plan === void 0) throw new Error("Character initialization found memory records without a plan");
+    const expected = plannedOwnerMetadata(plan);
+    if (rows.length !== 1 || rows[0].collection !== "owners" || rows[0].key !== expected.ownerKey || !equal(JSON.parse(String(rows[0].value)), expected))
+      throw new Error("Character initialization found unplanned memory records");
+  });
+}
+function initializeCharacterStorage(storage, directory) {
+  return __async(this, null, function* () {
+    const metadata = yield storage.metadata.data();
+    if (metadata.contains("state")) {
+      if (metadata.contains("initialization")) throw new Error("Character initialization plan remains beside completed metadata");
+      return;
+    }
+    let persisted = metadata.get("initialization");
+    if (persisted === void 0) {
+      yield validateRecords(storage, void 0);
+      const plan2 = createPlan();
+      yield storage.metadata.edit((preferences) => {
+        if (preferences.contains("state") || preferences.contains("initialization"))
+          throw new Error("Character initialization changed concurrently");
+        preferences.set("initialization", storedValue(plan2));
+      });
+      persisted = storedValue(plan2);
+    }
+    assertPlan(persisted);
+    const plan = persisted;
+    yield validateRecords(storage, plan);
+    yield storage.configuration.cards.edit((preferences) => {
+      const entries = preferences.entries();
+      if (entries.length === 1 && entries[0][0] === recordPrefix + plan.card.id && equal(entries[0][1], plan.card)) return;
+      if (entries.length !== 0) throw new Error("Character initialization card changed concurrently");
+      preferences.set(recordPrefix + plan.card.id, storedValue(plan.card));
+    });
+    const owner2 = plannedOwner(plan);
+    const existing = yield storage.memory.get("owners", owner2.ownerKey);
+    const ownerMetadata = plannedOwnerMetadata(plan);
+    if (existing === null) {
+      yield storage.memory.commit([{ op: "put", collection: "owners", key: owner2.ownerKey, value: storedValue(ownerMetadata), expectedVersion: null }]);
+    } else if (!equal(existing.value, ownerMetadata)) throw new Error("Character initialization owner changed concurrently");
+    const path = directory + "/" + owner2.userDocumentPath;
+    const file = yield Tools.Files.exists(path);
+    if (file.exists) {
+      if (file.isDirectory) throw new Error("Character initialization document path is a directory");
+    } else {
+      const created = yield Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true);
+      if (!created.successful) throw new Error(created.details);
+      const { operation } = yield Tools.Files.write(path, "", false);
+      if (!operation.successful) throw new Error(operation.details);
+    }
+    yield validateRecords(storage, plan);
+    yield storage.metadata.edit((preferences) => {
+      if (preferences.contains("state") || !equal(preferences.get("initialization"), plan))
+        throw new Error("Character initialization changed concurrently");
+      preferences.set("state", { version: 1, active: { CharacterCard: { id: plan.card.id } }, memoryPreferences: plan.memoryPreferences, memoryRecall: plan.memoryRecall });
+      preferences.remove("initialization");
+    });
+  });
+}
+
 // src/storage/database.ts
 function completed2(result2) {
   if (!result2.successful) throw new Error(result2.details);
@@ -4824,29 +5147,18 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
         throw new Error("Plugin data directory is unavailable");
       const storage = yield CharacterStorage.open();
       const repository2 = new _DatabaseCharacterRepository(storage, directory, directories2);
-      const existing = (yield storage.metadata.data()).get("state");
-      if (existing === void 0) {
-        const state = createInitialState(Date.now());
-        for (const name of configurationNames) {
-          yield storage.configuration[name].edit((preferences) => {
-            if (preferences.entries().length !== 0) throw new Error("Character initialization found existing configuration: " + name);
-            for (const value of state[name]) preferences.set(recordPrefix + value.id, storedValue(value));
-          });
+      try {
+        yield initializeCharacterStorage(storage, directory);
+        yield repository2.readMetadata();
+        return repository2;
+      } catch (error) {
+        try {
+          yield storage.close();
+        } catch (cleanupError) {
+          throw Object.assign(new Error("Character initialization and handle cleanup failed"), { cause: error, cleanupError });
         }
-        const initialMemory = records(state).filter((row) => !configurationNames.some((name) => name === row.collection));
-        if (initialMemory.length !== 0) yield storage.memory.commit(initialMemory.map((row) => ({ op: "put", ...row, expectedVersion: null })));
-        for (const owner2 of state.owners) {
-          const path = directory + "/" + owner2.userDocumentPath;
-          completed2(yield Tools.Files.mkdir(path.slice(0, path.lastIndexOf("/")), true));
-          completed2(yield Tools.Files.write(path, "", false));
-        }
-        yield storage.metadata.edit((preferences) => {
-          if (preferences.contains("state")) throw new Error("Character initialization changed concurrently");
-          preferences.set("state", { version: state.version, active: storedValue(state.active), memoryPreferences: storedValue(state.memoryPreferences), memoryRecall: storedValue(state.memoryRecall) });
-        });
+        throw error;
       }
-      yield repository2.readMetadata();
-      return repository2;
     });
   }
   /** Combines complete JSON preferences with independently stored memory records for a domain session. */
@@ -5157,7 +5469,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
           );
         }
         const stagedPath = document2.path + ".pending";
-        completed2(yield Tools.Files.write(stagedPath, document2.content, false));
+        completed2((yield Tools.Files.write(stagedPath, document2.content, false)).operation);
         stagedDocuments.push({ path: document2.path, stagedPath });
       }
       for (const name of configurationNames) {
@@ -5198,6 +5510,26 @@ function connectDirectorySources(sources) {
 }
 function getRepository() {
   return repository ?? (repository = Promise.resolve().then(() => DatabaseCharacterRepository.open(directories)));
+}
+function recoverRepository(source) {
+  return __async(this, null, function* () {
+    const previous = repository;
+    if (previous !== void 0) {
+      let failed = false;
+      try {
+        yield previous;
+      } catch {
+        failed = true;
+      }
+      if (!failed) throw new Error("\u89D2\u8272\u5361\u670D\u52A1\u5DF2\u7ECF\u6B63\u5E38\u8FD0\u884C\uFF0C\u65E0\u9700\u4FEE\u590D\u521D\u59CB\u5316\u3002");
+    }
+    if (repository !== previous) throw new Error("\u5DF2\u6709\u521D\u59CB\u5316\u6216\u4FEE\u590D\u8BF7\u6C42\u6B63\u5728\u6267\u884C\u3002");
+    repository = Promise.resolve().then(() => __async(null, null, function* () {
+      if (source !== null) yield repairCharacterInitialization(source);
+      return DatabaseCharacterRepository.open(directories);
+    }));
+    return repository;
+  });
 }
 
 // src/chat-storage.ts
@@ -8251,6 +8583,12 @@ function initializeService() {
     yield getService();
   });
 }
+function recoverService(source) {
+  return __async(this, null, function* () {
+    const owner2 = yield recoverRepository(source);
+    service = Promise.resolve(createCharacterCardsService(owner2));
+  });
+}
 function dispatch2(request) {
   return __async(this, null, function* () {
     return (yield getService()).dispatch(request);
@@ -8466,6 +8804,20 @@ function receiveDomainRequest(value) {
 function registerUiRequestChannel() {
   ToolPkg.ipc.on("character-memory.request", receiveUiRequest);
   ToolPkg.ipc.on("character-memory.domain", receiveDomainRequest);
+  ToolPkg.ipc.on("character-memory.initialization", receiveInitializationRecovery);
+}
+function receiveInitializationRecovery(value) {
+  return __async(this, null, function* () {
+    const request = record(value, "character-memory.initialization");
+    if (request.action === "inspect") return inspectCharacterInitialization();
+    if (request.action === "repair") {
+      const source = record(request.source, "initialization recovery source");
+      if (!("card" in source) || !("owner" in source)) throw new Error("Missing inspected initialization source");
+      yield recoverService(source);
+    } else if (request.action === "resume") yield recoverService(null);
+    else throw new Error("Unknown initialization recovery action");
+    return { status: "ready" };
+  });
 }
 function registerServiceLifecycle() {
   ToolPkg.registerAppLifecycleHook({ id: "service-initialize", event: "application_on_create", function: onServiceInitialize });

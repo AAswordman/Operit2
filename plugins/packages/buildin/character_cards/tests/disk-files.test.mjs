@@ -13,8 +13,10 @@ test("disk IO harness writes and reads real temporary plugin files with current 
   assert.deepEqual(Object.keys(absent).sort(), interfaceMembers("../../../../types/results.d.ts", "FileExistsData").sort());
   const content = '{"text":"真实磁盘内容","id":"9223372036854775807"}';
   const written = await disk.files.write(file, content);
-  assert.equal(written.successful, true);
-  assert.deepEqual(Object.keys(written).sort(), interfaceMembers("../../../../types/results.d.ts", "FileOperationData").sort());
+  assert.equal(written.operation.successful, true);
+  assert.equal(written.successful, undefined);
+  assert.deepEqual(Object.keys(written).sort(), interfaceMembers("../../../../types/results.d.ts", "FileApplyResultData").sort());
+  assert.deepEqual(Object.keys(written.operation).sort(), interfaceMembers("../../../../types/results.d.ts", "FileOperationData").sort());
   assert.equal(await readFile(file, "utf8"), content);
   const read = await disk.files.read(file);
   assert.deepEqual(Object.keys(read).sort(), interfaceMembers("../../../../types/results.d.ts", "FileContentData").sort());
