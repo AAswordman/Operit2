@@ -447,6 +447,12 @@ const CrossrefSearch = (function () {
                 'User-Agent': 'Operit/1.0 (mailto:support@example.com)'
             });
 
+            if (!response.isSuccessful()) {
+                return {
+                    success: false,
+                    message: `搜索失败: HTTP ${response.statusCode} - ${response.statusMessage}`
+                };
+            }
 
             const data = response.json();
 
