@@ -8,6 +8,13 @@ use crate::SyncOperationStore::{SyncOperation, SyncOperationStoreError as Error,
 
 pub(crate) struct Journal(Box<dyn RuntimeSqliteConnection>);
 
+// Direct appends and recoverable preference edits share a durable identity floor.
+const AUTHOR_SEQUENCE_HIGH_WATER_SQL: &str = "SELECT MAX(
+    COALESCE((SELECT sequence FROM transaction_authors WHERE origin=?1),0),
+    COALESCE((SELECT MAX(sequence) FROM originals WHERE origin=?1),0),
+    COALESCE((SELECT MAX(sequence) FROM _operit_compacted WHERE origin=?1),0),
+    COALESCE((SELECT MAX(last) FROM legacy_receipts WHERE origin=?1),0))";
+
 impl Journal {
     pub(crate) fn open(host: &dyn RuntimeStorageHost, root: &str) -> Result<Self, Error> {
         let mut connection = host.openTransactionDatabase(&format!("{root}/transactions.sqlite"))?;
@@ -164,7 +171,7 @@ impl Journal {
     }
 
     pub(crate) fn highest(&mut self, origin: &str) -> Result<i64, Error> {
-        let rows = self.0.query("SELECT MAX(COALESCE((SELECT MAX(sequence) FROM originals WHERE origin=?1),0),COALESCE((SELECT MAX(sequence) FROM _operit_compacted WHERE origin=?1),0))", vec![text(origin)])?;
+        let rows = self.0.query(AUTHOR_SEQUENCE_HIGH_WATER_SQL, vec![text(origin)])?;
         Ok(rows[0].valueAt(0)?.asI64()?)
     }
 
@@ -224,7 +231,8 @@ impl Journal {
                 Some(row) => (row.valueAt(0)?.asI64()?, row.valueAt(1)?.asI64()?),
                 None => (0,0),
             };
-            let sequence = sequence.checked_add(1).ok_or_else(|| Error::Message("Transaction sequence overflow".into()))?;
+            let seen_sequence = tx.query(AUTHOR_SEQUENCE_HIGH_WATER_SQL, vec![text(origin)])?[0].valueAt(0)?.asI64()?;
+            let sequence = sequence.max(seen_sequence).checked_add(1).ok_or_else(|| Error::Message("Transaction sequence overflow".into()))?;
             let created_at = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(Error::Message)?;
             let seen = tx.query("SELECT MAX(COALESCE((SELECT MAX(business_time) FROM originals),0),COALESCE((SELECT MAX(business_time) FROM _operit_compacted),0))", vec![])?[0].valueAt(0)?.asI64()?;
             let logical = logical.max(seen).max(created_at).checked_add(1).ok_or_else(|| Error::Message("Transaction logical clock overflow".into()))?;

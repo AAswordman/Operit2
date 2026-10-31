@@ -3207,3 +3207,29 @@ fn journal_sql(host: &Arc<MemoryStorageHost>, sql: &str) {
     journal.receipt().unwrap();
     host.openTransactionDatabase("runtime/sync/transactions.sqlite").unwrap().executeBatch(sql).unwrap();
 }
+
+/// Direct recovery transactions remain allocated after their payloads retire.
+#[test]
+fn preference_allocator_skips_direct_recovery_ids_after_compaction() {
+    use crate::SyncOperationStore::NewSyncOperation;
+    let host = Arc::new(MemoryStorageHost::default());
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let origin = format!("{}:preferences", journal.localDeviceId().unwrap());
+    let first = PreferencesDataStore::newWithStorage(host.clone(), "runtime/config/preferences/before-recovery.preferences.json");
+    first.edit(|p|p.set(&stringPreferencesKey("value"), 1)).unwrap();
+    let path = "runtime/config/preferences/direct-recovery.preferences.json";
+    let template = nativePreferenceOperation(path, vec![("value", json!(2))], 1);
+    let recovery = journal.appendLocalOperation(&origin, NewSyncOperation {
+        domain: template.domain, entityType: template.entityType, entityId: template.entityId,
+        operation: template.operation, semantics: template.semantics, payload: template.payload,
+    }).unwrap();
+    assert_eq!(recovery.sequence, 2);
+    journal.ignoreFileOperations("preferences", path).unwrap();
+    assert!(!journal.preferenceHistory().unwrap().iter().any(|op|op.opId==recovery.opId));
+    let after = PreferencesDataStore::newWithStorage(host.clone(), "runtime/config/preferences/after-recovery.preferences.json");
+    after.edit(|p|p.set(&stringPreferencesKey("value"), 3)).unwrap();
+    let local = journal.preferenceHistory().unwrap().into_iter()
+        .find(|op|op.originDeviceId==origin && op.payload["storagePath"]==after.storagePath).unwrap();
+    assert_eq!(local.sequence, 3);
+    assert_eq!(after.data().unwrap().get(&stringPreferencesKey("value")), Some(&json!(3)));
+}

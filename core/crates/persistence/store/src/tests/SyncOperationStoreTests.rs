@@ -2646,3 +2646,20 @@ fn empty_preference_preparation_replays_explicit_history_for_a_prepared_dynamic_
     assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
     assert_eq!(local.data().unwrap().get(&stringPreferencesKey("remote")), Some(&json!(true)));
 }
+
+/// A recoverable file intent owns its ID before publication in the journal.
+#[test]
+fn direct_allocator_skips_reserved_preference_id() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let journal = SyncOperationStore::new(host, "runtime/sync");
+    let mutation = || NewSyncOperation {
+        domain: "preferences".into(), entityType: "allocator-test".into(), entityId: "allocator-test".into(),
+        operation: "set".into(), semantics: SyncOperationSemantics::EntityState, payload: json!({}),
+    };
+    let reserved = journal.withJournal(|j|j.reserve("allocator-test:preferences", mutation())).unwrap();
+    let direct = journal.appendLocalOperation("allocator-test:preferences", mutation()).unwrap();
+    assert_eq!(reserved.sequence, 1);
+    assert_eq!(direct.sequence, 2);
+    let next = journal.withJournal(|j|j.reserve("allocator-test:preferences", mutation())).unwrap();
+    assert_eq!(next.sequence, 3);
+}
