@@ -9,6 +9,47 @@ import 'package:webview_all_linux/src/linux_webview_constants.dart';
 import 'package:webview_all_linux/webview_all_linux.dart';
 import 'package:webview_platform_interface/webview_platform_interface.dart';
 
+
+/// Mounts the webview under a shaped clip and expects bounds-based clipping.
+Future<void> _pumpShapedClip(
+  WidgetTester tester, {
+  required List<MethodCall> calls,
+  required Widget Function(Widget child) clip,
+}) async {
+  final LinuxWebViewController controller = LinuxWebViewController(
+    const PlatformWebViewControllerCreationParams(),
+  );
+  final LinuxWebViewWidget platformWidget = LinuxWebViewWidget(
+    PlatformWebViewWidgetCreationParams(controller: controller),
+  );
+  await tester.pumpWidget(
+    Directionality(
+      textDirection: TextDirection.ltr,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: clip(
+          SizedBox(
+            width: 100,
+            height: 80,
+            child: Builder(builder: platformWidget.build),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+  // Shaped clips cannot shape a native overlay, so the mounted view stays
+  // visible and clips against the shape's axis-aligned bounds instead of
+  // hiding the whole view.
+  final Object? frame = calls
+      .lastWhere((MethodCall call) => call.method == 'setFrame')
+      .arguments;
+  expect(frame, isA<Map<Object?, Object?>>());
+  expect((frame as Map<Object?, Object?>)['visible'], isTrue);
+  expect(frame['clipWidth'], 100);
+  expect(frame['clipHeight'], 80);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -440,61 +481,30 @@ void main() {
     expect(arguments['clipHeight'], 600);
   });
 
-  testWidgets('hides native view for non-rectangular ancestor clips', (
+  testWidgets('clips shaped ancestors by their axis-aligned bounds', (
     WidgetTester tester,
   ) async {
     final List<MethodCall> calls = <MethodCall>[];
     _mockLinuxWebViewCreation(onInstanceCall: calls.add);
-    final LinuxWebViewController controller = LinuxWebViewController(
-      const PlatformWebViewControllerCreationParams(),
+    await _pumpShapedClip(
+      tester,
+      calls: calls,
+      clip: (child) => ClipOval(child: child),
     );
-    final LinuxWebViewWidget platformWidget = LinuxWebViewWidget(
-      PlatformWebViewWidgetCreationParams(controller: controller),
-    );
-    Widget Function(Widget child)? clipBuilder;
+  });
 
-    Widget buildWebView() {
-      final Widget webView = SizedBox(
-        width: 100,
-        height: 80,
-        child: Builder(builder: platformWidget.build),
-      );
-      return Directionality(
-        textDirection: TextDirection.ltr,
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: clipBuilder?.call(webView) ?? webView,
-        ),
-      );
-    }
-
-    await tester.pumpWidget(buildWebView());
-    await tester.pump();
-    expect(
-      (calls.lastWhere((MethodCall call) => call.method == 'setFrame').arguments
-          as Map<Object?, Object?>)['visible'],
-      isTrue,
-    );
-
-    clipBuilder = (Widget child) => ClipOval(child: child);
-    await tester.pumpWidget(buildWebView());
-    await tester.pump();
-    expect(
-      (calls.lastWhere((MethodCall call) => call.method == 'setFrame').arguments
-          as Map<Object?, Object?>)['visible'],
-      isFalse,
-    );
-
-    clipBuilder = (Widget child) => ClipRSuperellipse(
-      borderRadius: BorderRadius.circular(16),
-      child: child,
-    );
-    await tester.pumpWidget(buildWebView());
-    await tester.pump();
-    expect(
-      (calls.lastWhere((MethodCall call) => call.method == 'setFrame').arguments
-          as Map<Object?, Object?>)['visible'],
-      isFalse,
+  testWidgets('clips rounded ancestors by their axis-aligned bounds', (
+    WidgetTester tester,
+  ) async {
+    final List<MethodCall> calls = <MethodCall>[];
+    _mockLinuxWebViewCreation(onInstanceCall: calls.add);
+    await _pumpShapedClip(
+      tester,
+      calls: calls,
+      clip: (child) => ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: child,
+      ),
     );
   });
 

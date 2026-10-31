@@ -536,6 +536,8 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
   VoidCallback _onDetached;
   bool _reportedUnsupportedTransform = false;
   bool _reportedUnsupportedClip = false;
+  bool _reportedApproximatedClip = false;
+  String _clipOffender = '';
   int? _nativeViewId;
   _LinuxViewGeometry _paintGeometry = _LinuxViewGeometry.hidden;
 
@@ -656,21 +658,31 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
     while (ancestor != null && ancestor != renderView) {
       final Rect? localClip = ancestor.describeApproximatePaintClip(child);
       if (localClip != null) {
-        if (_hasNonRectangularClip(ancestor)) {
-          _reportUnsupportedClip();
-          _onGeometryChanged(_LinuxViewGeometry.hidden);
-          return;
-        }
-        final Rect? transformedClip = _transformAxisAlignedRect(
-          ancestor.getTransformTo(renderRoot),
+        final ancestorTransform = ancestor.getTransformTo(renderRoot);
+        // Native overlays cannot be shaped or rotated, so shaped clips and
+        // non-axis-aligned transforms clip approximately with their
+        // axis-aligned bounds instead of hiding the whole view.
+        final exactClip = _transformAxisAlignedRect(
+          ancestorTransform,
           localClip,
         );
-        if (transformedClip == null) {
-          _reportUnsupportedClip();
-          _onGeometryChanged(_LinuxViewGeometry.hidden);
-          return;
+        if (exactClip != null) {
+          clip = clip.intersect(exactClip);
+        } else {
+          final approximateClip = MatrixUtils.transformRect(
+            ancestorTransform,
+            localClip,
+          );
+          if (!approximateClip.isFinite) {
+            _clipOffender = _describeRenderObject(ancestor);
+            _reportUnsupportedClip();
+            _onGeometryChanged(_LinuxViewGeometry.hidden);
+            return;
+          }
+          _clipOffender = _describeRenderObject(ancestor);
+          _reportApproximatedClip();
+          clip = clip.intersect(approximateClip);
         }
-        clip = clip.intersect(transformedClip);
         if (!_LinuxViewGeometry._isUsableRect(clip)) {
           _onGeometryChanged(_LinuxViewGeometry.hidden);
           return;
@@ -685,22 +697,6 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
 
     _paintGeometry = _LinuxViewGeometry(frame: frame, clip: clip);
     _onGeometryChanged(_paintGeometry);
-  }
-
-  bool _hasNonRectangularClip(RenderObject ancestor) {
-    if (ancestor is RenderClipRRect ||
-        ancestor is RenderClipRSuperellipse ||
-        ancestor is RenderClipOval ||
-        ancestor is RenderClipPath ||
-        ancestor is RenderPhysicalShape) {
-      return true;
-    }
-    if (ancestor is RenderPhysicalModel) {
-      return ancestor.shape != BoxShape.rectangle ||
-          (ancestor.borderRadius != null &&
-              ancestor.borderRadius != BorderRadius.zero);
-    }
-    return false;
   }
 
   Rect? _transformAxisAlignedRect(Matrix4 transform, Rect rect) {
@@ -739,13 +735,46 @@ class _LinuxGeometryRenderBox extends RenderProxyBox {
     return MatrixUtils.transformRect(transform, rect);
   }
 
+  /** Names the widget behind an offending render object when a creator exists. */
+  String _describeRenderObject(RenderObject object) {
+    final detail = object is RenderClipRRect
+        ? ' radius=${object.borderRadius}'
+        : object is RenderPhysicalModel
+        ? ' shape=${object.shape} radius=${object.borderRadius}'
+        : '';
+    final creator = object.debugCreator;
+    final chain = <String>[];
+    if (creator is DebugCreator) {
+      creator.element.visitAncestorElements((element) {
+        if (chain.length >= 12) return false;
+        chain.add(element.widget.runtimeType.toString());
+        return true;
+      });
+    }
+    return '${object.runtimeType}$detail ancestors: ${chain.join(' < ')}';
+  }
+
+  /** Reports shaped or rotated clips that fall back to axis-aligned bounds. */
+  void _reportApproximatedClip() {
+    if (_reportedApproximatedClip) {
+      return;
+    }
+    debugPrint(
+      'webview_all_linux: shaped or rotated Flutter clips cannot be '
+      'represented exactly by a native GTK overlay; clipping approximately '
+      'with their axis-aligned bounds. offender: $_clipOffender',
+    );
+    _reportedApproximatedClip = true;
+  }
+
   void _reportUnsupportedClip() {
     if (_reportedUnsupportedClip) {
       return;
     }
     debugPrint(
-      'webview_all_linux: non-rectangular or transformed Flutter clips cannot '
-      'be represented by a native GTK overlay; the native WebView was hidden.',
+      'webview_all_linux: a Flutter clip with unusable bounds cannot '
+      'position a native GTK overlay; the native WebView was hidden. '
+      'offender: $_clipOffender',
     );
     _reportedUnsupportedClip = true;
   }
