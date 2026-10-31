@@ -15,6 +15,7 @@
   "tools": [
     {
       "name": "get_current_date",
+      "display": {"label": {"zh": "获取日期时间", "en": "Get date and time"}, "icon": "time"},
       "description": {
         "zh": "获取当前日期和时间。",
         "en": "Get the current date and time."
@@ -23,6 +24,7 @@
     },
     {
       "name": "device_status",
+      "display": {"label": {"zh": "查看设备状态", "en": "Read device status"}},
       "description": {
         "zh": "获取设备、电量、内存、存储和网络状态。",
         "en": "Get device, battery, memory, storage, and network status."
@@ -31,6 +33,7 @@
     },
     {
       "name": "search_weather",
+      "display": {"label": {"zh": "查询天气", "en": "Look up weather"}, "icon": "web", "targetParameter": "location"},
       "description": {
         "zh": "查询指定地点的当前天气。",
         "en": "Look up current weather for a location."
@@ -49,6 +52,7 @@
     },
     {
       "name": "set_reminder",
+      "display": {"label": {"zh": "创建提醒", "en": "Create reminder"}, "icon": "notification", "targetParameter": "title"},
       "description": {
         "zh": "创建持久化的应用内通知提醒。插件启用且宿主定时事件运行期间，每分钟检查到期提醒；不是系统闹钟或系统提醒应用中的记录。",
         "en": "Create a persistent in-app notification reminder, checked once per minute while the plugin and Host events are active. Does not create a system alarm or a system reminder-app entry."
@@ -85,6 +89,7 @@
     },
     {
       "name": "take_screenshot",
+      "display": {"label": {"zh": "截取屏幕", "en": "Take screenshot"}},
       "description": {
         "zh": "截取当前屏幕。",
         "en": "Capture the current screen."
@@ -93,6 +98,7 @@
     },
     {
       "name": "list_reminders",
+      "display": {"label": {"zh": "查看提醒", "en": "List reminders"}, "icon": "notification"},
       "description": {
         "zh": "查询插件内提醒及其待触发、已发送、取消或失败状态。",
         "en": "List plugin reminders and their pending, delivered, cancelled, or failed states."
@@ -101,6 +107,7 @@
     },
     {
       "name": "cancel_reminder",
+      "display": {"label": {"zh": "取消提醒", "en": "Cancel reminder"}, "icon": "notification", "targetParameter": "id"},
       "description": {
         "zh": "按提醒 ID 取消尚未开始投递的通知提醒。",
         "en": "Cancel a notification reminder by ID before delivery starts."

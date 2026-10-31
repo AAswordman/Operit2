@@ -12,6 +12,9 @@ PODS:
     - FlutterMacOS
   - file_selector_macos (0.0.1):
     - FlutterMacOS
+  - floating_windows (0.1.0):
+    - desktop_multi_window
+    - FlutterMacOS
   - FlutterMacOS (1.0.0)
   - geolocator_apple (1.2.0):
     - Flutter
@@ -47,6 +50,7 @@ DEPENDENCIES:
   - desktop_widgets_macos (from `Flutter/ephemeral/.symlinks/plugins/desktop_widgets_macos/macos`)
   - dynamic_color (from `Flutter/ephemeral/.symlinks/plugins/dynamic_color/macos`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
+  - floating_windows (from `Flutter/ephemeral/.symlinks/plugins/floating_windows/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - geolocator_apple (from `Flutter/ephemeral/.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_macos (from `Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos`)
@@ -73,6 +77,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/dynamic_color/macos
   file_selector_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos
+  floating_windows:
+    :path: Flutter/ephemeral/.symlinks/plugins/floating_windows/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
   geolocator_apple:
@@ -105,6 +111,7 @@ SPEC CHECKSUMS:
   desktop_widgets_macos: 9b54eff81606e0ecbddd972d1dd1044bb3b193fe
   dynamic_color: b0b28f4bc541eb1a011f49579adedf0ff836adee
   file_selector_macos: 3e56eaea051180007b900eacb006686fd54da150
+  floating_windows: 940db3255162263c08f3efc5a6d71c4244e796c6
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   geolocator_apple: 66b711889fd333205763b83c9dcf0a57a28c7afd
   image_picker_macos: 2506ff19cb68903beebc6327ce4024277de6faa8

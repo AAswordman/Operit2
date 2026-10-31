@@ -153,14 +153,13 @@ impl<'a> Registry<'a> {
     }
 
     fn failure(&self, path: &str, operations: &[SyncOperation], error: String, report: &mut ApplyReport) -> Result<(), String> {
-        match FailureKind::classify(&error) {
-            FailureKind::Temporary => report.errors.push(format!("{path}: {error}")),
-            FailureKind::Capability => {
-                self.journal.skipOperations(operations).map_err(|e|e.to_string())?;
-                report.skipped += operations.len();
-                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!(
-                    "sync_apply.skipped owner={path} kind=capability count={} reason={error}", operations.len()));
-            }
+        if operations.is_empty() || FailureKind::classify(&error) == FailureKind::Temporary {
+            report.errors.push(format!("{path}: {error}"));
+        } else {
+            self.journal.skipOperations(operations).map_err(|e|e.to_string())?;
+            report.skipped += operations.len();
+            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!(
+                "sync_apply.skipped owner={path} kind=capability count={} reason={error}", operations.len()));
         }
         report.outcomes.insert(path.to_owned(), Err(error));
         Ok(())

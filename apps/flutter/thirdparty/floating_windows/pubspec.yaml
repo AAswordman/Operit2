@@ -1,0 +1,27 @@
+name: floating_windows
+description: Transparent live floating surfaces with explicit geometry, input and engine ownership.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.8.0 <4.0.0'
+  flutter: '>=3.32.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  desktop_multi_window:
+    path: ../desktop_multi_window
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.floating_windows
+        pluginClass: FloatingWindowsPlugin
+      macos:
+        pluginClass: FloatingWindowsPlugin
+      windows:
+        pluginClass: FloatingWindowsPlugin
+      linux:
+        pluginClass: FloatingWindowsPlugin

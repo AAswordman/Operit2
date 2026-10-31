@@ -11,6 +11,7 @@
     "tools": [
         {
             "name": "file_exists",
+            "display": {"label": {"zh": "检查文件", "en": "Check file"}, "icon": "file", "targetParameter": "path"},
             "description": {"zh":"检查文件或目录是否存在。","en":"Check if a file or directory exists."},
             "parameters": [
                 {"name":"path","description":{"zh":"目标路径（VFS 路径）","en":"Target path (VFS path)"},"type":"string","required":true}
@@ -18,6 +19,7 @@
         },
         {
             "name": "zip_files",
+            "display": {"label": {"zh": "压缩文件", "en": "Zip files"}, "icon": "package", "targetParameter": "source"},
             "description": {"zh":"压缩文件/目录。","en":"Zip files/directories."},
             "parameters": [
                 {"name":"source","description":{"zh":"源路径（VFS 路径）","en":"Source path (VFS path)"},"type":"string","required":true},
@@ -27,6 +29,7 @@
         },
         {
             "name": "unzip_files",
+            "display": {"label": {"zh": "解压文件", "en": "Unzip files"}, "icon": "package", "targetParameter": "source"},
             "description": {"zh":"解压 zip 文件。","en":"Unzip an archive."},
             "parameters": [
                 {"name":"source","description":{"zh":"zip 文件路径（VFS 路径）","en":"Zip file path (VFS path)"},"type":"string","required":true},
@@ -35,6 +38,7 @@
         },
         {
             "name": "open_file",
+            "display": {"label": {"zh": "打开文件", "en": "Open file"}, "icon": "file", "targetParameter": "path"},
             "description": {"zh":"用系统默认应用打开文件。","en":"Open a file with system default app."},
             "parameters": [
                 {"name":"path","description":{"zh":"文件路径（VFS 路径）","en":"File path (VFS path)"},"type":"string","required":true}
@@ -42,6 +46,7 @@
         },
         {
             "name": "share_file",
+            "display": {"label": {"zh": "分享文件", "en": "Share file"}, "icon": "file", "targetParameter": "path"},
             "description": {"zh":"分享文件给其他应用。","en":"Share a file with other apps."},
             "parameters": [
                 {"name":"path","description":{"zh":"文件路径（VFS 路径）","en":"File path (VFS path)"},"type":"string","required":true},

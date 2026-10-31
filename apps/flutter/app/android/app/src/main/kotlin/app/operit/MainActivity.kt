@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.Display
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import dev.floating_windows.FloatingWindowsPlugin
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -50,6 +51,15 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         val runtimeHost = ensureRuntimeHost()
         val ownerSystem = ensureOwnerSystem(runtimeHost)
+        FloatingWindowsPlugin.setEngineConfigurer { childEngine ->
+            val childRouter = RuntimeMethodChannelRouter(this, runtimeHost, ownerSystem)
+            childRouter.configure(childEngine.dartExecutor.binaryMessenger)
+            childEngine.addEngineLifecycleListener(object : FlutterEngine.EngineLifecycleListener {
+                override fun onPreEngineRestart() {}
+                override fun onEngineWillDestroy() { childRouter.clear() }
+            })
+        }
+
         runtimeRouter = RuntimeMethodChannelRouter(this, runtimeHost, ownerSystem)
         runtimeRouter.configure(flutterEngine.dartExecutor.binaryMessenger)
         nativeCrashChannel = NativeCrashChannel(this)

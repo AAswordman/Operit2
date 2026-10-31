@@ -130,6 +130,13 @@
         <!-- Enables partial repaint on engines that support it (the patched
              flutter-ohos engine). Stock engines ignore this flag. The Impeller
              backend is autoselected with its normal fallback chain. -->
+        <!-- Selects the Impeller rendering backend; an empty value keeps
+             engine autoselection, including its driver blacklist. The Android
+             build script sets it through the operitImpellerBackend Gradle
+             property. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.ImpellerBackend"
+            android:value="${operitImpellerBackend}" />
         <meta-data
             android:name="io.flutter.embedding.android.EnablePartialRepaint"
             android:value="true" />

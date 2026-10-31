@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.floating_window_demo",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {"zh": "悬浮窗示例", "en": "Floating Window Demo"},
+  "description": {"zh": "演示透明实时悬浮窗、桌宠交互、移动和显示生命周期。", "en": "Transparent live floating windows, pet interaction, movement and lifecycle."},
+  "enabled_by_default": false,
+  "subpackages": [],
+  "resources": []
+}

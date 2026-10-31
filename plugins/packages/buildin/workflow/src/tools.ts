@@ -6,11 +6,11 @@ import { object, parseWorkflow } from "./validation";
   "display_name": {"zh":"工作流","en":"Workflow"},
   "description": {"zh":"管理和执行可视化工作流。工作流保存在当前插件中。","en":"Manage and execute plugin-owned visual workflows."},
   "tools": [
-    {"name":"list","description":"列出工作流和最近执行记录","parameters":[]},
-    {"name":"import_workflow","description":"导入工作流 JSON；生成新 ID，初始停用，返回导入结果。","parameters":[{"name":"json","type":"string","required":true,"description":"Workflow JSON"}]},
-    {"name":"run","description":"运行已启用的工作流；工具调用使用宿主权限。","parameters":[{"name":"id","type":"string","required":true,"description":"工作流 ID"},{"name":"triggerId","type":"string","required":false,"description":"指定触发节点 ID"}]},
-    {"name":"save","description":"更新工作流；必须保留 list 返回的 revision，用于防止覆盖其他编辑。","parameters":[{"name":"json","type":"string","required":true,"description":"包含 revision 的完整 Workflow JSON"}]},
-    {"name":"cancel","description":"请求在当前节点结束后取消后续执行","parameters":[{"name":"id","type":"string","required":true,"description":"工作流 ID"}]}
+    {"name":"list","display":{"label": {"zh": "查看工作流", "en": "List workflows"}, "icon": "package"},"description":"列出工作流和最近执行记录","parameters":[]},
+    {"name":"import_workflow","display":{"label": {"zh": "导入工作流", "en": "Import workflow"}, "icon": "package"},"description":"导入工作流 JSON；生成新 ID，初始停用，返回导入结果。","parameters":[{"name":"json","type":"string","required":true,"description":"Workflow JSON"}]},
+    {"name":"run","display":{"label": {"zh": "运行工作流", "en": "Run workflow"}, "icon": "package", "targetParameter": "id"},"description":"运行已启用的工作流；工具调用使用宿主权限。","parameters":[{"name":"id","type":"string","required":true,"description":"工作流 ID"},{"name":"triggerId","type":"string","required":false,"description":"指定触发节点 ID"}]},
+    {"name":"save","display":{"label": {"zh": "保存工作流", "en": "Save workflow"}, "icon": "edit"},"description":"更新工作流；必须保留 list 返回的 revision，用于防止覆盖其他编辑。","parameters":[{"name":"json","type":"string","required":true,"description":"包含 revision 的完整 Workflow JSON"}]},
+    {"name":"cancel","display":{"label": {"zh": "取消工作流执行", "en": "Cancel workflow"}, "icon": "package", "targetParameter": "id"},"description":"请求在当前节点结束后取消后续执行","parameters":[{"name":"id","type":"string","required":true,"description":"工作流 ID"}]}
   ]
 }
 */

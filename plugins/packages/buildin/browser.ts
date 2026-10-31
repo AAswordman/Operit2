@@ -14,6 +14,7 @@
     "tools": [
         {
             "name": "click",
+            "display": {"label": {"zh": "点击网页元素", "en": "Click element"}, "icon": "web", "targetParameter": "element"},
             "description": { "zh": "按快照 ref 点击页面元素，包括同源 iframe 内的元素。", "en": "Click an element by snapshot ref, including refs inside same-origin iframes." },
             "parameters": [
                 { "name": "ref", "description": { "zh": "快照中的目标元素引用；和 selector 至少提供一个。", "en": "Target element ref from the snapshot; provide ref or selector." }, "type": "string", "required": false },
@@ -26,16 +27,19 @@
         },
         {
             "name": "close",
+            "display": {"label": {"zh": "关闭标签页", "en": "Close tab"}, "icon": "web"},
             "description": { "zh": "关闭当前 tab。", "en": "Close the current tab." },
             "parameters": []
         },
         {
             "name": "close_all",
+            "display": {"label": {"zh": "关闭所有标签页", "en": "Close all tabs"}, "icon": "web"},
             "description": { "zh": "关闭全部 tab。", "en": "Close all tabs." },
             "parameters": []
         },
         {
             "name": "console_messages",
+            "display": {"label": {"zh": "读取控制台消息", "en": "Read console messages"}, "icon": "web", "targetParameter": "level"},
             "description": { "zh": "读取控制台消息。", "en": "Read console messages." },
             "parameters": [
                 { "name": "level", "description": { "zh": "可选，日志级别：error/warning/info/debug，默认 info。", "en": "Optional log level: error/warning/info/debug. Defaults to info." }, "type": "string", "required": false },
@@ -44,6 +48,7 @@
         },
         {
             "name": "drag",
+            "display": {"label": {"zh": "拖拽网页元素", "en": "Drag element"}, "icon": "web", "targetParameter": "startElement"},
             "description": { "zh": "在两个元素之间拖拽。", "en": "Drag between two elements." },
             "parameters": [
                 { "name": "startElement", "description": { "zh": "源元素的人类可读描述。", "en": "Human-readable source element description." }, "type": "string", "required": true },
@@ -54,6 +59,7 @@
         },
         {
             "name": "evaluate",
+            "display": {"label": {"zh": "执行网页脚本", "en": "Evaluate page script"}, "icon": "web", "targetParameter": "element"},
             "description": { "zh": "在页面或元素上执行 JavaScript 函数。", "en": "Evaluate a JavaScript function on the page or an element." },
             "parameters": [
                 { "name": "function", "description": { "zh": "要执行的函数源码。", "en": "Function source to execute." }, "type": "string", "required": true },
@@ -63,6 +69,7 @@
         },
         {
             "name": "upload",
+            "display": {"label": {"zh": "上传文件", "en": "Upload files"}, "icon": "file"},
             "description": { "zh": "向点击或执行脚本打开的当前文件选择器上传文件；支持单文件、多文件及取消，上传失败保留选择器。", "en": "Upload files to the chooser opened by a click or page script. Supports single/multiple files and cancellation; failed uploads preserve the chooser." },
             "parameters": [
                 { "name": "paths", "description": { "zh": "可选，host 文件系统中的绝对文件路径数组；省略表示取消并保留已选文件，空数组表示清空。多个文件要求选择器支持 multiple。", "en": "Optional absolute file paths in the host file system. Omission cancels without changing selected files; an empty array clears the selection. Multiple files require a multiple chooser." }, "type": "array", "required": false }
@@ -70,6 +77,7 @@
         },
         {
             "name": "fill_form",
+            "display": {"label": {"zh": "填写网页表单", "en": "Fill form"}, "icon": "web"},
             "description": { "zh": "批量填写表单字段。", "en": "Fill multiple form fields." },
             "parameters": [
                 { "name": "fields", "description": { "zh": "字段数组。", "en": "Array of form fields." }, "type": "array", "required": true }
@@ -77,6 +85,7 @@
         },
         {
             "name": "handle_dialog",
+            "display": {"label": {"zh": "处理网页弹窗", "en": "Handle dialog"}, "icon": "web"},
             "description": { "zh": "处理当前对话框。", "en": "Handle the current dialog." },
             "parameters": [
                 { "name": "accept", "description": { "zh": "是否接受对话框。", "en": "Whether to accept the dialog." }, "type": "boolean", "required": true },
@@ -85,6 +94,7 @@
         },
         {
             "name": "hover",
+            "display": {"label": {"zh": "悬停网页元素", "en": "Hover element"}, "icon": "web", "targetParameter": "element"},
             "description": { "zh": "悬停到页面元素上。", "en": "Hover over an element." },
             "parameters": [
                 { "name": "ref", "description": { "zh": "目标元素 ref。", "en": "Target element ref." }, "type": "string", "required": true },
@@ -93,6 +103,7 @@
         },
         {
             "name": "goto",
+            "display": {"label": {"zh": "打开网页", "en": "Open page"}, "icon": "web", "targetParameter": "url"},
             "description": { "zh": "导航到指定 URL。", "en": "Navigate to a URL." },
             "parameters": [
                 { "name": "url", "description": { "zh": "目标 URL。", "en": "Target URL." }, "type": "string", "required": true }
@@ -100,11 +111,13 @@
         },
         {
             "name": "back",
+            "display": {"label": {"zh": "返回上一页", "en": "Go back"}, "icon": "web"},
             "description": { "zh": "后退到上一页。", "en": "Go back to the previous page." },
             "parameters": []
         },
         {
             "name": "network_requests",
+            "display": {"label": {"zh": "读取网络请求", "en": "Read network requests"}, "icon": "web"},
             "description": { "zh": "读取当前页面的网络请求。", "en": "Read network requests for the current page." },
             "parameters": [
                 { "name": "includeStatic", "description": { "zh": "可选，是否包含静态资源请求，默认 false。", "en": "Optional include static resource requests. Defaults to false." }, "type": "boolean", "required": false },
@@ -113,6 +126,7 @@
         },
         {
             "name": "press_key",
+            "display": {"label": {"zh": "发送浏览器按键", "en": "Press key"}, "icon": "web", "targetParameter": "key"},
             "description": { "zh": "按下键盘按键。", "en": "Press a keyboard key." },
             "parameters": [
                 { "name": "key", "description": { "zh": "按键名。", "en": "Key name." }, "type": "string", "required": true }
@@ -120,6 +134,7 @@
         },
         {
             "name": "resize",
+            "display": {"label": {"zh": "调整浏览器窗口", "en": "Resize browser"}, "icon": "web"},
             "description": { "zh": "调整浏览器视口大小。", "en": "Resize the browser viewport." },
             "parameters": [
                 { "name": "width", "description": { "zh": "宽度。", "en": "Width." }, "type": "number", "required": true },
@@ -128,6 +143,7 @@
         },
         {
             "name": "run_code",
+            "display": {"label": {"zh": "运行浏览器代码", "en": "Run browser code"}, "icon": "web"},
             "description": { "zh": "运行 Playwright 风格代码片段。", "en": "Run a Playwright-style code snippet." },
             "parameters": [
                 { "name": "code", "description": { "zh": "代码片段。", "en": "Code snippet." }, "type": "string", "required": true }
@@ -135,6 +151,7 @@
         },
         {
             "name": "select_option",
+            "display": {"label": {"zh": "选择网页选项", "en": "Select option"}, "icon": "web", "targetParameter": "element"},
             "description": { "zh": "在下拉框中选择选项。", "en": "Select options in a dropdown." },
             "parameters": [
                 { "name": "ref", "description": { "zh": "目标元素 ref。", "en": "Target element ref." }, "type": "string", "required": true },
@@ -144,6 +161,7 @@
         },
         {
             "name": "snapshot",
+            "display": {"label": {"zh": "读取网页快照", "en": "Read page snapshot"}, "icon": "web", "targetParameter": "selector"},
             "description": { "zh": "获取当前页面结构化快照，包括同源 iframe 内容。", "en": "Get a structured page snapshot, including same-origin iframe content." },
             "parameters": [
                 { "name": "filename", "description": { "zh": "可选，保存快照的文件名。", "en": "Optional snapshot output file name." }, "type": "string", "required": false },
@@ -153,6 +171,7 @@
         },
         {
             "name": "type",
+            "display": {"label": {"zh": "输入网页文本", "en": "Type text"}, "icon": "web", "targetParameter": "element"},
             "description": { "zh": "向可编辑元素输入文本。", "en": "Type text into an editable element." },
             "parameters": [
                 { "name": "ref", "description": { "zh": "目标元素 ref。", "en": "Target element ref." }, "type": "string", "required": true },
@@ -164,6 +183,7 @@
         },
         {
             "name": "wait_for",
+            "display": {"label": {"zh": "等待网页状态", "en": "Wait for page"}, "icon": "web", "targetParameter": "text"},
             "description": { "zh": "等待文本出现、消失或等待指定时间。", "en": "Wait for text to appear, disappear, or for a duration." },
             "parameters": [
                 { "name": "time", "description": { "zh": "可选，等待秒数。", "en": "Optional number of seconds to wait." }, "type": "number", "required": false },
@@ -173,6 +193,7 @@
         },
         {
             "name": "tabs",
+            "display": {"label": {"zh": "管理标签页", "en": "Manage tabs"}, "icon": "web", "targetParameter": "action"},
             "description": { "zh": "列出、创建、切换或关闭 tab。", "en": "List, create, select, or close tabs." },
             "parameters": [
                 { "name": "action", "description": { "zh": "操作：list/create/select/close。", "en": "Action: list/create/select/close." }, "type": "string", "required": true },

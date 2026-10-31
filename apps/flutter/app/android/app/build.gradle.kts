@@ -152,6 +152,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Empty keeps Impeller's automatic backend selection (including its
+        // driver blacklist); set the operitImpellerBackend Gradle property to
+        // "vulkan" or "opengles" to force one.
+        manifestPlaceholders["operitImpellerBackend"] =
+            providers.gradleProperty("operitImpellerBackend").orNull ?: ""
     }
 
     sourceSets.getByName("main").assets.setSrcDirs(emptyList<String>())

@@ -574,7 +574,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String desktopWidgetsCount(int count) {
-    return '桌面组件 $count';
+    return '桌面小部件 $count';
   }
 
   @override

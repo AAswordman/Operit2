@@ -14,6 +14,7 @@
     "tools": [
         {
             "name": "operit_editor",
+            "display": {"label": {"zh": "管理 Operit 配置", "en": "Manage Operit settings"}, "icon": "edit"},
             "description": {
                 "zh": "执行 Operit2 平台编辑命令，直接调用 Tools.SoftwareSettings.exec(args)，与系统 execute_cli_command 使用同一执行入口。args=[] 获取实际命令帮助；例如 [\"package\",\"list\"]、[\"package\",\"enable\",\"包名\"]、[\"skill\",\"show\",\"PackageBuilder\"]、[\"prefs\",\"show\"]。先读取真实状态，变更用户配置或删除资源前取得用户确认，修改后重新读取状态核验。不执行 shell 命令或任意脚本片段，不接受自然语言 query。",
                 "en": "Execute Operit2 editing commands via Tools.SoftwareSettings.exec(args), using the same executor as execute_cli_command. Use [] for live help, or e.g. [\"package\",\"list\"], [\"package\",\"enable\",\"name\"], [\"prefs\",\"show\"]. Read state first, obtain user confirmation before mutations or deletion, and verify state afterward. Not a shell or arbitrary script evaluator; natural-language query is not supported."

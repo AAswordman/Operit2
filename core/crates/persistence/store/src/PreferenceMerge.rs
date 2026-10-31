@@ -370,7 +370,8 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
         let preparation = store.clone();
         let validation = store.clone();
         let application = store.clone();
-        let projection = store.clone();
+        let projection = (owner.merge.catalog.is_some() || !owner.merge.references.is_empty() || metadata.iter()
+            .chain(operations.iter().copied().filter(|op| isMergeMetadata(op))).any(|op| registry.target(op).as_ref() == Ok(&path))).then(|| store.clone());
         let snapshot = store.clone();
         let coverage = store.clone();
         let repair = store;
@@ -394,9 +395,8 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
                 preparation.syncSchemaVersion().map(|_|()).map_err(|e|e.to_string())
             }),
             apply: Box::new(move |operations, aliases| applyDeclaredOperations(&application,schema,operations,aliases,retain)),
-            project: Some( Box::new(move |aliases: &BTreeMap<String,String>| {
-                applyDeclaredOperations(&projection,schema,&[],aliases,retain).map(|_|())
-            }) as Box<dyn Fn(&BTreeMap<String,String>)->Result<(),String> + 'a>),
+            project: projection.map(|projection| Box::new(move |aliases: &BTreeMap<String,String>| applyDeclaredOperations(&projection,schema,&[],aliases,retain).map(drop))
+                as Box<dyn Fn(&BTreeMap<String,String>)->Result<(),String> + 'a>),
             snapshot: Some(Box::new(move || snapshot.syncSnapshot().map_err(|e|e.to_string()))),
             coverage: Box::new(move || coverage.syncSnapshot().map(|snapshot|snapshot.covered).map_err(|e|e.to_string())),
             content_digest: crate::Transaction::Snapshot::content_digest,

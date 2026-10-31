@@ -222,12 +222,12 @@ impl TerminalStreamExecutor {
                 if let Ok(mut inner) = observation.inner.lock() {
                     let result = taskScheduler.monotonicTimeMillis().and_then(|at| {
                         inner.completedAt = Some(at);
-                        result
+                        result.and_then(|receipt| terminalCommandResultData(&receipt))
                     });
                     inner.result = Some(match result {
                         Ok(receipt) => {
                             inner.events.push_back(TerminalExecEvent::Completed {
-                                result: terminalCommandResultData(&receipt),
+                                result: receipt,
                             });
                             Ok(())
                         }

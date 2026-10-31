@@ -220,10 +220,9 @@ packages:
   desktop_multi_window:
     dependency: "direct main"
     description:
-      name: desktop_multi_window
-      sha256: "6a82209dfd29279258515157e5c08612542ebf7bfb3b55fb1dfcd32c076eea4d"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../thirdparty/desktop_multi_window"
+      relative: true
+    source: path
     version: "0.3.1"
   desktop_widgets:
     dependency: "direct main"
@@ -389,6 +388,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
+  floating_windows:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/floating_windows"
+      relative: true
+    source: path
+    version: "0.1.0"
   flutter:
     dependency: "direct main"
     description: flutter

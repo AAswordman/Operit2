@@ -9,108 +9,108 @@
     "enabledByDefault": true,
     "category": "System",
     "tools": [
-        { "name": "get_system_setting", "description": { "zh": "获取系统设置。", "en": "Get a system setting." }, "parameters": [
+        { "name": "get_system_setting", "display": {"label": {"zh": "读取系统设置", "en": "Read system setting"}, "targetParameter": "setting"}, "description": { "zh": "获取系统设置。", "en": "Get a system setting." }, "parameters": [
             { "name": "setting", "description": { "zh": "设置名称。", "en": "Setting name." }, "type": "string", "required": true },
             { "name": "namespace", "description": { "zh": "命名空间：system、secure 或 global。", "en": "Namespace: system, secure, or global." }, "type": "string", "required": false }
         ] },
-        { "name": "modify_system_setting", "description": { "zh": "修改系统设置。", "en": "Modify a system setting." }, "parameters": [
+        { "name": "modify_system_setting", "display": {"label": {"zh": "修改系统设置", "en": "Change system setting"}, "icon": "edit", "targetParameter": "setting"}, "description": { "zh": "修改系统设置。", "en": "Modify a system setting." }, "parameters": [
             { "name": "setting", "description": { "zh": "设置名称。", "en": "Setting name." }, "type": "string", "required": true },
             { "name": "value", "description": { "zh": "设置值。", "en": "Setting value." }, "type": "string", "required": true },
             { "name": "namespace", "description": { "zh": "命名空间。", "en": "Setting namespace." }, "type": "string", "required": false }
         ] },
-        { "name": "install_app", "description": { "zh": "安装 APK。", "en": "Install an APK." }, "parameters": [
+        { "name": "install_app", "display": {"label": {"zh": "安装应用", "en": "Install app"}, "icon": "package", "targetParameter": "path"}, "description": { "zh": "安装 APK。", "en": "Install an APK." }, "parameters": [
             { "name": "path", "description": { "zh": "APK 文件路径。", "en": "APK file path." }, "type": "string", "required": true }
         ] },
-        { "name": "uninstall_app", "description": { "zh": "卸载应用。", "en": "Uninstall an app." }, "parameters": [
+        { "name": "uninstall_app", "display": {"label": {"zh": "卸载应用", "en": "Uninstall app"}, "icon": "delete", "targetParameter": "package_name"}, "description": { "zh": "卸载应用。", "en": "Uninstall an app." }, "parameters": [
             { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": true },
             { "name": "keep_data", "description": { "zh": "保留应用数据。", "en": "Keep application data." }, "type": "boolean", "required": false }
         ] },
-        { "name": "list_installed_apps", "description": { "zh": "列出已安装应用。", "en": "List installed apps." }, "parameters": [
+        { "name": "list_installed_apps", "display": {"label": {"zh": "查看已安装应用", "en": "List installed apps"}, "icon": "package"}, "description": { "zh": "列出已安装应用。", "en": "List installed apps." }, "parameters": [
             { "name": "include_system_apps", "description": { "zh": "包含系统应用。", "en": "Include system apps." }, "type": "boolean", "required": false }
         ] },
-        { "name": "start_app", "description": { "zh": "启动应用。", "en": "Start an app." }, "parameters": [
+        { "name": "start_app", "display": {"label": {"zh": "启动应用", "en": "Start app"}, "icon": "package", "targetParameter": "package_name"}, "description": { "zh": "启动应用。", "en": "Start an app." }, "parameters": [
             { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": true },
             { "name": "activity", "description": { "zh": "可选 Activity。", "en": "Optional activity." }, "type": "string", "required": false }
         ] },
-        { "name": "stop_app", "description": { "zh": "停止应用。", "en": "Stop an app." }, "parameters": [
+        { "name": "stop_app", "display": {"label": {"zh": "停止应用", "en": "Stop app"}, "icon": "package", "targetParameter": "package_name"}, "description": { "zh": "停止应用。", "en": "Stop an app." }, "parameters": [
             { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": true }
         ] },
-        { "name": "get_notifications", "description": { "zh": "获取设备通知。", "en": "Get device notifications." }, "parameters": [
+        { "name": "get_notifications", "display": {"label": {"zh": "读取通知", "en": "Read notifications"}, "icon": "notification"}, "description": { "zh": "获取设备通知。", "en": "Get device notifications." }, "parameters": [
             { "name": "limit", "description": { "zh": "最大条数。", "en": "Maximum number of entries." }, "type": "number", "required": false },
             { "name": "include_ongoing", "description": { "zh": "包含常驻通知。", "en": "Include ongoing notifications." }, "type": "boolean", "required": false }
         ] },
-        { "name": "get_app_usage_time", "description": { "zh": "获取应用前台使用时长。", "en": "Get application foreground usage time." }, "parameters": [
+        { "name": "get_app_usage_time", "display": {"label": {"zh": "查看应用使用时长", "en": "Read app usage"}, "icon": "time", "targetParameter": "package_name"}, "description": { "zh": "获取应用前台使用时长。", "en": "Get application foreground usage time." }, "parameters": [
             { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": false },
             { "name": "since_hours", "description": { "zh": "统计时间范围，单位小时。", "en": "Lookback period in hours." }, "type": "number", "required": false },
             { "name": "limit", "description": { "zh": "最大返回条数。", "en": "Maximum number of entries." }, "type": "number", "required": false },
             { "name": "include_system_apps", "description": { "zh": "包含系统应用。", "en": "Include system apps." }, "type": "boolean", "required": false }
         ] },
-        { "name": "get_device_location", "description": { "zh": "获取设备位置。", "en": "Get device location." }, "parameters": [
+        { "name": "get_device_location", "display": {"label": {"zh": "获取设备位置", "en": "Get device location"}}, "description": { "zh": "获取设备位置。", "en": "Get device location." }, "parameters": [
             { "name": "high_accuracy", "description": { "zh": "使用高精度模式。", "en": "Use high accuracy mode." }, "type": "boolean", "required": false },
             { "name": "timeout", "description": { "zh": "超时时间，单位秒。", "en": "Timeout in seconds." }, "type": "number", "required": false }
         ] },
-        { "name": "request_bluetooth_permission", "description": { "zh": "请求蓝牙权限。", "en": "Request Bluetooth permission." }, "parameters": [] },
-        { "name": "get_bluetooth_state", "description": { "zh": "获取蓝牙状态。", "en": "Get Bluetooth state." }, "parameters": [] },
-        { "name": "request_enable_bluetooth", "description": { "zh": "请求开启蓝牙。", "en": "Request Bluetooth to be enabled." }, "parameters": [] },
-        { "name": "list_bluetooth_bonded_devices", "description": { "zh": "列出已配对蓝牙设备。", "en": "List bonded Bluetooth devices." }, "parameters": [] },
-        { "name": "scan_bluetooth_devices", "description": { "zh": "扫描蓝牙设备。", "en": "Scan Bluetooth devices." }, "parameters": [
+        { "name": "request_bluetooth_permission", "display": {"label": {"zh": "申请蓝牙权限", "en": "Request Bluetooth permission"}}, "description": { "zh": "请求蓝牙权限。", "en": "Request Bluetooth permission." }, "parameters": [] },
+        { "name": "get_bluetooth_state", "display": {"label": {"zh": "读取蓝牙状态", "en": "Read Bluetooth state"}}, "description": { "zh": "获取蓝牙状态。", "en": "Get Bluetooth state." }, "parameters": [] },
+        { "name": "request_enable_bluetooth", "display": {"label": {"zh": "开启蓝牙", "en": "Enable Bluetooth"}}, "description": { "zh": "请求开启蓝牙。", "en": "Request Bluetooth to be enabled." }, "parameters": [] },
+        { "name": "list_bluetooth_bonded_devices", "display": {"label": {"zh": "查看已配对蓝牙设备", "en": "List paired Bluetooth devices"}}, "description": { "zh": "列出已配对蓝牙设备。", "en": "List bonded Bluetooth devices." }, "parameters": [] },
+        { "name": "scan_bluetooth_devices", "display": {"label": {"zh": "扫描蓝牙设备", "en": "Scan Bluetooth devices"}, "icon": "search"}, "description": { "zh": "扫描蓝牙设备。", "en": "Scan Bluetooth devices." }, "parameters": [
             { "name": "duration_ms", "description": { "zh": "扫描时长毫秒。", "en": "Scan duration in milliseconds." }, "type": "number", "required": false },
             { "name": "include_ble", "description": { "zh": "包含 BLE。", "en": "Include BLE." }, "type": "boolean", "required": false }
         ] },
-        { "name": "bluetooth_connect", "description": { "zh": "连接经典蓝牙设备。", "en": "Connect to a classic Bluetooth device." }, "parameters": [
+        { "name": "bluetooth_connect", "display": {"label": {"zh": "连接蓝牙设备", "en": "Connect Bluetooth device"}, "targetParameter": "address"}, "description": { "zh": "连接经典蓝牙设备。", "en": "Connect to a classic Bluetooth device." }, "parameters": [
             { "name": "address", "description": { "zh": "蓝牙地址。", "en": "Bluetooth address." }, "type": "string", "required": true },
             { "name": "uuid", "description": { "zh": "RFCOMM UUID。", "en": "RFCOMM UUID." }, "type": "string", "required": false }
         ] },
-        { "name": "bluetooth_listen", "description": { "zh": "监听经典蓝牙连接。", "en": "Listen for a classic Bluetooth connection." }, "parameters": [
+        { "name": "bluetooth_listen", "display": {"label": {"zh": "监听蓝牙连接", "en": "Listen for Bluetooth connections"}, "targetParameter": "name"}, "description": { "zh": "监听经典蓝牙连接。", "en": "Listen for a classic Bluetooth connection." }, "parameters": [
             { "name": "name", "description": { "zh": "服务名。", "en": "Service name." }, "type": "string", "required": false },
             { "name": "uuid", "description": { "zh": "RFCOMM UUID。", "en": "RFCOMM UUID." }, "type": "string", "required": false }
         ] },
-        { "name": "bluetooth_accept", "description": { "zh": "接受蓝牙连接。", "en": "Accept a Bluetooth connection." }, "parameters": [
+        { "name": "bluetooth_accept", "display": {"label": {"zh": "接受蓝牙连接", "en": "Accept Bluetooth connection"}, "targetParameter": "listener_session_id"}, "description": { "zh": "接受蓝牙连接。", "en": "Accept a Bluetooth connection." }, "parameters": [
             { "name": "listener_session_id", "description": { "zh": "监听会话 ID。", "en": "Listener session ID." }, "type": "string", "required": true },
             { "name": "timeout_ms", "description": { "zh": "等待毫秒数。", "en": "Wait time in milliseconds." }, "type": "number", "required": false }
         ] },
-        { "name": "bluetooth_send", "description": { "zh": "发送蓝牙数据。", "en": "Send Bluetooth data." }, "parameters": [
+        { "name": "bluetooth_send", "display": {"label": {"zh": "发送蓝牙数据", "en": "Send Bluetooth data"}, "targetParameter": "session_id"}, "description": { "zh": "发送蓝牙数据。", "en": "Send Bluetooth data." }, "parameters": [
             { "name": "session_id", "description": { "zh": "会话 ID。", "en": "Session ID." }, "type": "string", "required": true },
             { "name": "text", "description": { "zh": "UTF-8 文本。", "en": "UTF-8 text." }, "type": "string", "required": false },
             { "name": "data_base64", "description": { "zh": "Base64 字节。", "en": "Base64 bytes." }, "type": "string", "required": false }
         ] },
-        { "name": "bluetooth_read", "description": { "zh": "读取蓝牙数据。", "en": "Read Bluetooth data." }, "parameters": [
+        { "name": "bluetooth_read", "display": {"label": {"zh": "读取蓝牙数据", "en": "Read Bluetooth data"}, "targetParameter": "session_id"}, "description": { "zh": "读取蓝牙数据。", "en": "Read Bluetooth data." }, "parameters": [
             { "name": "session_id", "description": { "zh": "会话 ID。", "en": "Session ID." }, "type": "string", "required": true },
             { "name": "max_bytes", "description": { "zh": "最大字节数。", "en": "Maximum bytes." }, "type": "number", "required": false },
             { "name": "timeout_ms", "description": { "zh": "等待毫秒数。", "en": "Wait time in milliseconds." }, "type": "number", "required": false }
         ] },
-        { "name": "bluetooth_send_and_read", "description": { "zh": "发送并读取蓝牙数据。", "en": "Send and read Bluetooth data." }, "parameters": [
+        { "name": "bluetooth_send_and_read", "display": {"label": {"zh": "收发蓝牙数据", "en": "Exchange Bluetooth data"}, "targetParameter": "session_id"}, "description": { "zh": "发送并读取蓝牙数据。", "en": "Send and read Bluetooth data." }, "parameters": [
             { "name": "session_id", "description": { "zh": "会话 ID。", "en": "Session ID." }, "type": "string", "required": true },
             { "name": "text", "description": { "zh": "UTF-8 文本。", "en": "UTF-8 text." }, "type": "string", "required": false },
             { "name": "data_base64", "description": { "zh": "Base64 字节。", "en": "Base64 bytes." }, "type": "string", "required": false },
             { "name": "max_bytes", "description": { "zh": "最大字节数。", "en": "Maximum bytes." }, "type": "number", "required": false },
             { "name": "timeout_ms", "description": { "zh": "等待毫秒数。", "en": "Wait time in milliseconds." }, "type": "number", "required": false }
         ] },
-        { "name": "bluetooth_close", "description": { "zh": "关闭蓝牙会话。", "en": "Close a Bluetooth session." }, "parameters": [
+        { "name": "bluetooth_close", "display": {"label": {"zh": "关闭蓝牙连接", "en": "Close Bluetooth connection"}, "targetParameter": "session_id"}, "description": { "zh": "关闭蓝牙会话。", "en": "Close a Bluetooth session." }, "parameters": [
             { "name": "session_id", "description": { "zh": "会话 ID。", "en": "Session ID." }, "type": "string", "required": true }
         ] },
-        { "name": "bluetooth_ble_connect", "description": { "zh": "连接 BLE 设备。", "en": "Connect to a BLE device." }, "parameters": [
+        { "name": "bluetooth_ble_connect", "display": {"label": {"zh": "连接 BLE 设备", "en": "Connect BLE device"}, "targetParameter": "address"}, "description": { "zh": "连接 BLE 设备。", "en": "Connect to a BLE device." }, "parameters": [
             { "name": "address", "description": { "zh": "蓝牙地址。", "en": "Bluetooth address." }, "type": "string", "required": true },
             { "name": "auto_connect", "description": { "zh": "使用自动连接。", "en": "Use auto-connect." }, "type": "boolean", "required": false }
         ] },
-        { "name": "bluetooth_ble_discover_services", "description": { "zh": "发现 BLE 服务。", "en": "Discover BLE services." }, "parameters": [
+        { "name": "bluetooth_ble_discover_services", "display": {"label": {"zh": "发现 BLE 服务", "en": "Discover BLE services"}, "icon": "search", "targetParameter": "session_id"}, "description": { "zh": "发现 BLE 服务。", "en": "Discover BLE services." }, "parameters": [
             { "name": "session_id", "description": { "zh": "BLE 会话 ID。", "en": "BLE session ID." }, "type": "string", "required": true },
             { "name": "timeout_ms", "description": { "zh": "等待毫秒数。", "en": "Wait time in milliseconds." }, "type": "number", "required": false }
         ] },
-        { "name": "bluetooth_ble_read_characteristic", "description": { "zh": "读取 BLE characteristic。", "en": "Read a BLE characteristic." }, "parameters": [
+        { "name": "bluetooth_ble_read_characteristic", "display": {"label": {"zh": "读取 BLE 特征", "en": "Read BLE characteristic"}, "targetParameter": "characteristic_uuid"}, "description": { "zh": "读取 BLE characteristic。", "en": "Read a BLE characteristic." }, "parameters": [
             { "name": "session_id", "description": { "zh": "BLE 会话 ID。", "en": "BLE session ID." }, "type": "string", "required": true },
             { "name": "service_uuid", "description": { "zh": "Service UUID。", "en": "Service UUID." }, "type": "string", "required": true },
             { "name": "characteristic_uuid", "description": { "zh": "Characteristic UUID。", "en": "Characteristic UUID." }, "type": "string", "required": true },
             { "name": "timeout_ms", "description": { "zh": "等待毫秒数。", "en": "Wait time in milliseconds." }, "type": "number", "required": false }
         ] },
-        { "name": "bluetooth_ble_write_characteristic", "description": { "zh": "写入 BLE characteristic。", "en": "Write a BLE characteristic." }, "parameters": [
+        { "name": "bluetooth_ble_write_characteristic", "display": {"label": {"zh": "写入 BLE 特征", "en": "Write BLE characteristic"}, "icon": "edit", "targetParameter": "characteristic_uuid"}, "description": { "zh": "写入 BLE characteristic。", "en": "Write a BLE characteristic." }, "parameters": [
             { "name": "session_id", "description": { "zh": "BLE 会话 ID。", "en": "BLE session ID." }, "type": "string", "required": true },
             { "name": "service_uuid", "description": { "zh": "Service UUID。", "en": "Service UUID." }, "type": "string", "required": true },
             { "name": "characteristic_uuid", "description": { "zh": "Characteristic UUID。", "en": "Characteristic UUID." }, "type": "string", "required": true },
             { "name": "text", "description": { "zh": "UTF-8 文本。", "en": "UTF-8 text." }, "type": "string", "required": false },
             { "name": "data_base64", "description": { "zh": "Base64 字节。", "en": "Base64 bytes." }, "type": "string", "required": false }
         ] },
-        { "name": "bluetooth_ble_write_and_read_characteristic", "description": { "zh": "写入并读取 BLE characteristic。", "en": "Write and read BLE characteristics." }, "parameters": [
+        { "name": "bluetooth_ble_write_and_read_characteristic", "display": {"label": {"zh": "收发 BLE 特征数据", "en": "Exchange BLE characteristic data"}, "targetParameter": "session_id"}, "description": { "zh": "写入并读取 BLE characteristic。", "en": "Write and read BLE characteristics." }, "parameters": [
             { "name": "session_id", "description": { "zh": "BLE 会话 ID。", "en": "BLE session ID." }, "type": "string", "required": true },
             { "name": "write_service_uuid", "description": { "zh": "写入 Service UUID。", "en": "Write service UUID." }, "type": "string", "required": true },
             { "name": "write_characteristic_uuid", "description": { "zh": "写入 Characteristic UUID。", "en": "Write characteristic UUID." }, "type": "string", "required": true },
@@ -120,17 +120,17 @@
             { "name": "data_base64", "description": { "zh": "Base64 字节。", "en": "Base64 bytes." }, "type": "string", "required": false },
             { "name": "timeout_ms", "description": { "zh": "等待毫秒数。", "en": "Wait time in milliseconds." }, "type": "number", "required": false }
         ] },
-        { "name": "bluetooth_ble_subscribe_characteristic", "description": { "zh": "订阅或取消订阅 BLE characteristic。", "en": "Subscribe or unsubscribe a BLE characteristic." }, "parameters": [
+        { "name": "bluetooth_ble_subscribe_characteristic", "display": {"label": {"zh": "设置 BLE 订阅", "en": "Set BLE subscription"}, "icon": "notification", "targetParameter": "characteristic_uuid"}, "description": { "zh": "订阅或取消订阅 BLE characteristic。", "en": "Subscribe or unsubscribe a BLE characteristic." }, "parameters": [
             { "name": "session_id", "description": { "zh": "BLE 会话 ID。", "en": "BLE session ID." }, "type": "string", "required": true },
             { "name": "service_uuid", "description": { "zh": "Service UUID。", "en": "Service UUID." }, "type": "string", "required": true },
             { "name": "characteristic_uuid", "description": { "zh": "Characteristic UUID。", "en": "Characteristic UUID." }, "type": "string", "required": true },
             { "name": "enable", "description": { "zh": "是否订阅。", "en": "Whether to subscribe." }, "type": "boolean", "required": false }
         ] },
-        { "name": "bluetooth_ble_read_notifications", "description": { "zh": "读取 BLE 通知。", "en": "Read BLE notifications." }, "parameters": [
+        { "name": "bluetooth_ble_read_notifications", "display": {"label": {"zh": "读取 BLE 通知", "en": "Read BLE notifications"}, "icon": "notification", "targetParameter": "session_id"}, "description": { "zh": "读取 BLE 通知。", "en": "Read BLE notifications." }, "parameters": [
             { "name": "session_id", "description": { "zh": "BLE 会话 ID。", "en": "BLE session ID." }, "type": "string", "required": true },
             { "name": "limit", "description": { "zh": "读取条数。", "en": "Number of notifications." }, "type": "number", "required": false }
         ] },
-        { "name": "get_device_info", "description": { "zh": "获取详细设备信息。", "en": "Get detailed device information." }, "parameters": [] }
+        { "name": "get_device_info", "display": {"label": {"zh": "读取设备信息", "en": "Read device info"}}, "description": { "zh": "获取详细设备信息。", "en": "Get detailed device information." }, "parameters": [] }
     ]
 }
 */

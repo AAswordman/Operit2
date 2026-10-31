@@ -12,11 +12,13 @@
     "tools": [
         {
             "name": "get_current_date",
+            "display": {"label": {"zh": "获取当前日期", "en": "Get current date"}, "icon": "time"},
             "description": { "zh": "获取当前日期，以上海时区（Asia/Shanghai, UTC+8）为准，返回格式为 'yyyy-MM-dd'。主要用于解析用户提到的相对日期（如“明天”、“下周三”），为其他需要日期的接口提供准确的日期输入。", "en": "Get the current date in the Shanghai timezone (Asia/Shanghai, UTC+8). Returns format 'yyyy-MM-dd'. Mainly used to resolve relative dates (e.g. \"tomorrow\", \"next Wednesday\") and provide correct date input for other APIs." },
             "parameters": []
         },
         {
             "name": "get_stations_code_in_city",
+            "display": {"label": {"zh": "查询城市车站", "en": "Find stations in city"}, "icon": "search", "targetParameter": "city"},
             "description": { "zh": "通过中文城市名查询该城市 **所有** 火车站的名称及其对应的 `station_code`，结果是一个包含多个车站信息的列表。", "en": "Given a Chinese city name, list **all** train stations in that city and their corresponding `station_code`." },
             "parameters": [
                 { "name": "city", "description": { "zh": "中文城市名称，例如：'北京', '上海'", "en": "Chinese city name, e.g. '北京', '上海'." }, "type": "string", "required": true }
@@ -24,6 +26,7 @@
         },
         {
             "name": "get_station_code_of_citys",
+            "display": {"label": {"zh": "查询城市车站代码", "en": "Find city station codes"}, "icon": "search", "targetParameter": "citys"},
             "description": { "zh": "通过中文城市名查询代表该城市的 `station_code`。此接口主要用于在用户提供**城市名**作为出发地或到达地时，为接口准备 `station_code` 参数。", "en": "Get the representative `station_code` for a Chinese city name. Use this when the user provides a **city name** as origin/destination and you need a `station_code`." },
             "parameters": [
                 { "name": "citys", "description": { "zh": "要查询的城市，比如'北京'。若要查询多个城市，请用|分割，比如'北京|上海'。", "en": "City to query, e.g. '北京'. For multiple cities, separate with |, e.g. '北京|上海'." }, "type": "string", "required": true }
@@ -31,6 +34,7 @@
         },
         {
             "name": "get_station_code_by_names",
+            "display": {"label": {"zh": "查询车站代码", "en": "Find station codes"}, "icon": "search", "targetParameter": "station_names"},
             "description": { "zh": "通过具体的中文车站名查询其 `station_code` 和车站名。此接口主要用于在用户提供**具体车站名**作为出发地或到达地时，为接口准备 `station_code` 参数。", "en": "Given a specific Chinese station name, return its `station_code` and station name. Use this when the user provides a **specific station name** for origin/destination." },
             "parameters": [
                 { "name": "station_names", "description": { "zh": "具体的中文车站名称，例如：'北京南', '上海虹桥'。若要查询多个站点，请用|分割，比如'北京南|上海虹桥'。", "en": "Specific Chinese station names, e.g. '北京南', '上海虹桥'. For multiple stations, separate with |, e.g. '北京南|上海虹桥'." }, "type": "string", "required": true }
@@ -38,6 +42,7 @@
         },
         {
             "name": "get_station_by_telecode",
+            "display": {"label": {"zh": "查询车站名称", "en": "Find station name"}, "icon": "search", "targetParameter": "station_telecode"},
             "description": { "zh": "通过车站的 `station_telecode` 查询车站的详细信息，包括名称、拼音、所属城市等。此接口主要用于在已知 `telecode` 的情况下获取更完整的车站数据，或用于特殊查询及调试目的。一般用户对话流程中较少直接触发。", "en": "Query station details by `station_telecode`, including name, pinyin, city, etc. Mainly for getting more complete station data when `telecode` is known, or for special queries/debugging." },
             "parameters": [
                 { "name": "station_telecode", "description": { "zh": "车站的 `station_telecode` (3位字母编码)", "en": "Station `station_telecode` (3-letter code)." }, "type": "string", "required": true }
@@ -45,6 +50,7 @@
         },
         {
             "name": "get_tickets",
+            "display": {"label": {"zh": "查询火车票", "en": "Search train tickets"}, "icon": "search", "targetParameter": "date"},
             "description": { "zh": "查询12306余票信息。", "en": "Query 12306 ticket availability." },
             "parameters": [
                 { "name": "date", "description": { "zh": "查询日期，格式为 'yyyy-MM-dd'。如果用户提供的是相对日期（如“明天”），请务必先调用 `get_current_date` 接口获取当前日期，并计算出目标日期。", "en": "Query date in 'yyyy-MM-dd'. If the user gives a relative date (e.g. \"tomorrow\"), call `get_current_date` first and compute the target date." }, "type": "string", "required": true },
@@ -58,6 +64,7 @@
         },
         {
             "name": "get_interline_tickets",
+            "display": {"label": {"zh": "查询中转车票", "en": "Search connecting trains"}, "icon": "search", "targetParameter": "date"},
             "description": { "zh": "查询12306中转余票信息。尚且只支持查询前十条。", "en": "Query 12306 transfer (interline) ticket availability. Currently only supports the first 10 results." },
             "parameters": [
                 { "name": "date", "description": { "zh": "查询日期，格式为 'yyyy-MM-dd'。如果用户提供的是相对日期（如“明天”），请务必先调用 `get_current_date` 接口获取当前日期，并计算出目标日期。", "en": "Query date in 'yyyy-MM-dd'. If the user gives a relative date, call `get_current_date` first and compute the target date." }, "type": "string", "required": true },
@@ -73,6 +80,7 @@
         },
         {
             "name": "get_train_route_stations",
+            "display": {"label": {"zh": "查询列车经停站", "en": "Read train route"}, "icon": "search", "targetParameter": "train_no"},
             "description": { "zh": "查询特定列车车次在指定区间内的途径车站、到站时间、出发时间及停留时间等详细经停信息。当用户询问某趟具体列车的经停站时使用此接口。", "en": "Query detailed stop information for a specific train within a segment, including stations, arrival/departure times, and stop duration. Use when the user asks for stops of a specific train." },
             "parameters": [
                 { "name": "train_no", "description": { "zh": "要查询的实际车次编号 `train_no`，例如 '240000G10336'，而非'G1033'。此编号通常可以从 `get_tickets` 的查询结果中获取，或者由用户直接提供。", "en": "Actual train number `train_no`, e.g. '240000G10336' (not 'G1033'). Usually obtained from `get_tickets` results or provided by the user." }, "type": "string", "required": true },

@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.14)
+project(floating_windows LANGUAGES CXX)
+set(PLUGIN_NAME "floating_windows_plugin")
+
+add_library(${PLUGIN_NAME} SHARED "floating_windows_plugin.cpp")
+apply_standard_settings(${PLUGIN_NAME})
+target_compile_features(${PLUGIN_NAME} PRIVATE cxx_std_17)
+target_compile_definitions(${PLUGIN_NAME} PRIVATE FLUTTER_PLUGIN_IMPL NOMINMAX)
+set_target_properties(${PLUGIN_NAME} PROPERTIES CXX_VISIBILITY_PRESET hidden)
+target_include_directories(${PLUGIN_NAME} INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin dwmapi comctl32)
+set(floating_windows_bundled_libraries "" PARENT_SCOPE)

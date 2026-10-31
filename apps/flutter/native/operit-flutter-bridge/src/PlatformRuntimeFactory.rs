@@ -50,6 +50,9 @@ pub(crate) fn startBridge(startup: BridgeStartup) -> Result<OperitFlutterBridge,
         }))
         .withBrowserSessionHost(Arc::new(FlutterBrowserSessionBridge::new()))
         .withComposeDslWebViewHost(Arc::new(composeDslHost))
+        .withFloatingWindowHost(Arc::new(|request: serde_json::Value| {
+            crate::FlutterOwnerCapabilities::ownerSystemOperation::<serde_json::Value>("floating_window", request)
+        }))
         .withToastHost(Arc::new(
             crate::FlutterOwnerCapabilities::presentFlutterToast,
         ))

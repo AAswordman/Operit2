@@ -3054,8 +3054,88 @@ pub struct ToolPkgPublicApiRegistration<TPayload, TResult> {
     /// Handles a request in the provider's main runtime.
     pub function: Arc<dyn Fn(ToolPkgPublicApiEvent<TPayload>) -> JsFuture<TResult> + Send + Sync>,
 }
-/// Provides IPC and registration services for the current ToolPkg package.
+/// Window geometry in logical pixels; position uses the host desktop's top-left origin.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgFloatingWindowOptions {
+    /// Sets the left coordinate, when positioning is supported.
+    pub x: Option<f64>,
+    /// Sets the top coordinate, when positioning is supported.
+    pub y: Option<f64>,
+    /// Sets content width (16 through 4096 logical pixels).
+    pub width: Option<f64>,
+    /// Sets content height (16 through 4096 logical pixels).
+    pub height: Option<f64>,
+    /// Keeps the surface above ordinary application windows; defaults to true.
+    pub alwaysOnTop: Option<bool>,
+    /// Passes pointer input through the entire surface; defaults to false.
+    pub clickThrough: Option<bool>,
+    /// Allows the surface to accept keyboard focus; defaults to false.
+    pub focusable: Option<bool>,
+    /// Moves directly in the host using pointer-down screen/window anchors; defaults to false.
+    pub draggable: Option<bool>,
+}
+/// Opens a transparent live UI surface owned by the executing plugin.
+pub struct ToolPkgFloatingWindowOpenOptions {
+    /// Identifies the window within this plugin; opening an existing ID fails.
+    pub id: String,
+    /// Selects one of this plugin's registered Compose UI routes.
+    pub route: String,
+    /// Supplies the UI session's initial state.
+    pub state: Option<ToolPkgJsonObject>,
+    /// Configures geometry and interaction flags.
+    pub options: Option<ToolPkgFloatingWindowOptions>,
+}
+/// Reports the actual presentation scope and host capabilities.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgFloatingWindowCapabilities {
+    /// "system", "application", or "unsupported". Application scope stays inside Operit.
+    pub scope: String,
+    pub systemOverlay: bool,
+    pub applicationOverlay: bool,
+    pub supported: bool,
+    pub permissionGranted: bool,
+    pub positioning: bool,
+    pub alwaysOnTop: bool,
+    pub clickThrough: bool,
+    pub focusable: bool,
+}
+/// Describes a live window owned by the executing plugin.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgFloatingWindowInfo {
+    pub id: String,
+    pub route: String,
+    pub visible: bool,
+    pub options: ToolPkgFloatingWindowOptions,
+}
+/// Controls general floating windows independently of launcher widgets.
+pub struct ToolPkgFloatingWindowApi;
+pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
+    /// Queries capabilities without opening a window or displaying a permission prompt.
+    fn capabilities(&self) -> JsFuture<ToolPkgFloatingWindowCapabilities>;
+    /// Opens the host's overlay permission settings when required; query capabilities again afterwards.
+    fn requestPermission(&self) -> JsFuture<bool>;
+    /// Creates a transparent live route session. IDs are local to the executing plugin.
+    fn open(&self, options: ToolPkgFloatingWindowOpenOptions) -> JsFuture<ToolPkgFloatingWindowInfo>;
+    /// Applies partial window options and shallow-merges optional UI state without recreating the session.
+    fn update(&self, id: String, options: ToolPkgFloatingWindowOptions, state: Option<ToolPkgJsonObject>) -> JsFuture<ToolPkgFloatingWindowInfo>;
+    /// Shows an owned window without resetting its UI session.
+    fn show(&self, id: String) -> JsFuture<ToolPkgFloatingWindowInfo>;
+    /// Hides an owned window while retaining its UI session.
+    fn hide(&self, id: String) -> JsFuture<ToolPkgFloatingWindowInfo>;
+    /// Closes an owned window and releases its UI session and engine.
+    fn close(&self, id: String) -> JsFuture<()>;
+    /// Lists only the executing plugin's live windows.
+    fn list(&self) -> JsFuture<Vec<ToolPkgFloatingWindowInfo>>;
+}
+/// Groups runtime presentation services for plugin-owned user interfaces.
+pub struct ToolPkgUiApi {
+    /// Controls live floating windows independently of launcher widgets.
+    pub floatingWindows: ToolPkgFloatingWindowApi,
+}
+/// Provides runtime and registration services for the current ToolPkg package.
 pub struct ToolPkgRegistry {
+    /// Groups runtime presentation services for plugin-owned user interfaces.
+    pub ui: ToolPkgUiApi,
     /// Exposes inter-context messaging for this ToolPkg registry.
     pub ipc: ToolPkgIpcApi,
     /// Exposes declared WASM exports for this ToolPkg registry.

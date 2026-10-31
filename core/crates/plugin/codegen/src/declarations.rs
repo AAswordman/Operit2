@@ -390,6 +390,7 @@ impl<'a> EmitContext<'a> {
         if self.current_file == "toolpkg.d.ts" && scope == ["ToolPkg"] {
             output.push_str(&format!("{indent}/** Exposes the host registry IPC service. */\n{indent}export const ipc: IpcApi;\n"));
             output.push_str(&format!("{indent}/** Exposes the host registry WASM service. */\n{indent}export const wasm: WasmApi;\n"));
+            output.push_str(&format!("{indent}/** Groups runtime presentation services for plugin-owned user interfaces. */\n{indent}export const ui: UiApi;\n"));
         }
         let mut entries = self.scope_entries(scope);
         entries.sort_by(|left, right| {

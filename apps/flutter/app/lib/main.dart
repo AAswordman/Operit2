@@ -4,6 +4,7 @@ import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:desktop_widgets/desktop_widgets.dart';
+import 'package:floating_windows/floating_windows.dart';
 import 'package:operit_keep_alive/operit_keep_alive.dart';
 import 'package:operit_ui/operit_ui.dart'
     show prepareLiquidGlass, OperitDesignCaptureScope;
@@ -19,6 +20,7 @@ import 'ui/features/packages/screens/GitHubOAuthLoginCallback.dart';
 import 'ui/main/OperitApp.dart';
 import 'ui/window/DetachedChatWindowApp.dart';
 import 'ui/window/DesktopWidgetWindowApp.dart';
+import 'ui/window/FloatingWindowApp.dart';
 import 'ui/window/OperitWindowArguments.dart';
 import 'ui/window/OperitWindowPlatform.dart';
 
@@ -77,7 +79,10 @@ void main(List<String> arguments) async {
         tag: _appStartupLogTag,
         verboseLevel: VerboseLevel.level1,
       );
-      final startsDetachedChatWindow = _startsDetachedChatWindow(arguments);
+      final startsDetachedChatWindow =
+          _startsDetachedChatWindow(arguments) ||
+          FloatingWindows.parseLaunch(arguments) != null ||
+          DesktopWidgets.parseLaunch(arguments) != null;
       if (startsDetachedChatWindow) {
         ClientLogger.v(
           'skip process-owned startup for detached chat window',
@@ -107,47 +112,56 @@ void main(List<String> arguments) async {
         tag: _appStartupLogTag,
         verboseLevel: VerboseLevel.level1,
       );
-      await DesktopWidgets.run(
+      await FloatingWindows.run(
         arguments: arguments,
-        widgetBuilder: (launch) {
+        windowBuilder: (launch) {
           applicationStarted = true;
-          return OperitDesignCaptureScope(
-            name: 'Operit Desktop Widget',
-            child: DesktopWidgetWindowApp(launch: launch),
-          );
+          return FloatingWindowApp(launch: launch);
         },
         application: () async {
-          final windowStopwatch = Stopwatch()..start();
-          final windowArguments = await readOperitWindowArguments();
-          ClientLogger.v(
-            'window arguments read type=${windowArguments.runtimeType} elapsedMs=${windowStopwatch.elapsedMilliseconds}',
-            tag: _appStartupLogTag,
-            verboseLevel: VerboseLevel.level1,
-          );
-          switch (windowArguments) {
-            case MainWindowArguments():
-              await OperitKeepAlive.instance.initialize(
-                const KeepAliveOptions(
-                  applicationName: 'Operit2',
-                  androidServiceClassName: 'app.operit.OperitCoreService',
-                  openLabel: '打开 Operit2',
-                  exitLabel: '退出 Operit2',
-                  quitMessage: '退出将停止后台任务。确定退出 Operit2？',
-                ),
+          await DesktopWidgets.run(
+            arguments: arguments,
+            widgetBuilder: (launch) {
+              applicationStarted = true;
+              return OperitDesignCaptureScope(
+                name: 'Operit Desktop Widget',
+                child: DesktopWidgetWindowApp(launch: launch),
               );
-              final coreStopwatch = Stopwatch()..start();
-              CoreApplicationService.instance.initialize();
+            },
+            application: () async {
+              final windowStopwatch = Stopwatch()..start();
+              final windowArguments = await readOperitWindowArguments();
               ClientLogger.v(
-                'core application initialize dispatched elapsedMs=${coreStopwatch.elapsedMilliseconds}',
+                'window arguments read type=${windowArguments.runtimeType} elapsedMs=${windowStopwatch.elapsedMilliseconds}',
                 tag: _appStartupLogTag,
                 verboseLevel: VerboseLevel.level1,
               );
-              _runMainWindow();
-              applicationStarted = true;
-            case final DetachedChatWindowArguments detachedArguments:
-              _runDetachedChatWindow(detachedArguments);
-              applicationStarted = true;
-          }
+              switch (windowArguments) {
+                case MainWindowArguments():
+                  await OperitKeepAlive.instance.initialize(
+                    const KeepAliveOptions(
+                      applicationName: 'Operit2',
+                      androidServiceClassName: 'app.operit.OperitCoreService',
+                      openLabel: '打开 Operit2',
+                      exitLabel: '退出 Operit2',
+                      quitMessage: '退出将停止后台任务。确定退出 Operit2？',
+                    ),
+                  );
+                  final coreStopwatch = Stopwatch()..start();
+                  CoreApplicationService.instance.initialize();
+                  ClientLogger.v(
+                    'core application initialize dispatched elapsedMs=${coreStopwatch.elapsedMilliseconds}',
+                    tag: _appStartupLogTag,
+                    verboseLevel: VerboseLevel.level1,
+                  );
+                  _runMainWindow();
+                  applicationStarted = true;
+                case final DetachedChatWindowArguments detachedArguments:
+                  _runDetachedChatWindow(detachedArguments);
+                  applicationStarted = true;
+              }
+            },
+          );
         },
       );
       ClientLogger.i(
@@ -203,7 +217,12 @@ void _runMainWindow() {
     tag: _appStartupLogTag,
     verboseLevel: VerboseLevel.level1,
   );
-  runApp(const OperitDesignCaptureScope(child: OperitApp()));
+  runApp(
+    FloatingWindowsHost(
+      windowBuilder: (launch) => FloatingWindowApp(launch: launch),
+      child: const OperitDesignCaptureScope(child: OperitApp()),
+    ),
+  );
 }
 
 /// Starts a detached chat window after runtime configuration is loaded.

@@ -1985,6 +1985,7 @@ impl JsEngineState {
                 wake();
             }
         });
+        let windowSink = asyncCallbackSink.clone();
         let toolSink = asyncCallbackSink.clone();
         let timerSink = asyncCallbackSink.clone();
         let ipcBinding = self.packageBinding.clone();
@@ -2006,6 +2007,28 @@ impl JsEngineState {
         let sendRoutePushSink = asyncCallbackSink.clone();
         let closeRoutePushSink = asyncCallbackSink.clone();
         let asyncFunctions: Vec<(&str, HostJavaScriptAsyncJsonCallback)> = vec![
+            (
+                "__operitNativeFloatingWindowCommand",
+                Arc::new(move |requestId, arguments| {
+                    let [payload] = exactHostJavaScriptJsonArguments("__operitNativeFloatingWindowCommand", arguments)?;
+                    requireHostObject(&payload)?;
+                    let host = currentExecutionHost().map_err(HostError::new)?;
+                    let sink = windowSink.clone();
+                    // A new surface must be able to acquire its own JS session
+                    // while this caller awaits the host's startup acknowledgement.
+                    defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeTask(
+                        "operit-floating-window",
+                        Box::new(move || {
+                            let (result, reject) = match host.floating_window_command(&payload) {
+                                Ok(value) => (value, false),
+                                Err(error) => (Value::String(error), true),
+                            };
+                            sink(JsAsyncCallback::Promise { requestId, result, reject });
+                        }),
+                    )?;
+                    Ok(())
+                }),
+            ),
             (
                 "__operitNativeCallToolStructured",
                 Arc::new(move |requestId, arguments| {

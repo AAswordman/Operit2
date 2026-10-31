@@ -482,6 +482,11 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return path;
         }
 
+        function windowCommand(operation, options) {
+            if (registrationOnly) throw new Error('Floating windows cannot be used during registration');
+            var request = Object.assign({}, options || {}, {operation:operation});
+            return root.__operitInvokeHostAsync(root.__operitNativeFloatingWindowCommand, [request]);
+        }
         function requireToolPkgApiRuntime() {
             var runtime = root.__operitToolPkgApi;
             if (!runtime || typeof runtime !== 'object') {
@@ -508,6 +513,18 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 capture.publicApis.push(normalizeSpec(normalized));
             },
             callDependency: toolPkgApi.callDependency,
+            ui: {
+              floatingWindows: {
+                capabilities: function() { return windowCommand('capabilities', {}); },
+                requestPermission: function() { return windowCommand('requestPermission', {}); },
+                open: function(options) { return windowCommand('open', options); },
+                update: function(id, options, state) { var request = {id:id, options:options}; if (state !== undefined) request.state = state; return windowCommand('update', request); },
+                show: function(id) { return windowCommand('show', {id:id}); },
+                hide: function(id) { return windowCommand('hide', {id:id}); },
+                close: function(id) { return windowCommand('close', {id:id}); },
+                list: function() { return windowCommand('list', {}); }
+              }
+            },
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'ToolPkg.registerToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'ToolPkg.registerUiRoute'),
             registerChatComposerSlot: registerScreen('chatComposerSlots', 'ToolPkg.registerChatComposerSlot'),
