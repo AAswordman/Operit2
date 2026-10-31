@@ -51,7 +51,20 @@ pub list_files: DirectoryListingData,
 
 Core 保留原生 `ToolResultData`。Flutter 只按工具声明的 `resultRenderer` 选择结果视图，然后校验数据结构；不根据原生结果类型或类似 `Directory listing for ...` 的文本推断展示。目录来自执行 Host 返回的数据，不扫描 Flutter 所在设备。声明为 `fileDiff` 的工具还可以使用显式 `<file-diff>` 协议。
 
-实时工具调用的展示声明附加在 Markdown XML 事件的 `display` 属性中。`proxy` / `package_proxy` 只按其明确的 `tool_name`、`params` 协议解析目标；目标尚未完整到达时使用通用展示。
+实时工具调用的展示声明附加在 Markdown XML 事件的 `display` 属性中。`proxy` / `package_proxy` 只按其明确的 `tool_name`、`params` 协议解析目标。`params` 新调用使用 YAML 映射文本，代码和多行正文使用 `|`、`|-` 或 `|+` 原文块；执行与展示仍兼容历史 JSON 对象及 JSON 参数文本。目标尚未完整到达时使用通用展示。
+
+例如，原生调用的 `tool_name` 为 `files:write` 时，`params` 字符串的正文写成：
+
+```yaml
+path: /tmp/demo.py
+content: |-
+  import re
+  pattern = r"\d+\s+\w+"
+  print("hello")
+```
+
+`params` 的根节点必须是参数名到参数值的映射；数字、布尔值、空值、数组和嵌套映射保留类型。看起来像数字、布尔值或空值的字符串应加引号。`|-` 去掉末尾换行，`|` 保留一个末尾换行，`|+` 保留全部末尾换行。兼容解析直接读取已有历史记录，不需要迁移聊天数据。
+
 
 需要专用结果视图的工具将展示声明和结果载荷分别保存在已有 `MessagePart.attributes` 的 `display`、`result_data` 属性中。这些字段使用 JSON；XML 传输时按属性转义，读取时只解码一次。没有新增存储文件、表或数据库迁移。通用文本视图不额外附加重复的结构化结果。完整结构化结果仅在现有单条工具结果预算内附加，超过预算时仍保留原有的有界文本结果。多步骤结果继续使用原来的合并文本回退。
 

@@ -20,5 +20,6 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"],
 regex = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+serde-saphyr = { version = "2", default-features = false, features = ["serialize", "deserialize"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 zip = { workspace = true, optional = true }

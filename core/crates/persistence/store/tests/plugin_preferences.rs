@@ -739,8 +739,7 @@ fn character_merge_extension_preserves_old_data_and_rejects_changed_rules() {
     receiver.host.writeBytes(&receiver.path, &serde_json::to_vec(&incomplete.data.values).unwrap()).unwrap();
     receiver.host = Arc::new(NativeRuntimeStorageHost::new(receiver.root.join("runtime"), receiver.root.join("workspaces")));
     let handle = receiver.open();
-    receiver.schema(&handle, json!([[]])).unwrap();
-    assert_eq!(receiver.data(&handle)["values"]["state"]["retained"], true);
+    assert!(receiver.data(&handle)["values"].get("state").is_none());
     receiver.schema(&handle, json!([[]])).unwrap();
     assert_eq!(receiver.data(&handle)["values"]["state"]["retained"], true);
     let mut changed = current.clone(); changed["references"][0]["target"] = json!(source.path);

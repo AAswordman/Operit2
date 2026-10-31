@@ -824,10 +824,15 @@ impl StructuredToolCallBridge {
             xml.push_str(&format!("\n<{toolTagName} name=\"{name}\">"));
             if let Some(paramsObj) = paramsObj {
                 for (key, value) in paramsObj {
+                    let text = match (&value, name, key.as_str()) {
+                        (Value::Object(parameters), PACKAGE_PROXY_TOOL_NAME | CLI_PROXY_TOOL_NAME, "params") =>
+                            operit_util::ProxyParameters::format_proxy_parameters(parameters),
+                        _ => jsonValueToText(&value),
+                    };
                     xml.push_str(&format!(
                         "\n<param name=\"{}\">{}</param>",
                         key,
-                        Self::escapeXml(&jsonValueToText(&value))
+                        Self::escapeXml(&text)
                     ));
                 }
             } else if !argumentsRaw.trim().is_empty() {
@@ -987,9 +992,14 @@ impl StructuredToolCallBridge {
                     .split_once('>')
                     .and_then(|(_, tail)| tail.rsplit_once("</").map(|(body, _)| body))
                     .map(Self::xmlUnescape)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
+                    .unwrap_or_default();
+                // YAML literal blocks carry meaningful trailing whitespace and newlines.
+                let paramValue = if matches!(toolMatch.name.as_str(), PACKAGE_PROXY_TOOL_NAME | CLI_PROXY_TOOL_NAME)
+                    && paramName == "params" {
+                    paramValue
+                } else {
+                    paramValue.trim().to_string()
+                };
                 params.insert(paramName, json!(paramValue));
             }
             let toolNamePart = Self::sanitizeToolCallId(&toolMatch.name);
@@ -1032,12 +1042,12 @@ impl StructuredToolCallBridge {
                 .and_then(Value::as_str)
                 .unwrap_or("{}");
             let originalArguments =
-                serde_json::from_str::<Value>(if rawArguments.trim().is_empty() {
+                serde_json::from_str::<Map<String, Value>>(if rawArguments.trim().is_empty() {
                     "{}"
                 } else {
                     rawArguments
                 })
-                .unwrap_or_else(|_| json!({}));
+                .unwrap_or_default();
             let mut wrapped = toolCall.clone();
             if let Some(object) = wrapped.as_object_mut() {
                 object.insert(
@@ -1046,7 +1056,7 @@ impl StructuredToolCallBridge {
                         "name": "package_proxy",
                         "arguments": json!({
                             "tool_name": toolName,
-                            "params": originalArguments,
+                            "params": operit_util::ProxyParameters::format_proxy_parameters(&originalArguments),
                         }).to_string(),
                     }),
                 );
@@ -1276,7 +1286,7 @@ fn toBase36(mut value: u32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
+    use serde_json::{json, Value};
 
     use super::StructuredToolCallBridge;
     use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -1318,6 +1328,47 @@ mod tests {
                 .and_then(Value::as_str),
             Some("package_proxy")
         );
+    }
+
+    /// Preserves literal YAML text through the stored-markup history boundary.
+    #[test]
+    fn proxy_yaml_history_preserves_literal_text_and_trailing_newlines() {
+        let yaml = "path: /tmp/demo.py\ncontent: |+\n  print(\"\\d+ <tag>&\")  \n\n";
+        let expected = operit_util::ProxyParameters::parse_proxy_parameters(&json!(yaml)).unwrap();
+        for name in ["package_proxy", "proxy"] {
+            let calls = vec![json!({"function": {
+                "name": name,
+                "arguments": json!({"tool_name": "files:write", "params": yaml}).to_string(),
+            }})];
+            let markup = StructuredToolCallBridge::convertToolCallsToXml(&calls);
+            let history = vec![PromptTurn::new(PromptTurnKind::TOOL_CALL, markup)];
+            let messages = StructuredToolCallBridge::buildMessagesValueForProvider(&history, true, true);
+            let replayed: Value = serde_json::from_str(messages[0]["tool_calls"][0]["function"]["arguments"].as_str().unwrap()).unwrap();
+            assert_eq!(replayed["params"], yaml);
+            assert_eq!(operit_util::ProxyParameters::parse_proxy_parameters(&replayed["params"]).unwrap(), expected);
+        }
+    }
+
+    /// Newly wrapped package calls advertise YAML even when their original arguments were structured.
+    #[test]
+    fn newly_wrapped_package_calls_use_yaml_parameters() {
+        let arguments = json!({"content": "print(\"hello\")\n\n", "enabled": true, "items": [1, 2]});
+        let calls = vec![json!({"function": {"name": "files:write", "arguments": arguments.to_string()}})];
+        let wrapped = StructuredToolCallBridge::wrapPackageToolCallsWithProxy(&calls);
+        let envelope: Value = serde_json::from_str(wrapped[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        let yaml = envelope["params"].as_str().expect("new proxy payload must be YAML text");
+        assert!(yaml.contains("content: |"));
+        assert_eq!(operit_util::ProxyParameters::parse_proxy_parameters(&envelope["params"]).unwrap(), arguments.as_object().unwrap().clone());
+
+        let legacy = vec![json!({"function": {
+            "name": "package_proxy",
+            "arguments": json!({"tool_name": "files:write", "params": arguments}).to_string(),
+        }})];
+        let markup = StructuredToolCallBridge::convertToolCallsToXml(&legacy);
+        let (_, calls) = StructuredToolCallBridge::parseXmlToolCalls(&markup);
+        let envelope: Value = serde_json::from_str(calls.unwrap()[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert!(envelope["params"].as_str().unwrap().contains("content: |"));
+        assert_eq!(operit_util::ProxyParameters::parse_proxy_parameters(&envelope["params"]).unwrap(), arguments.as_object().unwrap().clone());
     }
 
     /// Verifies package proxy results match the proxied executable tool name.

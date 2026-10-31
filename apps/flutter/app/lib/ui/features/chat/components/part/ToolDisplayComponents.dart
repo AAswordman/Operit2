@@ -2,6 +2,8 @@
 
 import 'dart:convert';
 
+import 'package:yaml/yaml.dart';
+
 import 'package:flutter/material.dart';
 import 'package:operit_ui/operit_ui.dart'
     show operitDesignBridgeEnabled, OperitDesignSource;
@@ -765,7 +767,7 @@ ToolDisplayData normalizeToolDisplayForStrictProxy(
   if (target == null || target.trim().isEmpty || payload == null) {
     return ToolDisplayData(toolName: toolName, params: params);
   }
-  final decoded = decodeToolMetadata(payload);
+  final decoded = decodeProxyParameters(payload);
   if (decoded == null) {
     return ToolDisplayData(toolName: toolName, params: params);
   }
@@ -778,6 +780,26 @@ ToolDisplayData normalizeToolDisplayForStrictProxy(
         )
         .join('\n'),
   );
+}
+
+/// Reads YAML proxy payloads while keeping historical JSON parameter text readable.
+Map<String, dynamic>? decodeProxyParameters(String input) {
+  final legacy = decodeToolMetadata(input);
+  if (legacy != null) return legacy;
+  try {
+    final parsed = loadYaml(input);
+    if (parsed is! Map || parsed.keys.any((key) => key is! String)) {
+      return null;
+    }
+    // Validate nested values against the same JSON-compatible parameter map as the core.
+    return (jsonDecode(jsonEncode(parsed)) as Map).cast<String, dynamic>();
+  } on YamlException {
+    return null;
+  } on JsonUnsupportedObjectError {
+    return null;
+  } on FormatException {
+    return null;
+  }
 }
 
 String normalizeEscapedTextForDisplay(String input) {
@@ -809,35 +831,14 @@ String unescapeXmlForDisplay(String input) {
       .replaceAll('&amp;', '&');
 }
 
-String? parseProxyJsonParamsToXml(String input) {
-  final trimmed = input.trim();
-  if (trimmed.isEmpty) {
-    return '';
-  }
-  try {
-    final parsed = jsonDecode(trimmed);
-    if (parsed is Map<String, Object?>) {
-      return parsed.entries
-          .map(
-            (entry) =>
-                '<param name="${escapeXmlAttribute(entry.key)}">${escapeXmlText(jsonValueToParamText(entry.value))}</param>',
-          )
-          .join('\n');
-    }
-    if (parsed is List<Object?>) {
-      return parsed
-          .asMap()
-          .entries
-          .map(
-            (entry) =>
-                '<param name="${entry.key}">${escapeXmlText(jsonValueToParamText(entry.value))}</param>',
-          )
-          .join('\n');
-    }
-  } on FormatException {
-    return null;
-  }
-  return null;
+String? parseProxyParamsToXml(String input) {
+  final parsed = decodeProxyParameters(input);
+  return parsed?.entries
+      .map(
+        (entry) =>
+            '<param name="${escapeXmlAttribute(entry.key)}">${escapeXmlText(jsonValueToParamText(entry.value))}</param>',
+      )
+      .join('\n');
 }
 
 String jsonValueToParamText(Object? value) {

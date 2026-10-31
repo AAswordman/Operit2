@@ -11,7 +11,8 @@ use operit_local_models::LocalModelManifest::LocalModelKind;
 use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    default_deepseek_provider, local_model_provider, ApiProviderType, AvailableProviderModel,
+    default_deepseek_model, default_deepseek_provider, local_model_provider, ApiProviderType,
+    AvailableProviderModel,
     AvailableProviderModelSource, ModelCapabilities, ModelConfigDefaults, ModelContextSpec,
     ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderCatalogEntry,
     ProviderModelSummary, ProviderProfile, ResolvedModelConfig,
@@ -123,6 +124,40 @@ impl ModelConfigManager {
     /// Creates a manager using the default API data directory.
     pub fn default() -> Self {
         Self::new(ApiPreferences::data_dir())
+    }
+
+    /// Persists the default provider and model before a default function binding is used.
+    pub(crate) fn ensureDefaultModelConfig(&self) -> Result<(), ModelConfigError> {
+        let preferences = self.modelConfigDataStore.data()?;
+        match self.readProviderFromPreferences(&preferences, Self::DEFAULT_PROVIDER_ID) {
+            Ok(provider)
+                if provider
+                    .models
+                    .iter()
+                    .any(|model| model.id == Self::DEFAULT_MODEL_ID) =>
+            {
+                return Ok(());
+            }
+            Ok(_) | Err(ModelConfigError::ProviderNotFound(_)) => {}
+            Err(error) => return Err(error),
+        }
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            let mut provider =
+                match self.readProviderFromPreferences(preferences, Self::DEFAULT_PROVIDER_ID) {
+                    Ok(provider) => provider,
+                    Err(ModelConfigError::ProviderNotFound(_)) => default_deepseek_provider(),
+                    Err(error) => return Err(error),
+                };
+            if !provider
+                .models
+                .iter()
+                .any(|model| model.id == Self::DEFAULT_MODEL_ID)
+            {
+                provider.models.push(default_deepseek_model());
+            }
+            Self::writeProvider(preferences, &provider)?;
+            Ok(())
+        })
     }
 
     /// Observes the ordered provider id list.

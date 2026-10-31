@@ -3326,8 +3326,8 @@ fn buildPackageProxyToolPrompt() -> ToolPrompt {
             },
             crate::chat::config::SystemToolPrompts::ToolParameterSchema {
                 name: "params".to_string(),
-                value_type: "object".to_string(),
-                description: "JSON object of parameters to forward to the target tool".to_string(),
+                value_type: "string".to_string(),
+                description: operit_util::ProxyParameters::PROXY_PARAMS_DESCRIPTION_EN.to_string(),
                 required: true,
                 default: None,
             },
@@ -3344,8 +3344,8 @@ fn buildPackageProxyToolPrompt() -> ToolPrompt {
             },
             ToolParameterSchema {
                 name: "params".to_string(),
-                r#type: "object".to_string(),
-                description: "JSON object of parameters to forward to the target tool".to_string(),
+                r#type: "string".to_string(),
+                description: operit_util::ProxyParameters::PROXY_PARAMS_DESCRIPTION_EN.to_string(),
                 required: true,
                 default: None,
             },
@@ -4047,5 +4047,22 @@ mod guidance_tests {
             .enqueue("guide the next request".to_string())
             .unwrap();
         assert!(registered.guidanceInbox.as_ref().unwrap().hasPending());
+    }
+}
+
+#[cfg(test)]
+mod package_proxy_yaml_tests {
+    use super::buildPackageProxyToolPrompt;
+
+    #[test]
+    fn package_proxy_advertises_yaml_text_in_both_schema_representations() {
+        let prompt = buildPackageProxyToolPrompt();
+        let schema: serde_json::Value = serde_json::from_str(&prompt.parameters).unwrap();
+        assert_eq!(schema["properties"]["params"]["type"], "string");
+        let parameter = prompt.parametersStructured.unwrap().into_iter().find(|p| p.name == "params").unwrap();
+        assert_eq!(parameter.r#type, "string");
+        assert!(parameter.description.contains("YAML"));
+        assert!(parameter.description.contains("|-"));
+        assert!(!parameter.description.contains("JSON"));
     }
 }

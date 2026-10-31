@@ -98,17 +98,18 @@ impl FunctionalConfigManager {
         Self::new(ApiPreferences::data_dir())
     }
 
-    /// Observes the full mapping from runtime functions to provider model bindings.
+    /// Observes persisted bindings after initializing missing functions and their default model.
     pub fn functionModelBindingFlow(
         &self,
     ) -> Result<Flow<HashMap<FunctionType, FunctionModelBinding>>, FunctionalConfigError> {
+        let manager = self.clone();
         Ok(self
             .functionalConfigDataStore
             .dataFlow()
-            .mapResult(|preferences| Self::readFunctionModelBinding(&preferences)))
+            .mapResult(move |preferences| manager.readOrInitializeFunctionModelBinding(&preferences)))
     }
 
-    /// Reads native JSON function bindings using their declared function identities.
+    /// Reads only bindings present in the persisted snapshot.
     fn readFunctionModelBinding(
         preferences: &Preferences,
     ) -> Result<HashMap<FunctionType, FunctionModelBinding>, PreferencesDataStoreError> {
@@ -125,6 +126,40 @@ impl FunctionalConfigManager {
             binding.insert(functionType, value);
         }
         Ok(binding)
+    }
+
+    /// Commits the backing default model before publishing any binding that refers to it.
+    fn readOrInitializeFunctionModelBinding(
+        &self,
+        preferences: &Preferences,
+    ) -> Result<HashMap<FunctionType, FunctionModelBinding>, PreferencesDataStoreError> {
+        let binding = Self::readFunctionModelBinding(preferences)?;
+        let missingFunctions = Self::functionTypeValues()
+            .iter()
+            .any(|function| !binding.contains_key(function));
+        let usesDefaultModel = binding.values().any(|value| {
+            value.providerId == ModelConfigManager::DEFAULT_PROVIDER_ID
+                && value.modelId == ModelConfigManager::DEFAULT_MODEL_ID
+        });
+        if missingFunctions || usesDefaultModel {
+            self.modelConfigManager
+                .ensureDefaultModelConfig()
+                .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
+        }
+        if !missingFunctions {
+            return Ok(binding);
+        }
+
+        self.functionalConfigDataStore.try_edit_result(|preferences| {
+            // Re-read under the store lock so a concurrent user edit keeps precedence.
+            let mut binding = Self::readFunctionModelBinding(preferences)?;
+            for (function, default) in Self::defaultBinding() {
+                binding.entry(function).or_insert(default);
+            }
+            Self::normalizeBinding(&mut binding);
+            Self::writeFunctionModelBinding(preferences, binding.clone())?;
+            Ok(binding)
+        })
     }
 
     /// Saves the complete function-to-model binding map after normalizing follow-chat links.
@@ -446,6 +481,284 @@ mod tests {
                     "title"
                 );
             }
+        }
+    }
+
+    struct ConfigFixture {
+        root: std::path::PathBuf,
+        storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
+        manager: FunctionalConfigManager,
+    }
+
+    impl ConfigFixture {
+        fn new() -> Self {
+            use operit_host_native_storage::NativeRuntimeStorageHost;
+            use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
+            use operit_util::RuntimeStoreRoot::{
+                setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig,
+            };
+
+            let root = std::env::temp_dir()
+                .join(format!("operit-default-config-{}", uuid::Uuid::new_v4()));
+            let runtime = root.join("runtime");
+            let workspaces = root.join("workspaces");
+            let storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost> =
+                std::sync::Arc::new(NativeRuntimeStorageHost::new(
+                    runtime.clone(),
+                    workspaces.clone(),
+                ));
+            setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
+                runtime.clone(),
+                workspaces,
+            ));
+            setDefaultRuntimeStorageHost(storage.clone());
+            let manager = FunctionalConfigManager::new(runtime);
+            Self {
+                root,
+                storage,
+                manager,
+            }
+        }
+
+        fn modelStore(&self) -> operit_store::PreferencesDataStore::PreferencesDataStore {
+            super::ModelConfigManager::preferenceStore(
+                self.storage.clone(),
+                operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
+            )
+        }
+    }
+
+    impl Drop for ConfigFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn missing_bindings_persist_default_provider_model_and_editable_bindings() {
+        use super::ModelConfigManager;
+        use operit_model::ModelConfigData::ProviderProfile;
+        use operit_store::PreferencesDataStore::stringPreferencesKey;
+
+        for empty_map in [false, true] {
+            let fixture = ConfigFixture::new();
+            let manager = &fixture.manager;
+            manager
+                .functionalConfigDataStore
+                .edit(|preferences| {
+                    let key = FunctionalConfigManager::FUNCTION_MODEL_BINDING();
+                    if empty_map {
+                        preferences.set(&key, serde_json::json!({}));
+                    } else {
+                        preferences.remove(&key);
+                    }
+                })
+                .unwrap();
+            manager
+                .modelConfigManager
+                .deleteProvider(ModelConfigManager::DEFAULT_PROVIDER_ID)
+                .unwrap();
+            let store = fixture.modelStore();
+            let key = stringPreferencesKey(&format!(
+                "provider_{}",
+                ModelConfigManager::DEFAULT_PROVIDER_ID
+            ));
+            assert!(!store.data().unwrap().contains(&key));
+
+            let chat = manager
+                .getModelBindingForFunction(FunctionType::CHAT)
+                .unwrap();
+            let persisted = manager.functionalConfigDataStore.data().unwrap();
+            assert_eq!(
+                FunctionalConfigManager::readFunctionModelBinding(&persisted).unwrap(),
+                FunctionalConfigManager::defaultBinding(),
+            );
+            let mut provider: ProviderProfile =
+                serde_json::from_value(store.data().unwrap().get(&key).unwrap().clone()).unwrap();
+            assert!(provider.models.iter().any(|model| model.id == chat.modelId));
+            let model_manager = &manager.modelConfigManager;
+            model_manager
+                .getResolvedModelConfig(&chat.providerId, &chat.modelId)
+                .unwrap();
+            model_manager
+                .getThinkingSettingsForProvider(&chat.providerId, &chat.modelId)
+                .unwrap();
+            assert!(model_manager
+                .getProviderProfiles()
+                .unwrap()
+                .iter()
+                .any(|value| value.id == chat.providerId));
+
+            provider.apiKey = "test-persisted-key".into();
+            model_manager.updateProviderProfile(provider).unwrap();
+            let before = manager
+                .functionalConfigDataStore
+                .syncSnapshot()
+                .unwrap()
+                .token()
+                .unwrap();
+            let model_before = store.syncSnapshot().unwrap().token().unwrap();
+            // Open fresh storage hosts so these reads cannot use either manager's cache.
+            let cold_storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost> =
+                std::sync::Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+                    fixture.root.join("runtime"),
+                    fixture.root.join("workspaces"),
+                ));
+            let cold_bindings = FunctionalConfigManager::preferenceStore(
+                cold_storage.clone(),
+                operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
+            )
+            .data()
+            .unwrap();
+            assert_eq!(cold_bindings, persisted);
+            let cold_models = ModelConfigManager::preferenceStore(
+                cold_storage,
+                operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
+            )
+            .data()
+            .unwrap();
+            assert_eq!(cold_models.get(&key).unwrap()["apiKey"], "test-persisted-key");
+            let reopened = FunctionalConfigManager::new(fixture.root.join("runtime"));
+            assert_eq!(
+                reopened
+                    .getModelBindingForFunction(FunctionType::CHAT)
+                    .unwrap(),
+                chat
+            );
+            assert_eq!(
+                reopened
+                    .modelConfigManager
+                    .getResolvedModelConfig(&chat.providerId, &chat.modelId)
+                    .unwrap()
+                    .apiKey,
+                "test-persisted-key",
+            );
+            assert_eq!(
+                manager
+                    .functionalConfigDataStore
+                    .syncSnapshot()
+                    .unwrap()
+                    .token()
+                    .unwrap(),
+                before
+            );
+            assert_eq!(store.syncSnapshot().unwrap().token().unwrap(), model_before);
+        }
+    }
+
+    #[test]
+    fn partial_bindings_are_completed_in_storage_without_replacing_user_choices() {
+        let fixture = ConfigFixture::new();
+        let manager = &fixture.manager;
+        manager
+            .functionalConfigDataStore
+            .edit(|preferences| {
+                preferences.set(
+                    &FunctionalConfigManager::FUNCTION_MODEL_BINDING(),
+                    serde_json::json!({
+                        "CHAT": binding("custom-provider", "custom-chat", false),
+                        "SUMMARY": binding("custom-provider", "custom-chat", true),
+                        "TRANSLATION": binding("translation-provider", "translation-model", false),
+                    }),
+                );
+            })
+            .unwrap();
+
+        let bindings = manager.functionModelBindingFlow().unwrap().first().unwrap();
+        let persisted = manager.functionalConfigDataStore.data().unwrap();
+        assert_eq!(
+            FunctionalConfigManager::readFunctionModelBinding(&persisted).unwrap(),
+            bindings
+        );
+        assert_eq!(
+            bindings.len(),
+            FunctionalConfigManager::functionTypeValues().len()
+        );
+        assert_eq!(
+            bindings[&FunctionType::CHAT],
+            binding("custom-provider", "custom-chat", false)
+        );
+        assert_eq!(
+            bindings[&FunctionType::TRANSLATION],
+            binding("translation-provider", "translation-model", false)
+        );
+        assert!(bindings[&FunctionType::SUMMARY].followsChat);
+        assert_eq!(
+            manager
+                .getModelBindingForFunction(FunctionType::SUMMARY)
+                .unwrap(),
+            bindings[&FunctionType::CHAT]
+        );
+        assert_eq!(
+            bindings[&FunctionType::MEMORY],
+            FunctionModelBinding::default()
+        );
+    }
+
+    #[test]
+    fn missing_default_model_is_persisted_without_resetting_provider_settings() {
+        use super::ModelConfigManager;
+
+        let fixture = ConfigFixture::new();
+        let manager = &fixture.manager;
+        let model_manager = &manager.modelConfigManager;
+        let mut provider = model_manager
+            .getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID)
+            .unwrap();
+        provider.apiKey = "test-existing-key".into();
+        provider.endpoint = "https://example.test/v1/chat/completions".into();
+        model_manager.updateProviderProfile(provider).unwrap();
+        model_manager
+            .deleteModel(
+                ModelConfigManager::DEFAULT_PROVIDER_ID,
+                ModelConfigManager::DEFAULT_MODEL_ID,
+            )
+            .unwrap();
+        assert!(model_manager
+            .getModelProfile(
+                ModelConfigManager::DEFAULT_PROVIDER_ID,
+                ModelConfigManager::DEFAULT_MODEL_ID
+            )
+            .is_err());
+
+        let flow = manager.functionModelBindingFlow().unwrap();
+        let bindings = flow.first().unwrap();
+        let chat = &bindings[&FunctionType::CHAT];
+        let config = model_manager
+            .getResolvedModelConfig(&chat.providerId, &chat.modelId)
+            .unwrap();
+        assert_eq!(config.apiKey, "test-existing-key");
+        assert_eq!(
+            config.apiEndpoint,
+            "https://example.test/v1/chat/completions"
+        );
+
+        // An existing flow also repairs a later deleted binding on its next read.
+        manager
+            .functionalConfigDataStore
+            .edit(|preferences| {
+                preferences.remove(&FunctionalConfigManager::FUNCTION_MODEL_BINDING());
+            })
+            .unwrap();
+        assert_eq!(flow.first().unwrap(), bindings);
+        assert!(manager
+            .functionalConfigDataStore
+            .data()
+            .unwrap()
+            .contains(&FunctionalConfigManager::FUNCTION_MODEL_BINDING()));
+    }
+
+    #[test]
+    fn read_invalid_bindings_still_reports_errors() {
+        use operit_store::PreferencesDataStore::emptyPreferences;
+
+        for invalid in [
+            serde_json::json!({"CHAT": {"providerId": "p"}}),
+            serde_json::json!({"UNKNOWN": binding("p", "m", false)}),
+        ] {
+            let mut preferences = emptyPreferences();
+            preferences.set(&FunctionalConfigManager::FUNCTION_MODEL_BINDING(), invalid);
+            assert!(FunctionalConfigManager::readFunctionModelBinding(&preferences).is_err());
         }
     }
 

@@ -2719,6 +2719,32 @@ mod tests {
         assert!(fixture.handler.hasToolExecutor("tts_set_current_config_id"));
     }
 
+    /// Both proxy entry points accept new YAML and both historical JSON forms without changing routing.
+    #[tokio::test]
+    async fn proxy_yaml_and_legacy_json_resolve_to_identical_parameters() {
+        let fixture = PipelineFixture::new();
+        let expected = json!({"content": "print(\"\\d+\")\n\n", "enabled": true, "nested": {"items": [1, null]}});
+        let yaml = operit_util::ProxyParameters::format_proxy_parameters(expected.as_object().unwrap());
+        for name in ["package_proxy", "proxy"] {
+            let turn = ToolRuntimeContext {
+                callerChatId: Some("chat".into()), callerParticipantId: None,
+                workspacePath: None, workspaceFolders: Vec::new(),
+                toolExposureMode: if name == "proxy" { ToolExposureMode::CLI } else { ToolExposureMode::FULL },
+                extensionOwner: "config-owner".into(), executionData: Default::default(),
+            };
+            for payload in [Value::String(yaml.clone()), expected.clone(), Value::String(expected.to_string())] {
+                let request = ToolCall { name: name.into(), parameters: BTreeMap::from([
+                    ("tool_name".into(), json!("files:write")), ("params".into(), payload),
+                ]) };
+                let resolved = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), async {
+                    request.resolveTarget(&ToolInvocationContext::capture(fixture.handler.clone()))
+                }).await.unwrap();
+                assert_eq!(resolved.name, "files:write");
+                assert_eq!(serde_json::to_value(resolved.parameters).unwrap(), expected);
+            }
+        }
+    }
+
     /// Proves CLI aliases resolve once, with hooks and permission admission restricted to AI calls.
     #[tokio::test]
     async fn proxy_resolution_does_not_execute_a_second_lifecycle() {

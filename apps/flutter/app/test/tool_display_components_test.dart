@@ -18,6 +18,51 @@ void main() {
     );
   });
 
+  test(
+    'shows YAML proxy parameters without rewriting code or trailing newlines',
+    () {
+      const content = 'print("\\d+ <tag>& \\"quoted\\"")  \n\n';
+      final payload = 'path: /tmp/demo.py\ncontent: |+\n  $content';
+      for (final toolName in ['package_proxy', 'proxy']) {
+        final display = normalizeToolDisplayForStrictProxy(
+          toolName,
+          '<param name="tool_name">files:write</param>'
+          '<param name="params">${escapeXmlText(payload)}</param>',
+        );
+        expect(display.toolName, 'files:write');
+        final parameters = extractToolParamMap(display.params);
+        expect(parameters['path'], '/tmp/demo.py');
+        expect(parameters['content'], content);
+      }
+    },
+  );
+
+  test('decodes nested YAML types and keeps malformed proxies readable', () {
+    final parameters = decodeProxyParameters(
+      'enabled: true\nlimit: 3\nitems: [one, two]\n'
+      'options: {mode: fast}\noptional: null\ntext: "0012"\n',
+    );
+    expect(parameters, {
+      'enabled': true,
+      'limit': 3,
+      'items': ['one', 'two'],
+      'options': {'mode': 'fast'},
+      'optional': null,
+      'text': '0012',
+    });
+    for (final payload in ['[1, 2]', 'content: [unfinished', 'just text']) {
+      final markup =
+          '<param name="tool_name">files:write</param>'
+          '<param name="params">$payload</param>';
+      final display = normalizeToolDisplayForStrictProxy(
+        'package_proxy',
+        markup,
+      );
+      expect(display.toolName, 'package_proxy');
+      expect(display.params, markup);
+    }
+  });
+
   test('keeps direct tool names and XML parameters', () {
     final display = normalizeToolDisplayForStrictProxy(
       'read_file',

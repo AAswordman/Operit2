@@ -69,6 +69,7 @@ dependencies:
     path: ../thirdparty/record_ohos
   archive: ^4.0.9
   xml: ^6.6.1
+  yaml: ^3.1.4
   webview_all:
     path: ../thirdparty/webview_all
   webview_all_windows: ^1.2.1

@@ -134,8 +134,8 @@ impl CliToolModeSupport {
                         },
                         ToolParameterSchema {
                             name: "params".to_string(),
-                            r#type: "object".to_string(),
-                            description: "JSON object of parameters to forward to the hidden target tool".to_string(),
+                            r#type: "string".to_string(),
+                            description: operit_util::ProxyParameters::PROXY_PARAMS_DESCRIPTION_EN.to_string(),
                             required: true,
                             default: None,
                         },
@@ -185,8 +185,8 @@ impl CliToolModeSupport {
                         },
                         ToolParameterSchema {
                             name: "params".to_string(),
-                            r#type: "object".to_string(),
-                            description: "转发给隐藏目标工具的 JSON 参数对象".to_string(),
+                            r#type: "string".to_string(),
+                            description: operit_util::ProxyParameters::PROXY_PARAMS_DESCRIPTION_CN.to_string(),
                             required: true,
                             default: None,
                         },
@@ -205,13 +205,13 @@ impl CliToolModeSupport {
 - Only two public tools are available: `search` and `proxy`.
 - `search` only searches the hidden tool catalog. It does not read files, search code, or browse the web.
 - All real capabilities are hidden behind `proxy`.
-- Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and JSON params."#
+- Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and YAML mapping text in params. Use indented literal blocks (|, |-, |+) for multiline code or text, and quote strings that look like numbers, booleans, or null."#
         } else {
             r#"CLI 工具模式
 - 当前只有两个公开工具：`search` 和 `proxy`。
 - `search` 只搜索隐藏工具目录，不会直接读文件、搜代码或访问网页。
 - 所有真实能力都隐藏在 `proxy` 后面。
-- 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。"#
+- 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 YAML 映射文本参数调用 `proxy`。代码和多行文本使用缩进的原文块（|、|-、|+）；看起来像数字、布尔值或 null 的字符串需加引号。"#
         };
         let category = SystemToolPromptCategory {
             categoryName: if useEnglish {
@@ -436,11 +436,16 @@ impl CliToolModeSupport {
             }
             match &entry.suggested_params_json {
                 Some(params) if !params.trim().is_empty() => {
-                    output.push_str("   ");
-                    if useEnglish {
-                        output.push_str(&format!("Params hint: `{params}`\n"));
-                    } else {
-                        output.push_str(&format!("参数示例：`{params}`\n"));
+                    if let Ok(parameters) = operit_util::ProxyParameters::parse_proxy_parameters(&serde_json::Value::String(params.clone())) {
+                        let yaml = operit_util::ProxyParameters::format_proxy_parameters(&parameters);
+                        output.push_str(if useEnglish { "   Params hint (YAML):\n\n" } else { "   参数示例（YAML）：\n\n" });
+                        output.push_str("   ```yaml\n");
+                        for line in yaml.lines() {
+                            output.push_str("   ");
+                            output.push_str(line);
+                            output.push('\n');
+                        }
+                        output.push_str("   ```\n");
                     }
                 }
                 _ if !entry.parameter_hints.is_empty() => {
@@ -782,4 +787,38 @@ fn normalize(value: &str) -> String {
         }
     }
     normalized.trim().to_string()
+}
+
+#[cfg(test)]
+mod proxy_yaml_tests {
+    use super::*;
+
+    #[test]
+    fn cli_proxy_prompts_advertise_yaml_text_in_both_languages() {
+        for english in [true, false] {
+            let tools = CliToolModeSupport::buildCliPublicToolPrompts(english);
+            let proxy = tools.iter().find(|tool| tool.name == PROXY_TOOL_NAME).unwrap();
+            let params = proxy.parametersStructured.as_ref().unwrap().iter().find(|p| p.name == "params").unwrap();
+            assert_eq!(params.r#type, "string");
+            assert!(params.description.contains("YAML"));
+            let prompt = CliToolModeSupport::buildCliModePrompt(english);
+            assert!(prompt.contains("YAML"));
+            assert!(!prompt.contains("JSON"));
+        }
+    }
+
+    #[test]
+    fn search_hints_render_as_yaml_even_for_historical_catalog_json() {
+        let entry = HiddenToolCatalogEntry {
+            target_tool_name: "use_package".into(), display_name: "browser".into(),
+            description: "Browser tools".into(), parameter_hints: vec![],
+            source_kind: HiddenToolSourceKind::ACTIVATION, keywords: vec![],
+            suggested_params_json: Some(r#"{"package_name":"browser"}"#.into()),
+        };
+        for english in [true, false] {
+            let result = CliToolModeSupport::formatSearchResults("browser", &[entry.clone()], english);
+            assert!(result.contains("```yaml\n   package_name: browser"));
+            assert!(!result.contains(r#"{"package_name""#));
+        }
+    }
 }

@@ -32,6 +32,7 @@ pub mod OCRUtils;
 pub mod OperitPaths;
 pub mod PortProcessKiller;
 pub mod PluginStoragePaths;
+pub mod ProxyParameters;
 #[path = "RuntimeStorageLayout.rs"]
 pub mod RuntimeStorageLayout;
 #[path = "RuntimeStoreRoot.rs"]
