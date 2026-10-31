@@ -24,6 +24,7 @@ include hashes in the existing build manifest.
   OpenHarmony, and Windows.
 - `build_cli_<platform>.py`: CLI builds for Linux, macOS, and Windows.
 - `build_cli_current.py`: CLI build for the current host platform.
+- `build_cli_linux_debian12.py`: glibc 2.36-compatible Linux CLI build inside a Debian 12 container (`containers/debian12/`). The image is provisioned through `podman run` + `commit`, avoiding kernel-overlayfs build-context mounts.
 - `build_local.py`: existing current-host App/CLI/ESP32 dispatcher.
 - `build_apple_release.py`: Apple release asset dispatcher.
 - `build_esp32.py`: ESP32 firmware builder.
