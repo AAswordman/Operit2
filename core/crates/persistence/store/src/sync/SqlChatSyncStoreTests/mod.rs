@@ -1199,7 +1199,7 @@ fn record_message_snapshots_are_merged_into_final_stream_state() {
         syncStore.recordMessageSnapshot(chatId, timestamp).unwrap();
     }
 
-    assert_eq!(sqlOperationCount(&database), 100);
+    assert_eq!(sqlOperationCount(&database), 1);
     let operations = syncStore
         .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], 10)
         .unwrap();
@@ -1285,7 +1285,7 @@ fn older_merged_upsert_does_not_revert_newer_state() {
             .content,
         "new"
     );
-    assert_eq!(sqlOperationCount(&database), 2);
+    assert_eq!(sqlOperationCount(&database), 1);
     AppDatabase::closeDatabase();
 }
 
@@ -1354,7 +1354,7 @@ fn stress_stream_snapshots_export_single_final_operation() {
         syncStore.recordMessageSnapshot(chatId, timestamp).unwrap();
     }
 
-    assert_eq!(sqlOperationCount(&database), 1000);
+    assert_eq!(sqlOperationCount(&database), 1);
     let operations = syncStore
         .operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.to_string()], 10)
         .unwrap();
@@ -1401,7 +1401,7 @@ fn stress_many_messages_roundtrip_with_stream_compaction() {
         }
     }
 
-    assert_eq!(sqlOperationCount(&sourceDatabase), (messageCount * updateRounds) as i64);
+    assert_eq!(sqlOperationCount(&sourceDatabase), messageCount as i64);
     let operations = sourceSyncStore
         .operationsSince(
             &SyncClock::empty(),
@@ -1600,7 +1600,7 @@ fn native_sql_compaction_does_not_erase_durable_receipts() {
             .completeOperations(std::slice::from_ref(operation))
             .unwrap();
     }
-    assert_eq!(sqlOperationCount(&database), 2);
+    assert_eq!(sqlOperationCount(&database), 1);
     assert_eq!(
         syncStore.receipt().unwrap().ranges["remote-sql"],
         vec![[1, 2]]
@@ -1634,7 +1634,7 @@ fn later_chat_write_has_a_new_identity_and_collision_keeps_business_state() {
     assert!(store.applyOperation(&collision).is_err());
     store.applyOperation(&original).unwrap();
     assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, "latest");
-    assert_eq!(sqlOperationCount(&database), 2);
+    assert_eq!(sqlOperationCount(&database), 1);
     assert_eq!(store.operationsSince(&SyncClock::empty(), &[CHAT_SYNC_DOMAIN.into()], 10).unwrap(), vec![latest]);
     AppDatabase::closeDatabase();
 }
@@ -1738,5 +1738,48 @@ fn incremental_messages_with_different_local_ids_have_equal_content_digests() {
     parts["rows"][0][content] = serde_json::json!({"Text":"different business content"});
     assert_ne!(SqlChatSyncStore::snapshotContentDigest(&source_snapshot).unwrap(),
         SqlChatSyncStore::snapshotContentDigest(&changed).unwrap());
+    AppDatabase::closeDatabase();
+}
+
+#[test]
+fn correction_replaces_chat_payloads_with_an_exportable_initializer_and_replays_offline_writes() {
+    let _guard = DATABASE_MUTEX.lock().unwrap_or_else(|e|e.into_inner());
+    let (_,a_db,a) = openTestStore("compact-init-a");
+    let first = upsertOperation(1,"A"); let latest = upsertOperation(2,"AB");
+    a.applyOperation(&first).unwrap(); a.applyOperation(&latest).unwrap();
+    assert_eq!(sqlOperationCount(&a_db),1);
+    let (_,b_db,b) = openTestStore("compact-init-b");
+    b.applyOperation(&latest).unwrap();
+    let (_,offline_db,offline) = openTestStore("compact-init-offline");
+    offline.applyOperation(&latest).unwrap();
+    let mut pending = upsertOperation(1,"offline");
+    pending.originDeviceId = "offline-author".into(); pending.opId = "offline-author:1".into(); pending.createdAt = 30;
+    pending.entityId = "chat-remote:3000".into();
+    pending.payload = serde_json::to_value(ChatSyncPayload { chatRows:vec![chat("chat-remote")],
+        messageRows:vec![message("chat-remote",3000,"offline")],partRows:vec![messagePart("chat-remote",3000,"offline")],..Default::default() }).unwrap();
+    offline.applyOperation(&pending).unwrap();
+    let a_snapshot = a.syncSnapshot().unwrap(); let b_snapshot = b.syncSnapshot().unwrap();
+    let mut authority = a_snapshot.clone(); authority.covered.extend(b_snapshot.covered.iter().cloned());
+    for (store,db,capture) in [(&a,&a_db,&a_snapshot),(&b,&b_db,&b_snapshot)] {
+        assert!(store.repairSyncedSnapshot(&capture.token().unwrap(),&authority).unwrap());
+        assert_eq!(sqlOperationCount(db),0);
+        assert!(store.receipt().unwrap().containsSequence("remote-sql",1));
+    }
+    let initializers = a.operationsSince(&SyncClock::empty(),&[],100).unwrap();
+    assert_eq!(initializers.len(),1);
+    assert_eq!(initializers,b.operationsSince(&SyncClock::empty(),&[],100).unwrap());
+    offline.applyOperation(&initializers[0]).unwrap();
+    assert_eq!(offline_db.messagePartDao().getPartsForMessage("chat-remote",2000,0).unwrap()[0].content,"AB");
+    assert_eq!(offline_db.messagePartDao().getPartsForMessage("chat-remote",3000,0).unwrap()[0].content,"offline");
+    assert_eq!(sqlOperationCount(&offline_db),1);
+    let (_,empty_db,empty) = openTestStore("compact-init-empty");
+    empty.applyOperation(&initializers[0]).unwrap();
+    assert_eq!(empty.syncSnapshot().unwrap().data,authority.data);
+    assert_eq!(sqlOperationCount(&empty_db),0);
+    let receipt = a.receipt().unwrap();
+    assert!(a.operationsSince(&receipt,&[],100).unwrap().is_empty());
+    let mut collision = first.clone(); collision.createdAt += 99;
+    assert!(a.applyOperation(&collision).is_err());
+    a.applyOperation(&first).unwrap(); assert_eq!(sqlOperationCount(&a_db),0);
     AppDatabase::closeDatabase();
 }

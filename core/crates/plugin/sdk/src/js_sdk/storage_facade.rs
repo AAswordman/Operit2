@@ -243,6 +243,9 @@ pub enum StoragePreferencesCallbackResult {
     Complete(()),
     Pending(JsFuture<()>),
 }
+/// Portable rules interpreted by the common state and transaction migration engine.
+pub type StorageMigrationRule = super::storage::StoragePreferencesMigrationRule;
+
 /// Owns a native JSON preference file with Rust-style snapshot and edit semantics.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct StorageDataStore {
@@ -254,8 +257,8 @@ pub trait StorageDataStoreMethods: Send + Sync {
     fn data(&self) -> JsFuture<StoragePreferences>;
     /// Publishes one callback atomically; conflicts reject without rerunning the callback.
     fn edit(&self, transform: std::sync::Arc<dyn Fn(StorageMutablePreferences) -> StoragePreferencesCallbackResult + Send + Sync>) -> JsFuture<StoragePreferences>;
-    /// Declares ordered one-version upgrades before subsequent reads or edits.
-    fn withSchema(&self, currentVersion: u32, migrate: std::sync::Arc<dyn Fn(u32, StorageMutablePreferences) -> StoragePreferencesCallbackResult + Send + Sync>) -> StorageDataStore;
+    /// Persists numbered migration rules shared by data upgrades and background transaction replay.
+    fn withSchema(&self, currentVersion: u32, steps: Vec<Vec<StorageMigrationRule>>) -> StorageDataStore;
     /// Reads the declared store's current schema version after applying pending upgrades.
     fn schemaVersion(&self) -> JsFuture<u32>;
     /// Observes complete snapshots with collector-owned cancellation.

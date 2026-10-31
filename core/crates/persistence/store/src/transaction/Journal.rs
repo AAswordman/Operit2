@@ -19,6 +19,7 @@ impl Journal {
                 business_time INTEGER NOT NULL, target TEXT NOT NULL, format_version INTEGER NOT NULL,
                 UNIQUE(origin, sequence));
             CREATE INDEX IF NOT EXISTS originals_pending ON originals(pending, domain);
+            CREATE INDEX IF NOT EXISTS originals_time ON originals(business_time);
             CREATE TABLE IF NOT EXISTS legacy_receipts(origin TEXT, first INTEGER, last INTEGER,
                 PRIMARY KEY(origin, first));
             CREATE TABLE IF NOT EXISTS legacy_fingerprints(id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL);
@@ -28,6 +29,8 @@ impl Journal {
             CREATE TABLE IF NOT EXISTS transaction_commits(id TEXT PRIMARY KEY);
             CREATE INDEX IF NOT EXISTS originals_target ON originals(target,pending,business_time);
             CREATE TABLE IF NOT EXISTS journal_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
+        connection.executeBatch(super::compaction::SCHEMA)?;
+        connection.executeBatch("CREATE TABLE IF NOT EXISTS preference_compaction_policy(path TEXT PRIMARY KEY,format INTEGER NOT NULL,safe INTEGER NOT NULL)")?;
         Ok(Self(connection))
     }
 
@@ -50,6 +53,8 @@ impl Journal {
             || original.opId != format!("{}:{}", original.originDeviceId, original.sequence) {
             return Err(Error::Message("Invalid transaction identity".into()));
         }
+        if super::compaction::retired(tx,original)? { return Ok(()); }
+        if !tx.query("SELECT 1 FROM _operit_initialization_coverage WHERE id=?1",vec![text(&original.opId)])?.is_empty() { return Ok(()); }
         let fingerprint = crate::Transaction::digest(original).map_err(Error::Message)?;
         let previous = tx.query("SELECT fingerprint FROM originals WHERE id=?1 UNION ALL SELECT fingerprint FROM legacy_fingerprints WHERE id=?1", vec![text(&original.opId)])?;
         for row in &previous {
@@ -84,6 +89,17 @@ impl Journal {
         )?.into_iter().map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).collect()
     }
 
+    /// Local edits compare current-format originals only; initialization blobs stay unopened.
+    pub(crate) fn preference_compaction_history(&mut self, path: &str, format: u32) -> Result<Vec<SyncOperation>, Error> {
+        self.0.query(
+            "SELECT o.original FROM originals o JOIN preference_compaction_policy p
+             ON p.path=o.target AND p.format=o.format_version AND p.safe=1
+             WHERE o.target=?1 AND p.format=?2 AND o.pending=0 AND o.domain='preferences'
+             AND json_extract(o.header,'$.operation') NOT IN ('initialize','alias') ORDER BY o.origin,o.sequence",
+            vec![text(path), SqliteValue::Integer(format.into())],
+        )?.into_iter().map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).collect()
+    }
+
     /// Small headers are enough for export planning; business payloads are read only after selection.
     pub(crate) fn headers(&mut self, pending: Option<bool>) -> Result<Vec<JournalRecord>, Error> {
         let (sql, params) = match pending {
@@ -103,11 +119,16 @@ impl Journal {
             for operation in operations {
                 let fingerprint = crate::Transaction::digest(operation).map_err(Error::Message)?;
                 let rows = tx.query("SELECT fingerprint FROM originals WHERE id=?1", vec![text(&operation.opId)])?;
+                if rows.is_empty() && (super::compaction::retired(tx,operation)? || !tx.query("SELECT 1 FROM _operit_initialization_coverage WHERE id=?1",vec![text(&operation.opId)])?.is_empty()) { continue; }
                 let row = rows.first().ok_or_else(|| Error::Message(format!("Unreceived operation {}", operation.opId)))?;
                 if row.valueAt(0)?.asString()? != fingerprint {
                     return Err(Error::Message(format!("Conflicting immutable operation {}", operation.opId)));
                 }
                 tx.execute("UPDATE originals SET pending=0 WHERE id=?1", vec![text(&operation.opId)])?;
+                // SQL owners export through their own source; this journal only carries pending reception.
+                if matches!(operation.domain.as_str(), "chat" | "plugin_storage") {
+                    Self::retire_ids(tx,std::iter::once(operation.opId.clone()))?;
+                }
             }
             Ok(())
         })
@@ -118,14 +139,17 @@ impl Journal {
         for row in self.0.query("SELECT origin,first,last FROM legacy_receipts", vec![])? {
             receipt.observeRange(&row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()?, row.valueAt(2)?.asI64()?);
         }
-        for row in self.0.query("SELECT origin,sequence FROM originals ORDER BY origin,sequence", vec![])? {
+        for row in self.0.query("SELECT origin,sequence FROM originals UNION SELECT origin,sequence FROM _operit_compacted ORDER BY origin,sequence", vec![])? {
             receipt.observe(&row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()?);
+        }
+        for row in self.0.query("SELECT id FROM _operit_initialization_coverage",vec![])? {
+            super::compaction::observe_id(&mut receipt,&row.valueAt(0)?.asString()?);
         }
         Ok(receipt)
     }
 
     pub(crate) fn highest(&mut self, origin: &str) -> Result<i64, Error> {
-        let rows = self.0.query("SELECT COALESCE(MAX(sequence),0) FROM originals WHERE origin=?1", vec![text(origin)])?;
+        let rows = self.0.query("SELECT MAX(COALESCE((SELECT MAX(sequence) FROM originals WHERE origin=?1),0),COALESCE((SELECT MAX(sequence) FROM _operit_compacted WHERE origin=?1),0))", vec![text(origin)])?;
         Ok(rows[0].valueAt(0)?.asI64()?)
     }
 
@@ -187,7 +211,7 @@ impl Journal {
             };
             let sequence = sequence.checked_add(1).ok_or_else(|| Error::Message("Transaction sequence overflow".into()))?;
             let created_at = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(Error::Message)?;
-            let seen = tx.query("SELECT COALESCE(MAX(business_time),0) FROM originals", vec![])?[0].valueAt(0)?.asI64()?;
+            let seen = tx.query("SELECT MAX(COALESCE((SELECT MAX(business_time) FROM originals),0),COALESCE((SELECT MAX(business_time) FROM _operit_compacted),0))", vec![])?[0].valueAt(0)?.asI64()?;
             let logical = logical.max(seen).max(created_at).checked_add(1).ok_or_else(|| Error::Message("Transaction logical clock overflow".into()))?;
             mutation.payload["logicalTime"] = serde_json::Value::from(logical);
             tx.execute("INSERT INTO transaction_authors(origin,sequence,logical_time) VALUES(?1,?2,?3) ON CONFLICT(origin) DO UPDATE SET sequence=excluded.sequence,logical_time=excluded.logical_time",
@@ -223,6 +247,53 @@ impl Journal {
                 return Ok(());
             }
             tx.execute("INSERT INTO transaction_files VALUES(?1,?2)",vec![text(path), SqliteValue::Integer(i64::from(encrypted))])?;
+            Ok(())
+        })
+    }
+}
+
+impl Journal {
+    pub(crate) fn set_compaction(&mut self,path: &str,format: u32,safe: bool) -> Result<bool,Error> {
+        self.transaction(|tx| {
+            if !tx.query("SELECT 1 FROM preference_compaction_policy WHERE path=?1 AND format=?2 AND safe=?3",
+                vec![text(path),SqliteValue::Integer(format.into()),SqliteValue::Integer(i64::from(safe))])?.is_empty() { return Ok(false); }
+            tx.execute("INSERT INTO preference_compaction_policy VALUES(?1,?2,?3) ON CONFLICT(path) DO UPDATE SET format=excluded.format,safe=excluded.safe",
+                vec![text(path),SqliteValue::Integer(format.into()),SqliteValue::Integer(i64::from(safe))])?;
+            Ok(true)
+        })
+    }
+
+    /// A coverage decision retires pending and completed copies through the same atomic path.
+    pub(crate) fn retire_ids(tx: &mut dyn RuntimeSqliteTransaction, ids: impl IntoIterator<Item=String>) -> Result<(),Error> {
+        for id in ids {
+            for row in tx.query("SELECT origin,sequence,business_time,fingerprint FROM originals WHERE id=?1",vec![text(&id)])? {
+                super::compaction::seal_identity(tx,&id,&row.valueAt(0)?.asString()?,row.valueAt(1)?.asI64()?,row.valueAt(2)?.asI64()?,&row.valueAt(3)?.asString()?)?;
+                tx.execute("DELETE FROM originals WHERE id=?1",vec![text(&id)])?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retire_covered(tx: &mut dyn RuntimeSqliteTransaction, paths: &[String], covered: &std::collections::BTreeSet<String>) -> Result<(),Error> {
+        for id in covered {
+            tx.execute("INSERT OR IGNORE INTO _operit_initialization_coverage VALUES(?1)",vec![text(id)])?;
+        }
+        for path in paths {
+            let ids = tx.query("SELECT id FROM originals WHERE target=?1 AND domain='preferences'",vec![text(path)])?.into_iter()
+                .map(|row|row.valueAt(0)?.asString()).collect::<Result<Vec<_>,_>>()?;
+            Self::retire_ids(tx,ids.into_iter().filter(|id|covered.contains(id)))?;
+        }
+        Ok(())
+    }
+
+    /// Upgrade the old duplicate SQL archive once. Completed SQL commits belong to their source.
+    pub(crate) fn reclaim_sql_copies(&mut self) -> Result<(),Error> {
+        self.transaction(|tx| {
+            if !tx.query("SELECT 1 FROM journal_meta WHERE key='sql_sources_own_completed'",vec![])?.is_empty() { return Ok(()); }
+            let ids = tx.query("SELECT id FROM originals WHERE pending=0 AND domain IN ('chat','plugin_storage')",vec![])?.into_iter()
+                .map(|row|row.valueAt(0)?.asString()).collect::<Result<Vec<_>,_>>()?;
+            Self::retire_ids(tx,ids)?;
+            tx.execute("INSERT INTO journal_meta VALUES('sql_sources_own_completed','1')",vec![])?;
             Ok(())
         })
     }

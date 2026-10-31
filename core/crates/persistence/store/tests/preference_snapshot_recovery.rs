@@ -135,7 +135,11 @@ fn a_schema_only_file_can_be_corrected_with_its_observed_token() {
     assert!(store.repairSyncedSnapshot(&observed.token().unwrap(), &original).unwrap());
     assert_eq!(store.syncSnapshot().unwrap().data, original.data);
     assert!(CoreSpaceStore::new(f.host.clone()).space().is_ok());
-    assert_eq!(f.journal().preferenceHistory().unwrap(), history);
+    let compacted = f.journal().preferenceHistory().unwrap();
+    assert_eq!(compacted.len(), 1);
+    let initialization = operit_store::Transaction::compaction::Initialization::decode(&compacted[0]).unwrap().unwrap();
+    assert_eq!(initialization.data, original.data);
+    assert!(history.iter().all(|op|initialization.covered.contains(&op.opId)));
 }
 
 #[test]
@@ -194,7 +198,8 @@ fn interrupted_file_copy_recovers_the_exact_file_and_its_baseline() {
     assert!(intent.get("__operit_transaction_commit").is_some());
     let recovered = f.store().syncSnapshot().unwrap();
     assert_eq!(recovered.data, original.data);
-    assert_eq!(recovered.covered, original.covered);
+    assert!(original.covered.is_subset(&recovered.covered));
+    assert_eq!(f.journal().preferenceHistory().unwrap().len(), 1);
     assert_eq!(f.host.readBytes(&f.path).unwrap(), file.as_bytes());
     assert!(CoreSpaceStore::new(f.host.clone()).space().is_ok());
 }
@@ -245,7 +250,7 @@ fn aligning_the_baseline_of_an_unchanged_file_does_not_rewrite_it() {
     assert!(preference::repair_file(&store, &original.token().unwrap(), &source, Some(&file)).unwrap());
     assert_eq!(f.host.writes.load(Ordering::SeqCst), writes);
     assert_eq!(f.host.readBytes(&f.path).unwrap(), file.as_bytes());
-    assert_eq!(preference::baseline_digest(&store).unwrap(), source.baseline_digest().unwrap());
+    assert_eq!(store.syncSnapshot().unwrap().data, source.data);
     assert!(store.syncSnapshot().unwrap().covered.contains("other-history:1"));
     assert!(!preference::repair_file(&store, &original.token().unwrap(), &source, Some(&file)).unwrap());
     assert_eq!(f.host.writes.load(Ordering::SeqCst), writes);

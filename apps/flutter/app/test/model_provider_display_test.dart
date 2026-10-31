@@ -121,6 +121,19 @@ void main() {
     );
   }
 
+  test('user messages never use the recipient AI display identity', () {
+    final message = _message(
+      sender: 'user',
+      extensions: const {
+        'host.chat.identity': {
+          'title': 'Operit',
+          'avatarUri': 'provider-logo:openai',
+        },
+      },
+    );
+    expect(readChatMessageIdentity(message), isNull);
+  });
+
   test('missing historical metadata does not invent names or separators', () {
     final snapshot = _snapshot('cursor', true, true);
     expect(

@@ -878,6 +878,11 @@ impl SyncOperationStore {
         Ok(history)
     }
 
+    pub(crate) fn preferenceCompactionHistory(&self, path: &str, format: u32) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.withJournal(|journal| journal.preference_compaction_history(path, format))?.into_iter()
+            .map(|operation| self.decodeOperationPayload(operation)).collect()
+    }
+
     /// Lists registered owners, including datasets prepared by plugins while their UI is closed.
     pub fn preferenceDatasets(&self) -> Result<BTreeMap<String, bool>, SyncOperationStoreError> {
         self.withJournal(|journal| journal.files())
@@ -1689,6 +1694,7 @@ impl SyncOperationStore {
         if state.is_none() {
             let mut journal = crate::Transaction::Journal::open(self.storageHost.as_ref(), &self.rootPath)?;
             self.importLegacyJournal(&mut journal)?;
+            journal.reclaim_sql_copies()?;
             *state = Some(journal);
         }
         action(state.as_mut().expect("journal opened"))
@@ -1854,6 +1860,12 @@ impl SyncOperationStore {
         drop(control);
         publishSyncMutation();
         Ok(())
+    }
+
+    /// The caller supplies a committed coverage proof for these exact originals.
+    pub(crate) fn retireCoveredOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        self.withJournal(|journal|journal.transaction(|tx|crate::Transaction::Journal::retire_ids(tx,
+            operations.iter().map(|operation|operation.opId.clone()))))
     }
 
     pub fn pendingOperationIds(&self) -> Result<Vec<String>, SyncOperationStoreError> {

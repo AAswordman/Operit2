@@ -243,7 +243,7 @@ impl<'de> DeserializeSeed<'de> for MergeEntries {
                     let fields =
                         serde_json::from_str::<RouteFields<'_>>(raw.get()).unwrap_or_default();
                     found |=
-                        string_field(fields.key).as_deref() == Some(PLUGIN_MERGE_DECLARATION_KEY);
+                        string_field(fields.key).as_deref().is_some_and(|key| [PLUGIN_MERGE_DECLARATION_KEY,crate::PluginPreferenceSchema::KEY].contains(&key));
                 }
                 Ok(found)
             }
@@ -265,8 +265,7 @@ impl PayloadRoute {
             encrypted,
             resolved: !encrypted,
             storage_path: string_field(fields.storage_path),
-            merge_metadata: string_field(fields.key).as_deref()
-                == Some(PLUGIN_MERGE_DECLARATION_KEY)
+            merge_metadata: string_field(fields.key).as_deref().is_some_and(|key| [PLUGIN_MERGE_DECLARATION_KEY,crate::PluginPreferenceSchema::KEY].contains(&key))
                 || merge_entries,
             contract_version: fields
                 .contract_version

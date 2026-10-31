@@ -492,7 +492,7 @@ fn effective_replay_commits_no_sibling_of_an_invalid_transaction() {
 /// Keeps committed ordinary datasets out of an unrelated delta's replay and lock scope.
 #[test]
 fn incremental_replay_only_materializes_the_changed_dataset() {
-    use operit_store::SyncOperationStore::{SyncOperation, SyncOperationSemantics};
+    use operit_store::SyncOperationStore::{SyncOperation, SyncOperationSemantics, SyncOperationKnowledge};
     let fixture = Fixture::new();
     let paths = (0..50).map(|dataset| format!("{}/probe-{dataset}.preferences.json",
         operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH)).collect::<Vec<_>>();
@@ -536,7 +536,13 @@ fn incremental_replay_only_materializes_the_changed_dataset() {
     assert_eq!(outcomes[0].operations, vec![delta]);
     let current = PreferencesDataStore::newWithStorage(fixture.host.clone(), path).data().unwrap();
     assert_eq!(current.get(&stringPreferencesKey("value")), Some(&json!(201)));
-    assert_eq!(journal.preferenceHistory().unwrap().len(), 10_001);
+    assert_eq!(journal.preferenceHistory().unwrap().len(), 50, "one retained assignment per dataset");
+    let receipt = journal.receipt().unwrap();
+    for dataset in 0..50 {
+        for sequence in 1..=200 {
+            assert!(receipt.containsSequence(&format!("probe-{dataset}"), sequence));
+        }
+    }
 }
 
 /// Duplicate delivery validates immutable content without decoding committed business history again.

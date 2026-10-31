@@ -485,7 +485,9 @@ mod tests {
                     .syncSnapshot()
                     .unwrap();
                 assert_eq!(replayed.data, migrated.data, "{path}");
-                assert_eq!(replayed.covered, migrated.covered, "{path}");
+                let business_ids = |snapshot: &operit_store::Transaction::Snapshot| snapshot.covered.iter()
+                    .filter(|id| !id.starts_with("~init:")).cloned().collect::<std::collections::BTreeSet<_>>();
+                assert_eq!(business_ids(&replayed), business_ids(&migrated), "{path}");
                 assert_eq!(replayed.data.values.get(key), Some(&record));
                 assert!(!replayed.data.values.contains_key(index));
             }
@@ -1183,8 +1185,14 @@ mod tests {
             assert_eq!(source_store.syncSnapshot().unwrap().data,target_store.syncSnapshot().unwrap().data);
         }
         assert_eq!(authority.data.revision,checkpoint.data.revision);
-        assert_eq!(authority.covered,checkpoint.covered);
+        assert!(checkpoint.covered.is_subset(&authority.covered));
+        assert_eq!(authority.covered.difference(&checkpoint.covered).count(), 1);
+        assert!(authority.covered.difference(&checkpoint.covered).all(|id| id.starts_with("~init:")));
         assert!(Transaction::compare(&source_store.syncSnapshot().unwrap(),&target_store.syncSnapshot().unwrap()).unwrap().is_none());
     }
 
 }
+
+#[cfg(test)]
+#[path = "PreferenceMigrationTests.rs"]
+mod preference_migration_tests;

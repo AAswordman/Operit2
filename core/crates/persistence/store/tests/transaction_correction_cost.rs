@@ -26,7 +26,9 @@ fn unchanged_sql_correction_updates_only_the_checkpoint_and_still_enforces_cas()
         let mut source = original.clone();
         source.covered.insert("other-history:1".into());
         assert!(dataset.repair(&original.token().unwrap(), &source).unwrap());
-        assert_eq!(dataset.baseline_digest().unwrap(), source.baseline_digest().unwrap());
+        let initialization = operit_store::Transaction::compaction::Initialization::decode(&dataset.initialization().unwrap().unwrap()).unwrap().unwrap();
+        assert_eq!(initialization.data, source.data);
+        assert_eq!(initialization.covered, source.covered);
         assert_eq!(store.queryOne("SELECT count(*) FROM audit", vec![]).unwrap().unwrap().get::<_, i64>(0).unwrap(), 0);
         assert!(!dataset.repair(&original.token().unwrap(), &source).unwrap());
         assert_eq!(store.queryOne("SELECT count(*) FROM audit", vec![]).unwrap().unwrap().get::<_, i64>(0).unwrap(), 0);

@@ -11,11 +11,12 @@ $\operatorname{Tx}(X)$ 是以 X 为目标的事务记录集合。事务的 SQL �
 
 | 记号 | 含义 |
 | --- | --- |
-| $A,B;\ C(A)$ | 两端完整业务状态；$C(A)$ 是确定序列化的文件值或同步 SQL 表结构及记录；完整重放状态及旧基线另行保存。 |
+| $A,B;\ C(A)$ | 两端完整业务状态；$C(A)$ 是确定序列化的文件值或同步 SQL 表结构及记录；重放状态及覆盖信息保存在本机 SQL 账本。 |
 | $T_a;\ \mathcal T_A=(T_{a_1},\ldots,T_{a_n})$ | 单个事务；A 端的一组事务，序列可以为空。$\rho(T_a)$ 是业务修改顺序，$\rho(A)$ 是文件最后业务修改的顺序。 |
 | $\operatorname{Apply}_\mu(A,\mathcal T)$ | 按序列逐个原子应用事务；$\mu$ 是目标数据所属模块的 merge rule。 |
 | $[];\ \Vert;\ \pi$ | 空序列；序列拼接；任意到达顺序的排列。 |
 | $\cup_{\mathrm{id}};\ N(\mathcal H)$ | 按身份合并历史；对历史按身份去重并按 $\rho$ 排序。同身份同原文计入一次，同身份不同原文判错。 |
+| $\mathsf M_{\mu,b}(\mathcal H)=(b_c,\mathcal H_c)$ | 事务合并：将基线 b 和历史改写为等价基线 $b_c$ 及更小的历史 $\mathcal H_c$。 |
 | $\operatorname{Eff}_{\mu_T}(\mathcal H)$ | 校验原文身份后，按目标依赖及事务规则求有效的一阶历史；仅有一阶事务时等于原历史。 |
 | $m_F,m_L;\ m=m_F\circ m_L$ | 格式迁移、layout 迁移；组合表示先确定当前归属，再转换为对应格式。 |
 | $m(A);\ m_A(\mathcal T)$ | 同一规则迁移完整状态；以 A 为上下文转换事务序列。与上下文无关时可简写为 $m(\mathcal T)$。 |
@@ -46,7 +47,7 @@ m\!\left(\operatorname{Apply}_{\mu_0}(A,\mathcal T)\right)
 =\operatorname{Apply}_{\mu_1}\!\left(m(A),m_A(\mathcal T)\right).
 $$
 
-$\mu_0,\mu_1$ 为迁移前后的对应规则。此式分别约束 $m_F$、$m_L$ 及其组合。原始事务保留原文；转换视图沿用身份、业务修订和原子边界，一个源事务展开的多个操作仍整体提交。需要上下文的规则使用完整基线及身份映射。
+$\mu_0,\mu_1$ 为迁移前后的对应规则。此式分别约束 $m_F$、$m_L$ 及其组合。存续事务保持原文；已合并历史按下述覆盖规则回收。转换视图沿用身份、业务修订和原子边界，一个源事务展开的多个操作仍整体提交。需要上下文的规则使用完整基线及身份映射。
 
 $f$ 统一可操作的表示；迁移等价式是迁移实现须满足的语义约束，由公共内核和业务测试共同检验。
 
@@ -99,36 +100,86 @@ $$
 
 先合并原文，求有效历史，再排序、转换和重放。已迁移的基线直接使用其当前状态；$R$ 在下表中均使用相同基线、迁移和规则。
 
+**事务合并。** 用更小的事务历史或基线代替已被覆盖的修改，保持后续同步的业务结果。记原基线 $b=(A_0,K_b)$、合并后基线 $b_c=(A_c,K_c)$，$K_c$ 为替代表示覆盖的原事务身份；对任意符合 owner 规则及依赖约束的外来历史 $\mathcal U$，须满足：
+
+$$
+\mathsf M_{\mu,b}(\mathcal H)=(b_c,\mathcal H_c)
+\quad\Longrightarrow\quad
+R_b(\mathcal H\cup_{\mathrm{id}}\mathcal U)
+\equiv R_{b_c}\!\left(\mathcal H_c\cup_{\mathrm{id}}(\mathcal U\setminus K_c)\right).
+$$
+
+$R_b$ 为以上带基线的重放；$\equiv$ 比较业务值、修改范围优先级、删除事实、别名和增量贡献，允许日志表示不同。只比较合并当下的文件值不足以证明此式。
+
+同一归属、同一字段的绝对赋值 $W(k,x,r)$，按后来修改生效。若 $r_1<r_2$，且两个事务仅含该赋值，则：
+
+$$
+[W(k,\text{A},r_1),W(k,\text{AB},r_2)]
+\xrightarrow{\mathsf M}[W(k,\text{AB},r_2)],\qquad
+K_c\setminus K_b=\{\operatorname{id}(W(k,\text{A},r_1))\}.
+$$
+
+最终值仍由全部写入的最大业务顺序决定；外来写入排在 $r_2$ 之前时取 AB，排在其后时取外来值。AB 沿用原身份和 $r_2$。`AB` 在这里表示完整赋值，字符串追加和数值增量按各自规则证明等价。
+
+合并以整个原子事务为单位：$T_1=(x:=\text{A},y:=1)$、$T_2=(x:=\text{AB})$ 时，$T_1$ 的 y 仍有效，整条保留；多个后继事务覆盖其全部效果后才可回收。覆盖关系由迁移后规范归属及操作语义判定。SQL 约束、业务投影和身份映射也属于须保留的效果。高阶事务仍需引用原文时保留依赖，或一并折入可重放的替代表示。
+
+两种迁移均须满足合并相容性；记 $Q=(b,\mathcal H)$、$\mathsf M_\mu(Q)=\mathsf M_{\mu,b}(\mathcal H)$；$m(Q)$ 同时转换基线、事务和归属覆盖凭据：
+
+$$
+m_F(\mathsf M_{\mu_0}(Q))\equiv\mathsf M_{\mu_1}(m_F(Q)),\qquad
+m_L(\mathsf M_{\mu_0}(Q))\equiv\mathsf M_{\mu_1}(m_L(Q)).
+$$
+
+工程上，替代基线、剩余事务和覆盖凭据共同持久提交后回收旧 payload；导出先保证对端取得完整替代表示，再确认覆盖身份。离线端通过基线接续，已覆盖历史按空效果确认，其余修改继续按原顺序合并。覆盖按 owner 和来源保存精确区间，空洞、必要指纹及依赖继续保留。未来格式、归属未就绪的待处理事务继续保留。重试保持幂等，合并本身沿用业务修订。
+
 **最终强制校正。** 两端迁移和本轮增量交换完成后，以各自导出范围判断比较是否过期；新事务进入下一轮增量。全量校正的前提为：
 
 $$
 (\widehat e_A=e_A)\land(\widehat e_B=e_B)\land C(A')\ne C(B').
 $$
 
-该前提允许 $e_A\ne e_B$，无需两端同时采样。旧基线差异本身不触发全量。记 $b(X)=(X_0,K_X)$，包含完整基线状态及覆盖范围。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
+该前提允许 $e_A\ne e_B$，无需两端同时采样。历史覆盖信息差异本身不触发全量。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
 
 $$
 X^*=\underset{X\in\{A',B'\}}{\arg\max}\;(\rho(X),d(X)),\qquad
 C(A_{\mathrm{final}})=C(B_{\mathrm{final}})=C(X^*).
 $$
 
-直接复制 $X^*$ 的完整同步文件，并在两端固化共同基线 $A_0^*=X^*$。令 $K_A,K_B$ 为各端校正前已处理事务的身份集合，则：
+直接复制 $X^*$ 的完整同步文件，并在两端保存相同初始化事务，记其状态为 $A_0^*=X^*$。令 $K_A,K_B$ 为各端校正前已处理事务的身份集合，则：
 
 $$
 K^*=K_A\cup K_B,\qquad
 A_{\mathrm{next}}=B_{\mathrm{next}}=\operatorname{Apply}_{\mu_1}\!\left(A_0^*,N(\mathcal H_{\mathrm{next}}\setminus K^*)\right).
 $$
 
-$\setminus K^*$ 按事务身份排除已封存历史；其原文继续归档，后续应用以复制后的文件为起点。缺失文件按同一流程补齐。两端分别按捕获版本原子保存文件及基线，再次比较；期间写入则重新同步、选源和比较。一致后结束本轮同步。记 $\operatorname{Complete}(A,B)$ 为本轮完成，$\operatorname{ready}(A)$ 包含两种迁移、事务处理及对应校验协议均就绪，则：
+$\setminus K^*$ 按事务身份排除已封存历史。强制校正先确定权威内容，再以事务合并封存该结果：
+
+$$
+\mathsf M^*(A_0^*,K^*)=((A_0^*,K^*),[]),\qquad
+\operatorname{Restore}(\varnothing,\operatorname{Init}(A_0^*,K^*))\equiv A_0^*.
+$$
+
+$\operatorname{Init}$ 是整文件及全部条目的初始化事务；接收端整体发布一次，效果等于从该文件重新开始。初始化事务取得新标识，条目沿用原业务修订、范围版本、删除事实和别名；校正时刻仅记录封存时间。替代表示提交后，该 owner 被 $K^*$ 覆盖且依赖已处理的旧事务 payload 可全部删除。$K^*$ 来自实际覆盖身份，离线端尚未交换的事务按原顺序处理；墙上时钟早于校正时刻不构成覆盖证明。
+
+定义故障因素 $\mathcal F=(\widehat e_A=e_A)\land(\widehat e_B=e_B)\land C(A')\ne C(B')$。故障恢复是人为规定的权威替换：
+
+$$
+\operatorname{Correct}_{\mathcal F}(A',\mathcal H_A;B',\mathcal H_B)
+=\bigl(X^*,[\operatorname{Init}(X^*,K^*)];X^*,[\operatorname{Init}(X^*,K^*)]\bigr).
+$$
+
+这一步允许 $X^*\ne R(\mathcal H_A\cup_{\mathrm{id}}\mathcal H_B)$，以修复后的文件为准；普通合并的重放等价式适用于无故障历史。两端删除 $K^*$ 内的旧载荷，保留收据与可验证的身份指纹；损坏载荷也可依据已提交的身份元数据回收。尚未交换的事务在 $K^*$ 外，继续按原顺序应用。
+
+$\mathsf M^*$ 封存的是已选定的校正结果；普通合并 $\mathsf M$ 保持合并前后的业务语义。后续应用以复制后的文件为起点。缺失文件按同一流程补齐。两端分别按捕获版本原子保存文件及初始化事务，再次比较；期间写入则重新同步、选源和比较。一致后结束本轮同步。记 $\operatorname{Complete}(A,B)$ 为本轮完成，$\operatorname{ready}(A)$ 包含两种迁移、事务处理及对应校验协议均就绪，则：
 
 $$
 \operatorname{Complete}(A,B)\Rightarrow\operatorname{ready}(A)\land\operatorname{ready}(B)\land C(A)=C(B).
 $$
 
-全量校正还需验证共同基线已落盘：
+记 $I(X)$ 为该文件已提交的初始化事务。全量校正后，两端具有同一条初始化事务：
 
 $$
-\operatorname{CorrectedComplete}(A,B)\Rightarrow\operatorname{Complete}(A,B)\land b(A)=b(B).
+\operatorname{CorrectedComplete}(A,B)\Rightarrow\operatorname{Complete}(A,B)\land I(A)=I(B).
 $$
 
 强制校正保证最终内容相等；迁移等价式与业务合并规则另由业务测试验证。

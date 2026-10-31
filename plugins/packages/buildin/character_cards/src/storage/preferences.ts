@@ -1,10 +1,10 @@
+import schema from "./meta-schema.json";
 import type { Storage } from "../../../../../types/storage";
 import declarations from "./merge.json";
 import type { StoragePreferencesMergeDescriptor } from "../../../../../types/storage.generated";
 const merge = declarations as Record<keyof typeof declarations, StoragePreferencesMergeDescriptor>;
 import { clone } from "./records";
 import { migrateCharacterStorage } from "./migrations/legacy-to-v1";
-import { assertObject } from "../validation";
 import { CharacterMemoryDatabase } from "./memory";
 
 export const configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"] as const;
@@ -65,16 +65,7 @@ export class CharacterStorage {
   static async open(): Promise<CharacterStorage> {
     const storage = await CharacterStorage.openForRecovery();
     try {
-      // The schema callback only marks the format upgrade. File and record work belongs
-      // to the repository's initialization, outside any pending preferences edit.
-      storage.metadata.withSchema(1, (version, preferences) => {
-        if (version !== 0) throw new Error("Missing character schema migration: " + version);
-        const state = preferences.get<Record<string, Storage.Value>>("state");
-        if (state !== undefined) {
-          assertObject(state, "character schema metadata");
-          preferences.set("state", { ...state, legacyImportPending: true });
-        }
-      });
+      storage.metadata.withSchema(schema.version, schema.steps as Storage.MigrationRule[][]);
       await storage.metadata.data();
       await migrateCharacterStorage(storage, ToolPkg.getSpaceDataDir());
       await storage.memory.retireLegacyEmbeddings();

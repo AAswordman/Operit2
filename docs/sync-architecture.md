@@ -63,7 +63,7 @@
 
 ## 日志读取与内存边界
 
-`SyncOperationJournal` 通过 Host 范围读取扫描 JSONL，使用 64 KiB 缓冲与不持有业务 payload 的轻量索引。`SyncOperationStore::readJournal` 统一处理导出、合并声明与 owner 历史查询。
+生产日志位于 `transactions.sqlite`；聊天和插件 SQL 通过同一 source 接口导出各自的业务日志。SQL 元数据索引先规划页面，再读取选中的载荷。旧 JSONL 与接收文件仅由兼容导入器读取。
 
 收据、domain、数据集和水位先筛选；调用者过滤先于实体状态压缩。偏好历史与事务不进行实体状态压缩。需要检查 payload 的记录逐条解码，页面按精确序列化字节数与记录数限制；单条超限记录由传输层处理。
 
@@ -104,4 +104,10 @@ SQL 完整快照仍携带所有表列和原始覆盖凭据，用于条件导出�
 - [附件生命周期](chat-attachment-locations.md)：临时附件的位置与来源。
 - [同步服务](../core/crates/node/runtime/src/SpacePersistenceSyncService.rs)、[日志存储](../core/crates/persistence/store/src/SyncOperationStore.rs)、[偏好物化](../core/crates/persistence/store/src/PreferenceMerge.rs)。
 
-原始操作历史的长期压缩需要明确的覆盖证明。检查点、较高 schema 和当前物化值本身都不构成删除历史的依据。
+## 事务合并
+
+Preference 同步先按身份并集、定位并迁移到共同表示，再用公共 `Transaction::compaction` 选择有效事务，最后重放。合并结果中的删除 ID 随文件提交意图持久化，SQL 提交只执行这份清单，保留身份指纹和收据。本地编辑复用相同合并函数，只查询当前格式的普通历史，不读取初始化载荷。聊天和插件 SQL 继续在同库提交内维护范围索引。普通合并要求独立赋值及上下文无关的迁移；原子事务仍有部分效果有效时整笔保留，声明、增量、层级范围和业务 merge rule 保留原文。
+
+强制矫正是 [事务模型](transaction-model.md) 中的故障恢复规则：两端保存同一条完整初始化事务，删除该 owner 已封存的旧日志。初始化保留业务修订、范围版本、删除事实、别名和精确覆盖身份，接替旧独立基线。离线节点安装初始化后重放其未覆盖修改，空节点直接恢复完整文件。
+
+初始化事务参加正常分页、收据和转发；较大的内容使用现有校验 Blob 传输。收据、覆盖判断和导出规划只查询 SQL 元数据；普通写入不解析初始化快照。同步协议版本为 4，两端在交换前确认支持初始化事务。

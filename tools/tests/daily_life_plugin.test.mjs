@@ -121,7 +121,7 @@ function fixture({ visitResults = [], notify, storeState = null, failReminderEdi
       const pending = declaredSchema;
       if (pending === null || state.schema >= pending.version) return;
       declaredSchema = null;
-      try { await storeHandle.edit(preferences => pending.migrate(state.schema, preferences)); }
+      try { for (const rules of pending.steps.slice(state.schema)) assert.deepEqual(plain(rules), []); }
       finally { declaredSchema = pending; }
       state.schema = pending.version;
     },
@@ -141,7 +141,7 @@ function fixture({ visitResults = [], notify, storeState = null, failReminderEdi
       storageEdits.push({ path: storePath, set: Object.fromEntries(changes.set), removed: [...changes.removed] });
       return this.data();
     },
-    withSchema(version, migrate) { declaredSchema = { version, migrate }; return storeHandle; },
+    withSchema(version, steps) { assert.equal(steps.length, version); declaredSchema = { version, steps }; return storeHandle; },
     async schemaVersion() { await this.applySchema(); return state.schema; },
     async close() {},
   };

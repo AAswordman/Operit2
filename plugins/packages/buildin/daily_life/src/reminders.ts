@@ -103,7 +103,7 @@ function load(): Promise<Storage.DataStore> {
   if (persistenceFailure !== null) return Promise.reject(persistenceFailure);
   if (store === null) {
     store = Tools.Storage.dataStore.open({ path: `${ToolPkg.getSpaceDataDir()}/reminders.preferences.json` })
-      .then(opened => opened.withSchema(1, () => {}))
+      .then(opened => opened.withSchema(1, [[]]))
       .then(initialize);
   }
   return store;

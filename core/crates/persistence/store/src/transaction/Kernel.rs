@@ -6,8 +6,9 @@ use super::{Snapshot, Owner, Revision};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OwnerState {
-    /// Baseline coverage is explicit. A late transaction is never discarded by its timestamp.
-    pub baseline: Snapshot,
+    /// One-time compatibility input; replay starts from an exported initialization transaction.
+    #[serde(default, rename = "baseline", skip_serializing)]
+    pub legacy_baseline: Option<Snapshot>,
     pub current: Snapshot,
     pub format_progress: u32,
     pub layout_progress: u32,
@@ -18,6 +19,8 @@ pub struct OwnerState {
 pub struct FileCommit {
     pub id: String,
     pub originals: Vec<SyncOperation>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub retired: BTreeSet<String>,
     pub completed: Vec<String>,
     pub covered: BTreeSet<String>,
     pub aliases: BTreeMap<String, String>,
@@ -28,8 +31,9 @@ pub struct FileCommit {
     #[serde(default)]
     pub additions: BTreeMap<String, Vec<super::Addition>>,
     pub generation: u64,
-    pub reset_baseline: bool,
-    /// Exact plaintext file to publish after the checkpoint commits; encrypted locally.
+    #[serde(default, rename = "reset_baseline", skip_serializing_if = "std::ops::Not::not")]
+    pub legacy_reset: bool,
+    /// Exact plaintext file to publish after the SQL commit; encrypted locally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
 }
@@ -54,7 +58,6 @@ pub struct Participant<'a> {
     pub snapshot: Option<Box<dyn Fn() -> Result<Snapshot, String> + 'a>>,
     /// Owner-defined business equality; snapshot tokens and transfer contents remain complete.
     pub content_digest: fn(&Snapshot) -> Result<String, String>,
-    pub baseline: Option<Box<dyn Fn() -> Result<String, String> + 'a>>,
     pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>) -> Result<bool, String> + 'a>>,
 }
 
@@ -96,8 +99,26 @@ impl<'a> Registry<'a> {
         self.owners.values().filter_map(|owner| (owner.prepare)().err().map(|e| format!("{}: {e}", owner.path))).collect()
     }
 
+    /// Coverage, rather than the reception status, determines what still needs application.
+    fn uncovered(&self, path: &str, operations: Vec<SyncOperation>) -> Result<Vec<SyncOperation>,String> {
+        if operations.is_empty() { return Ok(operations); }
+        let covered = self.owners.get(path).and_then(|owner|owner.snapshot.as_ref())
+            .and_then(|snapshot|snapshot().ok()).map(|snapshot|snapshot.covered).unwrap_or_default();
+        let (retired,pending): (Vec<_>,Vec<_>) = operations.into_iter().partition(|op|covered.contains(&op.opId));
+        if !retired.is_empty() { self.journal.retireCoveredOperations(&retired).map_err(|e|e.to_string())?; }
+        Ok(pending)
+    }
+
     pub fn pending_owners(&self) -> Result<BTreeSet<String>, String> {
-        self.journal.pendingOperations().map_err(|e| e.to_string())?.iter().map(|op| self.target(op)).collect()
+        let mut groups = BTreeMap::<String,Vec<SyncOperation>>::new();
+        for operation in self.journal.pendingOperations().map_err(|e|e.to_string())? {
+            groups.entry(self.target(&operation)?).or_default().push(operation);
+        }
+        let mut pending = BTreeSet::new();
+        for (path,operations) in groups {
+            if !self.uncovered(&path,operations)?.is_empty() { pending.insert(path); }
+        }
+        Ok(pending)
     }
 
     pub fn receive(&self, incoming: &[SyncOperation]) -> Result<ApplyReport, String> {
@@ -129,6 +150,7 @@ impl<'a> Registry<'a> {
                 continue;
             };
             if let Err(error) = (owner.prepare)() { report.errors.push(format!("{path}: {error}")); report.outcomes.insert(path,Err(error)); continue; }
+            let operations = self.uncovered(&path,operations)?;
             let operations = operations.into_iter().filter(|operation| {
                 let result = owner.validate.as_ref().map_or(Ok(()), |validate| validate(operation));
                 if let Err(error) = result {
@@ -252,21 +274,27 @@ impl<'a> Registry<'a> {
 
     pub fn repair_file(&self, owner: &Owner, expected: &str, source: &Snapshot, file: Option<&str>) -> Result<bool, String> {
         if &source.data.owner != owner { return Err("Snapshot owner differs".into()); }
-        if self.pending_owners()?.contains(&owner.path) { return Err("Dataset has pending transactions".into()); }
+        let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
+        (participant.prepare)()?;
+        let pending = self.journal.pendingOperations().map_err(|e|e.to_string())?.into_iter()
+            .filter(|operation|self.target(operation).as_ref() == Ok(&owner.path)).collect::<Vec<_>>();
+        let pending = self.uncovered(&owner.path,pending)?;
+        if pending.iter().any(|operation|!source.covered.contains(&operation.opId)) {
+            return Err("Dataset has uncovered pending transactions".into());
+        }
+        let capture = || (participant.snapshot.as_ref().ok_or("Owner has no snapshot capability")?)();
         if !expected.is_empty() {
-            let current = self.snapshot(owner)?;
+            let current = capture()?;
             if current.token()? != expected { return Ok(false); }
             if (&current.data.revision, &current.node) > (&source.data.revision, &source.node) {
                 return Err("Snapshot source is older than the local authority".into());
             }
         }
-        let repair = self.owners.get(&owner.path).and_then(|owner| owner.repair.as_ref()).ok_or("Owner cannot replace files")?;
+        let repair = participant.repair.as_ref().ok_or("Owner cannot replace files")?;
         if !repair(expected, source, file)? { return Ok(false); }
-        let verified = self.snapshot(owner)?;
+        let verified = capture()?;
         if verified.data != source.data { return Err("Snapshot verification failed after replacement".into()); }
-        if let Some(baseline) = self.owners.get(&owner.path).and_then(|owner|owner.baseline.as_ref()) {
-            if baseline()? != verified.baseline_digest()? { return Err("Replacement baseline was not committed".into()); }
-        }
+        self.journal.retireCoveredOperations(&pending).map_err(|e|e.to_string())?;
         Ok(true)
     }
 }

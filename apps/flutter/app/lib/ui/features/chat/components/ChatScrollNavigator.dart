@@ -698,7 +698,7 @@ class _CodexHoverTooltipCard extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context)!;
     final isUser = entry.sender == 'user';
-    final displayName = entry.displayName.trim();
+    final displayName = isUser ? '' : entry.displayName.trim();
     final title = displayName.isNotEmpty
         ? displayName
         : senderLabel(context, entry.sender);

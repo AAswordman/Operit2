@@ -15,8 +15,9 @@ class ChatMessageIdentity {
       avatarUri != null && Uri.parse(avatarUri!).scheme == 'provider-logo';
 }
 
-/// Reads optional native display metadata and rejects malformed saved identities.
+/// Reads assistant display metadata; the execution participant never names user input.
 ChatMessageIdentity? readChatMessageIdentity(core_proxy.ChatMessage message) {
+  if (message.sender != 'ai') return null;
   final value = message.pluginExtensions['host.chat.identity'];
   if (value == null) return null;
   if (value is! Map ||

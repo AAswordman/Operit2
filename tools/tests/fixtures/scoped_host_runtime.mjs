@@ -66,7 +66,7 @@ export function domainToolResult(name, payload, request) {
     switch (op) {
       case 'open': return {op,...payload};
       case 'open_preferences': return {op:'open',...payload};
-      case 'preferences_data': case 'preferences_finish_edit': return {op,snapshot:payload};
+      case 'preferences_schema': case 'preferences_data': case 'preferences_finish_edit': return {op,snapshot:payload};
       case 'preferences_begin_edit': return {op,edit:payload};
       case 'preferences_cancel_edit': return {op};
       case 'close': return {op};

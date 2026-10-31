@@ -871,6 +871,7 @@ impl SpacePersistenceSyncService {
             validateDomainClock(&localClock, domains, "local")?;
             let mut remoteClock = remoteClock?;
             validateDomainClock(&remoteClock, domains, "remote")?;
+            consistency::requireConsistencySupport(&localClock, &remoteClock)?;
             if let Ok(mut gates) = self.state.peerGates.lock() {
                 gates.entry(targetNodeId.to_owned()).or_default().pendingWork = false;
             }
@@ -956,7 +957,6 @@ impl SpacePersistenceSyncService {
                 {
                     return Ok(false);
                 }
-                consistency::requireConsistencySupport(&localClock, &remoteClock)?;
                 if !self.synchronizeConsistency(targetNodeId, &localClock, &remoteClock).await? {
                     // A concurrent edit invalidates the captured file, not the synchronization service.
                     self.state.peerGates.lock().map_err(|error| error.to_string())?

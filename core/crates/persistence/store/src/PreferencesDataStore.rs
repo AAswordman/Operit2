@@ -3929,13 +3929,23 @@ impl PreferencesSyncedEntry {
         Ok(Self { storagePath: owner.path, encrypted, schemaVersion: Some(owner.format), mutation: PreferencesSyncedMutation::Transaction(mutations), id: transaction.id, revision: transaction.revision })
     }
 
-    pub(crate) fn replay(entries: &[Self], preferences: &mut Preferences) -> Result<(), PreferencesDataStoreError> {
+    pub(crate) fn replay(entries: &[Self], preferences: &mut Preferences, compact: bool) -> Result<BTreeSet<String>, PreferencesDataStoreError> {
+        let transactions = entries.iter().map(Self::transaction).collect::<Result<Vec<_>, _>>()?;
+        // Declarations carry an immutable, append-only contract even when their effective value was normalized.
+        let retired = if compact {
+            crate::Transaction::compaction::superseded(transactions.iter().filter(|transaction|
+                !transaction.id.starts_with("~import:") && transaction.edits.iter().all(|edit|
+                    !crate::PluginPreferenceSchema::reserved(edit.key()) && edit.key() != crate::PreferenceMerge::PLUGIN_MERGE_DECLARATION_KEY)))
+                .map_err(PreferencesDataStoreError::Message)?
+        } else { BTreeSet::new() };
         let mut data = preferences.view.clone().ok_or_else(|| PreferencesDataStoreError::Message("Owner replay context is missing".into()))?;
-        for entry in entries { data.apply(&entry.transaction()?).map_err(PreferencesDataStoreError::Message)?; }
+        for transaction in transactions.iter().filter(|transaction| !retired.contains(&transaction.id)) {
+            data.apply(transaction).map_err(PreferencesDataStoreError::Message)?;
+        }
         preferences.values = Arc::new(data.values.iter().map(|(k,v)| (k.clone(),v.clone())).collect());
         preferences.set(&PreferencesDataStore::schemaVersionKey(), data.owner.format);
         preferences.view = Some(data);
-        Ok(())
+        Ok(retired)
     }
 }
 
@@ -3946,7 +3956,7 @@ impl PreferencesDataStore {
         let mut values = self.loadedPreferences().expect("loaded file");
         crate::Transaction::preference::recover(self, &mut values)
     }
-    pub(crate) fn migrateSyncedEntries(&self, version: u32, entries: &mut Vec<PreferencesSyncedEntry>) -> Result<(), PreferencesDataStoreError> {
-        crate::Transaction::preference::migrate_entries(self,version,entries)
+    pub(crate) fn migrateSyncedEntries(&self, version: u32, baseline: &Preferences, entries: &mut Vec<PreferencesSyncedEntry>) -> Result<(), PreferencesDataStoreError> {
+        crate::Transaction::preference::migrate_entries(self,version,baseline,entries)
     }
 }

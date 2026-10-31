@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { StorageChangePage, StorageMergeDescriptor, StoragePreferencesMergeDescriptor, StorageRecordGuard, StorageRequest, StorageTable } from "./storage.generated";
+import type { StorageChangePage, StorageMergeDescriptor, StoragePreferencesMergeDescriptor, StoragePreferencesMigrationRule, StorageRecordGuard, StorageRequest, StorageTable } from "./storage.generated";
 
 /**
  * Dispatches the exact wire contract through the authenticated host.
@@ -278,6 +278,11 @@ export namespace Storage {
   export type PreferencesCallbackResult = void | Promise<void>;
 
   /**
+   * Portable rules interpreted by the common state and transaction migration engine.
+   */
+  export type MigrationRule = StoragePreferencesMigrationRule;
+
+  /**
    * Owns a native JSON preference file with Rust-style snapshot and edit semantics.
    */
   export interface DataStore extends Handle {
@@ -290,9 +295,9 @@ export namespace Storage {
      */
     edit(transform: (arg0: MutablePreferences) => PreferencesCallbackResult): Promise<Preferences>;
     /**
-     * Declares ordered one-version upgrades before subsequent reads or edits.
+     * Persists numbered migration rules shared by data upgrades and background transaction replay.
      */
-    withSchema(currentVersion: number, migrate: (arg0: number, arg1: MutablePreferences) => PreferencesCallbackResult): DataStore;
+    withSchema(currentVersion: number, steps: MigrationRule[][]): DataStore;
     /**
      * Reads the declared store's current schema version after applying pending upgrades.
      */
@@ -339,4 +344,4 @@ export namespace Storage {
   function request(request: StorageRequest): Promise<any>;
 }
 
-export type { StorageRequest, StorageTable, StorageSqlValue, StorageMergeDescriptor, StorageKind, StorageColumn, StorageColumnType, StorageMutation, StorageStatement, StorageMergeEntity, StorageMergeReference, StorageMergeTarget, StorageMergeKeyEncoding, StoragePreferencesMergeDescriptor, StoragePreferencesMergeCatalog, StoragePreferencesMergeReference, StoragePreferencesMergeKey, StoragePreferencesMergePathSegment, StoragePreferencesMergeProjection } from "./storage.generated";
+export type { StorageRequest, StorageTable, StorageSqlValue, StorageMergeDescriptor, StorageKind, StorageColumn, StorageColumnType, StorageMutation, StorageStatement, StorageMergeEntity, StorageMergeReference, StorageMergeTarget, StorageMergeKeyEncoding, StoragePreferencesMergeDescriptor, StoragePreferencesMergeCatalog, StoragePreferencesMergeReference, StoragePreferencesMergeKey, StoragePreferencesMergePathSegment, StoragePreferencesMergeProjection, StoragePreferencesSchema, StoragePreferencesMigrationRule } from "./storage.generated";

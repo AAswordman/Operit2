@@ -86,6 +86,20 @@ impl SqlChatSyncStore {
         database: &AppDatabase,
     ) -> Result<Self, SqlChatSyncStoreError> {
         scopes::prepare(database.store())?;
+        database.store().executeBatch(crate::Transaction::compaction::SCHEMA)?;
+        database.store().transaction(|tx| {
+            if tx.queryOne("SELECT 1 FROM _operit_compaction_progress WHERE version=1",vec![])?.is_none() {
+                for row in tx.queryRows("SELECT * FROM sync_sql_operations ORDER BY createdAt,originDeviceId,sequence",vec![])? {
+                    let mut operation = mapOperationMetadata(&row)?;
+                    if let Ok(payload) = readPayload(&mut |sql,params|tx.queryRows(sql,params),&operation.opId) {
+                        operation.payload = serde_json::to_value(&payload).map_err(|e|SqliteStoreError::Message(e.to_string()))?;
+                        compactRecord(tx,&operation,&payload)?;
+                    }
+                }
+                tx.execute("INSERT INTO _operit_compaction_progress VALUES(1)",vec![])?;
+            }
+            Ok(())
+        })?;
         let syncOperationStore = SyncOperationStore::native(paths);
         let deviceId = syncOperationStore.localDeviceId()?;
         Ok(Self {
@@ -108,7 +122,7 @@ impl SqlChatSyncStore {
                 path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(), format: CHAT_SYNC_OPERATION_SCHEMA_VERSION as u32, layout: 1 },
             node: self.originDeviceId.clone(),
             tables: &["chats", "messages", "message_variants", "message_parts", "sync_sql_versions"],
-            revisions: "SELECT opId,createdAt,originDeviceId,sequence FROM sync_sql_operations",
+            revisions: "SELECT opId,createdAt,originDeviceId,sequence FROM sync_sql_operations UNION SELECT id,business_time,origin,sequence FROM _operit_compacted",
             cleanup: "",
         }
     }
@@ -126,12 +140,27 @@ impl SqlChatSyncStore {
         })
     }
 
-    pub fn syncBaselineDigest(&self) -> Result<String, SqlChatSyncStoreError> {
-        self.dataset().baseline_digest().map_err(SqlChatSyncStoreError::Message)
+    pub fn repairSyncedSnapshot(&self, expected: &str, source: &crate::Transaction::Snapshot) -> Result<bool, SqlChatSyncStoreError> {
+        self.dataset().repair_with(expected, source, None, |tx, snapshot| self.reconcileInitialization(tx, snapshot, false))
+            .map_err(SqlChatSyncStoreError::Message)
     }
 
-    pub fn repairSyncedSnapshot(&self, expected: &str, source: &crate::Transaction::Snapshot) -> Result<bool, SqlChatSyncStoreError> {
-        self.dataset().repair(expected, source).map_err(SqlChatSyncStoreError::Message)
+    fn reconcileInitialization(&self, tx: &mut SqliteTransaction<'_>, snapshot: &crate::Transaction::Snapshot, replay: bool) -> Result<(), SqliteStoreError> {
+        let originals = tx.queryRows("SELECT * FROM sync_sql_operations",vec![])?.iter()
+            .map(mapOperationMetadata).collect::<Result<Vec<_>,_>>()?;
+        let originals = crate::Transaction::ordered(originals, |op| &op.opId, crate::Transaction::Revision::fromOperation)
+            .map_err(SqliteStoreError::Message)?;
+        for operation in originals {
+            if snapshot.covered.contains(&operation.opId) {
+                crate::Transaction::compaction::seal_identity(tx.raw(),&operation.opId,&operation.originDeviceId,operation.sequence,operation.createdAt,"")?;
+                tx.execute("DELETE FROM sync_sql_operations WHERE opId=?1",sqliteParams![operation.opId])?;
+            } else if replay {
+                let payload = readPayload(&mut |sql,params|tx.queryRows(sql,params),&operation.opId)?;
+                applyPayload(tx, &operation, &payload, false)?;
+                scopes::observe_payload(tx, &operation, &payload)?;
+            }
+        }
+        Ok(())
     }
 
     /// Records a metadata-only upsert for a chat.
@@ -430,11 +459,15 @@ impl SqlChatSyncStore {
     pub fn receipt(&self) -> Result<SyncReceipt, SqlChatSyncStoreError> {
         let mut receipt = SyncReceipt::default();
         for row in self.store.queryRows(
-            "SELECT originDeviceId,sequence FROM sync_sql_operations ORDER BY originDeviceId,sequence",
+            "SELECT originDeviceId,sequence FROM sync_sql_operations UNION SELECT origin,sequence FROM _operit_compacted ORDER BY originDeviceId,sequence",
             Vec::new(),
         )? {
             receipt.observe(&row.get::<_, String>(0)?, row.get(1)?);
         }
+        if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
+            receipt.observe(&origin,sequence);
+        }
+        crate::Transaction::compaction::observe_coverage(&self.store,&mut receipt)?;
         Ok(receipt)
     }
 
@@ -462,6 +495,9 @@ impl SqlChatSyncStore {
                 }
             };
             if sequence > floor && !clock.containsSequence(&origin, sequence) { ids.insert(row.get(0)?); }
+        }
+        if let Some((id,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
+            if !clock.containsSequence(&origin,sequence) { ids.insert(id); }
         }
         Ok(ids)
     }
@@ -526,6 +562,16 @@ impl SqlChatSyncStore {
                 &mut |sql, params| self.store.queryRows(sql, params), &operation.opId,
             )?)?;
         }
+        if limit > 0 {
+            if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
+                if !clock.containsSequence(&origin,sequence) {
+                    if let Some(initialization) = self.dataset().initialization().map_err(SqlChatSyncStoreError::Message)? {
+                        operations.insert(0,initialization);
+                        operations.truncate(limit);
+                    }
+                }
+            }
+        }
         Ok(operations)
     }
 
@@ -550,7 +596,13 @@ impl SqlChatSyncStore {
         operation: &SyncOperation,
         ignoreNewerEntityState: bool,
     ) -> Result<(), SqlChatSyncStoreError> {
+        if crate::Transaction::compaction::Initialization::decode(operation).map_err(SqlChatSyncStoreError::Message)?.is_some() {
+            self.dataset().receive_initialization(operation, |tx,snapshot| self.reconcileInitialization(tx,snapshot,true))
+                .map_err(SqlChatSyncStoreError::Message)?;
+            return Ok(());
+        }
         let didApply = self.store.transaction(|transaction| {
+            if crate::Transaction::compaction::retired(transaction.raw(),operation)? { return Ok(false); }
             if let Some(row) = transaction.queryOne(
                 "SELECT * FROM sync_sql_operations WHERE opId = ?1", sqliteParams![operation.opId],
             )? {
@@ -564,9 +616,12 @@ impl SqlChatSyncStore {
             }
             let payload = decodePayload(operation)
                 .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
-            if !crate::Transaction::covered_by_checkpoint(transaction, operation)? {
-                applyPayload(transaction, operation, &payload, ignoreNewerEntityState)?;
+            if crate::Transaction::covered_by_initialization(transaction, operation)? {
+                crate::Transaction::compaction::seal(transaction.raw(),operation)?;
+                observeOperation(transaction, operation)?;
+                return Ok(false);
             }
+            applyPayload(transaction, operation, &payload, ignoreNewerEntityState)?;
             insertOperation(transaction, operation, &payload)?;
             observeOperation(transaction, operation)?;
             Ok(true)
@@ -1060,7 +1115,25 @@ fn insertOperation(
             ],
         )?;
     }
-    scopes::observe_payload(transaction, operation, payload)
+    scopes::observe_payload(transaction, operation, payload)?;
+    compactRecord(transaction,operation,payload)
+}
+
+fn compactRecord(transaction: &mut SqliteTransaction<'_>, operation: &SyncOperation, payload: &ChatSyncPayload) -> Result<(),SqliteStoreError> {
+    let scopes = if payload.deletions.is_empty() {
+        let mut scopes = BTreeSet::new();
+        for row in &payload.chatRows { scopes.insert(format!("chat:{}",row.id)); }
+        for row in &payload.messageRows { scopes.insert(serde_json::to_string(&("message",&row.chatId,row.timestamp)).map_err(|e|SqliteStoreError::Message(e.to_string()))?); }
+        for row in &payload.variantRows { scopes.insert(serde_json::to_string(&("variant",&row.chatId,row.messageTimestamp,row.variantIndex)).map_err(|e|SqliteStoreError::Message(e.to_string()))?); }
+        for row in &payload.partRows { scopes.insert(serde_json::to_string(&("parts",&row.chatId,row.messageTimestamp,row.variantIndex)).map_err(|e|SqliteStoreError::Message(e.to_string()))?); }
+        (!scopes.is_empty()).then_some(scopes)
+    } else { None };
+    let mut canonical = operation.clone();
+    canonical.payload = serde_json::to_value(readPayload(&mut |sql,params|transaction.queryRows(sql,params),&operation.opId)?).map_err(|e|SqliteStoreError::Message(e.to_string()))?;
+    for id in crate::Transaction::compaction::record(transaction.raw(),&canonical,scopes)? {
+        transaction.execute("DELETE FROM sync_sql_operations WHERE opId=?1",vec![SqliteValue::Text(id)])?;
+    }
+    Ok(())
 }
 
 /// Stores a complete chat record in the real sync operation payload table.

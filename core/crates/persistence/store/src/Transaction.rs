@@ -11,6 +11,9 @@ pub use crate::SyncOperationStore::SyncOperationOrder as Revision;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+#[path = "transaction/Compaction.rs"]
+pub mod compaction;
+
 #[path = "transaction/Checkpoint.rs"]
 mod checkpoint;
 
@@ -139,7 +142,7 @@ pub enum Edit {
 }
 
 impl Edit {
-    fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &str {
         match self {
             Self::Set { key, .. }
             | Self::Delete { key, .. }
@@ -1169,11 +1172,7 @@ impl Snapshot {
         digest(&values)
     }
 
-    pub fn baseline_digest(&self) -> Result<String> {
-        digest(&(&self.data, &self.covered))
-    }
-
-    /// Installs the authoritative baseline without allocating a business revision.
+    /// Installs authoritative data without allocating a business revision.
     pub fn replace(&mut self, expected: &str, source: &Self) -> Result<bool> {
         if self.token()? != expected {
             return Ok(false);
@@ -1378,7 +1377,29 @@ fn sql_identifier(name: &str) -> String {
 #[cfg(feature = "full")]
 impl SqlDataset<'_> {
     fn prepare(&self) -> Result<()> {
-        self.store.executeBatch("CREATE TABLE IF NOT EXISTS _operit_transaction_checkpoint(id INTEGER PRIMARY KEY CHECK(id=1),snapshot TEXT NOT NULL)").map_err(|e| e.to_string())
+        compaction::prepare(self.store).map_err(|e|e.to_string())?;
+        if self.store.queryOne("SELECT 1 FROM sqlite_master WHERE name='_operit_transaction_checkpoint'",vec![]).map_err(|e|e.to_string())?.is_none() { return Ok(()); }
+        // Read-only import of the previous checkpoint carrier; new writes use initialization transactions.
+        self.store.transaction(|tx| {
+            if tx.queryOne("SELECT 1 FROM sqlite_master WHERE name='_operit_transaction_checkpoint'",vec![])?.is_some() {
+                if let Some(row) = tx.queryOne("SELECT snapshot FROM _operit_transaction_checkpoint WHERE id=1",vec![])? {
+                    let snapshot: Snapshot = serde_json::from_str(&row.get::<_,String>(0)?).map_err(sql_error)?;
+                    let operation = compaction::Initialization::from_snapshot(&snapshot).operation(self.domain(),false).map_err(sql_error)?;
+                    if compaction::initialization(tx)?.is_none() { compaction::save_initialization(tx,&operation)?; }
+                }
+                tx.execute("DROP TABLE _operit_transaction_checkpoint",vec![])?;
+            }
+            Ok(())
+        }).map_err(|e|e.to_string())
+    }
+
+    fn domain(&self) -> &str {
+        if self.owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH { "chat" } else { "plugin_storage" }
+    }
+
+    pub fn initialization(&self) -> Result<Option<crate::SyncOperationStore::SyncOperation>> {
+        self.prepare()?;
+        self.store.transaction(compaction::initialization).map_err(|e|e.to_string())
     }
 
     fn snapshot_in(
@@ -1387,16 +1408,12 @@ impl SqlDataset<'_> {
     ) -> std::result::Result<Snapshot, crate::SqliteStore::SqliteStoreError> {
         let mut data = Data::empty(self.owner.clone());
         let mut covered = BTreeSet::new();
-        let mut generation = 0;
-        if let Some(row) = tx.queryOne(
-            "SELECT snapshot FROM _operit_transaction_checkpoint WHERE id=1",
-            vec![],
-        )? {
-            let previous: Snapshot =
-                serde_json::from_str(&row.get::<_, String>(0)?).map_err(sql_error)?;
+        let generation = 0;
+        if let Some(operation) = compaction::initialization(tx)? {
+            let previous = compaction::Initialization::decode(&operation).map_err(sql_error)?.ok_or_else(||sql_error("Missing initialization"))?;
             data.revision = previous.data.revision;
             covered = previous.covered;
-            generation = previous.generation;
+            covered.insert(operation.opId);
         }
         for table in self.tables {
             let info = tx.queryRows(
@@ -1433,12 +1450,13 @@ impl SqlDataset<'_> {
             );
         }
         for row in tx.queryRows(self.revisions, vec![])? {
-            covered.insert(row.get::<_, String>(0)?);
-            data.revision = data.revision.max(Some(Revision {
-                createdAt: row.get(1)?,
-                originDeviceId: row.get(2)?,
-                sequence: row.get(3)?,
-            }));
+            let id = row.get::<_, String>(0)?;
+            let revision = Revision { createdAt: row.get(1)?, originDeviceId: row.get(2)?, sequence: row.get(3)? };
+            // Sealed history supplies receipts; only uncovered edits advance the restored data.
+            if !covered.contains(&id) && !revision.originDeviceId.starts_with("~init:") {
+                data.revision = data.revision.max(Some(revision));
+            }
+            covered.insert(id);
         }
         Ok(Snapshot {
             node: self.node.clone(),
@@ -1455,27 +1473,48 @@ impl SqlDataset<'_> {
             .map_err(|e| e.to_string())
     }
 
-    pub fn baseline_digest(&self) -> Result<String> {
-        self.prepare()?;
-        let row = self.store.queryOne("SELECT snapshot FROM _operit_transaction_checkpoint WHERE id=1", vec![]).map_err(|e|e.to_string())?;
-        match row {
-            Some(row) => serde_json::from_str::<Snapshot>(&row.get::<_, String>(0).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?.baseline_digest(),
-            None => digest(&Option::<u8>::None),
-        }
+    pub fn repair(&self, expected: &str, source: &Snapshot) -> Result<bool> {
+        self.repair_with(expected,source,None,|_,_|Ok(()))
     }
 
-    /// SQL state, deletion/version facts and correction baseline commit in the same SQL transaction.
-    pub fn repair(&self, expected: &str, source: &Snapshot) -> Result<bool> {
-        use crate::SqliteStore::SqliteValue;
+    pub fn repair_with(&self, expected: &str, source: &Snapshot, definition: Option<Value>,
+        retire: impl FnOnce(&mut crate::SqliteStore::SqliteTransaction<'_>, &Snapshot) -> std::result::Result<(),crate::SqliteStore::SqliteStoreError>) -> Result<bool> {
+        self.commit_snapshot(expected, source, definition, None, retire)
+    }
+
+    /// Install the immutable initialization, then replay only locally retained, uncovered originals.
+    pub fn receive_initialization(&self, operation: &crate::SyncOperationStore::SyncOperation,
+        replay: impl FnOnce(&mut crate::SqliteStore::SqliteTransaction<'_>, &Snapshot) -> std::result::Result<(),crate::SqliteStore::SqliteStoreError>) -> Result<bool> {
+        let initialization = compaction::Initialization::decode(operation)?.ok_or("Missing initialization")?;
+        if initialization.data.owner != self.owner || operation.domain != self.domain() { return Err("Initialization owner differs".into()); }
+        let current = self.snapshot()?;
+        if current.covered.contains(&operation.opId) { return Ok(false); }
+        if let Some(previous) = self.initialization()? {
+            let previous_data = compaction::Initialization::decode(&previous)?.ok_or("Missing initialization")?;
+            if !initialization.covered.contains(&previous.opId)
+                && (previous_data.data.revision.as_ref(), &previous.opId) >= (initialization.data.revision.as_ref(), &operation.opId) {
+                return Ok(false);
+            }
+        }
+        let source = initialization.snapshot(&self.node, current.generation + 1);
+        if !self.commit_snapshot(&current.token()?, &source, None, Some(operation), replay)? {
+            return Err("SQL owner changed while receiving initialization; retry required".into());
+        }
+        Ok(true)
+    }
+
+    fn commit_snapshot(&self, expected: &str, source: &Snapshot, definition: Option<Value>,
+        original: Option<&crate::SyncOperationStore::SyncOperation>,
+        retire: impl FnOnce(&mut crate::SqliteStore::SqliteTransaction<'_>, &Snapshot) -> std::result::Result<(),crate::SqliteStore::SqliteStoreError>) -> Result<bool> {
         self.prepare()?;
         let mut changed = false;
         let repaired = self.store.transaction(|tx| {
             let mut current = self.snapshot_in(tx)?;
             let expected = if expected.is_empty() {
-                // Provisioning is conditional on an empty database with no committed baseline.
-                let checkpoint = tx.queryOne("SELECT 1 FROM _operit_transaction_checkpoint WHERE id=1", vec![])?.is_some();
+                // Provisioning requires an empty database with no initialization or history.
+                let initialized = tx.queryOne("SELECT 1 FROM _operit_transaction_initialization WHERE id=1", vec![])?.is_some();
                 let occupied = current.data.values.values().any(|table| table["rows"].as_array().is_none_or(|rows| !rows.is_empty()));
-                if checkpoint || !current.covered.is_empty() || occupied { return Ok(false); }
+                if initialized || !current.covered.is_empty() || occupied { return Ok(false); }
                 current.token().map_err(sql_error)?
             } else { expected.to_owned() };
             changed = current.data != source.data;
@@ -1500,8 +1539,16 @@ impl SqlDataset<'_> {
                 }
                 if !self.cleanup.is_empty() { tx.execute(self.cleanup, vec![])?; }
             }
-            tx.execute("INSERT INTO _operit_transaction_checkpoint(id,snapshot) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET snapshot=excluded.snapshot",
-                vec![SqliteValue::Text(serde_json::to_string(&current).map_err(sql_error)?)])?;
+            // Correction seals the exchanged history. Receipt of an initializer preserves its exact coverage.
+            if original.is_some() { current.covered = source.covered.clone(); }
+            let mut initialization = compaction::Initialization::from_snapshot(&current);
+            initialization.definition = definition;
+            let operation = match original {
+                Some(operation) => operation.clone(),
+                None => initialization.operation(self.domain(),false).map_err(sql_error)?,
+            };
+            compaction::save_initialization(tx,&operation)?;
+            retire(tx, &current)?;
             Ok(true)
         }).map_err(|e| e.to_string())?;
         if repaired && changed {
@@ -1516,22 +1563,14 @@ fn sql_error(error: impl std::fmt::Display) -> crate::SqliteStore::SqliteStoreEr
     crate::SqliteStore::SqliteStoreError::Message(error.to_string())
 }
 
-/// A correction is a complete authoritative baseline; older late arrivals remain archived.
+/// Exact initialization coverage seals historical redelivery without reviving its payload.
 #[cfg(feature = "full")]
-pub fn covered_by_checkpoint(
+pub fn covered_by_initialization(
     tx: &mut crate::SqliteStore::SqliteTransaction<'_>,
     operation: &crate::SyncOperationStore::SyncOperation,
 ) -> std::result::Result<bool, crate::SqliteStore::SqliteStoreError> {
-    if tx.queryOne("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_operit_transaction_checkpoint'", vec![])?.is_none() { return Ok(false); }
-    let Some(row) = tx.queryOne(
-        "SELECT snapshot FROM _operit_transaction_checkpoint WHERE id=1",
-        vec![],
-    )?
-    else {
-        return Ok(false);
-    };
-    let baseline: Snapshot = serde_json::from_str(&row.get::<_, String>(0)?).map_err(sql_error)?;
-    Ok(baseline.covered.contains(&operation.opId))
+    if tx.queryOne("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_operit_initialization_coverage'", vec![])?.is_none() { return Ok(false); }
+    Ok(tx.queryOne("SELECT 1 FROM _operit_initialization_coverage WHERE id=?1",vec![crate::SqliteStore::SqliteValue::Text(operation.opId.clone())])?.is_some())
 }
 
 /// The common f representation: complete data and SQL transaction effects obey the same rules.

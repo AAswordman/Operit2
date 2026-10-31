@@ -438,3 +438,138 @@ fn transaction_conversion_must_use_the_same_state_function_as_file_migration() {
         .contains("shared state function"));
     assert_eq!(context.after, expected);
 }
+
+#[test]
+fn codecs_preserve_unrelated_nested_versions_and_additions() {
+    use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStoreError};
+    let step = Definition::from_preferences(|_, state| {
+        let key = stringPreferencesKey("provider");
+        if let Some(value) = state.get(&key) {
+            let mut value = value.clone();
+            if value["type"] == "IFLOW" {
+                value["type"] = json!("OTHER");
+            }
+            state.set(&key, value);
+        }
+        Ok::<_, PreferencesDataStoreError>(())
+    });
+    let owner = owner(Backend::DataStore);
+    let mut before = Data::empty(owner.clone());
+    before
+        .apply(&tx(
+            &owner,
+            1,
+            vec![set(
+                "provider",
+                json!({"type":"IFLOW","name":"old","count":0}),
+            )],
+        ))
+        .unwrap();
+    before
+        .apply(&tx(
+            &owner,
+            2,
+            vec![Edit::Increment {
+                key: "provider".into(),
+                path: vec!["count".into()],
+                delta: 2,
+            }],
+        ))
+        .unwrap();
+    for (index, edits) in [
+        vec![Edit::Patch {
+            key: "provider".into(),
+            set: BTreeMap::from([("name".into(), json!("new"))]),
+            delete: Default::default(),
+        }],
+        vec![Edit::Set {
+            key: "provider".into(),
+            path: vec!["type".into()],
+            value: json!("IFLOW"),
+        }],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        before = law(&step, &before, &tx(&owner, 3 + index as i64, edits));
+    }
+}
+
+#[test]
+fn default_projection_maps_root_and_field_deletion_to_the_same_versioned_default() {
+    use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStoreError};
+    let step = Definition::from_preferences(|_, state| {
+        let key = stringPreferencesKey("record");
+        let mut value = state.get(&key).cloned().unwrap_or(json!({}));
+        value
+            .as_object_mut()
+            .unwrap()
+            .entry("choice")
+            .or_insert(json!("default"));
+        state.set(&key, value);
+        Ok::<_, PreferencesDataStoreError>(())
+    });
+    let owner = owner(Backend::DataStore);
+    let mut before = Data::empty(owner.clone());
+    for (n, edits) in [
+        (1, vec![set("record", json!({"choice":"custom"}))]),
+        (
+            2,
+            vec![Edit::Patch {
+                key: "record".into(),
+                set: BTreeMap::new(),
+                delete: ["choice".into()].into(),
+            }],
+        ),
+        (
+            3,
+            vec![Edit::Delete {
+                key: "record".into(),
+                path: vec![],
+            }],
+        ),
+        (
+            4,
+            vec![Edit::Delete {
+                key: "record".into(),
+                path: vec![],
+            }],
+        ),
+    ] {
+        before = law(&step, &before, &tx(&owner, n, edits));
+    }
+}
+
+#[test]
+fn default_records_survive_atomic_namespace_replacement() {
+    use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStoreError};
+    let step = Definition::from_preferences(|_, state| {
+        let key = stringPreferencesKey("profile_default");
+        if !state.contains(&key) {
+            state.set(&key, json!({"id":"default"}));
+        }
+        Ok::<_, PreferencesDataStoreError>(())
+    });
+    let owner = owner(Backend::DataStore);
+    let mut before = Data::empty(owner.clone());
+    for (n, records) in [
+        (
+            1,
+            BTreeMap::from([("custom".into(), json!({"id":"custom"}))]),
+        ),
+        (2, BTreeMap::new()),
+    ] {
+        before = law(
+            &step,
+            &before,
+            &tx(
+                &owner,
+                n,
+                vec![Edit::ReplaceRecords {
+                    prefix: "profile_".into(),
+                    records,
+                }],
+            ),
+        );
+    }
+}

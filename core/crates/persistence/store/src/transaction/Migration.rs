@@ -18,6 +18,8 @@ pub struct Context {
     pub history: Vec<Transaction>,
     pub references: BTreeMap<String, String>,
     pub routes: BTreeMap<String, String>,
+    // A sequence of declarative rules has a context-independent transaction map.
+    pub(crate) rules: Option<Vec<super::Rule>>,
 }
 
 impl Context {
@@ -32,6 +34,7 @@ impl Context {
             history: vec![],
             references: BTreeMap::new(),
             routes: BTreeMap::new(),
+            rules: Some(vec![]),
         }
     }
 
@@ -42,6 +45,7 @@ impl Context {
         version: u32,
         convert: &dyn Fn(u32, &mut Preferences) -> Result<(), Error>,
     ) -> Result<(), Error> {
+        self.rules = None;
         fn project(
             data: &mut Data,
             version: u32,
@@ -65,14 +69,19 @@ impl Context {
             }
             for encoded in data.versions.keys().chain(data.additions.keys()) {
                 let (key, path): (String, Vec<super::Path>) = serde_json::from_str(encoded)?;
-                if data.values.get(&key) != values.get(&key)
-                    && (!path.is_empty() || data.additions.contains_key(encoded))
+                let before = super::nested_value(data.values.get(&key), &path);
+                let after = super::nested_value(values.get(&key), &path);
+                if (!path.is_empty() && before.is_some() && after.is_none())
+                    || (data.additions.contains_key(encoded) && before != after)
                 {
                     return Err(Error::Message(
-                        "Scoped or additive migration requires an explicit scope rule".into(),
+                        "Migration changed a modification scope or additive contribution; use an explicit scope rule".into(),
                     ));
                 }
             }
+            // A codec may turn deletion into an explicit default at the same scope.
+            // Its original scope version survives; the default is no longer a tombstone.
+            data.deleted.retain(|key| !values.contains_key(key));
             data.values = values;
             Ok(())
         }
@@ -105,8 +114,8 @@ impl Context {
                                 Error::Message("Migration changed an edit scope".into())
                             })?;
                     }
-                    Edit::Patch { key, set, .. } => {
-                        for (field, value) in set {
+                    Edit::Patch { key, set, delete } => {
+                        for (field, value) in set.iter_mut() {
                             *value = converted
                                 .values
                                 .get(key)
@@ -116,19 +125,37 @@ impl Context {
                                     Error::Message("Migration changed a patch scope".into())
                                 })?;
                         }
+                        delete.retain(|field| {
+                            if let Some(value) =
+                                converted.values.get(key).and_then(|v| v.get(field))
+                            {
+                                set.insert(field.clone(), value.clone());
+                                false
+                            } else {
+                                true
+                            }
+                        });
                     }
-                    Edit::ReplaceRecords { prefix, records } => {
-                        for (id, value) in records {
-                            *value = converted
-                                .values
-                                .get(&format!("{prefix}{id}"))
-                                .cloned()
-                                .ok_or_else(|| {
-                                    Error::Message("Migration changed a record identity".into())
-                                })?;
+                    Edit::Delete { key, path } => {
+                        if let Some(value) = super::nested_value(converted.values.get(key), path) {
+                            *edit = Edit::Set {
+                                key: key.clone(),
+                                path: path.clone(),
+                                value: value.clone(),
+                            };
                         }
                     }
-                    Edit::Delete { .. } | Edit::Increment { .. } => {}
+                    Edit::ReplaceRecords { prefix, records } => {
+                        *records = converted
+                            .values
+                            .iter()
+                            .filter_map(|(key, value)| {
+                                key.strip_prefix(prefix.as_str())
+                                    .map(|id| (id.to_owned(), value.clone()))
+                            })
+                            .collect();
+                    }
+                    Edit::Increment { .. } => {}
                 }
             }
         }
@@ -138,12 +165,18 @@ impl Context {
 
 type Step = dyn Fn(u32, &mut Context) -> Result<(), Error> + Send + Sync;
 #[derive(Clone)]
-pub struct Definition(Arc<Step>);
+pub struct Definition {
+    step: Arc<Step>,
+    pub(crate) independent: bool,
+}
 impl Definition {
     pub fn new(
         step: impl Fn(u32, &mut Context) -> Result<(), Error> + Send + Sync + 'static,
     ) -> Self {
-        Self(Arc::new(step))
+        Self {
+            step: Arc::new(step),
+            independent: false,
+        }
     }
     pub fn from_preferences(
         step: impl Fn(u32, &mut Preferences) -> Result<(), Error> + Send + Sync + 'static,
@@ -152,7 +185,21 @@ impl Definition {
     }
     pub fn apply(&self, version: u32, context: &mut Context) -> Result<(), Error> {
         let mut staged = context.clone();
-        (self.0)(version, &mut staged)?;
+        (self.step)(version, &mut staged)?;
+        // Certify only effects fully expressed by the recorded rules. Opaque Rust
+        // projections continue to require their actual source state.
+        if let (Some(before), Some(after)) = (&context.rules, &staged.rules) {
+            let mut expected = context.clone();
+            for rule in &after[before.len()..] {
+                super::Form::apply_rule(&mut expected, rule).map_err(Error::Message)?;
+            }
+            if expected.before != staged.before
+                || expected.after != staged.after
+                || expected.transactions != staged.transactions
+            {
+                staged.rules = None;
+            }
+        }
         if staged.before.revision != context.before.revision
             || staged.after.revision != context.after.revision
         {
@@ -184,7 +231,7 @@ impl Definition {
                 state.after = source.clone();
                 state.original = None;
                 state.transactions.clear();
-                (self.0)(version, &mut state)?;
+                (self.step)(version, &mut state)?;
                 state.after.owner = staged.destination.clone();
                 if state.after != *converted {
                     return Err(Error::Message(
@@ -243,6 +290,9 @@ impl super::Form for Context {
         Ok(())
     }
     fn apply_rule(&mut self, rule: &super::Rule) -> super::Result<()> {
+        if let Some(rules) = &mut self.rules {
+            rules.push(rule.clone());
+        }
         rule.apply(&mut self.before)?;
         rule.apply(&mut self.after)?;
         for transaction in &mut self.transactions {

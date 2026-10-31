@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 
 /** Adapts generic object-storage calls to real SQLite transactions without implementing character business logic. */
 export function createStorageHost(directory, attempted) {
@@ -152,7 +152,14 @@ export function createStorageHost(directory, attempted) {
         const version = Object.hasOwn(values, "__operit_preferences_schema_version") ? values.__operit_preferences_schema_version : 0;
         if (declaration !== null) {
           if (version > declaration.version) throw new Error("Preference schema version is newer than the declared schema");
-          for (let step = version; step < declaration.version; step += 1) await declaration.migrate(step, preferences);
+          for (let step = version; step < declaration.version; step += 1) for (const rule of declaration.steps[step]) {
+            if (rule.op !== "set_object_field") throw new Error("Unexpected schema rule in plugin host fixture");
+            const value = preferences.get(rule.key);
+            if (value !== undefined) {
+              if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Migration requires an object");
+              preferences.set(rule.key, {...value, [rule.field]: structuredClone(rule.value)});
+            }
+          }
           values.__operit_preferences_schema_version = declaration.version;
         }
         if (callback !== null) await callback(preferences);
@@ -183,7 +190,7 @@ export function createStorageHost(directory, attempted) {
         } catch (error) { sql.exec("ROLLBACK"); throw error; }
       },
       /** Declares one schema before this handle starts reading or editing. */
-      withSchema(version, migrate) { if (started || declaration !== null) throw new Error("Preference schema must be declared before operations"); declaration = { version, migrate }; return handle; },
+      withSchema(version, steps) { if (started || declaration !== null) throw new Error("Preference schema must be declared before operations"); if (!Array.isArray(steps) || steps.length !== version) throw new Error("Portable schema steps required"); declaration = { version, steps }; return handle; },
       /** Returns one complete immutable snapshot after declared schema upgrades. */
       data() { attempted("storage.preferences.data", [options.path]); return enqueue(() => perform(null)); },
       /** Publishes exactly the mutations made by the owning callback. */
@@ -281,9 +288,12 @@ export function createStorageHost(directory, attempted) {
     close() { for (const sql of handles) sql.close(); handles.clear(); },
     /** Reads and deliberately edits a real JSON preference file for independent assertions. */
     inspectPreferences(name, callback) {
-      const target = path.join(directory, name + ".preferences.json"), values = readPreferences(target);
+      const target = path.join(directory, name === "migration" ? "local" : "", name + ".preferences.json"), values = readPreferences(target);
       const before = JSON.stringify(values), result = callback(values);
-      if (JSON.stringify(values) !== before) writeFileSync(target, JSON.stringify(values), "utf8");
+      if (JSON.stringify(values) !== before) {
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, JSON.stringify(values), "utf8");
+      }
       return result;
     },
     /** Reads raw collection entries for independent test assertions and deliberate corruption cases. */

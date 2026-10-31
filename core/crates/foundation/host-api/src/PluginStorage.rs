@@ -128,6 +128,9 @@ pub enum StorageRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         merge: Option<StoragePreferencesMergeDescriptor>,
     },
+    /// Persists the complete numbered migration contract before accessing owner data.
+    #[serde(rename = "preferences_schema")]
+    PreferencesSchema { handle: String, schema: StoragePreferencesSchema },
     #[serde(rename = "preferences_data")]
     PreferencesData { handle: String },
     #[serde(rename = "preferences_begin_edit")]
@@ -480,6 +483,29 @@ pub enum StoragePreferenceEdit {
     IncrementInteger { key: String, delta: i64 },
     #[serde(rename = "set_object_field")]
     SetObjectField { key: String, field: String, value: Value },
+}
+
+/// A portable format migration. Step n converts format n to n+1 on data and transactions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoragePreferencesSchema {
+    pub version: u32,
+    pub steps: Vec<Vec<StoragePreferencesMigrationRule>>,
+}
+
+/// Pure migration operations executed by the shared native migration context.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoragePreferencesMigrationRule {
+    RenameKey { from: String, to: String },
+    RenameField { key: String, from: String, to: String },
+    SplitObject { key: String, fields: std::collections::BTreeMap<String, String> },
+    SplitRecords { key: String, prefix: String, identity: String },
+    DropKey { key: String },
+    /// Sets a field when the named object exists; absence remains absence.
+    SetObjectField { key: String, field: String, value: Value },
+    /// Decodes legacy JSON strings; already decoded values remain valid inputs.
+    DecodeJson { key: String },
 }
 
 /// Carries a complete typed preference snapshot independently of object collection versions.

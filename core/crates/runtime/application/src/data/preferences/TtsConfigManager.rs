@@ -53,11 +53,6 @@ impl TtsConfigManager {
     }
 
     #[allow(non_snake_case)]
-    fn TTS_CONFIG_LIST() -> operit_store::PreferencesDataStore::PreferencesKey {
-        stringPreferencesKey("tts_config_list")
-    }
-
-    #[allow(non_snake_case)]
     fn CURRENT_TTS_CONFIG_ID() -> operit_store::PreferencesDataStore::PreferencesKey {
         stringPreferencesKey("current_tts_config_id")
     }
@@ -421,27 +416,19 @@ impl TtsConfigManager {
         }
         context.map_preferences(from, &|version, preferences| match version {
             0 => {
-                let hasCurrentConfig = preferences
-                    .getTyped::<String>(&TtsConfigManager::CURRENT_TTS_CONFIG_ID())?
-                    .is_some_and(|value| !value.trim().is_empty());
-                let list = preferences
-                    .getTyped::<String>(&Self::TTS_CONFIG_LIST())?
-                    .map(|encoded| serde_json::from_str::<Vec<String>>(&encoded))
-                    .transpose()?
-                    .unwrap_or_default();
-                if hasCurrentConfig || !list.is_empty() {
-                    return Ok(());
-                }
+                // The system profile is independent of the selected custom profile.
+                // This makes initialization the same projection before and after any edit.
                 let config = defaultSystemTtsConfig(0);
-                preferences.set(
-                    &Self::TTS_CONFIG_LIST(),
-                    serde_json::to_string(&[DEFAULT_SYSTEM_TTS_CONFIG_ID])?,
-                );
-                preferences.set(&configJsonKey(&config.id), serde_json::to_string(&config)?);
-                preferences.set(
-                    &TtsConfigManager::CURRENT_TTS_CONFIG_ID(),
-                    DEFAULT_SYSTEM_TTS_CONFIG_ID.to_string(),
-                );
+                let key = configJsonKey(&config.id);
+                if !preferences.contains(&key) {
+                    preferences.set(&key, serde_json::to_string(&config)?);
+                }
+                let hasCurrentConfig = preferences
+                    .getTyped::<String>(&Self::CURRENT_TTS_CONFIG_ID())?
+                    .is_some_and(|value| !value.trim().is_empty());
+                if !hasCurrentConfig {
+                    preferences.set(&Self::CURRENT_TTS_CONFIG_ID(), config.id);
+                }
                 Ok(())
             }
             1 => {
@@ -453,8 +440,10 @@ impl TtsConfigManager {
                     })
                     .collect::<Vec<_>>();
                 for (key, value) in records {
-                    let encoded = serde_json::from_value::<String>(value)?;
-                    let record: serde_json::Value = serde_json::from_str(&encoded)?;
+                    let record: serde_json::Value = match value {
+                        serde_json::Value::String(encoded) => serde_json::from_str(&encoded)?,
+                        record => record,
+                    };
                     let config: TtsConfig = serde_json::from_value(record.clone())?;
                     let id = key
                         .strip_prefix("tts_config_")

@@ -19,6 +19,7 @@ pub mod NetworkControlStore;
 #[cfg(feature = "full")]
 #[path = "PluginStorage.rs"]
 pub mod PluginStorage;
+pub(crate) mod PluginPreferenceSchema;
 #[path = "Transaction.rs"]
 pub mod Transaction;
 #[path = "PreferenceLayout.rs"]

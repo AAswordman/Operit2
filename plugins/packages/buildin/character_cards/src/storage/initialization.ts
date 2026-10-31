@@ -1,3 +1,4 @@
+import schema from "./meta-schema.json";
 import type { Storage } from "../../../../../types/storage";
 import type { Card, GlobalMemoryPreferences, MemoryRecallSettings, MemorySpace } from "../model";
 import { readCharacter } from "../drafts";
@@ -75,9 +76,7 @@ export async function inspectCharacterInitialization(): Promise<InitializationIn
 export async function repairCharacterInitialization(expected: InitializationRecoverySource): Promise<void> {
   const storage = await CharacterStorage.openForRecovery();
   try {
-    storage.metadata.withSchema(1, (version, preferences) => {
-      if (version !== 0 || preferences.contains("state")) throw new Error("现有元数据不属于缺失首次初始化信息，不能执行此修复。");
-    });
+    storage.metadata.withSchema(schema.version, schema.steps as Storage.MigrationRule[][]);
     const source = await recoverySource(storage);
     if (!equal(source, expected)) throw new Error("数据已在检查后发生变化，请重新检查再确认修复。");
     const plan = recoveryPlan(source);

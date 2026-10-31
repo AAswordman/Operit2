@@ -871,8 +871,10 @@ impl ModelConfigManager {
                     })
                     .collect::<Vec<_>>();
                 for (key, value) in records {
-                    let encoded = serde_json::from_value::<String>(value)?;
-                    let mut record: serde_json::Value = serde_json::from_str(&encoded)?;
+                    let mut record: serde_json::Value = match value {
+                        serde_json::Value::String(encoded) => serde_json::from_str(&encoded)?,
+                        record => record,
+                    };
                     for field in ["providerTypeId", "providerType"] {
                         let removed = record
                             .get(field)

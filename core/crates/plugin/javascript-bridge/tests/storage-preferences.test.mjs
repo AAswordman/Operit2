@@ -22,6 +22,19 @@ function harness(values={},version=0) {
     if(!handle) throw new Error("Unknown or closed storage handle");
     switch(call.op) {
       case "close":handles.delete(call.handle);wake();return {op:"close"};
+      case "preferences_schema": {
+        const {version,steps}=call.schema;
+        if(state.version>version)throw new Error("Preference schema is newer than supported");
+        const next=structuredClone(state.values);
+        for(let n=state.version;n<version;n++)for(const rule of steps[n]) {
+          switch(rule.op) {
+            case "rename_key":if(Object.hasOwn(next,rule.from)){if(Object.hasOwn(next,rule.to))throw new Error("Key destination exists");next[rule.to]=next[rule.from];delete next[rule.from];}break;
+            case "decode_json":if(typeof next[rule.key]==="string")next[rule.key]=JSON.parse(next[rule.key]);break;
+            default:throw new Error("Unsupported migration rule");
+          }
+        }
+        state.values=next;state.version=version;return {op:call.op,snapshot:snapshot()};
+      }
       case "preferences_data":return {op:call.op,snapshot:snapshot()};
       case "preferences_begin_edit": {
         assert.equal(handle.edit,null,"Only one callback may be active on a handle");
@@ -148,33 +161,38 @@ test("native edit conflicts reject without rerunning callbacks",async()=>{
   assert.equal(h.requests.filter(call=>call.op==="preferences_cancel_edit").length,0);
 });
 
-/** Executes numbered version cases inside one publication before exposing the upgraded data. */
-test("withSchema applies case 0 then case 1 atomically and only once",async()=>{
-  const h=harness();
-  await h.execute(`globalThis.steps=[];globalThis.store=(await Tools.Storage.dataStore.open({path:"roles.preferences.json"})).withSchema(2,async(version,p)=>{
-    steps.push(version);switch(version){case 0:p.set("old",{id:"1"});break;case 1:await Promise.resolve();p.set("card",{id:"new-uuid"});p.remove("old");break;default:throw new Error("missing migration");}
-  });await store.data();await store.data();`);
-  assert.deepEqual(Array.from(h.context.steps),[0,1]);assert.deepEqual(h.state.values,{card:{id:"new-uuid"}});assert.equal(h.state.version,2);
-  assert.equal(h.requests.filter(call=>call.op==="preferences_finish_edit").length,1);
-  assert.equal(await h.run('store.schemaVersion()'),2);
-  assert.throws(()=>h.run('store.withSchema(3,()=>{})'),/before using/);
-});
-
-/** Leaves both the original values and schema version intact when a numbered step fails. */
-test("schema failures discard earlier numbered migration steps",async()=>{
-  const h=harness({original:true});
-  await h.execute(`globalThis.store=(await Tools.Storage.dataStore.open({path:"roles.preferences.json"})).withSchema(2,(version,p)=>{
-    switch(version){case 0:p.set("draft",1);break;case 1:throw new Error("missing v1 migration");default:throw new Error("unknown version");}
-  });`);
-  await assert.rejects(h.run('store.data()'),/missing v1 migration/);
-  assert.equal(h.state.version,0);assert.deepEqual(h.state.values,{original:true});
+/** Sends portable numbered rules once; only the host executes migration. */
+test("schema rules are registered once with native persistence",async()=>{
+  const h=harness({old:{id:"1"},profile:'{"enabled":true}'});
+  await h.execute(`globalThis.store=(await Tools.Storage.dataStore.open({path:"roles.preferences.json"})).withSchema(2,
+    [[{op:"rename_key",from:"old",to:"card"}],[{op:"decode_json",key:"profile"}]]);await store.data();await store.data();`);
+  assert.deepEqual(h.state.values,{card:{id:"1"},profile:{enabled:true}});assert.equal(h.state.version,2);
+  assert.equal(h.requests.filter(call=>call.op==="preferences_schema").length,1);
   assert.equal(h.requests.filter(call=>call.op==="preferences_finish_edit").length,0);
+  assert.equal(await h.run('store.schemaVersion()'),2);
+  assert.throws(()=>h.run('store.withSchema(3,[[],[],[]])'),/before using/);
 });
 
-/** Rejects unsupported future versions before executing a user edit or migration callback. */
-test("future schema versions cannot invoke callbacks or overwrite data",async()=>{
+/** Rejects arbitrary JS migrations and incomplete rule histories at the public boundary. */
+test("schema declarations require portable complete steps",async()=>{
+  const h=harness();await h.execute('globalThis.store=await Tools.Storage.dataStore.open({path:"roles.preferences.json"})');
+  assert.throws(()=>h.run('store.withSchema(1,()=>{})'),/rule array/);
+  assert.throws(()=>h.run('store.withSchema(2,[[]])'),/rule array/);
+});
+
+/** A failed native migration publishes neither earlier steps nor a version bump. */
+test("schema failures preserve the complete source snapshot",async()=>{
+  const h=harness({original:true,bad:"not json"});
+  await h.execute(`globalThis.store=(await Tools.Storage.dataStore.open({path:"roles.preferences.json"})).withSchema(2,
+    [[{op:"rename_key",from:"original",to:"draft"}],[{op:"decode_json",key:"bad"}]]);`);
+  await assert.rejects(h.run('store.data()'),SyntaxError);
+  assert.equal(h.state.version,0);assert.deepEqual(h.state.values,{original:true,bad:"not json"});
+});
+
+/** A future native format rejects the declaration before executing any user edit. */
+test("future schema versions cannot invoke edit callbacks or overwrite data",async()=>{
   const h=harness({future:true},3);
-  await h.execute('globalThis.calls=0;globalThis.store=(await Tools.Storage.dataStore.open({path:"roles.preferences.json"})).withSchema(2,()=>{calls++})');
+  await h.execute('globalThis.calls=0;globalThis.store=(await Tools.Storage.dataStore.open({path:"roles.preferences.json"})).withSchema(2,[[],[]])');
   await assert.rejects(h.run('store.data()'),/newer than supported/);
   await assert.rejects(h.run('store.edit(()=>{calls++})'),/newer than supported/);
   assert.equal(h.context.calls,0);assert.equal(h.state.version,3);assert.deepEqual(h.state.values,{future:true});

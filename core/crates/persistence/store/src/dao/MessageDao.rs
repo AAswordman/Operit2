@@ -841,19 +841,24 @@ pub(crate) fn insertMessageParams(
 
 /// Reads the saved author from the same revision as the locator's preview text.
 fn mapLocatorPreview(row: &SqliteRow) -> Result<ChatMessageLocatorPreview, SqliteStoreError> {
-    let extensionsJson: String = row.get(7)?;
-    let extensions = decodePluginExtensions(&extensionsJson)?;
-    let displayName = extensions.get("host.chat.identity")
-        .and_then(|identity| identity.get("title"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .unwrap_or_default()
-        .to_string();
+    let sender: String = row.get(2)?;
+    let displayName = if sender == "ai" {
+        let extensionsJson: String = row.get(7)?;
+        let extensions = decodePluginExtensions(&extensionsJson)?;
+        extensions.get("host.chat.identity")
+            .and_then(|identity| identity.get("title"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        String::new()
+    };
     Ok(ChatMessageLocatorPreview {
         messageIndex: row.get(0)?,
         timestamp: row.get(1)?,
-        sender: row.get(2)?,
+        sender,
         displayName,
         previewContent: row.get(3)?,
         contentLength: row.get(4)?,

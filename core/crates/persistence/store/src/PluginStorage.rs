@@ -503,7 +503,7 @@ fn openDatabase(
             return Err(failure("Existing database does not carry a plugin storage manifest"));
         }
         let existing = !tables.is_empty();
-        for sql in DATABASE_SCHEMA.split(';').filter(|sql| !sql.trim().is_empty()) { tx.execute(sql, Vec::new())?; }
+        for sql in DATABASE_SCHEMA.split(';').chain(crate::Transaction::compaction::SCHEMA.split(';')).filter(|sql| !sql.trim().is_empty()) { tx.execute(sql, Vec::new())?; }
         if manifest.kind == StorageKind::Objects { for sql in OBJECT_CHANGE_SCHEMA { tx.execute(sql, Vec::new())?; } }
         let manifestColumns = tx.queryRows("PRAGMA table_info(_operit_manifest)", Vec::new())?;
         if !manifestColumns.iter().any(|row| row.get::<_, String>(1).ok().as_deref() == Some("merge")) {
@@ -576,6 +576,15 @@ fn openDatabase(
                     origin = actual;
                 }
             }
+        }
+        if tx.queryOne("SELECT 1 FROM _operit_compaction_progress WHERE version=1",vec![])?.is_none() {
+            for row in tx.queryRows("SELECT origin,sequence,created_at,payload FROM _operit_log ORDER BY created_at,origin,sequence",vec![])? {
+                if let Ok(payload) = serde_json::from_str(&row.get::<_,String>(3)?) {
+                    let operation = storageOperation(&row.get::<_,String>(0)?,row.get(1)?,row.get(2)?,payload);
+                    if decodePayload(operation.payload.clone()).is_ok() { compactRecord(tx,&operation)?; }
+                }
+            }
+            tx.execute("INSERT INTO _operit_compaction_progress VALUES(1)",vec![])?;
         }
         Ok(effectiveMerge)
     })?;
@@ -723,14 +732,14 @@ impl Database {
     ) -> Result<String, SqliteStoreError> {
         let sequence = tx
             .queryOne(
-                "SELECT COALESCE(MAX(sequence),0)+1 FROM _operit_log WHERE origin=?1",
+                "SELECT MAX(COALESCE((SELECT MAX(sequence) FROM _operit_log WHERE origin=?1),0),COALESCE((SELECT MAX(sequence) FROM _operit_compacted WHERE origin=?1),0))+1",
                 vec![SqliteValue::Text(self.origin.clone())],
             )?
             .ok_or_else(|| failure("Missing local sequence"))?
             .get::<_, i64>(0)?;
         let logical = tx
             .queryOne(
-                "SELECT COALESCE(MAX(created_at),0)+1 FROM _operit_log",
+                "SELECT MAX(COALESCE((SELECT MAX(created_at) FROM _operit_log),0),COALESCE((SELECT MAX(business_time) FROM _operit_compacted),0))+1",
                 Vec::new(),
             )?
             .ok_or_else(|| failure("Missing logical time"))?
@@ -781,7 +790,8 @@ impl Database {
             changes,
         })
         .map_err(|e| failure(e.to_string()))?;
-        tx.execute("INSERT INTO _operit_log(origin,sequence,created_at,payload,outgoing) VALUES(?1,?2,?3,?4,1)", vec![SqliteValue::Text(self.origin.clone()), SqliteValue::Integer(sequence), SqliteValue::Integer(createdAt), SqliteValue::Text(payload)])?;
+        tx.execute("INSERT INTO _operit_log(origin,sequence,created_at,payload,outgoing) VALUES(?1,?2,?3,?4,1)", vec![SqliteValue::Text(self.origin.clone()), SqliteValue::Integer(sequence), SqliteValue::Integer(createdAt), SqliteValue::Text(payload.clone())])?;
+        compactRecord(tx, &storageOperation(&self.origin, sequence, createdAt, serde_json::from_str(&payload).map_err(|e|failure(e.to_string()))?))?;
         Ok(version)
     }
 }
@@ -790,7 +800,7 @@ impl PluginStorageSession {
     /// Identifies native preference requests without requiring a SQLite host registration.
     pub fn isPreferencesRequest(&self, request: &StorageRequest) -> Result<bool, SqliteStoreError> {
         match request {
-            StorageRequest::OpenPreferences { .. } | StorageRequest::PreferencesData { .. }
+            StorageRequest::OpenPreferences { .. } | StorageRequest::PreferencesSchema { .. } | StorageRequest::PreferencesData { .. }
             | StorageRequest::PreferencesBeginEdit { .. } | StorageRequest::PreferencesFinishEdit { .. }
             | StorageRequest::PreferencesCancelEdit { .. } => Ok(true),
             StorageRequest::Close { handle } => {
@@ -813,7 +823,7 @@ impl PluginStorageSession {
             return Ok(StorageResponse::Open(StorageOpenResult { handle, path }));
         }
         let handle = match &request {
-            StorageRequest::Close { handle } | StorageRequest::PreferencesData { handle }
+            StorageRequest::Close { handle } | StorageRequest::PreferencesSchema { handle, .. } | StorageRequest::PreferencesData { handle }
             | StorageRequest::PreferencesBeginEdit { handle } | StorageRequest::PreferencesFinishEdit { handle, .. }
             | StorageRequest::PreferencesCancelEdit { handle, .. } => handle,
             _ => return Err(failure("Native preference requests require DataStore operations")),
@@ -939,7 +949,8 @@ impl PluginStorageSession {
             return Ok(StorageResponse::Open(StorageOpenResult { handle, path }));
         }
         let handle = match &request {
-            StorageRequest::PreferencesData { handle }
+            StorageRequest::PreferencesSchema { handle, .. }
+            | StorageRequest::PreferencesData { handle }
             | StorageRequest::PreferencesBeginEdit { handle }
             | StorageRequest::PreferencesFinishEdit { handle, .. }
             | StorageRequest::PreferencesCancelEdit { handle, .. }
@@ -1059,7 +1070,7 @@ impl PluginStorageSession {
                 }
                 commitValues(&database,tx,mutations).map(StorageResponse::Commit)
             },
-            StorageRequest::PreferencesData { .. }
+            StorageRequest::PreferencesSchema { .. } | StorageRequest::PreferencesData { .. }
             | StorageRequest::PreferencesBeginEdit { .. }
             | StorageRequest::PreferencesFinishEdit { .. }
             | StorageRequest::PreferencesCancelEdit { .. } => Err(failure("Preference operations require a DataStore handle")),
@@ -1395,8 +1406,9 @@ pub fn localClock(host: Arc<dyn RuntimeSqliteHost>) -> Result<SyncClock, SqliteS
     for database in databases {
         let path: String = database.get(0)?;
         let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            crate::Transaction::compaction::prepare(&store)?;
         for row in store.queryRows(
-            "SELECT origin,MAX(sequence) FROM _operit_log GROUP BY origin",
+            "SELECT origin,MAX(sequence) FROM (SELECT origin,sequence FROM _operit_log UNION ALL SELECT origin,sequence FROM _operit_compacted) GROUP BY origin",
             Vec::new(),
         )? {
             let origin: String = row.get(0)?;
@@ -1419,12 +1431,15 @@ pub fn receipt(
         let path: String = row.get(0)?;
         let result = (|| -> Result<(), SqliteStoreError> {
             let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            crate::Transaction::compaction::prepare(&store)?;
             for row in store.queryRows(
-                "SELECT origin,sequence FROM _operit_log ORDER BY origin,sequence",
+                "SELECT origin,sequence FROM _operit_log UNION SELECT origin,sequence FROM _operit_compacted ORDER BY origin,sequence",
                 Vec::new(),
             )? {
                 receipt.observe(&row.get::<_, String>(0)?, row.get(1)?);
             }
+            if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? { receipt.observe(&origin,sequence); }
+            crate::Transaction::compaction::observe_coverage(&store,&mut receipt)?;
             Ok(())
         })();
         if let Err(error) = result {
@@ -1454,7 +1469,7 @@ fn withSyncDataset<R>(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str,
         owner: crate::Transaction::Owner { backend: crate::Transaction::Backend::Sql, path: path.into(), format: 1, layout: 1 },
         node: node.into(), tables: &names,
         cleanup: "DELETE FROM _operit_dirty",
-        revisions: "SELECT origin || ':' || sequence,created_at,origin,sequence FROM _operit_log" })
+        revisions: "SELECT origin || ':' || sequence,created_at,origin,sequence FROM _operit_log UNION SELECT id,business_time,origin,sequence FROM _operit_compacted" })
 }
 
 /// A complete dataset declaration lets file correction provision an absent peer database.
@@ -1494,10 +1509,6 @@ pub fn installSnapshotDefinition(host: Arc<dyn RuntimeSqliteHost>, storage: Arc<
     registerFile(storage, &manifest)
 }
 
-pub fn syncBaselineDigest(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str) -> Result<String,String> {
-    withSyncDataset(host,path,node,|dataset|dataset.baseline_digest())
-}
-
 pub fn syncDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
     catalog(host)?.queryRows("SELECT path FROM plugin_databases WHERE sync=1 ORDER BY path", vec![])?.iter().map(|row|row.get(0)).collect()
 }
@@ -1521,7 +1532,10 @@ pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<
 }
 
 pub fn repairSyncedSnapshot(host: Arc<dyn RuntimeSqliteHost>, expected: &str, source: &crate::Transaction::Snapshot, node: &str) -> Result<bool, String> {
-    withSyncDataset(host, &source.data.owner.path, node, |dataset| dataset.repair(expected, source))
+    let definition = snapshotDefinition(host.clone(), &source.data.owner.path).map_err(|e|e.to_string())?;
+    withSyncDataset(host, &source.data.owner.path, node, |dataset| dataset.repair_with(expected, source, Some(definition), |tx,snapshot| {
+        reconcileInitialization(tx, snapshot, None)
+    }))
 }
 
 /// Inventories outgoing transactions without decoding database payloads or assuming contiguous sequences.
@@ -1534,10 +1548,14 @@ pub fn operationIdsSince<K: SyncOperationKnowledge>(
         let path: String = row.get(0)?;
         let result = (|| -> Result<(), SqliteStoreError> {
             let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            crate::Transaction::compaction::prepare(&store)?;
             for row in store.queryRows("SELECT origin,sequence FROM _operit_log WHERE outgoing=1", Vec::new())? {
                 let origin: String = row.get(0)?;
                 let sequence: i64 = row.get(1)?;
                 if !clock.containsSequence(&origin, sequence) { ids.insert(format!("{origin}:{sequence}")); }
+            }
+            if let Some((id,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? {
+                if !clock.containsSequence(&origin,sequence) { ids.insert(id); }
             }
             Ok(())
         })();
@@ -1602,7 +1620,13 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
         let path: String = row.get(0)?;
         let result = (|| -> Result<_, SqliteStoreError> {
             let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            crate::Transaction::compaction::prepare(&store)?;
             let mut entries = Vec::new();
+            if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? {
+                if !clock.containsSequence(&origin,sequence) {
+                    entries.push((0,origin,sequence,stores.len(),128));
+                }
+            }
             for row in store.queryRows(
                 "SELECT DISTINCT origin FROM _operit_log WHERE outgoing=1",
                 Vec::new(),
@@ -1664,6 +1688,9 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
         }
         let (path, store) = &stores[storeIndex];
         let result = (|| -> Result<SyncOperation, SqliteStoreError> {
+            if origin.starts_with("~init:") {
+                return readInitialization(store)?.ok_or_else(||failure("Missing initialization"));
+            }
             let payload: String = store
                 .queryRows(
                     "SELECT payload FROM _operit_log WHERE origin=?1 AND sequence=?2",
@@ -1676,20 +1703,8 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
                 .next()
                 .ok_or_else(|| failure("Missing synchronization payload"))?
                 .get(0)?;
-            Ok(SyncOperation {
-                opId: format!("{origin}:{sequence}"),
-                originDeviceId: origin.clone(),
-                sequence,
-                domain: PLUGIN_STORAGE_SYNC_DOMAIN.into(),
-                entityType: "transaction".into(),
-                entityId: format!("{origin}:{sequence}"),
-                operation: "commit".into(),
-                semantics: SyncOperationSemantics::Transaction,
-                payload: serde_json::from_str(&payload)
-                    .map_err(|error| failure(error.to_string()))?,
-                createdAt,
-                schemaVersion: 1,
-            })
+            Ok(storageOperation(&origin, sequence, createdAt,
+                serde_json::from_str(&payload).map_err(|e|failure(e.to_string()))?))
         })();
         match result {
             Ok(operation) => {
@@ -2860,6 +2875,9 @@ fn reconcileDurableMappings(
 /// Identifies the explicit plugin database commit boundary without interpreting its record mutations.
 pub fn syncDatasetPath(operation: &SyncOperation) -> Result<String, SqliteStoreError> {
     if operation.domain != PLUGIN_STORAGE_SYNC_DOMAIN { return Err(failure("Not a plugin storage operation")); }
+    if let Some(initialization) = crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)? {
+        return resolveStoragePath(&initialization.data.owner.path).map_err(failure);
+    }
     let path = operation.payload.get("manifest").and_then(|manifest| manifest.get("path")).and_then(Value::as_str)
         .ok_or_else(|| failure("Plugin transaction dataset path is missing"))?;
     resolveStoragePath(path).map_err(failure)
@@ -2872,6 +2890,19 @@ pub fn applyOperation(
     operation: &SyncOperation,
     preferences: &BTreeMap<String, String>,
 ) -> Result<(), SqliteStoreError> {
+    if operation.domain == PLUGIN_STORAGE_SYNC_DOMAIN {
+        if let Some(initialization) = crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)? {
+            let path = initialization.data.owner.path.clone();
+            let definition = initialization.definition.ok_or_else(||failure("Initialization lacks database definition"))?;
+            installSnapshotDefinition(host.clone(),storage,&path,definition.clone())?;
+            let manifest = decodeManifest(definition["manifest"].clone())?;
+            let database = openDatabase(host.clone(),&manifest,String::new())?;
+            withSyncDataset(host,&path,"",|dataset|dataset.receive_initialization(operation,|tx,snapshot| {
+                reconcileInitialization(tx,snapshot,Some((&database,preferences)))
+            })).map_err(failure)?;
+            return Ok(());
+        }
+    }
     if operation.domain != PLUGIN_STORAGE_SYNC_DOMAIN
         || operation.entityType != "transaction"
         || operation.operation != "commit"
@@ -2913,14 +2944,27 @@ pub fn applyOperation(
     registerDatabase(host, &payload.manifest)?;
     registerFile(storage, &payload.manifest)?;
     database.store.transaction(|tx| {
+        if crate::Transaction::compaction::retired(tx.raw(), operation)? { return Ok(()); }
         if let Some(row) = tx.queryOne("SELECT payload,created_at FROM _operit_log WHERE origin=?1 AND sequence=?2",vec![SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence)])? {
             let recorded: Value = serde_json::from_str(&row.get::<_,String>(0)?).map_err(|e|failure(e.to_string()))?;
             if recorded != recordedPayload || row.get::<_,i64>(1)? != operation.createdAt { return Err(failure("Remote operation identity has conflicting content")); }
             return Ok(());
         }
-        let checkpointCovered = crate::Transaction::covered_by_checkpoint(tx, operation)?;
-        // A copied baseline seals every business effect, including merge aliases and schema.
-        if !checkpointCovered {
+        if crate::Transaction::covered_by_initialization(tx, operation)? {
+            crate::Transaction::compaction::seal(tx.raw(),operation)?;
+            return Ok(());
+        }
+        {
+            applyRecordedPayload(tx, &database, &payload, operation, preferences)?;
+        }
+        tx.execute("INSERT INTO _operit_log(origin,sequence,created_at,payload,outgoing) VALUES(?1,?2,?3,?4,1) ON CONFLICT(origin,sequence) DO NOTHING",vec![SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence),SqliteValue::Integer(operation.createdAt),SqliteValue::Text(serde_json::to_string(&recordedPayload).map_err(|e|failure(e.to_string()))?)])?;
+        compactRecord(tx, operation)?;
+        Ok(())
+    })
+}
+
+fn applyRecordedPayload(tx: &mut SqliteTransaction<'_>, database: &Database, payload: &Payload,
+    operation: &SyncOperation, preferences: &BTreeMap<String,String>) -> Result<(),SqliteStoreError> {
             if payload.tables.len() > 1000 {return Err(failure("Remote transaction exceeds table declaration limit"));}
             let mut tableNames=BTreeSet::new();
             for table in &payload.tables {
@@ -2966,8 +3010,59 @@ pub fn applyOperation(
                 }
             }
             tx.execute("DELETE FROM _operit_dirty",Vec::new())?;
+    Ok(())
+}
+
+fn reconcileInitialization(tx: &mut SqliteTransaction<'_>, snapshot: &crate::Transaction::Snapshot,
+    replay: Option<(&Database, &BTreeMap<String,String>)>) -> Result<(),SqliteStoreError> {
+    let rows = tx.queryRows("SELECT origin,sequence,created_at,payload FROM _operit_log",vec![])?;
+    let mut retained = Vec::new();
+    for row in rows {
+        let origin: String = row.get(0)?; let sequence:i64 = row.get(1)?; let time:i64 = row.get(2)?;
+        let id = format!("{origin}:{sequence}");
+        if snapshot.covered.contains(&id) {
+            crate::Transaction::compaction::seal_identity(tx.raw(),&id,&origin,sequence,time,"")?;
+            tx.execute("DELETE FROM _operit_log WHERE origin=?1 AND sequence=?2",vec![SqliteValue::Text(origin),SqliteValue::Integer(sequence)])?;
+        } else if replay.is_some() {
+            retained.push(storageOperation(&origin,sequence,time,serde_json::from_str(&row.get::<_,String>(3)?).map_err(|e|failure(e.to_string()))?));
         }
-        tx.execute("INSERT INTO _operit_log(origin,sequence,created_at,payload,outgoing) VALUES(?1,?2,?3,?4,1) ON CONFLICT(origin,sequence) DO NOTHING",vec![SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence),SqliteValue::Integer(operation.createdAt),SqliteValue::Text(serde_json::to_string(&recordedPayload).map_err(|e|failure(e.to_string()))?)])?;
-        Ok(())
-    })
+    }
+    if let Some((database,preferences)) = replay {
+        let retained = crate::Transaction::ordered(retained, |op| &op.opId, crate::Transaction::Revision::fromOperation).map_err(failure)?;
+        for operation in retained {
+            let payload = decodePayload(operation.payload.clone())?;
+            applyRecordedPayload(tx,database,&payload,&operation,preferences)?;
+        }
+    }
+    Ok(())
+}
+
+fn readInitialization(store: &SqliteStore) -> Result<Option<SyncOperation>,SqliteStoreError> {
+    store.transaction(crate::Transaction::compaction::initialization)
+}
+
+fn storageOperation(origin: &str, sequence: i64, created_at: i64, payload: Value) -> SyncOperation {
+    SyncOperation { opId: format!("{origin}:{sequence}"), originDeviceId:origin.into(), sequence,
+        domain:PLUGIN_STORAGE_SYNC_DOMAIN.into(), entityType:"transaction".into(), entityId:format!("{origin}:{sequence}"),
+        operation:"commit".into(), semantics:SyncOperationSemantics::Transaction, payload, createdAt:created_at, schemaVersion:1 }
+}
+
+fn compactRecord(tx: &mut SqliteTransaction<'_>, operation: &SyncOperation) -> Result<(),SqliteStoreError> {
+    let payload = decodePayload(operation.payload.clone())?;
+    // Catalog merges and projections have effects beyond row replacement; their originals stay pinned.
+    let scopes = if payload.manifest.merge.is_none() && !payload.changes.is_empty() {
+        let mut scopes = BTreeSet::new();
+        for change in &payload.changes {
+            scopes.insert(serde_json::to_string(&(&payload.manifest, &change.collection, &change.key)).map_err(|e|failure(e.to_string()))?);
+        }
+        for table in &payload.tables {
+            scopes.insert(serde_json::to_string(&("schema", &payload.manifest.path, table)).map_err(|e|failure(e.to_string()))?);
+        }
+        Some(scopes)
+    } else { None };
+    for id in crate::Transaction::compaction::record(tx.raw(),operation,scopes)? {
+        let (origin,sequence) = id.rsplit_once(':').ok_or_else(||failure("Invalid compacted identity"))?;
+        tx.execute("DELETE FROM _operit_log WHERE origin=?1 AND sequence=?2",vec![SqliteValue::Text(origin.into()),SqliteValue::Integer(sequence.parse().map_err(|_|failure("Invalid compacted sequence"))?)])?;
+    }
+    Ok(())
 }

@@ -862,7 +862,7 @@ impl OperitApplication {
         }).map_err(|error| error.to_string())?;
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
-        result["consistencyVersion"] = serde_json::json!(3);
+        result["consistencyVersion"] = serde_json::json!(4);
         result["pending"] = serde_json::json!(pending);
         result["pendingOperationIds"] = serde_json::json!(store.pendingOperationIds().map_err(|error| error.to_string())?);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
@@ -981,6 +981,8 @@ impl OperitApplication {
         let failed_domains = if errors.is_empty() { vec![] } else if domains.is_empty() {
             vec!["preferences".to_owned(),CHAT_SYNC_DOMAIN.into(),PLUGIN_STORAGE_SYNC_DOMAIN.into(),RUNTIME_FILE_SYNC_DOMAIN.into()]
         } else { domains };
+        let files = self.runtimeFileSyncStore()?;
+        let operations = operations.into_iter().map(|op|files.prepareTransactionForTransport(op)).collect::<Result<Vec<_>,_>>()?;
         Ok(serde_json::json!({"operations":boundSyncOperationPage(operations,DEFAULT_SYNC_PAGE_BYTES),"remaining":remaining,
             "progressErrors":progress_errors,"errors":errors,"failedDomains":failed_domains}))
     }
@@ -989,6 +991,8 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn syncApplyOperations(&self, operations: serde_json::Value) -> Result<serde_json::Value,String> {
         let operations: Vec<SyncOperation> = serde_json::from_value(operations).map_err(|e|e.to_string())?;
+        let files = self.runtimeFileSyncStore()?;
+        let operations = operations.into_iter().map(|op|files.hydrateTransaction(op)).collect::<Result<Vec<_>,_>>()?;
         let journal = self.runtimeSyncOperationStore()?;
         let application = journal.lockApplication().map_err(|e|e.to_string())?;
         journal.receiveOperations(&operations).map_err(|e|e.to_string())?;

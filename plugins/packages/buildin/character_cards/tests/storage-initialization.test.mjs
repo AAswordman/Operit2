@@ -77,20 +77,21 @@ async function retained(disk, before) {
 
 test("startup and current-chat requests wait for the same complete migration", async t => {
   const { disk, state } = await released(t);
-  let ready, resume, metadataOpens = 0, editing = 0;
+  let ready, resume, metadataOpens = 0, schemaDeclarations = 0;
   const paused = new Promise(resolve => { ready = resolve; });
   const gate = new Promise(resolve => { resume = resolve; });
   const storage = metadataHost(disk, handle => {
     metadataOpens++;
     const schema = handle.withSchema;
-    handle.withSchema = (version, migrate) => schema(version, (...args) => {
-      editing++;
-      try { return migrate(...args); } finally { editing--; }
-    });
+    handle.withSchema = (version, steps) => {
+      assert.ok(Array.isArray(steps));
+      schemaDeclarations++;
+      return schema(version, steps);
+    };
   });
   const copy = disk.files.copy;
   disk.files.copy = async (...args) => {
-    assert.equal(editing, 0, "File conversion must execute outside the metadata schema callback");
+    assert.ok(schemaDeclarations > 0, "Portable format rules must be declared before layout file work");
     const result = await copy(...args);
     ready(); await gate;
     return result;

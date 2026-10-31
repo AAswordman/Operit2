@@ -691,9 +691,10 @@ fn locator_previews_preserve_saved_participant_names() {
     manager.writePluginExtension("host.chat.identity", &messageTarget(2),
         json!({"title":"另一个参与者","avatarUri":null})).unwrap();
 
-    // Only recorded participant identities supply names; obsolete role names are ignored.
+    // User rows may contain the recipient AI identity; it must never name their author.
+    // Obsolete role names are also ignored.
     for (timestamp, sender, roleName, title) in [
-        (43, "user", "Old user", Some("小明")),
+        (43, "user", "user", Some("Operit")),
         (44, "ai", "废弃角色卡名字", None),
         (45, "ai", "", None),
         (46, "user", "废弃角色卡名字", None),
@@ -726,6 +727,6 @@ fn locator_previews_preserve_saved_participant_names() {
             "extensions-chat".to_string(), query.to_string()).unwrap();
         let names: Vec<_> = previews.iter().filter(|preview| preview.timestamp > 42)
             .map(|preview| preview.displayName.as_str()).collect();
-        assert_eq!(names, ["小明", "", "", "", ""]);
+        assert_eq!(names, ["", "", "", "", ""]);
     }
 }

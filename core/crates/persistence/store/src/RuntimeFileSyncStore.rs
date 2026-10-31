@@ -312,6 +312,13 @@ impl RuntimeFileSyncStore {
     pub fn requiredBlob(
         operation: &SyncOperation,
     ) -> Result<Option<RuntimeFileSyncReference>, String> {
+        if operation.entityType == "initialization" && operation.operation == "initialize" {
+            return operation.payload.get("transactionBlob").map(|reference| {
+                let reference = serde_json::from_value(reference.clone()).map_err(|e|e.to_string())?;
+                validateBlobReference(&reference)?;
+                Ok(reference)
+            }).transpose();
+        }
         if operation.domain != RUNTIME_FILE_SYNC_DOMAIN {
             return Ok(None);
         }
@@ -328,6 +335,30 @@ impl RuntimeFileSyncStore {
             "delete" => Ok(None),
             other => Err(format!("unsupported runtime file sync operation: {other}")),
         }
+    }
+
+    /// Initializers use the existing verified blob transport instead of exceeding an operation page.
+    pub fn prepareTransactionForTransport(&self, mut operation: SyncOperation) -> Result<SyncOperation,String> {
+        if operation.operation == "initialize" && operation.entityType == "initialization" {
+            let bytes = serde_json::to_vec(&operation).map_err(|e|e.to_string())?;
+            if bytes.len() > 32 * 1024 {
+                let reference = self.storeBlob(&bytes)?;
+                operation.payload = serde_json::json!({"transactionBlob":reference});
+            }
+        }
+        Ok(operation)
+    }
+
+    pub fn hydrateTransaction(&self, operation: SyncOperation) -> Result<SyncOperation,String> {
+        if operation.operation != "initialize" || operation.entityType != "initialization" { return Ok(operation); }
+        let Some(reference) = Self::requiredBlob(&operation)? else { return Ok(operation); };
+        let original: SyncOperation = serde_json::from_slice(&self.readBlob(&reference)?).map_err(|e|e.to_string())?;
+        let mut envelope = original.clone();
+        envelope.payload = operation.payload.clone();
+        if envelope != operation || crate::Transaction::compaction::Initialization::decode(&original)?.is_none() {
+            return Err("Initialization blob differs from its envelope".into());
+        }
+        Ok(original)
     }
 
     /// Reports whether a verified content-addressed blob is available locally.
@@ -697,4 +728,22 @@ mod tests {
         let store = RuntimeFileSyncStore::new(host, RUNTIME_SYNC_DIR_PATH);
         assert!(store.writeBytes(RUNTIME_CLIENT_LOG_PATH, b"log").is_err());
     }
+    #[test]
+    fn large_initialization_uses_verified_blobs_and_preserves_its_immutable_envelope() {
+        use crate::Transaction::{Backend,Owner,Data,Snapshot,compaction::Initialization};
+        let source = RuntimeFileSyncStore::new(Arc::new(MemoryStorageHost::default()),RUNTIME_SYNC_DIR_PATH);
+        let target = RuntimeFileSyncStore::new(Arc::new(MemoryStorageHost::default()),RUNTIME_SYNC_DIR_PATH);
+        let mut data = Data::empty(Owner {backend:Backend::DataStore,path:"runtime/config/preferences/blob.preferences.json".into(),format:1,layout:1});
+        data.values.insert("large".into(),serde_json::json!("content".repeat(20_000)));
+        let original = Initialization::from_snapshot(&Snapshot {node:"a".into(),data,covered:Default::default(),generation:0}).operation("preferences",false).unwrap();
+        let wire = source.prepareTransactionForTransport(original.clone()).unwrap();
+        assert!(serde_json::to_vec(&wire).unwrap().len() < 1024);
+        let reference = RuntimeFileSyncStore::requiredBlob(&wire).unwrap().unwrap();
+        assert!(target.hydrateTransaction(wire.clone()).is_err());
+        target.writeBlob(&reference,&source.readBlob(&reference).unwrap()).unwrap();
+        assert_eq!(target.hydrateTransaction(wire.clone()).unwrap(),original);
+        let mut forged = wire; forged.createdAt += 1;
+        assert!(target.hydrateTransaction(forged).is_err());
+    }
+
 }

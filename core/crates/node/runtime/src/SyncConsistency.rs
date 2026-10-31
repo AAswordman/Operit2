@@ -17,7 +17,7 @@ struct Report {
 /// Exchanging every known original does not prove equal contents on an older peer.
 pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result<(), String> {
     for (side, clock) in [("Local", local), ("Remote", remote)] {
-        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(3) {
+        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(4) {
             return Err(format!(
                 "{side} peer cannot verify synchronized contents; a compatible version is required"
             ));
@@ -300,7 +300,7 @@ mod tests {
         });
         b.data.deleted.insert("old".into());
         assert_ne!(a.token().unwrap(), b.token().unwrap());
-        assert_ne!(a.baseline_digest().unwrap(), b.baseline_digest().unwrap());
+        assert_ne!((&a.data,&a.covered),(&b.data,&b.covered));
         assert!(correctionPlans(&report(&a),&report(&b)).is_empty());
         assert_eq!(verifyReports(&report(&a),&report(&b)), Ok(true));
     }
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn completion_requires_a_supported_consistency_protocol_on_both_peers() {
-        let current = json!({"consistencyVersion":3});
+        let current = json!({"consistencyVersion":4});
         assert!(requireConsistencySupport(&current, &current).is_ok());
         for unsupported in [
             Value::Null,
@@ -452,7 +452,8 @@ mod tests {
             json!({"consistencyVersion":0}),
             json!({"consistencyVersion":1}),
             json!({"consistencyVersion":2}),
-            json!({"consistencyVersion":4}),
+            json!({"consistencyVersion":3}),
+            json!({"consistencyVersion":5}),
         ] {
             assert!(requireConsistencySupport(&unsupported, &current).is_err());
             assert!(requireConsistencySupport(&current, &unsupported).is_err());

@@ -399,7 +399,8 @@ impl CharacterPluginWriter {
                 source,
                 json!({"complete":true,"cleanupPaths":data.cleanup_paths,"cleanupComplete":false,"themeTargets":theme_targets}),
             )?,
-        ])
+        ])?;
+        super::CharacterPluginLayout::prepareMetadata(self.storage.clone(),&format!("{}/meta.preferences.json",self.directory))
     }
 }
 

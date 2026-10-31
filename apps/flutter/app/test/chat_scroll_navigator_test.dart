@@ -206,7 +206,7 @@ void main() {
     testWidgets(
       'preview uses participant names with sender fallback (persisted: $usePersistedEntries)',
       (tester) async {
-        const names = <String>['小明', 'Operit', '', '', '', ''];
+        const names = <String>['Operit', 'Operit', '', '', '', ''];
         final messages = List<ChatMessage>.generate(
           names.length,
           (index) => _message(
@@ -247,7 +247,7 @@ void main() {
         final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
         await mouse.addPointer(location: Offset.zero);
         const expectedTitles = <String>[
-          '小明 #1',
+          '用户 #1',
           'Operit',
           '用户 #3',
           'AI',
@@ -261,6 +261,7 @@ void main() {
           await tester.pump();
           expect(find.text(expectedTitles[index]), findsOneWidget);
           expect(find.textContaining('废弃角色卡名字'), findsNothing);
+          if (index.isEven) expect(find.textContaining('Operit'), findsNothing);
         }
         await mouse.removePointer();
       },

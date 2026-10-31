@@ -211,6 +211,8 @@ pub struct SqliteTransaction<'a> {
 }
 
 impl SqliteTransaction<'_> {
+    pub(crate) fn raw(&mut self) -> &mut dyn RuntimeSqliteTransaction { self.inner.as_mut() }
+
     /// Executes a statement within this transaction.
     pub fn execute(
         &mut self,

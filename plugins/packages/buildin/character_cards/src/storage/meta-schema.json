@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "steps": [
+    [{ "op": "set_object_field", "key": "state", "field": "legacyImportPending", "value": true }]
+  ]
+}

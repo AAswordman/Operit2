@@ -56,7 +56,7 @@ function __operitStorageRequest(request) {
         switch (result.op) {
             case 'open': return { handle: result.handle, path: result.path };
             case 'close': case 'preferences_cancel_edit': return null;
-            case 'preferences_data': case 'preferences_finish_edit': return result.snapshot;
+            case 'preferences_schema': case 'preferences_data': case 'preferences_finish_edit': return result.snapshot;
             case 'preferences_begin_edit': return result.edit;
             case 'query': return result.rows;
             case 'execute': case 'transaction': return result.results;
@@ -328,7 +328,7 @@ function __operitPreferencesView(source, mutable) {
     /** Protects the native schema metadata and validates explicit preference identities. */
     function keyAllowed(key) {
         if (typeof key !== "string" || key.length === 0) throw new Error("Preference key must be a nonempty string");
-        if (key === "__operit_preferences_schema_version" || key === "__operit_preferences_merge") throw new Error("Preference schema metadata is managed by withSchema");
+        if (key.startsWith("__operit_preferences_")) throw new Error("Preference schema metadata is managed by withSchema");
     }
     /** Rejects retained mutation methods after their callback has completed. */
     function writable() {if (!active) throw new Error("Preference edit callback has completed");}
@@ -383,7 +383,7 @@ async function __operitPreferencesOpen(options) {
     for (const key of Object.keys(options)) if (key !== "path" && key !== "merge") throw new Error("Unknown storage open option: "+key);
     var openRequest={op:"open_preferences",path:options.path};
     if (Object.prototype.hasOwnProperty.call(options,"merge")) openRequest.merge=options.merge;
-    var opened=await __operitStorageRequest(openRequest), closed=false, schema=null, started=false;
+    var opened=await __operitStorageRequest(openRequest), closed=false, schema=null, schemaReady=false, started=false;
     var queue=Promise.resolve();
     /** Dispatches only preference operations on the retained authenticated handle. */
     function request(op,data) {
@@ -402,15 +402,20 @@ async function __operitPreferencesOpen(options) {
     function checkVersion(version) {
         if (schema !== null && version > schema.version) throw new Error("Preference schema version "+version+" is newer than supported version "+schema.version);
     }
-    /** Applies ordered one-version migrations and one edit in a single native publication. */
+    /** Makes the portable contract available to native replay even after this JS handle closes. */
+    async function declareSchema() {
+        if (schema !== null && !schemaReady) {
+            await request("preferences_schema",{schema:schema});
+            schemaReady=true;
+        }
+    }
+    /** Publishes only the user's edit; native migration owns format changes. */
     async function edit(transform) {
+        await declareSchema();
         var edit=await request("preferences_begin_edit",{}), submitted=false;
         var draft=__operitPreferencesView(edit.snapshot.values,true), version=edit.snapshot.schemaVersion;
         try {
             checkVersion(version);
-            if (schema !== null) {
-                while (version < schema.version) {await schema.migrate(version,draft.view);version+=1;}
-            }
             if (transform !== null) await transform(draft.view);
             __operitStorageValidate(draft.values,[]);
             draft.seal();submitted=true;
@@ -426,17 +431,20 @@ async function __operitPreferencesOpen(options) {
     }
     /** Reads a validated snapshot, applying declared upgrades atomically when required. */
     async function data() {
+        await declareSchema();
         var snapshot=await request("preferences_data",{});
         checkVersion(snapshot.schemaVersion);
-        if (schema !== null && snapshot.schemaVersion < schema.version) return edit(null);
+        if (schema !== null && snapshot.schemaVersion < schema.version) throw new Error("Native preference migration did not reach the declared version");
         return snapshot;
     }
     var facade={path:opened.path,
         /** Declares the supported version before this handle performs any operation. */
-        withSchema(currentVersion,migrate) {
+        withSchema(currentVersion,steps) {
             if (started || closed || schema !== null) throw new Error("withSchema must be declared once before using a DataStore handle");
-            if (!Number.isInteger(currentVersion) || currentVersion < 0 || currentVersion > 4294967295 || typeof migrate !== "function") throw new Error("withSchema requires a uint32 version and migration callback");
-            schema={version:currentVersion,migrate:migrate};return facade;
+            if (!Number.isInteger(currentVersion) || currentVersion < 0 || currentVersion > 4294967295 || !Array.isArray(steps) || steps.length !== currentVersion) throw new Error("withSchema requires a uint32 version and one rule array per version");
+            __operitStorageValidate(steps,[]);
+            if (steps.some(function(step){return !Array.isArray(step);})) throw new Error("Each migration step requires an array of rules");
+            schema=__operitPreferencesClone({version:currentVersion,steps:steps});return facade;
         },
         /** Reads the complete immutable application preferences. */
         data() {return enqueue(async function(){return __operitPreferencesView((await data()).values,false).view;});},

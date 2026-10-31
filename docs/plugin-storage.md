@@ -5,15 +5,10 @@
 ```ts
 const settings = (await Tools.Storage.dataStore.open({
   path: ToolPkg.getSpaceDataDir() + "/settings.preferences.json",
-})).withSchema(1, async (version, preferences) => {
-  switch (version) {
-    case 0:
-      // Convert released source data into the first plugin-owned format here.
-      break;
-    default:
-      throw new Error("Missing schema migration: " + version);
-  }
-});
+})).withSchema(2, [
+  [{ op: "rename_key", from: "old_profile", to: "profile" }], // format 0 → 1
+  [{ op: "decode_json", key: "profile" }],                  // format 1 → 2
+]);
 
 await settings.edit(preferences => {
   preferences.set("appearance", { theme: "dark" });
@@ -24,7 +19,13 @@ const appearance = (await settings.data()).get<{ theme: string }>("appearance");
 
 `data()` returns an immutable snapshot. `get()` preserves a stored `null` independently of an absent key (`undefined`). `edit()` accepts a synchronous or asynchronous callback and publishes its mutations through the native preference transaction. A callback exception publishes no preference changes. Native snapshot validation rejects concurrent edits without rerunning the callback. The mutable view cannot be used after its callback completes.
 
-`withSchema()` declares the current version and each numbered upgrade before the handle is used. Unsupported future versions reject. All schema steps for one file publish together. `incrementInteger()` and `setObjectField()` preserve native edit intentions rather than replacing them with a JavaScript synchronization implementation. `dataFlow()` observes native changes, including Rust writes and synchronization replay, through a collector-owned handle.
+`withSchema(version, steps)` declares one array of portable rules for every version, starting at zero. Rules include `rename_key`, `rename_field`, `split_object`, `split_records`, `drop_key`, `decode_json`, and `set_object_field` (for an existing object). Released steps are immutable; a new version appends steps. The declaration is persisted in engine-owned metadata, included in exported initialization transactions, and recovered by background synchronization without starting the plugin. Ordinary edit callbacks preserve the current format.
+
+The native engine executes the same rules through `Transaction::migration::Context` for complete data and old atomic transactions. It preserves transaction identity, business priority, modification scopes and atomic boundaries, and checks `m(Apply(A,T)) = Apply(m(A),m_A(T))`. State migration and declaration publication share one durable commit and preserve the original business revision. Unsupported rules remain pending for an engine upgrade; independent owners continue. Arbitrary JavaScript schema callbacks are rejected because a live closure is unavailable to background replay.
+
+These declarations describe **format migration**. Cross-file ownership changes remain **layout migration**, using the shared native layout machinery: commit the destination, publish its route or retirement decision, and retain local progress. A numbered format step does not imply that an old path is retired. Character legacy file conversion continues to keep its multi-file work and restart progress outside format rules.
+
+`incrementInteger()` and `setObjectField()` preserve native edit intentions. `dataFlow()` observes native changes, including Rust writes and synchronization replay, through a collector-owned handle.
 
 A plugin may supply bounded data-only merge declarations identifying a catalog's identity/name fields and reference paths. These declarations are retained with the preference journal and adapted to the existing native `PreferenceMerge` executor. No TypeScript merge callbacks run during Space replay. Declared arrays, union variants, and identity prefixes describe reference locations; native UUID/content/name rules make the merge decisions.
 
@@ -43,10 +44,11 @@ runtime/plugin_data/space/com.operit.character_cards/
   conversationGroups.preferences.json
   meta.preferences.json
   chats.preferences.json
-  migration.preferences.json       # Temporary released-data conversion work, when present.
   owners/                         # User documents and memory resources.
   memory.sqlite                   # Current memory engine; not ObjectBox.
 ```
+
+Temporary character conversion progress lives in the plugin’s device-owned `migration.preferences.json`.
 
 The first plugin schema is **v1**. Released Core data is adopted into these JSON owners; TypeScript converts plugin-owned identities and references to UUIDs before completing v1. There is no unpublished plugin v2 format or v1-to-v2 migration. Existing released backup formats have their own independent version numbers.
 

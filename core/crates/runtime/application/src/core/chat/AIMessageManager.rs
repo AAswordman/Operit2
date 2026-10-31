@@ -184,15 +184,20 @@ pub fn logMessageTiming(stage: &str, startTimeMs: MessageTiming, details: Option
 }
 
 impl AIMessageManager {
-    /// Records display identity and the actual author, without persisting execution configuration.
+    /// Records execution ownership and the assistant's display identity separately.
     pub fn applyConfigurationIdentity(message: &mut ChatMessage, configuration: &ChatConfigurationResult) {
-        message.pluginExtensions.insert(
-            "host.chat.identity".into(),
-            serde_json::json!({
-                "title": configuration.profile.name,
-                "avatarUri": configuration.profile.avatarUri,
-            }),
-        );
+        if message.sender == "ai" {
+            message.pluginExtensions.insert(
+                "host.chat.identity".into(),
+                serde_json::json!({
+                    "title": configuration.profile.name,
+                    "avatarUri": configuration.profile.avatarUri,
+                }),
+            );
+        } else {
+            // The configured participant receives user input; it did not author it.
+            message.pluginExtensions.remove("host.chat.identity");
+        }
         message.pluginExtensions.insert(
             configuration.extensionOwner.clone(),
             serde_json::json!({ "participantId": configuration.profile.id }),
@@ -1507,12 +1512,21 @@ mod tests {
             "executionData":{"profile":profile,"private":"Runtime only"}
         })).unwrap();
         configuration.extensionOwner = "configuration-owner".into();
-        let mut message = ChatMessage::new("ai".into());
-        AIMessageManager::applyConfigurationIdentity(&mut message,&configuration);
-        assert_eq!(serde_json::to_value(&message.pluginExtensions).unwrap(),serde_json::json!({
-            "configuration-owner":{"participantId":"author-id"},
-            "host.chat.identity":{"title":"Display name","avatarUri":null}
-        }));
+        for sender in ["ai", "user"] {
+            let mut message = ChatMessage::new(sender.into());
+            message.pluginExtensions.insert("host.chat.identity".into(),
+                serde_json::json!({"title":"Operit","avatarUri":null}));
+            AIMessageManager::applyConfigurationIdentity(&mut message, &configuration);
+            let mut expected = serde_json::json!({
+                "configuration-owner":{"participantId":"author-id"}
+            });
+            if sender == "ai" {
+                expected["host.chat.identity"] = serde_json::json!({
+                    "title":"Display name","avatarUri":null
+                });
+            }
+            assert_eq!(serde_json::to_value(&message.pluginExtensions).unwrap(), expected);
+        }
     }
 
     #[test]

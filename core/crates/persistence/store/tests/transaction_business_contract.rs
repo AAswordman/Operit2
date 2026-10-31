@@ -7,7 +7,7 @@ use operit_store::{
     PreferencesDataStore::{
         stringPreferencesKey, Preferences, PreferencesDataStore, PreferencesDataStoreError,
     },
-    SyncOperationStore::{SyncOperation, SyncOperationStore},
+    SyncOperationStore::{SyncOperation, SyncOperationKnowledge, SyncOperationStore},
     Transaction,
 };
 use serde_json::{json, Value};
@@ -60,6 +60,27 @@ impl Drop for Fixture {
     }
 }
 
+fn assert_history_represented(before: &[SyncOperation], after: &[SyncOperation]) {
+    let mut covered: std::collections::BTreeSet<_> =
+        after.iter().map(|op| op.opId.clone()).collect();
+    for operation in after {
+        if let Some(initialization) =
+            Transaction::compaction::Initialization::decode(operation).unwrap()
+        {
+            covered.extend(initialization.covered);
+        } else if let Some(original) = before.iter().find(|op| op.opId == operation.opId) {
+            assert_eq!(
+                operation, original,
+                "layout must preserve business operation identity"
+            );
+        }
+    }
+    assert!(
+        before.iter().all(|op| covered.contains(&op.opId)),
+        "every prior operation must remain represented"
+    );
+}
+
 fn migrate(
     from: u32,
     context: &mut Transaction::migration::Context,
@@ -78,16 +99,20 @@ fn migrate(
         }
         .apply(context)
         .map_err(PreferencesDataStoreError::Message)?;
-        context.map_preferences(from, &|_, values| {
-            let key = stringPreferencesKey("encodedSettings");
-            if let Some(value) = values.get(&key).cloned() {
-                let decoded: Value = serde_json::from_str(value.as_str().ok_or_else(|| {
-                    PreferencesDataStoreError::Message("Expected encoded settings".into())
-                })?)?;
-                values.set(&key, decoded);
-            }
-            Ok(())
-        })?;
+        let encoded = |data: &Transaction::Data| data.values.contains_key("encodedSettings");
+        if encoded(&context.before) || encoded(&context.after) {
+            context.map_preferences(from, &|_, values| {
+                let key = stringPreferencesKey("encodedSettings");
+                if let Some(value) = values.get(&key).cloned() {
+                    let decoded: Value =
+                        serde_json::from_str(value.as_str().ok_or_else(|| {
+                            PreferencesDataStoreError::Message("Expected encoded settings".into())
+                        })?)?;
+                    values.set(&key, decoded);
+                }
+                Ok(())
+            })?;
+        }
         Transaction::Rule::SplitObject {
             key: "encodedSettings".into(),
             fields: std::collections::BTreeMap::from([
@@ -547,15 +572,11 @@ fn layout_and_format_move_preserve_the_complete_checkpoint_without_reimporting_i
         .unwrap();
     let moved = fixture.store().syncSnapshot().unwrap();
     assert_eq!(moved.data.revision, snapshot.data.revision);
-    assert_eq!(moved.covered, snapshot.covered);
+    assert!(snapshot.covered.is_subset(&moved.covered));
     assert_eq!(moved.data.additions, snapshot.data.additions);
     assert_eq!(moved.data.values["counter"], 13);
     assert_eq!(moved.data.values["displayName"], "new");
-    assert_eq!(
-        fixture.journal().preferenceHistory().unwrap(),
-        history,
-        "layout cannot allocate a new business import"
-    );
+    assert_history_represented(&history, &fixture.journal().preferenceHistory().unwrap());
     fixture.apply(&history);
     assert_eq!(
         fixture.value("counter"),
@@ -565,12 +586,13 @@ fn layout_and_format_move_preserve_the_complete_checkpoint_without_reimporting_i
 }
 
 fn invalid_migration_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
-    PreferencesDataStore::newWithStorage(host, path).withMigration(2, |_, context| {
-        if context.original.is_some() {
-            context.after.versions.clear();
-        }
-        Ok(())
-    })
+    PreferencesDataStore::newWithStorage(host, path)
+        .withMigration(2, |_, context| {
+            if context.original.is_some() {
+                context.after.versions.clear();
+            }
+            Ok(())
+        })
 }
 
 #[test]
@@ -694,7 +716,19 @@ fn layout_with_existing_destination_commutes_with_old_path_transactions() {
         a.data, b.data,
         "layout migration must commute when its destination already exists"
     );
-    assert_eq!(a.covered, b.covered);
+    let business_ids = |snapshot: &Transaction::Snapshot| {
+        snapshot
+            .covered
+            .iter()
+            .filter(|id| !id.starts_with("~init:"))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        business_ids(&a),
+        business_ids(&b),
+        "both histories cover the same business edits"
+    );
     assert_eq!(a.data.values["displayName"], "later");
     assert_eq!(a.data.values["sourceOnly"], true);
     assert_eq!(a.data.values["destinationOnly"], true);
@@ -801,12 +835,17 @@ fn interrupted_occupied_layout_deduplicates_shared_increments_and_retains_newer_
     assert_eq!(target.value("counter"), Some(json!(15)));
     assert_eq!(target.value("afterFailure"), Some(json!(true)));
     assert_eq!(target.store().syncSnapshot().unwrap().data, checkpoint.data);
-    assert_eq!(
-        target.store().syncSnapshot().unwrap().covered,
-        checkpoint.covered
+    assert!(checkpoint
+        .covered
+        .is_subset(&target.store().syncSnapshot().unwrap().covered));
+    assert_history_represented(
+        &retry_history,
+        &target.journal().preferenceHistory().unwrap(),
     );
-    assert_eq!(target.journal().preferenceHistory().unwrap(), retry_history);
-    assert_eq!(retry_history.len(), history.len() + 1);
+    assert_history_represented(&history, &retry_history);
+    assert!(retry_history
+        .iter()
+        .any(|op| op.payload["key"] == "afterFailure"));
 }
 
 #[test]
@@ -857,7 +896,19 @@ fn occupied_layout_and_routed_object_fields_agree_after_destination_deletion() {
         let a = left.store().syncSnapshot().unwrap();
         let b = right.store().syncSnapshot().unwrap();
         assert_eq!(a.data, b.data);
-        assert_eq!(a.covered, b.covered);
+        let business_ids = |snapshot: &Transaction::Snapshot| {
+            snapshot
+                .covered
+                .iter()
+                .filter(|id| !id.starts_with("~init:"))
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert_eq!(
+            business_ids(&a),
+            business_ids(&b),
+            "both histories cover the same business edits"
+        );
         assert_eq!(
             left.value("profile"),
             if revision > 20 {
@@ -949,86 +1000,272 @@ fn dynamic_space_owners_only_accept_declared_record_paths() {
 fn file_correction_seals_both_histories_and_future_edits_start_from_the_copied_file() {
     let source = Fixture::new();
     let target = Fixture::new();
-    let old = authored(CURRENT, 2, 40, |values| values.set(&stringPreferencesKey("discarded"), "old history"));
-    let new = authored(CURRENT, 2, 50, |values| values.set(&stringPreferencesKey("x"), "original"));
+    let old = authored(CURRENT, 2, 40, |values| {
+        values.set(&stringPreferencesKey("discarded"), "old history")
+    });
+    let new = authored(CURRENT, 2, 50, |values| {
+        values.set(&stringPreferencesKey("x"), "original")
+    });
     target.apply(&old);
     source.apply(&new);
     // The materialized file is authoritative even when it cannot be reconstructed from history.
-    let bytes = b"{\n  \"x\": \"repaired file\",\n  \"__operit_preferences_schema_version\": 2\n}\n";
+    let bytes =
+        b"{\n  \"x\": \"repaired file\",\n  \"__operit_preferences_schema_version\": 2\n}\n";
     source.host.writeBytesAtomically(CURRENT, bytes).unwrap();
     let a = source.store().syncSnapshot().unwrap();
     let b = target.store().syncSnapshot().unwrap();
-    let file = Transaction::preference::file_snapshot(&source.store(), &a.token().unwrap()).unwrap();
+    let file =
+        Transaction::preference::file_snapshot(&source.store(), &a.token().unwrap()).unwrap();
     let baseline = Transaction::compare(&a, &b).unwrap().unwrap().source;
     for (fixture, expected) in [(&target, b.token().unwrap()), (&source, a.token().unwrap())] {
-        assert!(Transaction::preference::repair_file(&fixture.store(), &expected, &baseline, Some(&file)).unwrap());
+        assert!(Transaction::preference::repair_file(
+            &fixture.store(),
+            &expected,
+            &baseline,
+            Some(&file)
+        )
+        .unwrap());
         assert_eq!(fixture.host.readBytes(CURRENT).unwrap(), bytes);
         let reopened = current_store(fixture.reopen(), CURRENT);
-        assert_eq!(reopened.syncSnapshot().unwrap().covered, baseline.covered);
+        assert!(baseline
+            .covered
+            .is_subset(&reopened.syncSnapshot().unwrap().covered));
         apply(fixture.reopen(), &old);
         apply(fixture.reopen(), &new);
-        assert_eq!(reopened.data().unwrap().get(&stringPreferencesKey("x")), Some(&json!("repaired file")));
-        assert!(reopened.data().unwrap().get(&stringPreferencesKey("discarded")).is_none());
+        assert_eq!(
+            reopened.data().unwrap().get(&stringPreferencesKey("x")),
+            Some(&json!("repaired file"))
+        );
+        assert!(reopened
+            .data()
+            .unwrap()
+            .get(&stringPreferencesKey("discarded"))
+            .is_none());
     }
-    let next = authored(CURRENT, 2, 60, |values| values.set(&stringPreferencesKey("y"), "future edit"));
-    for fixture in [&source, &target] { apply(fixture.reopen(), &next); }
-    let a = current_store(source.reopen(), CURRENT).syncSnapshot().unwrap();
-    let b = current_store(target.reopen(), CURRENT).syncSnapshot().unwrap();
+    let next = authored(CURRENT, 2, 60, |values| {
+        values.set(&stringPreferencesKey("y"), "future edit")
+    });
+    for fixture in [&source, &target] {
+        apply(fixture.reopen(), &next);
+    }
+    let a = current_store(source.reopen(), CURRENT)
+        .syncSnapshot()
+        .unwrap();
+    let b = current_store(target.reopen(), CURRENT)
+        .syncSnapshot()
+        .unwrap();
     assert_eq!(a.data, b.data);
     assert_eq!(a.data.values["x"], json!("repaired file"));
     assert_eq!(a.data.values["y"], json!("future edit"));
     assert!(!a.data.values.contains_key("discarded"));
 }
 
-
 #[test]
 fn equal_files_with_a_half_committed_baseline_do_not_require_another_full_transfer() {
     let source = Fixture::new();
     let target = Fixture::new();
-    let source_history = authored(CURRENT,2,50,|values|values.set(&stringPreferencesKey("x"),"source"));
-    let target_history = authored(CURRENT,2,40,|values|values.set(&stringPreferencesKey("old"),"superseded"));
+    let source_history = authored(CURRENT, 2, 50, |values| {
+        values.set(&stringPreferencesKey("x"), "source")
+    });
+    let target_history = authored(CURRENT, 2, 40, |values| {
+        values.set(&stringPreferencesKey("old"), "superseded")
+    });
     source.apply(&source_history);
     target.apply(&target_history);
     let a = source.store().syncSnapshot().unwrap();
     let b = target.store().syncSnapshot().unwrap();
-    let baseline = Transaction::compare(&a,&b).unwrap().unwrap().source;
-    assert!(target.store().repairSyncedSnapshot(&b.token().unwrap(),&baseline).unwrap());
+    let baseline = Transaction::compare(&a, &b).unwrap().unwrap().source;
+    assert!(target
+        .store()
+        .repairSyncedSnapshot(&b.token().unwrap(), &baseline)
+        .unwrap());
     // Simulate disconnection before the source installs its new baseline.
     let manifests = |fixture: &Fixture| {
         let schema = schema();
-        let registry = PreferenceMerge::registry(fixture.reopen(),&schema,[],|_,_|true).unwrap();
+        let registry =
+            PreferenceMerge::registry(fixture.reopen(), &schema, [], |_, _| true).unwrap();
         let manifests = registry.manifests().unwrap().0;
-        manifests.into_iter().find(|m|m.owner.path == CURRENT).unwrap()
+        manifests
+            .into_iter()
+            .find(|m| m.owner.path == CURRENT)
+            .unwrap()
     };
     let local = manifests(&source);
     let remote = manifests(&target);
-    assert_eq!(local.digest,remote.digest);
-    assert_ne!(Transaction::preference::baseline_digest(&source.store()).unwrap(),
-        Transaction::preference::baseline_digest(&target.store()).unwrap());
-    assert_eq!(Transaction::compare_manifests(&local,&remote).unwrap(),Transaction::Source::Equal);
+    assert_eq!(local.digest, remote.digest);
+    assert_ne!(
+        source.store().syncSnapshot().unwrap().covered,
+        target.store().syncSnapshot().unwrap().covered
+    );
+    assert_eq!(
+        Transaction::compare_manifests(&local, &remote).unwrap(),
+        Transaction::Source::Equal
+    );
     // Resuming the already captured correction still commits its exact coverage.
-    let reopened = current_store(source.reopen(),CURRENT);
-    assert!(reopened.repairSyncedSnapshot(&a.token().unwrap(),&baseline).unwrap());
-    assert_eq!(Transaction::compare_manifests(&manifests(&source),&manifests(&target)).unwrap(),Transaction::Source::Equal);
+    let reopened = current_store(source.reopen(), CURRENT);
+    assert!(reopened
+        .repairSyncedSnapshot(&a.token().unwrap(), &baseline)
+        .unwrap());
+    assert_eq!(
+        Transaction::compare_manifests(&manifests(&source), &manifests(&target)).unwrap(),
+        Transaction::Source::Equal
+    );
     source.apply(&target_history);
     target.apply(&source_history);
-    assert_eq!(source.store().syncSnapshot().unwrap().data,target.store().syncSnapshot().unwrap().data);
+    assert_eq!(
+        source.store().syncSnapshot().unwrap().data,
+        target.store().syncSnapshot().unwrap().data
+    );
 }
-
 
 #[test]
 fn independent_preference_histories_with_equal_file_values_need_no_correction() {
     let a = Fixture::new();
     let b = Fixture::new();
-    a.apply(&authored(CURRENT, 2, 20, |values| values.set(&stringPreferencesKey("x"), "same")));
-    b.apply(&authored(CURRENT, 2, 40, |values| values.set(&stringPreferencesKey("x"), "same")));
+    a.apply(&authored(CURRENT, 2, 20, |values| {
+        values.set(&stringPreferencesKey("x"), "same")
+    }));
+    b.apply(&authored(CURRENT, 2, 40, |values| {
+        values.set(&stringPreferencesKey("x"), "same")
+    }));
     let a_snapshot = a.store().syncSnapshot().unwrap();
     let b_snapshot = b.store().syncSnapshot().unwrap();
     assert_eq!(a_snapshot.data.values, b_snapshot.data.values);
     assert_ne!(a_snapshot.data.revision, b_snapshot.data.revision);
     assert_ne!(a_snapshot.covered, b_snapshot.covered);
-    assert!(Transaction::compare(&a_snapshot, &b_snapshot).unwrap().is_none());
+    assert!(Transaction::compare(&a_snapshot, &b_snapshot)
+        .unwrap()
+        .is_none());
     // Only an actual difference in the persisted values makes this a correction target.
-    b.store().edit(|values| values.set(&stringPreferencesKey("x"), "different")).unwrap();
-    assert!(Transaction::compare(&a_snapshot, &b.store().syncSnapshot().unwrap()).unwrap().is_some());
+    b.store()
+        .edit(|values| values.set(&stringPreferencesKey("x"), "different"))
+        .unwrap();
+    assert!(
+        Transaction::compare(&a_snapshot, &b.store().syncSnapshot().unwrap())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn compaction_retires_only_fully_covered_atomic_preferences_and_keeps_receipts() {
+    let first = authored(CURRENT, 2, 10, |p| {
+        p.set(&stringPreferencesKey("x"), "A");
+        p.set(&stringPreferencesKey("y"), 1);
+    });
+    let second = authored(CURRENT, 2, 20, |p| p.set(&stringPreferencesKey("x"), "AB"));
+    let third = authored(CURRENT, 2, 30, |p| p.set(&stringPreferencesKey("y"), 2));
+    let compacted = Fixture::new();
+    compacted.apply(&first);
+    compacted.apply(&second);
+    assert_eq!(
+        compacted.journal().preferenceHistory().unwrap().len(),
+        2,
+        "the first transaction still owns y"
+    );
+    compacted.apply(&third);
+    let history = compacted.journal().preferenceHistory().unwrap();
+    assert_eq!(history.len(), 2);
+    assert!(!history.iter().any(|op| op.opId == first[0].opId));
+    assert!(compacted
+        .journal()
+        .receipt()
+        .unwrap()
+        .containsSequence(&first[0].originDeviceId, first[0].sequence));
+    compacted.apply(&first);
+    assert_eq!(
+        compacted.journal().preferenceHistory().unwrap(),
+        history,
+        "redelivery cannot restore a retired payload"
+    );
+    let mut forged = first[0].clone();
+    forged.createdAt += 1;
+    assert!(compacted.journal().receiveOperations(&[forged]).is_err());
+    let original = first
+        .into_iter()
+        .chain(second)
+        .chain(third)
+        .collect::<Vec<_>>();
+    for revision in [5, 15, 25, 35] {
+        let external = authored(CURRENT, 2, revision, |p| {
+            p.set(&stringPreferencesKey("x"), "external")
+        });
+        let a = Fixture::new();
+        let b = Fixture::new();
+        a.apply(&original);
+        a.apply(&external);
+        b.apply(&history);
+        b.apply(&external);
+        assert_eq!(
+            a.store().syncSnapshot().unwrap().data,
+            b.store().syncSnapshot().unwrap().data
+        );
+    }
+}
+
+#[test]
+fn local_preference_writes_stay_compact_and_initialization_reaches_empty_and_offline_peers() {
+    let source = Fixture::new();
+    source.apply(&[]); // Register the owner's plain assignment policy before writing.
+    for index in 0..50 {
+        source
+            .store()
+            .edit(|p| p.set(&stringPreferencesKey("x"), index))
+            .unwrap();
+    }
+    assert_eq!(source.journal().preferenceHistory().unwrap().len(), 1);
+    let before = source.store().syncSnapshot().unwrap();
+    let offline = Fixture::new();
+    offline.apply(&source.journal().preferenceHistory().unwrap());
+    offline
+        .store()
+        .edit(|p| p.set(&stringPreferencesKey("offline"), true))
+        .unwrap();
+    // Simulate a damaged file and an explicitly selected authoritative replacement.
+    let mut authority = before.clone();
+    authority.data.values.insert("x".into(), json!("repaired"));
+    assert!(source
+        .store()
+        .repairSyncedSnapshot(&before.token().unwrap(), &authority)
+        .unwrap());
+    let initialized = source.journal().preferenceHistory().unwrap();
+    assert_eq!(initialized.len(), 1);
+    assert!(
+        Transaction::compaction::Initialization::decode(&initialized[0])
+            .unwrap()
+            .is_some()
+    );
+    let empty = Fixture::new();
+    empty.apply(&initialized);
+    assert_eq!(empty.store().syncSnapshot().unwrap().data, authority.data);
+    offline.apply(&initialized);
+    assert_eq!(offline.value("x"), Some(json!("repaired")));
+    assert_eq!(offline.value("offline"), Some(json!(true)));
+    source.apply(&offline.journal().preferenceHistory().unwrap());
+    assert_eq!(
+        source.store().syncSnapshot().unwrap().data,
+        offline.store().syncSnapshot().unwrap().data
+    );
+    let receipt = source.journal().receipt().unwrap();
+    assert!(source
+        .journal()
+        .operationsSince(&receipt, &[], 100)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn registering_an_existing_plain_preference_owner_compacts_its_old_sql_payloads() {
+    let fixture = Fixture::new();
+    for index in 0..30 {
+        fixture
+            .store()
+            .edit(|p| p.set(&stringPreferencesKey("x"), index))
+            .unwrap();
+    }
+    let original = fixture.store().syncSnapshot().unwrap().data;
+    assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), 30);
+    fixture.apply(&[]);
+    assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), 1);
+    assert_eq!(fixture.store().syncSnapshot().unwrap().data, original);
 }

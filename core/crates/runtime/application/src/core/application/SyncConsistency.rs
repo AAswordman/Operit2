@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 /// File contents and their durable replay boundary travel together.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct BaselineFile {
+struct CorrectionFile {
     snapshot: Snapshot,
     content: Option<String>,
     definition: Option<Value>,
@@ -33,7 +33,6 @@ impl OperitApplication {
         });
         let chat = SqlChatSyncStore::default().map_err(|e|e.to_string());
         let (prepare,apply,snapshot,repair,receipt,export,inventory) = (chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat);
-        let baseline = snapshot.clone();
         registry.register(Participant { validate: None,
             content_digest: SqlChatSyncStore::snapshotContentDigest,
             path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(),
@@ -44,7 +43,6 @@ impl OperitApplication {
                 Ok(BTreeMap::new())
             }), project: None,
             snapshot: Some(Box::new(move || snapshot.as_ref().map_err(Clone::clone)?.syncSnapshot().map_err(|e|e.to_string()))),
-            baseline: Some(Box::new(move ||baseline.as_ref().map_err(Clone::clone)?.syncBaselineDigest().map_err(|e|e.to_string()))),
             repair: Some(Box::new(move |expected,source,_| repair.as_ref().map_err(Clone::clone)?.repairSyncedSnapshot(expected,source).map_err(|e|e.to_string()))),
         })?;
         registry.sources.push(Source {
@@ -68,7 +66,6 @@ impl OperitApplication {
         for path in paths {
             let (apply,snapshot,repair,project) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
             let (snapshot_path,node_snapshot,node_repair,storage) = (path.clone(),node.clone(),node.clone(),storage.clone());
-            let (baseline, baseline_path, baseline_node) = (plugin.clone(),path.clone(),node.clone());
             registry.register(Participant { validate: None, path,
                 content_digest: PluginStorage::snapshotContentDigest,
                 prepare: Box::new(||Ok(())),
@@ -78,14 +75,13 @@ impl OperitApplication {
                 }),
                 project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,aliases).map_err(|e|e.to_string()))),
                 snapshot: Some(Box::new(move ||PluginStorage::syncSnapshot(snapshot.clone()?,&snapshot_path,&node_snapshot))),
-                baseline: Some(Box::new(move ||PluginStorage::syncBaselineDigest(baseline.clone()?,&baseline_path,&baseline_node))),
                 repair: Some(Box::new(move |expected,source,_|PluginStorage::repairSyncedSnapshot(repair.clone()?,expected,source,&node_repair))),
             })?;
         }
         for operation in operations.iter().filter(|op|!matches!(op.domain.as_str(),"preferences"|CHAT_SYNC_DOMAIN|PLUGIN_STORAGE_SYNC_DOMAIN)) {
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
-            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, content_digest: operit_store::Transaction::Snapshot::content_digest, baseline: None, repair: None,
+            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
                 apply: Box::new(move |operations,_| {
                     for operation in operations {
                         match operation.domain.as_str() {
@@ -134,7 +130,7 @@ impl OperitApplication {
         let definition = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH || owner.backend != operit_store::Transaction::Backend::Sql {
             None
         } else { Some(PluginStorage::snapshotDefinition(self.pluginSqliteHost()?, &owner.path).map_err(|e|e.to_string())?) };
-        let bytes = serde_json::to_vec(&BaselineFile { snapshot, content, definition }).map_err(|e|e.to_string())?;
+        let bytes = serde_json::to_vec(&CorrectionFile { snapshot, content, definition }).map_err(|e|e.to_string())?;
         serde_json::to_value(self.runtimeFileSyncStore()?.storeBlob(&bytes)?).map_err(|e|e.to_string())
     }
     pub(super) fn exportConsistencyCoverage(&self, owner: Owner, token: &str) -> Result<Value,String> {
@@ -149,7 +145,7 @@ impl OperitApplication {
         let journal = self.runtimeSyncOperationStore()?;
         let _application = journal.lockApplication().map_err(|e|e.to_string())?;
         let files = self.runtimeFileSyncStore()?;
-        let mut source: BaselineFile = serde_json::from_slice(&files.readBlob(&reference.source)?).map_err(|e|e.to_string())?;
+        let mut source: CorrectionFile = serde_json::from_slice(&files.readBlob(&reference.source)?).map_err(|e|e.to_string())?;
         if source.snapshot.data.owner != owner { return Err("Correction file owner differs".into()); }
         if let Some(reference) = reference.superseded {
             let superseded: FileCoverage = serde_json::from_slice(&files.readBlob(&reference)?).map_err(|e|e.to_string())?;

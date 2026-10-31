@@ -1,5 +1,4 @@
-
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -191,54 +190,53 @@ impl FunctionalConfigManager {
         version: u32,
         preferences: &mut Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
+        fn read(
+            preferences: &Preferences,
+        ) -> Result<BTreeMap<String, FunctionModelBinding>, PreferencesDataStoreError> {
+            match preferences.get(&FunctionalConfigManager::FUNCTION_MODEL_BINDING()) {
+                Some(serde_json::Value::String(encoded)) => Ok(serde_json::from_str(encoded)?),
+                Some(value) => Ok(serde_json::from_value(value.clone())?),
+                None => Ok(BTreeMap::new()),
+            }
+        }
+        fn write(
+            preferences: &mut Preferences,
+            binding: BTreeMap<String, FunctionModelBinding>,
+        ) -> Result<(), PreferencesDataStoreError> {
+            let key = FunctionalConfigManager::FUNCTION_MODEL_BINDING();
+            let value = match preferences.get(&key) {
+                Some(value) if !value.is_string() => serde_json::to_value(binding)?,
+                _ => serde_json::Value::String(serde_json::to_string(&binding)?),
+            };
+            preferences.set(&key, value);
+            Ok(())
+        }
         match version {
             0 => {
-                let binding = preferences
-                    .getTyped::<String>(&Self::FUNCTION_MODEL_BINDING())?
-                    .map(|encoded| {
-                        serde_json::from_str::<HashMap<String, FunctionModelBinding>>(&encoded)
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
+                let mut binding = read(preferences)?;
                 if binding.is_empty() {
-                    let defaults = Self::defaultBinding()
+                    binding = Self::defaultBinding()
                         .into_iter()
                         .map(|(function, binding)| {
                             (Self::functionTypeName(function).to_owned(), binding)
                         })
-                        .collect::<HashMap<_, _>>();
-                    preferences.set(
-                        &Self::FUNCTION_MODEL_BINDING(),
-                        serde_json::to_string(&defaults)?,
-                    );
+                        .collect();
                 }
-                Ok(())
+                write(preferences, binding)
             }
             1 => {
-                let encoded = preferences
-                    .getTyped::<String>(&Self::FUNCTION_MODEL_BINDING())?
-                    .ok_or_else(|| {
-                        PreferencesDataStoreError::Message(
-                            "Function bindings missing at schema version 1".into(),
-                        )
-                    })?;
-                let mut binding: HashMap<String, FunctionModelBinding> =
-                    serde_json::from_str(&encoded)?;
-                binding.insert(
-                    Self::functionTypeName(FunctionType::TITLE_GENERATION).to_owned(),
-                    FunctionModelBinding::default(),
-                );
-                preferences.set(
-                    &Self::FUNCTION_MODEL_BINDING(),
-                    serde_json::to_string(&binding)?,
-                );
-                Ok(())
+                let mut binding = read(preferences)?;
+                if !preferences.contains(&Self::FUNCTION_MODEL_BINDING()) {
+                    return Ok(());
+                }
+                binding
+                    .entry(Self::functionTypeName(FunctionType::TITLE_GENERATION).to_owned())
+                    .or_default();
+                write(preferences, binding)
             }
             2 => {
-                if let Some(value) = preferences.get(&Self::FUNCTION_MODEL_BINDING()) {
-                    let encoded = serde_json::from_value::<String>(value.clone())?;
-                    let binding: HashMap<String, FunctionModelBinding> =
-                        serde_json::from_str(&encoded)?;
+                if preferences.contains(&Self::FUNCTION_MODEL_BINDING()) {
+                    let binding = read(preferences)?;
                     preferences.set(
                         &Self::FUNCTION_MODEL_BINDING(),
                         serde_json::to_value(binding)?,
@@ -419,6 +417,37 @@ impl FunctionalConfigManager {
 mod tests {
     use super::{FunctionModelBinding, FunctionType, FunctionalConfigManager};
     use std::collections::HashMap;
+
+    #[test]
+    fn migration_encoding_is_deterministic_and_keeps_custom_title_binding() {
+        use operit_store::PreferencesDataStore::emptyPreferences;
+        let key = FunctionalConfigManager::FUNCTION_MODEL_BINDING();
+        for version in [0, 1] {
+            let mut source = emptyPreferences();
+            if version == 1 {
+                source.set(
+                    &key,
+                    serde_json::json!({"CHAT":binding("p","chat",false),
+                    "TITLE_GENERATION":binding("p","title",false)})
+                    .to_string(),
+                );
+            }
+            let mut expected = source.clone();
+            FunctionalConfigManager::migratePreferences(version, &mut expected).unwrap();
+            for _ in 0..32 {
+                let mut actual = source.clone();
+                FunctionalConfigManager::migratePreferences(version, &mut actual).unwrap();
+                assert_eq!(actual, expected);
+            }
+            if version == 1 {
+                FunctionalConfigManager::migratePreferences(2, &mut expected).unwrap();
+                assert_eq!(
+                    expected.get(&key).unwrap()["TITLE_GENERATION"]["modelId"],
+                    "title"
+                );
+            }
+        }
+    }
 
     fn binding(provider: &str, model: &str, follows_chat: bool) -> FunctionModelBinding {
         FunctionModelBinding {

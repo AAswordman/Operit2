@@ -214,7 +214,7 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
     router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
         control,
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: Some(3),
+        consistencyVersion: Some(4),
     }));
 }
 
@@ -242,7 +242,7 @@ fn gateMesh(
             router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
                 control,
                 pendingFailure: pendingFailure.clone(),
-                consistencyVersion: Some(3),
+                consistencyVersion: Some(4),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -383,7 +383,7 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     );
 }
 
-/// An older peer may exchange operations, but only a verified round can settle the gate.
+/// Unsupported peers must upgrade before receiving initialization transactions.
 #[tokio::test]
 async fn a_peer_without_consistency_support_cannot_complete_until_upgraded() {
     let _guard = routeTestGlobalLock().lock().await;
@@ -399,7 +399,7 @@ async fn a_peer_without_consistency_support_cannot_complete_until_upgraded() {
     let observer = idleObserver(&routers[1]);
     let error = observer.synchronizeOnce().await.unwrap_err();
     assert!(error.contains("compatible version is required"), "{error}");
-    assert!(synchronizedMethodCount(&peers[1], "syncApplyOperations") > 0);
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncApplyOperations"), 0);
     assert_eq!(synchronizedMethodCount(&peers[1], "syncConsistency"), 0);
     installControlSyncTestApplication(&mut routers[0]);
     peers[1].link(&routers[0]);
@@ -592,7 +592,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(3),
+                consistencyVersion: Some(4),
             }
             .gateClock()
             .unwrap()
@@ -649,7 +649,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(3),
+                consistencyVersion: Some(4),
             }
             .gateClock()
             .unwrap(),
@@ -819,7 +819,7 @@ async fn snapshot_changes_retry_without_publishing_an_error_or_opening_the_sync_
         for (index, router) in routers.iter_mut().enumerate() {
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(3) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(4) },
                 snapshot: snapshots[index].clone(), fault, reports: std::sync::atomic::AtomicUsize::new(0),
             }));
         }
@@ -869,7 +869,7 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
         for (index, router) in routers.iter_mut().enumerate() {
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(3) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(4) },
                 snapshot: snapshots[index].clone(),
                 fault: if index == 0 && scenario == "new-write" { "new-write" } else { "" },
                 reports: std::sync::atomic::AtomicUsize::new(0),
