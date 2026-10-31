@@ -255,6 +255,51 @@ the Fedora `/usr/aarch64-redhat-linux/sys-root/fc43` sysroot. The build release 
 the sysroot's `limits.h` while compiling C dependencies because Fedora's cross compiler
 is built without target headers.
 
+## Debian 12 Linux CLI Build Container
+
+`build_cli_linux_debian12.py` builds the Linux CLI inside a Debian 12
+container. Binaries link against Debian 12's glibc (2.36) and require the
+GCC 12 C++ runtime (`GLIBCXX_3.4.30`), so they run on Debian 12, Ubuntu
+22.04, and newer distributions that reject binaries built on newer hosts
+(`GLIBC_2.xx not found`). Packaging, installer files, embedded plugin
+assets, and artifact naming match `build_cli_linux.py`; the release-standard
+x86_64 musl build stays available there. The driver rejects a packaged
+binary that references glibc symbols newer than 2.36.
+
+Prerequisites: `podman` (rootless, preferred) or `docker`. The image is
+provisioned by running `containers/debian12/image-setup.sh` in a scratch
+container and committing it, so kernels without the overlayfs module (where
+`podman build` cannot mount its build context) are supported; container
+storage itself uses the btrfs driver on btrfs filesystems. When podman's
+default storage configuration is unusable, the driver falls back to
+`CONTAINERS_STORAGE_CONF=~/.config/containers/storage.conf` (set
+`driver = "btrfs"` there on btrfs hosts).
+
+```bash
+# Host architecture; use --arches all for x86_64 + aarch64
+python3 tools/build_scripts/build_cli_linux_debian12.py
+
+# On a restricted network, point the first image build at reachable mirrors
+# and export rustup mirror variables for the container:
+python3 tools/build_scripts/build_cli_linux_debian12.py \
+  --base-image docker.m.daocloud.io/library/debian:12 \
+  --apt-mirror mirrors.ustc.edu.cn \
+  --rebuild-image
+export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
+export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup
+# Slow npm downloads: forward a registry mirror into the container.
+python3 tools/build_scripts/build_cli_linux_debian12.py \
+  --env npm_config_registry=https://registry.npmmirror.com
+```
+
+Rust is not baked into the image. The driver provisions rustup (toolchain
+version from `RUST_TOOLCHAIN_VERSION`, defaulting to the release-pinned
+1.95.0), the cargo cache, and the pnpm store under the git-ignored
+`tools/release/work/debian12/`, so image rebuilds do not re-download the
+toolchain or crates. The aarch64 target cross-compiles with
+`gcc-aarch64-linux-gnu` and needs no additional sysroot. `--shell` opens the
+container with the same mounts for debugging.
+
 ## Local CLI Checks
 
 Run from the repository root.
