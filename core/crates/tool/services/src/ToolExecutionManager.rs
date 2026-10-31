@@ -103,7 +103,7 @@ impl ToolCall {
         }
         for key in self.parameters.keys() {
             if !matches!(key.as_str(), "tool_name" | "params" | PACKAGE_CALLER_NAME_PARAM | PACKAGE_CHAT_ID_PARAM | PACKAGE_CALLER_PARTICIPANT_ID_PARAM | PACKAGE_CALLER_OWNER_PARAM) {
-                return Err(format!("Unexpected proxy parameter: {key}"));
+                return Err(format!("Unexpected proxy parameter: {key}. Put target tool parameters inside params as YAML mapping text."));
             }
         }
         let name = self.parameters.get("tool_name").and_then(serde_json::Value::as_str)

@@ -76,6 +76,12 @@ impl Default for SyncProgressTracker {
 }
 
 impl SyncProgressTracker {
+    /// Never expose an older completed session instead of the current hidden pass.
+    pub(crate) fn peer(&self, peer: &str) -> Option<SpaceSyncProgress> {
+        self.sessions.value().into_iter().rev().find(|s|s.progress.peerNodeId == peer)
+            .filter(|s|s.visible).map(|s|s.progress)
+    }
+
     /// Hidden sessions never cross the proxy or rebuild the UI.
     pub(crate) fn flow(&self) -> StateFlow<Vec<SpaceSyncProgress>> {
         self.sessions.map(|sessions| {
@@ -112,6 +118,20 @@ impl SyncProgressTracker {
 
     pub(crate) fn clear(&self) {
         self.sessions.set_value(Vec::new());
+    }
+
+    /// Displays the coordinator's actual work without counting a second local transfer.
+    pub(crate) fn mirror(&self, peer: &str, progress: &SpaceSyncProgress) {
+        self.update(|sessions| {
+            if let Some(session) = sessions.iter_mut().rev().find(|s|s.progress.peerNodeId == peer && s.progress.spaceId == progress.spaceId) {
+                let started = session.progress.startedAt;
+                session.progress = progress.clone();
+                session.progress.peerNodeId = peer.into();
+                session.progress.startedAt = started;
+                session.progress.updatedAt = currentTimeMillis();
+                session.visible = true;
+            }
+        });
     }
 
     pub(crate) fn begin(&self, peer: &str, spaceId: &str) {
@@ -507,6 +527,24 @@ mod tests {
         progress.records("peer", 256);
         progress.reveal("peer");
         assert_eq!(progress.flow().value().len(), 1);
+        let mirrored = SyncProgressTracker::default();
+        let mut remote = progress.flow().value().remove(0);
+        mirrored.begin("coordinator", "other-space");
+        mirrored.mirror("coordinator", &remote);
+        assert!(mirrored.flow().value().is_empty());
+        mirrored.begin("coordinator", "space");
+        mirrored.mirror("coordinator", &remote);
+        assert_eq!(mirrored.flow().value()[0].peerNodeId, "coordinator");
+        mirrored.finish("coordinator", false, None, None);
+        mirrored.begin("coordinator", "space");
+        assert!(mirrored.peer("coordinator").is_none());
+        remote.status = SpaceSyncStatus::Waiting;
+        remote.pendingRecords = 1;
+        mirrored.mirror("coordinator", &remote);
+        assert_eq!(mirrored.flow().value().last().unwrap().pendingRecords, 1);
+        remote.pendingRecords = 0; remote.status = SpaceSyncStatus::Completed;
+        mirrored.mirror("coordinator", &remote);
+        assert_eq!(mirrored.flow().value().last().unwrap().status, SpaceSyncStatus::Completed);
         progress.retain("space", &[]);
         assert!(progress.flow().value().is_empty());
     }

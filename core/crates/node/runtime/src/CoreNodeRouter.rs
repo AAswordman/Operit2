@@ -1960,6 +1960,23 @@ impl CoreNodeRouter {
                 })
             {
                 Err(error) => return CoreCallResponse::err(requestId, error),
+                Ok((true, PeerSyncMethod::SyncProgress)) => {
+                    let service = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+                        self.localCore.clone(), self.clone(), self.spaceStore.clone());
+                    let progress = service.peerProgress(&request.originNodeId);
+                    return CoreCallResponse { requestId, result: operit_link::toCoreValue(progress).map_err(|e|CoreLinkError::internal(e.to_string())) };
+                }
+                Ok((true, PeerSyncMethod::SyncRequest)) => {
+                    let result = async {
+                        let args: crate::PeerSync::SyncRequest = operit_link::fromCoreValue(request.payload.args).map_err(|e|CoreLinkError::internal(e.to_string()))?;
+                        let service = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+                            self.localCore.clone(), self.clone(), self.spaceStore.clone());
+                        let status = service.synchronizeRequestedPeer(request.originNodeId, args.limit, args.force).await
+                            .map_err(CoreLinkError::internal)?;
+                        operit_link::toCoreValue(status).map_err(|e|CoreLinkError::internal(e.to_string()))
+                    }.await;
+                    return CoreCallResponse { requestId, result };
+                }
                 Ok((true, method)) => return self.dispatchPeerSyncCall(method, request.payload).await,
                 Ok((false, _)) => return self.forwardCall(Some(&previousNodeId), request).await,
             }
@@ -3779,7 +3796,8 @@ mod tests {
         };
         let before = router.localCore.runtimeStorageHost().list("runtime/").unwrap();
         for method in [PeerSyncMethod::SyncClock, PeerSyncMethod::SyncOperationsSince,
-            PeerSyncMethod::SyncApplyOperations, PeerSyncMethod::SyncBlobExists, PeerSyncMethod::SyncReadBlobChunk] {
+            PeerSyncMethod::SyncApplyOperations, PeerSyncMethod::SyncBlobExists, PeerSyncMethod::SyncReadBlobChunk,
+            PeerSyncMethod::SyncRequest, PeerSyncMethod::SyncProgress] {
             let mut call = request.clone();
             call.payload = method.request("storage-denied".into(),
                 operit_link::toCoreValue(serde_json::json!({"operations":[]})).unwrap());

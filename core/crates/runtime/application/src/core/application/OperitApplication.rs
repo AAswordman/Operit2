@@ -847,6 +847,7 @@ impl OperitApplication {
         let schema = PreferenceSpaceMerge::schema();
         let pending_owners = store.pendingOperations().map_err(|e|e.to_string())?;
         let registry = self.transactionRegistry(&schema,&pending_owners)?;
+        let summary = store.synchronizationSummary().map_err(|e|e.to_string())?;
         let (receipt,failures) = registry.receipt()?;
         errors.extend(failures);
         let pending = store.pendingOperationIds().map_err(|error| error.to_string())?;
@@ -862,7 +863,8 @@ impl OperitApplication {
         }).map_err(|error| error.to_string())?;
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
         result["protocolVersion"] = serde_json::json!(1);
-        result["consistencyVersion"] = serde_json::json!(5);
+        result["consistencyVersion"] = serde_json::json!(6);
+        result["stateSummary"] = serde_json::json!(format!("digest:{summary}"));
         result["pending"] = serde_json::json!(pending.len());
         result["pendingOperationIds"] = serde_json::json!(pending);
         result["pendingBlobs"] = serde_json::to_value(blobs.into_values().collect::<Vec<_>>())
@@ -889,71 +891,11 @@ impl OperitApplication {
             serde_json::from_value(reference).map_err(|e| e.to_string())?)
     }
 
-    /// Returns a compact change fingerprint of the state a full synchronization
-    /// pass would exchange. Peers poll this instead of the full receipt: the
-    /// receipt carries one exact range per synced entity, which grows with the
-    /// Space and made every idle probe transfer the complete clock.
-    ///
-    /// Only durable operation clocks are fingerprinted. A storage-handle close
-    /// publishes a process mutation without writing any operation, so the
-    /// mutation revision cannot distinguish real changes from idle opens.
-    /// Only origins this device authored count as a change: applying a peer's
-    /// operations advances their ranges locally, but that is not new work to
-    /// offer the other members. Device preferences and projected control
-    /// operations change no clock, but the device that made them detects them
-    /// in its own local-state summary and starts the pass that pushes them to
-    /// its peers.
+    /// Returns the same change boundary carried by the ordinary synchronization receipt.
     #[allow(non_snake_case)]
     pub fn syncClockDigest(&self) -> Result<serde_json::Value, String> {
-        let store = self.runtimeSyncOperationStore()?;
-        let localDeviceId = store
-            .localDeviceId()
-            .map_err(|error| error.to_string())?;
-        let mut clock = store
-            .currentLocalClock()
-            .map_err(|error| error.to_string())?;
-        // Chat operations live in their own SQL journal; merge its clock the
-        // same way the local-state summary does so chat-only writes are seen.
-        if operit_util::RuntimeStoreRoot::default_runtime_store_root_config().is_some() {
-            match SqlChatSyncStore::default() {
-                Ok(sqlStore) => match sqlStore.localClock() {
-                    Ok(sqlClock) => {
-                        for (deviceId, sequence) in sqlClock.sequences {
-                            if sequence > clock.sequenceFor(&deviceId) {
-                                clock.setSequence(deviceId, sequence);
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::v_with_level(
-                            "CoreSyncTrace",
-                            &format!("sync_clock_digest.chat_clock_unavailable error={error}"),
-                            operit_util::AppLogger::VERBOSE_LEVEL_6,
-                        );
-                    }
-                },
-                Err(error) => {
-                    operit_util::AppLogger::AppLogger::v_with_level(
-                        "CoreSyncTrace",
-                        &format!("sync_clock_digest.chat_storage_unavailable error={error}"),
-                        operit_util::AppLogger::VERBOSE_LEVEL_6,
-                    );
-                }
-            }
-        }
-        // Operations applied from peers advance their origins in this clock.
-        // Fingerprinting every origin would make each applied batch look like
-        // new work to every neighbor, reopening full passes that have nothing
-        // to exchange. Advertise only what this device authored: members
-        // synchronize with each other over routed links, and projected control
-        // operations are advertised through the local-state summary.
-        clock.retainAuthoredBy(&localDeviceId);
-        let fingerprint = serde_json::to_vec(&clock).map_err(|error| error.to_string())?;
-        let digest = Sha256::digest(&fingerprint);
-        Ok(serde_json::json!({
-            "protocolVersion": 1,
-            "digest": format!("{digest:x}"),
-        }))
+        let digest = self.runtimeSyncOperationStore()?.synchronizationSummary().map_err(|e|e.to_string())?;
+        Ok(serde_json::json!({"protocolVersion":1,"digest":digest}))
     }
 
     /// Exports missing operations while reporting independently unavailable storage engines.
@@ -1164,11 +1106,12 @@ impl OperitApplication {
         })).map_err(|error| error.to_string())
     }
 
-    /// Reports whether one complete verified synchronization blob exists locally.
+    /// Verifies a page of local blobs, retaining each file's independent failure.
     #[allow(non_snake_case)]
-    pub fn syncBlobExists(&self, contentHash: String, size: i64) -> Result<bool, String> {
-        self.runtimeFileSyncStore()?
-            .hasBlob(&RuntimeFileSyncReference { contentHash, size })
+    pub fn syncBlobExists(&self, references: serde_json::Value) -> Result<Vec<Result<bool, String>>, String> {
+        let references: Vec<RuntimeFileSyncReference> = serde_json::from_value(references).map_err(|e|e.to_string())?;
+        let store = self.runtimeFileSyncStore()?;
+        Ok(references.iter().map(|reference|store.hasBlob(reference)).collect())
     }
 
     /// Reads one bounded synchronization blob chunk for transfer to another CoreNode.

@@ -26,7 +26,8 @@
         "repeated_cancel_reapply_cycles_preserve_files_and_keep_only_one_active_request",
         "offline_cancellation_intent_is_durable_and_stops_submission_retries_until_ack",
         "committed_approval_wins_cancellation_and_returns_actual_joined_state",
-        "delayed_cancellation_response_preserves_joined_state_without_resubmission"
+        "delayed_cancellation_response_preserves_joined_state_without_resubmission",
+        "acknowledged_submission_polls_projection_without_resending_evidence"
       ]
     },
     {
@@ -40,10 +41,13 @@
       "file": "departure.rs",
       "level": "real-router-isolated-host",
       "cases": [
+        "departure_delivery_does_not_apply_an_approved_space_merge",
         "departure_is_self_authored_and_relayed_without_moving_other_members",
         "departure_survives_reopen_until_the_neighbor_has_the_exact_receipt",
         "departure_of_the_last_admin_does_not_promote_or_move_other_devices",
-        "departure_recovers_a_crash_before_the_local_space_switch"
+        "departure_recovers_a_crash_before_the_local_space_switch",
+        "departure_discards_corrupt_approval_records_and_missing_local_profile",
+        "topology_keeps_other_members_when_one_profile_is_missing"
       ]
     },
     {
@@ -192,9 +196,16 @@
       "level": "real-router-isolated-host",
       "cases": [
         "idle_cycles_probe_clocks_without_repeating_full_exchanges",
+        "a_peer_without_consistency_support_cannot_complete_until_upgraded",
         "a_failed_pass_backs_off_before_retrying_the_full_exchange",
+        "a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange",
+        "rejected_digest_probes_back_off_without_reading_full_clocks",
         "preference_edits_reopen_a_settled_storage_provider_gate",
-        "partial_plugin_failure_keeps_healthy_replication_moving"
+        "partial_plugin_failure_keeps_healthy_replication_moving",
+        "applied_remote_progress_does_not_reopen_a_settled_gate",
+        "snapshot_changes_retry_without_publishing_an_error_or_opening_the_sync_overlay",
+        "metadata_differences_and_new_incremental_writes_never_start_a_full_transfer",
+        "concurrent_peer_wakeups_use_one_coordinator_and_verified_boundaries"
       ]
     },
     {
@@ -212,11 +223,16 @@
         "real_tcp_single_pairing_uses_one_bidirectional_channel",
         "real_tcp_single_channel_with_ipv6_listener",
         "real_tcp_single_channel_with_wildcard_listener",
+        "mixed_port_preserves_tcp_pairing_and_bidirectional_admission",
         "real_tcp_space_remove_deletes_pairing_and_allows_repairing",
         "real_tcp_listener_gate_reports_revocation_to_dialer",
         "outbound_only_hosts_pair_over_http_and_websocket",
+        "mixed_port_preserves_http_and_websocket_pairing_for_client_only_hosts",
         "listener_capabilities_validate_all_transports_before_binding",
-        "core_discovery_returns_only_unpaired_devices_for_all_callers"
+        "core_discovery_returns_only_unpaired_devices_for_all_callers",
+        "listener_port_policy_uses_host_allocation_and_preserves_explicit_fixed_ports",
+        "automatic_default_listener_advertises_its_actual_shared_port",
+        "qr_pairing_isolates_addresses_and_checks_identity_before_confirmation"
       ]
     }
   ]

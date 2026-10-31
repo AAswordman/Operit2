@@ -77,9 +77,9 @@ impl SyncClock {
     /// Keeps only sequences this device authored. Applied peer operations also
     /// advance their origins here, but they are not work this device still
     /// owes its peers, so change summaries exclude them.
-    pub fn retainAuthoredBy(&mut self, deviceId: &str) {
+    pub fn retainAuthoredBy(&mut self, deviceId: &str, nodeId: &str) {
         self.sequences
-            .retain(|origin, _| origin.starts_with(deviceId));
+            .retain(|origin, _| origin.starts_with(deviceId) || origin == nodeId);
     }
 }
 
@@ -920,6 +920,29 @@ impl SyncOperationStore {
         Ok(self
             .loadCachedJson(&mut clockState, &self.clockPath())?
             .clone())
+    }
+
+    /// Fingerprints authored changes without publishing outboxes or reading business contents.
+    #[cfg(feature = "full")]
+    pub fn synchronizationSummary(&self) -> Result<String, SyncOperationStoreError> {
+        let mut clock = self.currentLocalClock()?;
+        let sql = operit_util::RuntimeStoreRoot::default_runtime_store_root_config().map(|_| {
+            crate::sync::SqlChatSyncStore::SqlChatSyncStore::default().and_then(|store| store.localClock()).map_err(|e|e.to_string())
+        });
+        if let Some(Ok(sql)) = &sql {
+            for (origin, sequence) in &sql.sequences {
+                clock.setSequence(origin.clone(), (*sequence).max(clock.sequenceFor(origin)));
+            }
+        }
+        let deviceId = self.localDeviceId()?;
+        let nodeId = crate::CoreNodeIdentityStore::CoreNodeIdentityStore::new(self.storageHost.clone())
+            .initialize().map_err(SyncOperationStoreError::Message)?.nodeId;
+        clock.retainAuthoredBy(&deviceId, &nodeId);
+        crate::Transaction::digest(&(clock, sql.and_then(Result::err),
+            crate::NetworkControlStore::NetworkControlStore::new(self.storageHost.clone())
+                .and_then(|store|store.projectionEntryCount()).map_err(SyncOperationStoreError::Message)?,
+            crate::DevicePreferencesStore::devicePreferencesMutationRevision()))
+            .map_err(SyncOperationStoreError::Message)
     }
 
     /// Writes the local vector clock to storage.

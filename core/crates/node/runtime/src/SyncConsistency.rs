@@ -19,7 +19,7 @@ struct Report {
 /// Exchanging every known original does not prove equal contents on an older peer.
 pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result<(), String> {
     for (side, clock) in [("Local", local), ("Remote", remote)] {
-        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(5) {
+        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(6) {
             return Err(format!(
                 "{side} peer cannot verify synchronized contents; a compatible version is required"
             ));
@@ -30,14 +30,15 @@ pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result
 
 impl SpacePersistenceSyncService {
     async fn consistencyReports(&self, target: &str) -> Result<(Report, Report), String> {
-        let (local, remote) = tokio::join!(
-            self.callLocal("syncConsistency", Value::Null),
+        let (remote, local) = tokio::join!(
+            biased;
             callRemote(
                 &self.state.nodeRouter,
                 target,
                 PeerSyncMethod::SyncConsistency,
                 Value::Null
-            )
+            ),
+            self.callLocal("syncConsistency", Value::Null),
         );
         Ok((local?, remote?))
     }
@@ -470,7 +471,7 @@ mod tests {
 
     #[test]
     fn completion_requires_a_supported_consistency_protocol_on_both_peers() {
-        let current = json!({"consistencyVersion":5});
+        let current = json!({"consistencyVersion":6});
         assert!(requireConsistencySupport(&current, &current).is_ok());
         for unsupported in [
             Value::Null,
@@ -480,6 +481,7 @@ mod tests {
             json!({"consistencyVersion":2}),
             json!({"consistencyVersion":3}),
             json!({"consistencyVersion":4}),
+            json!({"consistencyVersion":5}),
         ] {
             assert!(requireConsistencySupport(&unsupported, &current).is_err());
             assert!(requireConsistencySupport(&current, &unsupported).is_err());

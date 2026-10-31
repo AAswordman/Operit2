@@ -2223,12 +2223,12 @@ fn authored_clock_retains_only_local_origins() {
     clock.setSequence("core-local", 3);
     clock.setSequence("core-local:sql", 7);
     clock.setSequence("core-local:preferences:abcd", 2);
-    clock.setSequence("core-remote", 9);
+    clock.setSequence("node-local", 9);
     clock.setSequence("core-remote:sql", 4);
-    clock.retainAuthoredBy("core-local");
+    clock.retainAuthoredBy("core-local", "node-local");
     assert_eq!(
         clock.sequences.keys().cloned().collect::<Vec<_>>(),
-        vec!["core-local", "core-local:preferences:abcd", "core-local:sql"]
+        vec!["core-local", "core-local:preferences:abcd", "core-local:sql", "node-local"]
     );
 }
 

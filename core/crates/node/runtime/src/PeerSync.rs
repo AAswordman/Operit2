@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const NODE_SYNC_TARGET: &str = "$node.sync";
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SyncRequest { pub limit: usize, pub force: bool }
+
 /// The complete remote call surface. Unknown methods fail deserialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +16,8 @@ pub(crate) enum PeerSyncMethod {
     DeviceSpace,
     SyncClock,
     SyncClockDigest,
+    SyncRequest,
+    SyncProgress,
     SyncConsistency,
     SyncReadSnapshot,
     SyncReadCoverage,
@@ -29,7 +35,7 @@ impl PeerSyncMethod {
     pub(crate) fn requiresStorageProvider(self) -> bool {
         matches!(self, Self::SyncClock | Self::SyncClockDigest | Self::SyncOperationsSince
             | Self::SyncApplyOperations | Self::SyncBlobExists | Self::SyncReadBlobChunk
-            | Self::SyncConsistency | Self::SyncReadSnapshot | Self::SyncReadCoverage | Self::SyncRepairSnapshot)
+            | Self::SyncConsistency | Self::SyncReadSnapshot | Self::SyncReadCoverage | Self::SyncRepairSnapshot | Self::SyncRequest | Self::SyncProgress)
     }
 
     pub(crate) fn request(self, requestId: String, args: CoreValue) -> CoreCallRequest {
@@ -124,6 +130,7 @@ mod tests {
             PeerSyncMethod::DeviceSpace,
             PeerSyncMethod::SyncClock,
             PeerSyncMethod::SyncClockDigest,
+            PeerSyncMethod::SyncProgress,
             PeerSyncMethod::SyncOperationsSince,
             PeerSyncMethod::SyncApplyOperations,
             PeerSyncMethod::SyncBlobExists,

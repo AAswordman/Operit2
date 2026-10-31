@@ -47,7 +47,7 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
       .where(
         (item) =>
             (_space == null || item.spaceId == _space!.space.spaceId) &&
-            (item.status != core.SpaceSyncStatus.completed ||
+            (item.status == core.SpaceSyncStatus.syncing ||
                 _now < item.updatedAt + 3000),
       )
       .toList();
@@ -167,12 +167,12 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
     });
   }
 
-  /// Only completion dismissal needs a timer. Small syncs never reach this UI.
+  /// Dismiss inactive notices without stopping retries or hiding active work.
   void _scheduleCompletion({int? now}) {
     _completionTimer?.cancel();
     _now = now ?? DateTime.now().millisecondsSinceEpoch;
     final deadlines = _visibleSync
-        .where((item) => item.status == core.SpaceSyncStatus.completed)
+        .where((item) => item.status != core.SpaceSyncStatus.syncing)
         .map((item) => item.updatedAt + 3000);
     if (deadlines.isEmpty) {
       if (!_loadingPackages && _visibleSync.isEmpty) _expanded = false;
@@ -408,16 +408,7 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
                                                 l10n,
                                               ),
                                               title:
-                                                  item.status ==
-                                                      core
-                                                          .SpaceSyncStatus
-                                                          .completed
-                                                  ? l10n.deviceSpaceSyncCompleted(
-                                                      _peerName(item, l10n),
-                                                    )
-                                                  : l10n.deviceSpaceSyncActive(
-                                                      _peerName(item, l10n),
-                                                    ),
+                                                  '${_peerName(item, l10n)} · ${_syncActivity(item, l10n).title}',
                                             ),
                                             if (item.status !=
                                                 core.SpaceSyncStatus.completed)

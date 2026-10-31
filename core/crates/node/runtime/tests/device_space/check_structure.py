@@ -36,9 +36,11 @@ def main():
         assert f"/tests/device_space/{file}" in owner.read_text(encoding="utf-8"), f"unwired module: {file}"
     assert not (crate / "src/router_space_join_tests.rs").exists(), "legacy test file must not duplicate the new suite"
     protocol = (crate / "src/peer/space_join.rs").read_text(encoding="utf-8")
+    layout = (crate.parent.parent / "foundation/util/src/RuntimeStorageLayout.rs").read_text(encoding="utf-8")
     for runtime_name, fixture_name in [("INBOUND", "INBOUND_RECORDS"), ("OUTBOUND", "OUTBOUND_RECORDS"),
                                         ("INBOX", "REVIEW_RECORDS"), ("RESULTS", "RESULT_RECORDS")]:
-        runtime_path = re.search(rf'const {runtime_name}: &str = "([^"]+)"', protocol)[1]
+        symbol = re.search(rf'const {runtime_name}: &str = (\w+)_PATH;', protocol)[1]
+        runtime_path = re.search(rf'pub const {symbol}: RuntimeStoragePathDefinition =\s*RuntimeStoragePathDefinition::exact\("([^"]+)"', layout)[1]
         fixture_path = re.search(rf'const {fixture_name}: &str = "([^"]+)"', source["fixtures.rs"])[1]
         assert runtime_path == fixture_path, f"fixture path drift: {runtime_name}"
     for file, text in source.items():

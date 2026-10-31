@@ -45,6 +45,7 @@ fn idleObserver(
 /// against genuine state, while everything else stays unsupported.
 struct GateTestApplicationClient {
     control: operit_store::NetworkControlStore::NetworkControlStore,
+    storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
     pendingFailure: Arc<std::sync::atomic::AtomicBool>,
     consistencyVersion: Option<u64>,
 }
@@ -60,6 +61,12 @@ impl GateTestApplicationClient {
         } else {
             Vec::new()
         }
+    }
+
+    /// Uses the production boundary for both probe and final receipt acknowledgements.
+    fn gateSummary(&self) -> Result<String,String> {
+        operit_store::SyncOperationStore::SyncOperationStore::new(self.storage.clone(),operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
+            .synchronizationSummary().map_err(|e|e.to_string())
     }
 
     /// Returns exact receipt intervals for the gate fixture.
@@ -82,7 +89,7 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
                 )
                 .map_err(|error| error.to_string()),
                 "syncClock" => operit_link::toCoreValue(
-                    serde_json::json!({"ranges":self.gateClock()?.ranges, "protocolVersion":1, "consistencyVersion":self.consistencyVersion, "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
+                    serde_json::json!({"ranges":self.gateClock()?.ranges, "protocolVersion":1, "consistencyVersion":self.consistencyVersion, "stateSummary":format!("digest:{}",self.gateSummary()?), "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
                 )
                 .map_err(|error| error.to_string()),
                 "syncConsistency" => operit_link::toCoreValue(
@@ -90,15 +97,7 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
                 ).map_err(|error| error.to_string()),
                 "syncClockDigest" => operit_link::toCoreValue(serde_json::json!({
                     "protocolVersion": 1,
-                    // The fixture models one remote process per router, so the
-                    // digest follows the remote's own receipt. Production adds
-                    // the peer-local mutation revision, which cannot be shared
-                    // across two routers living in one test process.
-                    "digest": format!(
-                        "ranges={}#errors={:?}",
-                        serde_json::to_string(&self.gateClock()?.ranges).unwrap_or_default(),
-                        self.gateErrors(),
-                    ),
+                    "digest": self.gateSummary()?,
                 }))
                 .map_err(|error| error.to_string()),
                 "syncOperationsSince" => {
@@ -134,22 +133,9 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
                     // parameter, exactly like the real application receives it.
                     let args: serde_json::Value = operit_link::fromCoreValue(request.args)
                         .map_err(|error| error.to_string())?;
-                    let parameter = args.get("operations").cloned().unwrap_or_default();
-                    let forceApply = parameter
-                        .get("forceApply")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false);
-                    let operationsValue = if forceApply {
-                        parameter
-                            .get("operations")
-                            .cloned()
-                            .ok_or_else(|| "bootstrap sync request is missing operations".to_string())?
-                    } else {
-                        parameter
-                    };
                     let operations: Vec<
                         operit_store::SyncOperationStore::SyncOperation,
-                    > = serde_json::from_value(operationsValue).map_err(|error| {
+                    > = serde_json::from_value(args["operations"].clone()).map_err(|error| {
                         format!(
                             "operations shape {}: {error}",
                             serde_json::to_string(&args).unwrap_or_default()
@@ -213,8 +199,9 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
     let control = router.networkControlStore.clone();
     router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
         control,
+        storage: router.localCore.runtimeStorageHost(),
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: Some(5),
+        consistencyVersion: Some(6),
     }));
 }
 
@@ -229,7 +216,7 @@ fn gateMesh(
     Arc<std::sync::atomic::AtomicBool>,
 ) {
     let services = (0..2)
-        .map(|index| approvalService(&format!("{prefix}-{index}")))
+        .map(|index| approvalService(&format!("{prefix}-{}",1-index)))
         .collect::<Vec<_>>();
     let mut routers = services
         .iter()
@@ -241,8 +228,9 @@ fn gateMesh(
             let control = router.networkControlStore.clone();
             router.installTestApplicationClient(Arc::new(GateTestApplicationClient {
                 control,
+                storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: pendingFailure.clone(),
-                consistencyVersion: Some(5),
+                consistencyVersion: Some(6),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -281,10 +269,6 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     let observer = idleObserver(&routers[1]);
 
     // The first pass converges with the remote and seeds the clock baseline.
-    // A bootstrap pass may still leave one detectable ripple on the remote
-    // (replayed operations land through dedup), so one settling cycle absorbs
-    // it before the idling baseline is taken.
-    observer.synchronizeOnce().await.unwrap();
     observer.synchronizeOnce().await.unwrap();
     let markersAfterFirstPass = fullPassMarkers(&peers[1]);
     let probesAfterFirstPass = synchronizedMethodCount(&peers[1], "syncClockDigest");
@@ -390,8 +374,9 @@ async fn a_peer_without_consistency_support_cannot_complete_until_upgraded() {
     installTestRuntimeScheduler();
     let (mut routers, _access, peers, _) = gateMesh("sync-old-consistency");
     let control = routers[0].networkControlStore.clone();
+    let storage = routers[0].localCore.runtimeStorageHost();
     routers[0].installTestApplicationClient(Arc::new(GateTestApplicationClient {
-        control,
+        control, storage,
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         consistencyVersion: None,
     }));
@@ -401,6 +386,10 @@ async fn a_peer_without_consistency_support_cannot_complete_until_upgraded() {
     assert!(error.contains("compatible version is required"), "{error}");
     assert_eq!(synchronizedMethodCount(&peers[1], "syncApplyOperations"), 0);
     assert_eq!(synchronizedMethodCount(&peers[1], "syncConsistency"), 0);
+    assert!(!observer.progressFlow().value().is_empty());
+    peers[1].disconnectPeer(&routers[0].localNodeId()).await.unwrap();
+    observer.synchronizeOnce().await.unwrap();
+    assert!(observer.progressFlow().value().is_empty(), "offline peers must not leave stale errors visible");
     installControlSyncTestApplication(&mut routers[0]);
     peers[1].link(&routers[0]);
     observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
@@ -447,10 +436,8 @@ async fn a_failed_pass_backs_off_before_retrying_the_full_exchange() {
         "the backoff must suppress the next full pass"
     );
 
-    // Once the backoff elapses the pass retries and converges; one settling
-    // cycle absorbs the bootstrap ripple before the idling baseline.
+    // Once the backoff elapses the pass retries and converges.
     observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
-    observer.synchronizeOnce().await.unwrap();
     observer.synchronizeOnce().await.unwrap();
     assert!(
         fullPassMarkers(&peers[1]) > markersAfterFailure,
@@ -591,8 +578,9 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
         .map(|router| {
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
+                storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(5),
+                consistencyVersion: Some(6),
             }
             .gateClock()
             .unwrap()
@@ -648,8 +636,9 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
         assert_eq!(
             GateTestApplicationClient {
                 control: router.networkControlStore.clone(),
+                storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(5),
+                consistencyVersion: Some(6),
             }
             .gateClock()
             .unwrap(),
@@ -783,7 +772,10 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
                 operit_link::toCoreValue(serde_json::json!({"contentHash":"0".repeat(64),"size":0}))
                     .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
             }
-            "syncBlobExists" => operit_link::toCoreValue(true)
+            "syncBlobExists" => {
+                let args: serde_json::Value = operit_link::fromCoreValue(request.args).unwrap();
+                operit_link::toCoreValue(vec![Ok::<_,String>(true);args["references"].as_array().unwrap().len()])
+            }
                 .map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),
             "syncRepairSnapshot" => operit_link::toCoreValue(self.fault != "syncRepairSnapshot")
                 .map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),
@@ -819,7 +811,8 @@ async fn snapshot_changes_retry_without_publishing_an_error_or_opening_the_sync_
         for (index, router) in routers.iter_mut().enumerate() {
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(5) },
+                storage: router.localCore.runtimeStorageHost(),
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(6) },
                 snapshot: snapshots[index].clone(), fault, reports: std::sync::atomic::AtomicUsize::new(0),
             }));
         }
@@ -869,7 +862,8 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
         for (index, router) in routers.iter_mut().enumerate() {
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(5) },
+                storage: router.localCore.runtimeStorageHost(),
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(6) },
                 snapshot: snapshots[index].clone(),
                 fault: if index == 0 && scenario == "new-write" { "new-write" } else { "" },
                 reports: std::sync::atomic::AtomicUsize::new(0),
@@ -892,5 +886,31 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
             assert_eq!(synchronizedMethodCount(&peers[1], "syncReadSnapshot"), 0);
             assert!(observer.progressFlow().value().is_empty());
         }
+    }
+}
+
+/// Concurrent wakeups share one bidirectional exchange and preserve edits from either endpoint.
+#[tokio::test]
+async fn concurrent_peer_wakeups_use_one_coordinator_and_verified_boundaries() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers,access,peers,_) = gateMesh("sync-one-coordinator");
+    let promoted = routers[0].networkControlStore.setIdentity(operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
+        nodeId: routers[1].localNodeId(), roleId: "admin".into() }).unwrap();
+    routers[1].networkControlStore.applySyncedOperation(&promoted).unwrap();
+    let workers = routers.iter().map(idleObserver).collect::<Vec<_>>();
+    for round in 0..2 {
+        for service in &access { service.updateDeviceSpacePolicy(format!("both-{round}"),"written".into()).unwrap(); }
+        let (a,b) = tokio::join!(workers[0].synchronizeOnce(),workers[1].synchronizeOnce());
+        a.unwrap(); b.unwrap();
+        assert_eq!(synchronizedMethodCount(&peers[0],"syncOperationsSince"),0);
+        assert!(synchronizedMethodCount(&peers[0],"syncRequest") > 0);
+        let before = fullPassMarkers(&peers[1]);
+        let (a,b) = tokio::join!(workers[0].synchronizeOnce(),workers[1].synchronizeOnce());
+        a.unwrap(); b.unwrap();
+        assert_eq!(fullPassMarkers(&peers[1]),before,"a verified boundary must not start an empty pass");
+        let histories = routers.iter().map(|r| r.networkControlStore.currentSpaceOperations().unwrap().into_iter()
+            .map(|op|op.opId).collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+        assert_eq!(histories[0],histories[1]);
     }
 }

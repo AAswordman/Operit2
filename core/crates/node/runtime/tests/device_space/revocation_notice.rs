@@ -740,12 +740,12 @@ async fn bounded_projection_negotiation_preserves_indirect_core_authority_sync()
     access[0].removeDeviceSpaceMember(removed.clone()).await.unwrap();
     assert!(routers[2].networkControlStore.currentState().unwrap().memberNodeIds.contains(&removed));
     assert!(!peers[2].hasPairing(&routers[0].localNodeId(), PairingDirection::Either).unwrap());
-    peers[2].calls.lock().unwrap().clear();
+    for peer in &peers { peer.calls.lock().unwrap().clear(); }
     let sync = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
         routers[2].localCore.clone(), routers[2].clone(), routers[2].spaceStore.clone());
     sync.synchronizeReachablePeer(routers[0].localNodeId(), 512).await.unwrap();
     assert!(!routers[2].networkControlStore.currentState().unwrap().memberNodeIds.contains(&removed));
-    let calls = peers[2].calls.lock().unwrap();
-    assert!(calls.iter().any(|(peer, method)| peer == &routers[1].localNodeId() && method == "exchange"));
+    let calls = peers.iter().flat_map(|peer|peer.calls.lock().unwrap().clone()).collect::<Vec<_>>();
+    assert!(calls.iter().any(|(peer, method)| peer == &routers[1].localNodeId() && method == "syncRequest"));
     assert!(!calls.iter().any(|(_, method)| method == "projectionProtocol"));
 }

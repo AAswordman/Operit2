@@ -299,6 +299,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('同步完成'), findsNothing);
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('后台任务'), findsNothing);
     },
   );
 
@@ -332,14 +334,17 @@ void main() {
   });
 
   testWidgets(
-    'waiting pauses animation and completion dismisses after three seconds',
+    'waiting and completion dismiss after three seconds without active work expiring',
     (tester) async {
       await mount(tester);
       await emitSync(tester, progress(status: core.SpaceSyncStatus.waiting));
       expect(find.text('等待重试'), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsNothing);
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('等待重试'), findsNothing);
+      await emitSync(tester, progress());
       await tester.pump(const Duration(seconds: 30));
-      expect(find.text('等待重试'), findsOneWidget);
+      expect(find.text('正在同步'), findsOneWidget);
       await emitSync(tester, progress(status: core.SpaceSyncStatus.completed));
       expect(find.text('同步完成'), findsOneWidget);
       await tester.pump(const Duration(seconds: 3));
