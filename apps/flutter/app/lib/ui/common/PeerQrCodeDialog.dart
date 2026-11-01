@@ -318,7 +318,7 @@ class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
             ),
           ),
           const SizedBox(height: 16),
-          Text(l10n.peerQrTrustHint, textAlign: TextAlign.center),
+          Text(l10n.peerQrConfirmJoinHint, textAlign: TextAlign.center),
           TextButton(
             onPressed: () => setState(() {
               _candidate = null;
@@ -415,7 +415,7 @@ class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
                 ? null
                 : () => Navigator.pop(context, _candidateCode),
             icon: const Icon(Icons.link_rounded, size: 18),
-            label: Text(l10n.settingsRuntimeStartPairing),
+            label: Text(l10n.peerQrConfirmJoin),
           ),
       ],
       child: SingleChildScrollView(

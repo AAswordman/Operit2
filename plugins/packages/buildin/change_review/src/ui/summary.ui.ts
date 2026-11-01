@@ -1,4 +1,5 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../../types/compose-dsl";
+import { fileIcon } from "../icons";
 import { fileIdentity, reviewForMessage, type ReviewFile, type ReviewMessage } from "../model";
 
 const ROUTE = "toolpkg:com.operit.change_review:ui:workspace";
@@ -41,7 +42,7 @@ export default function Summary(ctx: ComposeDslContext): ComposeNode {
     return UI.InkWell({ shape: { cornerRadius: 6 }, onClick: () => open(file) },
       UI.Tooltip({ message: `${en ? "View changes" : "查看变更"} · ${file.path}`, waitMillis: 400 },
         UI.Row({ modifier: M.padding(12, 10), verticalAlignment: "center" }, [
-          UI.Icon({ name: "insert_drive_file_outlined", size: 16, tint: c.onSurfaceVariant }),
+          UI.Svg({ source: fileIcon(name), width: 16, height: 16 }),
           UI.Spacer({ width: 10 }),
           UI.RichText({ weight: 1, maxLines: 1, overflow: "ellipsis", spans: [
             { text: name, fontSize: 12.5, fontWeight: "600", color: c.onSurface },

@@ -163,7 +163,7 @@ impl RuntimeRemoteLinkService {
     pub async fn discoverPeers(&self, timeoutMs: u64) -> Result<Vec<crate::NodeServices::DiscoveredPeer>, String> {
         self.nodeServices()?.peers().discoverPeers(timeoutMs).await.map_err(|error| error.to_string())
     }
-    /// Exports public coordinates of this runtime's live listeners for app and CLI QR rendering.
+    /// Exports a short-lived pairing invitation for the current Space and live listeners.
     pub async fn peerConnectionCode(&self) -> Result<String, String> {
         let addresses = self.nodeServices()?.peers().pairingAddresses().await
             .map_err(|error| error.to_string())?;
@@ -175,31 +175,39 @@ impl RuntimeRemoteLinkService {
                 .map(|profile| profile.displayName).unwrap_or_default(),
             addresses,
         };
-        crate::PeerConnectionCode::encode(&info).map_err(|error| error.to_string())
+        let (invitationId, secret) = self.nodeServices()?.peers().pairingInvitation(&self.spaceStore.initialize()?.spaceId)
+            .map_err(|error| error.to_string())?;
+        crate::PeerConnectionCode::encode(&crate::PeerConnectionCode::ConnectionInvitation { info, invitationId, secret })
+            .map_err(|error| error.to_string())
     }
 
     /// Parses untrusted input without opening a connection or changing local state.
     pub fn inspectPeerConnectionCode(&self, code: String) -> Result<crate::NodeServices::PeerConnectionInfo, String> {
-        crate::PeerConnectionCode::decode(&code, &self.nodeRouter.localNodeId())
+        crate::PeerConnectionCode::decode(&code, &self.nodeRouter.localNodeId()).map(|invitation| invitation.info)
             .map_err(|error| error.to_string())
     }
 
-    /// Uses the usual identity-bound pairing handshake and tries the code's network addresses in order.
-    pub async fn startPairingFromCode(&self, code: String) -> Result<crate::NodeServices::PendingPairing, String> {
-        let info = self.inspectPeerConnectionCode(code)?;
+    /// Completes identity-bound QR pairing using the invitation secret without manual code entry.
+    pub async fn startPairingFromCode(&self, code: String) -> Result<crate::NodeServices::PairedPeer, String> {
+        let invitation = crate::PeerConnectionCode::decode(&code, &self.nodeRouter.localNodeId()).map_err(|error| error.to_string())?;
+        let info = &invitation.info;
         let peers = self.nodeServices()?.peers();
         let mut errors = Vec::new();
         for address in &info.addresses {
             let transport = crate::PeerConnectionCode::endpointTransport(address).map_err(|error| error.to_string())?;
-            let attempt = peers.startPairing(crate::NodeServices::PeerEndpoint {
+            let attempt = peers.startQrPairing(crate::NodeServices::PeerEndpoint {
                 nodeId: info.nodeId.clone(), address: address.clone(),
-            }, Some(transport));
+            }, transport, &invitation.invitationId);
             let result = crate::fault_isolation::link("QR pairing address", async {
                 tokio::time::timeout(std::time::Duration::from_secs(4), attempt).await
                     .map_err(|_| operit_link::CoreLinkError::new("PAIRING_TIMEOUT", "Connection timed out"))?
             }).await;
             match result {
-                Ok(pairing) => return Ok(pairing),
+                Ok(pairing) => {
+                    let result = peers.finishPairing(&pairing.pairingId, &invitation.secret).await;
+                    if result.is_err() { peers.cancelPairing(&pairing.pairingId).await.map_err(|error| error.to_string())?; }
+                    return result.map_err(|error| error.to_string());
+                },
                 Err(error) => errors.push(format!("{address}: {error}")),
             }
         }

@@ -270,17 +270,19 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     _setBusy(true);
     try {
       final _RemotePairResult? result;
-      if (peer == null && connectionCode == null) {
+      if (connectionCode != null) {
+        final paired = await widget.clients.server.runtimeRemoteLinkService
+            .startPairingFromCode(code: connectionCode);
+        result = _RemotePairResult(peer: paired);
+      } else if (peer == null) {
         result = await _RemotePairDialog.show(context, clients: widget.clients);
       } else {
         final service = widget.clients.server.runtimeRemoteLinkService;
-        final pending = connectionCode != null
-            ? await service.startPairingFromCode(code: connectionCode)
-            : await service.startPairing(
-                address: peer!.address,
-                nodeId: peer.nodeId,
-                transport: peerEndpointTransport(peer.address),
-              );
+        final pending = await service.startPairing(
+          address: peer.address,
+          nodeId: peer.nodeId,
+          transport: peerEndpointTransport(peer.address),
+        );
         if (!mounted) {
           await widget.clients.server.runtimeRemoteLinkService.cancelPairing(
             pairingId: pending.pairingId,

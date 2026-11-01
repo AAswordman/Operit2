@@ -806,6 +806,17 @@ fn receiveCommand(service: &dyn NodeSpaceContext, peer: &str, current: &CoreSpac
         reconcile(service, &mut record)?;
     }
     saveRecord(service, INBOUND, &record.request.requestId, &record)?;
+    let local = service.localNodeId();
+    if !cancellation && matches!(record.request.status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving)
+        && record.request.reviewerDeviceId.as_deref() == Some(local.as_str()) && canReview(service, &local)?
+        && service.peers()?.qrJoinConsent(peer).map_err(|error| error.to_string())?
+            .is_some_and(|consent| consent.spaceId == current.spaceId
+                && (consent.expiresAt > currentTimeMillis() || record.approvedDecision == Some(true))) {
+        let id = record.request.requestId.clone();
+        let version = record.request.assignmentVersion;
+        drop(record);
+        record = decideLocally(service, &id, version, true)?;
+    }
     Ok(ConsentProjection::from(record.as_ref()))
 }
 
@@ -1178,35 +1189,35 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
         (None, Some(record)) if record.request.targetDeviceId != local => record,
         _ => return Err("Join review must have exactly one matching gateway or assignment record".into()),
     };
-    let onGateway = inbox.request.targetDeviceId == local;
-    let decision = Decision { requestId: id.clone(), assignmentVersion: version, approve };
-    let claim: Claim = if onGateway {
+    if inbox.request.targetDeviceId == local {
         let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        claimDecision(service, &local, decision, localDecisionContext(service)?)?
-    } else {
-        approvalCall(service, &inbox.request.targetDeviceId, "claim", toCoreValue(decision).map_err(|e| e.to_string())?).await?
-    };
+        return Ok(decideLocally(service, &id, version, approve)?.request);
+    }
+    let decision = Decision { requestId: id.clone(), assignmentVersion: version, approve };
+    let claim: Claim = approvalCall(service, &inbox.request.targetDeviceId, "claim", toCoreValue(decision).map_err(|e| e.to_string())?).await?;
     if inbox.identity() != responseIdentity(&claim.record) || inbox.sourceRevision != claim.record.sourceRevision {
         return Err("Join response identity mismatch".into());
     }
     if matches!(claim.record.request.status, SpaceJoinStatus::Approved | SpaceJoinStatus::Rejected) { return Ok(claim.record.request); }
-    // Completion needs only correlation facts; command evidence is consumed in its own phase.
     let expected = inbox.identity().map(str::to_owned);
     let expectedRevision = inbox.sourceRevision;
     drop(inbox);
-    let outcome = prepareOutcome(service, &id, version, approve, onGateway, claim)?;
-    let reply: JoinReply = if onGateway {
-        let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let record = completeDecision(service, &local, outcome, localDecisionContext(service)?)?;
-        membershipReply(service, ConsentProjection::from(record.as_ref()), &service.spaceStore().space()?)?
-    } else {
-        approvalCall(service, &expected[2], "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?
-    };
+    let outcome = prepareOutcome(service, &id, version, approve, false, claim)?;
+    let reply: JoinReply = approvalCall(service, &expected[2], "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?;
     if expected.each_ref().map(String::as_str) != projection::identity(&reply.request, &reply.sourceSpaceId, &reply.targetSpaceId)
         || expectedRevision != reply.sourceRevision {
         return Err("Join response identity mismatch".into());
     }
     Ok(reply.request)
+}
+
+/// Runs the same durable local decision for explicit review and QR admission under MUTATION.
+fn decideLocally(service: &dyn NodeSpaceContext, id: &str, version: u64, approve: bool) -> Result<Box<Record>, String> {
+    let local = service.localNodeId();
+    let claim = claimDecision(service, &local, Decision { requestId: id.into(), assignmentVersion: version, approve }, localDecisionContext(service)?)?;
+    if matches!(claim.record.request.status, SpaceJoinStatus::Approved | SpaceJoinStatus::Rejected) { return Ok(claim.record); }
+    let outcome = prepareOutcome(service, id, version, approve, true, claim)?;
+    completeDecision(service, &local, outcome, localDecisionContext(service)?)
 }
 
 /// Consumes command evidence synchronously so completion retains only the decision outcome.

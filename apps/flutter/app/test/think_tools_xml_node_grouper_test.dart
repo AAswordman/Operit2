@@ -89,7 +89,7 @@ void main() {
       final group = items.single as MarkdownGroupItem;
       expect(group.startIndex, 0);
       expect(group.endIndexInclusive, 7);
-      expect(group.stableKey, 'tools-only-0');
+      expect(group.stableKey, 'think-tools-0');
     });
 
     test('keeps line-break separators inside one four-call group', () {
@@ -151,7 +151,7 @@ void main() {
       final group = items.single as MarkdownGroupItem;
       expect(group.startIndex, 0);
       expect(group.endIndexInclusive, 1);
-      expect(group.stableKey, 'tools-only-0');
+      expect(group.stableKey, 'think-tools-0');
     });
 
     test('collapses a thinking block with one write tool call', () {
@@ -167,6 +167,86 @@ void main() {
       expect(group.startIndex, 0);
       expect(group.endIndexInclusive, 2);
       expect(group.stableKey, 'think-tools-0');
+    });
+
+    for (final first in [
+      '<tool name="read_file"/>',
+      '<tool_result name="read_file">ok</tool_result>',
+      '<search>first search</search>',
+    ]) {
+      test('merges activity after $first into the same group', () {
+        final nodes = [
+          _xml(first),
+          _break(),
+          _xml('<meta/>'),
+          _xml('<think>plan</think>'),
+          _xml('<tool name="grep_code"/>'),
+          _xml('<tool_result name="grep_code">ok</tool_result>'),
+          _xml('<search>next search</search>'),
+          _xml('<thinking>continue</thinking>'),
+        ];
+        final items = const ThinkToolsXmlNodeGrouper(
+          showThinkingProcess: true,
+        ).group(nodes, 'renderer');
+
+        expect(items, hasLength(1));
+        final group = items.single as MarkdownGroupItem;
+        expect(group.startIndex, 0);
+        expect(group.endIndexInclusive, nodes.length - 1);
+        expect(group.stableKey, 'think-tools-0');
+      });
+    }
+
+    for (final boundary in [
+      const MarkdownNodeStable(
+        type: MarkdownNodeType.plainText,
+        content: 'Visible answer',
+        isStreaming: false,
+      ),
+      _xml('<custom>Visible content</custom>'),
+    ]) {
+      test('keeps ${boundary.content} between separate activity groups', () {
+        final items = const ThinkToolsXmlNodeGrouper(
+          showThinkingProcess: true,
+        ).group([
+          _xml('<tool name="read_file"/>'),
+          boundary,
+          _xml('<think>plan</think>'),
+          _xml('<tool name="grep_code"/>'),
+        ], 'renderer');
+
+        expect(items, hasLength(3));
+        expect((items[0] as MarkdownGroupItem).endIndexInclusive, 0);
+        expect(items[1], isA<MarkdownSingleItem>());
+        expect((items[2] as MarkdownGroupItem).startIndex, 2);
+      });
+    }
+
+    test('keeps thinking without calls or searches ungrouped', () {
+      final items = const ThinkToolsXmlNodeGrouper(
+        showThinkingProcess: true,
+      ).group([
+        _xml('<think>plan</think>'),
+        _xml('<thinking>continue</thinking>'),
+      ], 'renderer');
+
+      expect(items, hasLength(2));
+      expect(items, everyElement(isA<MarkdownSingleItem>()));
+    });
+
+    test('does not include hidden thinking in an activity group', () {
+      final items = const ThinkToolsXmlNodeGrouper(
+        showThinkingProcess: false,
+      ).group([
+        _xml('<tool name="read_file"/>'),
+        _xml('<think>plan</think>'),
+        _xml('<tool name="grep_code"/>'),
+      ], 'renderer');
+
+      expect(items, hasLength(3));
+      expect((items[0] as MarkdownGroupItem).endIndexInclusive, 0);
+      expect(items[1], isA<MarkdownSingleItem>());
+      expect((items[2] as MarkdownGroupItem).startIndex, 2);
     });
   });
 

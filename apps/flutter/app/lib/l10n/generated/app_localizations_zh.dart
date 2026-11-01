@@ -4343,7 +4343,14 @@ class AppLocalizationsZh extends AppLocalizations {
   String get peerQrScanHint => '扫描另一台设备的 Operit 连接码。';
 
   @override
-  String get peerQrTrustHint => '二维码只提供连接地址。连接仍需对方显示的配对码，加入空间仍需审批。';
+  String get peerQrTrustHint =>
+      '二维码有效期为 5 分钟，请仅分享给可信设备。对方确认加入后即可连接；本机有管理员审批权限时会自动批准加入。';
+
+  @override
+  String get peerQrConfirmJoin => '确认加入';
+
+  @override
+  String get peerQrConfirmJoinHint => '是否确认加入此设备的空间？确认后将直接连接并提交加入，无需输入配对码。';
 
   @override
   String get peerQrListenerRequired => '请先在连接设置中开启接收连接，并连接到可用的网络。';

@@ -49,7 +49,7 @@ void main() {
           pointerY: 250,
           proximity: geometry.proximityAt(x),
         ),
-        24,
+        18,
       );
     }
   });

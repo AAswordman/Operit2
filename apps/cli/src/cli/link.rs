@@ -78,12 +78,9 @@ fn link_choices(choices: &[&str]) -> String {
         .collect::<Vec<_>>().join("\n")
 }
 
-/// Both interactive pairing and live sessions use the same public coordinates.
+/// Starts manual pairing from a discovered device in interactive and live sessions.
 async fn start_link_pair(application: &operit_core_application::CoreApplication, selector: Option<&str>, interactive: bool)
     -> Result<operit_node_runtime::NodeServices::PendingPairing, String> {
-    if let Some(code) = selector.filter(|value| value.trim().starts_with("operit://")) {
-        return application.accessServices().startPairingFromCode(code.to_owned()).await;
-    }
     let peers = application.accessServices().discoverPeers(2000).await?;
     let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
     if choices.is_empty() { return Err("No devices discovered. Run link qr on the receiving device, then use pair <connection-code>.".into()); }
@@ -121,6 +118,11 @@ async fn run_link_pair(args: &[String]) -> Result<(), String> {
     let application = create_cli_core_application_without_space_sync("client").await?;
     let result = async {
         let service = application.accessServices();
+        if let Some(code) = args.first().filter(|value| value.trim().starts_with("operit://")) {
+            let peer = service.startPairingFromCode(code.clone()).await?;
+            println!("Paired with {}. Use link space join to request membership.", peer.displayName);
+            return Ok(());
+        }
         let pending = start_link_pair(&application, args.first().map(String::as_str), true).await?;
         eprintln!("Pairing with {}. Read the six-digit code on the receiving device (CLI: link prompts).", pending.displayName);
         let confirmation = async {
@@ -191,7 +193,7 @@ async fn run_link_qr(args: &[String]) -> Result<(), String> {
 }
 
 fn print_connection_qr(code: &str) -> Result<(), String> {
-    let info = operit_node_runtime::PeerConnectionCode::decode(code, "").map_err(|error| error.to_string())?;
+    let info = operit_node_runtime::PeerConnectionCode::decode(code, "").map_err(|error| error.to_string())?.info;
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({"connectionCode": code, "device": info}));
         return Ok(());
@@ -205,7 +207,7 @@ fn print_connection_qr(code: &str) -> Result<(), String> {
     }
     print!("{rendered}");
     println!("{code}");
-    println!("Scan with Operit → Add device → Scan code. Pairing and Space approval still apply.");
+    println!("Scan with Operit → Add device → Scan code → Confirm join. Valid for 5 minutes; administrators approve automatically.");
     io::stdout().flush().map_err(|error| error.to_string())
 }
 
@@ -368,6 +370,12 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
     match args.first().map(String::as_str) {
         Some("qr") if args.len() == 1 => {
             print_connection_qr(&application.accessServices().peerConnectionCode().await?)
+        }
+        Some("pair") if args.len() == 2 && args[1].trim().starts_with("operit://") => {
+            let peer = application.accessServices().startPairingFromCode(args[1].clone()).await?;
+            if cli_json_mode() { emit_cli_json(serde_json::to_value(peer).map_err(|error| error.to_string())?); }
+            else { println!("Paired with {}", peer.displayName); }
+            Ok(())
         }
         Some("pair") if args.len() <= 2 => {
             if pendingPairing.is_some() { return Err("A pairing is waiting. Use confirm <six-digit-code> or pair-cancel first.".into()); }

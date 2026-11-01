@@ -1006,7 +1006,7 @@ async fn core_discovery_returns_only_unpaired_devices_for_all_callers() {
         .putRecord(
             RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH,
             "incoming-session",
-            &StoredInbound {
+            &StoredInbound { qrJoinConsent: None,
                 deviceId: "incoming".into(),
                 deviceInfo: info.clone(),
                 pairingServiceVersion: PAIRING_SERVICE_VERSION,
@@ -1229,17 +1229,19 @@ async fn automatic_default_listener_advertises_its_actual_shared_port() {
         version: crate::PeerConnectionCode::VERSION, nodeId: router.localNodeId(),
         displayName: "CLI".into(), addresses: peer.pairingAddresses().await.unwrap(),
     };
-    let code = crate::PeerConnectionCode::encode(&info).unwrap();
+    let (invitationId, secret) = peer.pairingInvitation(&router.spaceStore.initialize().unwrap().spaceId).unwrap();
+    let code = crate::PeerConnectionCode::encode(&crate::PeerConnectionCode::ConnectionInvitation { info, invitationId, secret }).unwrap();
     let decoded = crate::PeerConnectionCode::decode(&code, "scanner").unwrap();
-    assert!(decoded.addresses.contains(&format!("http://192.168.1.44:{}", current.port())));
+    assert!(decoded.info.addresses.contains(&format!("http://192.168.1.44:{}", current.port())));
     assert_eq!(discovery.0.lock().unwrap().len(), 2, "QR generation does not advertise or browse");
     peer.stop().await.unwrap();
 }
 
-/// A broken address stays local to that attempt; the successful handshake still binds
-/// the advertised identity and requires the receiver's ordinary confirmation code.
+/// QR pairing authenticates the advertised identity and secret without manual prompts;
+/// an authorized scanned gateway approves the resulting join immediately.
 #[tokio::test]
-async fn qr_pairing_isolates_addresses_and_checks_identity_before_confirmation() {
+async fn qr_pairing_authenticates_invitation_and_auto_approves_on_admin() {
+    use base64::Engine;
     use crate::HostRuntimePeerService::HostRuntimePeerService;
     use crate::PeerConnectionCode;
     use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
@@ -1276,7 +1278,8 @@ async fn qr_pairing_isolates_addresses_and_checks_identity_before_confirmation()
         ..HostManager::default()
     });
     let info = LinkDeviceInfo { platform: "test".into(), model: "qr".into(), pairingIncarnation: None };
-    let serverPeer = HostRuntimePeerService::new(serverHost, &Arc::new(serverRouter.clone()), info.clone()).unwrap();
+    let serverOwner = Arc::new(serverRouter.clone());
+    let serverPeer = HostRuntimePeerService::new(serverHost, &serverOwner, info.clone()).unwrap();
     serverRouter.installNodeServices(NodeServices::new(serverPeer.clone())).unwrap();
     PeerStateStore::new(serverRouter.localCore.runtimeStorageHost()).saveHostConfig(&PeerHostConfig {
         bindAddress: "127.0.0.1:0".into(), transports: vec![PeerTransport::Tcp],
@@ -1292,30 +1295,48 @@ async fn qr_pairing_isolates_addresses_and_checks_identity_before_confirmation()
         hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
         ..HostManager::default()
     });
-    let clientPeer = HostRuntimePeerService::new(clientHost, &Arc::new(clientRouter.clone()), info).unwrap();
+    let clientOwner = Arc::new(clientRouter.clone());
+    let clientPeer = HostRuntimePeerService::new(clientHost, &clientOwner, info).unwrap();
     clientRouter.installNodeServices(NodeServices::new(clientPeer.clone())).unwrap();
     let connectionInfo = crate::NodeServices::PeerConnectionInfo {
         version: PeerConnectionCode::VERSION, nodeId: serverRouter.localNodeId(), displayName: "QR server".into(),
         addresses: (1..=4).map(|i| format!("tcp://192.0.2.{i}:7777")).collect(),
     };
-    let result = tokio::time::timeout(Duration::from_secs(12), async {
+    let spaceId = serverRouter.spaceStore.initialize().unwrap().spaceId;
+    let (invitationId, secret) = serverPeer.pairingInvitation(&spaceId).unwrap();
+    let codeFor = |info| PeerConnectionCode::encode(&PeerConnectionCode::ConnectionInvitation {
+        info, invitationId: invitationId.clone(), secret: secret.clone(),
+    }).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(25), async {
         let mut wrongIdentity = connectionInfo.clone();
         wrongIdentity.nodeId = "wrong-device".into();
         wrongIdentity.addresses = vec![connectionInfo.addresses[3].clone()];
-        assert!(client.startPairingFromCode(PeerConnectionCode::encode(&wrongIdentity).unwrap()).await.is_err());
+        assert!(client.startPairingFromCode(codeFor(wrongIdentity)).await.is_err());
         assert!(server.pairingPrompts().unwrap().is_empty());
         mappedHost.attempts.lock().unwrap().clear();
 
-        let pending = client.startPairingFromCode(PeerConnectionCode::encode(&connectionInfo).unwrap()).await.unwrap();
-        assert_eq!(pending.peerNodeId, serverRouter.localNodeId());
-        assert_eq!(mappedHost.attempts.lock().unwrap().len(), 4);
+        let mut direct = connectionInfo.clone();
+        direct.addresses = vec![connectionInfo.addresses[3].clone()];
+        let invalidSecret = PeerConnectionCode::encode(&PeerConnectionCode::ConnectionInvitation {
+            info: direct.clone(), invitationId: invitationId.clone(),
+            secret: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0; 32]),
+        }).unwrap();
+        assert!(client.startPairingFromCode(invalidSecret).await.is_err());
         assert!(clientPeer.pairedPeers().unwrap().is_empty());
-        let prompts = server.pairingPrompts().unwrap();
-        assert_eq!(prompts.len(), 1);
-        let paired = client.finishPairing(pending.pairingId, prompts[0].confirmationCode.clone()).await.unwrap();
+        assert!(serverPeer.pairedPeers().unwrap().is_empty());
+        assert!(server.pairingPrompts().unwrap().is_empty());
+        mappedHost.attempts.lock().unwrap().clear();
+
+        let paired = client.startPairingFromCode(codeFor(connectionInfo.clone())).await.unwrap();
+        assert_eq!(mappedHost.attempts.lock().unwrap().len(), 5);
         assert_eq!(paired.nodeId, serverRouter.localNodeId());
         assert!(paired.outbound);
         assert!(serverPeer.pairedPeers().unwrap()[0].inbound);
+        assert!(server.pairingPrompts().unwrap().is_empty());
+        let joined = client.requestDeviceSpaceJoin(serverRouter.localNodeId()).await.unwrap();
+        assert_eq!(joined.status, SpaceJoinStatus::Joined);
+        assert_eq!(client.deviceSpace().unwrap().spaceId, spaceId);
+        assert!(server.incomingDeviceSpaceJoins().await.unwrap().is_empty());
     }).await;
     clientPeer.stop().await.unwrap();
     serverPeer.stop().await.unwrap();

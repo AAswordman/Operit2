@@ -110,7 +110,7 @@ test('collapse preserves local state across revision updates and then uses the n
 test('file rows preserve visible paths and both line counts with bounded scrolling', async () => {
   const page = await screen('../src/ui/summary.ui.ts', { message: message(Array.from({ length: 6 }, (_, index) => toolResult(`src/${index}.ts`, '+a'))) });
   const nodes = page.nodes();
-  assert.equal(nodes.filter(node => node.type === 'Icon' && node.props.name === 'insert_drive_file_outlined').length, 6);
+  assert.equal(nodes.filter(node => node.type === 'Svg').length, 6);
   assert.equal(nodes.filter(node => node.props.text === '+6').length, 1);
   assert.equal(nodes.filter(node => node.props.text === '−0').length, 7);
   assert.equal(nodes.filter(node => node.props.text === '+1').length, 6);

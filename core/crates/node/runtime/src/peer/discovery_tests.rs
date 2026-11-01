@@ -57,7 +57,7 @@ fn outbound(client: &HostRuntimePeerService, server: &str) -> StoredOutbound {
     record
 }
 fn inbound(server: &HostRuntimePeerService, client: &str, secret: u8) {
-    server.state.store.putRecord(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "saved-session", &StoredInbound {
+    server.state.store.putRecord(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "saved-session", &StoredInbound { qrJoinConsent: None,
         deviceId: client.into(), deviceInfo: server.state.info.clone(),
         pairingServiceVersion: PAIRING_SERVICE_VERSION, sessionSecret: BASE64.encode([secret; 32]),
     }).unwrap();

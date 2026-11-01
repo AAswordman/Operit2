@@ -104,11 +104,17 @@ Camera capture is available on Android, iOS, macOS, and web; other hosts can
 import an image or paste the code. A detected device is shown for confirmation
 before starting any network connection.
 
-A connection code contains only the node ID, display name, and public network
-listener addresses. It does not include a pairing code, credential, or Space
-admission. The initiator must still enter the receiver's six-digit pairing code
-and follow the existing Space join approval flow. A focused direct-link dialog
-accepts only the selected device's node ID.
+A v2 connection code carries the node ID, display name, live network addresses,
+and a random invitation secret valid for five minutes. The scanner shows one
+**Confirm join** action before opening a connection. Confirmation authenticates
+through the existing SPAKE2 pairing exchange and submits the Space join request;
+neither device shows a manual pairing-code dialog for this path. When the scanned
+device currently holds both admission and approval capabilities, it approves the
+request using the existing durable review transaction. Other gateways retain the
+normal assigned-reviewer flow. Consent is bound to the displayed Space and the
+current pairing, so an old invitation cannot authorize admission to another Space.
+A focused direct-link dialog still accepts only the selected device's node ID and
+ends after connection when the device is already a member.
 
 Addresses come from active listener sockets and the Host's current network
 interfaces. Wildcard binds, port zero, loopback, and unscoped IPv6 link-local
@@ -129,5 +135,5 @@ it starts an HTTP listener and keeps it alive until Ctrl-C. Listener options
 apply only when creating this foreground listener. `--json` emits the connection
 information without terminal escape sequences. In an interactive
 `operit2 cli link session http --no-discovery`, use `qr` to show the same code,
-`pair-code <connection-code>` to initiate pairing, and the existing pairing and
-`space` commands to confirm connections and manage join approval.
+`pair <connection-code>` to complete QR pairing, and the existing `space`
+commands to submit or inspect joins. Refresh an expired code with `qr`.

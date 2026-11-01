@@ -14,7 +14,7 @@ class ChatScrollRailGeometry {
   static const double interactionWidth = 88;
   static const double hitWidth = 48;
   static const double rightInset = 8;
-  static const double maximumTickWidth = 24;
+  static const double maximumTickWidth = 18;
   // Reach full width before the pointer touches the longest tick's left edge.
   static const double fullExpansionDistance = maximumTickWidth + 4;
   static const double proximityDistance = 72;

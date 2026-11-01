@@ -4527,7 +4527,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get peerQrTrustHint =>
-      'The code shares connection addresses only. Pairing still requires the code shown on the other device; joining a space still requires approval.';
+      'This QR code is valid for 5 minutes. Share it only with trusted devices. Confirming joins directly; this device automatically approves when it has administrator approval permissions.';
+
+  @override
+  String get peerQrConfirmJoin => 'Confirm join';
+
+  @override
+  String get peerQrConfirmJoinHint =>
+      'Join this device’s space? Confirm to connect and submit the join request without entering a pairing code.';
 
   @override
   String get peerQrListenerRequired =>

@@ -15,7 +15,7 @@ import 'package:operit2/ui/common/DeviceSpaceDiscoveryPanel.dart';
 import 'device_space_actions_test.dart' show DeviceBridge;
 
 const sampleCode =
-    'operit://connect/v1/eyJuIjoiY29yZS10YXJnZXQiLCJkIjoiTWFjIiwiYSI6WyJodHRwOi8vMTkyLjE2OC4xLjU6MzcxOTUiXX0';
+    'operit://connect/v2/eyJwIjp7InZlcnNpb24iOjIsIm5vZGVJZCI6ImNvcmUtdGFyZ2V0IiwiZGlzcGxheU5hbWUiOiJNYWMiLCJhZGRyZXNzZXMiOlsiaHR0cDovLzE5Mi4xNjguMS41OjM3MTk1Il19LCJpIjoiMDE5YjdiMTAtMDAwMC03MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwicyI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2MifQ';
 
 class QrBridge extends DeviceBridge {
   bool failCode = false;
@@ -37,7 +37,7 @@ class QrBridge extends DeviceBridge {
       return encodeCoreLink([
         0,
         {
-          'version': 1,
+          'version': 2,
           'nodeId': 'core-target',
           'displayName': 'Mac',
           'addresses': ['http://192.168.1.5:37195'],
@@ -51,9 +51,10 @@ class QrBridge extends DeviceBridge {
       return encodeCoreLink([
         0,
         {
-          'pairingId': 'qr-pair',
-          'peerNodeId': 'core-target',
+          'nodeId': 'core-target',
           'displayName': 'Mac',
+          'inbound': false,
+          'outbound': true,
         },
       ]);
     }
@@ -169,7 +170,7 @@ void main() {
       expect(find.textContaining('INVALID_CONNECTION_CODE'), findsNothing);
       expect(result, isNull);
       expect(bridge.calls, isNot(contains('startPairingFromCode')));
-      await tester.tap(find.text('开始连接'));
+      await tester.tap(find.text('确认加入'));
       await tester.pumpAndSettle();
       expect(result, sampleCode);
       await close(tester, bridge);
@@ -182,7 +183,7 @@ void main() {
       await mount(tester, bridge, onlyNodeId: 'selected-device');
       await inspect(tester, sampleCode);
       expect(find.textContaining('此连接码属于其他设备'), findsOneWidget);
-      expect(find.text('开始连接'), findsNothing);
+      expect(find.text('确认加入'), findsNothing);
       await close(tester, bridge);
     },
   );
@@ -245,25 +246,20 @@ void main() {
     await tester.tap(find.text('扫码连接'));
     await tester.pumpAndSettle();
     await inspect(tester, sampleCode);
-    await tester.tap(find.text('开始连接'));
+    await tester.tap(find.text('确认加入'));
     await tester.pumpAndSettle();
   }
 
   testWidgets(
-    'QR pairing works during discovery and preserves confirmation and join approval',
+    'one QR confirmation connects and submits joining without manual pairing',
     (tester) async {
       final discovery = Completer<Uint8List>();
       final bridge = QrBridge()..discovery = discovery;
       await mountDevicePicker(tester, bridge);
       expect(bridge.pairingArgs, {'code': sampleCode});
       expect(bridge.calls, isNot(contains('finishPairing')));
-      await tester.enterText(find.byType(TextField), '123456');
-      await tester.tap(find.text('完成连接'));
-      await tester.pumpAndSettle();
-      expect(bridge.finishArgs, {
-        'pairingId': 'qr-pair',
-        'confirmationCode': '123456',
-      });
+      expect(find.text('完成连接'), findsNothing);
+      expect(find.byType(TextField), findsNothing);
       expect(bridge.calls, contains('requestDeviceSpaceJoin'));
       discovery.complete(encodeCoreLink([0, <Object?>[]]));
       await tester.pumpAndSettle();
@@ -271,19 +267,20 @@ void main() {
     },
   );
 
-  testWidgets('cancelling the confirmation releases the pending QR pairing', (
-    tester,
-  ) async {
-    final bridge = QrBridge();
-    await mountDevicePicker(tester, bridge);
-    await tester.tap(find.text('取消').last);
-    await tester.pumpAndSettle();
-    expect(bridge.calls, contains('cancelPairing'));
-    expect(bridge.calls, isNot(contains('finishPairing')));
-    expect(bridge.calls, isNot(contains('requestDeviceSpaceJoin')));
-    expect(find.text('扫码连接'), findsOneWidget);
-    await close(tester, bridge);
-  });
+  testWidgets(
+    'cancelling scan confirmation creates no pairing or join request',
+    (tester) async {
+      final bridge = QrBridge();
+      await mount(tester, bridge);
+      await inspect(tester, sampleCode);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(bridge.calls, isNot(contains('startPairingFromCode')));
+      expect(bridge.calls, isNot(contains('finishPairing')));
+      expect(bridge.calls, isNot(contains('requestDeviceSpaceJoin')));
+      await close(tester, bridge);
+    },
+  );
 
   testWidgets(
     'a late discovery response cannot overwrite the QR pairing failure',

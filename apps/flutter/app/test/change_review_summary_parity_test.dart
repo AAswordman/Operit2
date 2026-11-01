@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
@@ -86,7 +87,7 @@ void main() {
               expect(contrast, greaterThanOrEqualTo(4.5));
               expect(find.byIcon(Icons.undo_rounded), findsOneWidget);
               expect(
-                find.byIcon(Icons.insert_drive_file_outlined),
+                find.byType(SvgPicture),
                 expanded ? findsNWidgets(count) : findsNothing,
               );
               expect(find.byType(RichText), isNot(findsNothing));

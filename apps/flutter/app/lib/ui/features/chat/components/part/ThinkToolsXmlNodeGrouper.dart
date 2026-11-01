@@ -45,6 +45,7 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
     );
   }
 
+  /// Groups consecutive thinking, tool and search activity in any order.
   @override
   List<MarkdownGroupedItem> group(
     List<MarkdownNodeStable> nodes,
@@ -62,159 +63,60 @@ class ThinkToolsXmlNodeGrouper extends MarkdownNodeGrouper {
         continue;
       }
 
-      final tag = _extractXmlTagName(node);
-
-      if (showThinkingProcess && (tag == 'think' || tag == 'thinking')) {
-        var j = i + 1;
-        var toolCount = 0;
-        var searchCount = 0;
-        var xmlToolRelatedCount = 0;
-        while (j < nodes.length) {
-          final next = nodes[j];
-          if (_isToolGroupingSeparatorNode(next)) {
-            j++;
-            continue;
-          }
-          if (next.type != MarkdownNodeType.xmlBlock) {
-            break;
-          }
-
-          final nextTag = _extractXmlTagName(next);
-          if (_isIgnorableXmlTagForToolGrouping(nextTag)) {
-            j++;
-            continue;
-          }
-          final isThinkAgain = nextTag == 'think' || nextTag == 'thinking';
-          final isToolRelated = nextTag == 'tool' || nextTag == 'tool_result';
-          final isSearchRelated = nextTag == 'search';
-          if (!isThinkAgain && !isToolRelated && !isSearchRelated) {
-            break;
-          }
-
-          if (isToolRelated) {
-            if (nextTag == 'tool') {
-              toolCount++;
-            }
-            xmlToolRelatedCount++;
-          }
-          if (isSearchRelated) {
-            searchCount++;
-            xmlToolRelatedCount++;
-          }
-
-          j++;
-        }
-
-        if (_shouldCollapseThinkSequence(
-          toolCount,
-          searchCount,
-          xmlToolRelatedCount,
-        )) {
-          out.add(
-            MarkdownGroupItem(
-              startIndex: i,
-              endIndexInclusive: j - 1,
-              stableKey: 'think-tools-$i',
-            ),
-          );
-          i = j;
-          continue;
-        }
-
+      if (!_isGroupActivityTag(_extractXmlTagName(node))) {
         out.add(MarkdownSingleItem(i));
         i++;
         continue;
       }
 
-      if (tag == 'tool' || tag == 'tool_result') {
-        var j = i + 1;
-        var toolCount = tag == 'tool' ? 1 : 0;
-        var xmlToolRelatedCount = 1;
-
-        while (j < nodes.length) {
-          final next = nodes[j];
-          if (_isToolGroupingSeparatorNode(next)) {
-            j++;
-            continue;
-          }
-          if (next.type != MarkdownNodeType.xmlBlock) {
-            break;
-          }
-
-          final nextTag = _extractXmlTagName(next);
-          if (_isIgnorableXmlTagForToolGrouping(nextTag)) {
-            j++;
-            continue;
-          }
-          final isToolRelated = nextTag == 'tool' || nextTag == 'tool_result';
-          if (!isToolRelated) {
-            break;
-          }
-
-          xmlToolRelatedCount++;
-          if (nextTag == 'tool') {
-            toolCount++;
-          }
+      var j = i;
+      var hasCallOrSearch = false;
+      while (j < nodes.length) {
+        final next = nodes[j];
+        if (_isToolGroupingSeparatorNode(next)) {
           j++;
+          continue;
         }
-
-        if (_shouldCollapseToolSequence(toolCount, xmlToolRelatedCount)) {
-          out.add(
-            MarkdownGroupItem(
-              startIndex: i,
-              endIndexInclusive: j - 1,
-              stableKey: 'tools-only-$i',
-            ),
-          );
-          i = j;
-        } else {
-          out.add(MarkdownSingleItem(i));
-          i++;
+        if (next.type != MarkdownNodeType.xmlBlock) {
+          break;
         }
-        continue;
+        final nextTag = _extractXmlTagName(next);
+        if (_isIgnorableXmlTagForToolGrouping(nextTag)) {
+          j++;
+          continue;
+        }
+        if (!_isGroupActivityTag(nextTag)) {
+          break;
+        }
+        hasCallOrSearch |= nextTag == 'tool' || nextTag == 'search';
+        j++;
       }
 
-      if (tag == 'search') {
-        var j = i + 1;
-
-        while (j < nodes.length) {
-          final next = nodes[j];
-          if (_isToolGroupingSeparatorNode(next)) {
-            j++;
-            continue;
-          }
-          if (next.type != MarkdownNodeType.xmlBlock) {
-            break;
-          }
-
-          final nextTag = _extractXmlTagName(next);
-          if (_isIgnorableXmlTagForToolGrouping(nextTag)) {
-            j++;
-            continue;
-          }
-          if (nextTag != 'search') {
-            break;
-          }
-
-          j++;
-        }
-
+      if (hasCallOrSearch) {
         out.add(
           MarkdownGroupItem(
             startIndex: i,
             endIndexInclusive: j - 1,
-            stableKey: 'search-only-$i',
+            stableKey: 'think-tools-$i',
           ),
         );
         i = j;
-        continue;
+      } else {
+        out.add(MarkdownSingleItem(i));
+        i++;
       }
-
-      out.add(MarkdownSingleItem(i));
-      i++;
     }
 
     return out;
+  }
+
+  /// Selects activity tags using the current thinking visibility setting.
+  bool _isGroupActivityTag(String? tag) {
+    return switch (tag) {
+      'tool' || 'tool_result' || 'search' => true,
+      'think' || 'thinking' => showThinkingProcess,
+      _ => false,
+    };
   }
 
   @override
@@ -828,26 +730,6 @@ bool _isToolGroupingSeparatorNode(MarkdownNodeStable node) {
 /// Includes only XML nodes in the visible body of a tool group.
 bool _renderToolGroupXmlNode(MarkdownNodeStable node) {
   return node.type == MarkdownNodeType.xmlBlock;
-}
-
-/// Returns whether a tool-only sequence should render as one group.
-bool _shouldCollapseToolSequence(int toolCount, int xmlToolRelatedCount) {
-  if (xmlToolRelatedCount <= 0) {
-    return false;
-  }
-  return toolCount >= 1 && xmlToolRelatedCount >= 1;
-}
-
-/// Returns whether a thinking-led sequence should render as one group.
-bool _shouldCollapseThinkSequence(
-  int toolCount,
-  int searchCount,
-  int xmlToolRelatedCount,
-) {
-  if (xmlToolRelatedCount <= 0) {
-    return false;
-  }
-  return searchCount > 0 || toolCount > 0;
 }
 
 class _KeepAliveGroupItem extends StatefulWidget {

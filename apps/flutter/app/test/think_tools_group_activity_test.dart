@@ -272,6 +272,20 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('appending thinking keeps the same tool group active', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_renderGroup([_tool]));
+    await tester.pumpWidget(_renderGroup([_tool, _lineBreak, _think, _tool]));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.textContaining('Executing'), findsOneWidget);
+    expect(find.textContaining('1 thinking'), findsOneWidget);
+    expect(find.textContaining('2 calls'), findsOneWidget);
+    expect(find.textContaining('Completed'), findsNothing);
+    expect(find.text('Tool body'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('folds a group when its stream finishes', (tester) async {
     await tester.pumpWidget(_renderGroup([_tool, _lineBreak]));
     expect(find.text('Tool body'), findsOneWidget);
@@ -284,7 +298,7 @@ void main() {
 
   for (final (description, trailing) in [
     ('answer text', [_answer]),
-    ('a later thinking and tool group', [_think, _tool]),
+    ('a later thinking and tool group after text', [_answer, _think, _tool]),
   ]) {
     testWidgets('folds an earlier group when $description arrives', (
       tester,

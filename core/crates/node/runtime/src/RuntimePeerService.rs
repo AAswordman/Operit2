@@ -37,6 +37,22 @@ pub trait RuntimePeerService: Send + Sync {
         Err(CoreLinkError::new("PAIRING_QR_UNAVAILABLE", "This Host cannot share listener addresses"))
     }
 
+    /// Issues a short-lived QR invitation whose secret replaces manual code entry.
+    fn pairingInvitation(&self, _spaceId: &str) -> Result<(String, String), CoreLinkError> {
+        Err(CoreLinkError::new("PAIRING_QR_UNAVAILABLE", "This Host cannot issue pairing invitations"))
+    }
+
+    /// Starts an invitation-bound pairing without showing a manual confirmation prompt.
+    async fn startQrPairing(&self, _target: PeerEndpoint, _transport: PeerTransport, _invitationId: &str)
+        -> Result<PendingPairing, CoreLinkError> {
+        Err(CoreLinkError::new("PAIRING_QR_UNAVAILABLE", "This Host cannot pair using invitations"))
+    }
+
+    /// Reports admission consent only from a current authenticated QR pairing.
+    fn qrJoinConsent(&self, _peer: &str) -> Result<Option<crate::PeerStateStore::QrJoinConsent>, CoreLinkError> {
+        Ok(None)
+    }
+
     /// Starts pairing over PeerLink using ephemeral keys and identity-bound proofs.
     /// Every transport requires confirmation with the code shown by the receiving device.
     /// Pairing grants no Space membership or business-call authorization.

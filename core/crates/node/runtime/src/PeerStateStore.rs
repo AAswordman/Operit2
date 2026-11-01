@@ -51,6 +51,15 @@ pub(crate) struct StoredInbound {
     pub deviceInfo: LinkDeviceInfo,
     pub pairingServiceVersion: u32,
     pub sessionSecret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qrJoinConsent: Option<QrJoinConsent>,
+}
+
+/// Binds QR admission consent to the displayed Space and invitation lifetime.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct QrJoinConsent {
+    pub spaceId: String,
+    pub expiresAt: i64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StoredOutbound {
