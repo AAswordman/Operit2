@@ -51,6 +51,11 @@ impl TestRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for TestRuntimeStorageHost {
+    /// Uses the real transaction journal required by preference initialization.
+    fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
+        self.inner.openTransactionDatabase(path)
+    }
+
     /// Delegates durability to the real storage host without rewriting the file.
     fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
         self.inner.flushFile(path)
@@ -310,6 +315,57 @@ async fn receive_proxy_test_event(stream: &mut CoreEventStream) -> CoreEvent {
         .await
         .expect("proxy test event must arrive")
         .expect("proxy test stream must stay open")
+}
+
+/// Exercises the generated RPC route, including independent per-blob failures.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generated_proxy_blob_presence_preserves_batch_results() {
+    let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new().run_until(async {
+        use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSyncStore};
+        use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+
+        let storage = register_test_runtime_roots();
+        let store = RuntimeFileSyncStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
+        let present = store.storeBlob(b"sync blob route regression").unwrap();
+        let missing = RuntimeFileSyncReference { contentHash: "0".repeat(64), size: 0 };
+        let invalid = RuntimeFileSyncReference { contentHash: "invalid".into(), size: 0 };
+        let wrong_size = RuntimeFileSyncReference { size: present.size + 1, ..present.clone() };
+
+        let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+        hosts.runtimeStorageHost = Some(storage.clone());
+        hosts.runtimeSqliteHost = Some(storage);
+        hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+        hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+        hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+        let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(hosts));
+
+        let response = CoreLinkSharedClient::call(&proxy, CoreCallRequest::new(
+            "blob-presence", "core/application", "syncBlobExists",
+            toCoreValue(json!({"references": [present, missing, invalid, wrong_size]})).unwrap(),
+        )).await;
+        let presence: Vec<Result<bool, String>> = fromCoreValue(
+            response.result.expect("blob presence must be available through generated dispatch"),
+        ).unwrap();
+        assert_eq!(presence.len(), 4);
+        assert_eq!(presence[0], Ok(true));
+        assert_eq!(presence[1], Ok(false));
+        assert!(presence[2].as_ref().unwrap_err().contains("SHA-256"));
+        assert!(presence[3].is_err());
+
+        let empty = CoreLinkSharedClient::call(&proxy, CoreCallRequest::new(
+            "empty-blob-presence", "core/application", "syncBlobExists",
+            toCoreValue(json!({"references": []})).unwrap(),
+        )).await;
+        let presence: Vec<Result<bool, String>> = fromCoreValue(empty.result.unwrap()).unwrap();
+        assert!(presence.is_empty());
+
+        let malformed = CoreLinkSharedClient::call(&proxy, CoreCallRequest::new(
+            "invalid-blob-presence", "core/application", "syncBlobExists",
+            toCoreValue(json!({"references": {"invalid": true}})).unwrap(),
+        )).await;
+        assert!(malformed.result.is_err(), "invalid batches must fail without hiding per-blob errors");
+    }).await;
 }
 
 /// Verifies unrelated generated watches never wait for a resolved holder lock.

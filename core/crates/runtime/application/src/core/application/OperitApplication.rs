@@ -1131,11 +1131,13 @@ impl OperitApplication {
     }
 
     /// Verifies a page of local blobs, retaining each file's independent failure.
+    /// Keep the per-file Result envelopes in JSON: nested Results are not proxyable return types.
     #[allow(non_snake_case)]
-    pub fn syncBlobExists(&self, references: serde_json::Value) -> Result<Vec<Result<bool, String>>, String> {
+    pub fn syncBlobExists(&self, references: serde_json::Value) -> Result<serde_json::Value, String> {
         let references: Vec<RuntimeFileSyncReference> = serde_json::from_value(references).map_err(|e|e.to_string())?;
         let store = self.runtimeFileSyncStore()?;
-        Ok(references.iter().map(|reference|store.hasBlob(reference)).collect())
+        let presence: Vec<Result<bool, String>> = references.iter().map(|reference|store.hasBlob(reference)).collect();
+        serde_json::to_value(presence).map_err(|error|error.to_string())
     }
 
     /// Reads one bounded synchronization blob chunk for transfer to another CoreNode.
