@@ -10,15 +10,15 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import 'UsageTimeline.dart';
+import 'UsagePricing.dart';
 
 const double _dashboardMaxWidth = 1440;
 const double _dashboardCompactPadding = 16;
 const double _dashboardWidePadding = 24;
 const double _dashboardSectionSpacing = 12;
-const double _dashboardTrendSpacing = 16;
-const int _dashboardRankingRowLimit = 6;
 
-enum _UsageDateRange { all, last7Days, last30Days, custom }
+enum _UsageDateRange { lastDay, last7Days, last30Days, all, custom }
 
 enum _DateRangeEndpoint { start, end }
 
@@ -54,10 +54,21 @@ class UsageStatisticsDetailScreen extends StatefulWidget {
       _UsageStatisticsDetailScreenState();
 }
 
+class _UsageStatisticsSnapshot {
+  const _UsageStatisticsSnapshot(
+    this.records,
+    this.pricing,
+    this.pricingLoadFailed,
+  );
+  final List<core_proxy.UsageRequestRecord> records;
+  final UsagePricingIndex pricing;
+  final bool pricingLoadFailed;
+}
+
 class _UsageStatisticsDetailScreenState
     extends State<UsageStatisticsDetailScreen> {
-  late Future<List<core_proxy.UsageRequestRecord>> _future;
-  _UsageDateRange _selectedDateRange = _UsageDateRange.all;
+  late Future<_UsageStatisticsSnapshot> _future;
+  _UsageDateRange _selectedDateRange = _UsageDateRange.lastDay;
   DateTimeRange? _customDateRange;
 
   @override
@@ -66,8 +77,28 @@ class _UsageStatisticsDetailScreenState
     _future = _load();
   }
 
-  Future<List<core_proxy.UsageRequestRecord>> _load() {
-    return widget.clients.repositoryUsageStatisticsStore.getAllRequestRecords();
+  Future<_UsageStatisticsSnapshot> _load() async {
+    final store = widget.clients.repositoryUsageStatisticsStore;
+    final pricingFuture = () async {
+      try {
+        final result = await Future.wait<Object>([
+          store.getAllTokenStatsModels(),
+          widget.clients.preferencesModelConfigManager.getAllModelSummaries(),
+        ]);
+        return (
+          UsagePricingIndex(
+            saved: result[0] as List<core_proxy.TokenStatsModel>,
+            configured: result[1] as List<core_proxy.ProviderModelSummary>,
+          ),
+          false,
+        );
+      } catch (_) {
+        return (UsagePricingIndex(), true);
+      }
+    }();
+    final records = await store.getAllRequestRecords();
+    final (pricing, failed) = await pricingFuture;
+    return _UsageStatisticsSnapshot(records, pricing, failed);
   }
 
   void _reload() {
@@ -99,6 +130,31 @@ class _UsageStatisticsDetailScreenState
     });
   }
 
+  DateTimeRange? _timelineDateRange() {
+    if (_selectedDateRange == _UsageDateRange.all) return null;
+    final now = DateTime.now();
+    if (_selectedDateRange == _UsageDateRange.lastDay) {
+      return DateTimeRange(
+        start: now.subtract(const Duration(hours: 24)),
+        end: now,
+      );
+    }
+    final today = _dateOnly(now)!;
+    final start = switch (_selectedDateRange) {
+      _UsageDateRange.last7Days => today.subtract(const Duration(days: 6)),
+      _UsageDateRange.last30Days => today.subtract(const Duration(days: 29)),
+      _UsageDateRange.custom => _customDateRange!.start,
+      _UsageDateRange.all || _UsageDateRange.lastDay => today,
+    };
+    final lastDay = _selectedDateRange == _UsageDateRange.custom
+        ? _customDateRange!.end
+        : today;
+    return DateTimeRange(
+      start: start,
+      end: DateTime(lastDay.year, lastDay.month, lastDay.day + 1),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -118,19 +174,20 @@ class _UsageStatisticsDetailScreenState
           ),
         ],
       ),
-      body: FutureBuilder<List<core_proxy.UsageRequestRecord>>(
+      body: FutureBuilder<_UsageStatisticsSnapshot>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
           }
-          final records = snapshot.data;
-          if (records == null) {
+          final loaded = snapshot.data;
+          if (loaded == null) {
             return const M3LoadingPane();
           }
           final allViewData = _UsageStatisticsViewData.fromRequestRecords(
-            records,
+            loaded.records,
             l10n,
+            loaded.pricing,
           );
           if (allViewData.records.isEmpty) {
             return _UsageStatisticsEmptyState(
@@ -138,11 +195,8 @@ class _UsageStatisticsDetailScreenState
               description: l10n.settingsDataDetailedStatsDescription,
             );
           }
-          final viewData = allViewData.selectDateRange(
-            _selectedDateRange,
-            _customDateRange,
-            l10n,
-          );
+          final selectedWindow = _timelineDateRange();
+          final viewData = allViewData.selectTimeRange(selectedWindow);
           return LayoutBuilder(
             builder: (context, constraints) {
               final pagePadding = _dashboardPagePadding(constraints.maxWidth);
@@ -154,17 +208,6 @@ class _UsageStatisticsDetailScreenState
                 maxWidth: contentWidth,
                 minWidth: 132,
                 maxColumns: 6,
-              );
-              final trendWidth = _responsiveCardWidth(
-                maxWidth: contentWidth,
-                minWidth: 520,
-                maxColumns: 2,
-                spacing: _dashboardTrendSpacing,
-              );
-              final pieWidth = _responsiveCardWidth(
-                maxWidth: contentWidth,
-                minWidth: 320,
-                maxColumns: 3,
               );
               return ListView(
                 padding: EdgeInsets.fromLTRB(pagePadding, 12, pagePadding, 20),
@@ -247,22 +290,11 @@ class _UsageStatisticsDetailScreenState
                               SizedBox(
                                 width: metricWidth,
                                 child: _MetricCard(
-                                  icon: Icons.calendar_view_week_outlined,
-                                  label:
-                                      l10n.settingsDataDetailedStatsActiveDays,
-                                  value: _formatFullInt(viewData.activeDays),
-                                  accent: Theme.of(
-                                    context,
-                                  ).colorScheme.secondary,
-                                ),
-                              ),
-                              SizedBox(
-                                width: metricWidth,
-                                child: _MetricCard(
-                                  icon: Icons.forum_outlined,
-                                  label: l10n
-                                      .settingsDataDetailedStatsFunctionModels,
-                                  value: _formatFullInt(viewData.chatCount),
+                                  icon: Icons.track_changes_outlined,
+                                  label: l10n.settingsDataTimelineCacheRate,
+                                  value: viewData.totalInputTokens == 0
+                                      ? '—'
+                                      : '${(viewData.totalCachedInputTokens / viewData.totalInputTokens * 100).toStringAsFixed(1)}%',
                                   accent: Theme.of(
                                     context,
                                   ).colorScheme.tertiary,
@@ -271,34 +303,14 @@ class _UsageStatisticsDetailScreenState
                               SizedBox(
                                 width: metricWidth,
                                 child: _MetricCard(
-                                  icon: Icons.hub_outlined,
-                                  label:
-                                      l10n.settingsDataDetailedStatsProviders,
-                                  value: _formatFullInt(viewData.providerCount),
-                                  accent: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                              SizedBox(
-                                width: metricWidth,
-                                child: _MetricCard(
-                                  icon: Icons.view_in_ar_outlined,
-                                  label: l10n.settingsDataDetailedStatsModels,
-                                  value: _formatFullInt(viewData.modelCount),
+                                  icon: Icons.payments_outlined,
+                                  label: viewData.hasUnpricedRecords
+                                      ? l10n.settingsDataTimelineKnownSpend
+                                      : l10n.settingsDataTimelineSpend,
+                                  value: viewData.spendSummary,
                                   accent: Theme.of(
                                     context,
                                   ).colorScheme.secondary,
-                                ),
-                              ),
-                              SizedBox(
-                                width: metricWidth,
-                                child: _MetricCard(
-                                  icon: Icons.help_outline,
-                                  label: l10n
-                                      .settingsDataDetailedStatsUnknownTokenRecords,
-                                  value: _formatFullInt(
-                                    viewData.unknownTokenRecords,
-                                  ),
-                                  accent: Theme.of(context).colorScheme.error,
                                 ),
                               ),
                             ],
@@ -313,122 +325,10 @@ class _UsageStatisticsDetailScreenState
                             days: viewData.heatmapDays,
                           ),
                           const SizedBox(height: _dashboardSectionSpacing),
-                          Wrap(
-                            spacing: _dashboardTrendSpacing,
-                            runSpacing: _dashboardSectionSpacing,
-                            children: <Widget>[
-                              SizedBox(
-                                width: trendWidth,
-                                child: _LineChartCard(
-                                  title: l10n
-                                      .settingsDataDetailedStatsDailyUsageTitle,
-                                  subtitle: l10n
-                                      .settingsDataDetailedStatsDailyUsageSubtitle,
-                                  points: viewData.dailyPoints,
-                                  xLabels: _buildDateAxisLabels(
-                                    viewData.dailyPoints,
-                                  ),
-                                  series: <_ChartSeries>[
-                                    _ChartSeries(
-                                      label: l10n
-                                          .settingsDataDetailedStatsRequestsSeries,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.primary,
-                                      selector: (_DayUsagePoint point) =>
-                                          point.requestCount,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              SizedBox(
-                                width: trendWidth,
-                                child: _LineChartCard(
-                                  title: l10n
-                                      .settingsDataDetailedStatsInputOutputTitle,
-                                  subtitle: l10n
-                                      .settingsDataDetailedStatsInputOutputSubtitle,
-                                  points: viewData.dailyPoints,
-                                  xLabels: _buildDateAxisLabels(
-                                    viewData.dailyPoints,
-                                  ),
-                                  series: <_ChartSeries>[
-                                    _ChartSeries(
-                                      label: l10n.settingsDataInputTokens,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.secondary,
-                                      selector: (_DayUsagePoint point) =>
-                                          point.inputTokens,
-                                    ),
-                                    _ChartSeries(
-                                      label: l10n.settingsDataOutputTokens,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.tertiary,
-                                      selector: (_DayUsagePoint point) =>
-                                          point.outputTokens,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: _dashboardSectionSpacing),
-                          Wrap(
-                            spacing: _dashboardSectionSpacing,
-                            runSpacing: _dashboardSectionSpacing,
-                            children: <Widget>[
-                              SizedBox(
-                                width: pieWidth,
-                                child: _PieChartCard(
-                                  title: l10n
-                                      .settingsDataDetailedStatsProviderPieTitle,
-                                  totalLabel:
-                                      l10n.settingsDataDetailedStatsTotalTokens,
-                                  slices: viewData.providerSlices,
-                                ),
-                              ),
-                              SizedBox(
-                                width: pieWidth,
-                                child: _PieChartCard(
-                                  title: l10n
-                                      .settingsDataDetailedStatsModelPieTitle,
-                                  totalLabel:
-                                      l10n.settingsDataDetailedStatsTotalTokens,
-                                  slices: viewData.modelSlices,
-                                ),
-                              ),
-                              SizedBox(
-                                width: pieWidth,
-                                child: _PieChartCard(
-                                  title: l10n
-                                      .settingsDataDetailedStatsFunctionModelPieTitle,
-                                  totalLabel:
-                                      l10n.settingsDataDetailedStatsTotalTokens,
-                                  slices: viewData.chatSlices,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: _dashboardSectionSpacing),
-                          Wrap(
-                            spacing: _dashboardSectionSpacing,
-                            runSpacing: _dashboardSectionSpacing,
-                            children: <Widget>[
-                              SizedBox(
-                                width: contentWidth,
-                                child: _TopListCard(
-                                  title: l10n
-                                      .settingsDataDetailedStatsTopFunctionModelsTitle,
-                                  subtitle: l10n
-                                      .settingsDataDetailedStatsTopFunctionModelsSubtitle,
-                                  rows: viewData.topChatRows,
-                                  emptyLabel:
-                                      l10n.settingsDataDetailedStatsNoRankRows,
-                                ),
-                              ),
-                            ],
+                          UsageTimeline(
+                            records: viewData.records,
+                            dateRange: selectedWindow,
+                            pricingLoadFailed: loaded.pricingLoadFailed,
                           ),
                         ],
                       ),
@@ -447,316 +347,116 @@ class _UsageStatisticsDetailScreenState
 class _UsageStatisticsViewData {
   const _UsageStatisticsViewData({
     required this.records,
-    required this.dailyPoints,
     required this.heatmapDays,
-    required this.totalRequests,
     required this.totalInputTokens,
     required this.totalOutputTokens,
     required this.totalCachedInputTokens,
-    required this.activeDays,
-    required this.chatCount,
-    required this.providerCount,
-    required this.modelCount,
-    required this.unknownTokenRecords,
-    required this.firstRecordAt,
-    required this.lastRecordAt,
-    required this.providerSlices,
-    required this.modelSlices,
-    required this.chatSlices,
-    required this.topChatRows,
   });
 
-  final List<_UsageRecord> records;
-  final List<_DayUsagePoint> dailyPoints;
+  final List<UsageTimelineRecord> records;
   final List<_HeatmapDay> heatmapDays;
-  final int totalRequests;
   final int totalInputTokens;
   final int totalOutputTokens;
   final int totalCachedInputTokens;
-  final int activeDays;
-  final int chatCount;
-  final int providerCount;
-  final int modelCount;
-  final int unknownTokenRecords;
-  final DateTime? firstRecordAt;
-  final DateTime? lastRecordAt;
-  final List<_PieSliceData> providerSlices;
-  final List<_PieSliceData> modelSlices;
-  final List<_PieSliceData> chatSlices;
-  final List<_TopListRowData> topChatRows;
 
-  /// Builds view data for the selected date range.
-  _UsageStatisticsViewData selectDateRange(
-    _UsageDateRange range,
-    DateTimeRange? customRange,
-    AppLocalizations l10n,
-  ) {
-    if (range == _UsageDateRange.all) {
-      return this;
+  int get totalRequests => records.length;
+  DateTime? get firstRecordAt => records.firstOrNull?.occurredAt;
+  DateTime? get lastRecordAt => records.lastOrNull?.occurredAt;
+
+  bool get hasUnpricedRecords =>
+      records.any((record) => record.estimatedCost == null);
+
+  String get spendSummary {
+    final totals = <String, double>{};
+    for (final record in records) {
+      final cost = record.estimatedCost;
+      if (cost != null) {
+        totals.update(
+          record.currency!,
+          (value) => value + cost,
+          ifAbsent: () => cost,
+        );
+      }
     }
-    assert(range != _UsageDateRange.custom || customRange != null);
-    final endDay = _dateOnly(lastRecordAt);
-    final selectedRecords = switch (range) {
-      _UsageDateRange.all => records,
-      _UsageDateRange.last7Days =>
-        records
-            .where((record) => _recordIsInsideTrailingDays(record, endDay, 7))
-            .toList(growable: false),
-      _UsageDateRange.last30Days =>
-        records
-            .where((record) => _recordIsInsideTrailingDays(record, endDay, 30))
-            .toList(growable: false),
-      _UsageDateRange.custom =>
-        records
-            .where(
-              (record) => _recordIsInsideDateSpan(
-                record,
-                customRange!.start,
-                customRange.end,
-              ),
-            )
-            .toList(growable: false),
-    };
-    return _UsageStatisticsViewData.fromUsageRecords(selectedRecords, l10n);
+    if (totals.isEmpty) return '—';
+    return totals.entries
+        .map((entry) => '${entry.key} ${formatUsageMoney(entry.value)}')
+        .join(' / ');
   }
 
-  /// Normalizes detailed request records for dashboard aggregation.
+  _UsageStatisticsViewData selectTimeRange(DateTimeRange? range) {
+    if (range == null) return this;
+    return fromUsageRecords(
+      records
+          .where(
+            (record) =>
+                !record.occurredAt.isBefore(range.start) &&
+                record.occurredAt.isBefore(range.end),
+          )
+          .toList(),
+    );
+  }
+
   static _UsageStatisticsViewData fromRequestRecords(
     List<core_proxy.UsageRequestRecord> requestRecords,
     AppLocalizations l10n,
+    UsagePricingIndex pricing,
   ) {
-    final records = requestRecords
-        .map((record) {
-          final providerLabel = _providerLabel(record.provider, l10n);
-          final modelLabel = _modelLabel(record.modelName, l10n);
-          final functionTitle = _functionTypeLabel(record.functionType, l10n);
-          return _UsageRecord(
-            chatId: _functionModelKey(
-              record.functionType,
-              providerLabel,
-              modelLabel,
+    return fromUsageRecords(
+      requestRecords
+          .map(
+            (record) => UsageTimelineRecord(
+              occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                record.createdAtMs,
+              ).toLocal(),
+              provider: _providerLabel(record.provider, l10n),
+              model: _modelLabel(record.modelName, l10n),
+              inputTokens: record.inputTokens,
+              outputTokens: record.outputTokens,
+              cachedInputTokens: record.cachedInputTokens,
+              pricing: pricing.forModel(record.provider, record.modelName),
             ),
-            chatTitle: _functionModelTitle(
-              functionTitle,
-              providerLabel,
-              modelLabel,
-            ),
-            occurredAt: DateTime.fromMillisecondsSinceEpoch(
-              record.createdAtMs,
-            ).toLocal(),
-            providerLabel: providerLabel,
-            modelLabel: modelLabel,
-            requestCount: 1,
-            hasUnknownTokens: false,
-            inputTokens: record.inputTokens,
-            outputTokens: record.outputTokens,
-            cachedInputTokens: record.cachedInputTokens,
-          );
-        })
-        .toList(growable: false);
-    return _UsageStatisticsViewData.fromUsageRecords(records, l10n);
+          )
+          .toList(),
+    );
   }
 
-  /// Builds dashboard aggregates from normalized usage records.
   static _UsageStatisticsViewData fromUsageRecords(
-    List<_UsageRecord> sourceRecords,
-    AppLocalizations l10n,
+    List<UsageTimelineRecord> source,
   ) {
-    final records = List<_UsageRecord>.of(sourceRecords);
-    if (records.isEmpty) {
-      return _UsageStatisticsViewData(
-        records: const <_UsageRecord>[],
-        dailyPoints: const <_DayUsagePoint>[],
-        heatmapDays: const <_HeatmapDay>[],
-        totalRequests: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalCachedInputTokens: 0,
-        activeDays: 0,
-        chatCount: 0,
-        providerCount: 0,
-        modelCount: 0,
-        unknownTokenRecords: 0,
-        firstRecordAt: null,
-        lastRecordAt: null,
-        providerSlices: const <_PieSliceData>[],
-        modelSlices: const <_PieSliceData>[],
-        chatSlices: const <_PieSliceData>[],
-        topChatRows: const <_TopListRowData>[],
-      );
-    }
-
-    records.sort((left, right) {
-      final leftAt = left.occurredAt;
-      final rightAt = right.occurredAt;
-      if (leftAt == null && rightAt == null) return 0;
-      if (leftAt == null) return 1;
-      if (rightAt == null) return -1;
-      return leftAt.compareTo(rightAt);
-    });
-    final dailyAccumulators = <DateTime, _DayUsageAccumulator>{};
-    final providerAccumulators = <String, _AggregateAccumulator>{};
-    final modelAccumulators = <String, _AggregateAccumulator>{};
-    final chatAccumulators = <String, _AggregateAccumulator>{};
-
-    var totalInputTokens = 0;
-    var totalOutputTokens = 0;
-    var totalCachedInputTokens = 0;
-
+    final records = List<UsageTimelineRecord>.of(source)
+      ..sort((a, b) => a.occurredAt.compareTo(b.occurredAt));
+    final days = <DateTime, _DayUsageAccumulator>{};
+    var input = 0;
+    var output = 0;
+    var cached = 0;
     for (final record in records) {
-      totalInputTokens += record.inputTokens;
-      totalOutputTokens += record.outputTokens;
-      totalCachedInputTokens += record.cachedInputTokens;
-
-      final occurredAt = record.occurredAt;
-      if (occurredAt != null) {
-        final dayKey = DateTime(
-          occurredAt.year,
-          occurredAt.month,
-          occurredAt.day,
-        );
-        dailyAccumulators
-            .putIfAbsent(dayKey, _DayUsageAccumulator.new)
-            .add(record);
-      }
-      providerAccumulators
-          .putIfAbsent(record.providerLabel, _AggregateAccumulator.new)
-          .add(record);
-      modelAccumulators
-          .putIfAbsent(record.modelLabel, _AggregateAccumulator.new)
-          .add(record);
-      chatAccumulators
-          .putIfAbsent(record.chatId, _AggregateAccumulator.new)
+      input += record.inputTokens;
+      output += record.outputTokens;
+      cached += record.cachedInputTokens;
+      days
+          .putIfAbsent(_dateOnly(record.occurredAt)!, _DayUsageAccumulator.new)
           .add(record);
     }
-
-    final dailyPoints = dailyAccumulators.entries.toList()
-      ..sort((left, right) => left.key.compareTo(right.key));
-
-    final providerPalette = _buildPalette(constraintsSeed: 1);
-    final modelPalette = _buildPalette(constraintsSeed: 2);
-    final chatPalette = _buildPalette(constraintsSeed: 3);
-
-    final providerSlices = _buildPieSlices(
-      rows: providerAccumulators.entries
-          .map(
-            (entry) => _AggregateRow(
-              label: entry.key,
-              totalTokens: entry.value.totalTokens,
-            ),
-          )
-          .toList(growable: false),
-      otherLabel: l10n.settingsDataDetailedStatsOther,
-      palette: providerPalette,
-    );
-    final modelSlices = _buildPieSlices(
-      rows: modelAccumulators.entries
-          .map(
-            (entry) => _AggregateRow(
-              label: entry.key,
-              totalTokens: entry.value.totalTokens,
-            ),
-          )
-          .toList(growable: false),
-      otherLabel: l10n.settingsDataDetailedStatsOther,
-      palette: modelPalette,
-    );
-    final chatSlices = _buildPieSlices(
-      rows: chatAccumulators.entries
-          .map(
-            (entry) => _AggregateRow(
-              label: entry.value.chatTitle,
-              totalTokens: entry.value.totalTokens,
-            ),
-          )
-          .toList(growable: false),
-      otherLabel: l10n.settingsDataDetailedStatsOther,
-      palette: chatPalette,
-    );
-
-    final topChatRows = chatAccumulators.values.toList()
-      ..sort(
-        (left, right) => right.totalTokens.compareTo(left.totalTokens) != 0
-            ? right.totalTokens.compareTo(left.totalTokens)
-            : right.chatTitle.compareTo(left.chatTitle),
-      );
-
-    final mappedDailyPoints = dailyPoints
-        .map(
-          (entry) => _DayUsagePoint(
-            day: entry.key,
-            requestCount: entry.value.requestCount,
-            inputTokens: entry.value.inputTokens,
-            outputTokens: entry.value.outputTokens,
-          ),
-        )
-        .toList(growable: false);
-
     return _UsageStatisticsViewData(
       records: records,
-      dailyPoints: mappedDailyPoints,
-      heatmapDays: _buildHeatmapDays(mappedDailyPoints),
-      totalRequests: records.fold<int>(
-        0,
-        (sum, record) => sum + record.requestCount,
-      ),
-      totalInputTokens: totalInputTokens,
-      totalOutputTokens: totalOutputTokens,
-      totalCachedInputTokens: totalCachedInputTokens,
-      activeDays: dailyAccumulators.length,
-      chatCount: chatAccumulators.length,
-      providerCount: providerAccumulators.length,
-      modelCount: modelAccumulators.length,
-      unknownTokenRecords: records
-          .where((record) => record.hasUnknownTokens)
-          .length,
-      firstRecordAt: _firstDatedRecord(records),
-      lastRecordAt: _lastDatedRecord(records),
-      providerSlices: providerSlices,
-      modelSlices: modelSlices,
-      chatSlices: chatSlices,
-      topChatRows: topChatRows
-          .take(_dashboardRankingRowLimit)
-          .map(
-            (aggregate) => _TopListRowData(
-              title: aggregate.chatTitle,
-              subtitle: l10n.settingsDataDetailedStatsRequestCountSummary(
-                aggregate.requestCount,
+      heatmapDays: _buildHeatmapDays(
+        days.entries
+            .map(
+              (entry) => _DayUsagePoint(
+                day: entry.key,
+                requestCount: entry.value.requestCount,
+                inputTokens: entry.value.inputTokens,
+                outputTokens: entry.value.outputTokens,
               ),
-              trailing: _formatCompactInt(aggregate.totalTokens),
-            ),
-          )
-          .toList(growable: false),
+            )
+            .toList(),
+      ),
+      totalInputTokens: input,
+      totalOutputTokens: output,
+      totalCachedInputTokens: cached,
     );
   }
-}
-
-class _UsageRecord {
-  const _UsageRecord({
-    required this.chatId,
-    required this.chatTitle,
-    required this.occurredAt,
-    required this.providerLabel,
-    required this.modelLabel,
-    required this.requestCount,
-    required this.hasUnknownTokens,
-    required this.inputTokens,
-    required this.outputTokens,
-    required this.cachedInputTokens,
-  });
-
-  final String chatId;
-  final String chatTitle;
-  final DateTime? occurredAt;
-  final String providerLabel;
-  final String modelLabel;
-  final int requestCount;
-  final bool hasUnknownTokens;
-  final int inputTokens;
-  final int outputTokens;
-  final int cachedInputTokens;
-
-  int get totalTokens => inputTokens + outputTokens;
 }
 
 class _DayUsageAccumulator {
@@ -764,30 +464,11 @@ class _DayUsageAccumulator {
   int inputTokens = 0;
   int outputTokens = 0;
 
-  void add(_UsageRecord record) {
-    requestCount += record.requestCount;
+  void add(UsageTimelineRecord record) {
+    requestCount += 1;
     inputTokens += record.inputTokens;
     outputTokens += record.outputTokens;
   }
-}
-
-class _AggregateAccumulator {
-  int totalTokens = 0;
-  int requestCount = 0;
-  String chatTitle = '';
-
-  void add(_UsageRecord record) {
-    totalTokens += record.totalTokens;
-    requestCount += record.requestCount;
-    chatTitle = record.chatTitle;
-  }
-}
-
-class _AggregateRow {
-  const _AggregateRow({required this.label, required this.totalTokens});
-
-  final String label;
-  final int totalTokens;
 }
 
 class _DayUsagePoint {
@@ -814,42 +495,6 @@ class _HeatmapDay {
   final DateTime day;
   final int requestCount;
   final int totalTokens;
-}
-
-class _ChartSeries {
-  const _ChartSeries({
-    required this.label,
-    required this.color,
-    required this.selector,
-  });
-
-  final String label;
-  final Color color;
-  final int Function(_DayUsagePoint point) selector;
-}
-
-class _PieSliceData {
-  const _PieSliceData({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final int value;
-  final Color color;
-}
-
-class _TopListRowData {
-  const _TopListRowData({
-    required this.title,
-    required this.subtitle,
-    required this.trailing,
-  });
-
-  final String title;
-  final String subtitle;
-  final String trailing;
 }
 
 class _UsageStatisticsEmptyState extends StatelessWidget {
@@ -1400,7 +1045,10 @@ class _UsageHeatmapCardState extends State<_UsageHeatmapCard> {
       title: widget.title,
       subtitle: widget.subtitle,
       child: widget.days.isEmpty
-          ? _TopListEmptyRow(label: widget.emptyLabel)
+          ? Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(widget.emptyLabel),
+            )
           : LayoutBuilder(
               builder: (context, constraints) {
                 const cellSize = 12.0;
@@ -1516,512 +1164,6 @@ class _UsageHeatmapLegend extends StatelessWidget {
   }
 }
 
-class _LineChartCard extends StatelessWidget {
-  const _LineChartCard({
-    required this.title,
-    required this.subtitle,
-    required this.points,
-    required this.series,
-    required this.xLabels,
-  });
-
-  final String title;
-  final String subtitle;
-  final List<_DayUsagePoint> points;
-  final List<_ChartSeries> series;
-  final List<String> xLabels;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return _UsageStatisticsSectionCard(
-      title: title,
-      subtitle: subtitle,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final chartHeight = (constraints.maxWidth * 0.54)
-              .clamp(188.0, 260.0)
-              .toDouble();
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: series
-                    .map(
-                      (item) => _LegendChip(
-                        color: item.color,
-                        label: item.label,
-                        value: _formatCompactInt(
-                          points.fold<int>(
-                            0,
-                            (sum, point) => sum + item.selector(point),
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: chartHeight,
-                child: CustomPaint(
-                  painter: _LineChartPainter(
-                    points: points,
-                    series: series,
-                    colorScheme: colorScheme,
-                  ),
-                  child: const SizedBox.expand(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: xLabels
-                    .map(
-                      (label) => Expanded(
-                        child: Text(
-                          label,
-                          textAlign: label == xLabels.first
-                              ? TextAlign.start
-                              : label == xLabels.last
-                              ? TextAlign.end
-                              : TextAlign.center,
-                          style: TextStyle(color: colorScheme.onSurfaceVariant),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _PieChartCard extends StatelessWidget {
-  const _PieChartCard({
-    required this.title,
-    required this.totalLabel,
-    required this.slices,
-  });
-
-  final String title;
-  final String totalLabel;
-  final List<_PieSliceData> slices;
-
-  @override
-  Widget build(BuildContext context) {
-    final totalValue = slices.fold<int>(0, (sum, slice) => sum + slice.value);
-    return _UsageStatisticsSectionCard(
-      title: title,
-      subtitle: totalLabel,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final horizontal = constraints.maxWidth >= 430;
-          final chartSize = horizontal
-              ? math.min<double>(176.0, constraints.maxWidth * 0.38)
-              : (constraints.maxWidth * 0.62).clamp(156.0, 190.0).toDouble();
-          final chart = SizedBox(
-            width: chartSize,
-            height: chartSize,
-            child: Stack(
-              alignment: Alignment.center,
-              children: <Widget>[
-                CustomPaint(
-                  painter: _PieChartPainter(slices: slices),
-                  child: const SizedBox.expand(),
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        _formatCompactInt(totalValue),
-                        maxLines: 1,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      totalLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-          final legend = Column(
-            children: slices
-                .map(
-                  (slice) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: _PieLegendRow(
-                      color: slice.color,
-                      label: slice.label,
-                      percent: totalValue == 0
-                          ? '0%'
-                          : _formatPercent(slice.value / totalValue),
-                      value: _formatCompactInt(slice.value),
-                    ),
-                  ),
-                )
-                .toList(growable: false),
-          );
-          if (horizontal) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                chart,
-                const SizedBox(width: 16),
-                Expanded(child: legend),
-              ],
-            );
-          }
-          return Column(
-            children: <Widget>[chart, const SizedBox(height: 12), legend],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _TopListCard extends StatelessWidget {
-  const _TopListCard({
-    required this.title,
-    required this.subtitle,
-    required this.rows,
-    required this.emptyLabel,
-  });
-
-  final String title;
-  final String subtitle;
-  final List<_TopListRowData> rows;
-  final String emptyLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return _UsageStatisticsSectionCard(
-      title: title,
-      subtitle: subtitle,
-      child: rows.isEmpty
-          ? _TopListEmptyRow(label: emptyLabel)
-          : Column(
-              children: rows
-                  .asMap()
-                  .entries
-                  .map(
-                    (entry) => Column(
-                      children: <Widget>[
-                        if (entry.key > 0)
-                          Divider(
-                            height: 1,
-                            color: colorScheme.outlineVariant.withValues(
-                              alpha: 0.18,
-                            ),
-                          ),
-                        _TopListRow(rank: entry.key + 1, row: entry.value),
-                      ],
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-    );
-  }
-}
-
-class _TopListRow extends StatelessWidget {
-  const _TopListRow({required this.rank, required this.row});
-
-  final int rank;
-  final _TopListRowData row;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 46),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(
-          children: <Widget>[
-            SizedBox(
-              width: 30,
-              child: Text(
-                '#$rank',
-                textAlign: TextAlign.left,
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    row.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    row.subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 72,
-              child: Text(
-                row.trailing,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TopListEmptyRow extends StatelessWidget {
-  const _TopListEmptyRow({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 46),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-        ),
-      ),
-    );
-  }
-}
-
-class _LegendChip extends StatelessWidget {
-  const _LegendChip({
-    required this.color,
-    required this.label,
-    required this.value,
-  });
-
-  final Color color;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.2),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 8),
-          Text('$label · $value'),
-        ],
-      ),
-    );
-  }
-}
-
-class _PieLegendRow extends StatelessWidget {
-  const _PieLegendRow({
-    required this.color,
-    required this.label,
-    required this.percent,
-    required this.value,
-  });
-
-  final Color color;
-  final String label;
-  final String percent;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Row(
-      children: <Widget>[
-        Container(
-          width: 11,
-          height: 11,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
-        const SizedBox(width: 10),
-        Text(percent, style: TextStyle(color: colorScheme.onSurfaceVariant)),
-        const SizedBox(width: 10),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
-      ],
-    );
-  }
-}
-
-class _LineChartPainter extends CustomPainter {
-  const _LineChartPainter({
-    required this.points,
-    required this.series,
-    required this.colorScheme,
-  });
-
-  final List<_DayUsagePoint> points;
-  final List<_ChartSeries> series;
-  final ColorScheme colorScheme;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const leftPadding = 46.0;
-    const topPadding = 8.0;
-    const rightPadding = 12.0;
-    const bottomPadding = 20.0;
-    final chartRect = Rect.fromLTWH(
-      leftPadding,
-      topPadding,
-      size.width - leftPadding - rightPadding,
-      size.height - topPadding - bottomPadding,
-    );
-    if (chartRect.width <= 0 || chartRect.height <= 0 || points.isEmpty) {
-      return;
-    }
-
-    final values = series
-        .expand((item) => points.map(item.selector))
-        .toList(growable: false);
-    final maxValue = math.max(
-      1,
-      values.fold<int>(0, (maxValue, value) => math.max(maxValue, value)),
-    );
-
-    final gridPaint = Paint()
-      ..color = colorScheme.outlineVariant.withValues(alpha: 0.22)
-      ..strokeWidth = 1;
-
-    for (var index = 0; index < 5; index++) {
-      final ratio = index / 4;
-      final y = chartRect.bottom - chartRect.height * ratio;
-      canvas.drawLine(
-        Offset(chartRect.left, y),
-        Offset(chartRect.right, y),
-        gridPaint,
-      );
-      final value = (maxValue * ratio).round();
-      _paintText(
-        canvas,
-        text: _formatCompactInt(value),
-        offset: Offset(0, y - 8),
-        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 11),
-        maxWidth: leftPadding - 8,
-        textAlign: TextAlign.right,
-      );
-    }
-
-    canvas.drawLine(
-      Offset(chartRect.left, chartRect.bottom),
-      Offset(chartRect.right, chartRect.bottom),
-      Paint()
-        ..color = colorScheme.outlineVariant.withValues(alpha: 0.28)
-        ..strokeWidth = 1.2,
-    );
-
-    for (final entry in series) {
-      final path = Path();
-      final dotPaint = Paint()
-        ..color = entry.color
-        ..style = PaintingStyle.fill;
-      final linePaint = Paint()
-        ..color = entry.color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round;
-
-      for (var index = 0; index < points.length; index++) {
-        final point = points[index];
-        final x = points.length == 1
-            ? chartRect.center.dx
-            : chartRect.left + chartRect.width * index / (points.length - 1);
-        final y =
-            chartRect.bottom -
-            chartRect.height * entry.selector(point) / maxValue;
-        final offset = Offset(x, y);
-        if (index == 0) {
-          path.moveTo(offset.dx, offset.dy);
-        } else {
-          path.lineTo(offset.dx, offset.dy);
-        }
-        canvas.drawCircle(offset, 3.4, dotPaint);
-      }
-      canvas.drawPath(path, linePaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LineChartPainter oldDelegate) {
-    return oldDelegate.points != points ||
-        oldDelegate.series != series ||
-        oldDelegate.colorScheme != colorScheme;
-  }
-}
-
 class _UsageHeatmapPainter extends CustomPainter {
   const _UsageHeatmapPainter({
     required this.days,
@@ -2090,87 +1232,6 @@ class _UsageHeatmapPainter extends CustomPainter {
   }
 }
 
-class _PieChartPainter extends CustomPainter {
-  const _PieChartPainter({required this.slices});
-
-  final List<_PieSliceData> slices;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (slices.isEmpty) {
-      return;
-    }
-    final rect = Offset.zero & size;
-    final total = slices.fold<int>(0, (sum, slice) => sum + slice.value);
-    if (total <= 0) {
-      return;
-    }
-    final strokeWidth = math.max<double>(20.0, size.shortestSide * 0.18);
-    final arcRect = rect.deflate(strokeWidth / 2 + 6);
-    var startAngle = -math.pi / 2;
-    for (final slice in slices) {
-      final sweepAngle = (slice.value / total) * math.pi * 2;
-      final paint = Paint()
-        ..color = slice.color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.butt;
-      canvas.drawArc(arcRect, startAngle, sweepAngle, false, paint);
-      startAngle += sweepAngle;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _PieChartPainter oldDelegate) {
-    return oldDelegate.slices != slices;
-  }
-}
-
-/// Returns the localized label for a model function slot.
-String _functionTypeLabel(
-  core_proxy.FunctionType functionType,
-  AppLocalizations l10n,
-) {
-  return switch (functionType) {
-    core_proxy.FunctionType.chat => l10n.settingsModelFunctionChat,
-    core_proxy.FunctionType.summary => l10n.settingsModelFunctionSummary,
-    core_proxy.FunctionType.titleGeneration =>
-      l10n.settingsModelFunctionTitleGeneration,
-    core_proxy.FunctionType.memory => l10n.settingsModelFunctionMemory,
-    core_proxy.FunctionType.uiController =>
-      l10n.settingsModelFunctionUiController,
-    core_proxy.FunctionType.translation =>
-      l10n.settingsModelFunctionTranslation,
-    core_proxy.FunctionType.grep => l10n.settingsModelFunctionGrep,
-    core_proxy.FunctionType.roleResponsePlanner =>
-      l10n.settingsModelFunctionRoleResponsePlanner,
-    core_proxy.FunctionType.imageRecognition =>
-      l10n.settingsModelFunctionImageRecognition,
-    core_proxy.FunctionType.audioRecognition =>
-      l10n.settingsModelFunctionAudioRecognition,
-    core_proxy.FunctionType.videoRecognition =>
-      l10n.settingsModelFunctionVideoRecognition,
-  };
-}
-
-/// Builds the stable aggregation key for a function-model pair.
-String _functionModelKey(
-  core_proxy.FunctionType functionType,
-  String providerLabel,
-  String modelLabel,
-) {
-  return '${functionType.value}::$providerLabel::$modelLabel';
-}
-
-/// Builds the visible label for a function-model pair.
-String _functionModelTitle(
-  String functionTitle,
-  String providerLabel,
-  String modelLabel,
-) {
-  return '$functionTitle · $providerLabel · $modelLabel';
-}
-
 String _providerLabel(String provider, AppLocalizations l10n) {
   final value = provider.trim();
   return value.isEmpty
@@ -2181,57 +1242,6 @@ String _providerLabel(String provider, AppLocalizations l10n) {
 String _modelLabel(String model, AppLocalizations l10n) {
   final value = model.trim();
   return value.isEmpty ? l10n.settingsDataDetailedStatsUnlabeledModel : value;
-}
-
-List<_PieSliceData> _buildPieSlices({
-  required List<_AggregateRow> rows,
-  required String otherLabel,
-  required List<Color> palette,
-}) {
-  final sortedRows = List<_AggregateRow>.of(rows)
-    ..sort((left, right) => right.totalTokens.compareTo(left.totalTokens));
-  final visibleRows = <_AggregateRow>[];
-  var otherValue = 0;
-  for (var index = 0; index < sortedRows.length; index++) {
-    if (index < 5) {
-      visibleRows.add(sortedRows[index]);
-      continue;
-    }
-    otherValue += sortedRows[index].totalTokens;
-  }
-  if (otherValue > 0) {
-    visibleRows.add(_AggregateRow(label: otherLabel, totalTokens: otherValue));
-  }
-  return visibleRows
-      .asMap()
-      .entries
-      .map(
-        (entry) => _PieSliceData(
-          label: entry.value.label,
-          value: entry.value.totalTokens,
-          color: palette[entry.key % palette.length],
-        ),
-      )
-      .toList(growable: false);
-}
-
-List<Color> _buildPalette({required int constraintsSeed}) {
-  const basePalette = <Color>[
-    Color(0xFF8BC34A),
-    Color(0xFF4DB6AC),
-    Color(0xFFFFB74D),
-    Color(0xFF64B5F6),
-    Color(0xFFE57373),
-    Color(0xFF9575CD),
-    Color(0xFF4DD0E1),
-    Color(0xFFA1887F),
-  ];
-  final offset = constraintsSeed % basePalette.length;
-  return List<Color>.generate(
-    basePalette.length,
-    (index) => basePalette[(index + offset) % basePalette.length],
-    growable: false,
-  );
 }
 
 /// Builds continuous day cells for the usage heatmap.
@@ -2326,6 +1336,7 @@ double _dashboardPagePadding(double width) {
 /// Returns the localized label for a date range chip.
 String _usageDateRangeLabel(AppLocalizations l10n, _UsageDateRange range) {
   return switch (range) {
+    _UsageDateRange.lastDay => l10n.settingsDataDetailedStatsRangeLastDay,
     _UsageDateRange.all => l10n.settingsDataDetailedStatsRangeAll,
     _UsageDateRange.last7Days => l10n.settingsDataDetailedStatsRangeLast7Days,
     _UsageDateRange.last30Days => l10n.settingsDataDetailedStatsRangeLast30Days,
@@ -2381,45 +1392,6 @@ DateTimeRange _dateOnlyRange(DateTimeRange range) {
   );
 }
 
-/// Returns whether a record occurred within the trailing day window.
-bool _recordIsInsideTrailingDays(
-  _UsageRecord record,
-  DateTime? endDay,
-  int dayCount,
-) {
-  if (endDay == null) {
-    return false;
-  }
-  final startDay = endDay.subtract(Duration(days: dayCount - 1));
-  return _recordIsInsideDateSpan(record, startDay, endDay);
-}
-
-/// Returns whether a record occurred inside an inclusive date span.
-bool _recordIsInsideDateSpan(
-  _UsageRecord record,
-  DateTime startDay,
-  DateTime endDay,
-) {
-  final occurredDay = _dateOnly(record.occurredAt);
-  if (occurredDay == null) {
-    return false;
-  }
-  return !occurredDay.isBefore(startDay) && !occurredDay.isAfter(endDay);
-}
-
-/// Builds the three chart labels used for the visible date axis.
-List<String> _buildDateAxisLabels(List<_DayUsagePoint> points) {
-  if (points.isEmpty) {
-    return const <String>['', '', ''];
-  }
-  final middle = points[points.length ~/ 2].day;
-  return <String>[
-    _formatShortDate(points.first.day),
-    _formatShortDate(middle),
-    _formatShortDate(points.last.day),
-  ];
-}
-
 /// Computes the width for cards in a wrapping responsive row.
 double _responsiveCardWidth({
   required double maxWidth,
@@ -2434,24 +1406,6 @@ double _responsiveCardWidth({
     }
   }
   return maxWidth;
-}
-
-void _paintText(
-  Canvas canvas, {
-  required String text,
-  required Offset offset,
-  required TextStyle style,
-  required double maxWidth,
-  TextAlign textAlign = TextAlign.left,
-}) {
-  final painter = TextPainter(
-    text: TextSpan(text: text, style: style),
-    textDirection: TextDirection.ltr,
-    textAlign: textAlign,
-    maxLines: 1,
-    ellipsis: '…',
-  )..layout(maxWidth: maxWidth);
-  painter.paint(canvas, offset);
 }
 
 String _formatCompactInt(int value) {
@@ -2481,37 +1435,8 @@ String _formatFullInt(int value) {
   return value < 0 ? '-$buffer' : buffer.toString();
 }
 
-String _formatPercent(double ratio) {
-  final percentage = ratio * 100;
-  return percentage >= 10
-      ? '${percentage.toStringAsFixed(0)}%'
-      : '${percentage.toStringAsFixed(1)}%';
-}
-
 String _formatDate(DateTime value) {
   return '${value.year}-${_twoDigits(value.month)}-${_twoDigits(value.day)}';
 }
 
-String _formatShortDate(DateTime value) {
-  return '${_twoDigits(value.month)}/${_twoDigits(value.day)}';
-}
-
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
-
-/// Returns the earliest recorded timestamp.
-DateTime? _firstDatedRecord(List<_UsageRecord> records) {
-  for (final record in records) {
-    final occurredAt = record.occurredAt;
-    if (occurredAt != null) return occurredAt;
-  }
-  return null;
-}
-
-/// Returns the latest recorded timestamp.
-DateTime? _lastDatedRecord(List<_UsageRecord> records) {
-  for (var index = records.length - 1; index >= 0; index -= 1) {
-    final occurredAt = records[index].occurredAt;
-    if (occurredAt != null) return occurredAt;
-  }
-  return null;
-}

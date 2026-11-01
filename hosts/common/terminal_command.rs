@@ -2,9 +2,13 @@
 
 use std::fmt::Write;
 
-/// Keeps script control characters out of interactive input while preserving shell state.
+/// Keeps script control characters and history-expansion characters out of interactive input
+/// while preserving shell state.
 pub(crate) fn posixCommandLine(command: &str) -> String {
-    if !command.chars().any(char::is_control) {
+    if !command
+        .chars()
+        .any(|character| character.is_control() || character == '!')
+    {
         return command.to_string();
     }
     let mut encoded = String::with_capacity(command.len());
@@ -12,6 +16,7 @@ pub(crate) fn posixCommandLine(command: &str) -> String {
         match ch {
             '\\' => encoded.push_str("\\\\"),
             '\'' => encoded.push_str("\\047"),
+            '!' => encoded.push_str("\\0041"),
             _ if ch.is_control() => {
                 let mut utf8 = [0u8; 4];
                 for byte in ch.encode_utf8(&mut utf8).bytes() {

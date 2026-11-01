@@ -6,7 +6,8 @@ import 'package:flutter/material.dart';
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspacePathBar.dart';
-import 'WorkspaceTabModels.dart';
+import 'WorkspaceFileIcon.dart';
+import 'WorkspaceFileTree.dart';
 
 class WorkspaceFileBrowserContent extends StatefulWidget {
   const WorkspaceFileBrowserContent({
@@ -110,87 +111,106 @@ class _WorkspaceFileBrowserContentState
               ),
             ),
           Expanded(
-            child: FutureBuilder<List<WorkspaceFileEntry>>(
-              future: _entriesFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return _WorkspaceFileMessage(
-                    icon: Icons.error_outline,
-                    message: snapshot.error.toString(),
-                  );
-                }
-                final entries = snapshot.data ?? const <WorkspaceFileEntry>[];
-                if (entries.isEmpty) {
-                  return _WorkspaceFileMessage(
-                    icon: Icons.folder_off_outlined,
-                    message: l10n.emptyFolder,
-                  );
-                }
-                return ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    dragDevices: const <PointerDeviceKind>{
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.mouse,
-                      PointerDeviceKind.trackpad,
-                      PointerDeviceKind.stylus,
+            child: !_directorySelectionEnabled
+                ? WorkspaceFileTree(
+                    key: ValueKey(_currentPath),
+                    rootPath: _currentPath,
+                    rootLabel: _displayPath(),
+                    rootEntries: _entriesFuture!,
+                    onListDirectory: _listTreeDirectory,
+                    onOpenFile: widget.onOpenFile,
+                  )
+                : FutureBuilder<List<WorkspaceFileEntry>>(
+                    future: _entriesFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return _WorkspaceFileMessage(
+                          icon: Icons.error_outline,
+                          message: snapshot.error.toString(),
+                        );
+                      }
+                      final entries =
+                          snapshot.data ?? const <WorkspaceFileEntry>[];
+                      if (entries.isEmpty) {
+                        return _WorkspaceFileMessage(
+                          icon: Icons.folder_off_outlined,
+                          message: l10n.emptyFolder,
+                        );
+                      }
+                      return ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context).copyWith(
+                          dragDevices: const <PointerDeviceKind>{
+                            PointerDeviceKind.touch,
+                            PointerDeviceKind.mouse,
+                            PointerDeviceKind.trackpad,
+                            PointerDeviceKind.stylus,
+                          },
+                        ),
+                        child: Scrollbar(
+                          controller: _scrollController,
+                          thumbVisibility: true,
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            primary: false,
+                            padding: EdgeInsets.zero,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            itemCount: entries.length,
+                            itemBuilder: (context, index) {
+                              final entry = entries[index];
+                              return ListTile(
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                minTileHeight: 36,
+                                minLeadingWidth: 16,
+                                horizontalTitleGap: 8,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                ),
+                                leading: entry.isDirectory
+                                    ? const Icon(
+                                        Icons.folder,
+                                        size: 17,
+                                        color: Color(0xFFD4AD6A),
+                                      )
+                                    : buildWorkspaceFileIcon(
+                                        entry.name,
+                                        size: 16,
+                                      ),
+                                title: Text(
+                                  entry.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                trailing: entry.isDirectory
+                                    ? Icon(
+                                        Icons.chevron_right,
+                                        size: 16,
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                      )
+                                    : null,
+                                onTap: _selectingCurrentDirectory
+                                    ? null
+                                    : () {
+                                        if (entry.isDirectory) {
+                                          _openDirectory(entry.relativePath);
+                                          return;
+                                        }
+                                        widget.onOpenFile(entry);
+                                      },
+                              );
+                            },
+                          ),
+                        ),
+                      );
                     },
                   ),
-                  child: Scrollbar(
-                    controller: _scrollController,
-                    thumbVisibility: true,
-                    child: ListView.separated(
-                      controller: _scrollController,
-                      primary: false,
-                      padding: EdgeInsets.zero,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: entries.length,
-                      separatorBuilder: (context, index) => Divider(
-                        height: 1,
-                        indent: 56,
-                        color: theme.colorScheme.outlineVariant,
-                      ),
-                      itemBuilder: (context, index) {
-                        final entry = entries[index];
-                        final previewKind = entry.isDirectory
-                            ? null
-                            : workspacePreviewKindForPath(entry.path);
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            entry.isDirectory
-                                ? Icons.folder_outlined
-                                : workspacePreviewIconForKind(previewKind!),
-                            color: entry.isDirectory
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                          ),
-                          title: Text(
-                            entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: entry.isDirectory
-                              ? null
-                              : Text(_previewLabel(l10n, previewKind!)),
-                          onTap: _selectingCurrentDirectory
-                              ? null
-                              : () {
-                                  if (entry.isDirectory) {
-                                    _openDirectory(entry.relativePath);
-                                    return;
-                                  }
-                                  widget.onOpenFile(entry);
-                                },
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
           ),
           if (_directorySelectionEnabled)
             ConstrainedBox(
@@ -215,6 +235,13 @@ class _WorkspaceFileBrowserContentState
       return;
     }
     _entriesFuture = widget.onListWorkspaceFiles(_currentPath);
+  }
+
+  Future<List<WorkspaceFileEntry>> _listTreeDirectory(String path) {
+    if (!_isWorkspaceRelativePath(path)) {
+      return Future.error(StateError('工作区目录路径必须是相对路径'));
+    }
+    return widget.onListWorkspaceFiles(path);
   }
 
   /// Opens a directory returned by the active workspace listing service.
@@ -447,33 +474,6 @@ class _WorkspaceFileBrowserContentState
           _selectingCurrentDirectory = false;
         });
       }
-    }
-  }
-
-  String _previewLabel(AppLocalizations l10n, WorkspaceFilePreviewKind kind) {
-    switch (kind) {
-      case WorkspaceFilePreviewKind.image:
-        return l10n.imagePreview;
-      case WorkspaceFilePreviewKind.audio:
-        return l10n.audioPreview;
-      case WorkspaceFilePreviewKind.video:
-        return l10n.videoPreview;
-      case WorkspaceFilePreviewKind.pdf:
-        return l10n.pdfPreview;
-      case WorkspaceFilePreviewKind.word:
-        return l10n.wordPreview;
-      case WorkspaceFilePreviewKind.spreadsheet:
-        return l10n.spreadsheetPreview;
-      case WorkspaceFilePreviewKind.presentation:
-        return l10n.presentationPreview;
-      case WorkspaceFilePreviewKind.html:
-        return l10n.webPagePreview;
-      case WorkspaceFilePreviewKind.markdown:
-        return l10n.markdownPreview;
-      case WorkspaceFilePreviewKind.text:
-        return l10n.textPreview;
-      case WorkspaceFilePreviewKind.binary:
-        return l10n.file;
     }
   }
 }

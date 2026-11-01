@@ -237,42 +237,6 @@ mod bridge_tests {
         .unwrap()
     }
 
-    /// Keeps mutable globals and host bindings independent across contexts sharing compiled bytes.
-    #[test]
-    fn shared_bootstrap_preserves_runtime_isolation_and_host_binding_ownership() {
-        let host = NativeHostJavaScriptRuntimeHost::new();
-        let mut first = host.createHostJavaScriptRuntime().unwrap();
-        let mut second = host.createHostJavaScriptRuntime().unwrap();
-        for (runtime, owner) in [(&mut first, "first"), (&mut second, "second")] {
-            runtime
-                .registerHostJavaScriptFunction(
-                    "readOwner",
-                    Arc::new(move |_| Ok(JsonValue::String(owner.into()))),
-                )
-                .unwrap();
-            runtime.evaluateHostJavaScriptBootstrap(
-                "var owned = { count: 0 }; function next() { return readOwner() + ':' + (++owned.count); }").unwrap();
-        }
-        assert_eq!(
-            first
-                .evaluateHostJavaScriptString("probe", "next()")
-                .unwrap(),
-            "first:1"
-        );
-        assert_eq!(
-            first
-                .evaluateHostJavaScriptString("probe", "next()")
-                .unwrap(),
-            "first:2"
-        );
-        assert_eq!(
-            second
-                .evaluateHostJavaScriptString("probe", "next()")
-                .unwrap(),
-            "second:1"
-        );
-    }
-
     /// Deserialized functions resolve globals and callbacks in their own runtime.
     #[test]
     fn shared_module_code_cache_keeps_globals_exports_and_host_bindings_local() {

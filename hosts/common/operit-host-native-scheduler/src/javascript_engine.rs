@@ -13,6 +13,50 @@ use std::sync::{Arc, Once};
 
 pub(super) const MAX_PENDING_PROMISES: usize = 4096;
 
+thread_local! {
+    static ENGINE: RefCell<std::rc::Weak<NativeEngine>> = RefCell::new(std::rc::Weak::new());
+}
+
+/// Affine workers share one V8 heap; plugins retain independent contexts and job queues.
+struct NativeEngine {
+    isolate: RefCell<v8::OwnedIsolate>,
+    active: Arc<std::sync::Mutex<usize>>,
+}
+
+impl NativeEngine {
+    fn shared() -> Rc<Self> {
+        ENGINE.with(|cached| {
+            if let Some(engine) = cached.borrow().upgrade() { return engine; }
+            static INITIALIZE: Once = Once::new();
+            INITIALIZE.call_once(|| {
+                v8::V8::initialize_platform(v8::new_default_platform(0, false).make_shared());
+                v8::V8::initialize();
+            });
+            let mut parameters = v8::CreateParams::default();
+            if crate::runtime_task_scheduler::hasManagedWorkerStack() {
+                let stack_marker = 0u32;
+                let limit = (std::ptr::addr_of!(stack_marker) as usize - 4 * 1024 * 1024) as *mut u32;
+                // SAFETY: Host-managed workers reserve 16 MiB for Rust and V8 callbacks.
+                parameters = unsafe { parameters.set_stack_limit(limit) };
+            }
+            let mut isolate = v8::Isolate::new(parameters);
+            isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
+            // SAFETY: each operation re-enters this worker's isolate before accessing handles.
+            unsafe { isolate.exit(); }
+            let engine = Rc::new(Self { isolate: RefCell::new(isolate), active: Arc::default() });
+            *cached.borrow_mut() = Rc::downgrade(&engine);
+            engine
+        })
+    }
+}
+
+impl Drop for NativeEngine {
+    fn drop(&mut self) {
+        // SAFETY: all contexts and queues have released their handles on this owning worker.
+        unsafe { self.isolate.get_mut().enter(); }
+    }
+}
+
 pub(super) struct NativePendingPromise {
     scope: String,
     resolver: v8::Global<v8::PromiseResolver>,
@@ -36,6 +80,7 @@ enum HostBinding {
 }
 
 struct RuntimeBindings {
+    interrupt: Arc<JavaScriptInterrupt>,
     intrinsics: JsonIntrinsics,
     functions: RefCell<Vec<HostBinding>>,
     promises: NativePromises,
@@ -46,10 +91,11 @@ pub(super) struct NativeHostJavaScriptRuntime {
     bootstrap: Arc<HostJavaScriptBootstrap>,
     code_cache: Arc<HostJavaScriptCodeCache>,
     pub(super) promises: NativePromises,
-    bindings: Option<Rc<RuntimeBindings>>,
-    context: Option<v8::Global<v8::Context>>,
+    bindings: Rc<RuntimeBindings>,
+    context: v8::Global<v8::Context>,
+    _microtasks: v8::MicrotaskQueueHandle,
     interrupt: Arc<JavaScriptInterrupt>,
-    isolate: Option<v8::OwnedIsolate>,
+    engine: Rc<NativeEngine>,
 }
 
 /// Balances every temporary isolate entry, including unwinding from a Host callback.
@@ -82,27 +128,16 @@ impl NativeHostJavaScriptRuntime {
         bootstrap: Arc<HostJavaScriptBootstrap>,
         code_cache: Arc<HostJavaScriptCodeCache>,
     ) -> HostResult<Self> {
-        static INITIALIZE: Once = Once::new();
-        INITIALIZE.call_once(|| {
-            let platform = v8::new_default_platform(0, false).make_shared();
-            v8::V8::initialize_platform(platform);
-            v8::V8::initialize();
-        });
-        let mut parameters = v8::CreateParams::default();
-        if crate::runtime_task_scheduler::hasManagedWorkerStack() {
-            let stack_marker = 0u32;
-            let limit = (std::ptr::addr_of!(stack_marker) as usize - 4 * 1024 * 1024) as *mut u32;
-            // SAFETY: Host-managed workers reserve 16 MiB, leaving room for Rust callbacks.
-            parameters = unsafe { parameters.set_stack_limit(limit) };
-        }
-        let mut isolate = v8::Isolate::new(parameters);
-        isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
-        let interrupt = JavaScriptInterrupt::new(isolate.thread_safe_handle())?;
-        isolate.set_slot(interrupt.clone());
+        let engine = NativeEngine::shared();
         let promises = NativePromises::default();
-        let (context, bindings) = {
-            v8::scope!(let scope, &mut isolate);
+        let (context, bindings, microtasks, interrupt) = {
+            let mut isolate = engine.isolate.borrow_mut();
+            let _entry = IsolateEntry::new(&isolate);
+            let interrupt = JavaScriptInterrupt::new(isolate.thread_safe_handle(), engine.active.clone())?;
+            let microtasks = v8::MicrotaskQueue::new(&mut isolate, v8::MicrotasksPolicy::Explicit);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
+            context.set_microtask_queue(microtasks.as_ref());
             let scope = &mut v8::ContextScope::new(scope, context);
             v8::tc_scope!(let scope, scope);
             let intrinsics =
@@ -111,12 +146,13 @@ impl NativeHostJavaScriptRuntime {
                     None => error,
                 })?;
             let bindings = Rc::new(RuntimeBindings {
+                interrupt: interrupt.clone(),
                 intrinsics,
                 functions: RefCell::new(Vec::new()),
                 promises: promises.clone(),
                 next_promise: Cell::new(0),
             });
-            scope.set_slot(bindings.clone());
+            context.set_slot(Rc::new(Rc::downgrade(&bindings)));
             install_binding(
                 scope,
                 "__operitHostSnapshotJsonObject",
@@ -124,20 +160,17 @@ impl NativeHostJavaScriptRuntime {
                 &bindings,
                 true,
             )?;
-            (v8::Global::new(scope, context), bindings)
+            (v8::Global::new(scope, context), bindings, microtasks, interrupt)
         };
-        // SAFETY: creation entered the isolate; each operation explicitly re-enters it.
-        unsafe {
-            isolate.exit();
-        }
         Ok(Self {
             bootstrap,
             code_cache,
             promises,
-            bindings: Some(bindings),
-            context: Some(context),
+            bindings,
+            context,
+            _microtasks: microtasks,
             interrupt,
-            isolate: Some(isolate),
+            engine,
         })
     }
 
@@ -146,10 +179,12 @@ impl NativeHostJavaScriptRuntime {
         &mut self,
         operation: impl FnOnce(&mut v8::PinScope<'_, '_>) -> HostResult<R>,
     ) -> HostResult<R> {
-        let isolate = self.isolate.as_mut().expect("live V8 isolate");
-        let _entry = IsolateEntry::new(isolate);
-        v8::scope!(let scope, isolate);
-        let context = v8::Local::new(scope, self.context.as_ref().expect("live V8 context"));
+        let mut isolate = self.engine.isolate.try_borrow_mut()
+            .map_err(|_| HostError::new("Cannot synchronously re-enter the JavaScript worker"))?;
+        let _entry = IsolateEntry::new(&isolate);
+        let _execution = self.interrupt.enter();
+        v8::scope!(let scope, &mut *isolate);
+        let context = v8::Local::new(scope, &self.context);
         let scope = &mut v8::ContextScope::new(scope, context);
         v8::tc_scope!(let scope, scope);
         let result = operation(scope);
@@ -169,26 +204,15 @@ impl NativeHostJavaScriptRuntime {
 
     /// Installs a function whose Rust callback and engine handles belong to this isolate.
     fn register(&mut self, name: &str, binding: HostBinding) -> HostResult<()> {
-        let bindings = self.bindings.as_ref().expect("live V8 bindings").clone();
+        let bindings = self.bindings.clone();
         self.with_scope(|scope| install_binding(scope, name, binding, &bindings, false))
     }
 }
 
 impl Drop for NativeHostJavaScriptRuntime {
-    /// Releases all persistent handles while their owning isolate is entered and alive.
     fn drop(&mut self) {
         self.interrupt.replace(Vec::new());
-        let mut isolate = self.isolate.take().expect("live V8 isolate");
-        // SAFETY: this affine runtime is being destroyed on its owning executor.
-        unsafe {
-            isolate.enter();
-        }
         self.promises.borrow_mut().clear();
-        isolate.remove_slot::<Arc<JavaScriptInterrupt>>();
-        isolate.remove_slot::<Rc<RuntimeBindings>>();
-        self.bindings.take();
-        self.context.take();
-        drop(isolate);
     }
 }
 
@@ -253,7 +277,8 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
     /// Drains explicit V8 microtasks on the owning executor.
     fn executePendingHostJavaScriptJobs(&mut self) -> HostResult<()> {
         self.with_scope(|scope| {
-            scope.perform_microtask_checkpoint();
+            scope.get_current_context().get_microtask_queue().expect("realm job queue")
+                .perform_checkpoint(scope);
             Ok(())
         })
     }
@@ -269,7 +294,7 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
         name: &str,
         arguments: &[JsonValue],
     ) -> HostResult<JsonValue> {
-        let bindings = self.bindings.as_ref().expect("live V8 bindings").clone();
+        let bindings = self.bindings.clone();
         self.with_scope(|scope| {
             let context = scope.get_current_context();
             let key = text(scope, name)?;
@@ -434,10 +459,7 @@ fn host_callback<'s>(
     match output {
         Ok(Ok(value)) => result.set(value),
         Err(panic) => {
-            scope
-                .get_slot::<Arc<JavaScriptInterrupt>>()
-                .expect("V8 interrupt state")
-                .capture_panic(panic);
+            runtime_bindings(scope).interrupt.capture_panic(panic);
             scope.terminate_execution();
         }
         Ok(Err(error)) => {
@@ -454,15 +476,17 @@ fn host_callback<'s>(
     }
 }
 
+fn runtime_bindings(scope: &mut v8::PinScope<'_, '_>) -> Rc<RuntimeBindings> {
+    scope.get_current_context().get_slot::<std::rc::Weak<RuntimeBindings>>()
+        .and_then(|binding| binding.upgrade()).expect("live V8 realm bindings")
+}
+
 /// Dispatches cloned callback metadata without retaining a RefCell borrow across JavaScript.
 fn dispatch<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     arguments: v8::FunctionCallbackArguments<'s>,
 ) -> HostResult<v8::Local<'s, v8::Value>> {
-    let bindings = scope
-        .get_slot::<Rc<RuntimeBindings>>()
-        .expect("V8 Host bindings")
-        .clone();
+    let bindings = runtime_bindings(scope);
     let index = arguments
         .data()
         .int32_value(scope)
@@ -697,4 +721,69 @@ fn profile_stage(
     }
     line.push('\n');
     let _ = std::io::Write::write_all(&mut std::io::stderr().lock(), line.as_bytes());
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_host_api::HostJavaScriptExecutionInterrupt;
+
+    #[test]
+    fn hundreds_of_realms_share_an_engine_with_independent_bindings_and_jobs() {
+        let bootstrap = Arc::new(HostJavaScriptBootstrap::default());
+        let cache = Arc::new(HostJavaScriptCodeCache::default());
+        let mut realms = Vec::new();
+        for owner in 0..256 {
+            let mut realm = NativeHostJavaScriptRuntime::new(bootstrap.clone(), cache.clone()).unwrap();
+            realm.registerHostJavaScriptFunction("readOwner", Arc::new(move |_| Ok(JsonValue::from(owner)))).unwrap();
+            realm.evaluateHostJavaScriptBootstrap("var count=0; Promise.resolve().then(()=>count=readOwner()+1);").unwrap();
+            realms.push(realm);
+        }
+        for realm in &realms { assert!(Rc::ptr_eq(&realm.engine, &realms[0].engine)); }
+        for (owner, realm) in realms.iter_mut().enumerate() {
+            assert_eq!(realm.evaluateHostJavaScriptString("before", "String(count)").unwrap(), "0");
+            realm.executePendingHostJavaScriptJobs().unwrap();
+            assert_eq!(realm.evaluateHostJavaScriptString("after", "String(count)").unwrap(), (owner+1).to_string());
+        }
+        // Destroy contexts out of order and continue using the surviving contexts.
+        while realms.len() > 1 {
+            realms.remove(realms.len()/2);
+            realms[0].evaluateHostJavaScriptVoid("alive", "count++").unwrap();
+        }
+    }
+
+    #[test]
+    fn inactive_realms_cannot_interrupt_or_clear_the_active_realms_cancellation() {
+        let bootstrap = Arc::new(HostJavaScriptBootstrap::default());
+        let cache = Arc::new(HostJavaScriptCodeCache::default());
+        let mut first = NativeHostJavaScriptRuntime::new(bootstrap.clone(), cache.clone()).unwrap();
+        let mut second = NativeHostJavaScriptRuntime::new(bootstrap, cache).unwrap();
+        let cancelled = HostJavaScriptExecutionInterrupt::unlimited();
+        first.interrupt.replace(vec![cancelled.clone()]);
+        second.registerHostJavaScriptFunction("cancelFirst", Arc::new(move |_| {
+            cancelled.interrupt(); Ok(JsonValue::Null)
+        })).unwrap();
+        second.evaluateHostJavaScriptVoid("other", "cancelFirst(); for(let i=0;i<10000;i++){};").unwrap();
+        assert!(first.evaluateHostJavaScriptVoid("cancelled", "while(true){}").is_err());
+        let deadline = HostJavaScriptExecutionInterrupt::new(10).unwrap();
+        first.interrupt.replace(vec![deadline.clone()]);
+        let expiry = deadline.clone();
+        second.registerHostJavaScriptFunction("expireFirst", Arc::new(move |_| {
+            assert!(expiry.shouldInterrupt()); Ok(JsonValue::Null)
+        })).unwrap();
+        second.evaluateHostJavaScriptVoid("other", "var start=Date.now(); while(Date.now()-start<30){}; expireFirst();").unwrap();
+        assert!(deadline.didTimeOut());
+        assert!(first.evaluateHostJavaScriptVoid("expired", "while(true){}").is_err());
+        let stop = HostJavaScriptExecutionInterrupt::unlimited();
+        second.interrupt.replace(vec![stop.clone()]);
+        let inactive = first.interrupt.clone();
+        second.registerHostJavaScriptFunction("stop", Arc::new(move |_| {
+            stop.interrupt(); inactive.replace(Vec::new()); Ok(JsonValue::Null)
+        })).unwrap();
+        assert!(second.evaluateHostJavaScriptVoid("busy", "stop(); var start=Date.now(); while(Date.now()-start<30){}").is_err());
+        second.interrupt.replace(Vec::new());
+        drop(first);
+        assert_eq!(second.evaluateHostJavaScriptString("alive", "String(6*7)").unwrap(), "42");
+    }
 }

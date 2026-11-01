@@ -99,6 +99,9 @@
     }
   },
   "close": "Close",
+  "workspaceCloseOtherTabs": "Close Others",
+  "workspaceCloseTabsToRight": "Close to the Right",
+  "workspaceCloseAllTabs": "Close All",
   "commonExpand": "Expand",
   "commonCollapse": "Collapse",
   "create": "Create",
@@ -1493,7 +1496,7 @@
   "settingsDataInputTokens": "Input",
   "settingsDataOutputTokens": "Output",
   "settingsDataOpenDetailedStats": "View detailed statistics",
-  "settingsDataOpenDetailedStatsDescription": "Open daily trends, input/output token changes, heatmap intensity, and usage breakdown by provider, model, and function model.",
+  "settingsDataOpenDetailedStatsDescription": "View the usage heatmap and model usage timeline with minute-level zoom.",
   "settingsDataRefreshTokenStats": "Refresh statistics",
   "settingsDataResetTokenStats": "Reset statistics",
   "settingsDataDetailedStatsTitle": "Detailed statistics",
@@ -2354,5 +2357,72 @@
   "toolGroupExecuting": "Executing",
   "@toolGroupThinkingCount": {"placeholders": {"count": {"type": "int"}}},
   "@toolGroupCallCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}}
+  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}},
+  "settingsDataTimelineTitle": "Model usage over time",
+  "settingsDataTimelineHint": "One line per model. Pinch or scroll to zoom, drag to move, and tap to inspect a time bucket.",
+  "settingsDataTimelineHours": "{hours}h",
+  "@settingsDataTimelineHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineBucket": "{minutes} min buckets",
+  "@settingsDataTimelineBucket": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineSecondsBucket": "{seconds} sec buckets",
+  "@settingsDataTimelineSecondsBucket": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineEarlier": "Earlier",
+  "settingsDataTimelineLater": "Later",
+  "settingsDataTimelineRecent": "Recent 3h",
+  "settingsDataTimelineRange": "Visible time range",
+  "settingsDataTimelineSelectModel": "Select a model below to display its usage",
+  "settingsDataTimelineSpend": "Spending (estimated)",
+  "settingsDataTimelineCacheRate": "Cache hit rate",
+  "settingsDataTimelineSpendHint": "Estimated using current model prices. Shares the time range above.",
+  "settingsDataTimelineCacheRateHint": "Cached input / total input per time bucket. Idle periods have no rate.",
+  "settingsDataTimelineNoPrices": "No matching model prices",
+  "settingsDataTimelinePricesFailed": "Could not load model prices. Refresh to retry.",
+  "settingsDataTimelineUnpriced": "{count} requests have unknown cost",
+  "@settingsDataTimelineUnpriced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineKnownSpend": "Known spending (estimated)",
+  "settingsDataDetailedStatsRangeLastDay": "Last 24 hours",
+  "settingsDataTimelineAverageInput": "Average input per request",
+  "settingsDataTimelineAverageInputHint": "Input tokens / requests per bucket, to spot growing context sizes. Idle periods are gaps.",
+  "settingsDataTimelineCacheSavings": "Cache savings (estimated)",
+  "settingsDataTimelineCacheSavingsHint": "At current prices, cached input cost compared with regular input. Per-request billing saves 0; negative values mean a cache surcharge.",
+  "settingsDataTimelineTokensPerRequest": "{tokens} tokens / request",
+  "@settingsDataTimelineTokensPerRequest": {
+    "placeholders": {
+      "tokens": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataTimelineUnknownSavings": "Savings unknown for {count} requests",
+  "@settingsDataTimelineUnknownSavings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

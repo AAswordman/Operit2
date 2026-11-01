@@ -248,6 +248,138 @@ void main() {
     });
   }
 
+  testWidgets(
+    'market search filters loaded entries without reloading the list',
+    (tester) async {
+      final bridge = _MarketBridge();
+      await tester.pumpWidget(_searchableMarket(bridge));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('搜索'));
+      await tester.pumpAndSettle();
+
+      await _searchMarket(tester, '  pLuGiN  ');
+      expect(find.text('Plugin'), findsOneWidget);
+      expect(bridge.listPages, [1]);
+
+      await _searchMarket(tester, 'missing');
+      expect(find.text('Plugin'), findsNothing);
+      expect(find.text('没有匹配结果'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('取消'));
+      await tester.pumpAndSettle();
+      expect(find.text('Plugin'), findsOneWidget);
+      expect(bridge.listPages, [1]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('search stays usable while remaining market pages are pending', (
+    tester,
+  ) async {
+    final pendingPage = Completer<Map<String, Object?>>();
+    final bridge = _MarketBridge()
+      ..listPageLoader = (page) async =>
+          page == 1 ? _marketPage(1, 2, [_entry()]) : pendingPage.future;
+    await tester.pumpWidget(_searchableMarket(bridge));
+    await tester.pump();
+    await tester.tap(find.byTooltip('搜索'));
+    await tester.pump();
+    await _searchMarket(tester, 'plugin');
+
+    expect(find.text('Plugin'), findsOneWidget);
+    expect(bridge.listPages, [1, 2]);
+    await _searchMarket(tester, 'later');
+    expect(find.text('Plugin'), findsNothing);
+    expect(bridge.listPages, [1, 2]);
+
+    pendingPage.complete(
+      _marketPage(2, 2, [
+        MarketEntrySummary.fromJson({
+          ..._entry().toJson(),
+          'id': 'later',
+          'title': 'Later plugin',
+        }),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Later plugin'), findsOneWidget);
+    expect(bridge.listPages, [1, 2]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a failed later page preserves already loaded search matches', (
+    tester,
+  ) async {
+    final pendingPage = Completer<Map<String, Object?>>();
+    final bridge = _MarketBridge()
+      ..listPageLoader = (page) async => switch (page) {
+        1 => _marketPage(1, 3, [_entry()]),
+        2 => _marketPage(2, 3, [
+          MarketEntrySummary.fromJson({
+            ..._entry().toJson(),
+            'id': 'later',
+            'title': 'Later plugin',
+          }),
+        ]),
+        _ => pendingPage.future,
+      };
+    await tester.pumpWidget(_searchableMarket(bridge));
+    await tester.pump();
+    await tester.tap(find.byTooltip('搜索'));
+    await tester.pump();
+    await _searchMarket(tester, 'plugin');
+    expect(find.text('Plugin'), findsOneWidget);
+    expect(find.text('Later plugin'), findsOneWidget);
+
+    pendingPage.completeError(StateError('Page unavailable'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Plugin'), findsOneWidget);
+    expect(find.text('Later plugin'), findsOneWidget);
+    expect(find.text('没有匹配结果'), findsNothing);
+    expect(bridge.listPages, [1, 2, 3]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('search ignores an old pending page after changing sort', (
+    tester,
+  ) async {
+    var reloaded = false;
+    final pendingPage = Completer<Map<String, Object?>>();
+    final bridge = _MarketBridge()
+      ..listPageLoader = (page) async {
+        if (reloaded) {
+          return _marketPage(1, 1, [
+            MarketEntrySummary.fromJson({
+              ..._entry().toJson(),
+              'id': 'new',
+              'title': 'New plugin',
+            }),
+          ]);
+        }
+        return page == 1 ? _marketPage(1, 2, [_entry()]) : pendingPage.future;
+      };
+    await tester.pumpWidget(_searchableMarket(bridge));
+    await tester.pump();
+    await tester.tap(find.byTooltip('搜索'));
+    await tester.pump();
+    await _searchMarket(tester, 'plugin');
+    expect(find.text('Plugin'), findsOneWidget);
+
+    reloaded = true;
+    await tester.tap(find.text('点赞'));
+    await tester.pumpAndSettle();
+    expect(find.text('New plugin'), findsOneWidget);
+    expect(find.text('Plugin'), findsNothing);
+
+    pendingPage.complete(_marketPage(2, 2, [_entry()]));
+    await tester.pumpAndSettle();
+    expect(find.text('New plugin'), findsOneWidget);
+    expect(find.text('Plugin'), findsNothing);
+    expect(bridge.listPages, [1, 2, 1]);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('list installation succeeds inline without any bottom popup', (
     tester,
   ) async {
@@ -409,9 +541,49 @@ Widget _testApp(Widget child) {
     initialThemeIsReady: false,
     unconfiguredChildEnabled: true,
     hostInteractionHostsEnabled: false,
-    child: TopBarScope(controller: controller, child: child),
+    child: TopBarScope(
+      controller: controller,
+      child: ScaffoldMessenger(child: child),
+    ),
   );
 }
+
+/// Renders the market's real top bar so tests exercise search through its UI.
+Widget _searchableMarket(_MarketBridge bridge) => _testApp(
+  Builder(
+    builder: (context) {
+      final controller = TopBarScope.of(context);
+      return AnimatedBuilder(
+        animation: controller,
+        child: UnifiedMarketScreen(clients: GeneratedCoreProxyClients(bridge)),
+        builder: (context, child) => Scaffold(
+          appBar: AppBar(
+            title: controller.titleContent?.content(context),
+            actions: controller.actions?.call(context),
+          ),
+          body: child,
+        ),
+      );
+    },
+  ),
+);
+
+Future<void> _searchMarket(WidgetTester tester, String query) async {
+  await tester.enterText(find.byType(TextField), query);
+  await tester.pump(const Duration(milliseconds: 321));
+  await tester.pump();
+}
+
+Map<String, Object?> _marketPage(
+  int page,
+  int total,
+  List<MarketEntrySummary> entries,
+) => {
+  'page': page,
+  'pageSize': 1,
+  'total': total,
+  'items': entries.map((entry) => entry.toJson()).toList(),
+};
 
 class _MarketBridge extends OperitRuntimeBridge {
   final Map<String, String> versions = <String, String>{};
@@ -420,6 +592,8 @@ class _MarketBridge extends OperitRuntimeBridge {
   String? installError;
   Completer<String>? pendingInstall;
   Completer<Map<String, String>>? pendingVersions;
+  final List<int> listPages = [];
+  Future<Map<String, Object?>> Function(int page)? listPageLoader;
 
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
@@ -441,12 +615,16 @@ class _MarketBridge extends OperitRuntimeBridge {
         versions[(request.args as Map)['entryId'] as String] = version;
         result = version;
       case 'get_list_page':
-        result = {
-          'page': 1,
-          'pageSize': 50,
-          'total': 1,
-          'items': [_entry().toJson()],
-        };
+        final page = (request.args as Map)['page'] as int;
+        listPages.add(page);
+        result = listPageLoader != null
+            ? await listPageLoader!(page)
+            : {
+                'page': 1,
+                'pageSize': 50,
+                'total': 1,
+                'items': [_entry().toJson()],
+              };
       case 'get_comments_page':
         result = {
           'entryId': 'entry',

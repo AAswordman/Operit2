@@ -1794,6 +1794,41 @@ mod tests {
         assert_eq!(next.output, "中文 'quoted' \\012 $literal");
     }
 
+    /// Submits literal history characters through both interactive Bash protocols.
+    #[test]
+    fn posix_history_characters_execute_without_expansion() {
+        for protocol in [
+            PtyCommandProtocol::BashPromptCommand,
+            PtyCommandProtocol::ExplicitMarker,
+        ] {
+            let mut host = NativePtyTerminalHost::new();
+            Arc::make_mut(&mut host.commandSpec).commandProtocol = protocol;
+            let session = host.createOrGetSession("terminal_history").unwrap();
+            let result = host
+                .executeInSession(
+                    &session.sessionId,
+                    "#!/bin/bash\nOPERIT_HISTORY_LITERAL='中文 ! !! !$ !123'\nprintf '%s\\n' \"$OPERIT_HISTORY_LITERAL\"",
+                    3000,
+                )
+                .unwrap();
+            assert!(!result.timedOut);
+            assert_eq!(result.exitCode, 0);
+            assert_eq!(result.output.lines().last(), Some("中文 ! !! !$ !123"));
+
+            let next = host
+                .executeInSession(
+                    &session.sessionId,
+                    "printf '%s\\n' \"$OPERIT_HISTORY_LITERAL\" 'single line!'",
+                    3000,
+                )
+                .unwrap();
+            assert!(!next.timedOut);
+            assert_eq!(next.exitCode, 0);
+            assert!(next.output.ends_with("中文 ! !! !$ !123\nsingle line!"));
+            host.closePtySession(&session.sessionId).unwrap();
+        }
+    }
+
     /// Applies the timeout to the complete multiline script and keeps the shell responsive.
     #[test]
     fn posix_multiline_timeout_keeps_session_usable() {

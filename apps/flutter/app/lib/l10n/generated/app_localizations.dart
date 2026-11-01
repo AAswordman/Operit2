@@ -464,6 +464,24 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get close;
 
+  /// No description provided for @workspaceCloseOtherTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Others'**
+  String get workspaceCloseOtherTabs;
+
+  /// No description provided for @workspaceCloseTabsToRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Close to the Right'**
+  String get workspaceCloseTabsToRight;
+
+  /// No description provided for @workspaceCloseAllTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Close All'**
+  String get workspaceCloseAllTabs;
+
   /// No description provided for @commonExpand.
   ///
   /// In en, this message translates to:
@@ -5747,7 +5765,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataOpenDetailedStatsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Open daily trends, input/output token changes, heatmap intensity, and usage breakdown by provider, model, and function model.'**
+  /// **'View the usage heatmap and model usage timeline with minute-level zoom.'**
   String get settingsDataOpenDetailedStatsDescription;
 
   /// No description provided for @settingsDataRefreshTokenStats.
@@ -8077,6 +8095,156 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Executing'**
   String get toolGroupExecuting;
+
+  /// No description provided for @settingsDataTimelineTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model usage over time'**
+  String get settingsDataTimelineTitle;
+
+  /// No description provided for @settingsDataTimelineHint.
+  ///
+  /// In en, this message translates to:
+  /// **'One line per model. Pinch or scroll to zoom, drag to move, and tap to inspect a time bucket.'**
+  String get settingsDataTimelineHint;
+
+  /// No description provided for @settingsDataTimelineHours.
+  ///
+  /// In en, this message translates to:
+  /// **'{hours}h'**
+  String settingsDataTimelineHours(int hours);
+
+  /// No description provided for @settingsDataTimelineBucket.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min buckets'**
+  String settingsDataTimelineBucket(int minutes);
+
+  /// No description provided for @settingsDataTimelineSecondsBucket.
+  ///
+  /// In en, this message translates to:
+  /// **'{seconds} sec buckets'**
+  String settingsDataTimelineSecondsBucket(int seconds);
+
+  /// No description provided for @settingsDataTimelineEarlier.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier'**
+  String get settingsDataTimelineEarlier;
+
+  /// No description provided for @settingsDataTimelineLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Later'**
+  String get settingsDataTimelineLater;
+
+  /// No description provided for @settingsDataTimelineRecent.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent 3h'**
+  String get settingsDataTimelineRecent;
+
+  /// No description provided for @settingsDataTimelineRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Visible time range'**
+  String get settingsDataTimelineRange;
+
+  /// No description provided for @settingsDataTimelineSelectModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a model below to display its usage'**
+  String get settingsDataTimelineSelectModel;
+
+  /// No description provided for @settingsDataTimelineSpend.
+  ///
+  /// In en, this message translates to:
+  /// **'Spending (estimated)'**
+  String get settingsDataTimelineSpend;
+
+  /// No description provided for @settingsDataTimelineCacheRate.
+  ///
+  /// In en, this message translates to:
+  /// **'Cache hit rate'**
+  String get settingsDataTimelineCacheRate;
+
+  /// No description provided for @settingsDataTimelineSpendHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Estimated using current model prices. Shares the time range above.'**
+  String get settingsDataTimelineSpendHint;
+
+  /// No description provided for @settingsDataTimelineCacheRateHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Cached input / total input per time bucket. Idle periods have no rate.'**
+  String get settingsDataTimelineCacheRateHint;
+
+  /// No description provided for @settingsDataTimelineNoPrices.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching model prices'**
+  String get settingsDataTimelineNoPrices;
+
+  /// No description provided for @settingsDataTimelinePricesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load model prices. Refresh to retry.'**
+  String get settingsDataTimelinePricesFailed;
+
+  /// No description provided for @settingsDataTimelineUnpriced.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} requests have unknown cost'**
+  String settingsDataTimelineUnpriced(int count);
+
+  /// No description provided for @settingsDataTimelineKnownSpend.
+  ///
+  /// In en, this message translates to:
+  /// **'Known spending (estimated)'**
+  String get settingsDataTimelineKnownSpend;
+
+  /// No description provided for @settingsDataDetailedStatsRangeLastDay.
+  ///
+  /// In en, this message translates to:
+  /// **'Last 24 hours'**
+  String get settingsDataDetailedStatsRangeLastDay;
+
+  /// No description provided for @settingsDataTimelineAverageInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Average input per request'**
+  String get settingsDataTimelineAverageInput;
+
+  /// No description provided for @settingsDataTimelineAverageInputHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Input tokens / requests per bucket, to spot growing context sizes. Idle periods are gaps.'**
+  String get settingsDataTimelineAverageInputHint;
+
+  /// No description provided for @settingsDataTimelineCacheSavings.
+  ///
+  /// In en, this message translates to:
+  /// **'Cache savings (estimated)'**
+  String get settingsDataTimelineCacheSavings;
+
+  /// No description provided for @settingsDataTimelineCacheSavingsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'At current prices, cached input cost compared with regular input. Per-request billing saves 0; negative values mean a cache surcharge.'**
+  String get settingsDataTimelineCacheSavingsHint;
+
+  /// No description provided for @settingsDataTimelineTokensPerRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'{tokens} tokens / request'**
+  String settingsDataTimelineTokensPerRequest(String tokens);
+
+  /// No description provided for @settingsDataTimelineUnknownSavings.
+  ///
+  /// In en, this message translates to:
+  /// **'Savings unknown for {count} requests'**
+  String settingsDataTimelineUnknownSavings(int count);
 }
 
 class _AppLocalizationsDelegate

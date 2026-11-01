@@ -8,7 +8,7 @@ and Rust execution contracts live in `operit-plugin-sdk`.
 
 - Provide the concrete `JsEngine` implementation.
 - Execute ToolPkg JavaScript hooks and Compose DSL scripts.
-- Enforce request-scoped native QuickJS deadlines, including synchronous script execution.
+- Enforce request-scoped native JavaScript deadlines, including synchronous script execution.
 - Install SDK-owned JavaScript package, ToolPkg, and Compose DSL definitions.
 - Load engine-specific embedded JavaScript libraries and native bridge scripts.
 - Expose JS execution through traits defined by `operit-plugin-sdk`.
@@ -31,14 +31,18 @@ and Rust execution contracts live in `operit-plugin-sdk`.
 This crate implements JS execution. `operit-plugin-sdk` owns the public package
 models, fixed JavaScript APIs, DSL, ToolPkg package services, and execution
 contracts. This crate does not depend on `operit-tools`. The top-level runtime
-injects `QuickJsExecutionProvider` into the tool system, while `operit-tools`
+injects `HostJsExecutionProvider` into the tool system, while `operit-tools`
 implements `JsExecutionHost` with the real tool and package logic.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
 
 ## Prepared Page Engines
 
-Creating `QuickJsExecutionProvider` schedules preparation of two pristine engines through
+Native execution uses the four existing affine workers, with one shared V8 isolate per worker.
+Each plugin owns a separate context, host bindings and microtask queue; cancellation targets only
+its active execution. Preparing a page creates a context rather than another isolate.
+
+Creating `HostJsExecutionProvider` schedules preparation of two pristine engines through
 `HostRuntimeTaskSchedulerHost`. Preparation creates the Host-owned runtime, registers native
 interfaces and executes the common SDK bootstrap without binding a package or executing its code.
 The embedding application must install its JavaScript runtime Host and task scheduler first.

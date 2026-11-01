@@ -16,12 +16,14 @@ class WorkspaceTabStrip extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     required this.onClosed,
+    required this.onCloseTabs,
   });
 
   final List<WorkspaceTab> tabs;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final ValueChanged<int> onClosed;
+  final Future<void> Function(List<WorkspaceTab>) onCloseTabs;
 
   /// Builds a horizontally scrollable strip sized for the available width.
   @override
@@ -37,6 +39,7 @@ class WorkspaceTabStrip extends StatelessWidget {
         onSelected: onSelected,
         onClosed: onClosed,
         tabTitle: (tab) => _tabTitle(l10n, tab),
+        wrapTab: _wrapTab,
       );
     }
     final isDark = theme.brightness == Brightness.dark;
@@ -54,14 +57,16 @@ class WorkspaceTabStrip extends StatelessWidget {
             bottom: 0,
             child: Divider(height: 1, thickness: 1, color: dividerColor),
           ),
-          Center(
+          Align(
+            alignment: AlignmentDirectional.centerStart,
             child: SizedBox(
+              width: double.infinity,
               height: 28,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
+              child: _WorkspaceTabScroller(
+                tabs: tabs,
+                selectedIndex: selectedIndex,
                 padding: const EdgeInsetsDirectional.symmetric(horizontal: 10),
-                itemCount: tabs.length,
-                separatorBuilder: (context, index) => const SizedBox(width: 4),
+                spacing: 4,
                 itemBuilder: (context, index) {
                   final tab = tabs[index];
                   final selected = index == selectedIndex;
@@ -78,11 +83,131 @@ class WorkspaceTabStrip extends StatelessWidget {
                           }
                         : null,
                   );
-                  return _buildTabDragSource(context, tab, button);
+                  return _wrapTab(context, tab, button);
                 },
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _wrapTab(BuildContext context, WorkspaceTab tab, Widget child) {
+    return Tooltip(
+      message: _tabTitle(AppLocalizations.of(context)!, tab),
+      child: GestureDetector(
+        onSecondaryTapUp: (details) =>
+            _showTabMenu(context, tab, details.globalPosition),
+        child: _buildTabDragSource(context, tab, child),
+      ),
+    );
+  }
+
+  Future<void> _showTabMenu(
+    BuildContext context,
+    WorkspaceTab tab,
+    Offset position,
+  ) async {
+    final index = tabs.indexOf(tab);
+    if (index < 0) return;
+    final l10n = AppLocalizations.of(context)!;
+    // Capture objects before opening the menu: tab indices can change meanwhile.
+    final targets = <List<WorkspaceTab>>[
+      if (tab.closable) [tab] else [],
+      tabs.where((other) => other != tab && other.closable).toList(),
+      tabs.skip(index + 1).where((other) => other.closable).toList(),
+      tabs.where((other) => other.closable).toList(),
+    ];
+    final labels = [
+      l10n.close,
+      l10n.workspaceCloseOtherTabs,
+      l10n.workspaceCloseTabsToRight,
+      l10n.workspaceCloseAllTabs,
+    ];
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final localPosition = overlay.globalToLocal(position);
+    final action = await showMenu<int>(
+      context: context,
+      position: RelativeRect.fromSize(
+        Rect.fromLTWH(localPosition.dx, localPosition.dy, 0, 0),
+        overlay.size,
+      ),
+      items: [
+        for (var action = 0; action < targets.length; action++)
+          PopupMenuItem<int>(
+            value: action,
+            enabled: targets[action].isNotEmpty,
+            child: Text(labels[action]),
+          ),
+      ],
+    );
+    if (action != null && context.mounted) {
+      await onCloseTabs(targets[action]);
+    }
+  }
+}
+
+/// Keeps the active tab reachable when navigation selects an offscreen tab.
+class _WorkspaceTabScroller extends StatefulWidget {
+  const _WorkspaceTabScroller({
+    required this.tabs,
+    required this.selectedIndex,
+    required this.padding,
+    required this.spacing,
+    required this.itemBuilder,
+  });
+
+  final List<WorkspaceTab> tabs;
+  final int selectedIndex;
+  final EdgeInsetsGeometry padding;
+  final double spacing;
+  final IndexedWidgetBuilder itemBuilder;
+
+  @override
+  State<_WorkspaceTabScroller> createState() => _WorkspaceTabScrollerState();
+}
+
+class _WorkspaceTabScrollerState extends State<_WorkspaceTabScroller> {
+  final _controller = ScrollController();
+  final _tabKeys = <WorkspaceTab, GlobalKey>{};
+  WorkspaceTab? _selectedTab;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _tabKeys.removeWhere((tab, _) => !widget.tabs.contains(tab));
+    final selected = widget.tabs.elementAtOrNull(widget.selectedIndex);
+    if (selected != _selectedTab) {
+      _selectedTab = selected;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_controller.hasClients) return;
+        final target = _tabKeys[_selectedTab]?.currentContext
+            ?.findRenderObject();
+        if (target != null) {
+          _controller.position.ensureVisible(target, alignment: 0.5);
+        }
+      });
+    }
+    return SingleChildScrollView(
+      controller: _controller,
+      scrollDirection: Axis.horizontal,
+      padding: widget.padding,
+      child: Row(
+        children: [
+          for (var index = 0; index < widget.tabs.length; index++) ...[
+            if (index > 0) SizedBox(width: widget.spacing),
+            KeyedSubtree(
+              key: _tabKeys.putIfAbsent(widget.tabs[index], () => GlobalKey()),
+              child: widget.itemBuilder(context, index),
+            ),
+          ],
         ],
       ),
     );
@@ -96,6 +221,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
     required this.onSelected,
     required this.onClosed,
     required this.tabTitle,
+    required this.wrapTab,
   });
 
   final List<WorkspaceTab> tabs;
@@ -103,6 +229,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final ValueChanged<int> onClosed;
   final String Function(WorkspaceTab tab) tabTitle;
+  final Widget Function(BuildContext, WorkspaceTab, Widget) wrapTab;
 
   @override
   Widget build(BuildContext context) {
@@ -135,11 +262,11 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
               ),
             ),
           ),
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
+          child: _WorkspaceTabScroller(
+            tabs: tabs,
+            selectedIndex: selectedIndex,
             padding: const EdgeInsetsDirectional.fromSTEB(8, 5, 8, 5),
-            itemCount: tabs.length,
-            separatorBuilder: (context, index) => const SizedBox(width: 6),
+            spacing: 6,
             itemBuilder: (context, index) {
               final tab = tabs[index];
               final selected = index == selectedIndex;
@@ -159,7 +286,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
                   onClosed(index);
                 },
               );
-              return _buildTabDragSource(context, tab, button);
+              return wrapTab(context, tab, button);
             },
           ),
         ),
@@ -329,6 +456,7 @@ class _WorkspaceTabButton extends StatelessWidget {
         onTap: onTap,
         child: Container(
           height: 26,
+          constraints: const BoxConstraints(maxWidth: 180),
           padding: EdgeInsetsDirectional.only(
             start: 8,
             end: onClose == null ? 8 : 4,

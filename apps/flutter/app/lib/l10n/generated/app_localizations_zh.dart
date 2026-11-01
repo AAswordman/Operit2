@@ -202,6 +202,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get close => '关闭';
 
   @override
+  String get workspaceCloseOtherTabs => '关闭其他';
+
+  @override
+  String get workspaceCloseTabsToRight => '关闭右侧';
+
+  @override
+  String get workspaceCloseAllTabs => '关闭全部';
+
+  @override
   String get commonExpand => '展开';
 
   @override
@@ -3040,7 +3049,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataOpenDetailedStatsDescription =>
-      '打开每日趋势、输入输出 Token 变化、使用热力图，以及按供应商、模型、功能模型分类的使用明细。';
+      '查看使用热力图，以及可按分钟缩放的各模型用量时间线。';
 
   @override
   String get settingsDataRefreshTokenStats => '刷新统计';
@@ -4370,4 +4379,93 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get toolGroupExecuting => '正在执行';
+
+  @override
+  String get settingsDataTimelineTitle => '模型使用时间线';
+
+  @override
+  String get settingsDataTimelineHint => '每个模型一条线。双指或滚轮缩放，拖动查看其他时段，点击查看具体用量。';
+
+  @override
+  String settingsDataTimelineHours(int hours) {
+    return '$hours 小时';
+  }
+
+  @override
+  String settingsDataTimelineBucket(int minutes) {
+    return '每 $minutes 分钟汇总';
+  }
+
+  @override
+  String settingsDataTimelineSecondsBucket(int seconds) {
+    return '每 $seconds 秒汇总';
+  }
+
+  @override
+  String get settingsDataTimelineEarlier => '更早时段';
+
+  @override
+  String get settingsDataTimelineLater => '更晚时段';
+
+  @override
+  String get settingsDataTimelineRecent => '最近 3 小时';
+
+  @override
+  String get settingsDataTimelineRange => '可见时间范围';
+
+  @override
+  String get settingsDataTimelineSelectModel => '点选下方模型以查看用量';
+
+  @override
+  String get settingsDataTimelineSpend => '消费金额（估算）';
+
+  @override
+  String get settingsDataTimelineCacheRate => '缓存命中率';
+
+  @override
+  String get settingsDataTimelineSpendHint => '按当前模型价格估算，与上方共用时间范围。';
+
+  @override
+  String get settingsDataTimelineCacheRateHint => '每个时间段的缓存输入 ÷ 总输入；空闲时段不计命中率。';
+
+  @override
+  String get settingsDataTimelineNoPrices => '未找到对应的模型价格';
+
+  @override
+  String get settingsDataTimelinePricesFailed => '读取模型价格失败，请刷新重试。';
+
+  @override
+  String settingsDataTimelineUnpriced(int count) {
+    return '$count 次请求的费用未知';
+  }
+
+  @override
+  String get settingsDataTimelineKnownSpend => '已知消费（估算）';
+
+  @override
+  String get settingsDataDetailedStatsRangeLastDay => '最近 24 小时';
+
+  @override
+  String get settingsDataTimelineAverageInput => '单次请求平均输入';
+
+  @override
+  String get settingsDataTimelineAverageInputHint =>
+      '每段总输入 ÷ 请求数，用来观察上下文是否越来越长；空闲时段留空。';
+
+  @override
+  String get settingsDataTimelineCacheSavings => '缓存节省金额（估算）';
+
+  @override
+  String get settingsDataTimelineCacheSavingsHint =>
+      '按当前价格，比较缓存输入与普通输入的费用差；按次计费节省为 0，负数表示缓存更贵。';
+
+  @override
+  String settingsDataTimelineTokensPerRequest(String tokens) {
+    return '$tokens tokens / 次';
+  }
+
+  @override
+  String settingsDataTimelineUnknownSavings(int count) {
+    return '$count 次请求无法估算节省金额';
+  }
 }

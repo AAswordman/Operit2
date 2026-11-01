@@ -22,13 +22,28 @@ class ToolSettingsPanel extends StatefulWidget {
   State<ToolSettingsPanel> createState() => _ToolSettingsPanelState();
 }
 
-class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
+class _ToolSettingsPanelState extends State<ToolSettingsPanel>
+    with WidgetsBindingObserver {
   Future<_ToolSettingsData>? _future;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _future = _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _reload();
+    }
   }
 
   Future<_ToolSettingsData> _load() async {
@@ -62,9 +77,20 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
   }
 
   Future<void> _requestHostAuthorization(_HostRequirement requirement) async {
-    final data = await _future!;
-    await _HostAuthorizationBridge.request(data.host.id, requirement.id);
-    _reload();
+    try {
+      final data = await _future!;
+      await _HostAuthorizationBridge.request(data.host.id, requirement.id);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('授权失败：$error')));
+      }
+    } finally {
+      if (mounted) {
+        _reload();
+      }
+    }
   }
 
   Future<void> _editMcpStartupTimeout(_ToolSettingsData data) async {

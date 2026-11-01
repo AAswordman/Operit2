@@ -899,7 +899,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             .into_iter().map(|peer| peer.nodeId).collect::<BTreeSet<_>>();
         let recordCount = records.len();
         let peers = discoveredPeers(records, &self.state.nodeId, &pairedNodeIds);
-        operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+        operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
             "LAN discovery completed records={recordCount} paired={} candidates={}", pairedNodeIds.len(), peers.len()));
         Ok(peers)
     }
@@ -1261,7 +1261,7 @@ fn discoveredEndpoints(records: Vec<operit_host_api::ServiceDiscovery::Discovere
         }
         if !valid { invalid += 1; }
     }
-    operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+    operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
         "LAN discovery filtering local={local} paired={paired} invalid={invalid} candidates={}", peers.len()));
     peers.into_values().collect()
 }

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../common/components/M3LoadingIndicator.dart';
 import '../../../../main/navigation/AppNavigationModels.dart';
 import '../../../../main/screens/OperitScreens.dart';
 import '../../../../main/screens/ScreenRouteRegistry.dart';
@@ -514,11 +515,7 @@ class _DeviceRow extends StatelessWidget {
               ),
               if (isSwitching) ...<Widget>[
                 const SizedBox(width: 8),
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+                const M3LoadingIndicator(size: 16),
               ] else if (isExecuting) ...<Widget>[
                 const SizedBox(width: 8),
                 Tooltip(

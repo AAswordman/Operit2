@@ -80,11 +80,10 @@ impl<T: Send + 'static> PreparedEnginePool<T> {
         };
         for _ in 0..slots {
             let weak = Arc::downgrade(self);
-            let create = self.create.clone();
             let scheduled = (self.schedule)(Box::new(move || {
                 // The provider may have shut down before this Host task started.
                 if let Some(pool) = weak.upgrade() {
-                    pool.complete(create());
+                    pool.complete((pool.create)());
                 }
             }));
             if let Err(error) = scheduled {
@@ -101,8 +100,6 @@ impl<T: Send + 'static> PreparedEnginePool<T> {
             .expect("Prepared engine pool mutex poisoned");
         state.creating -= 1;
         if state.error.is_some() {
-            drop(state);
-            drop(result);
             return;
         }
         match result {

@@ -648,11 +648,13 @@ fn appleEnvironmentDescriptor() -> HostEnvironmentDescriptor {
     descriptor
 }
 
-#[cfg(target_os = "ios")]
-/// Returns the iOS notification permission required for background application alerts.
+/// Registers notification authorization with the shared Apple host permission UI.
 fn appleOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
+    if !cfg!(any(target_os = "ios", target_os = "macos")) {
+        return Vec::new();
+    }
     vec![HostOnboardingRequirement {
-        id: "ios.notifications".to_string(),
+        id: format!("{}.notifications", applePlatformName()),
         title: "通知".to_string(),
         description: "允许 Operit 在 AI 回复完成或工具等待批准时发送系统通知。".to_string(),
         capabilityIds: vec!["system.notifications.send".to_string()],
@@ -660,12 +662,6 @@ fn appleOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
         status: HostRequirementStatus::Missing,
         action: HostRequirementAction::RuntimePermission,
     }]
-}
-
-#[cfg(not(target_os = "ios"))]
-/// Returns no notification onboarding requirements for the current Apple host.
-fn appleOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
-    Vec::new()
 }
 
 fn appleHostPlatform() -> HostPlatform {
@@ -866,6 +862,26 @@ fn bytes_to_search_line(bytes: &[u8]) -> String {
 mod file_open_tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[test]
+    fn notificationsParticipateInUnifiedHostAuthorization() {
+        let descriptor = appleEnvironmentDescriptor();
+        let requirements = descriptor.onboardingRequirements;
+        assert_eq!(requirements.len(), 1);
+        let requirement = &requirements[0];
+        assert_eq!(requirement.id, format!("{}.notifications", descriptor.id));
+        assert_eq!(requirement.capabilityIds, vec!["system.notifications.send"]);
+        assert!(requirement.isRequired);
+        assert!(matches!(requirement.status, HostRequirementStatus::Missing));
+        assert!(matches!(
+            requirement.action,
+            HostRequirementAction::RuntimePermission
+        ));
+        assert!(descriptor
+            .capabilities
+            .contains(&"system.notifications.send".to_string()));
+    }
 
     #[test]
     fn opensValidatedFileThroughOwnerAndPreservesErrors() {

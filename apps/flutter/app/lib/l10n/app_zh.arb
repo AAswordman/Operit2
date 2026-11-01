@@ -99,6 +99,9 @@
     }
   },
   "close": "关闭",
+  "workspaceCloseOtherTabs": "关闭其他",
+  "workspaceCloseTabsToRight": "关闭右侧",
+  "workspaceCloseAllTabs": "关闭全部",
   "commonExpand": "展开",
   "commonCollapse": "收起",
   "create": "创建",
@@ -1486,7 +1489,7 @@
   "settingsDataInputTokens": "输入",
   "settingsDataOutputTokens": "输出",
   "settingsDataOpenDetailedStats": "查看详细统计",
-  "settingsDataOpenDetailedStatsDescription": "打开每日趋势、输入输出 Token 变化、使用热力图，以及按供应商、模型、功能模型分类的使用明细。",
+  "settingsDataOpenDetailedStatsDescription": "查看使用热力图，以及可按分钟缩放的各模型用量时间线。",
   "settingsDataRefreshTokenStats": "刷新统计",
   "settingsDataResetTokenStats": "重置统计",
   "settingsDataDetailedStatsTitle": "详细统计",
@@ -2347,5 +2350,72 @@
   "toolGroupExecuting": "正在执行",
   "@toolGroupThinkingCount": {"placeholders": {"count": {"type": "int"}}},
   "@toolGroupCallCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}}
+  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}},
+  "settingsDataTimelineTitle": "模型使用时间线",
+  "settingsDataTimelineHint": "每个模型一条线。双指或滚轮缩放，拖动查看其他时段，点击查看具体用量。",
+  "settingsDataTimelineHours": "{hours} 小时",
+  "@settingsDataTimelineHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineBucket": "每 {minutes} 分钟汇总",
+  "@settingsDataTimelineBucket": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineSecondsBucket": "每 {seconds} 秒汇总",
+  "@settingsDataTimelineSecondsBucket": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineEarlier": "更早时段",
+  "settingsDataTimelineLater": "更晚时段",
+  "settingsDataTimelineRecent": "最近 3 小时",
+  "settingsDataTimelineRange": "可见时间范围",
+  "settingsDataTimelineSelectModel": "点选下方模型以查看用量",
+  "settingsDataTimelineSpend": "消费金额（估算）",
+  "settingsDataTimelineCacheRate": "缓存命中率",
+  "settingsDataTimelineSpendHint": "按当前模型价格估算，与上方共用时间范围。",
+  "settingsDataTimelineCacheRateHint": "每个时间段的缓存输入 ÷ 总输入；空闲时段不计命中率。",
+  "settingsDataTimelineNoPrices": "未找到对应的模型价格",
+  "settingsDataTimelinePricesFailed": "读取模型价格失败，请刷新重试。",
+  "settingsDataTimelineUnpriced": "{count} 次请求的费用未知",
+  "@settingsDataTimelineUnpriced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineKnownSpend": "已知消费（估算）",
+  "settingsDataDetailedStatsRangeLastDay": "最近 24 小时",
+  "settingsDataTimelineAverageInput": "单次请求平均输入",
+  "settingsDataTimelineAverageInputHint": "每段总输入 ÷ 请求数，用来观察上下文是否越来越长；空闲时段留空。",
+  "settingsDataTimelineCacheSavings": "缓存节省金额（估算）",
+  "settingsDataTimelineCacheSavingsHint": "按当前价格，比较缓存输入与普通输入的费用差；按次计费节省为 0，负数表示缓存更贵。",
+  "settingsDataTimelineTokensPerRequest": "{tokens} tokens / 次",
+  "@settingsDataTimelineTokensPerRequest": {
+    "placeholders": {
+      "tokens": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataTimelineUnknownSavings": "{count} 次请求无法估算节省金额",
+  "@settingsDataTimelineUnknownSavings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

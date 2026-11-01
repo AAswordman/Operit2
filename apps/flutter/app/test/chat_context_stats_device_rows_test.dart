@@ -8,6 +8,7 @@ import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/common/components/M3LoadingIndicator.dart';
 import 'package:operit2/ui/features/chat/components/workspace/ChatContextStatsTopBarButton.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
@@ -107,14 +108,14 @@ void main() {
       final request = bridge.switchCalls.single;
       expect(request.target, 'core/server.runtimeRemoteLinkService');
       expect(request.args, {'chatId': 'chat', 'targetNodeId': 'relay'});
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(M3LoadingIndicator), findsOneWidget);
       expect(_selectedRow(_devices[1].deviceName), findsOneWidget);
       expect(_selectedRow(_devices[2].deviceName), findsNothing);
       await tester.tap(find.text(_devices[2].deviceName));
       expect(bridge.switchCalls, hasLength(1));
       bridge.switchGate!.complete();
       await tester.pumpAndSettle();
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(M3LoadingIndicator), findsNothing);
       expect(_selectedRow(_devices[1].deviceName), findsNothing);
       expect(_selectedRow(_devices[2].deviceName), findsOneWidget);
 
@@ -143,7 +144,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(_selectedRow(_devices[1].deviceName), findsOneWidget);
     expect(find.textContaining('切换失败：'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(M3LoadingIndicator), findsNothing);
     bridge.switchError = null;
     await tester.tap(find.text(_devices[2].deviceName));
     await tester.pumpAndSettle();
@@ -168,7 +169,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(_selectedRow(_devices[1].deviceName), findsOneWidget);
     expect(_selectedRow(_devices[2].deviceName), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(M3LoadingIndicator), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

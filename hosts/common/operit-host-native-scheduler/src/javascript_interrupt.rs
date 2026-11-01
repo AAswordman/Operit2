@@ -15,6 +15,7 @@ struct Execution {
 
 pub(super) struct JavaScriptInterrupt {
     isolate: v8::IsolateHandle,
+    active: Arc<Mutex<usize>>,
     execution: Mutex<Execution>,
     changed: tokio::sync::watch::Sender<Option<u128>>,
     owner: Weak<Self>,
@@ -22,10 +23,11 @@ pub(super) struct JavaScriptInterrupt {
 }
 
 impl JavaScriptInterrupt {
-    pub(super) fn new(isolate: v8::IsolateHandle) -> HostResult<Arc<Self>> {
+    pub(super) fn new(isolate: v8::IsolateHandle, active: Arc<Mutex<usize>>) -> HostResult<Arc<Self>> {
         let (changed, updates) = tokio::sync::watch::channel(None);
         let interrupt = Arc::new_cyclic(|owner| Self {
             isolate,
+            active,
             execution: Mutex::new(Execution::default()),
             changed,
             owner: owner.clone(),
@@ -42,9 +44,17 @@ impl JavaScriptInterrupt {
     /// Serializes delivery with scope replacement so a late event cannot stop the next call.
     fn terminate(&self, generation: u64) {
         let execution = self.execution.lock().expect("V8 execution scope poisoned");
-        if execution.generation == generation {
+        let active = self.active.lock().expect("V8 worker ownership poisoned");
+        if execution.generation == generation && *active == self.owner.as_ptr() as usize {
             self.isolate.terminate_execution();
         }
+    }
+
+    pub(super) fn enter(&self) -> ExecutionEntry<'_> {
+        *self.active.lock().expect("V8 worker ownership poisoned") = self.owner.as_ptr() as usize;
+        let tokens = self.execution.lock().expect("V8 execution scope poisoned").tokens.clone();
+        self.replace(tokens);
+        ExecutionEntry(self)
     }
 
     pub(super) fn capture_panic(&self, panic: Box<dyn std::any::Any + Send>) {
@@ -59,13 +69,24 @@ impl JavaScriptInterrupt {
     }
 }
 
+pub(super) struct ExecutionEntry<'a>(&'a JavaScriptInterrupt);
+
+impl Drop for ExecutionEntry<'_> {
+    fn drop(&mut self) {
+        let mut active = self.0.active.lock().expect("V8 worker ownership poisoned");
+        *active = 0;
+        self.0.isolate.cancel_terminate_execution();
+    }
+}
+
 impl HostJavaScriptInterruptController for JavaScriptInterrupt {
     fn replace(&self, tokens: Vec<HostJavaScriptExecutionInterrupt>) {
         let (generation, previous) = {
             let mut execution = self.execution.lock().expect("V8 execution scope poisoned");
             execution.generation += 1;
             execution.tokens = tokens.clone();
-            self.isolate.cancel_terminate_execution();
+            let active = self.active.lock().expect("V8 worker ownership poisoned");
+            if *active == self.owner.as_ptr() as usize { self.isolate.cancel_terminate_execution(); }
             (
                 execution.generation,
                 std::mem::take(&mut execution.subscriptions),

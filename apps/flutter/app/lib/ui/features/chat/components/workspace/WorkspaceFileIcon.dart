@@ -173,6 +173,71 @@ Widget buildWorkspaceFileIcon(String name, {double size = 14}) {
   final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
   final lowerName = name.toLowerCase();
 
+  // Name-based config files often have no useful extension. Non-code assets
+  // get recognizable colored symbols alongside the shared language SVGs.
+  final (IconData, Color)? assetIcon;
+  if (lowerName == '.env' || lowerName.startsWith('.env.')) {
+    assetIcon = (Icons.tune, const Color(0xFFE5C07B));
+  } else {
+    assetIcon = switch (ext) {
+      'png' ||
+      'jpg' ||
+      'jpeg' ||
+      'gif' ||
+      'webp' ||
+      'svg' ||
+      'ico' ||
+      'bmp' ||
+      'avif' => (Icons.image_outlined, const Color(0xFFA78BCA)),
+      'mp3' ||
+      'wav' ||
+      'ogg' ||
+      'flac' ||
+      'aac' ||
+      'm4a' => (Icons.audio_file_outlined, const Color(0xFFE1A1C4)),
+      'mp4' ||
+      'webm' ||
+      'mov' ||
+      'mkv' ||
+      'avi' => (Icons.video_file_outlined, const Color(0xFFE1A1C4)),
+      'pdf' => (Icons.picture_as_pdf_outlined, const Color(0xFFE06C75)),
+      'doc' ||
+      'docx' ||
+      'odt' ||
+      'rtf' => (Icons.description_outlined, const Color(0xFF619AE5)),
+      'xls' ||
+      'xlsx' ||
+      'csv' ||
+      'tsv' ||
+      'ods' => (Icons.table_chart_outlined, const Color(0xFF73B991)),
+      'ppt' ||
+      'pptx' ||
+      'odp' => (Icons.slideshow_outlined, const Color(0xFFE79A65)),
+      'zip' ||
+      'tar' ||
+      'gz' ||
+      'bz2' ||
+      'xz' ||
+      '7z' ||
+      'rar' => (Icons.folder_zip_outlined, const Color(0xFFE5C07B)),
+      'ttf' ||
+      'otf' ||
+      'woff' ||
+      'woff2' => (Icons.font_download_outlined, const Color(0xFFA78BCA)),
+      'vue' => (Icons.code, const Color(0xFF73B991)),
+      'xml' || 'xhtml' => (Icons.code, const Color(0xFFE79A65)),
+      'ini' ||
+      'conf' ||
+      'config' ||
+      'properties' => (Icons.settings_outlined, const Color(0xFF8B949E)),
+      'txt' || 'log' => (Icons.notes_outlined, const Color(0xFF8B949E)),
+      _ => null,
+    };
+  }
+  if (assetIcon != null) {
+    return Icon(assetIcon.$1, color: assetIcon.$2, size: size);
+  }
+
   if (lowerName == 'dockerfile' || lowerName.startsWith('dockerfile.')) {
     return SvgPicture.string(_kSvgLangDocker, width: size, height: size);
   }

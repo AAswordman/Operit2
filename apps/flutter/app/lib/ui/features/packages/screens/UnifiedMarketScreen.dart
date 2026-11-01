@@ -311,13 +311,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
   late final MarketInstallStateStore _installState;
   List<core_proxy.MarketEntrySummary> _items =
       <core_proxy.MarketEntrySummary>[];
-  List<core_proxy.MarketEntrySummary> _searchItems =
-      <core_proxy.MarketEntrySummary>[];
-  List<core_proxy.MarketEntrySummary>? _searchCorpus;
-  bool _searchLoading = false;
-  int _searchGeneration = 0;
-  int _featuredPrefetchGeneration = 0;
-  bool _featuredPrefetching = false;
+  int _prefetchGeneration = 0;
+  bool _prefetching = false;
   int _marketRequestGeneration = 0;
   bool _refreshing = false;
   int _refreshGeneration = 0;
@@ -344,26 +339,23 @@ class _MarketListPaneState extends State<_MarketListPane> {
     super.dispose();
   }
 
-  /// Synchronizes search, filter, and featured prefetch state with new inputs.
+  /// Filters the loaded list immediately and fills remaining pages in the background.
   @override
   void didUpdateWidget(covariant _MarketListPane oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.searchQuery != widget.searchQuery) {
-      _featuredPrefetchGeneration += 1;
-      _featuredPrefetching = false;
-      _loadSearchResults();
-    }
     if (oldWidget.sortOption != widget.sortOption ||
         oldWidget.type != widget.type ||
         oldWidget.categoryId != widget.categoryId) {
-      _searchCorpus = null;
       _loadFirstPage(clearExisting: true);
+      return;
     }
-    if (oldWidget.featuredOnly != widget.featuredOnly) {
-      _featuredPrefetchGeneration += 1;
-      _featuredPrefetching = false;
-      if (widget.featuredOnly && widget.searchQuery.trim().isEmpty) {
-        _startFeaturedPrefetch(notify: false);
+    if (oldWidget.searchQuery != widget.searchQuery ||
+        oldWidget.featuredOnly != widget.featuredOnly) {
+      if (_shouldPrefetch) {
+        _startPrefetch(notify: false);
+      } else {
+        _prefetchGeneration += 1;
+        _prefetching = false;
       }
     }
   }
@@ -371,16 +363,14 @@ class _MarketListPaneState extends State<_MarketListPane> {
   /// Loads the first market page and resets the active list state.
   Future<void> _loadFirstPage({bool clearExisting = false}) async {
     final requestGeneration = ++_marketRequestGeneration;
-    _featuredPrefetchGeneration += 1;
-    _featuredPrefetching = false;
+    _prefetchGeneration += 1;
+    _prefetching = false;
     setState(() {
       _loading = true;
       _errorMessage = null;
       _loadingMore = false;
       if (clearExisting) {
         _items = <core_proxy.MarketEntrySummary>[];
-        _searchItems = <core_proxy.MarketEntrySummary>[];
-        _searchCorpus = null;
         _page = 1;
         _totalPages = 1;
       }
@@ -392,13 +382,11 @@ class _MarketListPaneState extends State<_MarketListPane> {
       }
       setState(() {
         _items = page.items;
-        _searchItems = <core_proxy.MarketEntrySummary>[];
-        _searchCorpus = null;
         _page = page.page;
         _totalPages = _pageCount(page.total, page.pageSize);
         _loading = false;
       });
-      await _loadSearchResults();
+      _startPrefetch(notify: true);
     } catch (error, stackTrace) {
       debugPrint('Failed to load market: $error\n$stackTrace');
       if (!mounted || requestGeneration != _marketRequestGeneration) {
@@ -419,10 +407,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
     final refreshGeneration = ++_refreshGeneration;
     setState(() {
       _refreshing = true;
-      _searchGeneration += 1;
-      _featuredPrefetchGeneration += 1;
-      _featuredPrefetching = false;
-      _searchCorpus = null;
+      _prefetchGeneration += 1;
+      _prefetching = false;
       _page = 1;
       _totalPages = 1;
     });
@@ -442,7 +428,11 @@ class _MarketListPaneState extends State<_MarketListPane> {
 
   /// Loads the next ordinary market page when featured filtering is inactive.
   Future<void> _loadMore() async {
-    if (_loadingMore || !_hasMore || widget.featuredOnly) {
+    if (_loading ||
+        _loadingMore ||
+        _prefetching ||
+        !_hasMore ||
+        _shouldPrefetch) {
       return;
     }
     setState(() {
@@ -460,6 +450,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
         _totalPages = _pageCount(page.total, page.pageSize);
         _loadingMore = false;
       });
+      _startPrefetch(notify: true);
     } catch (error, stackTrace) {
       debugPrint('Failed to load more market: $error\n$stackTrace');
       if (!mounted || requestGeneration != _marketRequestGeneration) {
@@ -477,47 +468,36 @@ class _MarketListPaneState extends State<_MarketListPane> {
     }
   }
 
-  /// Prefetches all remaining pages without rebuilding during the scroll.
-  Future<void> _prefetchFeaturedPages(int generation) async {
-    var nextPage = _page + 1;
-    var totalPages = _totalPages;
-    var lastPage = _page;
-    final pendingItems = <core_proxy.MarketEntrySummary>[];
+  bool get _shouldPrefetch =>
+      widget.featuredOnly || widget.searchQuery.trim().isNotEmpty;
+
+  /// Appends each page to the same list used for browsing and local search.
+  Future<void> _prefetchPages(int generation) async {
     try {
-      while (nextPage <= totalPages) {
-        final page = await _loadPage(nextPage);
-        if (!mounted ||
-            generation != _featuredPrefetchGeneration ||
-            !widget.featuredOnly ||
-            widget.searchQuery.trim().isNotEmpty) {
+      while (_hasMore) {
+        final page = await _loadPage(_page + 1);
+        if (!mounted || generation != _prefetchGeneration || !_shouldPrefetch) {
           return;
         }
-        pendingItems.addAll(page.items);
-        totalPages = _pageCount(page.total, page.pageSize);
-        lastPage = page.page;
-        nextPage = page.page + 1;
+        setState(() {
+          _items = <core_proxy.MarketEntrySummary>[..._items, ...page.items];
+          _page = page.page;
+          _totalPages = _pageCount(page.total, page.pageSize);
+        });
       }
-      if (!mounted ||
-          generation != _featuredPrefetchGeneration ||
-          !widget.featuredOnly ||
-          widget.searchQuery.trim().isNotEmpty) {
+      if (!mounted || generation != _prefetchGeneration) {
         return;
       }
       setState(() {
-        _items = <core_proxy.MarketEntrySummary>[..._items, ...pendingItems];
-        _page = lastPage;
-        _totalPages = totalPages;
-        _featuredPrefetching = false;
+        _prefetching = false;
       });
     } catch (error, stackTrace) {
-      debugPrint(
-        'Failed to prefetch featured market entries: $error\n$stackTrace',
-      );
-      if (!mounted || generation != _featuredPrefetchGeneration) {
+      debugPrint('Failed to prefetch market entries: $error\n$stackTrace');
+      if (!mounted || generation != _prefetchGeneration) {
         return;
       }
       setState(() {
-        _featuredPrefetching = false;
+        _prefetching = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -528,81 +508,21 @@ class _MarketListPaneState extends State<_MarketListPane> {
     }
   }
 
-  /// Starts the featured page scan and keeps it outside scroll notifications.
-  void _startFeaturedPrefetch({required bool notify}) {
-    if (_featuredPrefetching ||
-        !widget.featuredOnly ||
-        widget.searchQuery.trim().isNotEmpty ||
+  /// Keeps pagination independent of search edits and list rendering.
+  void _startPrefetch({required bool notify}) {
+    if (_loading ||
+        _loadingMore ||
+        _prefetching ||
+        !_shouldPrefetch ||
         !_hasMore) {
       return;
     }
-    final generation = ++_featuredPrefetchGeneration;
-    _featuredPrefetching = true;
+    final generation = ++_prefetchGeneration;
+    _prefetching = true;
     if (notify && mounted) {
       setState(() {});
     }
-    unawaited(_prefetchFeaturedPages(generation));
-  }
-
-  /// Loads local search results and starts featured prefetch when needed.
-  Future<void> _loadSearchResults() async {
-    final query = widget.searchQuery.trim();
-    final generation = ++_searchGeneration;
-    if (query.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _searchItems = <core_proxy.MarketEntrySummary>[];
-        _searchLoading = false;
-      });
-      _startFeaturedPrefetch(notify: true);
-      return;
-    }
-    setState(() {
-      _searchLoading = true;
-    });
-    try {
-      final corpus =
-          _searchCorpus ??
-          (_hasMore ? await _loadAllPagesForLocalSearch() : _items);
-      if (!mounted || generation != _searchGeneration) {
-        return;
-      }
-      _searchCorpus = corpus;
-      setState(() {
-        _searchItems = corpus;
-        _searchLoading = false;
-      });
-    } catch (error, stackTrace) {
-      debugPrint(
-        'Failed to load local market search corpus: $error\n$stackTrace',
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _searchLoading = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString()),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  Future<List<core_proxy.MarketEntrySummary>>
-  _loadAllPagesForLocalSearch() async {
-    final firstPage = await _loadPage(1);
-    final totalPages = _pageCount(firstPage.total, firstPage.pageSize);
-    final entries = <core_proxy.MarketEntrySummary>[...firstPage.items];
-    for (var page = 2; page <= totalPages; page += 1) {
-      final nextPage = await _loadPage(page);
-      entries.addAll(nextPage.items);
-    }
-    return entries;
+    unawaited(_prefetchPages(generation));
   }
 
   String get _metric => marketSortMetric(widget.sortOption);
@@ -660,8 +580,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
     } else {
       final rawQuery = widget.searchQuery.trim();
       final query = rawQuery.toLowerCase();
-      final sourceItems = rawQuery.isEmpty ? _items : _searchItems;
-      final displayed = sourceItems
+      final displayed = _items
           .where((item) => !widget.featuredOnly || item.featured)
           .where(
             (item) =>
@@ -678,8 +597,8 @@ class _MarketListPaneState extends State<_MarketListPane> {
           )
           .toList(growable: false);
       content = MarketBrowseList(
-        isLoading: !_refreshing && (_loading || _searchLoading),
-        isLoadingMore: _loadingMore || _featuredPrefetching,
+        isLoading: !_refreshing && _loading,
+        isLoadingMore: _loadingMore || _prefetching,
         hasMore: _hasMore && rawQuery.isEmpty && !widget.featuredOnly,
         isEmpty: displayed.isEmpty,
         emptyTitle: rawQuery.isEmpty ? '暂无项目' : '没有匹配结果',

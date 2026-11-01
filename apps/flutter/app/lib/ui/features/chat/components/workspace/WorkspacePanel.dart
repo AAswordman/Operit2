@@ -401,6 +401,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
           selectedIndex: selectedIndex,
           onSelected: (index) => _selectTab(index, paneIndex: paneIndex),
           onClosed: (index) => _closeTab(index, paneIndex: paneIndex),
+          onCloseTabs: _closeTabs,
         ),
         Expanded(
           child: IndexedStack(
@@ -1865,6 +1866,18 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         }
         final pluginId = tab.pluginEntryId ?? tab.pluginUiModuleId;
         return 'plugin-${pluginId != null && pluginId.isNotEmpty ? pluginId : tab.identityToken}';
+    }
+  }
+
+  /// Closes a snapshot sequentially, stopping when a save prompt is cancelled.
+  Future<void> _closeTabs(List<WorkspaceTab> targets) async {
+    for (final tab in targets) {
+      if (!mounted) return;
+      final paneIndex = _session.secondaryTabs.contains(tab) ? 1 : 0;
+      final index = _tabsForPane(paneIndex).indexOf(tab);
+      if (index < 0 || !tab.closable) continue;
+      await _closeTab(index, paneIndex: paneIndex);
+      if (!mounted || _containsWorkspaceTab(tab)) return;
     }
   }
 

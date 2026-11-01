@@ -1938,6 +1938,7 @@ void main() {
                 selectedIndex: 1,
                 onSelected: (_) {},
                 onClosed: (_) {},
+                onCloseTabs: (_) async {},
               ),
               Expanded(
                 child: DragTarget<WorkspaceTabDragPayload>(
@@ -2017,6 +2018,7 @@ void main() {
           selectedIndex: selectedIndex,
           onSelected: (_) {},
           onClosed: (_) {},
+          onCloseTabs: (_) async {},
         ),
       );
       await tester.pumpWidget(_app(strip(selectedIndex: 0)));

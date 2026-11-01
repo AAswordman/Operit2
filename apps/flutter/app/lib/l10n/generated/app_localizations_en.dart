@@ -210,6 +210,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get close => 'Close';
 
   @override
+  String get workspaceCloseOtherTabs => 'Close Others';
+
+  @override
+  String get workspaceCloseTabsToRight => 'Close to the Right';
+
+  @override
+  String get workspaceCloseAllTabs => 'Close All';
+
+  @override
   String get commonExpand => 'Expand';
 
   @override
@@ -3161,7 +3170,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDataOpenDetailedStatsDescription =>
-      'Open daily trends, input/output token changes, heatmap intensity, and usage breakdown by provider, model, and function model.';
+      'View the usage heatmap and model usage timeline with minute-level zoom.';
 
   @override
   String get settingsDataRefreshTokenStats => 'Refresh statistics';
@@ -4571,4 +4580,98 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get toolGroupExecuting => 'Executing';
+
+  @override
+  String get settingsDataTimelineTitle => 'Model usage over time';
+
+  @override
+  String get settingsDataTimelineHint =>
+      'One line per model. Pinch or scroll to zoom, drag to move, and tap to inspect a time bucket.';
+
+  @override
+  String settingsDataTimelineHours(int hours) {
+    return '${hours}h';
+  }
+
+  @override
+  String settingsDataTimelineBucket(int minutes) {
+    return '$minutes min buckets';
+  }
+
+  @override
+  String settingsDataTimelineSecondsBucket(int seconds) {
+    return '$seconds sec buckets';
+  }
+
+  @override
+  String get settingsDataTimelineEarlier => 'Earlier';
+
+  @override
+  String get settingsDataTimelineLater => 'Later';
+
+  @override
+  String get settingsDataTimelineRecent => 'Recent 3h';
+
+  @override
+  String get settingsDataTimelineRange => 'Visible time range';
+
+  @override
+  String get settingsDataTimelineSelectModel =>
+      'Select a model below to display its usage';
+
+  @override
+  String get settingsDataTimelineSpend => 'Spending (estimated)';
+
+  @override
+  String get settingsDataTimelineCacheRate => 'Cache hit rate';
+
+  @override
+  String get settingsDataTimelineSpendHint =>
+      'Estimated using current model prices. Shares the time range above.';
+
+  @override
+  String get settingsDataTimelineCacheRateHint =>
+      'Cached input / total input per time bucket. Idle periods have no rate.';
+
+  @override
+  String get settingsDataTimelineNoPrices => 'No matching model prices';
+
+  @override
+  String get settingsDataTimelinePricesFailed =>
+      'Could not load model prices. Refresh to retry.';
+
+  @override
+  String settingsDataTimelineUnpriced(int count) {
+    return '$count requests have unknown cost';
+  }
+
+  @override
+  String get settingsDataTimelineKnownSpend => 'Known spending (estimated)';
+
+  @override
+  String get settingsDataDetailedStatsRangeLastDay => 'Last 24 hours';
+
+  @override
+  String get settingsDataTimelineAverageInput => 'Average input per request';
+
+  @override
+  String get settingsDataTimelineAverageInputHint =>
+      'Input tokens / requests per bucket, to spot growing context sizes. Idle periods are gaps.';
+
+  @override
+  String get settingsDataTimelineCacheSavings => 'Cache savings (estimated)';
+
+  @override
+  String get settingsDataTimelineCacheSavingsHint =>
+      'At current prices, cached input cost compared with regular input. Per-request billing saves 0; negative values mean a cache surcharge.';
+
+  @override
+  String settingsDataTimelineTokensPerRequest(String tokens) {
+    return '$tokens tokens / request';
+  }
+
+  @override
+  String settingsDataTimelineUnknownSavings(int count) {
+    return 'Savings unknown for $count requests';
+  }
 }

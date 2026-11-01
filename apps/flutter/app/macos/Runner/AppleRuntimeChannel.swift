@@ -153,6 +153,10 @@ final class AppleRuntimeChannel: NSObject {
       Self.notificationActivationReceiverReady = true
       dispatchPendingNotificationActivations()
       result(nil)
+    case "hostOnboardingPermissionSnapshot":
+      hostOnboardingPermissionSnapshot(call: call, result: result)
+    case "hostOnboardingRequestPermission":
+      hostOnboardingRequestPermission(call: call, result: result)
     case "ownerSystemCaptureScreenshot":
       ownerSystemCaptureScreenshot(result: result)
     case "ownerSystemRecognizeText":
@@ -642,6 +646,66 @@ final class AppleRuntimeChannel: NSObject {
     completion(response)
   }
 
+  /// Reports notification authorization to onboarding and the shared Host settings.
+  private func hostOnboardingPermissionSnapshot(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let arguments = call.arguments as? [String: Any],
+          let hostId = arguments["hostId"] as? String,
+          hostId == "macos" else {
+      result(FlutterError(code: "INVALID_HOST", message: "Invalid onboarding host", details: nil))
+      return
+    }
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+      let authorized = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+      DispatchQueue.main.async {
+        result([
+          "macos.notifications": [
+            "id": "macos.notifications",
+            "status": authorized ? "Satisfied" : "Missing",
+          ],
+        ])
+      }
+    }
+  }
+
+  /// Requests authorization only from the unified permission flow, or opens Settings after denial.
+  private func hostOnboardingRequestPermission(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let arguments = call.arguments as? [String: Any],
+          let hostId = arguments["hostId"] as? String,
+          hostId == "macos",
+          let requirementId = arguments["requirementId"] as? String,
+          requirementId == "macos.notifications" else {
+      result(FlutterError(code: "INVALID_ONBOARDING_REQUIREMENT", message: "Invalid onboarding notification requirement", details: nil))
+      return
+    }
+    let center = UNUserNotificationCenter.current()
+    center.getNotificationSettings { settings in
+      if settings.authorizationStatus == .denied {
+        DispatchQueue.main.async {
+          let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+          guard NSWorkspace.shared.open(url) else {
+            result(FlutterError(code: "MACOS_NOTIFICATION_PERMISSION_ERROR", message: "Unable to open macOS notification settings", details: nil))
+            return
+          }
+          result(nil)
+        }
+        return
+      }
+      guard settings.authorizationStatus == .notDetermined else {
+        DispatchQueue.main.async { result(nil) }
+        return
+      }
+      center.requestAuthorization(options: [.alert, .badge, .sound]) { _, error in
+        DispatchQueue.main.async {
+          if let error {
+            result(FlutterError(code: "MACOS_NOTIFICATION_PERMISSION_ERROR", message: error.localizedDescription, details: nil))
+            return
+          }
+          result(nil)
+        }
+      }
+    }
+  }
+
   /// Dispatches owner operations using their typed operation identifiers.
   private func ownerSystemOperation(call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard let payload = call.arguments as? [String: Any],
@@ -684,14 +748,8 @@ final class AppleRuntimeChannel: NSObject {
       return
     }
     let center = UNUserNotificationCenter.current()
-    center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, authorizationError in
-      if let authorizationError {
-        DispatchQueue.main.async {
-          result(FlutterError(code: "OWNER_SYSTEM_OPERATION_ERROR", message: authorizationError.localizedDescription, details: nil))
-        }
-        return
-      }
-      guard granted else {
+    center.getNotificationSettings { settings in
+      guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
         DispatchQueue.main.async {
           result(FlutterError(code: "OWNER_SYSTEM_OPERATION_ERROR", message: "macOS notification permission is not granted", details: nil))
         }
