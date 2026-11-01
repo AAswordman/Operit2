@@ -20,6 +20,7 @@ pub(super) enum BuiltinRoot {
     Workspace,
     Storage,
     Stt,
+    Sync,
     Update,
     Usage,
 }
@@ -43,6 +44,7 @@ pub(super) const BUILTIN_ROOTS: &[(&str, BuiltinRoot)] = &[
     ("workspace", BuiltinRoot::Workspace),
     ("storage", BuiltinRoot::Storage),
     ("stt", BuiltinRoot::Stt),
+    ("sync", BuiltinRoot::Sync),
     ("update", BuiltinRoot::Update),
     ("usage", BuiltinRoot::Usage),
 ];
