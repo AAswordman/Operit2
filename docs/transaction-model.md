@@ -3,7 +3,7 @@
 用 $X\in f$ 表示 X 实现统一接口；$\sqcup$ 表示带类型标记的并集：
 
 $$
-f=f_{\mathrm{DataStore}}\sqcup f_{\mathrm{SQL}},\qquad
+f=f_{\mathrm{DataStore}}\sqcup f_{\mathrm{SQL}}\sqcup f_{\mathrm{File}},\qquad
 A,B\in f,\qquad T_a\in\operatorname{Tx}(A)\subseteq f_{\mathrm{SQL}}\subseteq f.
 $$
 
@@ -27,6 +27,8 @@ $\operatorname{Tx}(X)$ 是以 X 为目标的事务记录集合。事务的 SQL �
 $e_X$ 表示 X 端本轮空增量导出时的接收范围，$\widehat e_X$ 为读取最终内容后的接收范围；各端只与自己的范围比较。
 
 完整状态写为 $A=(O,V,\rho,D,\alpha,\sigma,\Delta)$：归属与版本、值、业务修订、删除事实、身份映射、各修改范围的优先级、尚需保留的增量贡献。检查点另保存精确的历史覆盖集合 $K$。迁移等价式比较这些分量；例如 `name@50 → displayName@50` 同时转换值与范围版本，迁移后收到 `name@40` 仍由 50 生效。
+
+普通文件 $f_{\mathrm{File}}$ 以路径为原子边界，操作是带源修改时间的完整 upsert 或 delete；修改时间和大小决定文件判同，事务业务顺序仍决定并发覆盖，创建时间和文件内容哈希不参与判同。完整文件状态可直接恢复历史 skip，同路径只需物化待处理状态中的最终胜者；收到原文不等于已应用，只有物化或已有更高顺序的状态覆盖后才完成这些身份。偏好及 SQL 的增量仍通过完整初始化事务修正，不能套用该直接恢复规则。
 
 字段范围独立比较优先级：父级删除 @30 后，字段写入 @20 保持删除，字段写入 @50 只重建该字段需要的对象或 ID 记录容器；同一规则用于事务应用和检查点合并。
 

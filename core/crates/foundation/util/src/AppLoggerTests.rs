@@ -66,21 +66,95 @@ impl WriteGate {
 struct TestFiles {
     files: HashMap<String, String>,
     directories: HashSet<String>,
+    append_handles: HashMap<String, usize>,
 }
 
 #[derive(Default)]
 struct TestFileSystemHost {
-    storage: Mutex<TestFiles>,
+    storage: Arc<Mutex<TestFiles>>,
     fail_inspect: bool,
     fail_directory: bool,
     fail_write: Option<String>,
-    append_count: std::sync::atomic::AtomicUsize,
+    append_count: Arc<std::sync::atomic::AtomicUsize>,
+    open_count: std::sync::atomic::AtomicUsize,
+    inspect_count: std::sync::atomic::AtomicUsize,
+    fail_append: Arc<std::sync::atomic::AtomicBool>,
     fail_move: Option<String>,
     write_gate: Option<Arc<WriteGate>>,
     move_gate: Option<Arc<WriteGate>>,
 }
 
+/// Models an open descriptor with its own length and the shared file contents.
+struct TestAppendHandle {
+    storage: Arc<Mutex<TestFiles>>,
+    path: String,
+    length: u64,
+    append_count: Arc<std::sync::atomic::AtomicUsize>,
+    fail_append: Arc<std::sync::atomic::AtomicBool>,
+    write_gate: Option<Arc<WriteGate>>,
+}
+
+impl Drop for TestAppendHandle {
+    /// Releases the descriptor so lifecycle operations can safely replace the file.
+    fn drop(&mut self) {
+        *self
+            .storage
+            .lock()
+            .unwrap()
+            .append_handles
+            .get_mut(&self.path)
+            .unwrap() -= 1;
+    }
+}
+
+impl FileAppendHandle for TestAppendHandle {
+    /// Returns the byte count cached by the append descriptor.
+    fn byteLength(&self) -> u64 {
+        self.length
+    }
+
+    /// Writes through the descriptor, including a partial-write failure injection.
+    fn append(&mut self, content: &[u8]) -> HostResult<()> {
+        if let Some(gate) = &self.write_gate {
+            gate.wait_until_released();
+        }
+        self.append_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut storage = self.storage.lock().unwrap();
+        let file = storage.files.get_mut(&self.path).unwrap();
+        if self
+            .fail_append
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            file.push_str(std::str::from_utf8(&content[..1]).unwrap());
+            return Err(HostError::new("Partial append failure"));
+        }
+        file.push_str(std::str::from_utf8(content).unwrap());
+        self.length += content.len() as u64;
+        Ok(())
+    }
+}
+
 impl FileSystemHost for TestFileSystemHost {
+    /// Opens a descriptor once and shares the test storage with it.
+    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn FileAppendHandle>> {
+        if self.fail_write.as_deref() == Some(path) {
+            return Err(HostError::new("Permission denied writing file"));
+        }
+        self.open_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut storage = self.storage.lock().unwrap();
+        let length = storage.files.entry(path.into()).or_default().len() as u64;
+        *storage.append_handles.entry(path.into()).or_default() += 1;
+        Ok(Box::new(TestAppendHandle {
+            storage: self.storage.clone(),
+            path: path.into(),
+            length,
+            append_count: self.append_count.clone(),
+            fail_append: self.fail_append.clone(),
+            write_gate: self.write_gate.clone(),
+        }))
+    }
     /// Returns the test host label.
     fn envLabel(&self) -> &str {
         "test"
@@ -93,6 +167,8 @@ impl FileSystemHost for TestFileSystemHost {
 
     /// Inspects the in-memory files and directories.
     fn fileExists(&self, path: &str) -> HostResult<FileExistence> {
+        self.inspect_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.fail_inspect {
             return Err(HostError::new("Permission denied inspecting file"));
         }
@@ -131,6 +207,9 @@ impl FileSystemHost for TestFileSystemHost {
         }
         let parent = std::path::Path::new(path).parent().unwrap();
         let mut storage = self.storage.lock().unwrap();
+        if !append && storage.append_handles.get(path).copied().unwrap_or(0) != 0 {
+            return Err(HostError::new("File still has an open append descriptor"));
+        }
         if !storage.directories.contains(parent.to_str().unwrap()) {
             return Err(HostError::new("Parent directory does not exist"));
         }
@@ -196,6 +275,18 @@ impl FileSystemHost for TestFileSystemHost {
 
     /// Moves a log into its archive while applying the rotation gate.
     fn moveFile(&self, source: &str, destination: &str) -> HostResult<()> {
+        if self
+            .storage
+            .lock()
+            .unwrap()
+            .append_handles
+            .get(source)
+            .copied()
+            .unwrap_or(0)
+            != 0
+        {
+            return Err(HostError::new("File still has an open append descriptor"));
+        }
         if self.fail_move.as_deref() == Some(source) {
             return Err(HostError::new("Permission denied moving file"));
         }
@@ -229,6 +320,8 @@ impl FileSystemHost for TestFileSystemHost {
 
     /// Returns the in-memory log metadata.
     fn fileInfo(&self, path: &str) -> HostResult<FileInfo> {
+        self.inspect_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let storage = self.storage.lock().unwrap();
         let size = storage.files.get(path).map(|content| content.len() as i64);
         Ok(FileInfo {
@@ -398,11 +491,23 @@ fn file_write_batches_preserve_records_and_flush_once_per_host() {
     ensure_log_file(&second_host, path).unwrap();
     {
         let _outer = AppLogger::batch_file_writes();
-        append_line(&first_host, path, "12:00:00.001 first\n").unwrap();
+        append_line(
+            &LogFile::new(first_host.clone(), path),
+            "12:00:00.001 first\n",
+        )
+        .unwrap();
         {
             let _inner = AppLogger::batch_file_writes();
-            append_line(&first_host, path, "12:00:00.002 second\n").unwrap();
-            append_line(&second_host, path, "12:00:00.003 other-host\n").unwrap();
+            append_line(
+                &LogFile::new(first_host.clone(), path),
+                "12:00:00.002 second\n",
+            )
+            .unwrap();
+            append_line(
+                &LogFile::new(second_host.clone(), path),
+                "12:00:00.003 other-host\n",
+            )
+            .unwrap();
         }
         assert_eq!(first.storage.lock().unwrap().files[path], "");
     }
@@ -426,7 +531,11 @@ fn file_write_batches_preserve_records_and_flush_once_per_host() {
             .load(std::sync::atomic::Ordering::Relaxed),
         1
     );
-    append_line(&first_host, path, "12:00:00.004 outside\n").unwrap();
+    append_line(
+        &LogFile::new(first_host.clone(), path),
+        "12:00:00.004 outside\n",
+    )
+    .unwrap();
     assert_eq!(
         first
             .append_count
@@ -444,7 +553,7 @@ fn file_write_batches_flush_when_execution_unwinds() {
     ensure_log_file(&files, path).unwrap();
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _batch = AppLogger::batch_file_writes();
-        append_line(&files, path, "execution failed\n").unwrap();
+        append_line(&LogFile::new(files.clone(), path), "execution failed\n").unwrap();
         panic!("fixture execution failure");
     }));
     assert!(failure.is_err());
@@ -469,8 +578,8 @@ fn future_file_write_batches_flush_before_pending() {
     ensure_log_file(&files, path).unwrap();
     let mut polls = 0;
     let mut future = Box::pin(AppLogger::batch_future_file_writes(poll_fn(|_| {
-        append_line(&files, path, "first record\n").unwrap();
-        append_line(&files, path, "second record\n").unwrap();
+        append_line(&LogFile::new(files.clone(), path), "first record\n").unwrap();
+        append_line(&LogFile::new(files.clone(), path), "second record\n").unwrap();
         polls += 1;
         if polls == 1 {
             Poll::Pending
@@ -489,7 +598,7 @@ fn future_file_write_batches_flush_before_pending() {
         host.storage.lock().unwrap().files[path],
         "first record\nsecond record\n"
     );
-    append_line(&files, path, "unrelated task\n").unwrap();
+    append_line(&LogFile::new(files.clone(), path), "unrelated task\n").unwrap();
     assert_eq!(
         host.append_count.load(std::sync::atomic::Ordering::Relaxed),
         2
@@ -670,18 +779,17 @@ fn concurrent_appends_never_lose_lines_across_rotation() {
             storage.files.insert(LOG.into(), prefill.clone());
         }
 
+        let file = LogFile::new(host.clone(), LOG);
         let barrier = Arc::new(Barrier::new(THREADS));
         let writers: Vec<_> = (0..THREADS)
             .map(|thread| {
-                let host = host.clone();
+                let file = file.clone();
                 let barrier = barrier.clone();
                 std::thread::spawn(move || {
-                    let files: Arc<dyn FileSystemHost> = host.clone();
                     barrier.wait();
                     for line in 0..LINES_PER_THREAD {
                         append_line_with_rotation_cap(
-                            &files,
-                            LOG,
+                            &file,
                             &format!("T{thread}L{line:03}\n"),
                             CAP,
                         )
@@ -740,7 +848,8 @@ fn rotation_failure_is_propagated_and_writes_no_line() {
     }
 
     let files: Arc<dyn FileSystemHost> = host.clone();
-    let outcome = append_line_with_rotation_cap(&files, LOG, "dropped\n", CAP);
+    let outcome =
+        append_line_with_rotation_cap(&LogFile::new(files.clone(), LOG), "dropped\n", CAP);
     assert!(
         outcome.is_err(),
         "a failed rotation must surface as an explicit Err, not as a logged-and-continue"
@@ -773,7 +882,8 @@ fn append_failure_is_propagated_as_err() {
         .insert("/runtime/logs".into());
 
     let files: Arc<dyn FileSystemHost> = host.clone();
-    let outcome = append_line_with_rotation_cap(&files, LOG, "never lands\n", CAP);
+    let outcome =
+        append_line_with_rotation_cap(&LogFile::new(files.clone(), LOG), "never lands\n", CAP);
     assert!(outcome.is_err(), "a failed append must be Err");
     assert!(
         !host.storage.lock().unwrap().files.contains_key(LOG),
@@ -837,8 +947,8 @@ fn batch_flush_rotates_oversized_files_and_preserves_all_queued_records() {
         .insert(LOG.into(), original.clone());
     {
         let _batch = AppLogger::batch_file_writes();
-        append_line(&files, LOG, "first queued record\n").unwrap();
-        append_line(&files, LOG, "second queued record\n").unwrap();
+        append_line(&LogFile::new(files.clone(), LOG), "first queued record\n").unwrap();
+        append_line(&LogFile::new(files.clone(), LOG), "second queued record\n").unwrap();
         assert_eq!(host.storage.lock().unwrap().files[LOG], original);
     }
     let storage = host.storage.lock().unwrap();
@@ -872,7 +982,7 @@ fn diagnostic_reads_are_serialized_with_rotation() {
         .insert(LOG.into(), "x".repeat(128));
     let files: Arc<dyn FileSystemHost> = host;
     let writer = std::thread::spawn(move || {
-        append_line_with_rotation_cap(&files, LOG, "after rotation\n", 64)
+        append_line_with_rotation_cap(&LogFile::new(files.clone(), LOG), "after rotation\n", 64)
     });
     if !gate.wait_entered(Duration::from_secs(5)) {
         gate.release();
@@ -905,7 +1015,8 @@ fn repeated_rotation_keeps_only_the_latest_archive_generation() {
             .unwrap()
             .files
             .insert(LOG.into(), content.into());
-        append_line_with_rotation_cap(&files, LOG, "new current record\n", 4).unwrap();
+        append_line_with_rotation_cap(&LogFile::new(files.clone(), LOG), "new current record\n", 4)
+            .unwrap();
     }
     let storage = host.storage.lock().unwrap();
     assert_eq!(storage.files[&format!("{LOG}.1")], "second generation\n");
@@ -930,5 +1041,92 @@ fn binding_reports_legacy_log_trim_write_failures() {
     assert_eq!(
         ensure_log_file(&files, LOG).unwrap_err(),
         "Permission denied writing file"
+    );
+}
+
+/// Keeps every record immediately visible while opening and inspecting the file only once.
+#[test]
+fn repeated_appends_reuse_the_descriptor_without_per_record_metadata() {
+    const LOG: &str = "/runtime/logs/operit.log";
+    let host = Arc::new(TestFileSystemHost::default());
+    let files: Arc<dyn FileSystemHost> = host.clone();
+    ensure_log_file(&files, LOG).unwrap();
+    let inspections = host
+        .inspect_count
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let file = LogFile::new(files, LOG);
+    for index in 0..100 {
+        let record = format!("record-{index}\n");
+        append_line(&file, &record).unwrap();
+        assert!(host.storage.lock().unwrap().files[LOG].ends_with(&record));
+    }
+    assert_eq!(
+        host.open_count.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    assert_eq!(
+        host.inspect_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        inspections
+    );
+    assert_eq!(host.storage.lock().unwrap().files[LOG].lines().count(), 100);
+}
+
+/// Rotates using the bytes appended through the retained descriptor, then writes into a new file.
+#[test]
+fn cached_length_triggers_rotation_and_reopens_the_current_file() {
+    const LOG: &str = "/runtime/logs/operit.log";
+    let host = Arc::new(TestFileSystemHost::default());
+    let file = LogFile::new(host.clone(), LOG);
+    ensure_log_file(&file.host, LOG).unwrap();
+    append_line_with_rotation_cap(&file, "123456789\n", 8).unwrap();
+    append_line_with_rotation_cap(&file, "next\n", 8).unwrap();
+    let storage = host.storage.lock().unwrap();
+    assert_eq!(storage.files[&format!("{LOG}.1")], "123456789\n");
+    assert_eq!(storage.files[LOG], "next\n");
+    assert_eq!(
+        host.open_count.load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
+}
+
+/// Invalidates an uncertain length after a partial append without retrying or duplicating the record.
+#[test]
+fn partial_append_failure_discards_the_handle_and_reports_the_error() {
+    const LOG: &str = "/runtime/logs/operit.log";
+    let host = Arc::new(TestFileSystemHost::default());
+    let file = LogFile::new(host.clone(), LOG);
+    ensure_log_file(&file.host, LOG).unwrap();
+    append_line_with_rotation_cap(&file, "abc", 3).unwrap();
+    host.fail_append
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(append_line_with_rotation_cap(&file, "xfailed", 3).is_err());
+    assert!(file.writer.lock().unwrap().is_none());
+    append_line_with_rotation_cap(&file, "ok", 3).unwrap();
+    let storage = host.storage.lock().unwrap();
+    assert_eq!(storage.files[&format!("{LOG}.1")], "abcx");
+    assert_eq!(storage.files[LOG], "ok");
+}
+
+/// Drops retained descriptors before clearing files and never appends into the old generation.
+#[test]
+fn resetting_logs_reopens_both_descriptors_with_fresh_lengths() {
+    let _global = global_log_guard();
+    const LOG: &str = "/runtime/logs/operit.log";
+    const PACKAGE_LOG: &str = "/runtime/logs/toolpkg.log";
+    let host = Arc::new(TestFileSystemHost::default());
+    AppLogger::configure_log_files(host.clone(), LOG.into(), PACKAGE_LOG.into()).unwrap();
+    assert_eq!(AppLogger::i("ToolPkg", "before reset"), 0);
+    AppLogger::reset_log_file();
+    assert_eq!(AppLogger::i("ToolPkg", "after reset"), 0);
+    let storage = host.storage.lock().unwrap();
+    for path in [LOG, PACKAGE_LOG] {
+        assert!(!storage.files[path].contains("before reset"));
+        assert!(storage.files[path].contains("after reset"));
+        assert_eq!(storage.files[path].lines().count(), 1);
+    }
+    assert_eq!(
+        host.open_count.load(std::sync::atomic::Ordering::Relaxed),
+        4
     );
 }

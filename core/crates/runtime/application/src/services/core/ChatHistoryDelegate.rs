@@ -1682,6 +1682,14 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Clears the parent relationship through the shared history repository.
+    pub fn promoteChatToRoot(&mut self, chatId: String) -> Result<(), String> {
+        self.chatHistoryManager
+            .promoteChatToRoot(chatId)
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
     /// Releases owner state before deleting an unlocked conversation and its in-memory projection.
     pub async fn deleteChatHistory(
         &mut self,

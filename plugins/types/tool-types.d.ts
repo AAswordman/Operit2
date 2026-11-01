@@ -141,6 +141,7 @@ export interface ToolResultMap {
   update_chat_group: string;
   update_chat_pinned: string;
   update_chat_locked: string;
+  promote_chat_to_root: string;
   reorder_chats: string;
   delete_chat: ChatDeleteResultData;
   send_message_to_ai: MessageSendResultData;

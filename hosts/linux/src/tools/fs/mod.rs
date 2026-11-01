@@ -25,6 +25,11 @@ impl LinuxFileSystemHost {
 }
 
 impl FileSystemHost for LinuxFileSystemHost {
+    /// Keeps the descriptor open for repeated log appends.
+    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn operit_host_api::FileAppendHandle>> {
+        self.validatePath(path, "path")?;
+        operit_host_native_common::NativeFileAppendHandle::open(path)
+    }
     fn envLabel(&self) -> &str {
         "linux"
     }

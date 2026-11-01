@@ -767,6 +767,18 @@ impl ChatHistoryManager {
         Ok(())
     }
 
+    /// Detaches a conversation from its parent and publishes the canonical metadata change.
+    pub fn promoteChatToRoot(&self, chatId: String) -> ChatHistoryManagerResult<()> {
+        if !self.chatExists(chatId.clone())? {
+            return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                "Chat does not exist: {chatId}"
+            )));
+        }
+        self.chatDao.promoteChatToRoot(&chatId, currentTimeMillis())?;
+        self.recordChatMetadata(&chatId)?;
+        Ok(())
+    }
+
     /// Persists message metadata, revision parts, chat ordering, and sync state atomically.
     fn persistMessageLocked(
         &self,

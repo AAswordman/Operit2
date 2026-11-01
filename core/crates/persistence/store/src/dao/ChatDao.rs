@@ -159,6 +159,14 @@ impl ChatDao {
         )
     }
 
+    /// Removes only the parent relationship of an existing conversation.
+    pub fn promoteChatToRoot(&self, chatId: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
+        self.execute(
+            "UPDATE chats SET parentChatId = NULL, updatedAt = ?2 WHERE id = ?1",
+            sqliteParams![chatId, timestamp],
+        )
+    }
+
     /// Promotes an active chat without changing its pin, workspace, or plugin namespaces.
     pub fn moveChatToFront(&self, chatId: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
         self.execute(

@@ -1,5 +1,6 @@
 {
   "@@locale": "en",
+  "chatPromoteToRoot": "Promote to main conversation",
   "workspaceUnsavedChangesTitle": "Unsaved changes",
   "workspaceUnsavedChangesMessage": "Save your changes before closing this file?",
   "workspaceDiscardChanges": "Discard changes",

@@ -322,7 +322,7 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
         paths.insert(crate::Transaction::Migrations::resolve_path(&routes,&path)?);
     }
     let retired = crate::PreferenceLayout::retirements(storage.clone())?;
-    let mut registry = Registry { journal,owners: BTreeMap::new(),sources: vec![],routes,retired,
+    let mut registry = Registry { journal,domains: BTreeSet::from(["preferences".into()]),owners: BTreeMap::new(),sources: vec![],routes,retired,
         locate: Box::new(|op| PreferencesSyncedEntry::operationPath(op).map_err(|e|e.to_string())) };
     let mut owners = Vec::new();
     for path in paths {

@@ -202,6 +202,14 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
       update({ dialog: null }); await refresh();
     });
   }
+  /** Detaches the exact conversation and refreshes the native parent projection. */
+  async function promoteToRoot(id: string): Promise<void> {
+    await run(async () => {
+      chatFor(id);
+      await Tools.Chat.promoteToRoot(id);
+      update({ dialog: null }); await refresh();
+    });
+  }
   async function reorder(chatId: string, targetId: string): Promise<void> {
     const ids = current.current.chatSidebar.chats.map(chat => chat.id);
     const from = ids.indexOf(chatId), to = ids.indexOf(targetId);
@@ -234,6 +242,7 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
           { label: "编辑名称", icon: "Edit" },
           { label: chat.pinned ? "取消置顶" : "置顶", icon: "PushPin" },
           { label: chat.locked ? "解锁" : "锁定", icon: chat.locked ? "LockOpen" : "Lock" },
+          ...(chat.parentChatId !== null ? [{ label: "提升为主对话", icon: "VerticalAlignTop" }] : []),
           { label: "删除", icon: "DeleteOutline", danger: true } ],
         onSelected: async (index: number) => {
           if (index === 0) return lookupMessages(id, false);
@@ -241,7 +250,8 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
           else if (index === 2) renameChat(id);
           else if (index === 3) await changeFlag(id, true);
           else if (index === 4) await changeFlag(id, false);
-          else if (index === 5) await deleteChat(id);
+          else if (index === 5 && chat.parentChatId !== null) await promoteToRoot(id);
+          else if (index === (chat.parentChatId !== null ? 6 : 5)) await deleteChat(id);
           return null;
         },
       }, ctx.UI.Icon({ name: "MoreHoriz", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
@@ -392,8 +402,9 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
         tile("上移", "KeyboardArrowUp", () => moveRelative(chat.id, -1), index > 0),
         tile("下移", "KeyboardArrowDown", () => moveRelative(chat.id, 1), index >= 0 && index < ids.length - 1),
         tile(chat.pinned ? "取消置顶" : "置顶", "PushPin", () => changeFlag(chat.id, true)),
-        tile(chat.locked ? "解锁" : "锁定", chat.locked ? "LockOpen" : "Lock", () => changeFlag(chat.id, false)),
-        tile("删除", "DeleteOutline", () => deleteChat(chat.id), true, true));
+        tile(chat.locked ? "解锁" : "锁定", chat.locked ? "LockOpen" : "Lock", () => changeFlag(chat.id, false)));
+      if (chat.parentChatId !== null) body.push(tile("提升为主对话", "VerticalAlignTop", () => promoteToRoot(chat.id)));
+      body.push(tile("删除", "DeleteOutline", () => deleteChat(chat.id), true, true));
     }
     if (staged.progress !== null) body.push(ctx.UI.Text({ key: "sidebar-delete-result", text: `已删除 ${staged.progress.deletedChatIds.length} 条对话\n` + staged.progress.failedChatIds.map(value => value.chatId + ": " + value.error).join("\n"), fontSize: 11, color: staged.progress.failedChatIds.length === 0 ? colors.onSurface : colors.error }));
     if (state.error !== "") body.push(ctx.UI.Text({ text: state.error, color: colors.error, fontSize: 11 }));

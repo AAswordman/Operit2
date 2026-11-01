@@ -61,6 +61,11 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
         self.inner.flushFile(path)
     }
 
+    /// Reads native file metadata.
+    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.inner.modifiedAt(path) }
+    /// Preserves remote modification times.
+    fn setModifiedAt(&self, path: &str, time: i64) -> HostResult<()> { self.inner.setModifiedAt(path, time) }
+
     /// Returns the physical test runtime root.
     fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
         self.inner.runtimeRootDir()
@@ -365,6 +370,57 @@ async fn generated_proxy_blob_presence_preserves_batch_results() {
             toCoreValue(json!({"references": {"invalid": true}})).unwrap(),
         )).await;
         assert!(malformed.result.is_err(), "invalid batches must fail without hiding per-blob errors");
+    }).await;
+}
+
+/// Skipped full files retry the winner, retaining failures until its blob exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn skipped_file_states_recover_without_structured_initialization() {
+    let _guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new().run_until(async {
+        use operit_store::{RuntimeFileSyncStore::RuntimeFileSyncStore, SyncOperationStore::SyncOperationStore};
+        let source = register_test_runtime_roots();
+        let path = "workspaces/project/recovery.txt";
+        let files = RuntimeFileSyncStore::new(source.clone(), "runtime/sync");
+        files.writeBytes(path, b"superseded").unwrap();
+        files.writeBytes(path, b"second").unwrap();
+        let source_journal = SyncOperationStore::new(source.clone(), "runtime/sync");
+        source.openTransactionDatabase("runtime/sync/transactions.sqlite").unwrap()
+            .executeBatch("UPDATE originals SET pending=2 WHERE domain='runtime_file'").unwrap();
+        let originals = source_journal.skippedOperations().unwrap();
+        assert_eq!(originals.len(), 2);
+        let target = register_test_runtime_roots();
+        let journal = SyncOperationStore::new(target.clone(), "runtime/sync");
+        journal.receiveOperations(&originals).unwrap();
+        target.openTransactionDatabase("runtime/sync/transactions.sqlite").unwrap()
+            .executeBatch("UPDATE originals SET pending=2 WHERE domain='runtime_file'").unwrap();
+        let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+        hosts.runtimeStorageHost = Some(target.clone());
+        hosts.runtimeSqliteHost = Some(target.clone());
+        hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+        hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+        hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+        let app = OperitApplication::newWithContext(hosts);
+        let clock = app.syncClock().unwrap();
+        assert_eq!(clock["pending"], 2);
+        assert_eq!(clock["pendingBlobs"].as_array().unwrap().len(), 1);
+        assert_eq!(app.syncApplyOperations(json!([])).unwrap()["pending"], 2);
+        assert_eq!(journal.skippedOperations().unwrap().len(), 2);
+        // A newer complete state must supersede missing older blobs without a blocked recovery intent.
+        files.writeBytes(path, b"winner").unwrap();
+        let winner = source_journal.operationsSince(&journal.receipt().unwrap(), &[], 100).unwrap().pop().unwrap();
+        journal.receiveOperations(std::slice::from_ref(&winner)).unwrap();
+        assert_eq!(app.syncClock().unwrap()["pendingBlobs"].as_array().unwrap().len(), 1);
+        assert_eq!(journal.skippedOperations().unwrap().len(), 2, "preference preparation must not skip a healthy file operation");
+        let reference = RuntimeFileSyncStore::requiredBlob(&winner).unwrap().unwrap();
+        RuntimeFileSyncStore::new(target.clone(), "runtime/sync").writeBlob(&reference, &files.readBlob(&reference).unwrap()).unwrap();
+        assert_eq!(app.syncApplyOperations(json!([winner])).unwrap()["pending"], 0);
+        assert!(journal.skippedOperations().unwrap().is_empty());
+        assert_eq!(target.readBytes(path).unwrap(), b"winner");
+        assert_eq!(source.modifiedAt(path).unwrap(), target.modifiedAt(path).unwrap());
+        assert_eq!(app.syncApplyOperations(json!([])).unwrap()["applied"], 0);
+        assert_eq!(app.syncClock().unwrap()["pending"], 0);
+        assert!(app.syncConsistency().unwrap()["skipped"].as_object().unwrap().is_empty());
     }).await;
 }
 

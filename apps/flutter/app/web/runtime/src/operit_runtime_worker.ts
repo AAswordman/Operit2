@@ -51,6 +51,7 @@ interface WorkerSyncAccessHandle {
 }
 
 interface WorkerFileHandle {
+  getFile(): Promise<File>;
   createSyncAccessHandle(): Promise<WorkerSyncAccessHandle>;
 }
 
@@ -64,15 +65,19 @@ interface WorkerStorageManager {
 }
 
 interface WorkerStorageRecord {
+  modifiedAt: number;
   offset: number;
   byteLength: number;
 }
 
 interface WorkerStorageIndex {
+  version: 2;
   records: Array<[string, WorkerStorageRecord]>;
 }
 
 interface WorkerRuntimeStorageBridge {
+  modifiedAt(prefix: string, path: string): number;
+  setModifiedAt(prefix: string, path: string, modifiedAt: number): void;
   read(prefix: string, path: string): Uint8Array;
   readRange(prefix: string, path: string, offset: number, length: number): Uint8Array;
   write(prefix: string, path: string, content: Uint8Array): void;
@@ -644,6 +649,14 @@ function requiredArchiveStaging(): RuntimeWorkerArchiveStaging {
 /** Exposes OPFS runtime storage through the shared Rust Web host function names. */
 function runtimeStorageBridge(): WorkerRuntimeStorageBridge {
   return {
+    /** Reads the logical file timestamp from the durable OPFS record index. */
+    modifiedAt(prefix: string, path: string): number {
+      return requiredRuntimeStorage().modifiedAt(storageKey(prefix, path));
+    },
+    /** Preserves metadata when materializing a synchronized file. */
+    setModifiedAt(prefix: string, path: string, modifiedAt: number): void {
+      requiredRuntimeStorage().setModifiedAt(storageKey(prefix, path), modifiedAt);
+    },
     read(prefix: string, path: string): Uint8Array {
       return requiredRuntimeStorage().read(storageKey(prefix, path));
     },
@@ -745,9 +758,13 @@ class RuntimeWorkerStorage {
     let index: WorkerSyncAccessHandle | null = null;
     try {
       data = await openSyncAccessHandle(root, runtimeStorageDataFileName);
-      index = await openSyncAccessHandle(root, runtimeStorageIndexFileName);
-      const loaded = readRuntimeStorageIndex(index, data.getSize());
-      return new RuntimeWorkerStorage(data, index, loaded.records);
+      const indexFile = await root.getFileHandle(runtimeStorageIndexFileName, { create: true });
+      const indexModifiedAt = (await indexFile.getFile()).lastModified * 1000;
+      index = await indexFile.createSyncAccessHandle();
+      const loaded = readRuntimeStorageIndex(index, data.getSize(), indexModifiedAt);
+      const storage = new RuntimeWorkerStorage(data, index, loaded.records);
+      if (loaded.migrated) { storage.persistIndex(); }
+      return storage;
     } catch (error) {
       index?.close();
       data?.close();
@@ -759,6 +776,22 @@ class RuntimeWorkerStorage {
   close(): void {
     this.index.close();
     this.data.close();
+  }
+
+  /** Reads a file timestamp without loading the file's data extent. */
+  modifiedAt(itemKey: string): number {
+    const record = this.records.get(itemKey);
+    if (record === undefined) { throw new Error("runtime OPFS file does not exist"); }
+    return record.modifiedAt;
+  }
+
+  /** Restores the source metadata and persists it with the logical file index. */
+  setModifiedAt(itemKey: string, modifiedAt: number): void {
+    if (!Number.isSafeInteger(modifiedAt) || modifiedAt < 0) { throw new Error("invalid file modification time"); }
+    const record = this.records.get(itemKey);
+    if (record === undefined) { throw new Error("runtime OPFS file does not exist"); }
+    record.modifiedAt = modifiedAt;
+    this.persistIndex();
   }
 
   /** Reads one exact live record from runtime OPFS storage. */
@@ -800,6 +833,7 @@ class RuntimeWorkerStorage {
     this.records.set(itemKey, {
       offset,
       byteLength: (previous?.byteLength ?? 0) + content.byteLength,
+      modifiedAt: Math.max(Date.now() * 1000, (previous?.modifiedAt ?? 0) + 1),
     });
     this.persistIndex();
   }
@@ -888,6 +922,7 @@ class RuntimeWorkerStorage {
     this.records.set(session.key, {
       offset: session.offset,
       byteLength: session.byteLength,
+      modifiedAt: Math.max(Date.now() * 1000, (this.records.get(session.key)?.modifiedAt ?? 0) + 1),
     });
     this.sessions.delete(sessionId);
     this.persistIndex();
@@ -905,7 +940,7 @@ class RuntimeWorkerStorage {
     const offset = this.data.getSize();
     writeExact(this.data, content, offset);
     this.data.flush();
-    this.records.set(itemKey, { offset, byteLength: content.byteLength });
+    this.records.set(itemKey, { offset, byteLength: content.byteLength, modifiedAt: Math.max(Date.now() * 1000, (this.records.get(itemKey)?.modifiedAt ?? 0) + 1) });
     if (persist) {
       this.persistIndex();
     }
@@ -923,6 +958,7 @@ class RuntimeWorkerStorage {
   /** Persists the compact record index after a visible storage mutation. */
   private persistIndex(): void {
     const serialized = textEncoder.encode(JSON.stringify({
+      version: 2,
       records: Array.from(this.records.entries()),
     } satisfies WorkerStorageIndex));
     this.index.truncate(0);
@@ -1113,10 +1149,11 @@ async function openSyncAccessHandle(
 function readRuntimeStorageIndex(
   handle: WorkerSyncAccessHandle,
   dataSize: number,
-): { records: Map<string, WorkerStorageRecord> } {
+  indexModifiedAt: number,
+): { records: Map<string, WorkerStorageRecord>; migrated: boolean } {
   const indexSize = handle.getSize();
   if (indexSize === 0) {
-    return { records: new Map() };
+    return { records: new Map(), migrated: false };
   }
   const bytes = new Uint8Array(indexSize);
   if (handle.read(bytes, { at: 0 }) !== indexSize) {
@@ -1126,6 +1163,7 @@ function readRuntimeStorageIndex(
   if (!Array.isArray(parsed.records)) {
     throw new Error("runtime OPFS index is invalid");
   }
+  if (parsed.version !== undefined && parsed.version !== 2) { throw new Error("runtime OPFS index version is unsupported"); }
   const records = new Map<string, WorkerStorageRecord>();
   for (const entry of parsed.records) {
     if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") {
@@ -1135,9 +1173,14 @@ function readRuntimeStorageIndex(
     if (!isValidStorageRecord(record, dataSize)) {
       throw new Error("runtime OPFS index record is invalid");
     }
-    records.set(entry[0], { offset: record.offset!, byteLength: record.byteLength! });
+    // Version 1 stored all logical files in one timestamped index; migrate that metadata once.
+    if (parsed.version === undefined) { record.modifiedAt = indexModifiedAt; }
+    if (!Number.isSafeInteger(record.modifiedAt) || record.modifiedAt! < 0) {
+      throw new Error("runtime OPFS index file metadata is invalid");
+    }
+    records.set(entry[0], { offset: record.offset!, byteLength: record.byteLength!, modifiedAt: record.modifiedAt! });
   }
-  return { records };
+  return { records, migrated: parsed.version === undefined };
 }
 
 /** Validates a persisted OPFS record against the current data file size. */
@@ -1150,7 +1193,7 @@ function isValidStorageRecord(value: Partial<WorkerStorageRecord>, dataSize: num
 }
 
 /** Reads one exact byte range from a synchronous OPFS data file. */
-function readRecord(handle: WorkerSyncAccessHandle, record: WorkerStorageRecord): Uint8Array {
+function readRecord(handle: WorkerSyncAccessHandle, record: Pick<WorkerStorageRecord, "offset" | "byteLength">): Uint8Array {
   const bytes = new Uint8Array(record.byteLength);
   if (record.byteLength > 0 && handle.read(bytes, { at: record.offset }) !== record.byteLength) {
     throw new Error("OPFS data record could not be read completely");

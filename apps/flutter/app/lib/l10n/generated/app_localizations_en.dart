@@ -9,6 +9,9 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get chatPromoteToRoot => 'Promote to main conversation';
+
+  @override
   String get workspaceUnsavedChangesTitle => 'Unsaved changes';
 
   @override

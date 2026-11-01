@@ -425,6 +425,10 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
         ChatManagerToolOperation::UpdateChatLocked,
     );
     registerChatTool(
+        handler, &chatTools, BuiltinToolName::PromoteChatToRoot,
+        ChatManagerToolOperation::PromoteChatToRoot,
+    );
+    registerChatTool(
         handler, &chatTools, BuiltinToolName::ReorderChats,
         ChatManagerToolOperation::ReorderChats,
     );

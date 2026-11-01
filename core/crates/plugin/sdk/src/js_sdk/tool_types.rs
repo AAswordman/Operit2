@@ -185,6 +185,7 @@ pub struct ToolResultMap {
     pub update_chat_group: String,
     pub update_chat_pinned: String,
     pub update_chat_locked: String,
+    pub promote_chat_to_root: String,
     pub reorder_chats: String,
     pub delete_chat: ChatDeleteResultData,
     pub send_message_to_ai: MessageSendResultData,

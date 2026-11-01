@@ -440,6 +440,10 @@ class _DrawerContentState extends State<DrawerContent> {
         await _updateConversationPinned(history);
       case ConversationAction.toggleLocked:
         await _updateConversationLocked(history);
+      case ConversationAction.promoteToRoot:
+        await _runGroupMutation(
+          () => _chatCoreProxy.promoteChatToRoot(chatId: history.id),
+        );
       case ConversationAction.unbindWorkspace:
         await _showUnbindConversationWorkspaceDialog(history);
       case ConversationAction.delete:

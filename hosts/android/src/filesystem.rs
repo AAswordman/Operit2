@@ -20,6 +20,10 @@ impl AndroidFileSystemHost {
 }
 
 impl FileSystemHost for AndroidFileSystemHost {
+    /// Opens an app-owned log file through the native file host.
+    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn operit_host_api::FileAppendHandle>> {
+        self.inner.openAppendFile(path)
+    }
     fn envLabel(&self) -> &str {
         "android"
     }

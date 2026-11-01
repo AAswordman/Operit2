@@ -1043,6 +1043,16 @@ function renderSidebarScreen(ctx) {
       }));
     });
   }
+  function promoteToRoot(id2) {
+    return __async(this, null, function* () {
+      yield run(() => __async(null, null, function* () {
+        chatFor(id2);
+        yield Tools.Chat.promoteToRoot(id2);
+        update({ dialog: null });
+        yield refresh();
+      }));
+    });
+  }
   function reorder(chatId, targetId) {
     return __async(this, null, function* () {
       const ids = current.current.chatSidebar.chats.map((chat) => chat.id);
@@ -1089,6 +1099,7 @@ function renderSidebarScreen(ctx) {
           { label: "编辑名称", icon: "Edit" },
           { label: chat.pinned ? "取消置顶" : "置顶", icon: "PushPin" },
           { label: chat.locked ? "解锁" : "锁定", icon: chat.locked ? "LockOpen" : "Lock" },
+          ...chat.parentChatId !== null ? [{ label: "提升为主对话", icon: "VerticalAlignTop" }] : [],
           { label: "删除", icon: "DeleteOutline", danger: true }
         ],
         onSelected: (index) => __async(null, null, function* () {
@@ -1097,7 +1108,8 @@ function renderSidebarScreen(ctx) {
           else if (index === 2) renameChat(id2);
           else if (index === 3) yield changeFlag(id2, true);
           else if (index === 4) yield changeFlag(id2, false);
-          else if (index === 5) yield deleteChat(id2);
+          else if (index === 5 && chat.parentChatId !== null) yield promoteToRoot(id2);
+          else if (index === (chat.parentChatId !== null ? 6 : 5)) yield deleteChat(id2);
           return null;
         })
       }, ctx.UI.Icon({ name: "MoreHoriz", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
@@ -1343,9 +1355,10 @@ function renderSidebarScreen(ctx) {
         tile("上移", "KeyboardArrowUp", () => moveRelative(chat.id, -1), index > 0),
         tile("下移", "KeyboardArrowDown", () => moveRelative(chat.id, 1), index >= 0 && index < ids.length - 1),
         tile(chat.pinned ? "取消置顶" : "置顶", "PushPin", () => changeFlag(chat.id, true)),
-        tile(chat.locked ? "解锁" : "锁定", chat.locked ? "LockOpen" : "Lock", () => changeFlag(chat.id, false)),
-        tile("删除", "DeleteOutline", () => deleteChat(chat.id), true, true)
+        tile(chat.locked ? "解锁" : "锁定", chat.locked ? "LockOpen" : "Lock", () => changeFlag(chat.id, false))
       );
+      if (chat.parentChatId !== null) body.push(tile("提升为主对话", "VerticalAlignTop", () => promoteToRoot(chat.id)));
+      body.push(tile("删除", "DeleteOutline", () => deleteChat(chat.id), true, true));
     }
     if (staged.progress !== null) body.push(ctx.UI.Text({ key: "sidebar-delete-result", text: `已删除 ${staged.progress.deletedChatIds.length} 条对话
 ` + staged.progress.failedChatIds.map((value) => value.chatId + ": " + value.error).join("\n"), fontSize: 11, color: staged.progress.failedChatIds.length === 0 ? colors.onSurface : colors.error }));

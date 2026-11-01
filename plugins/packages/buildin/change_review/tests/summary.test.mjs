@@ -21,6 +21,18 @@ test('merges explicit semantic file results in execution order with original lin
   assert.ok(files[0].diffContent.endsWith('-b\n+e'));
 });
 
+test('failed file tools contribute no changes and leave successful changes visible', async () => {
+  const failed = toolResult('failed.ts', '+not-written');
+  failed.attributes.status = 'error';
+  failed.attributes.result_data = JSON.stringify({ __type: 'StringResultData', value: 'Write failed' });
+  const input = message([failed, toolResult('written.ts', '+written')]);
+  assert.deepEqual(JSON.parse(JSON.stringify(model.reviewForMessage(input))).map(file => file.path), ['written.ts']);
+  const page = await screen('../src/ui/summary.ui.ts', { message: input, locale: 'en' });
+  assert.ok(page.nodes().some(node => node.props.text === 'Edited 1 file'));
+  await page.update({ message: message([failed]), locale: 'en' });
+  assert.equal(page.nodes().some(node => node.type === 'Card'), false);
+});
+
 test('persisted XML envelopes require explicit fileDiff display metadata', () => {
   const part = toolResult('unused', '');
   delete part.attributes.result_data;

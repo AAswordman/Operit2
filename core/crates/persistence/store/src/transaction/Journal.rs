@@ -154,8 +154,9 @@ impl Journal {
         })
     }
 
-    pub(crate) fn skipped_ids(&mut self) -> Result<Vec<String>, Error> {
-        self.0.query("SELECT id FROM originals WHERE pending=2 ORDER BY id", vec![])?.into_iter()
+    pub(crate) fn skipped_ids(&mut self, domain: Option<&str>) -> Result<Vec<String>, Error> {
+        self.0.query("SELECT id FROM originals WHERE pending=2 AND (?1 IS NULL OR domain=?1) ORDER BY id",
+            vec![domain.map(text).unwrap_or(SqliteValue::Null)])?.into_iter()
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
     }
 

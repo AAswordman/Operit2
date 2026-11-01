@@ -624,6 +624,21 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         session.commitFast()
     }
 
+    /// Reads native file metadata without opening or hashing file contents.
+    fn modifiedAt(&self, path: &str) -> HostResult<i64> {
+        let time = fs::metadata(self.resolveFile(path)?)?.modified()?;
+        let elapsed = time.duration_since(std::time::UNIX_EPOCH).map_err(|e| HostError::new(e.to_string()))?;
+        i64::try_from(elapsed.as_micros()).map_err(|e| HostError::new(e.to_string()))
+    }
+
+    /// Preserves the source modification time on every native platform.
+    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> {
+        let micros = u64::try_from(modifiedAt).map_err(|e| HostError::new(e.to_string()))?;
+        let file = fs::OpenOptions::new().write(true).open(self.resolveFile(path)?)?;
+        file.set_times(fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_micros(micros)))?;
+        Ok(())
+    }
+
     /// Flushes and atomically replaces an identity-private catalog.
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
         let mut session = self.createWriteSessionInternal(path, true)?;

@@ -298,6 +298,10 @@ export namespace Chat {
    */
   function listChats(params?: HostListChatsParams): Promise<ChatListResultData>;
   /**
+   * Clears the parent relationship while preserving the conversation and its children.
+   */
+  function promoteToRoot(chatId: string): Promise<string>;
+  /**
    * Reads only the authenticated executing package's extension on an existing target.
    */
   function readExtension(target: ExtensionTarget): Promise<ChatReadExtensionResultData>;

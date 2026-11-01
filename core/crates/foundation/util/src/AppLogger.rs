@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 
 #[cfg(not(target_os = "espidf"))]
 use chrono::{DateTime, Local, Utc};
-use operit_host_api::FileSystemHost;
+use operit_host_api::{FileAppendHandle, FileSystemHost};
 use serde::{Deserialize, Serialize};
 
 /// Android-compatible verbose log priority.
@@ -62,17 +62,41 @@ struct LoggerState {
     enable_console_logging: bool,
     console_min_level: i32,
     console_max_verbose_level: i32,
-    file_system_host: Option<Arc<dyn FileSystemHost>>,
-    log_file: Option<String>,
-    package_log_file: Option<String>,
+    log_file: Option<Arc<LogFile>>,
+    package_log_file: Option<Arc<LogFile>>,
     entries: Vec<LogEntry>,
     retain_entries: bool,
 }
 
-/// Retains formatted file records only for the current synchronous execution step.
-struct BatchedLogFileWrite {
+/// Owns the configured host and append descriptor for one exclusively managed log.
+struct LogFile {
     host: Arc<dyn FileSystemHost>,
     path: String,
+    writer: Mutex<Option<Box<dyn FileAppendHandle>>>,
+}
+
+impl LogFile {
+    /// Binds a log path; its descriptor is opened on the first append.
+    fn new(host: Arc<dyn FileSystemHost>, path: &str) -> Arc<Self> {
+        Arc::new(Self {
+            host,
+            path: path.into(),
+            writer: Mutex::new(None),
+        })
+    }
+
+    /// Releases the descriptor before the caller truncates or prepares the path.
+    fn close(&self) {
+        self.writer
+            .lock()
+            .expect("AppLogger append mutex poisoned")
+            .take();
+    }
+}
+
+/// Retains formatted file records only for the current synchronous execution step.
+struct BatchedLogFileWrite {
+    file: Arc<LogFile>,
     content: String,
 }
 
@@ -108,12 +132,7 @@ impl Drop for LogFileWriteBatch {
         }
         let _state_guard = state().lock().expect("AppLogger mutex poisoned");
         for write in writes {
-            let _ = append_line_with_rotation_cap(
-                &write.host,
-                &write.path,
-                &write.content,
-                LOG_ROTATE_BYTES,
-            );
+            let _ = append_line_with_rotation_cap(&write.file, &write.content, LOG_ROTATE_BYTES);
         }
     }
 }
@@ -132,7 +151,6 @@ fn state() -> &'static Mutex<LoggerState> {
             enable_console_logging: true,
             console_min_level: INFO,
             console_max_verbose_level: VERBOSE_LEVEL_6,
-            file_system_host: None,
             log_file: None,
             package_log_file: None,
             entries: Vec::new(),
@@ -258,18 +276,27 @@ impl AppLogger {
         package_log_file: String,
     ) -> Result<(), String> {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
+        {
+            let _file_guard = FILE_WRITE_LOCK
+                .lock()
+                .expect("AppLogger file mutex poisoned");
+            for file in [&guard.log_file, &guard.package_log_file]
+                .into_iter()
+                .flatten()
+            {
+                file.close();
+            }
+        }
         if let Err(error) = ensure_log_file(&file_system_host, &log_file)
             .and_then(|()| ensure_log_file(&file_system_host, &package_log_file))
         {
-            guard.file_system_host = None;
             guard.log_file = None;
             guard.package_log_file = None;
             guard.enable_file_logging = false;
             return Err(error);
         }
-        guard.file_system_host = Some(file_system_host);
-        guard.log_file = Some(log_file);
-        guard.package_log_file = Some(package_log_file);
+        guard.log_file = Some(LogFile::new(file_system_host.clone(), &log_file));
+        guard.package_log_file = Some(LogFile::new(file_system_host, &package_log_file));
         guard.enable_file_logging = true;
         Ok(())
     }
@@ -280,7 +307,8 @@ impl AppLogger {
             .lock()
             .expect("AppLogger mutex poisoned")
             .log_file
-            .clone()
+            .as_ref()
+            .map(|file| file.path.clone())
     }
 
     /// Returns the bound ToolPkg log file path.
@@ -289,7 +317,8 @@ impl AppLogger {
             .lock()
             .expect("AppLogger mutex poisoned")
             .package_log_file
-            .clone()
+            .as_ref()
+            .map(|file| file.path.clone())
     }
 
     /// Returns the runtime log file path as display text.
@@ -309,13 +338,12 @@ impl AppLogger {
         let _file_guard = FILE_WRITE_LOCK
             .lock()
             .expect("AppLogger file mutex poisoned");
-        if let Some(file_system_host) = &guard.file_system_host {
-            if let Some(path) = &guard.log_file {
-                let _ = file_system_host.writeFile(path, "", false);
-            }
-            if let Some(path) = &guard.package_log_file {
-                let _ = file_system_host.writeFile(path, "", false);
-            }
+        for file in [&guard.log_file, &guard.package_log_file]
+            .into_iter()
+            .flatten()
+        {
+            file.close();
+            let _ = file.host.writeFile(&file.path, "", false);
         }
         guard.entries.clear();
     }
@@ -489,18 +517,15 @@ fn write_entry(
         // concurrent reset/reconfigure cannot slip in between them.
         let mut write_result = Ok(());
         if guard.enable_file_logging {
-            if let (Some(file_system_host), Some(path)) = (&guard.file_system_host, &guard.log_file)
-            {
-                write_result = append_line(file_system_host, path, &line);
+            if let Some(file) = &guard.log_file {
+                write_result = append_line(file, &line);
             }
-            if let (Some(file_system_host), Some(path)) =
-                (&guard.file_system_host, &guard.package_log_file)
-            {
+            if let Some(file) = &guard.package_log_file {
                 if let Some(package_line) = &package_line {
                     // Keep the first failure: the runtime log line that could
                     // not be written is the one worth reporting.
                     if write_result.is_ok() {
-                        write_result = append_line(file_system_host, path, package_line);
+                        write_result = append_line(file, package_line);
                     }
                 }
             }
@@ -543,50 +568,62 @@ fn write_entry(
 /// while holding [`FILE_WRITE_LOCK`] (lock order: state → file-write, never the
 /// reverse) so concurrent writers cannot interleave the rotate/append sequence
 /// and drop lines. Returns `Err` if the rotation or the append failed.
-fn append_line(
-    file_system_host: &Arc<dyn FileSystemHost>,
-    path: &str,
-    line: &str,
-) -> Result<(), ()> {
-    let batched = FILE_WRITE_BATCH.with(|batch| {
-        let mut batch = batch.borrow_mut();
-        if batch.depth == 0 {
-            return false;
-        }
-        match batch
-            .writes
-            .iter_mut()
-            .find(|write| write.path == path && Arc::ptr_eq(&write.host, file_system_host))
-        {
-            Some(write) => write.content.push_str(line),
-            None => batch.writes.push(BatchedLogFileWrite {
-                host: file_system_host.clone(),
-                path: path.to_string(),
-                content: line.to_string(),
-            }),
-        }
-        true
-    });
+fn append_line(file: &Arc<LogFile>, line: &str) -> Result<(), ()> {
+    let batched =
+        FILE_WRITE_BATCH.with(|batch| {
+            let mut batch = batch.borrow_mut();
+            if batch.depth == 0 {
+                return false;
+            }
+            match batch.writes.iter_mut().find(|write| {
+                write.file.path == file.path && Arc::ptr_eq(&write.file.host, &file.host)
+            }) {
+                Some(write) => write.content.push_str(line),
+                None => batch.writes.push(BatchedLogFileWrite {
+                    file: file.clone(),
+                    content: line.to_string(),
+                }),
+            }
+            true
+        });
     if batched {
         return Ok(());
     }
-    append_line_with_rotation_cap(file_system_host, path, line, LOG_ROTATE_BYTES)
+    append_line_with_rotation_cap(file, line, LOG_ROTATE_BYTES)
 }
 
 /// [`append_line`] with an explicit rotation cap so tests can rotate cheaply.
 fn append_line_with_rotation_cap(
-    file_system_host: &Arc<dyn FileSystemHost>,
-    path: &str,
+    file: &Arc<LogFile>,
     line: &str,
     rotate_bytes: i64,
 ) -> Result<(), ()> {
     let _guard = FILE_WRITE_LOCK
         .lock()
-        .map_err(|_| report_log_io_error("acquire-file-write-lock", path, "lock poisoned"))?;
-    rotate_if_oversized(file_system_host, path, rotate_bytes)?;
-    file_system_host
-        .writeFile(path, line, true)
-        .map_err(|error| report_log_io_error("append", path, &error.message))
+        .map_err(|_| report_log_io_error("acquire-file-write-lock", &file.path, "lock poisoned"))?;
+    let mut writer = file.writer.lock().expect("AppLogger append mutex poisoned");
+    if writer.is_none() {
+        *writer = Some(
+            file.host
+                .openAppendFile(&file.path)
+                .map_err(|error| report_log_io_error("open-append", &file.path, &error.message))?,
+        );
+    }
+    if writer.as_ref().unwrap().byteLength() > rotate_bytes as u64 {
+        writer.take();
+        rotate_log_file(&file.host, &file.path)?;
+        *writer = Some(
+            file.host
+                .openAppendFile(&file.path)
+                .map_err(|error| report_log_io_error("open-append", &file.path, &error.message))?,
+        );
+    }
+    if let Err(error) = writer.as_mut().unwrap().append(line.as_bytes()) {
+        // A partial write invalidates the cached length; do not retry the record.
+        writer.take();
+        return Err(report_log_io_error("append", &file.path, &error.message));
+    }
+    Ok(())
 }
 
 /// Size cap before a log file rotates (bytes).
@@ -594,17 +631,7 @@ const LOG_ROTATE_BYTES: i64 = LOG_FILE_MAX_BYTES;
 
 /// Rotates one log file once it exceeds the size cap, keeping a single `.1` archive.
 /// Returns an error before appending when any rotation operation fails.
-fn rotate_if_oversized(
-    file_system_host: &Arc<dyn FileSystemHost>,
-    path: &str,
-    rotate_bytes: i64,
-) -> Result<(), ()> {
-    let metadata = file_system_host
-        .fileInfo(path)
-        .map_err(|error| report_log_io_error("stat", path, &error.message))?;
-    if metadata.size <= rotate_bytes {
-        return Ok(());
-    }
+fn rotate_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Result<(), ()> {
     let archive = format!("{path}.1");
     // Only touch a stale archive that actually exists — a missing archive is
     // the normal first rotation, not a failure worth reporting.
@@ -729,17 +756,13 @@ fn ensure_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Re
 /// Returns the host and path for one configured runtime or ToolPkg log file.
 fn log_file_access(package_log: bool) -> Result<(Arc<dyn FileSystemHost>, String), String> {
     let guard = state().lock().expect("AppLogger mutex poisoned");
-    let file_system_host = guard
-        .file_system_host
-        .clone()
-        .ok_or_else(|| "AppLogger file-system host is not bound".to_string())?;
-    let path = if package_log {
+    let file = if package_log {
         guard.package_log_file.clone()
     } else {
         guard.log_file.clone()
     }
     .ok_or_else(|| "AppLogger log file is not bound".to_string())?;
-    Ok((file_system_host, path))
+    Ok((file.host.clone(), file.path.clone()))
 }
 
 /// Formats one runtime log record with its timestamp and error details.
@@ -815,7 +838,13 @@ fn format_package_log_line(entry: &LogEntry) -> String {
 #[cfg(target_os = "espidf")]
 fn format_timestamp_ms(timestamp_ms: u128) -> String {
     let day = timestamp_ms % 86_400_000;
-    format!("{:02}:{:02}:{:02}.{:03}", day / 3_600_000, day / 60_000 % 60, day / 1_000 % 60, day % 1_000)
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        day / 3_600_000,
+        day / 60_000 % 60,
+        day / 1_000 % 60,
+        day % 1_000
+    )
 }
 
 /// Formats one epoch-millis timestamp for human-readable local diagnostics.

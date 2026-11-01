@@ -1595,6 +1595,11 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.updateChatPinned(chatId, pinned);
     }
 
+    /// Promotes a child conversation to a root without changing its contents or bindings.
+    pub fn promoteChatToRoot(&mut self, chatId: String) -> Result<(), String> {
+        self.chatHistoryDelegate.promoteChatToRoot(chatId)
+    }
+
     /// Reorders only real chat identifiers; all plugin grouping stays outside Core.
     pub fn updateChatOrder(
         &mut self,

@@ -27,6 +27,7 @@ impl OperitApplication {
         let skipped = self.runtimeSyncOperationStore()?.skippedOperations().map_err(|e|e.to_string())?;
         let operations = operations.iter().chain(&skipped).collect::<Vec<_>>();
         let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter().copied(), |_,_|true)?;
+        registry.domains.extend([CHAT_SYNC_DOMAIN, PLUGIN_STORAGE_SYNC_DOMAIN, operit_store::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN, BINDING_SYNC_DOMAIN, NETWORK_CONTROL_SYNC_DOMAIN].map(str::to_owned));
         registry.locate = Box::new(|op| match op.domain.as_str() {
             "preferences" => operit_store::PreferencesDataStore::PreferencesSyncedEntry::operationPath(op).map_err(|e|e.to_string()),
             CHAT_SYNC_DOMAIN => Ok(operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into()),
@@ -97,7 +98,10 @@ impl OperitApplication {
             if registry.owners.contains_key(&path) { continue; }
             registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
                 apply: Box::new(move |operations,_| (|| {
-                    for operation in operations {
+                    // Every operation in a file owner replaces the whole file; materialize only the winner.
+                    let winner = operations.iter().max_by_key(|op| operit_store::Transaction::Revision::fromOperation(op));
+                    let complete = operations.iter().all(operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState);
+                    for operation in operations.iter().filter(|op| !complete || Some(*op) == winner) {
                         match operation.domain.as_str() {
                             BINDING_SYNC_DOMAIN => self.runtimeBindingStore()?.applySyncedOperation(operation)?,
                             NETWORK_CONTROL_SYNC_DOMAIN => self.runtimeNetworkControlStore()?.applySyncedOperation(operation)?,

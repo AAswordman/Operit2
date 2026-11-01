@@ -306,6 +306,48 @@ test('obsolete sidebar browser files, registration and archive builder are remov
 });
 
 
+for (const entry of ['longPress', 'popup']) {
+  test(entry + ' promotes only child conversations and refreshes their parent projection', async () => {
+    let chats = [summary('c1'), summary('c2', { parentChatId: 'c1' }), summary('c3', { parentChatId: 'c2' })];
+    const mutations = [];
+    let screen;
+    screen = mount(context(chats), catalog(chats), {
+      catalog: async request => catalog(request.chatSidebar.chats),
+      chat: { promoteToRoot: async id => {
+        mutations.push(id);
+        chats = chats.map(chat => chat.id === id ? { ...chat, parentChatId: null } : chat);
+        await screen.update(context(chats));
+        return '';
+      } },
+    });
+    let { tree } = await screen.load();
+    ({ tree } = await screen.click(tree, 'sidebar-children-c1'));
+    const rootMenu = keyedNode(tree, 'sidebar-chat-menu-c1');
+    assert.equal(rootMenu.props.items.some(item => item.label === '提升为主对话'), false);
+    let result;
+    if (entry === 'popup') {
+      const menu = keyedNode(tree, 'sidebar-chat-menu-c2');
+      const index = menu.props.items.findIndex(item => item.label === '提升为主对话');
+      assert.ok(index >= 0);
+      result = await screen.dispatch(menu.props.onSelected, index);
+    } else {
+      const combined = keyedNode(tree, 'sidebar-chat-hit-c2').props.modifier.__modifierOps
+        .find(op => op.name === 'combinedClickable').args[0];
+      const opened = await screen.dispatch(combined.onLongClick);
+      const tile = composeNodes(opened.tree, node => node.type === 'Surface' && node.props.onClick
+        && composeNodes(node, child => child.type === 'Text' && child.props.text === '提升为主对话').length > 0)[0];
+      assert.ok(tile);
+      result = await screen.dispatch(tile.props.onClick);
+    }
+    assert.deepEqual(mutations, ['c2']);
+    assert.equal(result.state['native-sidebar-state'].error, '');
+    assert.equal(result.state['native-sidebar-state'].dialog, null);
+    assert.equal(chats[1].parentChatId, null);
+    assert.equal(chats[2].parentChatId, 'c2');
+    assert.equal(keyedNode(result.tree, 'sidebar-chat-menu-c2').props.items.some(item => item.label === '提升为主对话'), false);
+  });
+}
+
 test('generic long press and swipe callbacks render plugin-owned actions and confirmation dialogs', async () => {
   const chats = [summary('c1'), summary('c2'), summary('c3')], screen = mount(context(chats), catalog(chats));
   const {tree} = await screen.load();

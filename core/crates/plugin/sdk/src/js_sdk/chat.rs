@@ -389,6 +389,8 @@ pub trait ChatHost: Send + Sync {
     fn updatePinned(&self, chatId: String, pinned: bool) -> JsFuture<String>;
     /// Updates only the deletion lock of an existing canonical chat.
     fn updateLocked(&self, chatId: String, locked: bool) -> JsFuture<String>;
+    /// Clears the parent relationship while preserving the conversation and its children.
+    fn promoteToRoot(&self, chatId: String) -> JsFuture<String>;
     /// Persists the supplied unique existing chat identifiers in display order.
     fn reorder(&self, chatIds: Vec<String>) -> JsFuture<String>;
     ///

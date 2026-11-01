@@ -23,7 +23,48 @@ impl WebFileSystemHost {
     }
 }
 
+/// Tracks a worker-owned file whose storage adapter maintains the append position.
+struct WebFileAppendHandle {
+    path: String,
+    length: u64,
+}
+
+impl operit_host_api::FileAppendHandle for WebFileAppendHandle {
+    /// Returns the initial length plus completed appends.
+    fn byteLength(&self) -> u64 {
+        self.length
+    }
+
+    /// Appends bytes without reading and rewriting the previous file contents.
+    fn append(&mut self, content: &[u8]) -> HostResult<()> {
+        call_file_system(
+            "appendFileBytes",
+            &[JsValue::from_str(&self.path), bytes_to_js(content)],
+        )?;
+        self.length += content.len() as u64;
+        Ok(())
+    }
+}
+
 impl FileSystemHost for WebFileSystemHost {
+    /// Resolves the starting length once before repeated worker-owned appends.
+    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn operit_host_api::FileAppendHandle>> {
+        self.validatePath(path, "path")?;
+        let metadata = self.fileExists(path)?;
+        if metadata.isDirectory {
+            return Err(operit_host_api::HostError::new("Append path is a directory"));
+        }
+        if !metadata.exists {
+            self.writeFileBytes(path, &[])?;
+        }
+        let length = u64::try_from(metadata.size)
+            .map_err(|_| operit_host_api::HostError::new("Append file length is negative"))?;
+        Ok(Box::new(WebFileAppendHandle {
+            path: path.into(),
+            length,
+        }))
+    }
+
     fn envLabel(&self) -> &str {
         "web"
     }

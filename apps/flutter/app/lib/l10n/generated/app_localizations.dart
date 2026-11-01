@@ -98,6 +98,12 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @chatPromoteToRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Promote to main conversation'**
+  String get chatPromoteToRoot;
+
   /// No description provided for @workspaceUnsavedChangesTitle.
   ///
   /// In en, this message translates to:

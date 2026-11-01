@@ -97,6 +97,7 @@ pub struct Source<'a> {
 
 pub struct Registry<'a> {
     pub journal: SyncOperationStore,
+    pub domains: BTreeSet<String>,
     pub owners: BTreeMap<String, Participant<'a>>,
     pub sources: Vec<Source<'a>>,
     pub routes: BTreeMap<String, String>,
@@ -138,9 +139,9 @@ impl<'a> Registry<'a> {
     }
 
     fn pending_groups(&self, report: &mut ApplyReport) -> Result<BTreeMap<String, Vec<SyncOperation>>, String> {
-        let pending = self.journal.pendingOperations().map_err(|e|e.to_string())?;
+        let pending = self.journal.applicationOperations().map_err(|e|e.to_string())?;
         let mut groups = BTreeMap::<String, Vec<SyncOperation>>::new();
-        for operation in super::ordered(pending, |op| &op.opId, Revision::fromOperation)? {
+        for operation in super::ordered(pending.into_iter().filter(|op|self.domains.contains(&op.domain)), |op| &op.opId, Revision::fromOperation)? {
             match self.target(&operation) {
                 Ok(path) => groups.entry(path).or_default().push(operation),
                 Err(error) => self.failure(&operation.opId, std::slice::from_ref(&operation), ApplyError::Capability(error), report)?,
@@ -160,7 +161,7 @@ impl<'a> Registry<'a> {
 
     pub fn skipped(&self) -> Result<BTreeMap<String, Vec<SyncOperation>>, String> {
         let mut groups = BTreeMap::<String, Vec<SyncOperation>>::new();
-        for operation in self.journal.skippedOperations().map_err(|e|e.to_string())? {
+        for operation in self.journal.skippedOperations().map_err(|e|e.to_string())?.into_iter().filter(|op|self.domains.contains(&op.domain)) {
             // Unlocatable originals remain in the journal; only actual owners can be corrected.
             if let Ok(path) = self.target(&operation) { groups.entry(path).or_default().push(operation); }
         }
@@ -225,7 +226,8 @@ impl<'a> Registry<'a> {
                 continue;
             }
             if operations.is_empty() { continue; }
-            if skipped.contains_key(&path) && !operations.iter().any(|operation|
+            if skipped.contains_key(&path) && !operations.iter().all(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState)
+                && !operations.iter().any(|operation|
                 operation.operation == "initialize" && operation.entityType == "initialization") {
                 self.journal.skipOperations(&operations).map_err(|e|e.to_string())?;
                 report.skipped += operations.len();
@@ -274,7 +276,7 @@ impl<'a> Registry<'a> {
                 }
             }
         }
-        report.pending = self.journal.pendingOperationIds().map_err(|e| e.to_string())?;
+        report.pending = self.journal.applicationOperations().map_err(|e|e.to_string())?.into_iter().filter(|op|self.domains.contains(&op.domain)).map(|op|op.opId).collect();
         Ok(report)
     }
 

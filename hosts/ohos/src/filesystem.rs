@@ -63,6 +63,10 @@ impl Default for OhosFileSystemHost {
 }
 
 impl FileSystemHost for OhosFileSystemHost {
+    /// Opens an app-owned log file through the native file host.
+    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn operit_host_api::FileAppendHandle>> {
+        self.inner.openAppendFile(path)
+    }
     /// Returns the OpenHarmony file-system environment label.
     fn envLabel(&self) -> &str {
         self.inner.envLabel()

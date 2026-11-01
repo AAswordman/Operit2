@@ -1847,6 +1847,14 @@ pub trait RuntimeStorageHost: Send + Sync {
     }
     /// Writes bytes to a virtual runtime storage path.
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    /// Reads a file modification time as Unix microseconds without reading its contents.
+    fn modifiedAt(&self, _path: &str) -> HostResult<i64> {
+        Err(HostError::new("Runtime storage host does not expose file modification times"))
+    }
+    /// Restores the source file modification time after copying its bytes.
+    fn setModifiedAt(&self, _path: &str, _modifiedAt: i64) -> HostResult<()> {
+        Err(HostError::new("Runtime storage host cannot restore file modification times"))
+    }
     /// Publishes a complete private catalog without exposing a partially written file.
     /// Persistent hosts must flush data before publishing; unsupported hosts fail explicitly.
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -2992,6 +3000,14 @@ pub trait SystemOperationHost: Send + Sync {
     ) -> HostResult<String>;
 }
 
+/// Owns a sequential append handle for a file managed exclusively by its caller.
+pub trait FileAppendHandle: Send {
+    /// Returns the initial length plus completed appends; discard the handle after an append error.
+    fn byteLength(&self) -> u64;
+    /// Submits all bytes to the file system before returning, without retaining a user-space buffer.
+    fn append(&mut self, content: &[u8]) -> HostResult<()>;
+}
+
 pub trait FileSystemHost: Send + Sync {
     fn envLabel(&self) -> &str;
     fn environmentDescriptor(&self) -> HostEnvironmentDescriptor;
@@ -3010,6 +3026,11 @@ pub trait FileSystemHost: Send + Sync {
     }
     fn writeFile(&self, path: &str, content: &str, append: bool) -> HostResult<()>;
     fn writeFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    /// Opens an existing file for repeated appends, creating it when absent.
+    /// Callers must drop the handle before truncating, moving or deleting the file.
+    fn openAppendFile(&self, _path: &str) -> HostResult<Box<dyn FileAppendHandle>> {
+        Err(HostError::new("File system host does not expose append handles"))
+    }
     /// Appends bytes to a binary file, creating it when missing.
     /// Streaming hosts must override this; unsupported hosts fail explicitly.
     fn appendFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {

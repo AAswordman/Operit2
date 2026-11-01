@@ -93,6 +93,7 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "Chat", method: "updateGroup", target: BuiltinToolName::UpdateChatGroup, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "updatePinned", target: BuiltinToolName::UpdateChatPinned, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "updateLocked", target: BuiltinToolName::UpdateChatLocked, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "Chat", method: "promoteToRoot", target: BuiltinToolName::PromoteChatToRoot, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "reorder", target: BuiltinToolName::ReorderChats, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "apply", target: BuiltinToolName::ApplyFile, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Files", method: "copy", target: BuiltinToolName::CopyFile, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },

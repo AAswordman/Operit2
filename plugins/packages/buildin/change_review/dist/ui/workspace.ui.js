@@ -78,7 +78,7 @@ function envelopeDiffs(text) {
 function reviewForMessage(message) {
   const files = /* @__PURE__ */ new Map();
   for (const part of message.parts) {
-    if (part.kind !== "tool_result") continue;
+    if (part.kind !== "tool_result" || part.attributes.status === "error") continue;
     const display = metadata(part.attributes.display);
     if (display === null || display.resultRenderer !== "fileDiff" || display.label === null || typeof display.label !== "object" || Array.isArray(display.label) || Object.values(display.label).some((value) => typeof value !== "string")) continue;
     let changes;

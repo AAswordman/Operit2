@@ -1905,9 +1905,22 @@ impl SyncOperationStore {
         self.pendingOperationIds()?.iter().map(|id| self.original(id)).collect()
     }
 
+    /// Complete file replacements can retry directly; structured deltas still require correction.
+    pub fn applicationOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        let mut operations = self.pendingOperations()?;
+        operations.extend(self.fileRetryOperations()?);
+        Ok(operations)
+    }
+
+    /// Queries only failed ordinary files, without decoding unrelated skipped owner payloads.
+    fn fileRetryOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.withJournal(|journal|journal.skipped_ids(Some(crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN)))?
+            .iter().map(|id|self.original(id)).filter(|op|op.as_ref().map_or(true, crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState)).collect()
+    }
+
     /// Skipped originals still relay normally, but no longer block file correction as pending work.
     pub fn skippedOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        self.withJournal(|journal| journal.skipped_ids())?.iter().map(|id| self.original(id)).collect()
+        self.withJournal(|journal| journal.skipped_ids(None))?.iter().map(|id| self.original(id)).collect()
     }
 
     pub(crate) fn skipOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
@@ -1919,6 +1932,9 @@ impl SyncOperationStore {
     pub fn visitPendingOperations(&self, domains: &[&str], mut visit: impl FnMut(&SyncOperation)) -> Result<(), SyncOperationStoreError> {
         for header in self.withJournal(|journal| journal.headers(Some(true)))? {
             if domains.is_empty() || domains.contains(&header.domain.as_str()) { visit(&self.original(&header.op_id)?); }
+        }
+        if domains.is_empty() || domains.contains(&crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN) {
+            for operation in self.fileRetryOperations()? { visit(&operation); }
         }
         Ok(())
     }

@@ -83,6 +83,16 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
     }
 
     /// The worker flushes the new OPFS record before publishing its index entry.
+    /// Reads worker-owned logical file metadata without copying OPFS bytes.
+    fn modifiedAt(&self, path: &str) -> HostResult<i64> {
+        js_i64(call_storage("modifiedAt", &[JsValue::from_str(path)])?, "runtimeStorage.modifiedAt")
+    }
+    /// Restores the source timestamp in the worker's persistent file index.
+    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> {
+        call_storage("setModifiedAt", &[JsValue::from_str(path), JsValue::from_f64(modifiedAt as f64)])?;
+        Ok(())
+    }
+
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.writeBytes(path, content)
     }

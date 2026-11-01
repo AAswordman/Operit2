@@ -1,5 +1,6 @@
 {
   "@@locale": "zh",
+  "chatPromoteToRoot": "提升为主对话",
   "workspaceUnsavedChangesTitle": "有未保存的修改",
   "workspaceUnsavedChangesMessage": "关闭此文件前，要保存你的修改吗？",
   "workspaceDiscardChanges": "放弃修改",

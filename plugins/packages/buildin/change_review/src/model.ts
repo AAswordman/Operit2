@@ -61,7 +61,7 @@ function envelopeDiffs(text: string): Array<{ path: string; diffContent: string 
 export function reviewForMessage(message: ReviewMessage): ReviewFile[] {
   const files = new Map<string, string>();
   for (const part of message.parts) {
-    if (part.kind !== "tool_result") continue;
+    if (part.kind !== "tool_result" || part.attributes.status === "error") continue;
     const display = metadata(part.attributes.display);
     if (display === null || display.resultRenderer !== "fileDiff" ||
         display.label === null || typeof display.label !== "object" ||

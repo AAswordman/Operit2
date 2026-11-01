@@ -17,6 +17,7 @@ enum ConversationAction {
   moveToWorkspace,
   togglePinned,
   toggleLocked,
+  promoteToRoot,
   unbindWorkspace,
   delete,
 }
@@ -249,6 +250,14 @@ class ConversationActionDialog extends StatelessWidget {
                 onTap: () => Navigator.of(
                   context,
                 ).pop(ConversationAction.unbindWorkspace),
+              ),
+            if (history.parentChatId != null)
+              _ConversationActionTile(
+                icon: Icons.vertical_align_top,
+                label: l10n.chatPromoteToRoot,
+                onTap: () => Navigator.of(
+                  context,
+                ).pop(ConversationAction.promoteToRoot),
               ),
             _ConversationActionTile(
               icon: Icons.delete_outline,

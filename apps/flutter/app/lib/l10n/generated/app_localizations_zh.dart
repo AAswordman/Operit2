@@ -9,6 +9,9 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get chatPromoteToRoot => '提升为主对话';
+
+  @override
   String get workspaceUnsavedChangesTitle => '有未保存的修改';
 
   @override

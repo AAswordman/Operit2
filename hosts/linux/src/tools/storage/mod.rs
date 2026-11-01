@@ -199,6 +199,11 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
     }
 
     /// Flushes and publishes a private catalog through the shared atomic writer.
+    /// Reads the source file modification time through the shared storage host.
+    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.storage.modifiedAt(path) }
+    /// Preserves source metadata through the shared storage host.
+    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> { self.storage.setModifiedAt(path, modifiedAt) }
+
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.storage.writeBytesAtomically(path, content)
     }

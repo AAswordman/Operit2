@@ -123,8 +123,8 @@ void Apply(WidgetWindow& owner, const Map& args) {
     const auto entry = args.find(Value(key));
     if (entry == args.end()) return fallback;
     double value;
-    if (auto n = std::get_if<double>(&entry->second)) value = *n;
-    else if (auto n = std::get_if<int32_t>(&entry->second)) value = *n;
+    if (const auto double_value = std::get_if<double>(&entry->second)) value = *double_value;
+    else if (const auto integer_value = std::get_if<int32_t>(&entry->second)) value = *integer_value;
     else throw std::invalid_argument("Coordinate must be numeric");
     if (!std::isfinite(value) || std::abs(value) > 1000000) throw std::invalid_argument("Invalid coordinate");
     return static_cast<int>(std::lround(value * GetDpiForWindow(owner.window) / 96.0));
