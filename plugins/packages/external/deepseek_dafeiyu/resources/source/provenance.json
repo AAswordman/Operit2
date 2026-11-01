@@ -1,0 +1,36 @@
+{
+  "repository": "https://github.com/PC2005-cloud/dsh-pet",
+  "revision": "38ae8465cd69ba15e8c8a29e7208997a0baa3451",
+  "fps": 24,
+  "canvas": [
+    272,
+    352
+  ],
+  "actions": {
+    "idle": {
+      "path": "dsh-pet/assets/webm/待机呼吸休闲.webm",
+      "sha256": "deb965d05a85dacf5ff4a20faa757846f0d11679598c3ec578a5571487660395",
+      "loop": true
+    },
+    "happy": {
+      "path": "dsh-pet/assets/webm/点击回应-元气挥手.webm",
+      "sha256": "48cd729ccdcf746369942ea954d242e9afdd5643e1dac3827fa5e67450eb8776",
+      "loop": false
+    },
+    "eat": {
+      "path": "dsh-pet/assets/webm/吃白饭.webm",
+      "sha256": "b620413d6fa303a0ed9168dc71453c3bddc10141a0b7edeff87dc2e6e054d502",
+      "loop": false
+    },
+    "walk": {
+      "path": "dsh-pet/assets/webm/原地漂浮踏步.webm",
+      "sha256": "7dee1c14672f1f99bebe5e6f1a52d6664b851ed95f9958ac6c12b753a5e5cc81",
+      "loop": true
+    },
+    "talk": {
+      "path": "dsh-pet/assets/webm/碎碎念-对屏碎碎念.webm",
+      "sha256": "fda85ca286e173b7cf868c91829c3445e55c395e0c788b6be310a855b9b37973",
+      "loop": false
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.deepseek_dafeiyu",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": {
@@ -9,8 +9,8 @@
     "en": "DeepSeek Dafeiyu Pet"
   },
   "description": {
-    "zh": "DeepSeek 社区二创大肥鱼：透明悬浮窗、呼吸与互动动画、拖动、输入穿透和独立设置页。",
-    "en": "Unofficial DeepSeek Dafeiyu with floating UI, breathing and interaction animations, dragging and settings."
+    "zh": "DeepSeek 社区二创大肥鱼：透明悬浮窗、真实逐帧动作（待机、挥手、吃饭、踏步、碎碎念）、拖动和实时设置。素材禁止商用。",
+    "en": "Unofficial Dafeiyu pet with transparent character animations, waving, eating, stepping, talking gestures and live settings. Noncommercial assets."
   },
   "enabled_by_default": false,
   "subpackages": [],
@@ -33,6 +33,11 @@
     {
       "key": "dafeiyu_walk",
       "path": "resources/walk.webp",
+      "mime": "image/webp"
+    },
+    {
+      "key": "dafeiyu_talk",
+      "path": "resources/talk.webp",
       "mime": "image/webp"
     },
     {

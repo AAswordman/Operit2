@@ -318,6 +318,72 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('animationKey creates a fresh stream only on explicit replay', (
+    tester,
+  ) async {
+    var reads = 0;
+    final host = ComposeDslWebViewHostContext(
+      packageName: 'test.animation',
+      routeInstanceId: 'route',
+      executionContextKey: 'session',
+      dispatchAction: (_, [payload]) async => null,
+      runtimeOptionsProvider: () => {},
+      readFileBytes: (_) async {
+        reads++;
+        return png;
+      },
+    );
+    Widget render(String animationKey, double width) => MaterialApp(
+      home: buildComposeDslLayoutForTest(
+        node: {
+          'type': 'Image',
+          'props': {
+            'key': 'pet',
+            'path': '/app/data/pet/eat.webp',
+            'animationKey': animationKey,
+            'width': width,
+            'height': 44,
+          },
+          'children': [],
+          'slots': {},
+        },
+        hostContext: host,
+        splitMarkdownContent: (_) async => [],
+        onTextInput: (_, text) async => null,
+      ),
+    );
+    await tester.pumpWidget(render('eat:1', 44));
+    await tester.pumpAndSettle();
+    final first = tester.widget<Image>(find.byType(Image)).image;
+    final stream = first.resolve(ImageConfiguration.empty);
+    expect(reads, 1);
+    await tester.pumpWidget(render('eat:1', 88));
+    await tester.pumpAndSettle();
+    final resized = tester.widget<Image>(find.byType(Image)).image;
+    expect(resized, same(first));
+    expect(
+      resized.resolve(ImageConfiguration.empty).completer,
+      same(stream.completer),
+    );
+    expect(reads, 1, reason: 'Resizing preserves the active decoder');
+    await tester.pumpWidget(render('eat:2', 88));
+    await tester.pumpAndSettle();
+    final replay = tester.widget<Image>(find.byType(Image)).image;
+    expect(replay, isNot(equals(first)));
+    expect(
+      replay.resolve(ImageConfiguration.empty).completer,
+      isNot(same(stream.completer)),
+    );
+    expect(
+      reads,
+      2,
+      reason: 'Replay loads a fresh codec for the same resource path',
+    );
+    await tester.pumpWidget(render('eat:2', 128));
+    await tester.pumpAndSettle();
+    expect(reads, 2);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('same-path images refresh when the owning session changes', (
     tester,
   ) async {

@@ -14,6 +14,10 @@ export interface Settings {
 }
 export const DEFAULTS: Settings = { width: 208, x: 100, y: 100, animated: true, walk: false, clickThrough: false };
 type Sprites = Record<string, string>;
+type Action = "idle" | "happy" | "eat" | "walk" | "talk";
+// All five source clips contain 241 frames at 24 fps. Keep this in sync with
+// resources/animation-info.json when replacing clips.
+export const ACTION_DURATION_MS = 10042;
 let configuration: Promise<{ settings: Settings }> | undefined;
 let resources: Promise<Sprites> | undefined;
 
@@ -34,7 +38,7 @@ function config(): Promise<{ settings: Settings }> {
 }
 async function sprites(): Promise<Sprites> {
   if (!resources) {
-    resources = Promise.all(["idle", "happy", "eat", "walk", "still"].map(async key =>
+    resources = Promise.all(["idle", "happy", "eat", "walk", "talk", "still"].map(async key =>
       [key, await ToolPkg.readResource(`dafeiyu_${key}`)] as const))
       .then(entries => Object.fromEntries(entries));
     resources.catch(() => { resources = undefined; });
@@ -75,18 +79,25 @@ export async function applyPetSettings(settings: Settings): Promise<ToolPkg.Floa
 export function pet(ctx: ComposeDslContext): ComposeNode {
   const [settings] = ctx.useState<Settings>("settings", DEFAULTS);
   const [images] = ctx.useState<Sprites>("sprites", {});
-  const [mood, setMood] = ctx.useState("mood", "idle");
-  const [bubble, setBubble] = ctx.useState("bubble", "拖动我，双击喂小鱼干");
-  ctx.useEffect("moodReset", () => {
-    const timer = setTimeout(() => { setMood("idle"); setBubble(""); }, mood === "eat" ? 2400 : 1600);
+  const [action, setAction] = ctx.useState<{ name: Action; sequence: number }>("action", { name: "idle", sequence: 0 });
+  const sequence = ctx.useRef("actionSequence", 0);
+  const [bubble, setBubble] = ctx.useState("bubble", "单击挥手，双击喂饭，长按碎碎念");
+  ctx.useEffect("actionReset", () => {
+    const timer = setTimeout(() => { setAction({ name: "idle", sequence: action.sequence }); setBubble(""); },
+      action.name === "idle" ? 3200 : ACTION_DURATION_MS);
     return () => clearTimeout(timer);
-  }, [mood, bubble]);
+  }, [action.name, action.sequence]);
+
+  function interact(name: Action, text: string): void {
+    setAction({ name, sequence: ++sequence.current });
+    setBubble(text);
+  }
 
   const gesture = ctx.Modifier
-    .tapGestures({ onTap: () => { setMood("happy"); setBubble("才不是大肥鱼，是大蓝鲸！"); },
-      onDoubleTap: () => { setMood("eat"); setBubble("小鱼干！再来一份！"); },
-      onLongPress: () => setBubble("在工具箱「大肥鱼桌宠」里调整设置") });
-  const animation = !settings.animated ? "still" : mood !== "idle" ? mood : settings.walk ? "walk" : "idle";
+    .tapGestures({ onTap: () => interact("happy", "你好呀！今天也要元气满满！"),
+      onDoubleTap: () => interact("eat", "米饭！再来一碗！"),
+      onLongPress: () => interact("talk", "才不是大肥鱼，是大蓝鲸！设置在工具箱里哦。") });
+  const animation = !settings.animated ? "still" : action.name !== "idle" ? action.name : settings.walk ? "walk" : "idle";
   return ctx.UI.Column({ fillMaxSize: true, spacing: 0 }, [
     ctx.UI.Box({ height: 44, fillMaxWidth: true, contentAlignment: "center" }, bubble ? [
       ctx.UI.Box({ padding: 7, backgroundColor: "#F0F5FF" }, [
@@ -94,13 +105,17 @@ export function pet(ctx: ComposeDslContext): ComposeNode {
       ]),
     ] : []),
     ctx.UI.Image({ key: "dafeiyu-sprite", uri: images[animation] ?? "", fillMaxWidth: true, weight: 1,
-      contentScale: "fit", contentDescription: "大肥鱼：拖动移动，单击跳跃，双击喂食", modifier: gesture }),
+      animationKey: `${animation}:${action.sequence}`,
+      contentScale: "fit", contentDescription: "大肥鱼：拖动移动，单击挥手，双击喂饭，长按碎碎念", modifier: gesture }),
   ]);
 }
 
 export function settingsPage(ctx: ComposeDslContext): ComposeNode {
   const [settings, setSettings] = ctx.useState<Settings>("settings", { ...DEFAULTS });
-  const [preview, setPreview] = ctx.useState("preview", "");
+  const [previewImages, setPreviewImages] = ctx.useState<Sprites>("previewImages", {});
+  const [previewAction, setPreviewAction] = ctx.useState<Action>("previewAction", "idle");
+  const previewSequence = ctx.useRef("previewSequence", 0);
+  const [previewVersion, setPreviewVersion] = ctx.useState("previewVersion", 0);
   const [status, setStatus] = ctx.useState("status", "正在读取设置…");
   const [busy, setBusy] = ctx.useState("busy", false);
   const [ready, setReady] = ctx.useState("ready", false);
@@ -130,6 +145,10 @@ export function settingsPage(ctx: ComposeDslContext): ComposeNode {
   }
   function changeSettings(next: Settings, debounce = false): void {
     const checked = validateSettings(next);
+    if (checked.walk !== changes.current.latest.walk || checked.animated !== changes.current.latest.animated) {
+      setPreviewAction(checked.walk ? "walk" : "idle");
+      setPreviewVersion(++previewSequence.current);
+    }
     changes.current.latest = checked;
     changes.current.dirty = true;
     setSettings(checked);
@@ -164,7 +183,8 @@ export function settingsPage(ctx: ComposeDslContext): ComposeNode {
         const saved = validateSettings((await config()).settings);
         changes.current.latest = saved;
         setSettings(saved);
-        setPreview((await sprites()).idle);
+        setPreviewImages(await sprites());
+        setPreviewAction(saved.walk ? "walk" : "idle");
         await describe(); setReady(true);
       } catch (error) { setStatus(String(error)); }
     },
@@ -172,7 +192,14 @@ export function settingsPage(ctx: ComposeDslContext): ComposeNode {
     UI.Text({ text: "大肥鱼桌宠", style: "headlineMedium" }),
     UI.Text({ text: "让这只吃白饭的小蓝鲸，住在你的桌面上。", style: "bodyLarge" }),
     UI.Card({ fillMaxWidth: true }, [UI.Column({ padding: 16, spacing: 8, horizontalAlignment: "center" }, [
-      ...(preview ? [UI.Image({ uri: preview, height: 190, contentScale: "fit", contentDescription: "大肥鱼呼吸动画预览" })] : []),
+      ...(previewImages.idle ? [UI.Image({ uri: previewImages[settings.animated ? previewAction : "still"],
+        animationKey: `preview:${previewAction}:${previewVersion}`, height: 190, contentScale: "fit",
+        contentDescription: "大肥鱼原生动作动画预览" })] : []),
+      UI.FlowRow({ spacing: 8 }, ([ ["idle", "待机"], ["happy", "挥手"], ["eat", "吃饭"],
+        ["walk", "踏步"], ["talk", "碎碎念"] ] as [Action, string][]).map(([name, label]) =>
+        UI.TextButton({ text: label, enabled: ready && settings.animated, onClick: () => {
+          setPreviewAction(name); setPreviewVersion(++previewSequence.current);
+        } }))),
       UI.Text({ text: scope, style: "labelLarge" }),
       UI.Text({ text: status, style: "bodyMedium" }),
     ])]),
@@ -191,10 +218,11 @@ export function settingsPage(ctx: ComposeDslContext): ComposeNode {
       UI.Text({ text: `大小 · ${settings.width} 逻辑像素` }),
       UI.Slider({ value: settings.width, min: 128, max: 320, divisions: 12, enabled: ready && !busy,
         onValueChange: value => changeSettings({ ...changes.current.latest, width: Math.round(value) }, true) }),
-      toggle("播放动画", "呼吸、摇摆、点击跳跃和喂食；关闭后显示静态形象。", "animated"),
-      toggle("行走展示", "播放侧面踏步动画，仍可自由拖动位置。", "walk"),
+      toggle("播放动画", "眨眼转头、挥手、端碗吃饭和碎碎念口型；关闭后显示静态形象。", "animated"),
+      toggle("行走展示", "待机时播放原地踏步动作，仍可自由拖动位置。", "walk"),
       toggle("鼠标 / 触摸穿透", "整窗输入透过大肥鱼。可从这个设置页直接关闭穿透。", "clickThrough"),
-      UI.Text({ text: "单击跳跃 · 双击喂食 · 按住拖动 · 长按查看提示", style: "bodySmall" }),
+      UI.Text({ text: "单击挥手 · 双击喂饭 · 按住拖动 · 长按碎碎念", style: "bodySmall" }),
+      UI.Text({ text: "碎碎念包含口型与表情动画，气泡为预设台词。", style: "bodySmall" }),
     ])]),
     UI.FlowRow({ spacing: 8 }, [
       UI.Button({ text: "隐藏", enabled: !busy, onClick: () => action(() => ToolPkg.ui.floatingWindows.hide(WINDOW), "已隐藏") }),
@@ -202,7 +230,7 @@ export function settingsPage(ctx: ComposeDslContext): ComposeNode {
       UI.Button({ text: "关闭", enabled: !busy, onClick: () => action(() => ToolPkg.ui.floatingWindows.close(WINDOW), "已关闭") }),
       UI.TextButton({ text: "恢复默认设置", enabled: !busy, onClick: () => changeSettings({ ...DEFAULTS }) }),
     ]),
-    UI.Text({ text: "DeepSeek 社区二创，非官方插件。三视图素材：1190fasheqi/dafeiyu-pet（MIT）。动画由本插件在原素材上制作。", style: "bodySmall" }),
+    UI.Text({ text: "DeepSeek 社区二创，非官方插件。动作素材：github.com/PC2005-cloud/dsh-pet，允许开源使用、禁止商用；形象遵循 CC BY-NC-SA 4.0。完整来源与授权见 THIRD_PARTY_NOTICES.md。", style: "bodySmall" }),
   ]);
 }
 

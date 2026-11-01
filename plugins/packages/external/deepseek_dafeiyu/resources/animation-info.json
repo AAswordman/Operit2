@@ -1,0 +1,46 @@
+{
+  "canvas": [
+    272,
+    352
+  ],
+  "fps": 24,
+  "alpha_floor": 4,
+  "actions": {
+    "idle": {
+      "frames": 229,
+      "duration_ms": 10042,
+      "loop": true,
+      "source_frames": 241
+    },
+    "happy": {
+      "frames": 231,
+      "duration_ms": 10042,
+      "loop": false,
+      "source_frames": 241
+    },
+    "eat": {
+      "frames": 234,
+      "duration_ms": 10042,
+      "loop": false,
+      "source_frames": 241
+    },
+    "walk": {
+      "frames": 235,
+      "duration_ms": 10042,
+      "loop": true,
+      "source_frames": 241
+    },
+    "talk": {
+      "frames": 225,
+      "duration_ms": 10042,
+      "loop": false,
+      "source_frames": 241
+    }
+  },
+  "source_crop": [
+    193,
+    36,
+    439,
+    354
+  ]
+}

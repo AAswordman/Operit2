@@ -2533,6 +2533,10 @@ export interface ComposeGeneratedImageProps extends ComposeCommonProps {
    */
   alpha?: number;
   /**
+   * Playback identity for an animated VFS resource; change it to restart decoding from the first frame. Keep it stable across unrelated renders.
+   */
+  animationKey?: string;
+  /**
    * Alignment used to position child content within the available bounds.
    */
   contentAlignment?: ComposeAlignment;

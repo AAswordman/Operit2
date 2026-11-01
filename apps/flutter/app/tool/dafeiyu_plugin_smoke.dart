@@ -152,7 +152,7 @@ Future<void> _checkPet() async {
       throw StateError('Pet interaction handler was not mounted');
     }
     gestures.first.onDoubleTap!();
-    await _until('feeding state from JavaScript', () => _hasText('小鱼干！再来一份！'));
+    await _until('feeding state from JavaScript', () => _hasText('米饭！再来一碗！'));
     await _screenshot('pet-feeding', capture: _petCapture);
     final sessionElement = _elements(
       _petCapture.currentContext! as Element,

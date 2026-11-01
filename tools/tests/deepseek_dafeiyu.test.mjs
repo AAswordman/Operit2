@@ -145,8 +145,83 @@ test('settings controls persist and update a live pet immediately, coalescing ed
     assert.equal(calls.at(-1).options.width, 256);
     assert.equal(store.settings.width, 256);
     assert.match(states.get('status'), /实时应用/);
+    assert.match([...nodes(plugin.settingsPage(ctx))].find(node => node.type === 'Image').props.uri, /dafeiyu_still$/);
+    [...nodes(plugin.settingsPage(ctx))].find(node => node.type === 'Switch').props.onCheckedChange(true);
+    await settle(); await settle();
+    tree = plugin.settingsPage(ctx);
+    [...nodes(tree)].find(node => node.type === 'TextButton' && node.props.text === '碎碎念').props.onClick();
+    tree = plugin.settingsPage(ctx);
+    const preview = [...nodes(tree)].find(node => node.type === 'Image');
+    assert.match(preview.props.uri, /dafeiyu_talk$/);
+    [...nodes(tree)].find(node => node.type === 'TextButton' && node.props.text === '碎碎念').props.onClick();
+    assert.notEqual([...nodes(plugin.settingsPage(ctx))].find(node => node.type === 'Image').props.animationKey, preview.props.animationKey);
   } finally {
     release();
+    Object.assign(globalThis, old);
+  }
+});
+
+test('interactions play the full real clip, replay from the beginning, and preserve playback during resizing', () => {
+  const old = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const states = new Map(), refs = new Map(), effects = new Map(), timers = new Map();
+  let timerId = 0;
+  globalThis.setTimeout = (callback, delay) => {
+    const id = ++timerId; timers.set(id, { callback, delay }); return id;
+  };
+  globalThis.clearTimeout = id => timers.delete(id);
+  const images = Object.fromEntries(['idle', 'happy', 'eat', 'walk', 'talk', 'still'].map(name => [name, `/pet/${name}`]));
+  states.set('settings', { ...plugin.DEFAULTS });
+  states.set('sprites', images);
+  const ctx = {
+    useState(key, initial) {
+      if (!states.has(key)) states.set(key, initial);
+      return [states.get(key), value => states.set(key, value)];
+    },
+    useRef(key, initial) {
+      if (!refs.has(key)) refs.set(key, { current: initial });
+      return refs.get(key);
+    },
+    useEffect(key, setup, deps) {
+      const previous = effects.get(key);
+      if (previous && JSON.stringify(previous.deps) === JSON.stringify(deps)) return;
+      previous?.cleanup();
+      effects.set(key, { deps, cleanup: setup() });
+    },
+    Modifier: { tapGestures: callbacks => callbacks },
+    UI: new Proxy({}, { get: (_, type) => (props, children = []) => ({ type, props, children }) }),
+  };
+  const image = tree => tree.children.find(node => node.type === 'Image');
+  const info = JSON.parse(readFileSync(new URL('../../plugins/packages/external/deepseek_dafeiyu/resources/animation-info.json', import.meta.url)));
+  try {
+    let tree = plugin.pet(ctx);
+    for (const [handler, action] of [['onTap', 'happy'], ['onDoubleTap', 'eat'], ['onLongPress', 'talk']]) {
+      image(tree).props.modifier[handler]();
+      tree = plugin.pet(ctx);
+      const first = image(tree).props;
+      assert.equal(first.uri, images[action]);
+      assert.equal(timers.size, 1);
+      assert.equal([...timers.values()][0].delay, info.actions[action].duration_ms);
+      const reset = [...timers.values()][0].callback;
+      states.set('settings', { ...plugin.DEFAULTS, width: 256 });
+      tree = plugin.pet(ctx);
+      assert.equal(image(tree).props.animationKey, first.animationKey);
+      assert.equal([...timers.values()][0].callback, reset);
+      image(tree).props.modifier[handler]();
+      tree = plugin.pet(ctx);
+      assert.notEqual(image(tree).props.animationKey, first.animationKey);
+      assert.equal(timers.size, 1, 'Replay must cancel the previous reset');
+    }
+    [...timers.values()][0].callback();
+    tree = plugin.pet(ctx);
+    assert.equal(image(tree).props.uri, images.idle);
+    states.set('settings', { ...plugin.DEFAULTS, walk: true });
+    tree = plugin.pet(ctx);
+    assert.equal(image(tree).props.uri, images.walk);
+    states.set('settings', { ...plugin.DEFAULTS, animated: false });
+    assert.equal(image(plugin.pet(ctx)).props.uri, images.still);
+    assert.equal(manifest.resources.find(resource => resource.key === 'dafeiyu_talk').path, 'resources/talk.webp');
+  } finally {
+    for (const effect of effects.values()) effect.cleanup();
     Object.assign(globalThis, old);
   }
 });
