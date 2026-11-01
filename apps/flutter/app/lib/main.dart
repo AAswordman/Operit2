@@ -57,7 +57,6 @@ void main(List<String> arguments) async {
         return;
       }
       await platformCoreProxy.dataRescue({'operation': 'runtimeLease'});
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       consumeGitHubOAuthWebCallbackAtStartup();
       final bindingElapsedMs = bindingStopwatch.elapsedMilliseconds;
       final loggerStopwatch = Stopwatch()..start();
@@ -138,6 +137,11 @@ void main(List<String> arguments) async {
               );
               switch (windowArguments) {
                 case MainWindowArguments():
+                  // Only the main window owns Android's Activity platform handler.
+                  // Overlay engines cannot complete SystemChrome requests.
+                  await SystemChrome.setEnabledSystemUIMode(
+                    SystemUiMode.edgeToEdge,
+                  );
                   await OperitKeepAlive.instance.initialize(
                     const KeepAliveOptions(
                       applicationName: 'Operit2',
