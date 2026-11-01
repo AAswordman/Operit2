@@ -551,9 +551,11 @@ fvm dart pub get --enforce-lockfile
 
 `lib/core/proxy/generated/*.g.dart` is generated at build time and gitignored.
 The app build scripts (`build_flutter_android.py`, `build_flutter_ios.py`,
-`build_flutter_macos.py`) regenerate it before `pub get`. When you invoke
-`flutter build`, `flutter analyze`, or `fvm dart pub get` outside those scripts
-on a clean checkout, generate it first, or Dart analysis fails with
+`build_flutter_macos.py`) regenerate it before `pub get`. Direct Windows and
+macOS Flutter builds also build the Rust bridge before Flutter assembles Dart,
+so `flutter run -d macos` and `flutter build macos` generate the proxy automatically.
+For `flutter analyze`, `fvm dart pub get`, or other platform builds outside those
+scripts on a clean checkout, generate it first to avoid
 `uri_has_not_been_generated` errors:
 
 ```powershell

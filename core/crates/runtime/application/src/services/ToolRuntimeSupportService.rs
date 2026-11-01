@@ -879,6 +879,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
             }
             // Only this native, successfully awaited dispatch may mark the submit as handled.
             request.turnOptions.chatInputSubmitRequestedHandled = true;
+            request.turnOptions.chatInputSubmittedHandled = true;
             let submission = {
                 let mut holder = self.chatRuntimeHolder.lock().await;
                 let core = holder.getCore(slot.clone());
@@ -1122,7 +1123,8 @@ async fn runAdmittedChatTurn(
         let options = ChatTurnOptions {
             continuation, nativeExecutionId: Some(admitted.handle.executionId.clone()), outputObserver: admitted.outputObserver.clone(), deferSequenceCompletion: true,
             deferSummary: matches!(admitted.work, AdmittedChatTurnWork::Continue { .. }),
-            chatInputSubmitRequestedHandled: true, notifyReply: Some(false), ..ChatTurnOptions::default()
+            chatInputSubmitRequestedHandled: true, chatInputSubmittedHandled: true,
+            notifyReply: Some(false), ..ChatTurnOptions::default()
         };
         let submission = core.startUserMessage(PromptFunctionType::CHAT, participantId, Some(chatId.clone()),
             message, None, None, None, attachments, reply, options, Some(admitted.lease.clone())).await?;

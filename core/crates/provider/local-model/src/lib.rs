@@ -8,6 +8,8 @@ pub mod LocalEngineDownload;
 pub mod LocalEngineManifest;
 #[path = "LocalInference.rs"]
 pub mod LocalInference;
+#[path = "LocalChatCatalog.rs"]
+mod LocalChatCatalog;
 #[path = "LocalModelCatalog.rs"]
 pub mod LocalModelCatalog;
 #[path = "LocalModelDownload.rs"]

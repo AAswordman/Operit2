@@ -11,6 +11,7 @@
 			isa = PBXAggregateTarget;
 			buildConfigurationList = 33CC111B2044C6BA0003C045 /* Build configuration list for PBXAggregateTarget "Flutter Assemble" */;
 			buildPhases = (
+				33A1B0102D00000200A1B010 /* Build Rust Bridge */,
 				33CC111E2044C6BF0003C045 /* ShellScript */,
 			);
 			dependencies = (
@@ -229,7 +230,6 @@
 			buildConfigurationList = 33CC10FB2044A3C60003C045 /* Build configuration list for PBXNativeTarget "Runner" */;
 			buildPhases = (
 				3277A2765B8E8B28AE625711 /* [CP] Check Pods Manifest.lock */,
-				33A1B0102D00000200A1B010 /* Build Rust Bridge */,
 				33CC10E92044A3C60003C045 /* Sources */,
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,

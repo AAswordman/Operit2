@@ -663,7 +663,7 @@ impl ChatServiceCore {
                 };
             }
         }
-        if turnOptions.continuation.is_none() && !turnOptions.chatInputSubmitRequestedHandled {
+        if turnOptions.continuation.is_none() && !turnOptions.chatInputSubmittedHandled {
             let mut context = self.buildChatInputHookContextAtEnd(&hookChatId, &messageText, &attachments,
                 replyToMessage.as_ref().map(|message| message.timestamp), CHAT_INPUT_EVENT_SUBMITTED);
             context.notifyReply = turnOptions.notifyReply != Some(false);

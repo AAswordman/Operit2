@@ -1,5 +1,6 @@
 #include "operit_local_llm_export.h"
 #include "llama.h"
+#include "SparkChatTemplate.hpp"
 #include "llm/llm.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -68,15 +69,29 @@ json llama_generate(const std::string &path, const json &messages, const json &b
     for (size_t i = 0; i < roles.size(); ++i) chat.push_back({roles[i].c_str(), contents[i].c_str()});
     const char *chat_template = llama_model_chat_template(model, nullptr);
     if (!chat_template) throw std::runtime_error("GGUF model has no chat template; import an instruct/chat model");
-    int length = llama_chat_apply_template(chat_template, chat.data(), chat.size(), true, nullptr, 0);
-    if (length < 0) throw std::runtime_error("llama.cpp does not support this model's chat template");
-    std::vector<char> prompt(length + 1);
-    length = llama_chat_apply_template(chat_template, chat.data(), chat.size(), true, prompt.data(), prompt.size());
-    if (length < 0 || static_cast<size_t>(length) >= prompt.size()) throw std::runtime_error("Chat template formatting failed");
-    int count = llama_tokenize(vocab, prompt.data(), length, nullptr, 0, true, true);
+    std::string prompt;
+    if (operit::isSparkChatTemplate(chat_template)) {
+        std::vector<operit::SparkChatMessage> sparkMessages;
+        for (size_t i = 0; i < roles.size(); ++i) {
+            const auto &message = messages[i];
+            const auto reasoning = message.find("reasoning_content");
+            sparkMessages.push_back({roles[i], contents[i],
+                reasoning != message.end() && reasoning->is_string() ? reasoning->get<std::string>() : ""});
+        }
+        prompt = operit::formatSparkChatPrompt(sparkMessages,
+            body.value("enable_thinking", false), body.value("reasoning_effort", std::string("high")));
+    } else {
+        int length = llama_chat_apply_template(chat_template, chat.data(), chat.size(), true, nullptr, 0);
+        if (length < 0) throw std::runtime_error("llama.cpp does not support this model's chat template");
+        std::vector<char> buffer(length + 1);
+        length = llama_chat_apply_template(chat_template, chat.data(), chat.size(), true, buffer.data(), buffer.size());
+        if (length < 0 || static_cast<size_t>(length) >= buffer.size()) throw std::runtime_error("Chat template formatting failed");
+        prompt.assign(buffer.data(), length);
+    }
+    int count = llama_tokenize(vocab, prompt.data(), prompt.size(), nullptr, 0, true, true);
     if (count >= 0) throw std::runtime_error("Chat prompt tokenization failed");
     std::vector<llama_token> tokens(-count);
-    count = llama_tokenize(vocab, prompt.data(), length, tokens.data(), tokens.size(), true, true);
+    count = llama_tokenize(vocab, prompt.data(), prompt.size(), tokens.data(), tokens.size(), true, true);
     if (count <= 0) throw std::runtime_error("Chat prompt is empty");
     const int maximum = body.value("max_tokens", 512);
     if (static_cast<uint32_t>(count) >= llama_n_ctx(context.get())) throw std::runtime_error("Prompt exceeds the configured local context size");

@@ -70,9 +70,9 @@ LocalModelFile { relativePath: "tokenizer.txt".to_string(), sha256: "77009625db0
 
     /// Returns all local model manifests bundled as built-in catalog entries.
     pub fn manifests() -> Vec<LocalModelManifest> {
-        vec![
-            Self::qwen3LlamaCpp(),
-            Self::qwen3Mnn(),
+        let mut manifests = vec![Self::qwen3LlamaCpp(), Self::qwen3Mnn()];
+        manifests.extend(crate::LocalChatCatalog::chatManifests());
+        manifests.extend([
             Self::sherpaOnnxStreamingStt(),
             Self::sherpaOnnxVitsTts(),
             Self::sherpaOnnxVitsZhLlTts(),
@@ -80,7 +80,8 @@ LocalModelFile { relativePath: "tokenizer.txt".to_string(), sha256: "77009625db0
             Self::sherpaOnnxKittenNanoTts(),
             Self::sherpaOnnxWebAsr(),
             Self::sherpaOnnxWebVitsTts(),
-        ]
+        ]);
+        manifests
     }
 
     /// Returns the cross-platform bilingual Sherpa ONNX streaming STT manifest.
@@ -824,15 +825,143 @@ mod tests {
         assert_eq!(manifest.sources[0].id, OLD_ASSISTANCE_STT_SOURCE_ID);
     }
 
-    /// Verifies the active catalog contains executable STT and TTS driver metadata.
+    /// Verifies every catalog entry declares its driver and engine dependency.
     #[test]
-    fn activeCatalogDeclaresSpeechDrivers() {
+    fn activeCatalogDeclaresDrivers() {
         let manifests = LocalModelCatalog::manifests();
-        assert_eq!(manifests.len(), 9);
+        assert_eq!(
+            manifests
+                .iter()
+                .filter(|m| m.kind != LocalModelKind::Chat)
+                .count(),
+            7
+        );
         assert!(manifests.iter().all(|manifest| manifest.driver.is_some()));
         assert!(manifests
             .iter()
             .all(|manifest| manifest.engineRequirement.is_some()));
+    }
+
+    /// Guards against duplicate ids and catalog entries that cannot be installed or resolved.
+    #[test]
+    fn chatCatalogHasCompletePinnedInstallMetadata() {
+        use crate::LocalEngineCatalog::LocalEngineCatalog;
+        use crate::LocalModelStorage::buildLocalModelStoragePath;
+        use std::collections::HashSet;
+
+        let engines = LocalEngineCatalog::manifests();
+        let mut ids = HashSet::new();
+        for manifest in LocalModelCatalog::manifests() {
+            assert!(
+                ids.insert(manifest.id.clone()),
+                "duplicate model: {}",
+                manifest.id
+            );
+            if manifest.kind != LocalModelKind::Chat {
+                continue;
+            }
+            assert!(!manifest.license.is_empty(), "{}", manifest.id);
+            assert!(!manifest.languages.is_empty(), "{}", manifest.id);
+            assert_eq!(manifest.version.len(), 40, "{}", manifest.id);
+            assert!(manifest.version.bytes().all(|b| b.is_ascii_hexdigit()));
+            assert!(buildLocalModelStoragePath(
+                &manifest.kind,
+                &manifest.engine,
+                &manifest.id,
+                &manifest.version
+            )
+            .is_ok());
+            let requirement = manifest.engineRequirement.as_ref().unwrap();
+            assert!(
+                engines
+                    .iter()
+                    .any(|engine| engine.id == requirement.engineId
+                        && engine.version == requirement.version),
+                "missing engine: {}",
+                manifest.id
+            );
+            assert!(!manifest.supportsPlatform(&LocalPlatform::Web));
+            for platform in [
+                LocalPlatform::Macos,
+                LocalPlatform::Linux,
+                LocalPlatform::Windows,
+                LocalPlatform::Android,
+                LocalPlatform::Ios,
+                LocalPlatform::Ohos,
+            ] {
+                assert_eq!(
+                    manifest.supportsPlatform(&platform),
+                    cfg!(feature = "native-llm")
+                );
+            }
+            let entryPath = match manifest.driver.as_ref().unwrap() {
+                LocalModelDriver::LlamaCpp { model } => model,
+                LocalModelDriver::Mnn { config } => config,
+                _ => panic!("unexpected chat driver: {}", manifest.id),
+            };
+            assert!(manifest
+                .files
+                .iter()
+                .any(|file| &file.relativePath == entryPath));
+            for file in &manifest.files {
+                assert!(file.byteSize > 0, "{}: {}", manifest.id, file.relativePath);
+                assert_eq!(
+                    file.sha256.len(),
+                    64,
+                    "{}: {}",
+                    manifest.id,
+                    file.relativePath
+                );
+                assert!(file.sha256.bytes().all(|b| b.is_ascii_hexdigit()));
+                let source = manifest.sourceForFile(file).unwrap();
+                assert_eq!(source.revision, manifest.version);
+                assert!(source
+                    .baseUrl
+                    .ends_with(&format!("/resolve/{}", manifest.version)));
+                let mirror = manifest
+                    .sourceForFileWithPreferredKind(file, Some(LocalModelSourceKind::HfMirror))
+                    .unwrap();
+                assert!(mirror
+                    .fileUrl(&file.relativePath)
+                    .starts_with("https://hf-mirror.com/"));
+            }
+        }
+    }
+
+    /// Keeps both existing selections and the requested families in the visible chat catalog.
+    #[test]
+    fn chatCatalogIncludesSmallModelsAndRequestedFamilies() {
+        let chats: Vec<_> = LocalModelCatalog::manifests()
+            .into_iter()
+            .filter(|manifest| manifest.kind == LocalModelKind::Chat)
+            .collect();
+        for id in [
+            "qwen3-0.6b-gguf",
+            "qwen3-0.6b-mnn",
+            "qwen3.8-27b-gguf",
+            "qwen3.5-0.8b-gguf",
+            "qwen2.5-coder-0.5b-instruct-gguf",
+            "spark-x2.6-1.7b-gguf",
+            "spark-x2.6-4b-gguf",
+            "smollm2-135m-instruct-gguf",
+            "minicpm4-0.5b-gguf",
+            "llama-3.2-1b-instruct-gguf",
+            "gemma-3-1b-it-gguf",
+            "lfm2.5-1.2b-instruct-gguf",
+            "phi-4-mini-instruct-gguf",
+        ] {
+            assert!(
+                chats.iter().any(|manifest| manifest.id == id),
+                "missing model: {id}"
+            );
+        }
+        assert!(
+            chats
+                .iter()
+                .filter(|manifest| manifest.declaredByteSize() < 1_000_000_000)
+                .count()
+                >= 8
+        );
     }
 
     /// Verifies browser bundles and native models cannot be selected on the wrong runtime.

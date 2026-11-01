@@ -40,6 +40,9 @@ pub struct ChatTurnOptions {
     pub deferSummary: bool,
     #[serde(default)]
     pub chatInputSubmitRequestedHandled: bool,
+    /// Records native dispatch of submitted independently from a caller's preflight check.
+    #[serde(skip)]
+    pub chatInputSubmittedHandled: bool,
 }
 
 impl Default for ChatTurnOptions {
@@ -56,6 +59,7 @@ impl Default for ChatTurnOptions {
             deferSequenceCompletion: false,
             deferSummary: false,
             chatInputSubmitRequestedHandled: false,
+            chatInputSubmittedHandled: false,
         }
     }
 }

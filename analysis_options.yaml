@@ -1,0 +1,9 @@
+# Native dependency downloads can contain Dart fixtures (for example MNN's
+# FlatBuffers tests). Exclude build trees at every depth in this monorepo.
+# Dart Code analysisExcludedFolders takes paths, so recursive globs belong here.
+analyzer:
+  exclude:
+    - 'target/**'
+    - '**/target/**'
+    - 'build/**'
+    - '**/build/**'

@@ -125,6 +125,7 @@ void main() {
           setAsCurrentChat: true,
           sourceChatId: null,
           parentChatId: null,
+          workspaceId: null,
           input: {
             'com.operit.character_cards': {
               'version': 1,

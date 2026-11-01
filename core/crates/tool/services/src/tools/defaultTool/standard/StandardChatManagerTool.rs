@@ -1319,6 +1319,7 @@ fn parseTurnOptions(tool: &AITool) -> Result<ChatTurnOptions, String> {
         disableWarning: match parseOptionalBoolean(tool, "disable_warning")? { Some(value) => value, None => false },
         continuation: parseContinuation(tool)?,
         chatInputSubmitRequestedHandled: false,
+        chatInputSubmittedHandled: false,
         nativeExecutionId: None,
         outputObserver: None,
         deferSequenceCompletion: false,

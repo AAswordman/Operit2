@@ -1,5 +1,21 @@
 {
   "dart.flutterSdkPath": "apps/flutter/app/.fvm/flutter_sdk",
-  "dart.analysisExcludedFolders": ["tools/release/work"],
+  "dart.analysisExcludedFolders": [
+    "tools/release/work",
+    "target",
+    "apps/flutter/app/build",
+    "apps/flutter/app/.fvm",
+    "apps/cli/target",
+    "core/target",
+    "hosts/apple/target",
+    "hosts/common/operit-host-native-scheduler/target",
+    "hosts/common/operit-host-native-terminal/target",
+    "apps/flutter/native/operit-flutter-bridge/target",
+    "apps/flutter/app/macos/build",
+    "apps/flutter/app/ios/build",
+    "apps/flutter/packages/operit_ui/build",
+    "apps/flutter/thirdparty/operit_keep_alive/build",
+    "apps/flutter/thirdparty/floating_windows/build"
+  ],
   "cmake.sourceDirectory": "${workspaceFolder}/edge/boards/esp32/ui_port"
 }

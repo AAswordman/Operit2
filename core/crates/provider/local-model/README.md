@@ -52,8 +52,40 @@ registry.
 
 ## Built-in Catalog
 
-The chat catalog includes pinned `qwen3-0.6b-gguf` (llama.cpp, Q8_0) and
-`qwen3-0.6b-mnn` (MNN) bundles, with per-file sizes and SHA-256 hashes.
+The chat catalog contains 27 pinned entries, including the existing
+`qwen3-0.6b-gguf` (llama.cpp, Q8_0) and `qwen3-0.6b-mnn` (MNN) bundles.
+The additional single-file llama.cpp entries use Q4_K_M (Qwen3.8 uses
+Unsloth's UD-Q4_K_M). Each entry pins a repository commit, published filename,
+byte size, SHA-256, and model-specific license. Hugging Face sources also work
+with the existing HF-Mirror selection. Quantizations come from author and
+community repositories; the manifest homepage identifies the publisher.
+
+| Family | Sizes |
+| --- | --- |
+| Qwen3.8 | 27B (16.46 GB weights; high-memory devices, text only) |
+| Qwen3.5 | 0.8B, 2B, 4B (text only) |
+| Qwen3 | 0.6B (GGUF/MNN), 1.7B, 4B, 8B |
+| Qwen2.5 Instruct / Qwen2.5 Coder Instruct | 0.5B, 1.5B, 3B each |
+| iFlytek Spark X2.6 | 1.7B, 4B |
+| SmolLM2 Instruct / SmolLM3 | 135M, 360M, 1.7B / 3B |
+| MiniCPM4 | 0.5B |
+| Llama 3.2 Instruct | 1B, 3B |
+| Gemma 3 IT | 1B |
+| LiquidAI LFM2.5 Instruct | 1.2B |
+| Microsoft Phi 4 Mini Instruct | 3.8B |
+
+`src/LocalChatCatalog.rs` holds the additional GGUF entries. Small models appear
+before the larger Qwen3.8 entry. File size describes the download, not total
+runtime memory. Models are downloaded on demand and do not enlarge the app.
+Spark X2.6 uses its published role tokens through a dedicated text prompt
+formatter, since the pinned llama.cpp template formatter does not recognize
+Spark's Jinja template. Its native regression checks can be run with:
+
+```sh
+c++ -std=c++17 -Wall -Wextra -Werror native/tests/spark_chat_template_test.cpp -o /tmp/operit-spark-chat-test
+/tmp/operit-spark-chat-test
+```
+
 Hub imports recognize complete GGUF files and MNN text model bundles. GGUF
 imports select one quantization, preferring Q4_K_M; split GGUF shards are not
 supported. MNN bundles must include their external embeddings unless the
