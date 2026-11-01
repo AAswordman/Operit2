@@ -2699,23 +2699,16 @@ impl PreferencesSyncedEntry {
         })
     }
 
-    /// Reads a validated dataset identity without requiring business payload decoding.
-    pub(crate) fn operationPath(
-        operation: &SyncOperation,
-    ) -> Result<&str, PreferencesDataStoreError> {
+    /// Recover routing from a known entry identity without modifying the immutable payload.
+    pub fn operationPath(operation: &SyncOperation) -> Result<String, PreferencesDataStoreError> {
         if operation.domain != "preferences" {
-            return Err(PreferencesDataStoreError::Message(
-                "Not a preference operation".into(),
-            ));
+            return Err(PreferencesDataStoreError::Message("Not a preference operation".into()));
         }
-        let path = operation
-            .payload
-            .get("storagePath")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                PreferencesDataStoreError::Message("Preference dataset path is missing".into())
-            })?;
-        validatePluginPreferenceSyncPath(path)?;
+        let path = operation.payload["storagePath"].as_str().filter(|path| !path.is_empty()).map(str::to_owned).or_else(|| {
+            let (path, key) = serde_json::from_str::<(String, String)>(&operation.entityId).ok()?;
+            (operation.payload["key"].as_str() == Some(key.as_str())).then_some(path)
+        }).ok_or_else(|| PreferencesDataStoreError::Message("Preference dataset path is missing".into()))?;
+        validatePluginPreferenceSyncPath(&path)?;
         Ok(path)
     }
 
@@ -2737,12 +2730,8 @@ impl PreferencesSyncedEntry {
     /// Rejects a different preference representation before any values or receipts are committed.
     pub(crate) fn requireSchemaVersion(&self, local: u32) -> Result<(), PreferencesDataStoreError> {
         let remote = self.schemaVersion();
-        if remote.unwrap_or(0) > local {
-            let remote = remote.map(|version| version.to_string()).unwrap_or_else(|| "missing".into());
-            return Err(PreferencesDataStoreError::Message(format!(
-                "preference schema version mismatch: path={} local={local} remote={remote}; synchronization skipped",
-                self.storagePath
-            )));
+        if let Some(actual) = remote.filter(|version| *version > local) {
+            return Err(PreferencesDataStoreError::SchemaVersionTooNew { actual, expected: local });
         }
         Ok(())
     }

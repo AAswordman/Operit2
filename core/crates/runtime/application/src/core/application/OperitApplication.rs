@@ -873,6 +873,20 @@ impl OperitApplication {
         Ok(result)
     }
 
+    /// Rebuilds local synchronization transactions from the current materialized business data.
+    pub fn syncResetTransactions(&self) -> Result<serde_json::Value, String> {
+        let journal = self.runtimeSyncOperationStore()?;
+        let _application = journal.lockApplication().map_err(|e|e.to_string())?;
+        let errors = journal.publishPreferenceOutboxes().map_err(|e|e.to_string())?;
+        if !errors.is_empty() { return Err(errors.join("\n")); }
+        let schema = PreferenceSpaceMerge::schema();
+        let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
+        let owners = self.transactionRegistry(&schema,&pending)?.reset_transactions()?;
+        let files = self.runtimeFileSyncStore()?.resetTransactions()?;
+        AppLogger::i("TransactionSync", &format!("sync_transactions.reset owners={owners} files={files}"));
+        Ok(serde_json::json!({"owners":owners,"files":files}))
+    }
+
     /// Compares the materialized datasets after their ordinary transaction exchange.
     pub fn syncConsistency(&self) -> Result<serde_json::Value, String> {
         self.consistencyManifest()
@@ -934,24 +948,34 @@ impl OperitApplication {
     pub fn syncApplyOperations(&self, operations: serde_json::Value) -> Result<serde_json::Value,String> {
         let operations: Vec<SyncOperation> = serde_json::from_value(operations).map_err(|e|e.to_string())?;
         let files = self.runtimeFileSyncStore()?;
-        let operations = operations.into_iter().map(|op|files.hydrateTransaction(op)).collect::<Result<Vec<_>,_>>()?;
+        let mut errors = Vec::new();
+        let mut deferred = BTreeMap::new();
+        let operations = operations.into_iter().filter_map(|op| {
+            let (id, owner) = (op.opId.clone(), op.entityId.clone());
+            match files.hydrateTransaction(op) {
+                Ok(original) => Some(original),
+                Err(error) => { errors.push(format!("transaction {id} owner={owner}: {error}")); deferred.insert(id, owner); None }
+            }
+        }).collect::<Vec<_>>();
         let journal = self.runtimeSyncOperationStore()?;
         let application = journal.lockApplication().map_err(|e|e.to_string())?;
         journal.receiveOperations(&operations).map_err(|e|e.to_string())?;
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
-        let mut errors = Vec::new();
         if let Err(error) = PreferenceSpaceMerge::prepareLayout(storage.clone()) { errors.push(format!("layout: {error}")); }
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let mut report = registry.apply_pending()?;
         errors.append(&mut report.errors);
+        report.pending.extend(deferred.keys().cloned());
+        let pending_owners = deferred.values().map(|path| operit_store::Transaction::Migrations::resolve_path(&registry.routes, path))
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
         drop(application);
         operit_store::SyncAppliedChanges::publish(&storage,&report.applied);
         let chats = report.applied.iter().filter_map(synchronizedChatId).collect();
         if let Err(error) = self.refreshSynchronizedChatFlows(&chats) { errors.push(format!("chat refresh: {error}")); }
         Ok(serde_json::json!({"received":operations.len(),"applied":report.applied.len(),"skipped":report.skipped,"pending":report.pending.len(),
-            "pendingOperationIds":report.pending,"errors":errors}))
+            "pendingOperationIds":report.pending,"pendingOwners":pending_owners,"errors":errors}))
     }
 
     /// Applies one route-transported Binding operation without moving persistent sync clocks.

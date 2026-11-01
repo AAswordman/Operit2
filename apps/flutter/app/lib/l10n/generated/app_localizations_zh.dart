@@ -1473,6 +1473,41 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get localModelsAddModel => '添加模型';
+
+  @override
+  String get localModelsFilterDownloads => '下载任务';
+
+  @override
+  String get localModelsAllTypes => '全部类型';
+
+  @override
+  String get localModelsNoMatches => '没有符合条件的模型';
+
+  @override
+  String get localModelsResetFilters => '重置筛选';
+
+  @override
+  String get localModelsDetails => '模型详情';
+
+  @override
+  String get localModelsMoreActions => '更多操作';
+
+  @override
+  String localModelsResultCount(int count, int total) {
+    return '显示 $count / $total 个模型';
+  }
+
+  @override
+  String get localModelsHubRepositoryTab => '仓库地址';
+
+  @override
+  String get localModelsDownloadFailed => '下载失败';
+
+  @override
+  String get localModelsDownloadPausedLabel => '已暂停';
+
+  @override
   String get localModelsCatalog => '模型目录';
 
   @override
@@ -2191,6 +2226,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsRuntimeRenameSpace => '重命名设备空间';
+
+  @override
+  String get settingsRuntimeResetTransactions => '重置事务';
+
+  @override
+  String get settingsRuntimeResetTransactionsDone => '已按本机当前内容重建同步事务';
 
   @override
   String get settingsRuntimeLeaveSpace => '退出设备空间';
@@ -4204,10 +4245,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get localModelsFilterAll => '全部模型';
 
   @override
-  String get localModelsFilterInstalled => '仅已安装';
+  String get localModelsFilterInstalled => '已安装';
 
   @override
-  String get localModelsSearchCatalog => '搜索名称或推理引擎';
+  String get localModelsSearchCatalog => '搜索模型名称、标签或推理引擎';
 
   @override
   String get deviceSpaceSyncPeer => '空间设备';

@@ -156,6 +156,8 @@ class DeviceSpacePanelBridge extends OperitRuntimeBridge {
             'members': <String>['self', 'tablet', 'relay'],
           },
         ]);
+      case 'syncResetTransactions':
+        return encodeCoreLink([0, <String, Object?>{'owners': 3, 'files': 1}]);
       case 'leaveDeviceSpace':
         left = true;
         failures.clear();
@@ -359,6 +361,44 @@ void main() {
     await tester.pump();
     await bridge.prompts.close();
   }
+
+  testWidgets(
+    'reset transactions appears above leave and rebuilds without leaving',
+    (tester) async {
+      final bridge = DeviceSpacePanelBridge(
+        topology: _topology(),
+        control: _control(),
+      );
+      await mountPanel(tester, bridge);
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(RuntimeSettingsPanel)),
+      )!;
+      await tester.tap(find.byIcon(Icons.more_horiz_rounded).first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final reset = find.text(l10n.settingsRuntimeResetTransactions);
+      expect(
+        tester.getTopLeft(reset).dy,
+        lessThan(
+          tester.getTopLeft(find.text(l10n.settingsRuntimeLeaveSpace)).dy,
+        ),
+      );
+      await tester.tap(reset);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        bridge.calls.where((call) => call == 'syncResetTransactions'),
+        hasLength(1),
+      );
+      expect(bridge.left, isFalse);
+      expect(
+        find.text(l10n.settingsRuntimeResetTransactionsDone),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 4));
+      await unmount(tester, bridge);
+    },
+  );
 
   for (final failed in ['deviceSpace', 'deviceSpaceTopology']) {
     testWidgets('$failed failure keeps local leave accessible', (tester) async {

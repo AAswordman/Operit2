@@ -269,8 +269,9 @@ impl Journal {
         })
     }
 
+    // Legacy target falls back to entityId; only explicit preference routes identify files here.
     pub(crate) fn owner_paths(&mut self) -> Result<Vec<String>, Error> {
-        self.0.query("SELECT path FROM transaction_owners UNION SELECT target FROM originals WHERE pending<>0 AND domain='preferences' ORDER BY path", vec![])?.iter()
+        self.0.query("SELECT path FROM transaction_owners UNION SELECT target FROM originals WHERE pending<>0 AND domain='preferences' AND json_type(header,'$.route.storage_path')='text' AND target<>'' ORDER BY path", vec![])?.iter()
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
     }
 

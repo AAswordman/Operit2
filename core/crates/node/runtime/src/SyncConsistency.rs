@@ -1,4 +1,4 @@
-//! Final materialized-content comparison after the ordinary history exchange is empty.
+//! Final content comparison at a stable exchange boundary, excluding incomplete transfers.
 use super::*;
 use operit_store::Transaction::{compare_manifests, digest, Manifest, Source};
 use operit_store::RuntimeFileSyncStore::FileCorrectionReference;
@@ -29,7 +29,7 @@ pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result
 }
 
 impl SpacePersistenceSyncService {
-    async fn consistencyReports(&self, target: &str) -> Result<(Report, Report), String> {
+    async fn consistencyReports(&self, target: &str, deferred: &BTreeSet<String>) -> Result<(Report, Report), String> {
         let (remote, local) = tokio::join!(
             biased;
             callRemote(
@@ -40,11 +40,13 @@ impl SpacePersistenceSyncService {
             ),
             self.callLocal("syncConsistency", Value::Null),
         );
-        Ok((local?, remote?))
+        let (mut local, mut remote): (Report, Report) = (local?, remote?);
+        for report in [&mut local, &mut remote] { report.pendingOwners.extend(deferred.iter().cloned()); }
+        Ok((local, remote))
     }
 
-    pub(super) async fn synchronizeConsistency(&self, target: &str, local_clock: &Value, remote_clock: &Value) -> Result<bool, String> {
-        let (local, remote) = self.consistencyReports(target).await?;
+    pub(super) async fn synchronizeConsistency(&self, target: &str, local_clock: &Value, remote_clock: &Value, deferred: &BTreeSet<String>) -> Result<bool, String> {
+        let (local, remote) = self.consistencyReports(target, deferred).await?;
         let local_receipt = serde_json::from_value(local_clock.clone()).map_err(|e|e.to_string())?;
         let remote_receipt = serde_json::from_value(remote_clock.clone()).map_err(|e|e.to_string())?;
         if !reportsAtExchange(&local, &remote, &local_receipt, &remote_receipt)? {
@@ -54,7 +56,7 @@ impl SpacePersistenceSyncService {
             return Ok(false);
         }
         let plans = correctionPlans(&local, &remote);
-        let mut changed = BTreeSet::new();
+        let mut changed = deferred.clone();
         if plans.is_empty() { return verifyReports(&local, &remote, &changed); }
         let startedAt = currentTimeMillis();
         let correctionCount = plans.len();
@@ -97,7 +99,7 @@ impl SpacePersistenceSyncService {
         }
         if !transfers.is_empty() {
             // One batch check; a changing file cannot prevent independent files from converging.
-            let (current_a, current_b) = self.consistencyReports(target).await?;
+            let (current_a, current_b) = self.consistencyReports(target, deferred).await?;
             for (a, b, choice, reference) in transfers {
                 let result = async {
                     if unchangedPair(&current_a, &current_b, a, b).is_err() { return Ok(false); }
@@ -134,7 +136,7 @@ impl SpacePersistenceSyncService {
                 }
             }
         }
-        let (latest_local, latest_remote) = self.consistencyReports(target).await?;
+        let (latest_local, latest_remote) = self.consistencyReports(target, deferred).await?;
         // Edits can also arrive after a successful CAS and before this final comparison.
         changed.extend(changedOwners(&local, &latest_local));
         changed.extend(changedOwners(&remote, &latest_remote));
@@ -292,6 +294,10 @@ mod tests {
         local.manifests[0] = expected.clone();
         remote.pendingOwners.insert("a".into());
         assert!(unchangedPair(&local, &remote, Some(&expected), Some(&expected)).is_err());
+        local.manifests[1].digest = "independent mismatch".into();
+        assert_eq!(correctionPlans(&local, &remote).len(), 1);
+        assert_eq!(super::verifyReports(&local, &remote, &BTreeSet::from(["a".into(), "b".into()])), Ok(false));
+        local.manifests[1].digest = remote.manifests[1].digest.clone();
         remote.pendingOwners.clear();
         remote.manifests.pop();
         assert!(unchangedPair(&local, &remote, Some(&expected), Some(&expected)).is_ok());

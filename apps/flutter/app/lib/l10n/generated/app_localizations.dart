@@ -2816,6 +2816,72 @@ abstract class AppLocalizations {
   /// **'Local model operation failed: {error}'**
   String localModelsOperationFailed(Object error);
 
+  /// No description provided for @localModelsAddModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Add model'**
+  String get localModelsAddModel;
+
+  /// No description provided for @localModelsFilterDownloads.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloads'**
+  String get localModelsFilterDownloads;
+
+  /// No description provided for @localModelsAllTypes.
+  ///
+  /// In en, this message translates to:
+  /// **'All types'**
+  String get localModelsAllTypes;
+
+  /// No description provided for @localModelsNoMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching models'**
+  String get localModelsNoMatches;
+
+  /// No description provided for @localModelsResetFilters.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset filters'**
+  String get localModelsResetFilters;
+
+  /// No description provided for @localModelsDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Model details'**
+  String get localModelsDetails;
+
+  /// No description provided for @localModelsMoreActions.
+  ///
+  /// In en, this message translates to:
+  /// **'More actions'**
+  String get localModelsMoreActions;
+
+  /// No description provided for @localModelsResultCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Showing {count} of {total} models'**
+  String localModelsResultCount(int count, int total);
+
+  /// No description provided for @localModelsHubRepositoryTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Repository'**
+  String get localModelsHubRepositoryTab;
+
+  /// No description provided for @localModelsDownloadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Download failed'**
+  String get localModelsDownloadFailed;
+
+  /// No description provided for @localModelsDownloadPausedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get localModelsDownloadPausedLabel;
+
   /// No description provided for @localModelsCatalog.
   ///
   /// In en, this message translates to:
@@ -4171,6 +4237,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Rename device space'**
   String get settingsRuntimeRenameSpace;
+
+  /// No description provided for @settingsRuntimeResetTransactions.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset transactions'**
+  String get settingsRuntimeResetTransactions;
+
+  /// No description provided for @settingsRuntimeResetTransactionsDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync transactions rebuilt from this device’s current content'**
+  String get settingsRuntimeResetTransactionsDone;
 
   /// No description provided for @settingsRuntimeLeaveSpace.
   ///
@@ -7799,7 +7877,7 @@ abstract class AppLocalizations {
   /// No description provided for @localModelsSearchCatalog.
   ///
   /// In en, this message translates to:
-  /// **'Search by name or inference engine'**
+  /// **'Search models, tags or engines'**
   String get localModelsSearchCatalog;
 
   /// No description provided for @deviceSpaceSyncPeer.

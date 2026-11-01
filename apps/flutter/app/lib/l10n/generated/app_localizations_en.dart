@@ -1528,6 +1528,41 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get localModelsAddModel => 'Add model';
+
+  @override
+  String get localModelsFilterDownloads => 'Downloads';
+
+  @override
+  String get localModelsAllTypes => 'All types';
+
+  @override
+  String get localModelsNoMatches => 'No matching models';
+
+  @override
+  String get localModelsResetFilters => 'Reset filters';
+
+  @override
+  String get localModelsDetails => 'Model details';
+
+  @override
+  String get localModelsMoreActions => 'More actions';
+
+  @override
+  String localModelsResultCount(int count, int total) {
+    return 'Showing $count of $total models';
+  }
+
+  @override
+  String get localModelsHubRepositoryTab => 'Repository';
+
+  @override
+  String get localModelsDownloadFailed => 'Download failed';
+
+  @override
+  String get localModelsDownloadPausedLabel => 'Paused';
+
+  @override
   String get localModelsCatalog => 'Model catalog';
 
   @override
@@ -2284,6 +2319,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsRuntimeRenameSpace => 'Rename device space';
+
+  @override
+  String get settingsRuntimeResetTransactions => 'Reset transactions';
+
+  @override
+  String get settingsRuntimeResetTransactionsDone =>
+      'Sync transactions rebuilt from this device’s current content';
 
   @override
   String get settingsRuntimeLeaveSpace => 'Leave device space';
@@ -4384,7 +4426,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get localModelsFilterInstalled => 'Installed only';
 
   @override
-  String get localModelsSearchCatalog => 'Search by name or inference engine';
+  String get localModelsSearchCatalog => 'Search models, tags or engines';
 
   @override
   String get deviceSpaceSyncPeer => 'a space device';

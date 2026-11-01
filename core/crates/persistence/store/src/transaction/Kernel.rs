@@ -48,30 +48,37 @@ pub struct ApplyReport {
     pub outcomes: BTreeMap<String, Result<BTreeMap<String,String>,String>>,
 }
 
-/// Unknown failures stay retryable. Only recognized data/capability errors abandon incremental apply.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FailureKind { Temporary, Capability }
+/// Adapters preserve error provenance before formatting diagnostics.
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ApplyError {
+    #[error("{0}")] Retry(String),
+    #[error("{0}")] Capability(String),
+}
 
-impl FailureKind {
-    fn classify(error: &str) -> Self {
-        let error = error.to_ascii_lowercase();
-        if ["locked", "busy", "timeout", "timed out", "temporar", "interrupted", "connection",
-            "i/o", "io error", "disk", "permission denied", "unavailable", "not registered for persistent sync",
-            "snapshot changed", "file changed", "os error"].iter().any(|reason| error.contains(reason)) {
-            return Self::Temporary;
+impl From<crate::PreferencesDataStore::PreferencesDataStoreError> for ApplyError {
+    fn from(error: crate::PreferencesDataStore::PreferencesDataStoreError) -> Self {
+        use crate::PreferencesDataStore::PreferencesDataStoreError::*;
+        match error {
+            Io(_) | Host(_) | Sync(_) | SchemaVersionTooNew { .. } => Self::Retry(error.to_string()),
+            _ => Self::Capability(error.to_string()),
         }
-        if ["unknown", "unsupported", "not supported", "not registered", "missing", "invalid", "malformed",
-            "migration", "schema", "format", "deserialize", "expected", "constraint", "no such table",
-            "no such column", "identity mismatch", "scope", "panicked", "requires", "cannot decode"]
-            .iter().any(|reason| error.contains(reason)) { Self::Capability } else { Self::Temporary }
+    }
+}
+
+impl From<crate::SqliteStore::SqliteStoreError> for ApplyError {
+    fn from(error: crate::SqliteStore::SqliteStoreError) -> Self {
+        match error {
+            crate::SqliteStore::SqliteStoreError::Message(_) => Self::Capability(error.to_string()),
+            _ => Self::Retry(error.to_string()),
+        }
     }
 }
 
 pub struct Participant<'a> {
     pub path: String,
-    pub prepare: Box<dyn Fn() -> Result<(), String> + 'a>,
-    pub validate: Option<Box<dyn Fn(&SyncOperation) -> Result<(), String> + 'a>>,
-    pub apply: Box<dyn Fn(&[SyncOperation], &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> + 'a>,
+    pub prepare: Box<dyn Fn() -> Result<(), ApplyError> + 'a>,
+    pub validate: Option<Box<dyn Fn(&SyncOperation) -> Result<(), ApplyError> + 'a>>,
+    pub apply: Box<dyn Fn(&[SyncOperation], &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, ApplyError> + 'a>,
     pub project: Option<Box<dyn Fn(&BTreeMap<String,String>) -> Result<(),String> + 'a>>,
     pub snapshot: Option<Box<dyn Fn() -> Result<Snapshot, String> + 'a>>,
     pub coverage: Box<dyn Fn() -> Result<BTreeSet<String>, String> + 'a>,
@@ -130,13 +137,21 @@ impl<'a> Registry<'a> {
         Ok(())
     }
 
-    pub fn pending_owners(&self) -> Result<BTreeSet<String>, String> {
-        let mut groups = BTreeMap::<String,Vec<SyncOperation>>::new();
-        for operation in self.journal.pendingOperations().map_err(|e|e.to_string())? {
-            groups.entry(self.target(&operation)?).or_default().push(operation);
+    fn pending_groups(&self, report: &mut ApplyReport) -> Result<BTreeMap<String, Vec<SyncOperation>>, String> {
+        let pending = self.journal.pendingOperations().map_err(|e|e.to_string())?;
+        let mut groups = BTreeMap::<String, Vec<SyncOperation>>::new();
+        for operation in super::ordered(pending, |op| &op.opId, Revision::fromOperation)? {
+            match self.target(&operation) {
+                Ok(path) => groups.entry(path).or_default().push(operation),
+                Err(error) => self.failure(&operation.opId, std::slice::from_ref(&operation), ApplyError::Capability(error), report)?,
+            }
         }
+        Ok(groups)
+    }
+
+    pub fn pending_owners(&self) -> Result<BTreeSet<String>, String> {
         let mut pending = BTreeSet::new();
-        for (path,mut operations) in groups {
+        for (path,mut operations) in self.pending_groups(&mut ApplyReport::default())? {
             self.discard_covered(&path,&mut operations)?;
             if !operations.is_empty() { pending.insert(path); }
         }
@@ -146,14 +161,14 @@ impl<'a> Registry<'a> {
     pub fn skipped(&self) -> Result<BTreeMap<String, Vec<SyncOperation>>, String> {
         let mut groups = BTreeMap::<String, Vec<SyncOperation>>::new();
         for operation in self.journal.skippedOperations().map_err(|e|e.to_string())? {
-            // Preference-only registries also share the SQL journal; only their routable originals belong here.
+            // Unlocatable originals remain in the journal; only actual owners can be corrected.
             if let Ok(path) = self.target(&operation) { groups.entry(path).or_default().push(operation); }
         }
         Ok(groups)
     }
 
-    fn failure(&self, path: &str, operations: &[SyncOperation], error: String, report: &mut ApplyReport) -> Result<(), String> {
-        if operations.is_empty() || FailureKind::classify(&error) == FailureKind::Temporary {
+    fn failure(&self, path: &str, operations: &[SyncOperation], error: ApplyError, report: &mut ApplyReport) -> Result<(), String> {
+        if operations.is_empty() || matches!(error, ApplyError::Retry(_)) {
             report.errors.push(format!("{path}: {error}"));
         } else {
             self.journal.skipOperations(operations).map_err(|e|e.to_string())?;
@@ -161,7 +176,7 @@ impl<'a> Registry<'a> {
             operit_util::AppLogger::AppLogger::w("TransactionSync", &format!(
                 "sync_apply.skipped owner={path} kind=capability count={} reason={error}", operations.len()));
         }
-        report.outcomes.insert(path.to_owned(), Err(error));
+        report.outcomes.insert(path.to_owned(), Err(error.to_string()));
         Ok(())
     }
 
@@ -177,9 +192,8 @@ impl<'a> Registry<'a> {
 
     /// Retries originals already received before owner discovery and layout preparation.
     pub fn apply_pending(&self) -> Result<ApplyReport, String> {
-        let pending = self.journal.pendingOperations().map_err(|e| e.to_string())?;
-        let pending = super::ordered(pending, |op| &op.opId, Revision::fromOperation)?;
         let mut report = ApplyReport::default();
+        let groups = self.pending_groups(&mut report)?;
         let mut skipped = self.skipped()?;
         for (path, operations) in &skipped {
             if self.is_retired(path) {
@@ -188,13 +202,6 @@ impl<'a> Registry<'a> {
             }
         }
         skipped.retain(|path,_| !self.is_retired(path));
-        let mut groups = BTreeMap::<String, Vec<SyncOperation>>::new();
-        for operation in pending {
-            match self.target(&operation) {
-                Ok(path) => groups.entry(path).or_default().push(operation),
-                Err(error) => report.errors.push(format!("{}: {error}", operation.opId)),
-            }
-        }
         // Reference owners consume only alias decisions from committed owners.
         let mut groups = groups.into_iter().collect::<Vec<_>>();
         groups.sort_by_key(|(path, operations)| (operations[0].domain != "preferences", path.clone()));
@@ -214,7 +221,7 @@ impl<'a> Registry<'a> {
                 continue;
             }
             if let Err(error) = self.discard_covered(&path,&mut operations) {
-                self.failure(&path, &operations, error, &mut report)?;
+                self.failure(&path, &operations, ApplyError::Retry(error), &mut report)?;
                 continue;
             }
             if operations.is_empty() { continue; }
@@ -226,7 +233,7 @@ impl<'a> Registry<'a> {
                 continue;
             }
             let Some(owner) = self.owners.get(&path) else {
-                self.failure(&path, &operations, format!("Unknown transaction owner: {path}"), &mut report)?;
+                self.failure(&path, &operations, ApplyError::Capability(format!("Unknown transaction owner: {path}")), &mut report)?;
                 continue;
             };
             if let Err(error) = (owner.prepare)() {
@@ -240,7 +247,7 @@ impl<'a> Registry<'a> {
             if count > 0 {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                     (owner.apply)(&operations[..count], &report.aliases)))
-                    .unwrap_or_else(|_| Err(format!("Owner panicked: {path}")));
+                    .unwrap_or_else(|_| Err(ApplyError::Capability(format!("Owner panicked: {path}"))));
                 match result {
                     Ok(aliases) => {
                         self.journal.completeOperations(&operations[..count]).map_err(|e|e.to_string())?;
@@ -263,7 +270,7 @@ impl<'a> Registry<'a> {
             for (path, owner) in &self.owners {
                 if skipped.contains_key(path) || report.outcomes.get(path).is_some_and(Result::is_err) { continue; }
                 if let Some(project) = &owner.project {
-                    if let Err(error) = project(&report.aliases) { self.failure(path, &[], error, &mut report)?; }
+                    if let Err(error) = project(&report.aliases) { self.failure(path, &[], ApplyError::Retry(error), &mut report)?; }
                 }
             }
         }
@@ -335,10 +342,35 @@ impl<'a> Registry<'a> {
     pub fn snapshot(&self, owner: &Owner) -> Result<Snapshot, String> {
         if self.pending_owners()?.contains(&owner.path) { return Err("Dataset has pending transactions".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
-        if !self.skipped()?.contains_key(&owner.path) { (participant.prepare)()?; }
+        if !self.skipped()?.contains_key(&owner.path) { (participant.prepare)().map_err(|e|e.to_string())?; }
         let snapshot = (participant.snapshot.as_ref().ok_or("Owner has no snapshot capability")?)()?;
         if &snapshot.data.owner != owner { return Err("Owner format/layout is not ready".into()); }
         Ok(snapshot)
+    }
+
+    /// Replaces business history with current owner initializations; immutable receipts remain sealed.
+    pub fn reset_transactions(&self) -> Result<usize, String> {
+        let originals = self.journal.withJournal(|journal| journal.headers(None)).map_err(|e|e.to_string())?
+            .into_iter().filter(|record| matches!(record.domain.as_str(), "preferences" | "chat" | "plugin_storage"))
+            .map(|record|record.op_id).collect::<Vec<_>>();
+        let mut unapplied = self.skipped()?;
+        for operation in self.journal.pendingOperations().map_err(|e|e.to_string())? {
+            if let Ok(path) = self.target(&operation) { unapplied.entry(path).or_default().push(operation); }
+        }
+        // Capture every owner first. A read failure must precede any history retirement.
+        let snapshots = self.owners.values().filter_map(|owner|owner.snapshot.as_ref())
+            .map(|snapshot|snapshot()).collect::<Result<Vec<_>,_>>()?;
+        for snapshot in &snapshots {
+            let mut source = snapshot.clone();
+            source.covered.extend(unapplied.get(&source.data.owner.path).into_iter().flatten().map(|op|op.opId.clone()));
+            if !self.repair(&source.data.owner, &snapshot.token()?, &source)? {
+                return Err(format!("File changed while resetting transactions: {}", source.data.owner.path));
+            }
+        }
+        self.journal.withJournal(|journal|journal.transaction(|tx|super::Journal::retire_ids(tx,originals)))
+            .map_err(|e|e.to_string())?;
+        crate::SyncOperationStore::publishSyncMutation();
+        Ok(snapshots.len())
     }
 
     /// Authority, version checks, CAS and verification are shared by every backend.
@@ -349,7 +381,7 @@ impl<'a> Registry<'a> {
     pub fn repair_file(&self, owner: &Owner, expected: &str, source: &Snapshot, file: Option<&str>) -> Result<bool, String> {
         if &source.data.owner != owner { return Err("Snapshot owner differs".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
-        if !self.skipped()?.contains_key(&owner.path) { (participant.prepare)()?; }
+        if !self.skipped()?.contains_key(&owner.path) { (participant.prepare)().map_err(|e|e.to_string())?; }
         let mut pending = self.journal.pendingOperations().map_err(|e|e.to_string())?.into_iter()
             .filter(|operation|self.target(operation).as_ref() == Ok(&owner.path)).collect::<Vec<_>>();
         self.discard_covered(&owner.path,&mut pending)?;

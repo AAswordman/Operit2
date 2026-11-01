@@ -79,7 +79,7 @@ impl PreferenceLayout {
         self.prepare()?;
         for operation in operations {
             if PreferencesSyncedEntry::operationPath(operation)
-                .is_ok_and(|path| std::path::Path::new(path) == self.state.path()) {
+                .is_ok_and(|path| std::path::Path::new(&path) == self.state.path()) {
                 return Err("Preference layout state is node-local and cannot be synchronized".into());
             }
         }

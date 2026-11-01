@@ -742,6 +742,23 @@
       "error": {}
     }
   },
+  "localModelsAddModel": "Add model",
+  "localModelsFilterDownloads": "Downloads",
+  "localModelsAllTypes": "All types",
+  "localModelsNoMatches": "No matching models",
+  "localModelsResetFilters": "Reset filters",
+  "localModelsDetails": "Model details",
+  "localModelsMoreActions": "More actions",
+  "localModelsResultCount": "Showing {count} of {total} models",
+  "@localModelsResultCount": {
+    "placeholders": {
+      "count": {"type": "int"},
+      "total": {"type": "int"}
+    }
+  },
+  "localModelsHubRepositoryTab": "Repository",
+  "localModelsDownloadFailed": "Download failed",
+  "localModelsDownloadPausedLabel": "Paused",
   "localModelsCatalog": "Model catalog",
   "localModelsCategorySpeechToText": "Speech-to-text models",
   "localModelsCategoryTextToSpeech": "Text-to-speech models",
@@ -1083,6 +1100,8 @@
   "settingsRuntimeCurrentSpace": "Current device space",
   "settingsRuntimeOverviewDescription": "Devices in the same space can connect and share data and routes.",
   "settingsRuntimeRenameSpace": "Rename device space",
+  "settingsRuntimeResetTransactions": "Reset transactions",
+  "settingsRuntimeResetTransactionsDone": "Sync transactions rebuilt from this device’s current content",
   "settingsRuntimeLeaveSpace": "Leave device space",
   "settingsRuntimeLeaveSpaceTitle": "Leave the current device space?",
   "settingsRuntimeLeaveSpaceDescription": "This device will create a new single-device space. Business data and paired devices are preserved.",
@@ -2266,7 +2285,7 @@
   "localModelsInvalidSettings": "Check the thread count, context size and batch size.",
   "localModelsFilterAll": "All models",
   "localModelsFilterInstalled": "Installed only",
-  "localModelsSearchCatalog": "Search by name or inference engine",
+  "localModelsSearchCatalog": "Search models, tags or engines",
   "deviceSpaceSyncPeer": "a space device",
   "deviceSpaceSyncActive": "Syncing with {device}",
   "@deviceSpaceSyncActive": {

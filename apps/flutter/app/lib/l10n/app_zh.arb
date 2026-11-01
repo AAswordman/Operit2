@@ -735,6 +735,23 @@
       "error": {}
     }
   },
+  "localModelsAddModel": "添加模型",
+  "localModelsFilterDownloads": "下载任务",
+  "localModelsAllTypes": "全部类型",
+  "localModelsNoMatches": "没有符合条件的模型",
+  "localModelsResetFilters": "重置筛选",
+  "localModelsDetails": "模型详情",
+  "localModelsMoreActions": "更多操作",
+  "localModelsResultCount": "显示 {count} / {total} 个模型",
+  "@localModelsResultCount": {
+    "placeholders": {
+      "count": {"type": "int"},
+      "total": {"type": "int"}
+    }
+  },
+  "localModelsHubRepositoryTab": "仓库地址",
+  "localModelsDownloadFailed": "下载失败",
+  "localModelsDownloadPausedLabel": "已暂停",
   "localModelsCatalog": "模型目录",
   "localModelsCategorySpeechToText": "语音识别（STT）模型",
   "localModelsCategoryTextToSpeech": "语音合成（TTS）模型",
@@ -1076,6 +1093,8 @@
   "settingsRuntimeCurrentSpace": "当前设备空间",
   "settingsRuntimeOverviewDescription": "在同一设备空间内，设备可以建立连接，共享数据和路由。",
   "settingsRuntimeRenameSpace": "重命名设备空间",
+  "settingsRuntimeResetTransactions": "重置事务",
+  "settingsRuntimeResetTransactionsDone": "已按本机当前内容重建同步事务",
   "settingsRuntimeLeaveSpace": "退出设备空间",
   "settingsRuntimeLeaveSpaceTitle": "退出当前设备空间？",
   "settingsRuntimeLeaveSpaceDescription": "这台设备会创建一个新的单设备空间。业务数据保留，已配对设备也不会被删除。",
@@ -2258,8 +2277,8 @@
   "localModelsLlmDescription": "下载 GGUF 模型使用 llama.cpp，或下载 MNN 模型包。安装后可在这里试运行，或设为聊天模型。",
   "localModelsInvalidSettings": "请检查线程数、上下文长度和批次大小。",
   "localModelsFilterAll": "全部模型",
-  "localModelsFilterInstalled": "仅已安装",
-  "localModelsSearchCatalog": "搜索名称或推理引擎",
+  "localModelsFilterInstalled": "已安装",
+  "localModelsSearchCatalog": "搜索模型名称、标签或推理引擎",
   "deviceSpaceSyncPeer": "空间设备",
   "deviceSpaceSyncActive": "正在与 {device} 同步",
   "@deviceSpaceSyncActive": {

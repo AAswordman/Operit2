@@ -7,7 +7,7 @@ use operit_store::{
     PreferencesDataStore::{
         stringPreferencesKey, Preferences, PreferencesDataStore, PreferencesDataStoreError,
     },
-    SyncOperationStore::{SyncOperation, SyncOperationKnowledge, SyncOperationStore},
+    SyncOperationStore::{SyncOperation, SyncOperationKnowledge, SyncOperationStore, SyncReceipt},
     Transaction,
 };
 use serde_json::{json, Value};
@@ -663,7 +663,95 @@ fn invalid_migration_skips_owner_until_initialization_and_other_owners_continue(
 }
 
 #[test]
-fn temporary_apply_failure_stays_pending_and_retries_once_per_batch() {
+fn missing_preference_route_is_skipped_without_rewriting_the_original() {
+    for path in [None, Some(Value::Null), Some(json!(42)), Some(json!(""))] {
+        let target = Fixture::new();
+        target.apply(&authored(CURRENT, 2, 10, |state| state.set(&stringPreferencesKey("x"), "committed")));
+        let mut invalid = authored(CURRENT, 2, 20, |state| state.set(&stringPreferencesKey("x"), "rejected"));
+        match path {
+            Some(value) => { invalid[0].payload["storagePath"] = value; }
+            None => { invalid[0].payload.as_object_mut().unwrap().remove("storagePath"); }
+        }
+        target.journal().receiveOperations(&invalid).unwrap();
+        let declarations = schema();
+        let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &invalid, |_,_|true).unwrap();
+        assert_eq!(registry.apply_pending().unwrap().skipped, invalid.len());
+        assert!(registry.pending_owners().unwrap().is_empty());
+        assert_eq!(target.journal().skippedOperations().unwrap(), invalid);
+        assert_eq!(registry.skipped().unwrap()[CURRENT], invalid);
+        let before = target.store().syncSnapshot().unwrap();
+        let mut corrected = before.clone();
+        corrected.covered.extend(invalid.iter().map(|op| op.opId.clone()));
+        assert!(registry.repair(&before.data.owner, &before.token().unwrap(), &corrected).unwrap());
+        assert!(target.journal().skippedOperations().unwrap().is_empty());
+        assert_eq!(target.value("x"), Some(json!("committed")));
+        let manifests = registry.manifests().unwrap();
+        assert!(manifests.1.is_empty() && manifests.2.is_empty());
+        invalid[0].opId = format!("{}:999", invalid[0].originDeviceId);
+        invalid[0].sequence = 999;
+        invalid[0].entityId = "unrecognizable legacy identity".into();
+        invalid[0].payload.as_object_mut().unwrap().remove("storagePath");
+        target.journal().receiveOperations(&invalid).unwrap();
+        let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &invalid, |_,_|true).unwrap();
+        assert!(registry.pending_owners().unwrap().is_empty());
+        assert!(registry.skipped().unwrap().is_empty());
+        assert_eq!(registry.manifests().unwrap(), manifests);
+        assert_eq!(target.journal().skippedOperations().unwrap(), invalid);
+        assert_eq!(target.value("x"), Some(json!("committed")));
+    }
+}
+
+#[test]
+fn resetting_transactions_preserves_current_data_and_exports_only_initialization() {
+    let target = Fixture::new();
+    let committed = authored(CURRENT, 2, 10, |state|state.set(&stringPreferencesKey("x"), "current"));
+    target.apply(&committed);
+    let pending = authored(CURRENT, 2, 20, |state|state.set(&stringPreferencesKey("x"), "unapplied"));
+    let mut orphan = pending[0].clone();
+    orphan.opId = format!("{}:999", orphan.originDeviceId);
+    orphan.sequence = 999;
+    orphan.entityId = "unlocatable".into();
+    orphan.payload.as_object_mut().unwrap().remove("storagePath");
+    let incoming = pending.iter().cloned().chain([orphan]).collect::<Vec<_>>();
+    target.journal().receiveOperations(&incoming).unwrap();
+    let before = target.store().syncSnapshot().unwrap().data;
+    let bytes = target.host.readBytes(CURRENT).unwrap();
+    let declarations = schema();
+    let registry = PreferenceMerge::registry(target.host.clone(), &declarations, &incoming, |_,_|true).unwrap();
+    assert_eq!(registry.reset_transactions().unwrap(), 1);
+    assert_eq!(target.host.readBytes(CURRENT).unwrap(), bytes);
+    assert_eq!(target.store().syncSnapshot().unwrap().data, before);
+    assert!(target.journal().pendingOperations().unwrap().is_empty());
+    assert!(target.journal().skippedOperations().unwrap().is_empty());
+    let export = target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap();
+    assert_eq!(export.len(), 1);
+    let initialization = Transaction::compaction::Initialization::decode(&export[0]).unwrap().unwrap();
+    assert_eq!(initialization.data, before);
+    assert!(pending.iter().all(|op|initialization.covered.contains(&op.opId)));
+    target.journal().receiveOperations(&incoming).unwrap();
+    assert!(target.journal().pendingOperations().unwrap().is_empty(), "old originals remain sealed");
+    let peer = Fixture::new();
+    peer.apply(&export);
+    assert_eq!(peer.value("x"), Some(json!("current")));
+    assert_eq!(registry.reset_transactions().unwrap(), 1);
+    assert_eq!(target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap().len(), 1);
+}
+
+#[test]
+fn reset_read_failure_keeps_existing_history() {
+    let target = Fixture::new();
+    target.apply(&authored(CURRENT, 2, 10, |state|state.set(&stringPreferencesKey("x"), "current")));
+    let declarations = schema();
+    let mut registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
+    let before = target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap();
+    registry.owners.get_mut(CURRENT).unwrap().snapshot = Some(Box::new(||Err("injected read failure".into())));
+    assert!(registry.reset_transactions().is_err());
+    assert_eq!(target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap(), before);
+    assert_eq!(target.value("x"), Some(json!("current")));
+}
+
+#[test]
+fn apply_failure_disposition_is_explicit_and_independent_of_diagnostics() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let target = Fixture::new();
     let declarations = schema();
@@ -673,7 +761,7 @@ fn temporary_apply_failure_stays_pending_and_retries_once_per_batch() {
     let calls = attempts.clone();
     registry.owners.get_mut(CURRENT).unwrap().apply = Box::new(move |_,_| {
         calls.fetch_add(1, Ordering::SeqCst);
-        Err("database is locked".into())
+        Err(Transaction::kernel::ApplyError::Retry("database is locked; invalid format".into()))
     });
     for expected in 1..=2 {
         let report = if expected == 1 { registry.receive(&operations) } else { registry.apply_pending() }.unwrap();
@@ -682,6 +770,10 @@ fn temporary_apply_failure_stays_pending_and_retries_once_per_batch() {
         assert_eq!(target.journal().pendingOperations().unwrap(), operations);
         assert!(target.journal().skippedOperations().unwrap().is_empty());
     }
+    registry.owners.get_mut(CURRENT).unwrap().apply = Box::new(|_,_| Err(Transaction::kernel::ApplyError::Capability("database is locked; invalid format".into())));
+    assert_eq!(registry.apply_pending().unwrap().skipped, operations.len());
+    assert!(target.journal().pendingOperations().unwrap().is_empty());
+    assert_eq!(target.journal().skippedOperations().unwrap(), operations);
 }
 
 #[test]

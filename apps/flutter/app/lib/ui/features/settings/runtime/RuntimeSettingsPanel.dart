@@ -1032,6 +1032,23 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     }
   }
 
+  /// Rebuilds synchronization history from this device's current content.
+  Future<void> _resetTransactions() async {
+    setState(() => _busy = true);
+    try {
+      await _clients.application.syncResetTransactions();
+      if (mounted) {
+        _showDeviceFeedback(
+          AppLocalizations.of(context)!.settingsRuntimeResetTransactionsDone,
+        );
+      }
+    } catch (error) {
+      if (mounted) _showDeviceFeedback(error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// Prompts for and persists a new name for the current device space.
   Future<void> _renameCurrentDeviceSpace() async {
     final currentDeviceSpace = _currentDeviceSpace;
@@ -1279,6 +1296,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
         busy: _busy,
         onRename: _renameCurrentDeviceSpace,
         onLeave: _leaveCurrentDeviceSpace,
+        onResetTransactions: _resetTransactions,
         onOpenProfile: widget.onOpenProfile,
         onDisconnectDevice: _disconnectDeviceSpaceConnection,
         connectionMessage: _connectionMessage,
@@ -1452,6 +1470,7 @@ class _DeviceSpaceOverviewCard extends StatelessWidget {
     required this.busy,
     required this.onRename,
     required this.onLeave,
+    required this.onResetTransactions,
     required this.onOpenProfile,
     required this.onDisconnectDevice,
     required this.connectionMessage,
@@ -1463,6 +1482,7 @@ class _DeviceSpaceOverviewCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onRename;
   final VoidCallback onLeave;
+  final VoidCallback onResetTransactions;
   final VoidCallback onOpenProfile;
   final Future<generated.RuntimeDeviceSpaceTopology> Function(String deviceId)
   onDisconnectDevice;
@@ -1530,6 +1550,8 @@ class _DeviceSpaceOverviewCard extends StatelessWidget {
                           switch (action) {
                             case _DeviceSpaceMenuAction.rename:
                               onRename();
+                            case _DeviceSpaceMenuAction.resetTransactions:
+                              onResetTransactions();
                             case _DeviceSpaceMenuAction.leave:
                               onLeave();
                           }
@@ -1543,6 +1565,15 @@ class _DeviceSpaceOverviewCard extends StatelessWidget {
                                   contentPadding: EdgeInsets.zero,
                                   leading: const Icon(Icons.edit_outlined),
                                   title: Text(l10n.settingsRuntimeRenameSpace),
+                                ),
+                              ),
+                              PopupMenuItem<_DeviceSpaceMenuAction>(
+                                value: _DeviceSpaceMenuAction.resetTransactions,
+                                enabled: !busy,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: const Icon(Icons.restart_alt_rounded),
+                                  title: Text(l10n.settingsRuntimeResetTransactions),
                                 ),
                               ),
                               PopupMenuItem<_DeviceSpaceMenuAction>(
@@ -1582,7 +1613,7 @@ class _DeviceSpaceOverviewCard extends StatelessWidget {
   }
 }
 
-enum _DeviceSpaceMenuAction { rename, leave }
+enum _DeviceSpaceMenuAction { rename, resetTransactions, leave }
 
 class _DeviceSpaceIdentityChip extends StatefulWidget {
   const _DeviceSpaceIdentityChip({required this.onTap});

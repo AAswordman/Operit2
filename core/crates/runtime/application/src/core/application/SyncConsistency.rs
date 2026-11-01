@@ -7,7 +7,7 @@ use operit_store::PluginStorage::PLUGIN_STORAGE_SYNC_DOMAIN;
 use operit_store::SyncOperationStore::{SyncOperation, DEFAULT_SYNC_PAGE_BYTES};
 use std::collections::BTreeMap;
 use operit_store::PreferenceMerge::{self, PreferenceMergeSchema};
-use operit_store::Transaction::{Owner, Snapshot, kernel::{Registry, Participant, Source}};
+use operit_store::Transaction::{Owner, Snapshot, kernel::{ApplyError, Registry, Participant, Source}};
 use operit_store::RuntimeFileSyncStore::{FileCorrectionReference, FileCoverage};
 use operit_store::PluginStorage;
 use serde_json::{json, Value};
@@ -28,7 +28,7 @@ impl OperitApplication {
         let operations = operations.iter().chain(&skipped).collect::<Vec<_>>();
         let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter().copied(), |_,_|true)?;
         registry.locate = Box::new(|op| match op.domain.as_str() {
-            "preferences" => op.payload["storagePath"].as_str().map(str::to_owned).ok_or("Preference path is missing".into()),
+            "preferences" => operit_store::PreferencesDataStore::PreferencesSyncedEntry::operationPath(op).map_err(|e|e.to_string()),
             CHAT_SYNC_DOMAIN => Ok(operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into()),
             PLUGIN_STORAGE_SYNC_DOMAIN => PluginStorage::syncDatasetPath(op).map_err(|e|e.to_string()),
             _ => Ok(format!("{}:{}",op.domain,synchronizationDataset(op)?)),
@@ -38,10 +38,14 @@ impl OperitApplication {
         registry.register(Participant { validate: None,
             content_digest: SqlChatSyncStore::snapshotContentDigest,
             path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(),
-            prepare: Box::new(move || prepare.as_ref().map(|_|()).map_err(Clone::clone)),
+            prepare: Box::new(move || prepare.as_ref().map(|_|()).map_err(|e|ApplyError::Retry(e.clone()))),
             apply: Box::new(move |operations,_| {
-                let store = apply.as_ref().map_err(Clone::clone)?;
-                for operation in operations { store.applyOperation(operation).map_err(|e|e.to_string())?; }
+                let store = apply.as_ref().map_err(|e|ApplyError::Retry(e.clone()))?;
+                for operation in operations { store.applyOperation(operation).map_err(|error| match error {
+                    operit_store::sync::SqlChatSyncStore::SqlChatSyncStoreError::Store(error) => ApplyError::from(error),
+                    operit_store::sync::SqlChatSyncStore::SqlChatSyncStoreError::Json(_) | operit_store::sync::SqlChatSyncStore::SqlChatSyncStoreError::Message(_) => ApplyError::Capability(error.to_string()),
+                    _ => ApplyError::Retry(error.to_string()),
+                })?; }
                 Ok(BTreeMap::new())
             }), project: None,
             snapshot: Some(Box::new(move || snapshot.as_ref().map_err(Clone::clone)?.syncSnapshot().map_err(|e|e.to_string()))),
@@ -74,7 +78,7 @@ impl OperitApplication {
                 content_digest: PluginStorage::snapshotContentDigest,
                 prepare: Box::new(||Ok(())),
                 apply: Box::new(move |operations,aliases| {
-                    for operation in operations { PluginStorage::applyOperation(apply.clone()?,storage.clone(),operation,aliases).map_err(|e|e.to_string())?; }
+                    for operation in operations { PluginStorage::applyOperation(apply.clone().map_err(ApplyError::Retry)?,storage.clone(),operation,aliases)?; }
                     Ok(BTreeMap::new())
                 }),
                 project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,&project_path,aliases).map_err(|e|e.to_string()))),
@@ -92,7 +96,7 @@ impl OperitApplication {
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
             registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
-                apply: Box::new(move |operations,_| {
+                apply: Box::new(move |operations,_| (|| {
                     for operation in operations {
                         match operation.domain.as_str() {
                             BINDING_SYNC_DOMAIN => self.runtimeBindingStore()?.applySyncedOperation(operation)?,
@@ -110,7 +114,7 @@ impl OperitApplication {
                         }
                     }
                     Ok(BTreeMap::new())
-                }),
+                })().map_err(ApplyError::Retry)),
             })?;
         }
         Ok(registry)

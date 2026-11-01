@@ -109,7 +109,7 @@ fn unversioned_supported_history_is_converted_and_archived_originals_remain_exac
 }
 
 #[test]
-fn future_data_skips_until_an_initialization_after_owner_upgrade() {
+fn future_data_stays_pending_and_replays_after_owner_upgrade() {
     let source = Fixture::new();
     let incoming = write(&source, 3, "future", json!(true), 40);
     let target = Fixture::new();
@@ -119,13 +119,10 @@ fn future_data_skips_until_an_initialization_after_owner_upgrade() {
     let outcomes = apply(&target, &incoming, 2);
     assert!(outcomes.iter().all(|o| !o.skipped && o.result.is_err()));
     assert_eq!(target.host.readBytes(PATH).unwrap(), before);
-    assert!(target.journal().pendingOperations().unwrap().is_empty());
-    assert_eq!(target.journal().skippedOperations().unwrap(), incoming);
-    let mut source_snapshot = source.store(PATH,3).syncSnapshot().unwrap();
-    source_snapshot.covered.extend(incoming.iter().map(|operation|operation.opId.clone()));
-    let initialization = Transaction::compaction::Initialization::from_snapshot(&source_snapshot).operation("preferences",false).unwrap();
-    assert!(apply(&target, &[initialization], 3).iter().all(|o|o.result.is_ok()));
+    assert_eq!(target.journal().pendingOperations().unwrap(), incoming);
     assert!(target.journal().skippedOperations().unwrap().is_empty());
+    assert!(apply(&target, &[], 3).iter().all(|o|o.result.is_ok()));
+    assert!(target.journal().pendingOperations().unwrap().is_empty());
     assert_eq!(target.store(PATH, 3).data().unwrap().get(&stringPreferencesKey("future")), Some(&json!(true)));
 }
 

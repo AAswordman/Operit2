@@ -124,6 +124,26 @@ impl RuntimeFileSyncStore {
         Ok(reference)
     }
 
+    /// Republishes current bytes and tombstones before retiring the captured file history.
+    pub fn resetTransactions(&self) -> Result<usize, String> {
+        crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone()).track(|| {
+            let originals = self.syncOperationStore.withJournal(|journal|journal.headers(None)).map_err(|e|e.to_string())?
+                .into_iter().filter(|record|record.domain == RUNTIME_FILE_SYNC_DOMAIN).collect::<Vec<_>>();
+            let paths = originals.iter().map(|record|record.entity_id.clone()).collect::<std::collections::BTreeSet<_>>();
+            let mut count = 0;
+            for path in paths {
+                if requireSpaceFile(&path).is_err() || crate::PluginStorage::ownsFile(self.storageHost.clone(),&path).map_err(|e|e.to_string())? { continue; }
+                if self.storageHost.exists(&path).map_err(|e|e.to_string())? {
+                    self.recordSnapshot(&path,&self.storageHost.readBytes(&path).map_err(|e|e.to_string())?,false)?;
+                } else { self.recordDeletion(&path)?; }
+                count += 1;
+            }
+            self.syncOperationStore.withJournal(|journal|journal.transaction(|tx|crate::Transaction::Journal::retire_ids(tx,
+                originals.into_iter().map(|record|record.op_id)))).map_err(|e|e.to_string())?;
+            Ok(count)
+        })
+    }
+
     /// Appends bytes to a Space file and records the resulting complete snapshot.
     #[allow(non_snake_case)]
     pub fn appendBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
@@ -448,7 +468,7 @@ impl RuntimeFileSyncStore {
         let content = self
             .storageHost
             .readBytes(&self.blobPath(&reference.contentHash)?)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("blob {}: {error}", reference.contentHash))?;
         verifyBlob(reference, &content)?;
         Ok(content)
     }
@@ -661,6 +681,29 @@ mod tests {
                 })
                 .collect())
         }
+    }
+
+    #[test]
+    fn reset_file_transactions_recaptures_current_bytes_and_deletions() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let files = RuntimeFileSyncStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+        let deleted = operit_util::RuntimeStorageLayout::RUNTIME_WEBSESSION_BROWSER_BOOKMARKS_PATH;
+        files.writeBytes(RUNTIME_WEBSESSION_BROWSER_HISTORY_PATH,b"old").unwrap();
+        files.writeBytes(deleted,b"deleted").unwrap();
+        files.delete(deleted).unwrap();
+        host.writeBytes(RUNTIME_WEBSESSION_BROWSER_HISTORY_PATH,b"current external content").unwrap();
+        let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+        let before = journal.operationsSince(&SyncClock::empty(),&[],usize::MAX).unwrap();
+        assert_eq!(files.resetTransactions().unwrap(),2);
+        let after = journal.operationsSince(&SyncClock::empty(),&[],usize::MAX).unwrap();
+        assert_eq!(after.len(),2);
+        assert!(before.iter().all(|old|after.iter().all(|new|old.opId != new.opId)));
+        let upsert = after.iter().find(|op|op.operation == "upsert").unwrap();
+        assert_eq!(files.readBlob(&RuntimeFileSyncStore::requiredBlob(upsert).unwrap().unwrap()).unwrap(),b"current external content");
+        assert!(after.iter().any(|op|op.entityId == deleted && op.operation == "delete"));
+        assert_eq!(host.readBytes(RUNTIME_WEBSESSION_BROWSER_HISTORY_PATH).unwrap(),b"current external content");
+        journal.receiveOperations(&before).unwrap();
+        assert!(journal.pendingOperations().unwrap().is_empty());
     }
 
     /// Verifies upsert and delete operations reproduce the same registered file on another host.
