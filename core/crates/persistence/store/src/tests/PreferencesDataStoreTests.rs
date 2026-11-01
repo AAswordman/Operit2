@@ -3233,3 +3233,67 @@ fn preference_allocator_skips_direct_recovery_ids_after_compaction() {
     assert_eq!(local.sequence, 3);
     assert_eq!(after.data().unwrap().get(&stringPreferencesKey("value")), Some(&json!(3)));
 }
+
+/// Transport blob envelopes replace large initialization payloads; their dataset
+/// identity travels in the entity id instead of the payload.
+#[test]
+fn initialization_blob_envelopes_route_by_their_entity_id() {
+    let path = MODEL_CONFIGS_PREFERENCES_PATH;
+    let mut initialization = nativePreferenceOperation(path, vec![("entity_a", json!(1))], 9);
+    initialization.entityType = "initialization".into();
+    initialization.operation = "initialize".into();
+    initialization.entityId = path.into();
+    initialization.payload = json!({"transactionBlob":{"contentHash":"a".repeat(64),"size":10}});
+    assert_eq!(
+        PreferencesSyncedEntry::operationPath(&initialization).unwrap(),
+        path
+    );
+
+    let mut entry = nativePreferenceOperation(path, vec![("entity_a", json!(1))], 10);
+    entry.payload = json!({"encrypted":false});
+    assert!(PreferencesSyncedEntry::operationPath(&entry).is_err());
+}
+
+/// A pending blob-envelope initialization must not fail the whole synchronization
+/// registry the way a malformed preference entry would; it degrades to a skipped
+/// owner failure while every healthy dataset keeps flowing.
+#[test]
+fn pending_initialization_envelopes_do_not_block_the_synchronization_registry() {
+    let path = MODEL_CONFIGS_PREFERENCES_PATH;
+    let schema = fixture_merge_schema(&[path]);
+    let host = Arc::new(MemoryStorageHost::default());
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    let mut envelope = nativePreferenceOperation(path, vec![("entity_a", json!(1))], 11);
+    envelope.entityType = "initialization".into();
+    envelope.operation = "initialize".into();
+    envelope.semantics = crate::SyncOperationStore::SyncOperationSemantics::Transaction;
+    envelope.entityId = path.into();
+    envelope.originDeviceId = "peer".into();
+    envelope.opId = "peer:11".into();
+    envelope.payload = json!({"transactionBlob":{"contentHash":"a".repeat(64),"size":10}});
+    journal.receiveOperations(&[envelope.clone()]).unwrap();
+    assert_eq!(journal.pendingOperationCount().unwrap(), 1);
+
+    // Synchronization entry points feed pending and skipped originals through the
+    // same construction path; a poison here disabled syncClock entirely.
+    let registry = crate::PreferenceMerge::registry(
+        host.clone(),
+        &schema,
+        std::iter::once(&envelope),
+        |_, _| true,
+    )
+    .expect("initialization envelopes must not fail registry construction");
+    let report = registry.apply_pending().unwrap();
+    assert!(report.errors.iter().all(|error|
+        !error.contains("Preference dataset path is missing")));
+    // The envelope must route to its dataset owner instead of being stranded as an
+    // unlocatable original: only located owners stay reachable for correction and
+    // for a re-delivered hydrated original to replace the envelope in place.
+    assert!(
+        report.outcomes.contains_key(path),
+        "envelope must route to its owner, outcomes={:?}",
+        report.outcomes.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(journal.pendingOperationCount().unwrap(), 0);
+    assert_eq!(journal.skippedOperations().unwrap().len(), 1);
+}

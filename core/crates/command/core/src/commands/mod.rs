@@ -15,6 +15,7 @@ mod prefs;
 mod skill;
 mod storage;
 mod stt;
+mod sync;
 mod tool;
 mod update;
 mod usage;
@@ -88,6 +89,7 @@ async fn run_core_owned_command(
         BuiltinRoot::Workspace => workspace::run_workspace_command(application, args, output).await,
         BuiltinRoot::Storage => storage::run_storage_command(application, args, output),
         BuiltinRoot::Stt => stt::run_stt_command(application, args, output),
+        BuiltinRoot::Sync => sync::run_sync_command(application, args, output),
         BuiltinRoot::Update => update::run_update_command(args, output),
         BuiltinRoot::Usage => usage::run_usage_command(application, args, output),
     }
@@ -134,6 +136,7 @@ fn print_core_usage(
         "operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|send>",
         "operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>",
         "operit2 storage <paths|migrate>",
+        "operit2 sync <reset-transactions>",
         "operit2 update <run|check|target>",
         "operit2 usage <summary|records|models|clear>",
     ].into_iter().map(str::to_string));

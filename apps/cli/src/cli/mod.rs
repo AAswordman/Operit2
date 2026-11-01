@@ -178,6 +178,7 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         "chat" => run_core_command_and_print(&mut core, &args).await,
         "workspace" => run_core_command_and_print(&mut core, &args).await,
         "storage" => run_local_core_command_and_print(&mut core, &localArgs).await,
+        "sync" => run_core_command_and_print(&mut core, &args).await,
         "shell" => run_shell_command(&mut core, &args[1..]).await,
         "approval" => run_core_command_and_print(&mut core, &args).await,
         "tool" => run_core_command_and_print(&mut core, &args).await,
@@ -1840,6 +1841,7 @@ const CLI_COMMANDS: &[(&str, &str)] = &[
     ("prefs", "Show or change preferences"),
     ("host", "Show host information"),
     ("storage", "Show storage paths or migrate storage"),
+    ("sync", "Reset local synchronization transaction history (recovery)"),
     ("log", "Show, package, or clear logs"),
     ("backup", "Create, restore, or inspect backups"),
     ("export", "Export memory, chat, or a snapshot"),
@@ -2257,7 +2259,7 @@ mod tests {
         let uniqueCount = names.len();
         names.dedup();
         assert_eq!(names.len(), uniqueCount, "CLI_COMMANDS names must be unique");
-        assert_eq!(uniqueCount, 30, "CLI_COMMANDS must cover inherent CLI families");
+        assert_eq!(uniqueCount, 31, "CLI_COMMANDS must cover inherent CLI families");
         assert!(CLI_COMMANDS
             .iter()
             .all(|(_, description)| !description.is_empty()));

@@ -2707,6 +2707,11 @@ impl PreferencesSyncedEntry {
         let path = operation.payload["storagePath"].as_str().filter(|path| !path.is_empty()).map(str::to_owned).or_else(|| {
             let (path, key) = serde_json::from_str::<(String, String)>(&operation.entityId).ok()?;
             (operation.payload["key"].as_str() == Some(key.as_str())).then_some(path)
+        }).or_else(|| {
+            // Blob transport replaces large initialization payloads with a reference
+            // that carries no path; the dataset identity is the operation's entity id.
+            (operation.entityType == "initialization" && operation.operation == "initialize")
+                .then_some(operation.entityId.clone())
         }).ok_or_else(|| PreferencesDataStoreError::Message("Preference dataset path is missing".into()))?;
         validatePluginPreferenceSyncPath(&path)?;
         Ok(path)
