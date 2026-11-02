@@ -56,7 +56,7 @@ class WorkspaceTerminalSessions {
     required String workingDirectory,
     required int rows,
     required int columns,
-  }) {
+  }) async {
     return _terminal.startTerminalPty(
       sessionName: sessionName,
       terminal: terminal,

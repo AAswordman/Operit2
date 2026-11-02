@@ -182,8 +182,16 @@ class DesktopContentPanel extends StatelessWidget {
             ).colorScheme.outlineVariant.withValues(alpha: 0.45),
           ),
         ),
-        position: DecorationPosition.foreground,
-        child: ClipRRect(borderRadius: radius, child: child),
+        // AppKit excludes Flutter foreground paint bounds from native hit
+        // testing, including the empty interior of a stroked border. Paint the
+        // frame below the platform view and expose it through a one-pixel inset.
+        child: Padding(
+          padding: const EdgeInsets.all(1),
+          child: ClipRRect(
+            borderRadius: const BorderRadius.all(Radius.circular(13)),
+            child: child,
+          ),
+        ),
       ),
     );
   }

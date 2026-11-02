@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  build-ish-rootfs:
+  build-arm64-rootfs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -19,34 +19,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore iSH Alpine rootfs cache
-        id: ish-rootfs-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
-          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh', 'tools/runtime/verify_alpine_node24.py') }}
+      - name: Install ARM64 rootfs build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl python3 qemu-user-static binfmt-support
 
-      - name: Build iSH Alpine rootfs
-        if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
-        run: bash tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
+      - name: Build Alpine ARM64 rootfs
+        run: sudo bash tools/ios-runtime/arm64/build_rootfs_linux.sh
 
-      - name: Save iSH Alpine rootfs cache
-        if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
-          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh', 'tools/runtime/verify_alpine_node24.py') }}
-
-      - name: Upload iSH Alpine rootfs
+      - name: Upload Alpine ARM64 rootfs
         uses: actions/upload-artifact@v4
         with:
-          name: operit2-ios-ish-rootfs-${{ github.sha }}
-          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          name: operit2-ios-arm64-rootfs-${{ github.sha }}
+          path: |
+            apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz
+            apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz.sha256
           if-no-files-found: error
           retention-days: 1
 
   package-ios:
-    needs: build-ish-rootfs
+    needs: build-arm64-rootfs
     runs-on: macos-15
     timeout-minutes: 90
     env:
@@ -62,10 +54,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download iSH Alpine rootfs
+      - name: Download Alpine ARM64 rootfs
         uses: actions/download-artifact@v4
         with:
-          name: operit2-ios-ish-rootfs-${{ github.sha }}
+          name: operit2-ios-arm64-rootfs-${{ github.sha }}
           path: apps/flutter/app/ios/Runner
 
       - name: Install bootstrap Dart
@@ -104,50 +96,40 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
 
-      - name: Install iSH build tools
+      - name: Install iOS runtime and V8 build tools
         run: |
-          brew install llvm@23 lld@23 meson ninja
+          brew install llvm@23 lld@23 cmake ninja
           echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld@23)/bin" >> "$GITHUB_PATH"
 
-      - name: Identify iSH build toolchain
-        id: ish-build-toolchain
+      - name: Identify iOS build toolchain
+        id: ios-build-toolchain
         run: |
           toolchain_hash="$({
             xcodebuild -version
             xcrun --sdk iphoneos --show-sdk-version
             xcrun --sdk iphoneos clang --version
-            meson --version
+            "$(brew --prefix llvm@23)/bin/clang" --version
+            "$(brew --prefix lld@23)/bin/ld64.lld" --version
+            cmake --version
             ninja --version
           } | shasum -a 256 | awk '{ print $1 }')"
           echo "hash=$toolchain_hash" >> "$GITHUB_OUTPUT"
-
-      - name: Restore iSH static libraries
-        id: ish-build-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: apps/flutter/app/apple/ish-build/Release-iphoneos
-          key: ${{ runner.os }}-${{ runner.arch }}-ish-static-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('apps/flutter/app/ios/Runner.xcodeproj/project.pbxproj', 'tools/ios-runtime/ish/build_ish_ios.sh', 'tools/ios-runtime/ish/fetch_sources.py', 'tools/ios-runtime/ish/patches/**') }}
 
       - name: Cache source-built iOS V8
         uses: actions/cache@v4
         with:
           path: tools/release/work/ios-v8/*/aarch64-apple-ios
-          key: ${{ runner.os }}-${{ runner.arch }}-ios-v8-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('tools/build_scripts/prepare_ios_v8.py', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ios-v8-${{ steps.ios-build-toolchain.outputs.hash }}-${{ hashFiles('tools/build_scripts/prepare_ios_v8.py', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock') }}
 
       - name: Check build environment
-        run: python3 tools/build_scripts/check_build_environment.py --products app --include-ios --github-runner
+        run: |
+          python3 tools/build_scripts/check_build_environment.py --products app --github-runner
+          xcrun --sdk iphoneos --show-sdk-path
+          cmake --version
 
-      - name: Build iSH static libraries
-        if: steps.ish-build-cache.outputs.cache-hit != 'true'
-        run: bash tools/ios-runtime/ish/build_ish_ios.sh Release iphoneos iphoneos arm64
-
-      - name: Save iSH static libraries
-        if: steps.ish-build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: apps/flutter/app/apple/ish-build/Release-iphoneos
-          key: ${{ runner.os }}-${{ runner.arch }}-ish-static-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('apps/flutter/app/ios/Runner.xcodeproj/project.pbxproj', 'tools/ios-runtime/ish/build_ish_ios.sh', 'tools/ios-runtime/ish/fetch_sources.py', 'tools/ios-runtime/ish/patches/**') }}
+      - name: Build iOS ARM64 runtime
+        run: bash tools/ios-runtime/arm64/build.sh ios
 
       - name: Cache Cargo outputs
         uses: actions/cache@v4

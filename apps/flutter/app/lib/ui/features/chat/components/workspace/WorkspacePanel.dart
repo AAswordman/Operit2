@@ -341,8 +341,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   Widget build(BuildContext context) {
     return WorkspacePanelSurface(
-      transparentSurface: OperitTheme.of(context)
-          .themePreferenceSnapshot.transparentSurfaceEnabled,
+      transparentSurface: OperitTheme.of(
+        context,
+      ).themePreferenceSnapshot.transparentSurfaceEnabled,
       child: _buildWorkspaceLayout(),
     );
   }
@@ -1169,8 +1170,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       ),
       onFinishWebVisit: (tab, response) =>
           _finishWebVisitTab(tab, response, paneIndex: paneIndex),
-      onActivateCurrentTab: () =>
-          _selectWorkspaceTab(tab, paneIndex: paneIndex),
       onCloseCurrentTab: () => _closeWorkspaceTab(tab, paneIndex: paneIndex),
       onOpenWorkspaceCreator: _showCreateWorkspaceDialog,
       onBindWorkspace: _bindWorkspaceFolder,

@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "target": "AArch64 Linux EL0 on Apple ARM64; ARMv8-A integer, FP and Advanced SIMD baseline",
+  "complete": false,
+  "references": [
+    "https://developer.arm.com/documentation/ddi0602/latest",
+    "https://developer.arm.com/documentation/ddi0487/latest",
+    "https://docs.kernel.org/arch/arm64/elf_hwcaps.html"
+  ],
+  "guest_capabilities": {
+    "AT_HWCAP": 0,
+    "AT_HWCAP2": 0
+  },
+  "coverage_rule": "A passing corpus form proves only the tested encoding, operands and observed state. A family stays partial until all allocated baseline forms and reserved-encoding checks are covered.",
+  "domains": [
+    {
+      "name": "integer",
+      "status": "partial",
+      "tested": [
+        "arithmetic",
+        "flags",
+        "conditional",
+        "bitfield",
+        "multiply",
+        "divide"
+      ],
+      "remaining": [
+        "systematic SP/ZR operand permutations",
+        "all allocated encodings and reserved-field validation"
+      ]
+    },
+    {
+      "name": "branch",
+      "status": "partial",
+      "tested": [
+        "conditional branches",
+        "compare/test branches"
+      ],
+      "remaining": [
+        "register branch/link/return conformance",
+        "BRK and exception-to-signal delivery"
+      ]
+    },
+    {
+      "name": "memory",
+      "status": "partial",
+      "tested": [
+        "integer/SIMD loads/stores",
+        "literal loads",
+        "pairs",
+        "LD/ST1-4 structures",
+        "lanes",
+        "replicate"
+      ],
+      "remaining": [
+        "LDTR/STTR",
+        "all register-offset extensions",
+        "register wrapping and all post-index forms",
+        "fault atomicity and constrained-unpredictable encodings"
+      ]
+    },
+    {
+      "name": "exclusive",
+      "status": "partial",
+      "tested": [
+        "single-register exclusive operations through threaded guest regression"
+      ],
+      "remaining": [
+        "LDXP/LDAXP/STXP/STLXP",
+        "direct hardware conformance",
+        "all reservation invalidation cases"
+      ]
+    },
+    {
+      "name": "floating",
+      "status": "partial",
+      "tested": [
+        "scalar arithmetic and conversion",
+        "all encodable FMOV immediates",
+        "vector arithmetic",
+        "rounding and FPSR with six FPCR modes",
+        "scalar fixed-point SCVTF/UCVTF/FCVTZS/FCVTZU, all legal fractional immediates"
+      ],
+      "remaining": [
+        "vector pairwise/reductions",
+        "widen/narrow conversions",
+        "vector fixed-point and indexed forms",
+        "scalar reciprocal estimates and refinement variants",
+        "all NaN/denormal/exception control combinations"
+      ],
+      "host_requirement": "Current FP backend uses statically assembled AArch64 instructions; unavailable on non-AArch64 hosts."
+    },
+    {
+      "name": "advanced-simd-integer",
+      "status": "partial",
+      "tested": [
+        "arithmetic and comparisons",
+        "halving and saturation",
+        "widen/narrow",
+        "permutations",
+        "copy",
+        "immediate/variable shifts",
+        "reductions",
+        "sampled scalar forms",
+        "narrowing/rounding/saturating shifts",
+        "saturating variable shifts"
+      ],
+      "remaining": [
+        "indexed-element arithmetic",
+        "doubling multiply families",
+        "polynomial multiply",
+        "pairwise widening/accumulate",
+        "full scalar SIMD coverage",
+        "all shift immediates and scalar narrowing/copy combinations"
+      ]
+    },
+    {
+      "name": "system",
+      "status": "partial",
+      "tested": [
+        "TLS",
+        "NZCV",
+        "FPCR/FPSR",
+        "counter reads",
+        "barriers",
+        "selected HINTs"
+      ],
+      "remaining": [
+        "WFE/WFI event semantics",
+        "remaining EL0 system instructions",
+        "reserved encodings and consistent guest counter origin"
+      ]
+    },
+    {
+      "name": "optional-extensions",
+      "status": "not-advertised",
+      "remaining": [
+        "CRC",
+        "LSE",
+        "crypto",
+        "FP16",
+        "SVE/SME",
+        "PAuth authentication instructions"
+      ],
+      "note": "Architecturally defined no-extension behavior is used for selected PAuth HINTs; this does not implement PAuth."
+    }
+  ],
+  "linux_gaps": [
+    {
+      "priority": 1,
+      "area": "signals",
+      "detail": "Signal actions/masks are retained; non-PI robust owner-death recovery is implemented. Signal delivery, rt_sigreturn and PI robust mutexes remain incomplete."
+    },
+    {
+      "priority": 1,
+      "area": "descriptor-lifetime",
+      "detail": "dup/dup3/fcntl share open-description state, eventfd and epoll objects; descriptor flags are separate. Epoll watch open-description lifetime and close/reuse remain incomplete."
+    },
+    {
+      "priority": 1,
+      "area": "blocking-io",
+      "detail": "Futex, epoll, guest pipes and eventfd wait through the scheduler. Guest pipe SIGPIPE is isolated from the host. Inherited stream, large/vector I/O and signal interruption semantics need broader coverage."
+    },
+    {
+      "priority": 1,
+      "area": "epoll",
+      "detail": "Validate combined read/write oneshot, edge/rearm, descriptor close/reuse and temporary signal masks."
+    },
+    {
+      "priority": 1,
+      "area": "execution-control",
+      "detail": "When all tasks wait indefinitely the synchronous run API can wait indefinitely; cancellation/wall-time policy is not yet implemented."
+    },
+    {
+      "priority": 1,
+      "area": "memory",
+      "detail": "File-backed MAP_SHARED writeback, madvise and full procfs views are incomplete."
+    },
+    {
+      "priority": 1,
+      "area": "environment",
+      "detail": "Sockets/network, process fork/exec/wait and terminal semantics are incomplete; current passing Python scripts do not prove a complete Linux environment."
+    },
+    {
+      "priority": 2,
+      "area": "parallelism",
+      "detail": "Guest tasks currently use one host executor with a preserved 4096-instruction scheduling quantum. Functional concurrency does not establish physical multicore execution or high performance."
+    }
+  ]
+}

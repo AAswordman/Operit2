@@ -1,3 +1,8 @@
+// Share the tested ARM64 protocol and session lifecycle with the iOS owner.
+#[cfg(all(feature = "arm64-runtime", target_os = "macos", target_arch = "aarch64"))]
+#[path = "../../../../ios/src/terminal.rs"]
+mod arm64;
+
 #[cfg(target_os = "macos")]
 #[path = "terminal_macos.rs"]
 mod platform;

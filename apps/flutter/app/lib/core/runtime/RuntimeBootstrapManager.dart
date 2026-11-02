@@ -74,6 +74,7 @@ class RuntimeBootstrapManager extends ChangeNotifier {
   LocalRuntimeStorageConfig _config =
       LocalRuntimeStorageConfig.platformDefault();
   ThemeMode _startupThemeMode = ThemeMode.system;
+  Future<void> _bootstrapWriteTail = Future<void>.value();
 
   /// Returns the current local bootstrap configuration.
   LocalRuntimeStorageConfig get config => _config;
@@ -118,6 +119,7 @@ class RuntimeBootstrapManager extends ChangeNotifier {
         tag: _logTag,
         verboseLevel: VerboseLevel.level1,
       );
+      _config = storedConfig;
       if (storedConfig.confirmed) {
         final storageStopwatch = Stopwatch()..start();
         ClientLogger.v(
@@ -378,13 +380,22 @@ class RuntimeBootstrapManager extends ChangeNotifier {
   Future<void> _writeBootstrapConfig(
     LocalRuntimeStorageConfig config, {
     ThemeMode? startupThemeMode,
-  }) async {
-    config.validate();
-    final encodedConfig = <String, Object?>{
-      ...config.toJson(),
-      _startupThemeModeKey: (startupThemeMode ?? _startupThemeMode).name,
-    };
-    await platformCoreProxy.runtimeBootstrapWrite(jsonEncode(encodedConfig));
+  }) {
+    // Serialize overlapping theme and identity updates.
+    final write = _bootstrapWriteTail.then((_) async {
+      config.validate();
+      final encodedConfig = <String, Object?>{
+        ...config.toJson(),
+        _startupThemeModeKey: (startupThemeMode ?? _startupThemeMode).name,
+      };
+      await platformCoreProxy.runtimeBootstrapWrite(jsonEncode(encodedConfig));
+      if (startupThemeMode != null) _startupThemeMode = startupThemeMode;
+    });
+    _bootstrapWriteTail = write.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return write;
   }
 }
 

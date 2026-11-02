@@ -1,34 +1,23 @@
-/**
- * Installs the existing v1 dispatch family over the conditional runtime script package.
- * @param {Record<string, any>} runtime
- */
+/** Installs the v1 compatibility surface as an SDK-internal adapter. */
 function __operitInstallV1Runtime(runtime) {
     var api = runtime.__operitToolPkgApi;
     var canonical = runtime.__operitCanonicalTools;
     var originalToolCall = runtime.toolCall;
+    var internal = runtime.__operitV1InternalRuntime;
+    if (!internal) throw new Error('Internal V1 runtime implementation is unavailable');
+    runtime.__operitV1CanonicalTools = canonical;
     var routes = Object.freeze({
-        'super_admin:terminal': 'v1_runtime:terminal',
-        'code_runner:run_javascript_node': 'v1_runtime:run_javascript_node',
-        'ffmpeg:ffmpeg_execute': 'v1_runtime:ffmpeg_execute',
-        'ffmpeg:ffmpeg_info': 'v1_runtime:ffmpeg_info',
+        'super_admin:terminal': 'terminal',
+        'code_runner:run_javascript_node': 'run_javascript_node',
+        'ffmpeg:ffmpeg_execute': 'ffmpeg_execute',
+        'ffmpeg:ffmpeg_info': 'ffmpeg_info',
     });
 
-    /** Decodes the script-package executor's JSON text without hiding provider failures.
-     * @param {unknown} value
-     * @returns {any}
-     */
-    function decoded(value) {
-        if (typeof value !== 'string') throw new TypeError('V1 runtime package must return serialized JSON');
-        return JSON.parse(value);
-    }
-
-    /** Calls one exact runtime tool through the original structured host transport.
-     * @param {string} method
-     * @param {Record<string, any>} params
-     * @returns {Promise<any>}
-     */
+    /** Calls the internal implementation without publishing a package tool identity. */
     function invoke(method, params) {
-        return originalToolCall('v1_runtime:' + method, params).then(decoded);
+        var implementation = internal[method];
+        if (typeof implementation !== 'function') throw new Error('Unknown internal V1 runtime method: ' + method);
+        return Promise.resolve().then(function() { return implementation(params || {}); });
     }
 
     // Both legacy file calls and shell commands use this existing managed filesystem.
@@ -136,18 +125,15 @@ function __operitInstallV1Runtime(runtime) {
         }
         if (type === 'default' && Object.prototype.hasOwnProperty.call(routes, name)) {
             var target = routes[/** @type {keyof typeof routes} */ (name)];
-            if (args[0] !== null && typeof args[0] === 'object') rewritten[0] = Object.assign({}, args[0], { name: target });
-            else rewritten[index] = target;
+            var objectCall = args[0] !== null && typeof args[0] === 'object';
+            var parameters = objectCall ? (args[0].params || {}) : (args[index + 1] || {});
             if (name === 'super_admin:terminal') {
-                var objectCall = args[0] !== null && typeof args[0] === 'object';
-                var parameters = objectCall ? args[0].params : args[index + 1];
                 if (parameters && typeof parameters.command === 'string') {
                     var mapped = Object.assign({}, parameters, { command: await cachePath(parameters.command) });
-                    if (objectCall) rewritten[0].params = mapped;
-                    else rewritten[index + 1] = mapped;
+                    parameters = mapped;
                 }
             }
-            return originalToolCall.apply(runtime, rewritten).then(decoded);
+            return invoke(target, parameters);
         }
         return originalToolCall.apply(runtime, args);
     }

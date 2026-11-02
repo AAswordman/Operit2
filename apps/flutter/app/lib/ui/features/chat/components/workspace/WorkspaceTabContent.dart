@@ -51,7 +51,6 @@ class WorkspaceTabContent extends StatelessWidget {
     this.onSelectBrowserTab,
     this.onCloseBrowserSession,
     required this.onFinishWebVisit,
-    required this.onActivateCurrentTab,
     required this.onCloseCurrentTab,
     required this.onOpenWorkspaceCreator,
     required this.onBindWorkspace,
@@ -96,7 +95,6 @@ class WorkspaceTabContent extends StatelessWidget {
   final ValueChanged<String>? onCloseBrowserSession;
   final void Function(WorkspaceTab tab, WebVisitResponse response)
   onFinishWebVisit;
-  final VoidCallback onActivateCurrentTab;
   final VoidCallback onCloseCurrentTab;
   final VoidCallback onOpenWorkspaceCreator;
   final Future<void> Function(String workspace) onBindWorkspace;
@@ -192,7 +190,6 @@ class WorkspaceTabContent extends StatelessWidget {
           onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
           onOpenWorkspaceFile: onOpenWorkspaceFile,
           onOpenBrowserTab: onOpenBrowser,
-          onActivateRequested: onActivateCurrentTab,
           onCloseRequested: onCloseCurrentTab,
         );
       case WorkspaceTabKind.webVisit:

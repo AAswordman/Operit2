@@ -9,23 +9,23 @@ use operit_host_native_common::{TerminalManagedRuntimeLaunch, TerminalManagedRun
 
 use crate::terminal::IosTerminalHost;
 
-const ISH_TERMINAL: &str = "ish";
+const ARM64_TERMINAL: &str = "arm64";
 const SHELL_TERMINAL_TYPE: &str = "shell";
-const ISH_RUNTIME_WORKSPACE: &str = "/root/.operit/managed_runtime";
+const ARM64_RUNTIME_WORKSPACE: &str = "/root/.operit/managed_runtime";
 
-/// Starts managed processes inside the persistent iSH Alpine environment.
+/// Starts managed processes inside the selected ARM64 root filesystem.
 #[derive(Clone)]
 pub struct IosManagedRuntimeHost {
     terminalHost: Arc<IosTerminalHost>,
 }
 
 impl IosManagedRuntimeHost {
-    /// Creates an iOS managed runtime host sharing the embedded iSH terminal owner.
+    /// Creates an iOS managed runtime host sharing the configured ARM64 terminal owner.
     pub fn new(terminalHost: Arc<IosTerminalHost>) -> Self {
         Self { terminalHost }
     }
 
-    /// Builds the iSH Alpine launch description for one managed runtime request.
+    /// Builds the ARM64 launch description for one managed runtime request.
     fn buildLaunch(
         &self,
         request: RuntimeProcessRequest,
@@ -60,7 +60,7 @@ impl IosManagedRuntimeHost {
             }
             None => (
                 "/root".to_string(),
-                ISH_RUNTIME_WORKSPACE.to_string(),
+                ARM64_RUNTIME_WORKSPACE.to_string(),
                 true,
                 program,
                 args,
@@ -68,7 +68,7 @@ impl IosManagedRuntimeHost {
             ),
         };
         Ok(TerminalManagedRuntimeLaunch {
-            terminal: ISH_TERMINAL.to_string(),
+            terminal: ARM64_TERMINAL.to_string(),
             terminalType: SHELL_TERMINAL_TYPE.to_string(),
             sessionWorkingDirectory,
             processWorkingDirectory,
@@ -85,25 +85,29 @@ impl IosManagedRuntimeHost {
         let hostWorkingDirectory = Path::new(hostWorkingDirectory);
         if !hostWorkingDirectory.is_absolute() {
             return Err(HostError::new(format!(
-                "iSH managed runtime working directory must be absolute: {}",
+                "ARM64 managed runtime working directory must be absolute: {}",
                 hostWorkingDirectory.to_string_lossy()
             )));
         }
         let hostParent = hostWorkingDirectory.parent().ok_or_else(|| {
             HostError::new(format!(
-                "iSH managed runtime working directory has no parent: {}",
+                "ARM64 managed runtime working directory has no parent: {}",
                 hostWorkingDirectory.to_string_lossy()
             ))
         })?;
         let hostParent = hostParent.to_str().ok_or_else(|| {
-            HostError::new("iSH managed runtime parent directory is not valid UTF-8")
+            HostError::new("ARM64 managed runtime parent directory is not valid UTF-8")
         })?;
         self.terminalHost
-            .mountManagedRuntimeDirectory(hostParent, hostParent)?;
+            .mountManagedRuntimeDirectory(hostParent, hostParent)
+            .map_err(|error| HostError::new(format!(
+                "Cannot expose managed runtime working directory {} at {hostParent} in the selected ARM64 root: {}. Configure its bind before starting terminals, or enable the App sandbox binding in terminal settings",
+                hostWorkingDirectory.to_string_lossy(), error.message,
+            )))?;
         Ok(hostWorkingDirectory.to_string_lossy().into_owned())
     }
 
-    /// Starts one iSH managed runtime process for a request.
+    /// Starts one ARM64 managed runtime process for a request.
     fn startProcess(
         &self,
         request: RuntimeProcessRequest,
@@ -113,12 +117,12 @@ impl IosManagedRuntimeHost {
 }
 
 impl ManagedRuntimeHost for IosManagedRuntimeHost {
-    /// Returns the persistent runtime workspace located inside the iSH Alpine filesystem.
+    /// Returns the persistent runtime workspace located inside the selected ARM64 root filesystem.
     fn runtimeWorkspaceDir(&self) -> HostResult<String> {
-        Ok(ISH_RUNTIME_WORKSPACE.to_string())
+        Ok(ARM64_RUNTIME_WORKSPACE.to_string())
     }
 
-    /// Resolves a runtime executable inside the embedded iSH Alpine filesystem.
+    /// Resolves a runtime executable inside the selected ARM64 root filesystem.
     fn resolveRuntimeExecutable(
         &self,
         program: ManagedRuntimeProgram,
@@ -139,7 +143,7 @@ impl ManagedRuntimeHost for IosManagedRuntimeHost {
         })
     }
 
-    /// Starts a persistent iSH Alpine process.
+    /// Starts a persistent process in the selected ARM64 root.
     fn startRuntimeProcess(
         &self,
         request: RuntimeProcessRequest,
@@ -147,7 +151,7 @@ impl ManagedRuntimeHost for IosManagedRuntimeHost {
         Ok(Box::new(self.startProcess(request)?))
     }
 
-    /// Runs a one-shot command inside iSH Alpine and captures its terminal output.
+    /// Runs a one-shot command inside the selected ARM64 root and captures its terminal output.
     fn runRuntimeCommand(
         &self,
         request: RuntimeProcessRequest,

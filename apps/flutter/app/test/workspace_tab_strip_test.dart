@@ -58,6 +58,58 @@ Future<void> _rightClick(WidgetTester tester, String title) async {
 
 void main() {
   for (final width in [390.0, 1024.0]) {
+    for (final direction in TextDirection.values) {
+      for (final tabCount in [1, 2]) {
+        testWidgets(
+          'tab strip fills pane and starts at its leading edge: $width, $direction, $tabCount tabs',
+          (tester) async {
+            tester.view.devicePixelRatio = 1;
+            tester.view.physicalSize = Size(width, 600);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            addTearDown(tester.view.resetPhysicalSize);
+            final paneKey = GlobalKey();
+            final tabs = _tabs().take(tabCount).toList();
+            await tester.pumpWidget(
+              _app(
+                Directionality(
+                  textDirection: direction,
+                  child: SizedBox(
+                    key: paneKey,
+                    width: 300,
+                    child: Column(
+                      children: [
+                        WorkspaceTabStrip(
+                          tabs: tabs,
+                          selectedIndex: 0,
+                          onSelected: (_) {},
+                          onClosed: (_) {},
+                          onCloseTabs: (_) async {},
+                        ),
+                        const Expanded(child: SizedBox.expand()),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+
+            final paneRect = tester.getRect(find.byKey(paneKey));
+            final stripRect = tester.getRect(find.byType(WorkspaceTabStrip));
+            expect(stripRect.left, paneRect.left);
+            expect(stripRect.right, paneRect.right);
+            final homeRect = tester.getRect(find.byTooltip('Home'));
+            final leadingInset = direction == TextDirection.ltr
+                ? homeRect.left - paneRect.left
+                : paneRect.right - homeRect.right;
+            expect(leadingInset, inInclusiveRange(8, 10));
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
+  for (final width in [390.0, 1024.0]) {
     for (final entry in <String, List<int>>{
       '关闭': [2],
       '关闭其他': [1, 3],

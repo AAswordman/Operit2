@@ -27,6 +27,7 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
+use operit_model::ModelConfigData::ModelSummarySettings;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ChatConfigurationResult;
@@ -54,6 +55,34 @@ struct ConversationSummaryRequest {
     chatModelIdOverride: Option<String>,
     autoContinue: bool,
     requireCurrentChat: bool,
+}
+
+/// Separates optional history scheduling from the token guard needed during every persisted tool loop.
+struct SummarySendPolicy {
+    tokenUsageThreshold: f64,
+    checkBeforeSend: bool,
+}
+
+impl SummarySendPolicy {
+    fn new(
+        settings: &ModelSummarySettings,
+        turnOptions: &ChatTurnOptions,
+        checkBeforeSend: bool,
+        isBackgroundSend: bool,
+    ) -> Self {
+        let enabled = settings.enableSummary && turnOptions.persistTurn;
+        Self {
+            tokenUsageThreshold: if enabled {
+                settings.tokenThresholdRatio()
+            } else {
+                f64::MAX
+            },
+            checkBeforeSend: enabled
+                && checkBeforeSend
+                && !isBackgroundSend
+                && !turnOptions.deferSummary,
+        }
+    }
 }
 
 /// Coordinates high-level chat sends, generic participant execution and conversation summaries.
@@ -710,8 +739,9 @@ impl MessageCoordinationDelegate {
             &chatId,
             participantId.clone(),
             promptFunctionType.clone(),
-            turnOptions.persistTurn && !isBackgroundSend && !turnOptions.deferSummary,
+            &turnOptions,
             !isContinuation && !isAutoContinuation && !isResume,
+            isBackgroundSend,
         )?;
         let runtimeChatHistory = match chatHistoryOverride {
             Some(history) => history,
@@ -819,8 +849,9 @@ impl MessageCoordinationDelegate {
         chatId: &str,
         participantId: Option<String>,
         promptFunctionType: PromptFunctionType,
-        enableSummary: bool,
+        turnOptions: &ChatTurnOptions,
         checkBeforeSend: bool,
+        isBackgroundSend: bool,
     ) -> Result<(i32, f64), String> {
         let providerId = configuration.profile.modelBinding.providerId.clone();
         let modelId = configuration.profile.modelBinding.modelId.clone();
@@ -830,11 +861,10 @@ impl MessageCoordinationDelegate {
             .getResolvedModelConfig(&providerId, &modelId)
             .map_err(|error| error.to_string())?;
         let maxTokens = settings.context.maxContextTokens();
-        if !enableSummary || !settings.summary.enableSummary {
-            return Ok((maxTokens, f64::MAX));
-        }
-        let mut threshold = settings.summary.tokenThresholdRatio();
-        if checkBeforeSend
+        let policy = SummarySendPolicy::new(
+            &settings.summary, turnOptions, checkBeforeSend, isBackgroundSend,
+        );
+        if policy.checkBeforeSend
             && self
                 .messageProcessingDelegate
                 .summaryTaskForChat(chatId)
@@ -854,7 +884,7 @@ impl MessageCoordinationDelegate {
                     messages.clone(),
                     chat.currentWindowSize,
                     maxTokens,
-                    threshold,
+                    policy.tokenUsageThreshold,
                     true,
                     settings.summary.enableSummaryByMessageCount,
                     settings.summary.summaryMessageCountThreshold,
@@ -873,10 +903,9 @@ impl MessageCoordinationDelegate {
                         requireCurrentChat: true,
                     },
                 )?;
-                threshold += 0.5;
             }
         }
-        Ok((maxTokens, threshold))
+        Ok((maxTokens, policy.tokenUsageThreshold))
     }
 
     /// Checks the completed conversation against every current participant's configured summary threshold.
@@ -1207,4 +1236,86 @@ impl MessageCoordinationDelegate {
 
     /// Installs UI bridge callbacks used by platform integrations.
     pub fn setUiBridge(&mut self) {}
+}
+
+#[cfg(test)]
+mod summary_send_policy_tests {
+    use super::*;
+    use operit_model::ChatTurnOptions::ChatTurnContinuation;
+    use operit_model::ModelConfigData::ModelContextSpec;
+
+    /// A continued or background tool loop must still compact at 98% with the default 85% threshold.
+    #[test]
+    fn continued_and_background_tool_loops_keep_the_configured_token_guard() {
+        let settings = ModelSummarySettings::default();
+        let maxTokens = ModelContextSpec::default().maxContextTokens();
+        for deferred in [false, true] {
+            for background in [false, true] {
+                let options = ChatTurnOptions {
+                    continuation: Some(ChatTurnContinuation {
+                        userMessageTimestamp: 1,
+                    }),
+                    deferSummary: deferred,
+                    ..Default::default()
+                };
+                let policy = SummarySendPolicy::new(&settings, &options, false, background);
+                assert!(!policy.checkBeforeSend);
+                assert!(AIMessageManager::shouldGenerateSummary(
+                    Vec::new(),
+                    i64::from(maxTokens) * 98 / 100,
+                    maxTokens,
+                    policy.tokenUsageThreshold,
+                    true,
+                    false,
+                    16,
+                ));
+            }
+        }
+    }
+
+    /// Scheduling a snapshot must leave the current tool loop protected at the configured threshold.
+    #[test]
+    fn proactive_summary_keeps_the_same_token_threshold_as_tool_continuations() {
+        let settings = ModelSummarySettings::default();
+        let initial = SummarySendPolicy::new(&settings, &ChatTurnOptions::default(), true, false);
+        let continued = SummarySendPolicy::new(
+            &settings,
+            &ChatTurnOptions {
+                deferSummary: true,
+                ..Default::default()
+            },
+            false,
+            false,
+        );
+        assert!(initial.checkBeforeSend);
+        assert!(!continued.checkBeforeSend);
+        assert_eq!(initial.tokenUsageThreshold, continued.tokenUsageThreshold);
+        assert!(initial.tokenUsageThreshold <= 1.0);
+    }
+
+    /// Explicit summary opt-out and ephemeral turns must continue without automatic compaction.
+    #[test]
+    fn disabled_summaries_and_ephemeral_turns_disable_both_checks() {
+        for (enabled, persisted) in [(false, true), (true, false)] {
+            let settings = ModelSummarySettings {
+                enableSummary: enabled,
+                ..Default::default()
+            };
+            let options = ChatTurnOptions {
+                persistTurn: persisted,
+                ..Default::default()
+            };
+            let policy = SummarySendPolicy::new(&settings, &options, true, false);
+            assert!(!policy.checkBeforeSend);
+            assert!(!AIMessageManager::shouldGenerateSummary(
+                Vec::new(),
+                196_000,
+                200_000,
+                policy.tokenUsageThreshold,
+                true,
+                false,
+                16,
+            ));
+        }
+    }
 }

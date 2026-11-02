@@ -18,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: ios-ish
-            script: tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
-            archive: apps/flutter/app/ios/Runner/ish-root.tar.gz
-            architecture: x86
+          - platform: ios-arm64
+            script: tools/ios-runtime/arm64/build_rootfs_linux.sh
+            archive: apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz
+            architecture: aarch64
             package_layout: preinstalled
           - platform: android
             script: tools/android-runtime/build_alpine_rootfs_wsl.sh
@@ -41,14 +41,14 @@ jobs:
       - name: Install build and verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl gawk python3 qemu-user-static
+          sudo apt-get install -y ca-certificates curl gawk python3 qemu-user-static binfmt-support
       - name: Build runtime rootfs
-        if: matrix.platform != 'ohos'
+        if: matrix.platform == 'android'
         env:
           BUILD_SCRIPT: ${{ matrix.script }}
         run: bash "$BUILD_SCRIPT"
-      - name: Build OHOS runtime rootfs with preserved ownership
-        if: matrix.platform == 'ohos'
+      - name: Build runtime rootfs with preserved ownership
+        if: matrix.platform == 'ohos' || matrix.platform == 'ios-arm64'
         env:
           BUILD_SCRIPT: ${{ matrix.script }}
         run: sudo bash "$BUILD_SCRIPT"

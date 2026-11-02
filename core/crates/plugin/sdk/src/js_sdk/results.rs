@@ -427,8 +427,8 @@ pub enum TerminalImplementation {
     Adb,
     #[serde(rename = "shell")]
     Shell,
-    #[serde(rename = "ish")]
-    Ish,
+    #[serde(rename = "arm64")]
+    Arm64,
     #[serde(rename = "qemu-vroot")]
     QemuVroot,
     #[serde(rename = "v86")]
@@ -443,7 +443,7 @@ impl TerminalImplementation {
             Self::AndroidSystem => "android-system",
             Self::Adb => "adb",
             Self::Shell => "shell",
-            Self::Ish => "ish",
+            Self::Arm64 => "arm64",
             Self::QemuVroot => "qemu-vroot",
             Self::V86 => "v86",
         }
@@ -465,7 +465,7 @@ impl TryFrom<&str> for TerminalImplementation {
             "android-system" => Ok(Self::AndroidSystem),
             "adb" => Ok(Self::Adb),
             "shell" => Ok(Self::Shell),
-            "ish" => Ok(Self::Ish),
+            "arm64" => Ok(Self::Arm64),
             "qemu-vroot" => Ok(Self::QemuVroot),
             "v86" => Ok(Self::V86),
             _ => Err(format!("invalid terminal implementation: {value}")),

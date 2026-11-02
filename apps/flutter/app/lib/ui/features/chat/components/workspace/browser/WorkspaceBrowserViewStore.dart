@@ -21,18 +21,20 @@ export 'tabs/WorkspaceBrowserTabModels.dart';
 
 class WorkspaceBrowserViewDelegate {
   /// Creates workspace-only browser presentation callbacks.
-  const WorkspaceBrowserViewDelegate({
-    required this.onActivateRequested,
-    required this.onCloseRequested,
-  });
+  const WorkspaceBrowserViewDelegate({required this.onCloseRequested});
 
-  final VoidCallback onActivateRequested;
   final VoidCallback onCloseRequested;
 }
 
 class WorkspaceBrowserViewStore extends ChangeNotifier {
   /// Creates the workspace browser surface store.
-  WorkspaceBrowserViewStore._();
+  WorkspaceBrowserViewStore._({BrowserSessions? sessions})
+    : _sessions = sessions ?? BrowserSessions();
+
+  /// Creates an isolated store with a supplied browser client for tests.
+  @visibleForTesting
+  WorkspaceBrowserViewStore.forTesting({required BrowserSessions sessions})
+    : this._(sessions: sessions);
 
   static final WorkspaceBrowserViewStore instance =
       WorkspaceBrowserViewStore._();
@@ -52,7 +54,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   static const String _encodedStreamTransport = 'encodedStream';
   static const String _logTag = 'WorkspaceBrowserSurface';
 
-  final BrowserSessions _sessions = BrowserSessions();
+  final BrowserSessions _sessions;
   final WorkspaceBrowserStores stores = WorkspaceBrowserStores();
   final WorkspaceBrowserPermissionStore permissions =
       WorkspaceBrowserPermissionStore();
@@ -209,9 +211,22 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
       throw StateError('Browser session is not attached');
     }
     _selectedIndex = index;
-    _delegate?.onActivateRequested();
+    // Workspace already selected its tab before synchronizing the session.
+    // Calling back into tab selection here re-enters selectSession and can
+    // activate the previous tab while a new browser content widget is mounting.
     notifyListeners();
-    unawaited(_sessions.activate(sessionId));
+    unawaited(_activateSession(sessionId));
+  }
+
+  /// Reports asynchronous activation failures on the affected browser tab.
+  Future<void> _activateSession(String sessionId) async {
+    try {
+      await _sessions.activate(sessionId);
+    } catch (error) {
+      _tabById(
+        sessionId,
+      )?.update(errorText: error.toString(), isLoading: false);
+    }
   }
 
   /// Closes one browser session through Core.

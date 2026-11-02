@@ -146,7 +146,7 @@ export type TerminalType = "powershell" | "bash" | "zsh" | "shell";
 /**
  * Identifies the concrete terminal implementation selected by a host.
  */
-export type TerminalImplementation = "native" | "proot" | "android-system" | "adb" | "shell" | "ish" | "qemu-vroot" | "v86";
+export type TerminalImplementation = "native" | "proot" | "android-system" | "adb" | "shell" | "arm64" | "qemu-vroot" | "v86";
 
 /**
  * Reports the start or an incremental chunk of a streamed chat-message response.

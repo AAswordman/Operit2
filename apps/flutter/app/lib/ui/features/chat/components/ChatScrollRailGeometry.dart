@@ -4,13 +4,14 @@ import 'dart:math' as math;
 
 /// Shares bounded rail geometry between painting, pointer selection and previews.
 class ChatScrollRailGeometry {
-  /// Creates a centered rail that always fits inside the transcript viewport.
+  /// Creates a centered viewport onto evenly spaced message ticks.
   const ChatScrollRailGeometry({
     required this.entryCount,
     required this.viewportHeight,
   }) : assert(entryCount > 0),
        assert(viewportHeight > 0 && viewportHeight < double.infinity);
 
+  static const double tickSpacing = 16;
   static const double interactionWidth = 88;
   static const double hitWidth = 48;
   static const double rightInset = 8;
@@ -23,12 +24,13 @@ class ChatScrollRailGeometry {
   final int entryCount;
   final double viewportHeight;
 
-  /// Keeps dense histories within the available height instead of overflowing.
-  double get height =>
-      math.min(entryCount * 8.0, math.max(8.0, viewportHeight - 100));
+  /// Preserves a separate tick for every message, even in long conversations.
+  double get contentHeight => entryCount * tickSpacing;
 
-  /// Limits paint work to the number of visually distinguishable tick rows.
-  int get tickCount => math.min(entryCount, math.max(1, (height / 3).floor()));
+  double get height =>
+      math.min(contentHeight, math.max(tickSpacing, viewportHeight - 100));
+
+  double get maxScrollOffset => math.max(0, contentHeight - height);
 
   /// Centers the rail independently of the number of messages in history.
   double get top => (viewportHeight - height) / 2;
@@ -42,21 +44,15 @@ class ChatScrollRailGeometry {
   /// Keeps the wave visible in both short conversations and long histories.
   double get waveSpread => math.min(waveRadius, math.max(12.0, height / 3));
 
-  /// Returns the exact message row nearest to a pointer's vertical position.
-  int entryIndexAt(double y) =>
-      (((y - top) / height) * entryCount).floor().clamp(0, entryCount - 1);
+  /// Resolves the visible message after accounting for independent rail scrolling.
+  int entryIndexAt(double y, {double scrollOffset = 0}) =>
+      ((y.clamp(top, top + height - 0.001) - top + scrollOffset) / tickSpacing)
+          .floor()
+          .clamp(0, entryCount - 1);
 
-  /// Places previews using the same history-to-rail mapping as pointer selection.
-  double entryCenter(int index) => top + (index + 0.5) * height / entryCount;
-
-  /// Returns the center of a bounded visual tick bucket.
-  double tickCenter(int index) => top + (index + 0.5) * height / tickCount;
-
-  /// Maps the first message represented by a visual tick bucket.
-  int bucketStart(int index) => index * entryCount ~/ tickCount;
-
-  /// Maps the exclusive last message represented by a visual tick bucket.
-  int bucketEnd(int index) => (index + 1) * entryCount ~/ tickCount;
+  /// Uses the same scroll offset for ticks, hit testing, and preview placement.
+  double entryCenter(int index, {double scrollOffset = 0}) =>
+      top + (index + 0.5) * tickSpacing - scrollOffset;
 
   /// Smoothly increases horizontal proximity and saturates beside the rail.
   double proximityAt(double x) {

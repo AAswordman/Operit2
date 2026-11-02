@@ -1,0 +1,110 @@
+{
+  "date": "2026-11-02",
+  "scope_complete": false,
+  "initial_corpus": {
+    "passed": 619,
+    "unsupported": 523
+  },
+  "initial_forms": 1142,
+  "same_forms_after": {
+    "forms": 1142,
+    "passed": 1142
+  },
+  "expanded_corpus": {
+    "passed": 4483
+  },
+  "expanded_forms": 4483,
+  "input_records": 421520,
+  "families": {
+    "floating-immediate": {
+      "passed": 1280
+    },
+    "integer-arithmetic": {
+      "passed": 116
+    },
+    "integer-bit": {
+      "passed": 36
+    },
+    "integer-multiply": {
+      "passed": 10
+    },
+    "integer-conditional": {
+      "passed": 48
+    },
+    "floating": {
+      "passed": 50
+    },
+    "floating-conversion": {
+      "passed": 48
+    },
+    "vector-arithmetic": {
+      "passed": 1072
+    },
+    "vector-unary": {
+      "passed": 75
+    },
+    "vector-permute": {
+      "passed": 178
+    },
+    "vector-reduction": {
+      "passed": 35
+    },
+    "vector-logical": {
+      "passed": 64
+    },
+    "vector-shift": {
+      "passed": 196
+    },
+    "vector-narrow-shift": {
+      "passed": 96
+    },
+    "scalar-simd": {
+      "passed": 120
+    },
+    "vector-widen": {
+      "passed": 444
+    },
+    "vector-narrow": {
+      "passed": 24
+    },
+    "vector-copy": {
+      "passed": 16
+    },
+    "vector-floating": {
+      "passed": 264
+    },
+    "memory-literal": {
+      "passed": 6
+    },
+    "branch": {
+      "passed": 30
+    },
+    "memory-load": {
+      "passed": 42
+    },
+    "memory-store": {
+      "passed": 27
+    },
+    "memory-pair": {
+      "passed": 28
+    },
+    "memory-structure": {
+      "passed": 98
+    },
+    "memory-lane": {
+      "passed": 64
+    },
+    "memory-replicate": {
+      "passed": 16
+    }
+  },
+  "catalog_sha256": "a6d4bfc197e9084b1381137714521fb5f37f1696bc9b68f111ebfcaa10e4f4e3",
+  "full_report": "tools/ios-runtime/arm64/build/host/isa-audit.json",
+  "validation": {
+    "host_ctest": "5/5 suites passed",
+    "sanitizer_ctest": "5/5 suites passed with ASan/UBSan",
+    "ios": "device/simulator arm64 static libraries, XCFramework, Swift simulator import/link passed",
+    "python": "stdlib/SQLite acceptance passed with fixed acceleration off/on",
+    "node": "version passed; basic/workers/threadpool failed during stdio bootstrap with open ENOTTY"
+  }
+}

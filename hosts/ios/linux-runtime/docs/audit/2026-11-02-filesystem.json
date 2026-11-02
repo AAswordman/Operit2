@@ -1,0 +1,173 @@
+{
+  "date": "2026-11-02",
+  "goal_complete": false,
+  "scope": "External rootfs, anchored directory bind namespace, real file operations, shared descriptors, scheduler-aware pipe/eventfd I/O, ABI and execution fixes",
+  "isa": {
+    "summary": {
+      "passed": 5251
+    },
+    "forms": 5251,
+    "records": 790160,
+    "families": {
+      "floating-immediate": {
+        "passed": 1280
+      },
+      "integer-arithmetic": {
+        "passed": 116
+      },
+      "integer-bit": {
+        "passed": 36
+      },
+      "integer-multiply": {
+        "passed": 10
+      },
+      "integer-conditional": {
+        "passed": 48
+      },
+      "floating": {
+        "passed": 50
+      },
+      "floating-conversion": {
+        "passed": 48
+      },
+      "floating-fixed-conversion": {
+        "passed": 768
+      },
+      "vector-arithmetic": {
+        "passed": 1072
+      },
+      "vector-unary": {
+        "passed": 75
+      },
+      "vector-permute": {
+        "passed": 178
+      },
+      "vector-reduction": {
+        "passed": 35
+      },
+      "vector-logical": {
+        "passed": 64
+      },
+      "vector-shift": {
+        "passed": 196
+      },
+      "vector-narrow-shift": {
+        "passed": 96
+      },
+      "scalar-simd": {
+        "passed": 120
+      },
+      "vector-widen": {
+        "passed": 444
+      },
+      "vector-narrow": {
+        "passed": 24
+      },
+      "vector-copy": {
+        "passed": 16
+      },
+      "vector-floating": {
+        "passed": 264
+      },
+      "memory-literal": {
+        "passed": 6
+      },
+      "branch": {
+        "passed": 30
+      },
+      "memory-load": {
+        "passed": 42
+      },
+      "memory-store": {
+        "passed": 27
+      },
+      "memory-pair": {
+        "passed": 28
+      },
+      "memory-structure": {
+        "passed": 98
+      },
+      "memory-lane": {
+        "passed": 64
+      },
+      "memory-replicate": {
+        "passed": 16
+      }
+    },
+    "catalog_sha256": "8203224de2fcd1c8ae1f138109f256ad99ff1610dd019bd8adaf1630e4184e29",
+    "complete": false
+  },
+  "python": {
+    "passed": true,
+    "fixture_mount": "read-only external bind"
+  },
+  "node": {
+    "passed": false,
+    "worker_deadline_ms": 15000,
+    "fixture_mount": "read-only external bind",
+    "cases": [
+      {
+        "test": "version",
+        "accelerated": false,
+        "passed": true,
+        "returncode": 0,
+        "timed_out": false
+      },
+      {
+        "test": "basic",
+        "accelerated": false,
+        "passed": true,
+        "returncode": 0,
+        "timed_out": false
+      },
+      {
+        "test": "workers",
+        "accelerated": false,
+        "passed": false,
+        "returncode": 1,
+        "timed_out": false
+      },
+      {
+        "test": "threadpool",
+        "accelerated": false,
+        "passed": true,
+        "returncode": 0,
+        "timed_out": false
+      },
+      {
+        "test": "version",
+        "accelerated": true,
+        "passed": true,
+        "returncode": 0,
+        "timed_out": false
+      },
+      {
+        "test": "basic",
+        "accelerated": true,
+        "passed": true,
+        "returncode": 0,
+        "timed_out": false
+      },
+      {
+        "test": "workers",
+        "accelerated": true,
+        "passed": false,
+        "returncode": 1,
+        "timed_out": false
+      },
+      {
+        "test": "threadpool",
+        "accelerated": true,
+        "passed": true,
+        "returncode": 0,
+        "timed_out": false
+      }
+    ]
+  },
+  "validation": {
+    "host": "All six CTest suites passed after identity fixes; final path/flag changes checked with affected suites.",
+    "sanitizers": "All six suites passed during implementation; latest affected filesystem/runtime/Alpine suites checked with ASan/UBSan.",
+    "ios": "Native device/simulator archive, XCFramework and Swift import/link including ort_arm64_bind."
+  },
+  "remaining_goal": "See docs/completeness.md; procfs/devfs, process fork/exec/wait, network, full signals/PTY, shared mappings, Linux metadata and physical multicore remain required."
+}

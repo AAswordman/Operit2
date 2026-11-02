@@ -214,7 +214,7 @@ pub enum ChatInitialTurn {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatSummaryPolicy {
-    /// Keeps the continued reply outside automatic summary scheduling.
+    /// Defers ordinary history summaries; tool-loop context limits still trigger compaction.
     #[serde(rename = "defer")]
     Defer,
     /// Checks configured summary thresholds after this reply has actually completed.

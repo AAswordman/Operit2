@@ -1,6 +1,7 @@
 #ifndef OperitFlutterBridge_h
 #define OperitFlutterBridge_h
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -9,8 +10,14 @@ extern "C" {
 #endif
 
 void *operit_flutter_bridge_create(void);
-char *operit_ios_ish_terminal_call(const char *command, const char *request_json);
-void operit_ios_ish_terminal_free(char *value);
+// A zero-length frame polls cancellation while the guest command is silent.
+// Return false to interrupt the command and recover its shell before returning.
+typedef bool (*operit_ios_arm64_terminal_output_callback)(void *context, const uint8_t *bytes, size_t length);
+char *operit_ios_arm64_terminal_call(const char *command, const char *request_json);
+void operit_ios_arm64_terminal_free(char *value);
+char *operit_ios_arm64_terminal_execute_streaming(
+    const char *command, const char *request_json, void *context,
+    operit_ios_arm64_terminal_output_callback on_output);
 void *operit_flutter_bridge_create_with_storage_roots(
     const char *runtime_root,
     const char *workspace_root);

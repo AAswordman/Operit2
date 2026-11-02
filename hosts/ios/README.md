@@ -1,14 +1,18 @@
 # iOS host
 
+## ARM64 Linux runtime
+
+独立运行时位于 [linux-runtime](linux-runtime/README.md)，按 CPU、内存、ELF、文件系统、Linux ABI 与固定组件加速分层。Flutter Runner 的终端通过 Rust 桥接调用 `Arm64TerminalBridge.mm`，使用原版 Alpine AArch64 软件包。构建与 rootfs 工具位于 `tools/ios-runtime/arm64/`；旧 x86 后端已从产品构建和终端路由移除。
+
 ## Terminal storage and paths
 
-iSH imports the bundled Alpine filesystem once into
-`Library/Application Support/operit-ish/rootfs` in the application data container.
+The ARM64 installer imports the bundled `arm64-rootfs.tar.gz` once into
+`Library/Application Support/operit-arm64/rootfs-arm64` in the application data container.
 Subsequent launches reuse it. Files in `/root`, shell configuration, and software
 installed into `/usr` survive process restarts and app updates that preserve app
 data. Removing app data also removes this filesystem.
 
-Host directories are shared through hostfs **at their original absolute paths**,
+Host directories are shared through the runtime bind mounts **at their original absolute paths**,
 matching Android's same-path bind mounts. The Documents directory and Operit2
 application-support directory are available to every shell; a host working
 directory can also be mounted on session creation. The shell and native file

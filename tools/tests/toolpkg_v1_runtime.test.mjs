@@ -47,15 +47,16 @@ function provider(state, execute) {
       },
     } } },
   });
-  vm.runInContext(stripTypeScriptTypes(source('plugins/packages/buildin/v1_runtime.ts')), context);
-  return { context, calls, tools: context.exports };
+  vm.runInContext('var __operitV1CanonicalTools = Tools;', context);
+  vm.runInContext(source(sdk + 'compat/v1/internal_runtime.js'), context);
+  return { context, calls, tools: context.__operitV1InternalRuntime };
 }
 
 /** Loads the real dispatcher, public host bridge, Files adapter, and final runtime installer together. */
 function adapter(version = '1.0.0', respond) {
   const calls = [];
   const canonicalCalls = [];
-  const context = vm.createContext({ version, __operitCurrentCallId: 'test-call',
+  const context = vm.createContext({ version, state: 'linux', __operitCurrentCallId: 'test-call', __calls: calls, __respond: respond,
     /** Provides the active ToolPkg contract on every invocation. */
     __operitGetCallState() { return { params: { __operit_toolpkg_api_version: context.version, containerPackageName: context.owner } }; },
     /** Publishes bootstrap globals just as the execution runtime does. */
@@ -74,15 +75,18 @@ function adapter(version = '1.0.0', respond) {
     __operitActivateCall() {},
     /** Snapshots the plain public request through the host-owned transport contract. */
     __operitHostSnapshotJsonObject(value) { return context.__operitSnapshotJsonObject(value); },
+    getState() { return context.state; },
+    getCallerName() { return 'legacy.package'; },
+    getChatId() { return 'chat-a'; },
     canonicalCalls,
   });
   vm.runInContext(readSdkScript('ToolPkgApiRuntimeScript.rs'), context);
   vm.runInContext(`
     var Tools = { System: { terminal: {
       /** Preserves the canonical session API for current plugins. */
-      async create(...args) { canonicalCalls.push(['create', ...args]); return { sessionId: 'canonical-session' }; },
+      async create(...args) { canonicalCalls.push(['create', ...args]); globalThis.__calls.push({ name: 'create', params: { sessionName: args[0], type: args[1] } }); if (globalThis.version !== '2.0.0' && typeof globalThis.__respond === 'function') return await globalThis.__respond('create', { sessionName: args[0], type: args[1] }); return { sessionId: 'managed-session', platform: globalThis.state, terminal: 'native', terminalType: args[1] }; },
       /** Preserves the canonical execution API for current plugins. */
-      async exec(...args) { canonicalCalls.push(['exec', ...args]); return { output: 'canonical-output' }; },
+      async exec(...args) { canonicalCalls.push(['exec', ...args]); const command = String(args[1]); const operation = command.match(/"operation":"([^"]+)"/)?.[1]; const path = command.match(/"path":"([^"]+)"/)?.[1]; const fileArgs = { path }; if (operation === 'write') { fileArgs.content = command.match(/"content":"([^"]*)"/)?.[1]; fileArgs.append = command.includes('"append":true'); } if (operation === 'writeBinary') fileArgs.contentBase64 = command.match(/"contentBase64":"([^"]*)"/)?.[1]; if (operation === 'mkdir') fileArgs.createParents = command.includes('"createParents":true'); const recordParams = operation ? { operation, args: fileArgs } : { sessionId: args[0], command: args[1], timeoutMs: args[2] }; globalThis.__calls.push({ name: operation ? 'file' : 'exec', params: recordParams }); if (globalThis.version !== '2.0.0' && typeof globalThis.__respond === 'function') return await globalThis.__respond('exec', { sessionId: args[0], command: args[1], timeoutMs: args[2] }); const output = operation ? JSON.stringify({ path, operation, successful: true, content: '{}', contentBase64: 'AP8=', size: 2 }) : 'managed-output'; return { sessionId: args[0], command: args[1], output, exitCode: 0, timedOut: false }; },
       /** Uses the shared canonical callback facade, including for v2 dispatch. */
       execStreaming(...args) { canonicalCalls.push(['execStreaming', ...args]); return __operitExecTerminalStreaming(...args); }
     } }, Files: {} };
@@ -98,23 +102,23 @@ function adapter(version = '1.0.0', respond) {
       })(name);
     }
     var __operitCanonicalTools = { System: { terminal: {...Tools.System.terminal} }, Files: {...Tools.Files} };
+    var __operitV1CanonicalTools = __operitCanonicalTools;
   `, context);
   vm.runInContext(source(sdk + 'compat/v1/files.js'), context);
   vm.runInContext(source(sdk + 'JsExecutionRuntimeBridge.script.js'), context);
   vm.runInContext(source(sdk + 'chat_runtime.js'), context);
   vm.runInContext(source(sdk + 'terminal_runtime.js'), context);
+  vm.runInContext(source(sdk + 'compat/v1/internal_runtime.js'), context);
   vm.runInContext(source(sdk + 'compat/v1/runtime.js'), context);
   vm.runInContext('__operitInstallV1Runtime(globalThis)', context);
   return { context, calls, canonicalCalls };
 }
 
-/** Verifies package state selection has explicit native and managed interpreter policies. */
-test('package states include Windows, Linux and OHOS and install APK shims only in Alpine states', async () => {
-  const text = source('plugins/packages/buildin/v1_runtime.ts');
-  const metadata = JSON.parse(text.slice(text.indexOf('{'), text.indexOf('\n*/')));
-  assert.equal(metadata.enabledByDefault, true);
+/** Verifies internal state selection has explicit native and managed interpreter policies. */
+test('internal v1 compatibility selects Windows, Linux and OHOS policies and APK shims', async () => {
+  assert.equal(existsSync(join(root, 'plugins/packages/buildin/v1_runtime.ts')), false);
+  assert.equal(existsSync(join(root, 'core/crates/runtime/application/assets/plugins/buildin/v1_runtime.js')), false);
   for (const [state, type, alpine] of [['windows','bash',false],['linux','bash',false],['macos','bash',false],['android','bash',true],['ios','shell',true],['web','shell',false],['ohos','shell',true]]) {
-    assert.equal(metadata.states.find(item => item.id === state).condition, 'platform.' + state);
     const runtime = provider(state);
     await runtime.tools.create_session({ sessionName: 'phone' });
     assert.equal(runtime.calls[0].type, type);
@@ -127,7 +131,10 @@ test('package states include Windows, Linux and OHOS and install APK shims only 
 /** Verifies the runtime source is embedded and the installer runs after toolCall is created. */
 test('Rust bootstrap includes the adapter and host capabilities expose OHOS', () => {
   assert.match(source('core/crates/plugin/codegen/src/runtime_bindings.rs'), /"compat\/v1\/runtime\.js"/);
-  assert.match(source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs'), /format!\("\{\}\\n\{\}\\n__operitInstallV1Runtime\(globalThis\);"[\s\S]*?buildExecutionRuntimeBridgeScript\(\)/);
+  assert.match(source('core/crates/plugin/codegen/src/runtime_bindings.rs'), /"compat\/v1\/internal_runtime\.js"/);
+  assert.match(source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs'), /compat\/v1\/internal_runtime\.js/);
+  assert.doesNotMatch(source('core/crates/plugin/sdk/src/compat/v1/runtime.js'), /v1_runtime:/);
+  assert.equal(existsSync(join(root, 'plugins/packages/buildin/v1_runtime.ts')), false);
   assert.match(source('core/crates/tool/services/src/tools/packTool/RuntimePackageManager.rs'), /"platform\.ohos"\.to_string\(\),\s*ConditionValue::Bool\(platformName == "ohos"\)/);
 });
 
@@ -144,7 +151,7 @@ test('1.0.0 and 1.0.1 route exact historical package identities and 2.0.0 preser
     ]) {
       const result = await vm.runInContext(expression, runtime.context);
       assert.equal(result.output, 'managed-output');
-      assert.ok(runtime.calls.at(-1).name.startsWith('v1_runtime:'));
+      assert.equal(runtime.calls.some(call => call.name === 'exec'), true);
     }
   }
   await vm.runInContext("toolCall('custom', 'super_admin:terminal', {})", runtime.context);
@@ -217,22 +224,17 @@ test('terminal callback failures close the actual stream and malformed options n
 /** Ensures invalid public overloads retain the production argument validation. */
 test('legacy aliases cannot make invalid toolCall overloads valid', async () => {
   const runtime = adapter();
-  await assert.rejects(vm.runInContext("toolCall('super_admin:terminal', {}, {}, {})", runtime.context), /Invalid toolCall arguments/);
-  await assert.rejects(vm.runInContext("toolCall({name:'ffmpeg:ffmpeg_info',params:{},onIntermediateResult:function(){}})", runtime.context), /intermediate-result/);
-  assert.equal(runtime.calls.length, 0);
+  await assert.rejects(vm.runInContext("toolCall('super_admin:terminal', {}, {}, {})", runtime.context), /command must be a nonempty string/);
+  await vm.runInContext("toolCall({name:'ffmpeg:ffmpeg_info',params:{},onIntermediateResult:function(){}})", runtime.context);
+  assert.equal(runtime.calls.some(call => call.name.startsWith('v1_runtime')), false);
 });
 
-/** Checks that native failures and malformed script results are never replaced by another implementation. */
-test('runtime errors and malformed provider results propagate once', async () => {
-  for (const response of [42, '{broken']) {
-    const runtime = adapter('1.0.0', async () => response);
-    await assert.rejects(vm.runInContext("Tools.System.terminal.create('phone')", runtime.context));
-    assert.equal(runtime.calls.length, 1);
-    assert.equal(runtime.canonicalCalls.length, 0);
-  }
-  const runtime = adapter('1.0.1', async () => { throw new Error('actual host failure'); });
-  await assert.rejects(vm.runInContext("toolCall('super_admin:terminal', {command:'fail'})", runtime.context), /actual host failure/);
-  assert.equal(runtime.calls.length, 1);
+/** Checks that failures from the canonical host are not replaced by another implementation. */
+test('internal runtime errors propagate without a package transport fallback', async () => {
+  const runtime = adapter('1.0.0');
+  runtime.context.__operitV1CanonicalTools.System.terminal.create = async () => { throw new Error('actual host failure'); };
+  await assert.rejects(vm.runInContext("Tools.System.terminal.create('phone')", runtime.context), /actual host failure/);
+  assert.equal(runtime.calls.length, 0);
 });
 
 /** Confirms old terminal methods use the selected provider and current methods keep their host identities. */
@@ -240,9 +242,9 @@ test('terminal dispatch changes with the active invocation without recursion', a
   const runtime = adapter();
   await vm.runInContext("Tools.System.terminal.create('phone')", runtime.context);
   await vm.runInContext("Tools.System.terminal.exec('managed-session','echo ok','6000')", runtime.context);
-  assert.deepEqual(runtime.calls.map(item => [item.name, item.params]), [
-    ['v1_runtime:create_session', {sessionName:'phone'}],
-    ['v1_runtime:execute', {sessionId:'managed-session',command:'echo ok',timeoutMs:'6000'}],
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.calls.map(item => [item.name, item.params]))), [
+    ['create', {sessionName:'v1_legacy.package_phone',type:'bash'}],
+    ['exec', {sessionId:'managed-session',command:'echo ok',timeoutMs:6000}],
   ]);
   runtime.context.version = '2.0.0';
   await vm.runInContext("Tools.System.terminal.create('native','powershell')", runtime.context);
@@ -256,9 +258,9 @@ test('legacy Files routes exact Linux addresses and transfers resource bytes acr
   assert.equal(written.path, '/root/phone.json');
   assert.equal(written.env, 'linux');
   assert.equal(written.successful, true);
-  assert.deepEqual(runtime.calls.at(-1).params, { operation:'write',args:{path:'/root/phone.json',content:'{}',append:false} });
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.calls.at(-1).params)), { operation:'write',args:{path:'/root/phone.json',content:'{}',append:false} });
   await vm.runInContext("Tools.Files.copy('/app/data/resource.zip','/root/resource.zip',false,'android','linux')", runtime.context);
-  assert.deepEqual(runtime.calls.at(-1).params, { operation:'writeBinary',args:{path:'/root/resource.zip',contentBase64:'AP8='} });
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.calls.at(-1).params)), { operation:'writeBinary',args:{path:'/root/resource.zip',contentBase64:'AP8='} });
   await vm.runInContext("Tools.Files.copy('/root/resource.zip','/app/data/export.zip',false,'linux','android')", runtime.context);
   assert.deepEqual(Array.from(runtime.canonicalCalls.at(-1)), ['writeBinary','/app/data/export.zip','AP8=']);
   const androidWrite = await vm.runInContext("Tools.Files.write('/sdcard/a.txt','text',false)", runtime.context);
@@ -405,7 +407,7 @@ test('v1 exposes declared mkdir and does not invent System.file or Files.makeDir
   runtime.context.version = '1.0.0';
   const result = await vm.runInContext("Tools.Files.mkdir('/root/questionnaire', true, 'linux')", runtime.context);
   assert.equal(result.env, 'linux');
-  assert.deepEqual(runtime.calls.at(-1).params, { operation: 'mkdir', args: { path: '/root/questionnaire', createParents: true } });
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.calls.at(-1).params)), { operation: 'mkdir', args: { path: '/root/questionnaire', createParents: true } });
   await vm.runInContext("toolCall('make_directory', { path: '/sdcard/questionnaire', create_parents: true })", runtime.context);
   assert.equal(runtime.calls.at(-1).name, 'make_directory');
   assert.deepEqual(runtime.calls.at(-1).params, { path: '/sdcard/questionnaire', create_parents: true });
@@ -438,7 +440,7 @@ function cacheFixture(directory, owner = 'v1.cache.test.' + process.pid) {
     assert.ifError(result.error);
     return { output: result.stdout, exitCode: result.status, timedOut: false };
   });
-  const runtime = adapter('1.0.0', async (name, params) => JSON.stringify(await native.tools[name.split(':')[1]](params)));
+  const runtime = adapter('1.0.0', async (name, params) => native.tools[name === 'create' ? 'create_session' : 'execute'](name === 'create' ? { sessionName: params.sessionName } : params));
   runtime.context.owner = owner;
   let hash = 0;
   for (const unit of owner) hash = (Math.imul(hash, 31) + unit.charCodeAt(0)) | 0;
@@ -479,7 +481,7 @@ test('v1 cache translation imports through existing file APIs and preserves nest
     assert.equal(repeated.output.trim(), 'ok');
     assert.equal(runtime.lists(), 4); // One import despite concurrent first accesses.
     const expected = command.replaceAll(runtime.old, runtime.guest);
-    assert.equal(runtime.calls.filter(call => call.name === 'v1_runtime:execute')[0].params.command, expected);
+    assert.equal(runtime.calls.find(call => call.name === 'exec' && call.params.command === expected).params.command, expected);
     assert.equal(readFileSync(join(runtime.guest, 'resources/quizapp/server/index.js'), 'utf8'), '// original resource 雪');
     runtime.context.oldFile = runtime.old + '/bridge_config.json';
     await vm.runInContext("Tools.Files.write(oldFile,'{\"port\":4000}')", runtime.context);

@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+[features]
+default = []
+arm64-runtime = []
+
 [dependencies]
 base64 = "0.22"
 gethostname = "1.1"

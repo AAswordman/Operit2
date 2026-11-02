@@ -1,0 +1,6 @@
+module OperitArm64 {
+    header "operit/arm64_runtime.h"
+    export *
+    link "c++"
+    link "resolv"
+}

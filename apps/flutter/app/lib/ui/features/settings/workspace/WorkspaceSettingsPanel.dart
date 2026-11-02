@@ -145,7 +145,7 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return FutureBuilder<_WorkspaceSettingsData>(
+    final content = FutureBuilder<_WorkspaceSettingsData>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -186,6 +186,7 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
         );
       },
     );
+    return content;
   }
 }
 

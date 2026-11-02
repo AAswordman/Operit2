@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/common/layout/ApplicationZoom.dart';
@@ -34,7 +35,7 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       await tester.pumpWidget(_app());
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 34);
+      expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 35);
       expect(find.byType(ThemeDesktopSidebarSurface), findsOneWidget);
       final clip = tester.widget<ClipRRect>(
         find.descendant(
@@ -42,16 +43,16 @@ void main() {
           matching: find.byType(ClipRRect),
         ),
       );
-      expect(clip.borderRadius, BorderRadius.circular(14));
+      expect(clip.borderRadius, BorderRadius.circular(13));
       expect(
         tester.getBottomRight(find.byKey(_contentKey)),
-        const Offset(792, 592),
+        const Offset(791, 591),
       );
 
       await _nativeInset(tester, 0);
-      expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 6);
+      expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 7);
       await _nativeInset(tester, 28);
-      expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 34);
+      expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 35);
       expect(tester.takeException(), isNull);
       await _finish(tester);
     },
@@ -66,7 +67,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.getTopLeft(find.byKey(_contentKey)).dy,
-        closeTo(28 + 6 * zoom, 0.01),
+        closeTo(28 + 7 * zoom, 0.01),
       );
     }
     expect(tester.takeException(), isNull);
@@ -80,11 +81,11 @@ void main() {
         debugDefaultTargetPlatformOverride = platform;
         await tester.pumpWidget(_app());
         await tester.pumpAndSettle();
-        expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 6);
+        expect(tester.getTopLeft(find.byKey(_contentKey)).dy, 7);
         expect(find.byType(ThemeDesktopSidebarSurface), findsOneWidget);
         expect(
           tester.getBottomRight(find.byKey(_contentKey)),
-          const Offset(792, 592),
+          const Offset(791, 591),
         );
         expect(calls.last.arguments['dark'], false);
         expect(
@@ -148,6 +149,44 @@ void main() {
     await _finish(tester);
   });
 
+  for (final platform in [
+    TargetPlatform.macOS,
+    TargetPlatform.windows,
+    TargetPlatform.linux,
+  ]) {
+    testWidgets(
+      '${platform.name} content frame paints below the native WebView layer',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = platform;
+        await tester.pumpWidget(
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: Theme(
+              data: ThemeData(colorScheme: _lightScheme),
+              child: const DesktopContentPanel(child: _NativeSurfaceProbe()),
+            ),
+          ),
+        );
+        final layers = tester.layers;
+        final nativeLayer = layers.whereType<PlatformViewLayer>().single;
+        // AppKit uses the bounds of foreground Flutter paint to exclude native
+        // mouse input. A border drawn afterwards excludes its entire interior.
+        expect(
+          layers
+              .skip(layers.indexOf(nativeLayer) + 1)
+              .whereType<PictureLayer>(),
+          isEmpty,
+        );
+        expect(
+          tester.getRect(find.byType(_NativeSurfaceProbe)),
+          const Rect.fromLTRB(1, 7, 791, 591),
+        );
+        expect(tester.takeException(), isNull);
+        await _finish(tester);
+      },
+    );
+  }
+
   testWidgets('mobile keeps its existing geometry and system safe area', (
     tester,
   ) async {
@@ -210,4 +249,26 @@ Future<void> _nativeInset(WidgetTester tester, double inset) async {
 Future<void> _finish(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
   debugDefaultTargetPlatformOverride = null;
+}
+
+/// Represents native content in the scene without requiring an OS WebView.
+class _NativeSurfaceProbe extends LeafRenderObjectWidget {
+  const _NativeSurfaceProbe();
+
+  @override
+  RenderBox createRenderObject(BuildContext context) =>
+      _NativeSurfaceRenderBox();
+}
+
+class _NativeSurfaceRenderBox extends RenderBox {
+  @override
+  bool get alwaysNeedsCompositing => true;
+
+  @override
+  void performLayout() => size = constraints.biggest;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    context.addLayer(PlatformViewLayer(rect: offset & size, viewId: 0));
+  }
 }

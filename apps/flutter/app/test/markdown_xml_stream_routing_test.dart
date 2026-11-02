@@ -41,6 +41,17 @@ void main() {
       expect(outer.xmlTagName, 'think');
       expect(outer.xmlIsClosed, isFalse);
       if (live) {
+        // Thinking panels start collapsed; expand both levels to exercise
+        // replay into child renderers that subscribe after events arrived.
+        final thinkingHeaders = find.byIcon(Icons.psychology_outlined);
+        await tester.tap(thinkingHeaders.first);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 250));
+        }
+        await tester.tap(thinkingHeaders.last);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 250));
+        }
         final renderers = tester.widgetList<StreamMarkdownRenderer>(
           find.byType(StreamMarkdownRenderer),
         );
@@ -55,6 +66,35 @@ void main() {
         expect(state.streamParsingCompletedSuccessfully, isTrue);
         expect(tester.takeException(), isNull);
       }
+      await tester.pumpWidget(const SizedBox());
+      await controller.close();
+    });
+  }
+
+  for (final live in [false, true]) {
+    testWidgets('contains missing XML parent 21 for live=$live', (tester) async {
+      final controller = StreamController<Object>.broadcast();
+      final state = StreamMarkdownRendererState();
+      var errors = 0;
+      final events = [
+        _event('chunk', value: 'retained source'),
+        _event('chunk', parent: 21, value: 'orphaned thinking body'),
+      ];
+      await tester.pumpWidget(
+        _surface(
+          state: state,
+          stream: live ? controller.stream : null,
+          split: (_) async => events,
+          onError: () => errors++,
+        ),
+      );
+      if (live) await controller.addStream(Stream.fromIterable(events));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(errors, 1);
+      expect(state.streamParsingCompletedSuccessfully, isFalse);
+      expect(state.collectedContent.toString(), 'retained source');
       await tester.pumpWidget(const SizedBox());
       await controller.close();
     });

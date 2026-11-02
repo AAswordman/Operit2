@@ -15,6 +15,8 @@ pub struct AppleTerminalHost {
     hosts: BTreeMap<String, NativePtyTerminalHost>,
     primary: String,
     sandboxed: bool,
+    #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+    arm64: super::arm64::IosTerminalHost,
 }
 
 impl Default for AppleTerminalHost {
@@ -54,6 +56,8 @@ impl AppleTerminalHost {
             hosts,
             primary,
             sandboxed,
+            #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+            arm64: super::arm64::IosTerminalHost::arm64Only(),
         }
     }
 
@@ -93,29 +97,49 @@ impl TerminalHost for AppleTerminalHost {
         workingDir: &str,
         resolveHostDirectory: &dyn Fn(&str) -> HostResult<String>,
     ) -> HostResult<String> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if terminal.trim() == "arm64" {
+            return self.arm64.resolveWorkingDirectory(
+                terminal,
+                terminalType,
+                workingDir,
+                // Until unified workspace mounts are available, host workspace
+                // locators open the guest home. /mnt/linux paths stay guest paths.
+                &|_| Ok("/root".to_string()),
+            );
+        }
         self.hostForType(terminal, terminalType)?
             .resolveWorkingDirectory(TERMINAL, terminalType, workingDir, resolveHostDirectory)
     }
 
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
+        let mut types: Vec<_> = self
+            .hosts
+            .keys()
+            .map(|kind| TerminalTypeInfo {
+                terminal: TERMINAL.to_string(),
+                terminalType: kind.clone(),
+                available: true,
+                description: if self.sandboxed {
+                    "macOS sandbox PTY (without controlling TTY)".to_string()
+                } else {
+                    format!("macOS native {kind} login PTY with job control")
+                },
+            })
+            .collect();
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        types.extend(
+            self.arm64
+                .terminalInfo()?
+                .types
+                .into_iter()
+                .filter(|kind| kind.terminal == "arm64"),
+        );
         Ok(TerminalInfo {
             platform: PLATFORM.to_string(),
             terminal: TERMINAL.to_string(),
             terminalType: self.primary.clone(),
-            types: self
-                .hosts
-                .keys()
-                .map(|kind| TerminalTypeInfo {
-                    terminal: TERMINAL.to_string(),
-                    terminalType: kind.clone(),
-                    available: true,
-                    description: if self.sandboxed {
-                        "macOS sandbox PTY (without controlling TTY)".to_string()
-                    } else {
-                        format!("macOS native {kind} login PTY with job control")
-                    },
-                })
-                .collect(),
+            types,
         })
     }
 
@@ -128,6 +152,17 @@ impl TerminalHost for AppleTerminalHost {
         rows: u16,
         cols: u16,
     ) -> HostResult<String> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if terminal.trim() == "arm64" {
+            return self.arm64.startPtySession(
+                sessionName,
+                terminal,
+                terminalType,
+                workingDir,
+                rows,
+                cols,
+            );
+        }
         self.hostForType(terminal, terminalType)?.startPtySession(
             sessionName,
             TERMINAL,
@@ -139,24 +174,44 @@ impl TerminalHost for AppleTerminalHost {
     }
 
     fn readPtySession(&self, sessionId: &str) -> HostResult<Vec<u8>> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.readPtySession(sessionId);
+        }
         self.hostForSession(sessionId)?.readPtySession(sessionId)
     }
 
     fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.writePtySession(sessionId, data);
+        }
         self.hostForSession(sessionId)?
             .writePtySession(sessionId, data)
     }
 
     fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.resizePtySession(sessionId, rows, cols);
+        }
         self.hostForSession(sessionId)?
             .resizePtySession(sessionId, rows, cols)
     }
 
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.pollPtyExitCode(sessionId);
+        }
         self.hostForSession(sessionId)?.pollPtyExitCode(sessionId)
     }
 
     fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.closePtySession(sessionId);
+        }
         self.hostForSession(sessionId)?.closePtySession(sessionId)
     }
 
@@ -165,14 +220,18 @@ impl TerminalHost for AppleTerminalHost {
         for host in self.hosts.values() {
             entries.extend(host.listSessions()?);
         }
-        Ok(entries
-            .into_iter()
-            .map(|mut entry| {
-                entry.platform = PLATFORM.to_string();
-                entry.terminal = TERMINAL.to_string();
-                entry
-            })
-            .collect())
+        for entry in &mut entries {
+            entry.platform = PLATFORM.to_string();
+            entry.terminal = TERMINAL.to_string();
+        }
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        entries.extend(
+            self.arm64
+                .listSessions()?
+                .into_iter()
+                .filter(|entry| entry.terminal == "arm64"),
+        );
+        Ok(entries)
     }
 
     /// Creates or reuses a named session in the default macOS interpreter.
@@ -186,6 +245,12 @@ impl TerminalHost for AppleTerminalHost {
         sessionName: &str,
         terminalType: &str,
     ) -> HostResult<TerminalSessionInfo> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if terminalType.trim() == "shell" {
+            return self
+                .arm64
+                .createOrGetTypedSession(sessionName, terminalType);
+        }
         self.hostForType(TERMINAL, terminalType)?
             .createOrGetTypedSession(sessionName, terminalType)
             .map(|mut info| {
@@ -201,6 +266,10 @@ impl TerminalHost for AppleTerminalHost {
         command: &str,
         timeoutMs: u64,
     ) -> HostResult<TerminalCommandOutput> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.executeInSession(sessionId, command, timeoutMs);
+        }
         self.hostForSession(sessionId)?
             .executeInSession(sessionId, command, timeoutMs)
             .map(|mut output| {
@@ -217,6 +286,12 @@ impl TerminalHost for AppleTerminalHost {
         timeoutMs: u64,
         onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
     ) -> HostResult<TerminalCommandOutput> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self
+                .arm64
+                .executeInSessionStreaming(sessionId, command, timeoutMs, onOutput);
+        }
         self.hostForSession(sessionId)?
             .executeInSessionStreaming(sessionId, command, timeoutMs, onOutput)
             .map(|mut output| {
@@ -247,15 +322,27 @@ impl TerminalHost for AppleTerminalHost {
         input: Option<&str>,
         control: Option<&str>,
     ) -> HostResult<TerminalInputOutput> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.inputInSession(sessionId, input, control);
+        }
         self.hostForSession(sessionId)?
             .inputInSession(sessionId, input, control)
     }
 
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.closeSession(sessionId);
+        }
         self.hostForSession(sessionId)?.closeSession(sessionId)
     }
 
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.getSessionScreen(sessionId);
+        }
         self.hostForSession(sessionId)?
             .getSessionScreen(sessionId)
             .map(|mut output| {
@@ -280,7 +367,7 @@ mod tests {
         let info = host.terminalInfo().unwrap();
         assert!(info.types.iter().any(|kind| kind.terminalType == "bash"));
         assert!(info.types.iter().any(|kind| kind.terminalType == "zsh"));
-        for kind in &info.types {
+        for kind in info.types.iter().filter(|kind| kind.terminal == TERMINAL) {
             let session = host
                 .createOrGetTypedSession("native-login-test", &kind.terminalType)
                 .unwrap();

@@ -187,6 +187,27 @@ test('Windows tools explicitly select PowerShell and Git Bash with separate sess
   assert.notEqual(powershell.sessionId, bash.sessionId);
 });
 
+/** Exercises the advertised macOS tools and keeps ARM64 shell sessions separate from native shells. */
+test('macOS advertises shell and routes it to ARM64 alongside native Bash and Zsh', async () => {
+  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
+  const macos = metadata.states.find(state => state.id === 'macos');
+  assert.equal(macos.condition, 'platform.macos');
+  assert.equal(macos.inheritTools, true);
+  assert.deepEqual(macos.tools.map(tool => tool.name).sort(), ['bash', 'shell', 'zsh']);
+  const f = fixture({ platform: 'macos', defaultType: 'zsh', implementations: { bash: 'native', zsh: 'native', shell: 'arm64' } });
+  const sessions = new Set();
+  for (const tool of macos.tools) {
+    const result = await f.tools[tool.name]({ command: 'pwd' });
+    assertEnvironment(result, 'macos', tool.name === 'shell' ? 'arm64' : 'native', tool.name);
+    sessions.add(result.sessionId);
+  }
+  assert.equal(sessions.size, 3);
+  const first = await f.tools.shell({ command: 'cd /tmp' });
+  const second = await f.tools.shell({ command: 'pwd' });
+  assert.equal(first.sessionId, second.sessionId);
+  assertEnvironment(second, 'macos', 'arm64', 'shell');
+});
+
 /** Ensures shell-only hosts use their advertised interpreter without plugin platform branches. */
 test('shell-only hosts keep their configured backend and report the selected environment', async () => {
   for (const [platform, terminal] of [['ios', 'ish'], ['ohos', 'qemu-vroot'], ['web', 'v86']]) {

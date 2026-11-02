@@ -253,6 +253,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
       borderRadius: BorderRadius.zero,
       clip: false,
       child: SizedBox(
+        width: double.infinity,
         height: 44,
         child: DecoratedBox(
           decoration: BoxDecoration(

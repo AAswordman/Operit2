@@ -352,16 +352,14 @@ struct OutputDecoder {
 }
 impl OutputDecoder {
     fn feed(&mut self, bytes: &[u8], finalFrame: bool) -> HostResult<String> {
-        const MARKERS: &[(&[u8], u8)] =
-            &[(b"\x1b]133;OperitPrompt=", 7), (b"\x1e__OPERIT_ISH_", 31)];
+        const PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
         self.pending.extend_from_slice(bytes);
         let mut used = 0;
         while used < self.pending.len() {
             let tail = &self.pending[used..];
-            if let Some((prefix, end)) = MARKERS.iter().find(|(prefix, _)| tail.starts_with(prefix))
-            {
-                if let Some(length) = tail[prefix.len()..].iter().position(|byte| byte == end) {
-                    used += prefix.len() + length + 1;
+            if tail.starts_with(PREFIX) {
+                if let Some(length) = tail[PREFIX.len()..].iter().position(|byte| *byte == 7) {
+                    used += PREFIX.len() + length + 1;
                     continue;
                 }
                 if tail.len() > 4096 {
@@ -374,7 +372,7 @@ impl OutputDecoder {
                 }
                 break;
             }
-            if !finalFrame && MARKERS.iter().any(|(prefix, _)| prefix.starts_with(tail)) {
+            if !finalFrame && PREFIX.starts_with(tail) {
                 break;
             }
             self.utf8.push(self.pending[used]);
@@ -426,7 +424,7 @@ mod tests {
     #[test]
     fn output_decoder_preserves_split_unicode_and_hides_split_native_markers() {
         let mut decoder = OutputDecoder::default();
-        let input = "雪🌍\x1b]133;OperitPrompt=cwd:0\x07done\x1e__OPERIT_ISH_uuid__:0\x1f!";
+        let input = "雪🌍\x1b]133;OperitPrompt=cwd:0\x07done!";
         let mut output = String::new();
         for byte in input.bytes() {
             output.push_str(&decoder.feed(&[byte], false).unwrap());

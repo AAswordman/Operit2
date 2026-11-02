@@ -36,7 +36,6 @@ class WorkspaceBrowserContent extends StatefulWidget {
     required this.onWriteWorkspaceFileBytes,
     required this.onOpenWorkspaceFile,
     required this.onOpenBrowserTab,
-    required this.onActivateRequested,
     required this.onCloseRequested,
   });
 
@@ -58,7 +57,6 @@ class WorkspaceBrowserContent extends StatefulWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowserTab;
-  final VoidCallback onActivateRequested;
   final VoidCallback onCloseRequested;
 
   @override
@@ -239,7 +237,6 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   void _attachBrowserUi() {
     _sessionStore.attachUi(
       delegate: WorkspaceBrowserViewDelegate(
-        onActivateRequested: widget.onActivateRequested,
         onCloseRequested: widget.onCloseRequested,
       ),
       onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,

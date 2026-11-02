@@ -167,7 +167,7 @@ source policy.
 
 ### Terminal Node.js versions
 
-Android, iOS/iSH, OpenHarmony, and Web runtime builders target Node.js 24 from
+Android, iOS/ARM64, OpenHarmony, and Web runtime builders target Node.js 24 from
 Alpine v3.23 and reject an installed APK database with another Node major.
 Their generated rootfs/initramfs artifacts must be rebuilt; CI `setup-node`
 only selects the build host's Node. Desktop terminals use the user's system
@@ -176,25 +176,31 @@ on those hosts; CI configuration alone cannot upgrade an end user's machine.
 
 ## iOS Runtime Source Pins
 
-The iOS runtime source set is reproducible from the pins in
-`tools/ios-runtime/ish/fetch_sources.py` and
-`tools/ios-runtime/ish/build_alpine_rootfs_linux.sh`:
+The iOS runtime is built from the independent C++ sources under
+`hosts/ios/linux-runtime`. It has no iSH or external ARM64 emulator dependency.
+`tools/ios-runtime/arm64/build.sh` builds the host CLI, iOS device/simulator static
+libraries and `OperitArm64.xcframework`. Runner invokes the same build through
+`apps/flutter/app/ios/build_arm64_runtime.sh`.
 
 | Component | Pin | Source and integrity |
 | --- | --- | --- |
-| iSH | `7864dd601e615d0fc09b888a93d327f458b25a1d` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
-| iSH libapps | `b8cacae35e5b11d64bb736a053921c16ca7faf9e` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
-| iSH Linux | `8ec9bf17f89c6dba818f3ed2427de4223e78644a` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
-| libarchive | `fc6563f5130d8a7ee1fc27c0e55baef35119f26c` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
-| iSH Alpine rootfs | `g00712ff0a54b2839c5aa1a8ed758003ca65357dc` | GitHub release archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
-| iSH Alpine repository | Alpine v3.23, x86 | `https://dl-cdn.alpinelinux.org/alpine/v3.23` |
-| uv | 0.12.1, i686 musl | GitHub release archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
-| pnpm in iSH rootfs | 10.12.1 | npm registry archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
+| Runtime | Repository sources, C++17 | `hosts/ios/linux-runtime/CMakeLists.txt` |
+| Alpine minirootfs | 3.23.6, aarch64 | Archive URL and SHA-256 in `tools/ios-runtime/arm64/rootfs.json` |
+| Alpine packages | v3.23 main/community, aarch64 | Signed APK packages installed by `tools/ios-runtime/arm64/build_rootfs_linux.sh` |
+| Node.js | Major 24 | Installed APK database checked by `tools/runtime/verify_alpine_node24.py` |
 
-The iOS workflow runs on `macos-15` and records the installed Xcode SDK,
-Clang, Meson, and Ninja versions in its cache key. Keep those runner and source
-pins synchronized with `.github/workflows/ios-flutter-build.yml` and
-`.github/workflows/ios-app-package-build.yml`.
+Build the complete development root on Linux using
+`sudo bash tools/ios-runtime/arm64/build_rootfs_linux.sh`. The script supports
+native AArch64 Linux and x86_64 Linux with qemu-user-static/binfmt configured for
+the build. QEMU is a build tool and is not embedded in the iOS app. The resulting
+`Runner/arm64-rootfs.tar.gz` and SHA-256 sidecar are consumed by the iOS workflow.
+`package_rootfs.py` validates externally supplied AArch64 archives before publishing
+them to Runner.
+
+The iOS workflows use `macos-15`, Xcode's iOS SDK, CMake and the Apple Clang
+compiler. Keep their build commands synchronized with
+`.github/workflows/ios-flutter-build.yml`, `ios-app-package-build.yml` and
+`ios-arm64-runtime.yml`.
 
 ## Generated Plugin Assets
 

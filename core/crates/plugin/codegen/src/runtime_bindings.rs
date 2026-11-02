@@ -500,6 +500,7 @@ var __operitCanonicalTools = __operitCopyToolsNamespaces(Tools);
         "compat/v1/workflow.js",
         "compat/v1/characters.js",
         "compat/v1/memory.js",
+        "compat/v1/internal_runtime.js",
         "compat/v1/runtime.js",
         "compat/v1/install.js",
         "DeviceTools.script.js",

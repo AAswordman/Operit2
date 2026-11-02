@@ -1,0 +1,81 @@
+name: Independent iOS ARM64 Runtime
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'hosts/ios/linux-runtime/**'
+      - 'tools/ios-runtime/arm64/**'
+      - 'tools/tests/test_arm64_rootfs.py'
+      - '.github/workflows/ios-arm64-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang lld cmake libssl-dev
+      - name: Install Apple cross assembler and linker
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm lld cmake
+          echo "OPERIT_AARCH64_CLANG=$(brew --prefix llvm)/bin/clang" >> "$GITHUB_ENV"
+          echo "OPERIT_AARCH64_LLD=$(brew --prefix lld)/bin/ld.lld" >> "$GITHUB_ENV"
+      - name: Test verified root import
+        run: python3 -m unittest discover -s tools/tests -p test_arm64_rootfs.py -v
+      - name: Prepare pinned original Alpine AArch64 root
+        run: python3 tools/ios-runtime/arm64/prepare_rootfs.py
+      - name: Build and test interpreter and real Alpine programs
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -S hosts/ios/linux-runtime -B tools/ios-runtime/arm64/build/ci \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DOPERIT_ARM64_SANITIZERS=ON \
+            -DOPERIT_ARM64_ROOTFS="$PWD/tools/ios-runtime/arm64/build/rootfs"
+          cmake --build tools/ios-runtime/arm64/build/ci --parallel
+          ctest --test-dir tools/ios-runtime/arm64/build/ci --output-on-failure
+      - name: Save native ARM64 ISA audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-isa-audit-${{ matrix.os }}
+          path: tools/ios-runtime/arm64/build/ci/isa-audit.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package device and simulator libraries
+        run: bash tools/ios-runtime/arm64/build.sh xcframework
+      - name: Verify Swift import and simulator link
+        run: |
+          xcrun --sdk iphonesimulator swiftc -emit-library \
+            -target arm64-apple-ios15.0-simulator \
+            -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            -I tools/ios-runtime/arm64/build/OperitArm64.xcframework/ios-arm64-simulator/Headers \
+            -L tools/ios-runtime/arm64/build/ios-simulator -loperit_arm64 \
+            hosts/ios/linux-runtime/tests/host/swift_api.swift \
+            -o tools/ios-runtime/arm64/build/swift-api-smoke.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: operit-arm64-xcframework
+          path: tools/ios-runtime/arm64/build/OperitArm64.xcframework
+          if-no-files-found: error
+          retention-days: 7

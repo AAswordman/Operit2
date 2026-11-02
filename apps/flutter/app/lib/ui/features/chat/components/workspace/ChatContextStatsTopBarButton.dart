@@ -180,9 +180,9 @@ class _ChatContextStatsTopBarButtonState
     }
   }
 
-  /// Converts the model context limit from Ki tokens to tokens.
+  /// Converts the model context limit from kilo-tokens using the same unit as Core.
   int? get _maxContextTokens =>
-      _summary == null ? null : (_summary!.maxContextLength * 1024).round();
+      _summary == null ? null : (_summary!.maxContextLength * 1000).round();
 
   /// Leaves unavailable limits unknown rather than presenting a false zero.
   double? get _contextUsagePercentage {

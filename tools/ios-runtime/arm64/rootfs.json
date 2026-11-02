@@ -1,0 +1,6 @@
+{
+  "architecture": "aarch64",
+  "version": "3.23.6",
+  "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/aarch64/alpine-minirootfs-3.23.6-aarch64.tar.gz",
+  "sha256": "b17a57958e29735ff0e6e64254d958e65903687a70ca30cc430b33a965ad49d7"
+}
