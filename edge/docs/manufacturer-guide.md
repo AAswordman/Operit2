@@ -12,7 +12,16 @@
 
 ## 接到设备空间
 
-参考 [完整无屏产品](../boards/headless_sensor/src/main.rs)。最小装配过程是：
+参考 [完整无屏产品](../boards/headless_sensor/src/main.rs)。装配前先确认产品提供的运行环境：
+
+| 能力 | 产品需要准备的内容 |
+| --- | --- |
+| 持久化存储 | 安装 `RuntimeStorageHost`，让身份、配对和空间状态能在设备重启后恢复 |
+| 传输 | 为选用的 TCP、串口等传输安装 Host 适配器，并确定监听配置 |
+| 任务调度 | 安装 `HostRuntimeTaskSchedulerHost`，为共享服务提供任务执行与延时能力 |
+| 随机源 | 在目标平台提供配对和加密使用的熵源，具体适配由产品运行环境负责 |
+
+最小装配过程是：
 
 1. 提供 `HostManager`，安装持久化存储、TCP/串口等传输、熵源和任务调度能力。硬件寄存器和操作系统 API 留在本产品的 `board/`。
 2. 用 `EdgeNode::headless()` 创建服务边界，再通过 `withCallHandler` 注册自己的服务。SDK 的 GPIO、屏幕和表情服务均可按产品需要注册。
@@ -22,6 +31,11 @@
 6. 调用 `device.space.requestDeviceSpaceJoin(peer_node_id)` 申请加入空间。审批通过后刷新请求；配对与空间授权分别验证，不能把“TCP 已连通”当成“已获授权”。
 
 成员身份、审批和持久化由共享 runtime 维护。自定义服务通过原有 Link 路由进入设备，路由检查空间、调用方和能力；不要另开绕过这些检查的业务 HTTP 入口。
+
+[`SpaceDevice::assemble`](../sdk/src/space_device.rs) 同步完成共享身份与空间初始化，
+实际监听由后续的 `listen` 启动。产品应在接收远端调用期间持有返回的 `SpaceDevice`；
+结束服务时调用 `device.stop().await` 停止共享 Peer 服务。重新启动时继续使用同一份
+持久化存储，保留设备身份和配对关系。
 
 ## 两种产品
 

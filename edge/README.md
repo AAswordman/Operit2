@@ -21,6 +21,16 @@ edge/
 
 SDK 默认没有第三方依赖。`space`、`http-agent`、`scene` 分别提供设备空间接入、模型工具调用和可选显示能力。SDK 不要求 SQL、JavaScript、工具包执行器或本地模型引擎。
 
+按任务查阅文档：
+
+| 要做的事 | 文档入口 |
+| --- | --- |
+| 选择 SDK 功能并创建厂商产品 | [厂商接入指南](docs/manufacturer-guide.md) |
+| 查看 crate 配置和 SDK 检查命令 | [SDK 说明](sdk/README.md) |
+| 理解 Edge、Core、Host 和权限的边界 | [架构说明](docs/architecture.md) |
+| 启动 ESP32 预览、模拟器或真机调试 | [编辑器与调试工具](boards/esp32/editor/README.md) |
+| 查看既有验收的基线、场景和资源测量 | [验收记录](docs/acceptance.md) |
+
 从仓库根目录运行完整模拟器验收，`EMSDK` 指向本机 Emscripten SDK 目录：
 
 ```sh
