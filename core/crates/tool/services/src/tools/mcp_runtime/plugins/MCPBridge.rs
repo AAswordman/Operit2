@@ -789,9 +789,18 @@ fn resolveMcpRuntimeCommand(
                 args: runtimeArgs,
             })
         }
-        _ => Err(format!(
-            "Unsupported MCP command '{command}'. Managed runtime supports node, python, uv, pnpm, npx, and uvx."
-        )),
+        _ => {
+            let expanded = expandPath(command).trim().to_string();
+            if expanded.is_empty() {
+                return Err("MCP command must not be empty".to_string());
+            }
+            let isExplicitPath = expanded.contains('/') || expanded.contains('\\');
+            Ok(ResolvedRuntimeCommand {
+                program: ManagedRuntimeProgram::Command(expanded.clone()),
+                executablePath: isExplicitPath.then(|| expanded.clone()),
+                args: args.to_vec(),
+            })
+        }
     }
 }
 
@@ -1735,6 +1744,53 @@ mod startup_tests {
         assert_eq!(response["success"], false);
         assert_eq!(response["error"]["message"], serverError.to_string());
         assert_eq!(writes.lock().unwrap().len(), 1);
+    }
+
+    /// Routes commands outside the managed-runtime allowlist to the host command
+    /// resolver instead of rejecting them, so native stdio MCP servers start.
+    #[test]
+    fn unknownCommandsResolveThroughHostCommandResolver() {
+        let runtime =
+            resolveMcpRuntimeCommand("wordcraft-cli", &["mcp".to_string()]).unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Command("wordcraft-cli".into()));
+        assert_eq!(runtime.executablePath, None);
+        assert_eq!(runtime.args, vec!["mcp".to_string()]);
+    }
+
+    /// Keeps the managed-runtime programs for well-known commands so their
+    /// bundled-runtime resolution and argument rewrites stay intact.
+    #[test]
+    fn wellKnownCommandsKeepManagedRuntimePrograms() {
+        let runtime = resolveMcpRuntimeCommand("node", &["server.js".to_string()]).unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Node);
+        let runtime = resolveMcpRuntimeCommand("npx", &["-y".to_string(), "pkg".to_string()]).unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Pnpm);
+        assert_eq!(runtime.args, vec!["dlx".to_string(), "pkg".to_string()]);
+    }
+
+    /// Passes explicit executable paths straight through for hosts that validate
+    /// and launch them directly.
+    #[test]
+    fn explicitCommandPathsBypassPathLookup() {
+        let runtime = resolveMcpRuntimeCommand(
+            "/opt/tools/wordcraft-cli",
+            &["mcp".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            runtime.program,
+            ManagedRuntimeProgram::Command("/opt/tools/wordcraft-cli".into())
+        );
+        assert_eq!(
+            runtime.executablePath,
+            Some("/opt/tools/wordcraft-cli".to_string())
+        );
+    }
+
+    /// Rejects blank commands before they reach the host resolver.
+    #[test]
+    fn blankCommandsStayRejected() {
+        assert!(resolveMcpRuntimeCommand("   ", &[]).is_err());
     }
 }
 
