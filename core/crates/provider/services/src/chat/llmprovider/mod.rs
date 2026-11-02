@@ -24,10 +24,11 @@ pub mod GeminiProvider;
 pub mod KimiProvider;
 #[path = "LlmRetryPolicy.rs"]
 pub mod LlmRetryPolicy;
-#[path = "MediaLinkBuilder.rs"]
-pub mod MediaLinkBuilder;
 #[path = "MediaLinkParser.rs"]
 pub mod MediaLinkParser;
+
+/// Re-exports the canonical media-link builders now shared with the tool layer.
+pub use operit_util::MediaLinkBuilder;
 #[path = "MimoProvider.rs"]
 pub mod MimoProvider;
 #[path = "MistralProvider.rs"]

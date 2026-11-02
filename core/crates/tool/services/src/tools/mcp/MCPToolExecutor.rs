@@ -11,6 +11,8 @@ use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, AsyncToolExecutor, ToolInvocationFuture, ToolValidationResult,
 };
 use operit_util::AppLogger::AppLogger;
+use operit_util::ImagePoolManager::ImagePoolManager;
+use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 
 const TAG: &str = "MCPToolExecutor";
 const REPLACEMENT_CHARACTER: char = '\u{FFFD}';
@@ -112,12 +114,16 @@ impl MCPToolExecutor {
                     .get("mimeType")
                     .and_then(Value::as_str)
                     .unwrap_or("image/png");
-                let dataSize = contentItem
+                let data = contentItem
                     .get("data")
                     .and_then(Value::as_str)
-                    .map(|data| data.len())
-                    .unwrap_or(0);
-                format!("[Image: {mimeType}, Size: {dataSize} bytes]")
+                    .unwrap_or_default();
+                self.registerImageContent(mimeType, data).unwrap_or_else(|| {
+                    format!(
+                        "[Image: {mimeType}, Size: {} bytes; the image data could not be attached]",
+                        data.len()
+                    )
+                })
             }
             "resource" => {
                 let Some(resource) = contentItem.get("resource") else {
@@ -136,6 +142,28 @@ impl MCPToolExecutor {
             }
             other => format!("[Unknown content type '{other}': {contentItem}]"),
         }
+    }
+
+    #[allow(non_snake_case)]
+    /// Registers one MCP image payload for multimodal model input and returns
+    /// its canonical media-link tag. Providers resolve the tag into an image
+    /// part; unresolvable payloads degrade to the caller-side placeholder.
+    fn registerImageContent(&self, mimeType: &str, data: &str) -> Option<String> {
+        if data.trim().is_empty() {
+            return None;
+        }
+        let imageId = ImagePoolManager::add_image_from_base64(data, mimeType, None);
+        if imageId.is_empty() || imageId == "error" {
+            return None;
+        }
+        let Some(image) = ImagePoolManager::get_image(&imageId) else {
+            return None;
+        };
+        if image.base64.is_empty() {
+            ImagePoolManager::remove_image(&imageId);
+            return None;
+        }
+        Some(MediaLinkBuilder::image(&imageId))
     }
 
     #[allow(non_snake_case)]
@@ -371,8 +399,18 @@ impl AsyncToolExecutor for MCPToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::MCPToolExecutor;
+    use crate::tools::mcp::MCPManager::MCPManager;
+    use operit_host_api::HostManager::HostManager;
+    use operit_util::ImagePoolManager::ImagePoolManager;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
+
+    /// Standard 1x1 PNG payload used to exercise real image registration.
+    const ONE_PIXEL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn executor() -> MCPToolExecutor {
+        MCPToolExecutor::new(MCPManager::getInstance(HostManager::default()))
+    }
 
     fn arguments(value: Value) -> BTreeMap<String, Value> {
         value.as_object().unwrap().clone().into_iter().collect()
@@ -460,5 +498,70 @@ mod tests {
             ),
             arguments(json!({"payload": payload, "optional": "note"})),
         );
+    }
+
+    /// Image payloads register into the image pool and surface as canonical
+    /// media-link tags that providers resolve into multimodal image parts.
+    #[test]
+    fn image_content_registers_payload_and_emits_media_link() {
+        let executor = executor();
+        let item = json!({"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64});
+        let result = executor.extractContentItem(&item);
+        let id = result
+            .split("id=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_default()
+            .to_string();
+        assert!(result.contains("<link type=\"image\""), "tag: {result}");
+        let image = ImagePoolManager::get_image(&id).expect("registered image");
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.width, 1);
+        assert_eq!(image.height, 1);
+        assert!(!image.base64.is_empty());
+        ImagePoolManager::remove_image(&id);
+    }
+
+    /// Undecodable image data degrades to the informative placeholder instead
+    /// of emitting a dead media link.
+    #[test]
+    fn invalid_image_data_falls_back_to_placeholder() {
+        let executor = executor();
+        let item = json!({"type": "image", "mimeType": "image/png", "data": "!!!!!!"});
+        let result = executor.extractContentItem(&item);
+        assert!(result.contains("[Image: image/png"), "tag: {result}");
+        assert!(result.contains("could not be attached"), "tag: {result}");
+        assert!(!result.contains("<link"), "tag: {result}");
+    }
+
+    /// Empty image data never reaches the image pool.
+    #[test]
+    fn empty_image_data_falls_back_to_placeholder() {
+        let executor = executor();
+        let item = json!({"type": "image", "mimeType": "image/png", "data": "   "});
+        let result = executor.extractContentItem(&item);
+        assert!(result.contains("[Image: image/png, Size: 3 bytes"), "tag: {result}");
+    }
+
+    /// Mixed content keeps text payloads alongside registered image links.
+    #[test]
+    fn mixed_content_preserves_text_and_image_items() {
+        let executor = executor();
+        let resultData = json!({
+            "content": [
+                {"type": "text", "text": "screenshot ready"},
+                {"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64},
+            ]
+        });
+        let result = executor.extractContentFromResult(Some(&resultData));
+        assert!(result.starts_with("screenshot ready"), "tag: {result}");
+        assert!(result.contains("<link type=\"image\""), "tag: {result}");
+        let id = result
+            .split("id=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_default()
+            .to_string();
+        ImagePoolManager::remove_image(&id);
     }
 }
