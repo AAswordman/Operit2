@@ -103,9 +103,7 @@ impl TerminalHost for AppleTerminalHost {
                 terminal,
                 terminalType,
                 workingDir,
-                // Until unified workspace mounts are available, host workspace
-                // locators open the guest home. /mnt/linux paths stay guest paths.
-                &|_| Ok("/root".to_string()),
+                resolveHostDirectory,
             );
         }
         self.hostForType(terminal, terminalType)?
@@ -356,6 +354,21 @@ impl TerminalHost for AppleTerminalHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+    #[test]
+    fn arm64_workspace_resolution_uses_the_host_resolver() {
+        let host = AppleTerminalHost::new();
+        let error = host.resolveWorkingDirectory(
+            "arm64", "shell", "/operitapp/workspaces/new",
+            &|path| Err(HostError::new(format!("host resolver reached: {path}"))),
+        ).unwrap_err();
+        assert_eq!(error.message, "host resolver reached: /operitapp/workspaces/new");
+        assert_eq!(host.resolveWorkingDirectory(
+            "arm64", "shell", "/mnt/linux/root/project",
+            &|_| Err(HostError::new("guest paths must not use the host resolver")),
+        ).unwrap(), "/root/project");
+    }
 
     /// Exercises the registered Host, real PTY and Xcode lookup in both native shells.
     #[test]

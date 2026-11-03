@@ -62,7 +62,7 @@ void store_wait_info(Memory &memory, uint64_t address, const ProcessWaitResult &
         code = 6;
         status = 18;
     } else if ((result.status & 255) == 0x7f) {
-        code = 5;
+        code = result.trace_stop ? 4 : 5;
         status = (result.status >> 8) & 255;
     } else if (result.status & 127) {
         code = (result.status & 128) ? 3 : 2;
@@ -89,6 +89,8 @@ int64_t Syscalls::dispatch_process(CpuState &cpu) {
     const auto arguments = cpu.x;
     const auto &a = arguments;
     switch (a[8]) {
+    case 117: // ptrace
+        return processes->ptrace_request(cpu);
     case 434: // pidfd_open: guest process identity, never a host PID.
         return process::pidfd_open(*processes, descriptors_, int32_t(a[0]), uint32_t(a[1]));
     case 424: { // pidfd_send_signal(pidfd, signal, siginfo, flags)
@@ -267,8 +269,7 @@ int64_t Syscalls::dispatch_process(CpuState &cpu) {
             auto result = pidfd ? pidfd->wait(*processes, request) : processes->wait(request);
             if (!result)
                 return {};
-            if (!(request.options & wait_nowait) && result->status != 0xffff &&
-                (result->status & 255) != 0x7f)
+            if (result->process_reaped)
                 process::pidfd_process_reaped(*processes, result->pid);
             if (output) {
                 if (waitid)

@@ -287,7 +287,7 @@ fn historical_message_avatars_are_adopted_after_completed_imports() {
     let fixture = Fixture::new();
     let writer = fixture.writer();
     let mut source = data();
-    source.cards[0].avatarUri = Some("/app/character/avatar.png".into());
+    source.cards[0].avatarUri = Some("/operitapp/character/avatar.png".into());
     writer.import("operit1", source).unwrap();
     let database = SqliteStore::openWithHost(fixture.host.clone(), "runtime/avatar-history.sqlite").unwrap();
     operit_store::db::AppDatabase::createAllTables(&database).unwrap();
@@ -323,7 +323,7 @@ fn historical_message_avatars_are_adopted_after_completed_imports() {
                 expected.as_object_mut().unwrap().remove(LEGACY_BINDING_NAMESPACE);
                 if *repaired {
                     expected[PLUGIN_ID] = json!({"participantId":"legacy"});
-                    expected["host.chat.identity"] = json!({"title":name,"avatarUri":"/app/character/avatar.png"});
+                    expected["host.chat.identity"] = json!({"title":name,"avatarUri":"/operitapp/character/avatar.png"});
                 }
                 assert_eq!(actual, expected, "wrong historical avatar in {table}");
             }
@@ -335,15 +335,15 @@ fn historical_message_avatars_are_adopted_after_completed_imports() {
 #[test]
 fn historical_avatar_adoption_requires_an_exact_author() {
     let cards = vec![
-        json!({"id":"first","name":"Same name","avatarUri":"/app/first.png"}),
-        json!({"id":"second","name":"Same name","avatarUri":"/app/second.png"}),
+        json!({"id":"first","name":"Same name","avatarUri":"/operitapp/first.png"}),
+        json!({"id":"second","name":"Same name","avatarUri":"/operitapp/second.png"}),
     ];
     let mut unnamed = BTreeMap::new();
     adoptMessageIdentity(&mut unnamed, &cards, Some("Same name")).unwrap();
     assert!(unnamed.is_empty());
     let mut identified = BTreeMap::from([(PLUGIN_ID.into(), json!({"participantId":"second"}))]);
     adoptMessageIdentity(&mut identified, &cards, Some("Historical name")).unwrap();
-    assert_eq!(identified["host.chat.identity"], json!({"title":"Historical name","avatarUri":"/app/second.png"}));
+    assert_eq!(identified["host.chat.identity"], json!({"title":"Historical name","avatarUri":"/operitapp/second.png"}));
 }
 
 /// Requires explicit global flags before any fresh import can publish business data.
@@ -657,7 +657,7 @@ fn cleanup_rejects_outside_paths_before_any_deletion() {
     let mut source = data();
     source.cleanup_paths = vec![
         CHARACTER_CARDS_PREFERENCES_PATH.to_string(),
-        "/app/data/unrelated".to_string(),
+        "/operitapp/data/unrelated".to_string(),
     ];
     fixture.writer().import("operit2-v27", source).unwrap();
     assert!(cleanupLegacyCharacters(fixture.writer())
@@ -751,12 +751,12 @@ fn resolves_only_unique_legacy_binding_targets() {
 fn checks_cross_owner_resources() {
     assert!(validateResourcePath("../outside").is_err());
     assert_eq!(
-        legacyResourceStoragePath("/app/data/data/memory/characters/legacy/doc.txt").unwrap(),
+        legacyResourceStoragePath("/operitapp/data/data/memory/characters/legacy/doc.txt").unwrap(),
         "runtime/data/memory/characters/legacy/doc.txt"
     );
     assert_eq!(
         publicResourcePath("runtime/plugin_data/space/example/doc.txt").unwrap(),
-        "/app/data/plugin_data/space/example/doc.txt"
+        "/operitapp/data/plugin_data/space/example/doc.txt"
     );
     assert_eq!(
         legacyResourceRelativePath(&format!(
@@ -1071,7 +1071,7 @@ fn migrates_card_and_group_themes_without_changing_other_bindings() {
             );
             saved.set(
                 &stringPreferencesKey("custom_user_avatar_uri"),
-                "/app/data/global-avatar.png".to_string(),
+                "/operitapp/data/global-avatar.png".to_string(),
             );
             saved.set(&stringPreferencesKey("unrelated"), "keep".to_string());
         })
@@ -1113,7 +1113,7 @@ fn migrates_card_and_group_themes_without_changing_other_bindings() {
     );
     assert_eq!(
         manager.get(group_id.to_string()).unwrap().snapshot["customUserAvatarUri"],
-        "/app/data/global-avatar.png"
+        "/operitapp/data/global-avatar.png"
     );
     let saved = preferences.data().unwrap();
     assert_eq!(
@@ -1675,7 +1675,7 @@ fn archive_theme_adoption_uses_source_snapshot_and_keeps_destination_preferences
             saved.set(&stringPreferencesKey("theme_mode"), "light".to_string());
             saved.set(
                 &stringPreferencesKey("custom_user_avatar_uri"),
-                "/app/data/current-user.png".to_string(),
+                "/operitapp/data/current-user.png".to_string(),
             );
         })
         .unwrap();
@@ -1686,7 +1686,7 @@ fn archive_theme_adoption_uses_source_snapshot_and_keeps_destination_preferences
     let mut source = operit_store::PreferencesDataStore::emptyPreferences();
     source.set(
         &stringPreferencesKey("character_card_theme_legacy_background_image_uri"),
-        "/app/data/imported/archive-background.png".to_string(),
+        "/operitapp/data/imported/archive-background.png".to_string(),
     );
     source.set(
         &stringPreferencesKey("character_card_theme_legacy_use_background_image"),
@@ -1698,7 +1698,7 @@ fn archive_theme_adoption_uses_source_snapshot_and_keeps_destination_preferences
     );
     source.set(
         &stringPreferencesKey("custom_user_avatar_uri"),
-        "/app/data/imported/archive-user.png".to_string(),
+        "/operitapp/data/imported/archive-user.png".to_string(),
     );
     let targets = vec![("cards".to_string(), "legacy".to_string())];
     fixture
@@ -1711,11 +1711,11 @@ fn archive_theme_adoption_uses_source_snapshot_and_keeps_destination_preferences
     assert_eq!(configs.len(), 1);
     assert_eq!(
         configs[0].snapshot["backgroundImageUri"],
-        "/app/data/imported/archive-background.png"
+        "/operitapp/data/imported/archive-background.png"
     );
     assert_eq!(
         configs[0].snapshot["customUserAvatarUri"],
-        "/app/data/imported/archive-user.png"
+        "/operitapp/data/imported/archive-user.png"
     );
     let saved = destination.data().unwrap();
     assert_eq!(
@@ -1726,7 +1726,7 @@ fn archive_theme_adoption_uses_source_snapshot_and_keeps_destination_preferences
         saved
             .get(&stringPreferencesKey("custom_user_avatar_uri"))
             .unwrap(),
-        "/app/data/current-user.png"
+        "/operitapp/data/current-user.png"
     );
     assert!(source.contains(&stringPreferencesKey(
         "character_card_theme_legacy_theme_mode"
@@ -2671,8 +2671,8 @@ fn missing_memory_attachments_do_not_block_migration() {
     let fixture = Fixture::new();
     let mut record = json!({
         "content":"retained user memory", "isDocumentNode":true,
-        "documentPath":"/app/data/data/memory/characters/legacy/missing.txt",
-        "chunkIndexFilePath":"/app/workspaces/missing-index.bin"
+        "documentPath":"/operitapp/data/data/memory/characters/legacy/missing.txt",
+        "chunkIndexFilePath":"/operitapp/workspaces/missing-index.bin"
     });
     let mut resources = BTreeMap::new();
     migrateMemoryResources(fixture.host.as_ref(), &fixture.writer().directory, "character:legacy", &mut record, &mut resources).unwrap();
@@ -2691,8 +2691,8 @@ fn available_memory_attachment_survives_a_missing_index() {
     fixture.host.writeBytes(&source, b"original document").unwrap();
     let mut record = json!({
         "content":"retained user memory",
-        "documentPath":"/app/data/data/memory/characters/legacy/document.txt",
-        "chunkIndexFilePath":"/app/data/data/memory/characters/legacy/missing-index.bin"
+        "documentPath":"/operitapp/data/data/memory/characters/legacy/document.txt",
+        "chunkIndexFilePath":"/operitapp/data/data/memory/characters/legacy/missing-index.bin"
     });
     let mut resources = BTreeMap::new();
     migrateMemoryResources(fixture.host.as_ref(), &fixture.writer().directory, "character:legacy", &mut record, &mut resources).unwrap();
@@ -2872,5 +2872,17 @@ fn assert_character_layout_retirement(retained_document: bool) {
     for operation in originals {
         assert!(history.contains(&operation));
         assert!(receipt.containsSequence(&operation.originDeviceId, operation.sequence));
+    }
+}
+
+#[test]
+fn legacy_resource_roots_read_old_addresses_and_publish_new_addresses() {
+    for (old, current, storage) in [
+        ("/app/data/assets/a.png", "/operitapp/data/assets/a.png", "runtime/assets/a.png"),
+        ("/app/workspaces/demo/a.txt", "/operitapp/workspaces/demo/a.txt", "workspaces/demo/a.txt"),
+    ] {
+        assert_eq!(legacyResourceStoragePath(old).unwrap(), storage);
+        assert_eq!(legacyResourceStoragePath(current).unwrap(), storage);
+        assert_eq!(publicResourcePath(storage).unwrap(), current);
     }
 }

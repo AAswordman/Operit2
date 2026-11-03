@@ -798,7 +798,7 @@ Future<void> _mountHome(
               mountedFolders: const [
                 WorkspaceMountedFolder(
                   name: 'Mounted folder',
-                  path: '/mnt/data',
+                  path: '/virtual/data',
                   relativePath: 'data',
                 ),
               ],

@@ -11,7 +11,7 @@ test("twenty default avatars share a path reference and never read binary bytes 
     ToolPkg: { async readResource(name, file) {
       exports++;
       assert.equal(name, "character_default_avatar"); assert.equal(file, "operit-avatar.png");
-      return "/app/data/resources/operit-avatar.png";
+      return "/operitapp/data/resources/operit-avatar.png";
     } },
   });
   const avatars = createAvatarResources(origin);
@@ -19,7 +19,7 @@ test("twenty default avatars share a path reference and never read binary bytes 
   assert.equal(exports, 1); assert.equal(new Set(sources).size, 1);
   assert.equal(sources[0], "avatars/1");
   assert.deepEqual(plain(avatars.intercept(request(origin + sources[0]))), {
-    action: "respond", response: { statusCode: 200, reasonPhrase: "OK", filePath: "/app/data/resources/operit-avatar.png" },
+    action: "respond", response: { statusCode: 200, reasonPhrase: "OK", filePath: "/operitapp/data/resources/operit-avatar.png" },
   });
   assert.equal(await avatars.source(null), sources[0]); assert.equal(exports, 1);
 });
@@ -27,7 +27,7 @@ test("twenty default avatars share a path reference and never read binary bytes 
 test("resource export failures and empty results can retry", async () => {
   let calls = 0;
   const { createAvatarResources } = loadModule("src/avatar-resources.ts", { ToolPkg: {
-    async readResource() { calls++; if (calls === 1) throw new Error("unavailable"); return calls === 2 ? " " : "/app/default.png"; },
+    async readResource() { calls++; if (calls === 1) throw new Error("unavailable"); return calls === 2 ? " " : "/operitapp/default.png"; },
   } });
   const avatars = createAvatarResources(origin);
   await assert.rejects(avatars.source(null), /unavailable/);
@@ -38,9 +38,9 @@ test("resource export failures and empty results can retry", async () => {
 test("custom images keep paths, legacy inline images and registered remote references", async () => {
   const { createAvatarResources } = loadModule("src/avatar-resources.ts");
   const avatars = createAvatarResources(origin);
-  const local = await avatars.source("/app/config/avatars/custom.image");
-  assert.equal(await avatars.source("/app/config/avatars/custom.image"), local);
-  assert.equal(avatars.intercept(request(origin + local)).response.filePath, "/app/config/avatars/custom.image");
+  const local = await avatars.source("/operitapp/config/avatars/custom.image");
+  assert.equal(await avatars.source("/operitapp/config/avatars/custom.image"), local);
+  assert.equal(avatars.intercept(request(origin + local)).response.filePath, "/operitapp/config/avatars/custom.image");
   const remote = await avatars.source("https://example.com/avatar.png");
   assert.deepEqual(plain(avatars.intercept(request(origin + remote))), { action: "rewrite", url: "https://example.com/avatar.png" });
   assert.deepEqual(plain(avatars.intercept(request("https://example.com/avatar.png"))), { action: "allow" });
@@ -61,12 +61,12 @@ test("overlapping browser loads deduplicate both default and custom avatar reque
   const sources = new Map();
   const avatars = createAvatarSources(sources, async path => { calls.push(path); await gate; return path === null ? "avatars/1" : "avatars/2"; });
   const first = avatars.load(Array(20).fill(null));
-  const second = avatars.load([null, "/app/custom.image", "/app/custom.image"]);
+  const second = avatars.load([null, "/operitapp/custom.image", "/operitapp/custom.image"]);
   const single = avatars.source(null);
-  await Promise.resolve(); assert.deepEqual(calls, [null, "/app/custom.image"]);
+  await Promise.resolve(); assert.deepEqual(calls, [null, "/operitapp/custom.image"]);
   complete(); await Promise.all([first, second, single]);
   assert.equal(sources.get(""), "avatars/1");
-  await avatars.load([null, "/app/custom.image"]); assert.equal(calls.length, 2);
+  await avatars.load([null, "/operitapp/custom.image"]); assert.equal(calls.length, 2);
 });
 
 test("all concurrent failures clear browser pending state and allow a later retry", async () => {

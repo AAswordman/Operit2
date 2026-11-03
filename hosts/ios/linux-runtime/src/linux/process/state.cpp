@@ -18,6 +18,11 @@ void Syscalls::inherit_process(const Syscalls &parent, uint64_t clone_flags, boo
                                      : std::make_shared<FsContext>(*parent.fs_context_);
     terminals_ = parent.terminals_;
     network_ = parent.network_;
+    posix_mq_accounting_ = parent.posix_mq_accounting_;
+    posix_mq_namespace_ = parent.posix_mq_namespace_;
+    message_queue_namespace_ = parent.message_queue_namespace_;
+    semaphore_namespace_ = parent.semaphore_namespace_;
+    shared_memory_namespace_ = parent.shared_memory_namespace_;
     information_ = parent.information_;
     executable_ = parent.executable_;
     process_memory_ = clone_flags & 0x100 ? parent.process_memory_
@@ -37,6 +42,7 @@ void Syscalls::exec_reset(const std::string &path, uint64_t stack, uint64_t heap
     set_process_image(path, stack);
 }
 void Syscalls::close_descriptors() {
+    ipc::posix_mq_process_exit(posix_mq_namespace_, process_anchor_->pid);
     files::record_lock_process_exit(scheduler_, process_anchor_->pid);
     DescriptorTable replacement;
     replacement.bind_resource_limits(resource_limits());

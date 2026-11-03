@@ -2319,9 +2319,9 @@ mod tests {
     #[test]
     fn manual_proot_directory_uses_guest_namespace() {
         let host = AndroidTerminalHost::new();
-        let resolveHost = |_: &str| Err(HostError::new("/mnt/linux is not mounted"));
+        let resolveHost = |_: &str| Err(HostError::new("/virtual/linux is not mounted"));
         assert_eq!(
-            host.resolveWorkingDirectory("proot", "bash", "/mnt/linux/root", &resolveHost)
+            host.resolveWorkingDirectory("proot", "bash", "/virtual/linux/root", &resolveHost)
                 .unwrap(),
             "/root",
         );
@@ -2331,17 +2331,17 @@ mod tests {
     #[test]
     fn manual_system_shell_preserves_host_mount_failure() {
         let host = AndroidTerminalHost::new();
-        let resolveHost = |_: &str| Err(HostError::new("/mnt/linux is not mounted"));
+        let resolveHost = |_: &str| Err(HostError::new("/virtual/linux is not mounted"));
         assert_eq!(
             host.resolveWorkingDirectory(
                 "android-system",
                 "shell",
-                "/mnt/linux/root",
+                "/virtual/linux/root",
                 &resolveHost
             )
             .unwrap_err()
             .message,
-            "/mnt/linux is not mounted",
+            "/virtual/linux is not mounted",
         );
     }
 

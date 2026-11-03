@@ -255,6 +255,11 @@ int64_t Syscalls::process_brk(uint64_t requested) {
 int64_t Syscalls::dispatch_control(CpuState &cpu) {
     const auto &a = cpu.x;
     switch (uint32_t(a[0])) {
+    case 21: // PR_GET_SECCOMP
+    case 22: // PR_SET_SECCOMP
+    case 38: // PR_SET_NO_NEW_PRIVS
+    case 39: // PR_GET_NO_NEW_PRIVS
+        return security::seccomp_prctl(scheduler_.current().seccomp, memory_, a[0], a[1], a[2], a[3], a[4]);
     case 3: { // PR_GET_DUMPABLE: process-wide guest ptrace access state.
         auto *controller = scheduler_.processes();
         if (!controller)

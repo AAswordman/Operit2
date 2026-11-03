@@ -8,7 +8,9 @@ namespace operit::arm64 {
 // AArch64 NZCV is separate: the AArch32 FPSR condition bits are RES0 here.
 inline constexpr uint64_t floating_control_mask = 0x07c80000;
 inline constexpr uint64_t floating_status_mask = 0x0800009f;
-uint64_t read_floating_control(const CpuState &cpu) noexcept;
+inline uint64_t read_floating_control(const CpuState &cpu) noexcept {
+    return cpu.fpcr & floating_control_mask;
+}
 uint64_t read_floating_status(const CpuState &cpu) noexcept;
 void write_floating_control(CpuState &cpu, uint64_t value) noexcept;
 void write_floating_status(CpuState &cpu, uint64_t value) noexcept;

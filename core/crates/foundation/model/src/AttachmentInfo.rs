@@ -27,13 +27,16 @@ impl AttachmentInfo {
     /// Keep the original host path for local previews and direct media processing.
     pub fn fileToolPath(&self) -> String {
         let normalized = self.filePath.replace('\\', "/");
+        if ["/app/", "/operitapp/", "/mnt/", "/virtual/"].iter().any(|root| normalized.starts_with(root)) {
+            return self.filePath.clone();
+        }
         if let Some((_, relative)) = normalized.rsplit_once("/data/chat_attachments/") {
             if !relative.is_empty()
                 && relative
                     .split('/')
                     .all(|part| !part.is_empty() && part != "." && part != "..")
             {
-                return format!("/app/data/data/chat_attachments/{relative}");
+                return format!("/operitapp/data/data/chat_attachments/{relative}");
             }
         }
         self.filePath.clone()
@@ -83,6 +86,15 @@ mod tests {
     }
 
     #[test]
+    fn vfs_attachment_addresses_are_not_rewritten_as_host_paths() {
+        for root in ["/app", "/operitapp", "/mnt", "/virtual"] {
+            let path = format!("{root}/data/data/chat_attachments/chat-a/file.pdf");
+            let attachment = AttachmentInfo::new(path.clone(), "file.pdf".into(), "application/pdf".into(), 3);
+            assert_eq!(attachment.fileToolPath(), path);
+        }
+    }
+
+    #[test]
     fn persistent_file_tool_paths_are_portable_without_changing_host_paths() {
         for path in [
             "/device-b/runtime/data/chat_attachments/chat-a/attachment-a/file.pdf",
@@ -92,7 +104,7 @@ mod tests {
                 AttachmentInfo::new(path.into(), "file.pdf".into(), "application/pdf".into(), 3);
             assert_eq!(
                 attachment.fileToolPath(),
-                "/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf"
+                "/operitapp/data/data/chat_attachments/chat-a/attachment-a/file.pdf"
             );
             assert_eq!(attachment.filePath, path);
         }

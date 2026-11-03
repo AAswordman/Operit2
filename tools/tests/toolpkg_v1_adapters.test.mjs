@@ -132,7 +132,7 @@ test('v1 declarations match their recorded source hashes', () => {
 test('v1 zip maps environment and restores the source result path', async () => {
   const { tools, calls } = engine();
   const result = await tools.Files.zip('/work', '/archive.zip', 'linux', false);
-  assert.deepEqual(plain(calls[0]), { name: 'zip', args: ['/mnt/linux/work', '/mnt/linux/archive.zip', false] });
+  assert.deepEqual(plain(calls[0]), { name: 'zip', args: ['/virtual/linux/work', '/virtual/linux/archive.zip', false] });
   assert.equal(result.env, 'linux');
   assert.equal(result.path, '/work');
 });
@@ -144,20 +144,31 @@ test('v1 defaults to its documented Android contract and delegates mounts to the
   assert.equal(calls[0].args[0].path, '/sdcard/file.txt');
   assert.equal(result.env, 'android');
   assert.equal(result.path, '/storage/emulated/0/file.txt');
-  await tools.Files.list('/app/data/plugins/demo');
-  assert.equal(calls[1].args[0], '/app/data/plugins/demo');
+  await tools.Files.list('/operitapp/data/plugins/demo');
+  assert.equal(calls[1].args[0], '/operitapp/data/plugins/demo');
   await assert.rejects(tools.Files.read('/unsupported-root/file.txt'), /no VFS mapping/);
   await assert.rejects(tools.Files.read('/../../file.txt'), /escapes/);
   await assert.rejects(tools.Files.list('/work', 'invented'), /Unsupported/);
   assert.equal(calls.length, 2);
 });
 
+test('both VFS roots pass through adapters and preserve plugin result paths', async () => {
+  const { tools, calls } = engine();
+  const app = await tools.Files.list('/app/data/plugins/demo');
+  assert.equal(calls[0].args[0], '/app/data/plugins/demo');
+  assert.equal(app.path, '/app/data/plugins/demo');
+  const mount = await tools.Files.list('/mnt/linux/work');
+  assert.equal(calls[1].args[0], '/mnt/linux/work');
+  assert.equal(mount.path, '/mnt/linux/work');
+});
+
+
 /** Checks legacy options are converted without leaking environment into v2 options. */
 test('v1 read options preserve intent and caller ownership', async () => {
   const { tools, calls } = engine();
   const options = Object.freeze({ path: '/work/file', environment: 'linux', intent: 'read', direct_image: false });
   await tools.Files.read(options);
-  assert.deepEqual(plain(calls[0].args), [{ path: '/mnt/linux/work/file', intent: 'read', direct_image: false }]);
+  assert.deepEqual(plain(calls[0].args), [{ path: '/virtual/linux/work/file', intent: 'read', direct_image: false }]);
   assert.equal(options.environment, 'linux');
 });
 
@@ -165,7 +176,7 @@ test('v1 read options preserve intent and caller ownership', async () => {
 test('v1 cross-environment copy preserves both addresses', async () => {
   const { tools, calls } = engine();
   const result = await tools.Files.copy('/tmp/a', '/sdcard/b', true, 'linux', 'android');
-  assert.deepEqual(plain(calls[0].args), ['/mnt/linux/tmp/a', '/sdcard/b', true]);
+  assert.deepEqual(plain(calls[0].args), ['/virtual/linux/tmp/a', '/sdcard/b', true]);
   assert.equal(result.path, '/tmp/a');
   assert.equal(result.env, 'linux');
 });
@@ -191,10 +202,10 @@ test('v1 download supports both handwritten overloads', async () => {
   const { tools, calls } = engine();
   const headers = Object.freeze({ Accept: 'text/plain' });
   await tools.Files.download('https://example.invalid/file', '/out', 'linux', headers);
-  assert.deepEqual(plain(calls[0].args), ['https://example.invalid/file', '/mnt/linux/out', headers]);
+  assert.deepEqual(plain(calls[0].args), ['https://example.invalid/file', '/virtual/linux/out', headers]);
   const options = Object.freeze({ visit_key: 'visit', link_number: 2, destination: '/out', environment: 'linux', headers });
   const result = await tools.Files.download(options);
-  assert.deepEqual(plain(calls[1].args), [{ visit_key: 'visit', link_number: 2, destination: '/mnt/linux/out', headers }]);
+  assert.deepEqual(plain(calls[1].args), [{ visit_key: 'visit', link_number: 2, destination: '/virtual/linux/out', headers }]);
   assert.equal(result.path, '/out');
   assert.equal(result.env, 'linux');
   assert.equal(options.destination, '/out');
@@ -205,8 +216,8 @@ test('v2 keeps its original signatures and receives no legacy result fields', as
   const { tools, calls, context } = engine();
   await tools.Files.zip('/work', '/out', 'linux', false);
   context.version = '2.0.0';
-  const result = await tools.Files.zip('/app/workspaces/a', '/app/data/out', false);
-  assert.deepEqual(plain(calls[1].args), ['/app/workspaces/a', '/app/data/out', false]);
+  const result = await tools.Files.zip('/operitapp/workspaces/a', '/operitapp/data/out', false);
+  assert.deepEqual(plain(calls[1].args), ['/operitapp/workspaces/a', '/operitapp/data/out', false]);
   assert.equal(Object.hasOwn(result, 'env'), false);
   context.version = '1.0.1';
   assert.equal((await tools.Files.list('/work', 'linux')).env, 'linux');

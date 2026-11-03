@@ -31,7 +31,7 @@ test('equal paths in separate Git roots remain separate trees and selections', (
 });
 
 test('Windows and absolute resource paths display segments without changing their original identity', () => {
-  for (const path of ['D:\\repo\\src\\a.ts', '/mnt/repo/src/a.ts']) {
+  for (const path of ['D:\\repo\\src\\a.ts', '/virtual/repo/src/a.ts']) {
     const rows = changeTreeRows(buildChangeTree([file(path)]), new Set());
     assert.equal(rows.at(-1).node.name, 'a.ts');
     assert.equal(rows.at(-1).node.id, path);

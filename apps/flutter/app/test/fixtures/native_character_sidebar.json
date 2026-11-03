@@ -262,7 +262,7 @@
                   "type": "Image",
                   "props": {
                     "key": "sidebar-avatar-card:travel",
-                    "uri": "/app/data/cache/toolpkg_resource_exports/operit-avatar.png",
+                    "uri": "/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png",
                     "width": 22,
                     "height": 22,
                     "contentScale": "crop",

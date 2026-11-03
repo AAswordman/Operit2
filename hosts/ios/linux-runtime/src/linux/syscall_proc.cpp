@@ -217,6 +217,8 @@ VirtualNode::Ptr Syscalls::process_fd_link(int number) {
             return std::string("anon_inode:[pidfd]");
         if (fd.description->inotify)
             return std::string("anon_inode:inotify");
+        if (ipc::is_posix_mq_file(fd.description))
+            return fd.description->virtual_file->node->identity;
         auto display = fd.display_path();
         if (!display.empty())
             return display;
@@ -237,6 +239,8 @@ VirtualNode::Ptr Syscalls::process_fd_link(int number) {
         node->standard_stream = entry.description->standard_stream;
         node->open_stream = [access, number](int flags) {
             auto &fd = access().descriptors_.get(number);
+            if (ipc::is_posix_mq_file(fd.description))
+                guest_error(95);
             if (process::pidfd_file(fd.description) || fd.description->poll ||
                 fd.description->counter || fd.description->timer || fd.description->inotify)
                 guest_error(6);

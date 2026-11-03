@@ -30,6 +30,7 @@ enum class Op : uint8_t {
     LoadLiteral,
     LoadPair,
     System,
+    Cache,
     Simd,
     VectorMemory,
     Exclusive,
@@ -59,6 +60,7 @@ enum class Dispatch : uint8_t {
     AddImmediate64,
     AddRegister32,
     AddRegister64,
+    CompareRegister64,
     AddCarry32,
     AddCarry64,
     LogicalImmediate32,
@@ -118,13 +120,20 @@ enum class Dispatch : uint8_t {
     RegisterToVectorHigh,
     VectorImmediate,
     VectorLogical,
+    ScalarFma64,
+    ScalarSqrt64,
+    ScalarUnsignedToDouble64,
+    ScalarAdd64,
+    ScalarCompare64,
+    ScalarSelect64,
+    VectorFma2D,
     Count
 };
 
 namespace decoded {
 constexpr unsigned set_flags = 1, subtract = 2;
 constexpr unsigned shift_type = 2, extended = 16, signed_extension = 32;
-constexpr unsigned address_mode = 3, offset = 0, register_offset = 1, post_index = 2, pre_index = 3;
+constexpr unsigned address_mode = 3, register_offset = 1, post_index = 2, pre_index = 3;
 constexpr unsigned signed_load = 4, word_result = 8, offset_word = 16, offset_signed = 32, offset_scaled = 64;
 } // namespace decoded
 

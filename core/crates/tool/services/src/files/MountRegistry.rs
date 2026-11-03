@@ -30,12 +30,12 @@ impl VfsMount {
     pub fn vfsPath(&self) -> String { format!("{}/{}", self.namespace, self.id) }
     fn validate(&self) -> Result<(), String> {
         let parts: Vec<_> = self.namespace.split('/').collect();
-        if parts.len() != 4 || parts[0] != "" || parts[1] != "mnt"
+        if parts.len() != 4 || parts[0] != "" || !matches!(parts[1], "mnt" | "virtual")
             || !parts[2..].iter().all(|s| safeSegment(s))
             || !safeSegment(&self.id)
             || (parts[2] == "windows" && parts[3].len() == 1)
-            || ["/mnt/android/root", "/mnt/android/sdcard"].contains(&self.namespace.as_str()) {
-            return Err("Mount namespace must be /mnt/<platform>/<kind> and must not shadow a built-in mount".into());
+            || (parts[2] == "android" && matches!(parts[3], "root" | "sdcard")) {
+            return Err("Mount namespace must be /mnt/<platform>/<kind> or /virtual/<platform>/<kind> and must not shadow a built-in mount".into());
         }
         FileSystemResource { backend: self.backend.clone(), root: self.root.clone(), path: String::new() }
             .validate().map_err(|e| e.to_string())?;
@@ -51,6 +51,12 @@ impl VfsMount {
         }
         Ok(())
     }
+}
+
+/// Both VFS mount roots address the same registry tree; persisted addresses stay unchanged.
+pub(super) fn mountRelativePath(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/mnt").or_else(|| path.strip_prefix("/virtual"))?;
+    if rest.is_empty() || rest.starts_with('/') { Some(rest.trim_start_matches('/')) } else { None }
 }
 
 fn safeSegment(s: &str) -> bool {
@@ -98,16 +104,16 @@ impl MountRegistry {
         let mut paths = std::collections::HashSet::new();
         for mount in &catalog.mounts {
             mount.validate()?;
-            if !paths.insert(mount.vfsPath()) { return Err("Duplicate VFS mount path".into()) }
+            if !paths.insert(mountRelativePath(&mount.vfsPath()).unwrap().to_string()) { return Err("Duplicate VFS mount path".into()) }
         }
         Ok(catalog.mounts)
     }
     pub fn register(&self, namespace: &str, backend: &str, root: &str, name: &str) -> Result<VfsMount, String> {
         let _guard = catalogLock().lock().map_err(|_| "VFS mount catalog lock is poisoned")?;
-        let candidate = VfsMount { id: Uuid::new_v4().simple().to_string(), namespace: namespace.trim_end_matches('/').into(), name: name.into(), backend: backend.into(), root: root.into() };
+        let candidate = VfsMount { id: Uuid::new_v4().simple().to_string(), namespace: namespace.trim_end_matches('/').to_string(), name: name.into(), backend: backend.into(), root: root.into() };
         candidate.validate()?;
         let mut mounts = self.list()?;
-        if let Some(existing) = mounts.iter().find(|m| m.namespace == candidate.namespace && m.backend == backend && m.root == root) {
+        if let Some(existing) = mounts.iter().find(|m| mountRelativePath(&m.namespace) == mountRelativePath(&candidate.namespace) && m.backend == backend && m.root == root) {
             return Ok(existing.clone());
         }
         mounts.push(candidate.clone());
@@ -118,7 +124,8 @@ impl MountRegistry {
         let _guard = catalogLock().lock().map_err(|_| "VFS mount catalog lock is poisoned")?;
         let mut mounts = self.list()?;
         let before = mounts.len();
-        mounts.retain(|m| m.vfsPath() != vfsPath.trim_end_matches('/'));
+        let relative = mountRelativePath(vfsPath.trim_end_matches('/')).ok_or("VFS mount not found")?;
+        mounts.retain(|m| mountRelativePath(&m.vfsPath()) != Some(relative));
         if before == mounts.len() { return Err("VFS mount not found".into()) }
         self.save(mounts)
     }
@@ -145,7 +152,7 @@ mod tests {
     fn unavailableStorageKeepsBuiltinMountsUsableButRejectsWrites() {
         let registry = MountRegistry { catalog: PathBuf::from("runtime/config/vfs_mounts.json"), storage: None };
         assert!(registry.list().unwrap().is_empty());
-        let error = registry.register("/mnt/test/resources", "test", "opaque", "Test").unwrap_err();
+        let error = registry.register("/virtual/test/resources", "test", "opaque", "Test").unwrap_err();
         assert!(error.contains("storage host is not configured"), "{error}");
     }
 
@@ -191,10 +198,31 @@ mod tests {
     }
 
     #[test]
+    fn catalog_preserves_namespaces_and_shares_both_mount_roots() {
+        let host = Arc::new(VirtualStorage::default());
+        *host.bytes.lock().unwrap() = Some(br#"{"version":1,"mounts":[{"id":"legacy","namespace":"/mnt/test/folders","name":"Old","backend":"native","root":"/mnt/physical-root"}]}"#.to_vec());
+        let registry = MountRegistry::withStorage(host.clone());
+        let mounts = registry.list().unwrap();
+        assert_eq!(mounts[0].vfsPath(), "/mnt/test/folders/legacy");
+        assert_eq!(mounts[0].root, "/mnt/physical-root");
+        let same = registry.register("/virtual/test/folders", "native", "/mnt/physical-root", "Old").unwrap();
+        assert_eq!(same, mounts[0]);
+        registry.register("/virtual/test/folders", "test", "opaque", "New").unwrap();
+        let bytes = host.bytes.lock().unwrap().clone().unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(saved["mounts"][0]["namespace"], "/mnt/test/folders");
+        assert_eq!(saved["mounts"][1]["namespace"], "/virtual/test/folders");
+        assert_eq!(saved["mounts"][0]["root"], "/mnt/physical-root");
+        registry.remove("/virtual/test/folders/legacy").unwrap();
+        assert_eq!(registry.list().unwrap().len(), 1);
+    }
+
+
+    #[test]
     fn virtualHostCatalogPersistsAcrossRegistriesAndFailedWrites() {
         let host = Arc::new(VirtualStorage::default());
         let registry = MountRegistry::withStorage(host.clone());
-        let mount = registry.register("/mnt/web/resources", "test", "opaque", "Web").unwrap();
+        let mount = registry.register("/virtual/web/resources", "test", "opaque", "Web").unwrap();
         let reopened = MountRegistry::withStorage(host.clone());
         assert_eq!(reopened.list().unwrap(), vec![mount.clone()]);
         host.rejectWrites.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -211,9 +239,9 @@ mod tests {
         let first = Arc::new(VirtualStorage::default());
         let second = Arc::new(VirtualStorage::default());
         let firstMount = MountRegistry::withStorage(first.clone())
-            .register("/mnt/web/resources", "test", "first-root", "First").unwrap();
+            .register("/virtual/web/resources", "test", "first-root", "First").unwrap();
         let secondMount = MountRegistry::withStorage(second.clone())
-            .register("/mnt/web/resources", "test", "second-root", "Second").unwrap();
+            .register("/virtual/web/resources", "test", "second-root", "Second").unwrap();
         let firstMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into(), first);
         let secondMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into(), second);
         assert!(firstMapper.resolve(&firstMount.vfsPath()).is_ok());
@@ -226,9 +254,13 @@ mod tests {
     fn duplicateVirtualCatalogEntriesAreRejected() {
         let host = Arc::new(VirtualStorage::default());
         let registry = MountRegistry::withStorage(host.clone());
-        let mount = registry.register("/mnt/web/resources", "test", "opaque", "Web").unwrap();
-        *host.bytes.lock().unwrap() = Some(serde_json::to_vec(&Catalog { version: 1, mounts: vec![mount.clone(), mount] }).unwrap());
-        assert!(registry.list().unwrap_err().contains("Duplicate VFS mount path"));
+        let mount = registry.register("/virtual/web/resources", "test", "opaque", "Web").unwrap();
+        for namespace in ["/virtual/web/resources", "/mnt/web/resources"] {
+            let mut duplicate = mount.clone();
+            duplicate.namespace = namespace.into();
+            *host.bytes.lock().unwrap() = Some(serde_json::to_vec(&Catalog { version: 1, mounts: vec![mount.clone(), duplicate] }).unwrap());
+            assert!(registry.list().unwrap_err().contains("Duplicate VFS mount path"));
+        }
     }
 
     #[cfg(unix)]
@@ -237,7 +269,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let root = TempRoot::new();
         let registry = root.registry();
-        registry.register("/mnt/test/resources", "test", "opaque", "Test").unwrap();
+        registry.register("/virtual/test/resources", "test", "opaque", "Test").unwrap();
         assert_eq!(fs::metadata(registry.catalog).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
@@ -245,30 +277,30 @@ mod tests {
     fn persistentCatalogIsStableAndIdentityLocal() {
         let first = TempRoot::new();
         let second = TempRoot::new();
-        let mount = first.registry().register("/mnt/android/documents", "android_documents", "content://com.termux.documents/tree/opaque%2Fhome", "Project").unwrap();
+        let mount = first.registry().register("/virtual/android/documents", "android_documents", "content://com.termux.documents/tree/opaque%2Fhome", "Project").unwrap();
         assert_eq!(first.registry().list().unwrap(), vec![mount.clone()]);
         assert!(second.registry().list().unwrap().is_empty());
-        assert_eq!(first.registry().register("/mnt/android/documents", "android_documents", &mount.root, "New name").unwrap().id, mount.id);
+        assert_eq!(first.registry().register("/virtual/android/documents", "android_documents", &mount.root, "New name").unwrap().id, mount.id);
         first.registry().remove(&mount.vfsPath()).unwrap();
         assert!(first.registry().list().unwrap().is_empty());
     }
     #[test]
     fn nativeAndFuturePlatformBackendsUseTheSameCatalog() {
         let temp = TempRoot::new();
-        temp.registry().register("/mnt/local/folders", "native", std::env::temp_dir().to_str().unwrap(), "Local").unwrap();
-        temp.registry().register("/mnt/macos/bookmarks", "macos_bookmark", "opaque bookmark", "Future").unwrap();
+        temp.registry().register("/virtual/local/folders", "native", std::env::temp_dir().to_str().unwrap(), "Local").unwrap();
+        temp.registry().register("/virtual/macos/bookmarks", "macos_bookmark", "opaque bookmark", "Future").unwrap();
         assert_eq!(temp.registry().list().unwrap().len(), 2);
     }
     #[test]
     fn invalidSourcesAndNamespacesAreRejectedBeforePersistence() {
         let temp = TempRoot::new();
-        for ns in ["/mnt", "/mnt/android", "/mnt/android/root", "/mnt/android/sdcard", "/mnt/windows/c", "/mnt/../documents", "/app/data/mounts"] {
+        for ns in ["/mnt", "/mnt/android", "/mnt/android/root", "/mnt/android/sdcard", "/mnt/windows/c", "/mnt/../documents", "/app/data/mounts", "/virtual", "/virtual/android", "/virtual/android/root", "/virtual/android/sdcard", "/virtual/windows/c", "/virtual/../documents", "/operitapp/data/mounts"] {
             assert!(temp.registry().register(ns, "test", "opaque", "Bad").is_err(), "{ns}");
         }
         for uri in ["/data/data/com.termux", "content://provider/document/id", "https://provider/tree/id", "content://provider/tree/id?x=1"] {
-            assert!(temp.registry().register("/mnt/android/documents", "android_documents", uri, "Bad").is_err(), "{uri}");
+            assert!(temp.registry().register("/virtual/android/documents", "android_documents", uri, "Bad").is_err(), "{uri}");
         }
-        assert!(temp.registry().register("/mnt/local/folders", "native", "relative", "Bad").is_err());
+        assert!(temp.registry().register("/virtual/local/folders", "native", "relative", "Bad").is_err());
         assert!(temp.registry().list().unwrap().is_empty());
     }
     #[test]
@@ -278,7 +310,7 @@ mod tests {
         fs::create_dir_all(registry.catalog.parent().unwrap()).unwrap();
         fs::write(&registry.catalog, "broken").unwrap();
         assert!(registry.list().is_err());
-        assert!(registry.register("/mnt/local/folders", "native", "/tmp", "Local").is_err());
+        assert!(registry.register("/virtual/local/folders", "native", "/tmp", "Local").is_err());
     }
     #[test]
     fn concurrentRegistrationDoesNotLoseMounts() {
@@ -286,7 +318,7 @@ mod tests {
         let registry = temp.registry();
         let jobs: Vec<_> = (0..8).map(|index| {
             let registry = registry.clone();
-            std::thread::spawn(move || registry.register("/mnt/test/resources", "test", &format!("root-{index}"), "Test").unwrap())
+            std::thread::spawn(move || registry.register("/virtual/test/resources", "test", &format!("root-{index}"), "Test").unwrap())
         }).collect();
         for job in jobs { job.join().unwrap(); }
         assert_eq!(registry.list().unwrap().len(), 8);

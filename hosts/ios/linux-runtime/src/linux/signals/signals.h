@@ -111,6 +111,7 @@ struct Restart {
     std::array<uint64_t, 9> registers{};
     uint64_t after_svc = 0;
     bool restartable = false, interrupted = false, without_handler_only = false;
+    bool always_restart = false; // ERESTARTNOINTR, even without SA_RESTART.
 };
 struct ThreadState {
     Pending pending;
@@ -127,6 +128,7 @@ struct ThreadRef {
     CpuState *cpu = nullptr;
     ThreadState *signals = nullptr;
     uint64_t *mask = nullptr;
+    bool traced = false;
 };
 struct ProcessRef {
     uint32_t pid = 0, parent = 0, group = 0, session = 0;
@@ -190,7 +192,9 @@ void force_fault(ProcessState &process, ThreadState &thread, uint64_t &mask, int
 
 uint64_t install_trampoline(Memory &memory, uint64_t preferred = 0x7fffffe00000);
 Delivery deliver(Memory &memory, CpuState &cpu, ProcessState &process, ThreadState &thread, uint64_t &mask,
-                 uint64_t trampoline);
+                 uint64_t trampoline, const std::function<bool(CpuState &)> &before_handler = {},
+                 std::optional<Queued> *tracer_signal = nullptr,
+                 const std::function<bool(const Queued &)> &before_delivery = {});
 bool restore_frame(Memory &memory, CpuState &cpu, ThreadState &thread, uint64_t &mask);
 AltStack visible_altstack(const ThreadState &thread, uint64_t sp);
 void change_altstack(ThreadState &thread, const AltStack &stack, uint64_t sp);

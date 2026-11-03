@@ -1,5 +1,6 @@
 #include "base/random.h"
 #include "linux/error_mapping.h"
+#include "linux/events/inotify.h"
 #include "linux/files/memory_file.h"
 #include "linux/files/open_how.h"
 #include "linux/syscalls.h"
@@ -216,6 +217,9 @@ int Syscalls::open_path(const Path &path, uint64_t guest_flags, mode_t mode) {
         if (link)
             entry.description->virtual_file = std::make_shared<VirtualOpen>(std::move(link));
         files::memory_file_attach(entry);
+        if (!metadata_only)
+            entry.description->inotify_open = InotifyOpenFile::opened(
+                path, entry.host.get(), (guest_flags & access_mode) != 0, guest_flags & temporary);
     } catch (...) {
         descriptors_.close(number);
         throw;

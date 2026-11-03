@@ -85,8 +85,12 @@ void Machine::stop_accounting() {
     const auto it = processes_.find(accounting_pid_);
     if (it != processes_.end()) {
         charge_usage(*it->second, delta);
-        if (auto *task = scheduler_.lookup(accounting_tid_); task && task->pid == accounting_pid_)
+        if (auto *task = scheduler_.lookup(accounting_tid_); task && task->pid == accounting_pid_) {
             charge_usage(*task, delta);
+            const auto limit = it->second->image.syscalls->resource_limits()->get(process::Resource::RealtimeTime);
+            scheduler_.account_runtime(task->tid, delta.runtime_nanoseconds,
+                                       limit.soft != process::resource_infinity);
+        }
     }
     accounting_pid_ = accounting_tid_ = 0;
 }
@@ -161,8 +165,13 @@ void Machine::enforce_cpu_limits() {
     for (auto &[pid, process] : processes_) {
         if (process->state != Process::State::Running)
             continue;
-        const auto limit = process->image.syscalls->resource_limits()->get(process::Resource::Cpu);
-        if (limit.soft == process::resource_infinity && limit.hard == process::resource_infinity)
+        auto &limits = *process->image.syscalls->resource_limits();
+        const auto cpu = limits.get(process::Resource::Cpu);
+        const auto realtime = limits.get(process::Resource::RealtimeTime);
+        const bool cpu_limited = cpu.soft != process::resource_infinity || cpu.hard != process::resource_infinity;
+        const bool realtime_limited = realtime.soft != process::resource_infinity ||
+                                      realtime.hard != process::resource_infinity;
+        if (!cpu_limited && !realtime_limited)
             continue;
         if (!settled) {
             stop_accounting();
@@ -171,11 +180,27 @@ void Machine::enforce_cpu_limits() {
         const auto tids = scheduler_.live_tids(pid);
         if (tids.empty())
             continue;
-        const int result = process::enforce_cpu_limit(
-            scheduler_, tids.front(), *process->image.syscalls->resource_limits(),
-            process->user_nanoseconds, process->system_nanoseconds);
-        if (result < 0 && result != -3)
-            guest_error(-result);
+        if (cpu_limited) {
+            const int result = process::enforce_cpu_limit(scheduler_, tids.front(), limits,
+                process->user_nanoseconds, process->system_nanoseconds);
+            if (result < 0 && result != -3)
+                guest_error(-result);
+            if (result == 9)
+                continue;
+        }
+        if (realtime_limited) {
+            for (const auto tid : tids) {
+                const auto *task = scheduler_.lookup(tid);
+                if (!task || !task->realtime_runtime_nanoseconds || scheduler_.effective_priority(tid) >= 100)
+                    continue;
+                const int result = process::enforce_realtime_limit(
+                    scheduler_, tid, limits, task->realtime_runtime_nanoseconds);
+                if (result < 0 && result != -3)
+                    guest_error(-result);
+                if (result == 9)
+                    break;
+            }
+        }
     }
 }
 } // namespace operit::arm64

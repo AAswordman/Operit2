@@ -7,7 +7,7 @@
 先通过已有文件工具将真实图片复制、下载或写入 `ToolPkg.getSpaceDataDir()` 返回的目录，确认操作成功后输出：
 
 ```markdown
-![图片说明](/app/data/plugin_data/space/com.operit.image_display/image-unique.png)
+![图片说明](/operitapp/data/plugin_data/space/com.operit.image_display/image-unique.png)
 ```
 
 图片语法独占一行，直接写入回复正文。每张图片使用唯一文件名，并保留已被历史消息引用的文件。

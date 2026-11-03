@@ -147,8 +147,7 @@ pub fn qualifyRemoteResultPaths(data: &mut ToolResultData, typedPath: &str, node
         ToolResultData::GrepResultData(entry) => {
             entry.searchPath = typedPath.to_string();
             for fileMatch in &mut entry.matches {
-                let filePath = fileMatch.filePath.clone();
-                fileMatch.filePath = format!("{nodePrefix}:{filePath}");
+                fileMatch.filePath = format!("{nodePrefix}:{}", fileMatch.filePath);
             }
         }
         _ => {}
@@ -207,17 +206,17 @@ mod tests {
 
     #[test]
     fn remoteRepliesRestoreTypedPathsOnEveryEcho() {
-        let listCall = call("list_files", vec![("path", "cas:/mnt/nas/data")]);
+        let listCall = call("list_files", vec![("path", "cas:/virtual/nas/data")]);
         let reply = replyValue(ToolResultData::DirectoryListingData(crate::tools::ToolResultDataClasses::DirectoryListingData {
-            path: "/mnt/nas/data".to_string(),
+            path: "/virtual/nas/data".to_string(),
             entries: vec![],
         }));
-        let result = remoteReplyToToolResult(&listCall, reply, "cas:/mnt/nas/data", "cas");
+        let result = remoteReplyToToolResult(&listCall, reply, "cas:/virtual/nas/data", "cas");
         assert!(result.success);
         let ToolResultData::DirectoryListingData(listing) = result.result else {
             panic!("expected the directory listing to survive the round-trip");
         };
-        assert_eq!(listing.path, "cas:/mnt/nas/data");
+        assert_eq!(listing.path, "cas:/virtual/nas/data");
 
         let readCall = call("read_file", vec![("path", "cas:/home/user/a.txt")]);
         let reply = replyValue(ToolResultData::FileContentData(FileContentData {
@@ -234,43 +233,55 @@ mod tests {
     }
 
     #[test]
+    fn remote_results_preserve_vfs_roots() {
+        let mut data = ToolResultData::FindFilesResultData(FindFilesResultData {
+            path: "/mnt/nas".into(), pattern: "*".into(),
+            files: vec!["/mnt/nas/file.txt".into(), "/app/workspaces/demo/file.txt".into()],
+        });
+        qualifyRemoteResultPaths(&mut data, "cas:/mnt/nas", "cas");
+        let ToolResultData::FindFilesResultData(find) = data else { panic!() };
+        assert_eq!(find.path, "cas:/mnt/nas");
+        assert_eq!(find.files, vec!["cas:/mnt/nas/file.txt", "cas:/app/workspaces/demo/file.txt"]);
+    }
+
+    #[test]
     fn remoteFindAndGrepRepliesPrefixEveryChildPath() {
         let mut findData = ToolResultData::FindFilesResultData(FindFilesResultData {
-            path: "/mnt/nas".to_string(),
+            path: "/virtual/nas".to_string(),
             pattern: "*.rs".to_string(),
-            files: vec!["/mnt/nas/src/lib.rs".to_string(), "/mnt/nas/README.md".to_string()],
+            files: vec!["/virtual/nas/src/lib.rs".to_string(), "/virtual/nas/README.md".to_string()],
         });
-        qualifyRemoteResultPaths(&mut findData, "cas:/mnt/nas", "cas");
+        qualifyRemoteResultPaths(&mut findData, "cas:/virtual/nas", "cas");
         let ToolResultData::FindFilesResultData(find) = &findData else { panic!() };
-        assert_eq!(find.path, "cas:/mnt/nas");
-        assert_eq!(find.files[0], "cas:/mnt/nas/src/lib.rs");
-        assert_eq!(find.files[1], "cas:/mnt/nas/README.md");
+        assert_eq!(find.path, "cas:/virtual/nas");
+        assert_eq!(find.files[0], "cas:/virtual/nas/src/lib.rs");
+        assert_eq!(find.files[1], "cas:/virtual/nas/README.md");
 
         let mut grepData = ToolResultData::GrepResultData(GrepResultData {
-            searchPath: "/mnt/nas".to_string(),
+            searchPath: "/virtual/nas".to_string(),
             pattern: "TODO".to_string(),
             matches: vec![GrepFileMatch {
-                filePath: "/mnt/nas/src/lib.rs".to_string(),
+                filePath: "/virtual/nas/src/lib.rs".to_string(),
                 lineMatches: vec![],
             }],
             totalMatches: 1,
             filesSearched: 3,
         });
-        qualifyRemoteResultPaths(&mut grepData, "cas:/mnt/nas", "cas");
+        qualifyRemoteResultPaths(&mut grepData, "cas:/virtual/nas", "cas");
         let ToolResultData::GrepResultData(grep) = &grepData else { panic!() };
-        assert_eq!(grep.searchPath, "cas:/mnt/nas");
-        assert_eq!(grep.matches[0].filePath, "cas:/mnt/nas/src/lib.rs");
+        assert_eq!(grep.searchPath, "cas:/virtual/nas");
+        assert_eq!(grep.matches[0].filePath, "cas:/virtual/nas/src/lib.rs");
     }
 
     #[test]
     fn untypedRepliesFallBackToJsonAndFailuresStayFailures() {
-        let call = call("file_info", vec![("path", "cas:/mnt/nas")]);
+        let call = call("file_info", vec![("path", "cas:/virtual/nas")]);
         let untyped = JsToolCallResult {
             success: true,
             data: JsToolCallResultData::Value(serde_json::json!({ "custom": true })),
             error: None,
         };
-        let result = remoteReplyToToolResult(&call, untyped, "cas:/mnt/nas", "cas");
+        let result = remoteReplyToToolResult(&call, untyped, "cas:/virtual/nas", "cas");
         assert!(result.success);
         assert!(matches!(result.result, ToolResultData::JsonResultData(_)));
 
@@ -279,7 +290,7 @@ mod tests {
             data: JsToolCallResultData::Value(serde_json::json!(null)),
             error: Some("Device is offline".to_string()),
         };
-        let result = remoteReplyToToolResult(&call, failure, "cas:/mnt/nas", "cas");
+        let result = remoteReplyToToolResult(&call, failure, "cas:/virtual/nas", "cas");
         assert!(!result.success);
         assert_eq!(result.error.as_deref(), Some("Device is offline"));
     }
@@ -289,14 +300,14 @@ mod tests {
     fn taggedPayloadsSurviveSerialization() {
         for json in [
             ToolResultData::BinaryFileContentData(BinaryFileContentData {
-                path: "/mnt/nas/a.bin".to_string(),
+                path: "/virtual/nas/a.bin".to_string(),
                 contentBase64: "aGk=".to_string(),
                 size: 2,
             })
             .toJson(),
             ToolResultData::FileOperationData(FileOperationData {
                 operation: "delete".to_string(),
-                path: "/mnt/nas/a.bin".to_string(),
+                path: "/virtual/nas/a.bin".to_string(),
                 successful: true,
                 details: String::new(),
             })

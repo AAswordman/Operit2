@@ -990,7 +990,8 @@ impl AIMessageManager {
         {
             attributes.push_str(&format!(" node_id=\"{}\"", escape(nodeId)));
         }
-        if toolPath.starts_with("/app/data/data/chat_attachments/") {
+        if toolPath.starts_with("/operitapp/data/data/chat_attachments/")
+            || toolPath.starts_with("/app/data/data/chat_attachments/") {
             attributes.push_str(&format!(" path=\"{}\"", escape(&toolPath)));
         }
         if attachment.fileSize > 0 {
@@ -1541,9 +1542,9 @@ mod tests {
         let tag =
             AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
         assert!(tag.contains("node_id=\"core-b\""));
-        assert!(tag.contains("path=\"/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
+        assert!(tag.contains("path=\"/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
         assert!(tag.contains("filename=\"报价单&quot;.pdf\""));
-        assert!(tag.contains("id=\"/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
+        assert!(tag.contains("id=\"/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
         assert!(!tag.contains("/device-b/"));
     }
 

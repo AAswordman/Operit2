@@ -22,6 +22,64 @@ inline void Memory::require_access(uint64_t address, uint64_t size, unsigned per
     }
 }
 
+inline bool Memory::ptrace_read(uint64_t address, void *destination, size_t size) {
+    return ptrace_transfer(address, destination, size, false);
+}
+
+inline bool Memory::ptrace_write(uint64_t address, const void *source, size_t size) {
+    return ptrace_transfer(address, const_cast<void *>(source), size, true);
+}
+
+inline bool Memory::ptrace_transfer(uint64_t address, void *buffer, size_t size, bool writing) {
+    if (!size)
+        return true;
+    if (!buffer || !valid_range(address, size))
+        return false;
+    try {
+        // Serial execution is still required: serial guest page accesses can
+        // bypass the reader gate. The writer gate also protects file aliases.
+        const memory_detail::AccessSynchronization::WriteGuard access(true);
+        require_access(address, size, 0);
+        struct Chunk {
+            Translation translation;
+            size_t offset, size;
+        };
+        std::vector<Chunk> chunks;
+        chunks.reserve((address % page_size + size - 1) / page_size + 1);
+        uint64_t current = address;
+        size_t remaining = size;
+        while (remaining) {
+            auto region = regions_.upper_bound(current);
+            --region; // require_access validated the complete range above.
+            auto &cached = translation(current);
+            refill(cached, current, writing ? write_perm : read_perm, true);
+            const size_t offset = current % page_size;
+            const size_t count = std::min<uint64_t>(
+                std::min<size_t>(remaining, page_size - offset), region->second.end - current);
+            chunks.push_back({cached, offset, count});
+            current += count;
+            remaining -= count;
+        }
+        auto *bytes = static_cast<uint8_t *>(buffer);
+        for (const auto &chunk : chunks) {
+            auto *guest = chunk.translation.data + chunk.offset;
+            if (writing) {
+                written(chunk.translation);
+                std::memcpy(guest, bytes, chunk.size);
+            } else
+                std::memcpy(bytes, guest, chunk.size);
+            bytes += chunk.size;
+        }
+        return true;
+    } catch (const Failure &) {
+        return false;
+    } catch (const GuestError &) {
+        return false;
+    } catch (const std::bad_alloc &) {
+        return false;
+    }
+}
+
 inline std::unique_ptr<Memory> Memory::fork_clone() {
     const AccessGuard access(*this);
     auto child = std::make_unique<Memory>(limit_);
@@ -43,7 +101,6 @@ inline std::unique_ptr<Memory> Memory::fork_clone() {
     // page. The child's translation cache starts empty.
     invalidate();
     child->code_epoch.store(code_epoch.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    child->data_epoch.store(data_epoch.load(std::memory_order_relaxed), std::memory_order_relaxed);
     child->refresh_mapping_summary();
     return child;
 }
@@ -56,7 +113,6 @@ inline void Memory::synchronize_shared() {
         refresh_mapping_summary();
     if (revision != observed || file_mapping_) {
         exclusive_revision_.fetch_add(1, std::memory_order_relaxed);
-        data_epoch.fetch_add(1, std::memory_order_relaxed);
         if (revision != observed || executable_file_)
             code_epoch.fetch_add(1, std::memory_order_relaxed);
         observed_shared_revision_.store(revision, std::memory_order_relaxed);
@@ -158,13 +214,15 @@ inline void Memory::map(uint64_t address, uint64_t size, unsigned permissions, b
 }
 
 inline void Memory::map_file(uint64_t address, uint64_t size, unsigned permissions, int descriptor,
-                             const Backing &backing, bool replace, bool permit_write) {
+                             const Backing &backing, bool replace, bool permit_write,
+                             std::shared_ptr<void> open_reference) {
     const AccessGuard access(*this);
     if (backing.offset % page_size)
         guest_error(22);
     if (backing.offset > uint64_t(INT64_MAX) || size > uint64_t(INT64_MAX) - backing.offset)
         guest_error(75);
-    auto file = std::make_shared<memory_detail::FileBacking>(descriptor, permit_write);
+    auto file = std::make_shared<memory_detail::FileBacking>(descriptor, permit_write,
+                                                           std::move(open_reference));
     if (backing.shared && permissions & write_perm && !file->writable)
         guest_error(13);
     Region region;

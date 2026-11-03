@@ -31,6 +31,33 @@ class AlpineTests(unittest.TestCase):
         self.assertEqual(stats['status'], 0)
         return result.stdout, stats
 
+    def test_bash_heredoc_pipe_capacity_boundaries(self):
+        if not (Path(OPTIONS.root) / 'bin/bash').exists():
+            self.skipTest('optional bash package is not installed in this rootfs')
+        sizes = (12000, 16383, 16384, 18684, 32768, 65535, 65536, 70000)
+        with tempfile.TemporaryDirectory(prefix='arm64-heredoc-') as temporary:
+            directory = Path(temporary)
+            commands = ['set -eu']
+            for size in sizes:
+                body = 'x' * size
+                # Exercise both a command reading the redirected FD and the
+                # read builtin used by neofetch's embedded configuration.
+                (directory / f'{size}.sh').write_text(
+                    "set -eu\nwc -c <<'EOF'\n" + body + "\nEOF\n"
+                    + "config=\nIFS= read -rd '' config <<'EOF' || test $? -eq 1\n"
+                    + body + "\nEOF\n"
+                    + f'test "${{#config}}" -eq {size + 1}\n')
+                commands.append(f'/bin/bash /probe/{size}.sh')
+            (directory / 'probe.sh').write_text('\n'.join(commands) + '\n')
+            result = subprocess.run([
+                OPTIONS.runtime, '--root', OPTIONS.root, '--stats', '--max-steps', '1000000000',
+                '--bind-ro', f'{directory}:/probe', '--',
+                '/bin/busybox', 'sh', '/probe/probe.sh',
+            ], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.split(), [str(size + 1) for size in sizes])
+            self.assertNotIn('cannot create temp file', result.stderr)
+
     def test_uname_reports_guest_identity_without_invented_kernel_metadata(self):
         with tempfile.TemporaryDirectory(prefix='arm64-uname-') as temporary:
             root = Path(temporary) / 'root'
@@ -132,6 +159,81 @@ class AlpineTests(unittest.TestCase):
     def test_fixed_helper_boundaries_identity_and_mutation(self):
         result = subprocess.run([OPTIONS.fixed_tests, str(Path(OPTIONS.root).resolve())], capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_python_musl_ipc_cross_process_lifecycle(self):
+        if not (Path(OPTIONS.root) / 'usr/bin/python3').exists():
+            self.skipTest('optional Python package is not installed in this rootfs')
+        source = (Path(__file__).parent / 'python/ipc_smoke.py').read_text()
+        for cpus in (1, 4):
+            with self.subTest(cpus=cpus):
+                command = [OPTIONS.runtime, '--root', OPTIONS.root, '--cpus', str(cpus),
+                           '--max-steps', '500000000', '--fixed-acceleration', '--stats',
+                           '--', '/usr/bin/python3', '-B', '-c', source]
+                result = subprocess.run(command, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(result.stdout, b'python-musl-ipc-cross-process-ok\n')
+                stats = json.loads(result.stderr.decode().splitlines()[-1])
+                self.assertEqual(stats['unsupported_syscalls'], 0)
+
+    def test_strace_follows_fork_and_exec(self):
+        if not (Path(OPTIONS.root) / 'usr/bin/strace').exists():
+            self.skipTest('optional strace package is not installed in this rootfs')
+        for cpus in (1, 4):
+            with self.subTest(cpus=cpus):
+                command = [OPTIONS.runtime, '--root', OPTIONS.root, '--cpus', str(cpus),
+                           '--max-steps', '100000000', '--memory-mib', '64', '--stats',
+                           '--', '/usr/bin/strace', '-f', '-e',
+                           'trace=clone,clone3,execve,exit,exit_group,write',
+                           '/bin/busybox', 'sh', '-c',
+                           '/bin/busybox sh -c "echo FOLLOW_CHILD"; echo FOLLOW_PARENT']
+                result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, 'FOLLOW_CHILD\nFOLLOW_PARENT\n')
+                self.assertRegex(result.stderr, r'Process \d+ attached')
+                self.assertRegex(result.stderr, r'\[pid\s+\d+\]\s+execve\(')
+                self.assertRegex(result.stderr, r'\[pid\s+\d+\]\s+write\(1, "FOLLOW_CHILD')
+                self.assertEqual(json.loads(result.stderr.splitlines()[-1])['unsupported_syscalls'], 0)
+
+    def test_liburing_file_io(self):
+        root = Path(OPTIONS.root).resolve()
+        required = ('usr/include/liburing.h', 'usr/include/linux/swab.h',
+                    'usr/lib/crt1.o', 'usr/lib/liburing.so', 'usr/lib/libc.so')
+        if not all((root / path).exists() for path in required):
+            self.skipTest('optional liburing, musl, and Linux development files are not installed')
+        clang = (os.environ.get('OPERIT_AARCH64_CLANG') or
+                 ('/opt/homebrew/opt/llvm/bin/clang'
+                  if Path('/opt/homebrew/opt/llvm/bin/clang').is_file() else shutil.which('clang')))
+        linker = (os.environ.get('OPERIT_AARCH64_LLD') or
+                  ('/opt/homebrew/opt/lld/bin/ld.lld'
+                   if Path('/opt/homebrew/opt/lld/bin/ld.lld').is_file() else shutil.which('ld.lld')))
+        if not clang or not linker:
+            self.skipTest('AArch64-capable clang and ld.lld are required')
+        clang = os.path.abspath(shutil.which(clang) or clang)
+        linker = os.path.abspath(shutil.which(linker) or linker)
+        with tempfile.TemporaryDirectory(prefix='arm64-liburing-') as temporary:
+            test_root = Path(temporary) / 'root'
+            shutil.copytree(root, test_root, symlinks=True)
+            binary = test_root / 'tmp/liburing-smoke'
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            source = Path(__file__).parent / 'guest/liburing_smoke.c'
+            compilation = subprocess.run([
+                clang, '--target=aarch64-linux-musl', '--sysroot=' + str(test_root),
+                '--ld-path=' + linker, '-nostdlib', '-no-pie', '-O2', '-Wall', '-Wextra',
+                '-Werror', str(test_root / 'usr/lib/crt1.o'), str(source),
+                '-L' + str(test_root / 'usr/lib'), '-luring', '-lc',
+                '-Wl,-dynamic-linker,/lib/ld-musl-aarch64.so.1', '-o', str(binary),
+            ], capture_output=True, text=True, timeout=30)
+            self.assertEqual(compilation.returncode, 0, compilation.stderr)
+            for cpus in (1, 4):
+                with self.subTest(cpus=cpus):
+                    result = subprocess.run([
+                        OPTIONS.runtime, '--root', str(test_root), '--cpus', str(cpus),
+                        '--max-steps', '200000000', '--fixed-acceleration', '--stats',
+                        '--', '/tmp/liburing-smoke',
+                    ], capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, 'liburing-file-io-ok\n')
+                    self.assertEqual(json.loads(result.stderr.splitlines()[-1])['unsupported_syscalls'], 0)
 
 
 if __name__ == '__main__':

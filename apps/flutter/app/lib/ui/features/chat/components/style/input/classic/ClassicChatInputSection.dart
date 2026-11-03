@@ -3,7 +3,6 @@
 import 'dart:async';
 
 import 'package:desktop_drop/desktop_drop.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:operit_ui/operit_ui.dart';
@@ -22,6 +21,7 @@ import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
+import '../common/ChatInputEnterActivator.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -629,7 +629,7 @@ class _ClassicInputBody extends StatelessWidget {
               onInterruptAndSendMessage != null
           ? 66
           : 36,
-      editor: _ClassicDesktopEnterSendShortcuts(
+      editor: _ClassicEnterSendShortcuts(
         controller: controller,
         canSendMessage: canSendMessage,
         onSendMessage: onSendMessage,
@@ -669,9 +669,6 @@ class _ClassicInputBody extends StatelessWidget {
                 chatPastedImageContentInsertionConfiguration(
                   onPasteImages: onPasteImages,
                 ),
-            onSubmitted: (_) {
-              if (!inputExpanded && canSendMessage) onSendMessage();
-            },
             onToggleExpansion: onToggleInputExpansion,
             expandTooltip: l10n.expandInput,
             collapseTooltip: l10n.collapseInput,
@@ -1355,8 +1352,8 @@ class _ClassicActionButton extends StatelessWidget {
   }
 }
 
-class _ClassicDesktopEnterSendShortcuts extends StatelessWidget {
-  const _ClassicDesktopEnterSendShortcuts({
+class _ClassicEnterSendShortcuts extends StatelessWidget {
+  const _ClassicEnterSendShortcuts({
     required this.controller,
     required this.canSendMessage,
     required this.onSendMessage,
@@ -1370,30 +1367,34 @@ class _ClassicDesktopEnterSendShortcuts extends StatelessWidget {
   final bool enabled;
   final Widget child;
 
-  /// Builds desktop enter-to-send shortcuts around the text field.
+  /// Builds hardware enter-to-send shortcuts around the text field.
   @override
   Widget build(BuildContext context) {
     return CallbackShortcuts(
-      bindings: enabled && _usesDesktopEnterSend
+      bindings: enabled
           ? <ShortcutActivator, VoidCallback>{
-              const SingleActivator(LogicalKeyboardKey.enter): _sendIfReady,
-              const SingleActivator(LogicalKeyboardKey.numpadEnter):
-                  _sendIfReady,
-              const SingleActivator(LogicalKeyboardKey.enter, control: true):
-                  _insertNewline,
-              const SingleActivator(
+              ChatInputEnterActivator(
+                LogicalKeyboardKey.enter,
+                controller: controller,
+              ): _sendIfReady,
+              ChatInputEnterActivator(
                 LogicalKeyboardKey.numpadEnter,
+                controller: controller,
+              ): _sendIfReady,
+              ChatInputEnterActivator(
+                LogicalKeyboardKey.enter,
+                controller: controller,
+                control: true,
+              ): _insertNewline,
+              ChatInputEnterActivator(
+                LogicalKeyboardKey.numpadEnter,
+                controller: controller,
                 control: true,
               ): _insertNewline,
             }
           : const <ShortcutActivator, VoidCallback>{},
       child: child,
     );
-  }
-
-  bool get _usesDesktopEnterSend {
-    return defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS;
   }
 
   /// Sends the draft when there is content.

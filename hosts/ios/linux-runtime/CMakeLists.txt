@@ -48,6 +48,7 @@ add_library(operit_arm64 STATIC
     src/fs/virtual/devfs.cpp
     src/fs/virtual/node.cpp
     src/fs/virtual/procfs.cpp
+    src/linux/debug/ptrace.cpp
     src/linux/error_mapping.cpp
     src/linux/events/epoll.cpp
     src/linux/events/inotify.cpp
@@ -60,16 +61,23 @@ add_library(operit_arm64 STATIC
     src/linux/files/pipe_buffer.cpp
     src/linux/files/record_lock.cpp
     src/linux/files/vector_io.cpp
+    src/linux/io_uring/io_uring.cpp
+    src/linux/ipc/posix_mq.cpp
+    src/linux/ipc/sysv_msg.cpp
+    src/linux/ipc/sysv_sem.cpp
+    src/linux/ipc/sysv_shared_memory.cpp
     src/linux/network/resolver.cpp
     src/linux/network/socket.cpp
     src/linux/network/message_batch.cpp
     src/linux/network/unix_namespace.cpp
+    src/linux/namespaces/namespaces.cpp
     src/linux/process/console.cpp
     src/linux/process/control.cpp
     src/linux/process/pidfd.cpp
     src/linux/process/resource_limits.cpp
     src/linux/process/limit_enforcement.cpp
     src/linux/process/state.cpp
+    src/linux/security/seccomp.cpp
     src/linux/signals/delivery.cpp
     src/linux/signals/frame.cpp
     src/linux/signals/state.cpp
@@ -80,15 +88,20 @@ add_library(operit_arm64 STATIC
     src/linux/syscall_file_control.cpp
     src/linux/syscall_file_transfer.cpp
     src/linux/syscall_io.cpp
+    src/linux/syscall_io_uring.cpp
+    src/linux/syscall_ipc.cpp
+    src/linux/syscall_identity.cpp
     src/linux/syscall_inotify.cpp
     src/linux/syscall_limits.cpp
     src/linux/syscall_memory.cpp
     src/linux/syscall_mount.cpp
+    src/linux/syscall_namespace.cpp
     src/linux/syscall_path.cpp
     src/linux/syscall_open.cpp
     src/linux/syscall_poll.cpp
     src/linux/syscall_proc.cpp
     src/linux/syscall_process.cpp
+    src/linux/syscall_process_vm.cpp
     src/linux/syscall_signal.cpp
     src/linux/syscall_socket.cpp
     src/linux/syscall_socket_message.cpp
@@ -105,6 +118,7 @@ add_library(operit_arm64 STATIC
     src/linux/terminal/termios.cpp
     src/linux/timers/host_events.cpp
     src/linux/threads/futex_pi.cpp
+    src/linux/threads/rseq.cpp
     src/linux/timers/timer_file.cpp
     src/linux/timers/process_timers.cpp
     src/linux/timers/timer_service.cpp
@@ -116,6 +130,7 @@ add_library(operit_arm64 STATIC
     src/runtime/process/accounting.cpp
     src/runtime/process/lifecycle.cpp
     src/runtime/process/observability.cpp
+    src/runtime/process/ptrace.cpp
     src/runtime/process/signals.cpp
     src/runtime/process/timers.cpp
     src/runtime/process/wait.cpp
@@ -148,35 +163,84 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     include(CTest)
     if(BUILD_TESTING)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        function(add_runtime_test target source test_name)
+            add_executable(${target} ${source})
+            target_compile_features(${target} PRIVATE cxx_std_17)
+            target_include_directories(${target} PRIVATE src)
+            target_link_libraries(${target} PRIVATE operit_arm64)
+            add_test(NAME ${test_name} COMMAND ${target})
+            set_tests_properties(${test_name} PROPERTIES TIMEOUT 15)
+        endfunction()
         add_executable(operit-arm64-cpu-validation tests/cpu_validation.cpp)
         target_compile_features(operit-arm64-cpu-validation PRIVATE cxx_std_17)
         target_include_directories(operit-arm64-cpu-validation PRIVATE src)
         target_link_libraries(operit-arm64-cpu-validation PRIVATE operit_arm64)
         add_test(NAME arm64-cpu-validation COMMAND operit-arm64-cpu-validation)
-        add_executable(operit-arm64-filesystem-tests tests/filesystem.cpp)
-        target_compile_features(operit-arm64-filesystem-tests PRIVATE cxx_std_17)
-        target_include_directories(operit-arm64-filesystem-tests PRIVATE src)
-        target_link_libraries(operit-arm64-filesystem-tests PRIVATE operit_arm64)
-        add_test(NAME arm64-filesystem COMMAND operit-arm64-filesystem-tests)
-        set_tests_properties(arm64-filesystem PROPERTIES TIMEOUT 15)
-        add_executable(operit-arm64-vfs-tests tests/virtual_filesystem.cpp)
-        target_compile_features(operit-arm64-vfs-tests PRIVATE cxx_std_17)
-        target_include_directories(operit-arm64-vfs-tests PRIVATE src)
-        target_link_libraries(operit-arm64-vfs-tests PRIVATE operit_arm64)
-        add_test(NAME arm64-virtual-filesystem COMMAND operit-arm64-vfs-tests)
-        set_tests_properties(arm64-virtual-filesystem PROPERTIES TIMEOUT 15)
-        add_executable(operit-arm64-network-tests tests/network.cpp)
-        target_compile_features(operit-arm64-network-tests PRIVATE cxx_std_17)
-        target_include_directories(operit-arm64-network-tests PRIVATE src)
-        target_link_libraries(operit-arm64-network-tests PRIVATE operit_arm64)
-        add_test(NAME arm64-network COMMAND operit-arm64-network-tests)
-        set_tests_properties(arm64-network PROPERTIES TIMEOUT 15)
-        add_executable(operit-arm64-task-tests tests/tasks.cpp)
-        target_compile_features(operit-arm64-task-tests PRIVATE cxx_std_17)
-        target_include_directories(operit-arm64-task-tests PRIVATE src)
-        target_link_libraries(operit-arm64-task-tests PRIVATE operit_arm64)
-        add_test(NAME arm64-tasks COMMAND operit-arm64-task-tests)
-        set_tests_properties(arm64-tasks PROPERTIES TIMEOUT 15)
+        add_test(NAME arm64-cache COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cache.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-cache PROPERTIES TIMEOUT 30)
+        add_executable(operit-arm64-memory-concurrency-tests tests/memory_concurrency.cpp)
+        target_compile_features(operit-arm64-memory-concurrency-tests PRIVATE cxx_std_17)
+        target_include_directories(operit-arm64-memory-concurrency-tests PRIVATE src)
+        target_link_libraries(operit-arm64-memory-concurrency-tests PRIVATE operit_arm64 Threads::Threads)
+        add_test(NAME arm64-memory-concurrency COMMAND operit-arm64-memory-concurrency-tests)
+        set_tests_properties(arm64-memory-concurrency PROPERTIES TIMEOUT 30)
+        add_test(NAME arm64-worker-profile-validation
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_worker_profile.py")
+        set_tests_properties(arm64-worker-profile-validation PROPERTIES TIMEOUT 10)
+        add_runtime_test(operit-arm64-filesystem-tests tests/filesystem.cpp arm64-filesystem)
+        add_runtime_test(operit-arm64-vfs-tests tests/virtual_filesystem.cpp arm64-virtual-filesystem)
+        add_runtime_test(operit-arm64-inotify-tests tests/inotify.cpp arm64-inotify)
+        add_runtime_test(operit-arm64-network-tests tests/network.cpp arm64-network)
+        add_runtime_test(operit-arm64-futex-pi-tests tests/futex_pi.cpp arm64-futex-pi)
+        add_runtime_test(operit-arm64-futex2-tests tests/futex2.cpp arm64-futex2)
+        add_runtime_test(operit-arm64-rseq-tests tests/rseq.cpp arm64-rseq)
+        add_runtime_test(operit-arm64-seccomp-tests tests/seccomp.cpp arm64-seccomp)
+        add_runtime_test(operit-arm64-namespace-tests tests/namespaces.cpp arm64-namespaces)
+        add_runtime_test(operit-arm64-io-uring-tests tests/io_uring.cpp arm64-io-uring)
+        add_runtime_test(operit-arm64-memory-async-lease-tests tests/memory_async_lease.cpp
+            arm64-memory-async-lease)
+        add_test(NAME arm64-io-uring-async-guest
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/guest/io_uring_async_test.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-io-uring-async-guest PROPERTIES TIMEOUT 900)
+        add_test(NAME arm64-io-uring-wait-guest
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/guest/io_uring_wait_test.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-io-uring-wait-guest PROPERTIES TIMEOUT 120)
+        add_runtime_test(operit-arm64-sysv-msg-tests tests/sysv_msg.cpp arm64-sysv-msg)
+        add_runtime_test(operit-arm64-sysv-sem-tests tests/sysv_sem.cpp arm64-sysv-sem)
+        add_runtime_test(operit-arm64-sysv-shm-tests tests/sysv_shared_memory.cpp arm64-sysv-shm)
+        add_runtime_test(operit-arm64-posix-mq-tests tests/posix_mq.cpp arm64-posix-mq)
+        add_runtime_test(operit-arm64-posix-mq-epoll-tests tests/posix_mq_epoll.cpp arm64-posix-mq-epoll)
+        add_runtime_test(operit-arm64-ptrace-tests tests/ptrace.cpp arm64-ptrace)
+        add_runtime_test(operit-arm64-ptrace-memory-tests tests/ptrace_memory.cpp arm64-ptrace-memory)
+        add_test(NAME arm64-ptrace-guest COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ptrace_guest.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-ptrace-guest PROPERTIES TIMEOUT 90)
+        add_test(NAME arm64-ptrace-lifecycle-guest COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ptrace_lifecycle_guest.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-ptrace-lifecycle-guest PROPERTIES TIMEOUT 120)
+        add_test(NAME arm64-ptrace-clone-x8-guest COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ptrace_clone_x8_guest.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-ptrace-clone-x8-guest PROPERTIES TIMEOUT 120)
+        add_test(NAME arm64-ptrace-threads-exit-guest COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ptrace_threads_exit_guest.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-ptrace-threads-exit-guest PROPERTIES TIMEOUT 120)
+        add_test(NAME arm64-seccomp-guest COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/seccomp_guest.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-seccomp-guest PROPERTIES TIMEOUT 120)
+        add_test(NAME arm64-namespaces-guest COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/namespaces_integration.py"
+            --runtime "$<TARGET_FILE:operit-arm64>")
+        set_tests_properties(arm64-namespaces-guest PROPERTIES TIMEOUT 90)
+        add_runtime_test(operit-arm64-process-vm-tests tests/process_vm.cpp arm64-process-vm)
+        add_runtime_test(operit-arm64-path-extensions-tests tests/path_extensions.cpp arm64-path-extensions)
+        add_runtime_test(operit-arm64-identity-tests tests/identity.cpp arm64-identity)
+        add_runtime_test(operit-arm64-scheduling-tests tests/scheduling.cpp arm64-scheduling)
+        add_test(NAME arm64-realtime COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_realtime.py"
+            --api-tests $<TARGET_FILE:operit-arm64-scheduling-tests>)
+        set_tests_properties(arm64-realtime PROPERTIES TIMEOUT 30)
+        add_runtime_test(operit-arm64-task-tests tests/tasks.cpp arm64-tasks)
         if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
             add_test(NAME arm64-isa-audit COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/isa/audit.py"
                 --runtime "$<TARGET_FILE:operit-arm64>" --report "${CMAKE_CURRENT_BINARY_DIR}/isa-audit.json" --register-aliases --require-passing)

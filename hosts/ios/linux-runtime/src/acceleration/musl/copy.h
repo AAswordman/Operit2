@@ -3,10 +3,12 @@
 #include "acceleration/scalar_ops.h"
 
 namespace operit::arm64::fixed {
-inline void copy(FixedExecution &c) {
+inline void copy(FixedExecution &c, bool loop_only = false) {
     auto &cpu = c.cpu;
     auto &memory = c.memory;
     auto &x = cpu.x;
+    if (loop_only)
+        goto L183c0;
     goto L18290;
 L18290:
     {
@@ -529,6 +531,8 @@ L183c0:
     }
 L183e8:
     {
+        if (loop_only)
+            return;
         if (!c.begin<0x183e8, 13>())
             return;
         {

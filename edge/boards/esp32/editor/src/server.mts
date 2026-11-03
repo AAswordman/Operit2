@@ -23,7 +23,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 const files = new Map<string, string>([
   ['/', 'web/index.html'],
-  ['/app.js', 'web/app.ts'],
+  ['/operitapp.js', 'web/app.ts'],
   ['/device-actions.js', 'web/device-actions.ts'],
   ['/device-state.js', 'web/device-state.ts'],
   ['/device-view.js', 'web/device-view.ts'],

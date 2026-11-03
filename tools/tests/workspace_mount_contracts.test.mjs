@@ -27,7 +27,7 @@ test('Android workspace paths map directly to the shared-storage mount', () => {
   const binding = section(mapper, 'fn normalizeWorkspaceBindingVfsPath(', 'fn normalizeWindowsHostWorkspacePath(');
   const android = section(binding, '[ROOT_SDCARD,', '[ROOT_DATA,');
   assert.match(android, /\[ROOT_SDCARD, rest @ \.\.\] \| \["storage", "emulated", "0", rest @ \.\.\]/);
-  assert.match(android, /Ok\(Some\(joinNormalizedSegments\(\s*&\[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD\],\s*rest,/);
+  assert.match(android, /Ok\(Some\(joinNormalizedSegments\(\s*&\[ROOT_VIRTUAL, MNT_ANDROID, MNT_ANDROID_SDCARD\],\s*rest,/);
   assert.doesNotMatch(binding, /canonicalizeVfsPath|EXTENSIONS_PLUGIN_|#\[cfg\(/);
 });
 
@@ -49,7 +49,7 @@ test('workspace binding uses the fallible folder-mount operation', () => {
 test('shared-storage workspace mounts resolve through the host filesystem', () => {
   const mapper = source(mapperPath);
   const resolve = section(mapper, 'pub fn resolve(', 'pub fn mapPhysicalChildToVfs(');
-  const android = section(resolve, '[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD,', '[ROOT_MNT, MNT_LINUX,');
+  const android = section(resolve, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD,', '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX,');
   assert.match(android, /physicalPath: physicalPathString\(joinUnixPhysical\("\/sdcard", rest\)\)/);
   const vfs = source('core/crates/tool/services/src/files/VisualFileSystem.rs');
   const list = section(vfs, 'pub fn listFiles(', 'pub fn readFile(');
@@ -66,7 +66,7 @@ test('Rust regression cases cover picker paths and repeated normalization', () =
     '/storage/emulated/0/Download',
     '/sdcard/Download/Operit/project',
     '/sdcard/Download/Operit/plugins/project',
-    '/mnt/android/sdcard/Download/Operit/project',
+    '/virtual/android/sdcard/Download/Operit/project',
   ]) {
     assert.ok(regression.indexOf(`"${path}"`) >= 0, `Missing regression path: ${path}`);
   }
@@ -77,12 +77,12 @@ test('Rust regression cases cover picker paths and repeated normalization', () =
 /** Root is an explicit Android OS path, not the VFS root or a plugin alias. */
 test('Android root is mapped to slash and remains bindable', () => {
   const mapper = source(mapperPath);
-  const resolve = section(mapper, '[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {', '[ROOT_MNT, MNT_LINUX, rest @ ..] => {');
+  const resolve = section(mapper, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {', '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX, rest @ ..] => {');
   assert.match(resolve, /androidRootMounted\(\)/);
   assert.match(resolve, /joinUnixPhysical\("\/", rest\)/);
   assert.match(mapper, /directoryEntry\(MNT_ANDROID_ROOT\)/);
   const binding = section(mapper, 'fn normalizeWorkspaceBindingVfsPath(', 'fn normalizeWindowsHostWorkspacePath(');
-  assert.match(binding, /\[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT, rest @ \.\.\]/);
+  assert.match(binding, /\[root @ \(ROOT_MNT \| ROOT_VIRTUAL\), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ \.\.\]/);
 });
 
 /** Catalog backends remain generic rather than hardcoding Termux into the mapper. */

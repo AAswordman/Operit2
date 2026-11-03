@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use operit_host_api::{FileEntry, RuntimeStorageHost};
 use operit_host_api::FileSystemResource::FileSystemResource;
-use super::MountRegistry::MountRegistry;
+use super::MountRegistry::{mountRelativePath, MountRegistry};
 use operit_util::RuntimeStorageLayout::{
     EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, EXTENSIONS_PLUGIN_DATA_DIR_PATH,
     RUNTIME_ROOT_PATH_PREFIX, WORKSPACE_DIR_PATH,
@@ -11,8 +11,25 @@ use operit_util::RuntimeStorageLayout::{
 
 const ROOT_APP: &str = "app";
 const ROOT_MNT: &str = "mnt";
+const ROOT_OPERITAPP: &str = "operitapp";
+const ROOT_VIRTUAL: &str = "virtual";
 const ROOT_SDCARD: &str = "sdcard";
 const ROOT_DATA: &str = "data";
+
+/// Controls discovery in the VFS root listing without changing path resolution.
+struct VfsRoot {
+    name: &'static str,
+    hidden: bool,
+}
+
+const VFS_ROOTS: &[VfsRoot] = &[
+    VfsRoot { name: ROOT_APP, hidden: true },
+    VfsRoot { name: ROOT_OPERITAPP, hidden: false },
+    VfsRoot { name: ROOT_MNT, hidden: true },
+    VfsRoot { name: ROOT_VIRTUAL, hidden: false },
+    VfsRoot { name: ROOT_SDCARD, hidden: true },
+    VfsRoot { name: ROOT_DATA, hidden: true },
+];
 
 const APP_DATA: &str = "data";
 const APP_WORKSPACES: &str = WORKSPACE_DIR_PATH;
@@ -99,7 +116,7 @@ impl PathMapper {
     /// Returns the VFS root containing all runtime workspaces.
     #[allow(non_snake_case)]
     pub fn workspaceCollectionPath() -> &'static str {
-        "/app/workspaces"
+        "/operitapp/workspaces"
     }
 
     /// Builds a VFS path for a workspace id under the workspace collection root.
@@ -137,7 +154,7 @@ impl PathMapper {
         };
         let root = storageRoot.strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
             .expect("plugin storage must belong to runtime");
-        let root = Self::joinVfsPath("/app/data", root)?;
+        let root = Self::joinVfsPath("/operitapp/data", root)?;
         Self::joinVfsPath(&root, &relative.join("/"))
     }
 
@@ -176,6 +193,23 @@ impl PathMapper {
         }
     }
 
+    /// Resolves a file-tool path against the active workspace without rewriting absolute paths.
+    #[allow(non_snake_case)]
+    pub fn resolveFileToolPath(workspace: Option<&str>, path: &str) -> Result<String, String> {
+        let text = path.trim();
+        if text.starts_with('/') || normalizeWindowsHostWorkspacePath(text)?.is_some() {
+            return Ok(text.to_string());
+        }
+        let base = workspace.filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Relative file paths require a current workspace".to_string())?;
+        let mut relative = text;
+        while let Some(rest) = relative.strip_prefix("./") {
+            relative = rest;
+        }
+        if relative == "." { relative = ""; }
+        Self::joinVfsPath(base, relative)
+    }
+
     /// Normalizes a path relative to an existing VFS root.
     #[allow(non_snake_case)]
     pub fn normalizeRelativePath(path: &str) -> Result<String, String> {
@@ -202,14 +236,20 @@ impl PathMapper {
     pub fn relativePath(root: &str, fullPath: &str) -> Result<Option<String>, String> {
         let root = normalizeAbsoluteVfsPath(root)?;
         let fullPath = normalizeAbsoluteVfsPath(fullPath)?;
-        if fullPath == root {
-            return Ok(Some(String::new()));
-        }
-        let prefix = format!("{}/", root.trim_end_matches('/'));
-        if !fullPath.starts_with(&prefix) {
+        let rootSegments = pathSegments(&root);
+        let fullSegments = pathSegments(&fullPath);
+        if fullSegments.len() < rootSegments.len() {
             return Ok(None);
         }
-        Ok(Some(fullPath[prefix.len()..].to_string()))
+        let inside = rootSegments.iter().zip(&fullSegments).enumerate().all(|(index, (root, path))| {
+            match (index, *root, *path) {
+                (0, ROOT_APP | ROOT_OPERITAPP, ROOT_APP | ROOT_OPERITAPP)
+                | (0, ROOT_MNT | ROOT_VIRTUAL, ROOT_MNT | ROOT_VIRTUAL) => true,
+                _ => root == path,
+            }
+        });
+        if !inside { return Ok(None); }
+        Ok(Some(fullSegments[rootSegments.len()..].join("/")))
     }
 
     /// Returns synthetic entries for VFS directories that are not backed by a host directory.
@@ -217,32 +257,38 @@ impl PathMapper {
     pub fn virtualDirectoryEntries(&self, path: &str) -> Result<Option<Vec<FileEntry>>, String> {
         let normalizedPath = normalizeAbsoluteVfsPath(path)?;
         let segments = pathSegments(&normalizedPath);
-        let mounts = if normalizedPath == "/" || normalizedPath == "/mnt" || normalizedPath.starts_with("/mnt/") {
+        let mountPath = mountRelativePath(&normalizedPath);
+        let mounts = if normalizedPath == "/" || mountPath.is_some() {
             self.mounts()?
         } else { Vec::new() };
         let mut entries = match segments.as_slice() {
             [] => {
-                let mut entries = vec![directoryEntry(ROOT_APP)];
-                if !mntMountEntries().is_empty() || !mounts.is_empty() { entries.push(directoryEntry(ROOT_MNT)); }
-                Some(entries)
+                let hasPlatformMounts = !mntMountEntries().is_empty() || !mounts.is_empty();
+                Some(VFS_ROOTS.iter()
+                    .filter(|root| !root.hidden)
+                    .filter(|root| root.name != ROOT_VIRTUAL || hasPlatformMounts)
+                    .map(|root| directoryEntry(root.name))
+                    .collect())
             }
-            [ROOT_APP] => Some(vec![directoryEntry(APP_DATA), directoryEntry(APP_WORKSPACES)]),
-            [ROOT_MNT] => { let entries = mntMountEntries(); if entries.is_empty() { None } else { Some(entries) } }
-            [ROOT_MNT, MNT_ANDROID] if androidRootMounted() => {
+            [ROOT_APP | ROOT_OPERITAPP] => Some(vec![directoryEntry(APP_DATA), directoryEntry(APP_WORKSPACES)]),
+            [ROOT_MNT | ROOT_VIRTUAL] => { let entries = mntMountEntries(); if entries.is_empty() { None } else { Some(entries) } }
+            [ROOT_MNT | ROOT_VIRTUAL, MNT_ANDROID] if androidRootMounted() => {
                 let mut entries = vec![directoryEntry(MNT_ANDROID_ROOT)];
                 if androidSdcardMounted() { entries.push(directoryEntry(MNT_ANDROID_SDCARD)); }
                 Some(entries)
             }
-            [ROOT_MNT, MNT_WINDOWS] if windowsMounted() => Some(windowsDriveEntries()),
+            [ROOT_MNT | ROOT_VIRTUAL, MNT_WINDOWS] if windowsMounted() => Some(windowsDriveEntries()),
             _ => None,
         };
-        let prefix = format!("{}/", normalizedPath.trim_end_matches('/'));
-        for mount in mounts {
-            let mountPath = mount.vfsPath();
-            if let Some(rest) = mountPath.strip_prefix(&prefix) {
-                if let Some(name) = rest.split('/').next() {
-                    let list = entries.get_or_insert_with(Vec::new);
-                    if !list.iter().any(|entry| entry.name == name) { list.push(directoryEntry(name)); }
+        if let Some(mountPath) = mountPath {
+            let prefix = if mountPath.is_empty() { String::new() } else { format!("{mountPath}/") };
+            for mount in mounts {
+                let path = mount.vfsPath();
+                if let Some(rest) = mountRelativePath(&path).and_then(|path| path.strip_prefix(&prefix)) {
+                    if let Some(name) = rest.split('/').next() {
+                        let list = entries.get_or_insert_with(Vec::new);
+                        if !list.iter().any(|entry| entry.name == name) { list.push(directoryEntry(name)); }
+                    }
                 }
             }
         }
@@ -253,10 +299,11 @@ impl PathMapper {
     pub fn resolve(&self, path: &str) -> Result<ResolvedVfsPath, String> {
         let normalizedPath = Self::canonicalizeVfsPath(path)?;
         let segments = pathSegments(&normalizedPath);
-        if normalizedPath.starts_with("/mnt/") {
+        if let Some(mountPath) = mountRelativePath(&normalizedPath) {
             for mount in self.mounts()? {
-                let root = mount.vfsPath();
-                let relative = if normalizedPath == root { Some("") } else { normalizedPath.strip_prefix(&format!("{root}/")) };
+                let path = mount.vfsPath();
+                let root = mountRelativePath(&path).expect("validated mount namespace");
+                let relative = if mountPath == root { Some("") } else { mountPath.strip_prefix(&format!("{root}/")) };
                 if let Some(relative) = relative {
                     let physicalPath = if mount.backend == "native" {
                         physicalPathString(joinPhysical(Path::new(&mount.root), &pathSegments(relative)))
@@ -270,20 +317,20 @@ impl PathMapper {
         }
         match segments.as_slice() {
             [] => Err("VFS root is a virtual directory".to_string()),
-            [ROOT_APP] | [ROOT_MNT] => Err(format!("{normalizedPath} is a virtual directory")),
-            [ROOT_APP, APP_DATA, rest @ ..] => Ok(ResolvedVfsPath {
-                vfsPath: joinNormalizedSegments(&[ROOT_APP, APP_DATA], rest),
+            [ROOT_APP | ROOT_OPERITAPP] | [ROOT_MNT | ROOT_VIRTUAL] => Err(format!("{normalizedPath} is a virtual directory")),
+            [root @ (ROOT_APP | ROOT_OPERITAPP), APP_DATA, rest @ ..] => Ok(ResolvedVfsPath {
+                vfsPath: joinNormalizedSegments(&[root, APP_DATA], rest),
                 physicalPath: physicalPathString(joinPhysical(&self.runtimeStoreRoot, rest)),
             }),
-            [ROOT_APP, APP_WORKSPACES, rest @ ..] => Ok(ResolvedVfsPath {
-                vfsPath: joinNormalizedSegments(&[ROOT_APP, APP_WORKSPACES], rest),
+            [root @ (ROOT_APP | ROOT_OPERITAPP), APP_WORKSPACES, rest @ ..] => Ok(ResolvedVfsPath {
+                vfsPath: joinNormalizedSegments(&[root, APP_WORKSPACES], rest),
                 physicalPath: physicalPathString(joinPhysical(&self.workspaceCollectionRoot, rest)),
             }),
-            [ROOT_MNT, MNT_WINDOWS, drive, rest @ ..] => {
+            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_WINDOWS, drive, rest @ ..] => {
                 let driveLetter = normalizeDriveLetter(drive)?;
                 if !windowsDriveRootExists(&driveLetter) {
                     return Err(format!(
-                        "Windows drive is not mounted under /mnt/windows: {driveLetter}"
+                        "Windows drive is not mounted under /virtual/windows: {driveLetter}"
                     ));
                 }
                 let mut physical = PathBuf::from(format!("{driveLetter}:/"));
@@ -291,44 +338,44 @@ impl PathMapper {
                     physical.push(segment);
                 }
                 Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[ROOT_MNT, MNT_WINDOWS, &driveLetter], rest),
+                    vfsPath: joinNormalizedSegments(&[root, MNT_WINDOWS, &driveLetter], rest),
                     physicalPath: physicalPathString(physical),
                 })
             }
-            [ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD, rest @ ..] => {
+            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD, rest @ ..] => {
                 if !androidSdcardMounted() {
-                    return Err("/mnt/android/sdcard is not mounted".to_string());
+                    return Err("/virtual/android/sdcard is not mounted".to_string());
                 }
                 Ok(ResolvedVfsPath {
                     vfsPath: joinNormalizedSegments(
-                        &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD],
+                        &[root, MNT_ANDROID, MNT_ANDROID_SDCARD],
                         rest,
                     ),
                     physicalPath: physicalPathString(joinUnixPhysical("/sdcard", rest)),
                 })
             }
-            [ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {
-                if !androidRootMounted() { return Err("/mnt/android/root is not mounted".into()); }
+            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {
+                if !androidRootMounted() { return Err("/virtual/android/root is not mounted".into()); }
                 Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT], rest),
+                    vfsPath: joinNormalizedSegments(&[root, MNT_ANDROID, MNT_ANDROID_ROOT], rest),
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
                 })
             }
-            [ROOT_MNT, MNT_LINUX, rest @ ..] => {
+            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX, rest @ ..] => {
                 if !linuxRootMounted() {
-                    return Err("/mnt/linux is not mounted".to_string());
+                    return Err("/virtual/linux is not mounted".to_string());
                 }
                 Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], rest),
+                    vfsPath: joinNormalizedSegments(&[root, MNT_LINUX], rest),
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
                 })
             }
-            [ROOT_MNT, MNT_MACOS, rest @ ..] => {
+            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_MACOS, rest @ ..] => {
                 if !macosRootMounted() {
-                    return Err("/mnt/macos is not mounted".to_string());
+                    return Err("/virtual/macos is not mounted".to_string());
                 }
                 Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], rest),
+                    vfsPath: joinNormalizedSegments(&[root, MNT_MACOS], rest),
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
                 })
             }
@@ -457,43 +504,43 @@ fn pathSegments(path: &str) -> Vec<&str> {
 fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String> {
     let segments = pathSegments(path);
     match segments.as_slice() {
-        [ROOT_APP, APP_WORKSPACES, workspaceId, rest @ ..] => Ok(Some(joinNormalizedSegments(
-            &[ROOT_APP, APP_WORKSPACES, workspaceId],
+        [root @ (ROOT_APP | ROOT_OPERITAPP), APP_WORKSPACES, workspaceId, rest @ ..] => Ok(Some(joinNormalizedSegments(
+            &[root, APP_WORKSPACES, workspaceId],
             rest,
         ))),
-        [ROOT_MNT, MNT_WINDOWS, drive, rest @ ..] if drive.len() == 1 => {
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_WINDOWS, drive, rest @ ..] if drive.len() == 1 => {
             let driveLetter = normalizeDriveLetter(drive)?;
             Ok(Some(joinNormalizedSegments(
-                &[ROOT_MNT, MNT_WINDOWS, &driveLetter],
+                &[root, MNT_WINDOWS, &driveLetter],
                 rest,
             )))
         }
-        [ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD, rest @ ..] => Ok(Some(joinNormalizedSegments(
-            &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD],
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD, rest @ ..] => Ok(Some(joinNormalizedSegments(
+            &[root, MNT_ANDROID, MNT_ANDROID_SDCARD],
             rest,
         ))),
-        [ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => Ok(Some(joinNormalizedSegments(
-            &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT], rest,
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => Ok(Some(joinNormalizedSegments(
+            &[root, MNT_ANDROID, MNT_ANDROID_ROOT], rest,
         ))),
-        [ROOT_MNT, MNT_LINUX, rest @ ..] => {
-            Ok(Some(joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], rest)))
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX, rest @ ..] => {
+            Ok(Some(joinNormalizedSegments(&[root, MNT_LINUX], rest)))
         }
-        [ROOT_MNT, MNT_MACOS, rest @ ..] => {
-            Ok(Some(joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], rest)))
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_MACOS, rest @ ..] => {
+            Ok(Some(joinNormalizedSegments(&[root, MNT_MACOS], rest)))
         }
         [ROOT_SDCARD, rest @ ..] | ["storage", "emulated", "0", rest @ ..] => {
             Ok(Some(joinNormalizedSegments(
-                &[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_SDCARD],
+                &[ROOT_VIRTUAL, MNT_ANDROID, MNT_ANDROID_SDCARD],
                 rest,
             )))
         }
         [ROOT_DATA, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_DATA], rest))),
         ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
-        [ROOT_MNT, platform, kind, id, rest @ ..] => Ok(Some(joinNormalizedSegments(
-            &[ROOT_MNT, platform, kind, id], rest,
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), platform, kind, id, rest @ ..] => Ok(Some(joinNormalizedSegments(
+            &[root, platform, kind, id], rest,
         ))),
-        [ROOT_APP, ..] | [ROOT_MNT, ..] => Err(format!(
-            "Workspace binding must use /app/workspaces/<id> or a mounted VFS path: {path}"
+        [ROOT_APP | ROOT_OPERITAPP, ..] | [ROOT_MNT | ROOT_VIRTUAL, ..] => Err(format!(
+            "Workspace binding must use /operitapp/workspaces/<id> or a mounted VFS path: {path}"
         )),
         _ => Ok(None),
     }
@@ -509,7 +556,7 @@ fn normalizeWindowsHostWorkspacePath(path: &str) -> Result<Option<String>, Strin
     let rest = normalizeRelativePath(path[2..].trim_start_matches('/'))?;
     let restSegments = pathSegments(&rest);
     Ok(Some(joinNormalizedSegments(
-        &[ROOT_MNT, MNT_WINDOWS, &driveLetter],
+        &[ROOT_VIRTUAL, MNT_WINDOWS, &driveLetter],
         &restSegments,
     )))
 }
@@ -521,15 +568,15 @@ fn normalizeAbsoluteHostWorkspacePath(path: &str) -> Result<String, String> {
     match segments.as_slice() {
         [] => Err("Workspace binding cannot use VFS root".to_string()),
         ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
-        [ROOT_APP, ..] | [ROOT_MNT, ..] => Err(format!(
-            "Workspace binding must use /app/workspaces/<id> or a mounted VFS path: {path}"
+        [ROOT_APP | ROOT_OPERITAPP, ..] | [ROOT_MNT | ROOT_VIRTUAL, ..] => Err(format!(
+            "Workspace binding must use /operitapp/workspaces/<id> or a mounted VFS path: {path}"
         )),
         #[cfg(target_os = "macos")]
-        _ => Ok(joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], &segments)),
+        _ => Ok(joinNormalizedSegments(&[ROOT_VIRTUAL, MNT_MACOS], &segments)),
         #[cfg(target_os = "android")]
-        _ => Ok(joinNormalizedSegments(&[ROOT_MNT, MNT_ANDROID, MNT_ANDROID_ROOT], &segments)),
+        _ => Ok(joinNormalizedSegments(&[ROOT_VIRTUAL, MNT_ANDROID, MNT_ANDROID_ROOT], &segments)),
         #[cfg(not(any(target_os = "macos", target_os = "android")))]
-        _ => Ok(joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], &segments)),
+        _ => Ok(joinNormalizedSegments(&[ROOT_VIRTUAL, MNT_LINUX], &segments)),
     }
 }
 
@@ -583,10 +630,10 @@ fn normalizePhysicalText(path: &str) -> String {
 fn normalizeDriveLetter(drive: &str) -> Result<String, String> {
     let mut chars = drive.chars();
     let Some(letter) = chars.next() else {
-        return Err("Windows drive is required under /mnt/windows".to_string());
+        return Err("Windows drive is required under /virtual/windows".to_string());
     };
     if chars.next().is_some() || !letter.is_ascii_alphabetic() {
-        return Err(format!("Invalid Windows drive under /mnt/windows: {drive}"));
+        return Err(format!("Invalid Windows drive under /virtual/windows: {drive}"));
     }
     Ok(letter.to_ascii_lowercase().to_string())
 }
@@ -703,26 +750,44 @@ fn macosRootMounted() -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn file_tool_paths_resolve_against_workspace_without_alias_rewrites() {
+        let base = Some("/app/workspaces/chat-a");
+        for (path, expected) in [
+            (".", "/app/workspaces/chat-a"),
+            ("./", "/app/workspaces/chat-a"),
+            ("./src/中文 file.rs", "/app/workspaces/chat-a/src/中文 file.rs"),
+            ("src/file", "/app/workspaces/chat-a/src/file"),
+            ("/app/data/a", "/app/data/a"),
+            ("/operitapp/data/a", "/operitapp/data/a"),
+        ] {
+            assert_eq!(PathMapper::resolveFileToolPath(base, path).unwrap(), expected);
+        }
+        assert!(PathMapper::resolveFileToolPath(None, "src/file").is_err());
+        assert!(PathMapper::resolveFileToolPath(base, "../outside").is_err());
+        assert!(PathMapper::resolveFileToolPath(base, "src/../../outside").is_err());
+    }
+
     /// Resolves relative, mounted and native resource paths at one runtime boundary.
     #[test]
     fn workspace_resource_locators_keep_absolute_and_relative_ownership() {
-        let base = "/app/workspaces/chat-a";
+        let base = "/operitapp/workspaces/chat-a";
         assert_eq!(
             PathMapper::resolveWorkspaceResourcePath(base, "src/a file.ts").unwrap(),
-            "/app/workspaces/chat-a/src/a file.ts"
+            "/operitapp/workspaces/chat-a/src/a file.ts"
         );
         assert_eq!(
             PathMapper::resolveWorkspaceResourcePath(base, "D:\\repo\\a.ts").unwrap(),
-            "/mnt/windows/d/repo/a.ts"
+            "/virtual/windows/d/repo/a.ts"
         );
         assert_eq!(
             PathMapper::resolveWorkspaceResourcePath("", "D:\\repo\\a.ts").unwrap(),
-            "/mnt/windows/d/repo/a.ts"
+            "/virtual/windows/d/repo/a.ts"
         );
         assert!(PathMapper::resolveWorkspaceResourcePath("", "src/a.ts").is_err());
         assert_eq!(
-            PathMapper::resolveWorkspaceResourcePath(base, "/mnt/linux/home/repo/a.ts").unwrap(),
-            "/mnt/linux/home/repo/a.ts"
+            PathMapper::resolveWorkspaceResourcePath(base, "/virtual/linux/home/repo/a.ts").unwrap(),
+            "/virtual/linux/home/repo/a.ts"
         );
         assert!(PathMapper::resolveWorkspaceResourcePath(base, "../other/a.ts").is_err());
     }
@@ -745,7 +810,7 @@ mod tests {
                 PathBuf::from("/custom workspaces"),
             );
             for relative in ["temp/clean_on_exit", "temp/clean_on_exit/terminal_output.log"] {
-                let vfsPath = format!("/app/data/{relative}");
+                let vfsPath = format!("/operitapp/data/{relative}");
                 let resolved = mapper.resolve(&vfsPath).unwrap();
                 assert_eq!(resolved.vfsPath, vfsPath);
                 assert_eq!(resolved.physicalPath, format!("{runtimeRoot}/{relative}"));
@@ -758,10 +823,40 @@ mod tests {
     }
 
     #[test]
+    fn both_roots_preserve_addresses_and_share_storage() {
+        for (first, second) in [
+            ("/app/workspaces/chat-a", "/operitapp/workspaces/chat-a"),
+            ("/mnt/linux/home", "/virtual/linux/home"),
+        ] {
+            for path in [first, second] {
+                assert_eq!(PathMapper::normalizeVfsPath(path).unwrap(), path);
+                assert_eq!(PathMapper::normalizeWorkspaceBindingPath(path).unwrap(), path);
+                assert_eq!(PathMapper::joinVfsPath(path, "file.txt").unwrap(), format!("{path}/file.txt"));
+                assert_eq!(PathMapper::relativePath(path, &format!("{path}/file.txt")).unwrap(), Some("file.txt".into()));
+            }
+            assert_eq!(PathMapper::relativePath(first, &format!("{second}/file.txt")).unwrap(), Some("file.txt".into()));
+            assert_eq!(PathMapper::relativePath(second, &format!("{first}/file.txt")).unwrap(), Some("file.txt".into()));
+        }
+        for suffix in ["data/config/example.json", "workspaces/chat-a/file.txt"] {
+            let first = mapper().resolve(&format!("/app/{suffix}")).unwrap();
+            let second = mapper().resolve(&format!("/operitapp/{suffix}")).unwrap();
+            assert_eq!(first.vfsPath, format!("/app/{suffix}"));
+            assert_eq!(second.vfsPath, format!("/operitapp/{suffix}"));
+            assert_eq!(first.physicalPath, second.physicalPath);
+        }
+        assert_eq!(PathMapper::relativePath("/app/workspaces/chat-a", "/operitapp/workspaces/chat-ab/file.txt").unwrap(), None);
+        assert!(mapper().resolve("/application/data").is_err());
+        assert!(mapper().resolve("/mnt-other/linux/home").is_err());
+        assert!(mapper().resolve("/operitapp-other/data").is_err());
+        assert!(mapper().resolve("/virtual-other/linux/home").is_err());
+    }
+
+
+    #[test]
     fn rootListShowsVisibleRootsOnly() {
-        let mut expected = vec!["app".to_string()];
+        let mut expected = vec!["operitapp".to_string()];
         if !mntMountEntries().is_empty() {
-            expected.push("mnt".to_string());
+            expected.push("virtual".to_string());
         }
         let names = mapper()
             .virtualDirectoryEntries("/")
@@ -776,9 +871,9 @@ mod tests {
     #[test]
     fn appWorkspacesResolveIntoWorkspaceCollectionMount() {
         let resolved = mapper()
-            .resolve("/app/workspaces/chat-a/src/main.rs")
+            .resolve("/operitapp/workspaces/chat-a/src/main.rs")
             .unwrap();
-        assert_eq!(resolved.vfsPath, "/app/workspaces/chat-a/src/main.rs");
+        assert_eq!(resolved.vfsPath, "/operitapp/workspaces/chat-a/src/main.rs");
         assert_eq!(
             resolved.physicalPath,
             "D:/operit-workspaces/chat-a/src/main.rs"
@@ -791,7 +886,7 @@ mod tests {
         {
             let driveEntry = windowsDriveEntries().into_iter().next().unwrap();
             let resolved = mapper()
-                .resolve(&format!("/mnt/windows/{}", driveEntry.name))
+                .resolve(&format!("/virtual/windows/{}", driveEntry.name))
                 .unwrap();
             assert_eq!(resolved.physicalPath, format!("{}:/", driveEntry.name));
         }
@@ -799,7 +894,7 @@ mod tests {
         {
             assert_eq!(
                 mapper()
-                    .resolve("/mnt/android/sdcard/Download/Operit")
+                    .resolve("/virtual/android/sdcard/Download/Operit")
                     .unwrap()
                     .physicalPath,
                 "/sdcard/Download/Operit"
@@ -809,7 +904,7 @@ mod tests {
         {
             assert_eq!(
                 mapper()
-                    .resolve("/mnt/linux/home/user")
+                    .resolve("/virtual/linux/home/user")
                     .unwrap()
                     .physicalPath,
                 "/home/user"
@@ -819,7 +914,7 @@ mod tests {
         {
             assert_eq!(
                 mapper()
-                    .resolve("/mnt/macos/Users/user/project")
+                    .resolve("/virtual/macos/Users/user/project")
                     .unwrap()
                     .physicalPath,
                 "/Users/user/project"
@@ -831,19 +926,19 @@ mod tests {
     fn unmountedMntEntriesDoNotResolve() {
         #[cfg(not(windows))]
         {
-            assert!(mapper().resolve("/mnt/windows/c").is_err());
+            assert!(mapper().resolve("/virtual/windows/c").is_err());
         }
         #[cfg(not(target_os = "android"))]
         {
-            assert!(mapper().resolve("/mnt/android/sdcard/Download").is_err());
+            assert!(mapper().resolve("/virtual/android/sdcard/Download").is_err());
         }
         #[cfg(not(target_os = "linux"))]
         {
-            assert!(mapper().resolve("/mnt/linux/home/user").is_err());
+            assert!(mapper().resolve("/virtual/linux/home/user").is_err());
         }
         #[cfg(not(target_os = "macos"))]
         {
-            assert!(mapper().resolve("/mnt/macos/Users/user").is_err());
+            assert!(mapper().resolve("/virtual/macos/Users/user").is_err());
         }
     }
 
@@ -856,8 +951,21 @@ mod tests {
             .into_iter()
             .map(|entry| entry.name)
             .collect::<Vec<_>>();
-        assert!(!rootNames.iter().any(|name| name == "sdcard"));
-        assert!(!rootNames.iter().any(|name| name == "data"));
+        for hidden in ["app", "mnt", "sdcard", "data"] {
+            assert!(!rootNames.iter().any(|name| name == hidden), "{hidden} must stay hidden");
+        }
+        assert_eq!(
+            mapper().virtualDirectoryEntries("/app").unwrap(),
+            mapper().virtualDirectoryEntries("/operitapp").unwrap(),
+        );
+        assert_eq!(
+            mapper().virtualDirectoryEntries("/mnt").unwrap(),
+            mapper().virtualDirectoryEntries("/virtual").unwrap(),
+        );
+        assert_eq!(
+            mapper().resolve("/app/workspaces/demo").unwrap().physicalPath,
+            mapper().resolve("/operitapp/workspaces/demo").unwrap().physicalPath,
+        );
         #[cfg(target_os = "android")]
         {
             assert_eq!(
@@ -883,30 +991,30 @@ mod tests {
     #[test]
     fn workspaceBindingPathUsesExplicitVfsRoots() {
         assert_eq!(
-            PathMapper::normalizeWorkspaceBindingPath("/app/workspaces/chat-a").unwrap(),
-            "/app/workspaces/chat-a"
+            PathMapper::normalizeWorkspaceBindingPath("/operitapp/workspaces/chat-a").unwrap(),
+            "/operitapp/workspaces/chat-a"
         );
         assert_eq!(
-            PathMapper::normalizeWorkspaceBindingPath("/mnt/windows/D/code").unwrap(),
-            "/mnt/windows/d/code"
+            PathMapper::normalizeWorkspaceBindingPath("/virtual/windows/D/code").unwrap(),
+            "/virtual/windows/d/code"
         );
         assert_eq!(
             PathMapper::normalizeWorkspaceBindingPath("D:/code").unwrap(),
-            "/mnt/windows/d/code"
+            "/virtual/windows/d/code"
         );
         #[cfg(target_os = "macos")]
         assert_eq!(
             PathMapper::normalizeWorkspaceBindingPath("/Users/user/project").unwrap(),
-            "/mnt/macos/Users/user/project"
+            "/virtual/macos/Users/user/project"
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             PathMapper::normalizeWorkspaceBindingPath("/home/user/project").unwrap(),
-            "/mnt/linux/home/user/project"
+            "/virtual/linux/home/user/project"
         );
         assert_eq!(
             PathMapper::normalizeWorkspaceBindingPath("/storage/emulated/0/Download").unwrap(),
-            "/mnt/android/sdcard/Download"
+            "/virtual/android/sdcard/Download"
         );
         assert!(PathMapper::normalizeWorkspaceBindingPath("/workspace").is_err());
         assert!(PathMapper::normalizeWorkspaceBindingPath("relative/path").is_err());
@@ -916,28 +1024,28 @@ mod tests {
     #[test]
     fn androidWorkspaceBindingPathsRemainOnTheSharedStorageMount() {
         for (input, expected) in [
-            ("/sdcard", "/mnt/android/sdcard"),
-            ("/storage/emulated/0", "/mnt/android/sdcard"),
-            ("/sdcard/Download", "/mnt/android/sdcard/Download"),
+            ("/sdcard", "/virtual/android/sdcard"),
+            ("/storage/emulated/0", "/virtual/android/sdcard"),
+            ("/sdcard/Download", "/virtual/android/sdcard/Download"),
             (
                 "/storage/emulated/0/Download",
-                "/mnt/android/sdcard/Download",
+                "/virtual/android/sdcard/Download",
             ),
             (
                 " /storage/emulated/0/Documents/My Project/ ",
-                "/mnt/android/sdcard/Documents/My Project",
+                "/virtual/android/sdcard/Documents/My Project",
             ),
             (
                 "/sdcard/Download/Operit/project",
-                "/mnt/android/sdcard/Download/Operit/project",
+                "/virtual/android/sdcard/Download/Operit/project",
             ),
             (
                 "/sdcard/Download/Operit/plugins/project",
-                "/mnt/android/sdcard/Download/Operit/plugins/project",
+                "/virtual/android/sdcard/Download/Operit/plugins/project",
             ),
             (
-                "/mnt/android/sdcard/Download/Operit/project",
-                "/mnt/android/sdcard/Download/Operit/project",
+                "/virtual/android/sdcard/Download/Operit/project",
+                "/virtual/android/sdcard/Download/Operit/project",
             ),
         ] {
             let normalized = PathMapper::normalizeWorkspaceBindingPath(input).unwrap();
@@ -959,7 +1067,7 @@ mod tests {
     #[test]
     fn workspaceBindingRejectsPluginStoragePaths() {
         assert!(PathMapper::normalizeWorkspaceBindingPath(
-            "/app/data/extensions/plugins/data/Download"
+            "/operitapp/data/extensions/plugins/data/Download"
         )
         .is_err());
     }
@@ -967,7 +1075,7 @@ mod tests {
     /// Rejects parent traversal in virtual paths.
     #[test]
     fn rejectsParentSegments() {
-        assert!(mapper().resolve("/app/workspaces/../x").is_err());
+        assert!(mapper().resolve("/operitapp/workspaces/../x").is_err());
     }
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
@@ -977,9 +1085,9 @@ mod tests {
             root.clone(), root.join("workspaces"),
         ));
         let registry = MountRegistry::withStorage(storage.clone());
-        let mount = registry.register("/mnt/android/documents", "android_documents", "content://com.termux.documents/tree/opaque%2Fid", "Termux").unwrap();
+        let mount = registry.register("/virtual/android/documents", "android_documents", "content://com.termux.documents/tree/opaque%2Fid", "Termux").unwrap();
         let mapper = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
-        for (parent, child) in [("/mnt", "android"), ("/mnt/android", "documents"), ("/mnt/android/documents", mount.id.as_str())] {
+        for (parent, child) in [("/virtual", "android"), ("/virtual/android", "documents"), ("/virtual/android/documents", mount.id.as_str())] {
             assert!(mapper.virtualDirectoryEntries(parent).unwrap().unwrap().iter().any(|e| e.name == child));
         }
         assert!(mapper.virtualDirectoryEntries(&mount.vfsPath()).unwrap().is_none());
@@ -990,6 +1098,11 @@ mod tests {
         assert_eq!(resource.path, "src/项目.py");
         assert_eq!(resource.root, mount.root);
         assert!(resolved.nativePath().is_err());
+        let other = format!("/mnt/android/documents/{}/src/项目.py", mount.id);
+        let otherResolved = mapper.resolve(&other).unwrap();
+        assert_eq!(otherResolved.vfsPath, other);
+        assert_eq!(otherResolved.physicalPath, resolved.physicalPath);
+        assert!(otherResolved.nativePath().is_err());
         let recreated = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
         assert_eq!(recreated.resolve(&path).unwrap(), resolved);
         registry.remove(&mount.vfsPath()).unwrap();
@@ -1006,14 +1119,14 @@ mod tests {
             root.clone(), root.join("workspaces"),
         ));
         let registry = MountRegistry::withStorage(storage.clone());
-        let mount = registry.register("/mnt/test/resources", "test", "opaque", "Test").unwrap();
+        let mount = registry.register("/virtual/test/resources", "test", "opaque", "Test").unwrap();
         let path = format!("{}/file.txt", mount.vfsPath());
         let persistent = PathMapper::new(root.clone(), root.join("workspaces"), storage);
         assert!(persistent.resolve(&path).is_ok());
 
         let builtin = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
         assert!(builtin.resolve(&path).is_err());
-        assert_eq!(builtin.resolve("/app/data/config/example.json").unwrap().physicalPath,
+        assert_eq!(builtin.resolve("/operitapp/data/config/example.json").unwrap().physicalPath,
             root.join("config/example.json").to_string_lossy().replace('\\', "/"));
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1027,17 +1140,17 @@ mod tests {
             root.clone(), root.join("workspaces"),
         ));
         let registry = MountRegistry::withStorage(storage.clone());
-        let mount = registry.register("/mnt/local/folders", "native", root.to_str().unwrap(), "Local").unwrap();
+        let mount = registry.register("/virtual/local/folders", "native", root.to_str().unwrap(), "Local").unwrap();
         let mapper = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
         assert_eq!(mapper.resolve(&format!("{}/a.txt", mount.vfsPath())).unwrap().nativePath().unwrap(), root.join("a.txt").to_string_lossy().replace('\\', "/"));
         for platform in ["android", "windows", "macos", "linux"] {
-            let path = format!("/mnt/{platform}/folders/mount-a/project");
+            let path = format!("/virtual/{platform}/folders/mount-a/project");
             assert_eq!(PathMapper::normalizeWorkspaceBindingPath(&path).unwrap(), path);
         }
         let resource = FileSystemResource { backend: "test".into(), root: "opaque".into(), path: "src".into() };
-        let base = ResolvedVfsPath { vfsPath: "/mnt/test/resources/id/src".into(), physicalPath: resource.encode().unwrap() };
+        let base = ResolvedVfsPath { vfsPath: "/virtual/test/resources/id/src".into(), physicalPath: resource.encode().unwrap() };
         let child = FileSystemResource { path: "src/a.txt".into(), ..resource.clone() };
-        assert_eq!(mapper.mapPhysicalChildToVfs(&base, &child.encode().unwrap()).unwrap(), "/mnt/test/resources/id/src/a.txt");
+        assert_eq!(mapper.mapPhysicalChildToVfs(&base, &child.encode().unwrap()).unwrap(), "/virtual/test/resources/id/src/a.txt");
         for bad in [FileSystemResource { path: "src-other/a".into(), ..resource.clone() }, FileSystemResource { root: "other".into(), path: "src/a".into(), ..resource }] {
             assert!(mapper.mapPhysicalChildToVfs(&base, &bad.encode().unwrap()).is_err());
         }
@@ -1047,17 +1160,17 @@ mod tests {
 
     #[test]
     fn androidRootIsAnExplicitUnrewrittenMount() {
-        for path in ["/mnt/android/root", "/mnt/android/root/", "/mnt/android/root/data/data/com.termux/files/home", "/mnt/android/root/sdcard/Download/Operit"] {
+        for path in ["/virtual/android/root", "/virtual/android/root/", "/virtual/android/root/data/data/com.termux/files/home", "/virtual/android/root/sdcard/Download/Operit"] {
             let normalized = PathMapper::normalizeWorkspaceBindingPath(path).unwrap();
             assert_eq!(normalized, path.trim_end_matches('/'));
             assert_eq!(PathMapper::canonicalizeVfsPath(&normalized).unwrap(), normalized);
         }
         #[cfg(target_os = "android")]
-        for (vfs, native) in [("/mnt/android/root", "/"), ("/mnt/android/root/data", "/data"), ("/mnt/android/root/sdcard/Download/Operit", "/sdcard/Download/Operit")] {
+        for (vfs, native) in [("/virtual/android/root", "/"), ("/virtual/android/root/data", "/data"), ("/virtual/android/root/sdcard/Download/Operit", "/sdcard/Download/Operit")] {
             assert_eq!(mapper().resolve(vfs).unwrap().nativePath().unwrap(), native);
         }
         #[cfg(not(target_os = "android"))]
-        assert!(mapper().resolve("/mnt/android/root").is_err());
+        assert!(mapper().resolve("/virtual/android/root").is_err());
     }
 
 }

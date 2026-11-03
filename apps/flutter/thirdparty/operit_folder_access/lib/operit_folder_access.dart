@@ -8,13 +8,16 @@ class FolderMountSource {
   const FolderMountSource({
     required this.backend,
     required this.root,
-    required this.namespace,
+    required String namespace,
     required this.name,
-  });
+  }) : _namespace = namespace;
 
   final String backend;
   final String root;
-  final String namespace;
+  final String _namespace;
+  String get namespace => _namespace == '/mnt' || _namespace.startsWith('/mnt/')
+      ? '/virtual${_namespace.substring(4)}'
+      : _namespace;
   final String name;
 
   factory FolderMountSource.native(String path) {
@@ -25,7 +28,7 @@ class FolderMountSource {
     return FolderMountSource(
       backend: 'native',
       root: path,
-      namespace: '/mnt/local/folders',
+      namespace: '/virtual/local/folders',
       name: label.isEmpty ? path : label,
     );
   }

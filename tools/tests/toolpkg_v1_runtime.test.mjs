@@ -9,6 +9,7 @@ import { stripTypeScriptTypes, createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readSdkScript } from '../runtime/compose_scripts.mjs';
+import { productionBootstrap } from './fixtures/production_bootstrap.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const sdk = 'core/crates/plugin/sdk/src/';
@@ -132,10 +133,17 @@ test('internal v1 compatibility selects Windows, Linux and OHOS policies and APK
 test('Rust bootstrap includes the adapter and host capabilities expose OHOS', () => {
   assert.match(source('core/crates/plugin/codegen/src/runtime_bindings.rs'), /"compat\/v1\/runtime\.js"/);
   assert.match(source('core/crates/plugin/codegen/src/runtime_bindings.rs'), /"compat\/v1\/internal_runtime\.js"/);
-  assert.match(source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs'), /compat\/v1\/internal_runtime\.js/);
+  assert.doesNotMatch(source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs'), /compat\/v1\/internal_runtime\.js/);
   assert.doesNotMatch(source('core/crates/plugin/sdk/src/compat/v1/runtime.js'), /v1_runtime:/);
   assert.equal(existsSync(join(root, 'plugins/packages/buildin/v1_runtime.ts')), false);
   assert.match(source('core/crates/tool/services/src/tools/packTool/RuntimePackageManager.rs'), /"platform\.ohos"\.to_string\(\),\s*ConditionValue::Bool\(platformName == "ohos"\)/);
+});
+
+/** Guards the complete generated-plus-host bootstrap against duplicate lexical declarations. */
+test('production bootstrap compiles with one internal v1 runtime declaration', () => {
+  const bootstrap = productionBootstrap();
+  assert.equal((bootstrap.match(/const v1RuntimeStates\b/g) ?? []).length, 1);
+  assert.doesNotThrow(() => new vm.Script(bootstrap, { filename: 'production-bootstrap.js' }));
 });
 
 /** Exercises all public call shapes against the production transport and dynamic version dispatcher. */
@@ -259,17 +267,17 @@ test('legacy Files routes exact Linux addresses and transfers resource bytes acr
   assert.equal(written.env, 'linux');
   assert.equal(written.successful, true);
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.calls.at(-1).params)), { operation:'write',args:{path:'/root/phone.json',content:'{}',append:false} });
-  await vm.runInContext("Tools.Files.copy('/app/data/resource.zip','/root/resource.zip',false,'android','linux')", runtime.context);
+  await vm.runInContext("Tools.Files.copy('/operitapp/data/resource.zip','/root/resource.zip',false,'android','linux')", runtime.context);
   assert.deepEqual(JSON.parse(JSON.stringify(runtime.calls.at(-1).params)), { operation:'writeBinary',args:{path:'/root/resource.zip',contentBase64:'AP8='} });
-  await vm.runInContext("Tools.Files.copy('/root/resource.zip','/app/data/export.zip',false,'linux','android')", runtime.context);
-  assert.deepEqual(Array.from(runtime.canonicalCalls.at(-1)), ['writeBinary','/app/data/export.zip','AP8=']);
+  await vm.runInContext("Tools.Files.copy('/root/resource.zip','/operitapp/data/export.zip',false,'linux','android')", runtime.context);
+  assert.deepEqual(Array.from(runtime.canonicalCalls.at(-1)), ['writeBinary','/operitapp/data/export.zip','AP8=']);
   const androidWrite = await vm.runInContext("Tools.Files.write('/sdcard/a.txt','text',false)", runtime.context);
   assert.equal(androidWrite.successful, true);
   assert.equal(androidWrite.path, '/sdcard/a.txt');
   assert.equal(runtime.canonicalCalls.at(-1)[1], '/sdcard/a.txt');
   runtime.context.version = '2.0.0';
-  await vm.runInContext("Tools.Files.read('/mnt/linux/current.txt')", runtime.context);
-  assert.deepEqual(Array.from(runtime.canonicalCalls.at(-1)), ['read','/mnt/linux/current.txt']);
+  await vm.runInContext("Tools.Files.read('/virtual/linux/current.txt')", runtime.context);
+  assert.deepEqual(Array.from(runtime.canonicalCalls.at(-1)), ['read','/virtual/linux/current.txt']);
 });
 
 /** Preserves native command exit status and timeout receipts while program helpers reject failed execution. */
@@ -445,7 +453,7 @@ function cacheFixture(directory, owner = 'v1.cache.test.' + process.pid) {
   let hash = 0;
   for (const unit of owner) hash = (Math.imul(hash, 31) + unit.charCodeAt(0)) | 0;
   const cacheName = owner + '-' + (hash >>> 0).toString(16);
-  const vfs = '/app/data/cache/toolpkg/' + cacheName;
+  const vfs = '/operitapp/data/cache/toolpkg/' + cacheName;
   const guest = '/tmp/operit-v1/toolpkg/' + cacheName;
   let lists = 0;
   const canonical = runtime.context.__operitCanonicalTools.Files;

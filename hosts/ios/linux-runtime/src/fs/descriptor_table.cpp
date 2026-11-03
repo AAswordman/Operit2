@@ -30,7 +30,7 @@ std::string Descriptor::display_path() const {
     return path;
 }
 bool OpenDescription::is_anon_inode() const {
-    return bool(poll || counter || timer || inotify);
+    return bool(poll || counter || timer || inotify || io_uring);
 }
 bool OpenDescription::is_read_only() const {
     return read_only || (mount && mount->read_only());

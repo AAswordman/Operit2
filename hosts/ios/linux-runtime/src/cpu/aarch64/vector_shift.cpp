@@ -5,6 +5,10 @@ namespace operit::arm64 {
 bool execute_vector_shift(CpuState &cpu, uint32_t r) {
     if ((r & 0x8f800400) != 0x0f000400)
         return false;
+    // Scalar SIMD shifts require Q=1. With Q=0 this encoding space includes
+    // scalar floating-point multiply-add instructions.
+    if ((r & (1u << 28)) && !(r & (1u << 30)))
+        return false;
     const unsigned immediate = (r >> 16) & 127;
     if (immediate < 8)
         return false;

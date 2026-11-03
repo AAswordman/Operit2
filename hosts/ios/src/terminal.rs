@@ -323,7 +323,14 @@ impl TerminalHost for IosTerminalHost {
             IosTerminalBackend::Arm64 => {
                 operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(
                     workingDir,
-                    resolveHostDirectory,
+                    &|path| {
+                        let directory = resolveHostDirectory(path)?;
+                        callArm64Terminal("terminalWorkspaceMount", json!({
+                            "hostDirectory": directory,
+                            "mountPoint": directory,
+                        }))?;
+                        Ok(directory)
+                    },
                 )
             }
             IosTerminalBackend::SystemShell => resolveHostDirectory(workingDir),

@@ -479,7 +479,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
         let safeBaseName = plugin_id.trim().replace(':', "_");
         Ok(format!(
-            "/app/data/extensions/device/plugins/configs/{safeBaseName}"
+            "/operitapp/data/extensions/device/plugins/configs/{safeBaseName}"
         ))
     }
 
@@ -511,7 +511,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
             format!("{root}/namespaces/{name}")
         };
         Ok(format!(
-            "/app/data/{}",
+            "/operitapp/data/{}",
             path.strip_prefix("runtime/")
                 .ok_or("invalid test config path")?
         ))
@@ -520,7 +520,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     /// Returns actual Host-visible local data without acquiring the package manager lock.
     fn plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String> {
         let path = operit_store::ExtensionStore::ExtensionStore::localDataPath(owner_id)?;
-        Ok(format!("/app/data/{}", path.strip_prefix("runtime/").ok_or("invalid local data path")?))
+        Ok(format!("/operitapp/data/{}", path.strip_prefix("runtime/").ok_or("invalid local data path")?))
     }
 
     /// Creates registration-local paths independently of the selected installation scope.
@@ -531,7 +531,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     /// Returns shared data independently of the installed package scope.
     fn plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String> {
         let path = operit_store::ExtensionStore::ExtensionStore::spaceDataPath(owner_id)?;
-        Ok(format!("/app/data/{}", path.strip_prefix("runtime/").ok_or("invalid shared data path")?))
+        Ok(format!("/operitapp/data/{}", path.strip_prefix("runtime/").ok_or("invalid shared data path")?))
     }
 
     /// Creates registration-shared paths without consulting installed state.
@@ -3558,13 +3558,13 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
             .expect("registration must resolve paths while its caller holds the manager lock");
         let entry: Value = serde_json::from_str(&capture.navigationEntries[0]).unwrap();
         let root = format!(
-            "/app/data/extensions/{}/plugins/configs/first_import",
+            "/operitapp/data/extensions/{}/plugins/configs/first_import",
             scope.as_str()
         );
         assert_eq!(entry["directory"], root);
-        assert_eq!(entry["localDirectory"], "/app/data/plugin_data/device/first_import");
+        assert_eq!(entry["localDirectory"], "/operitapp/data/plugin_data/device/first_import");
         assert_eq!(entry["localAgain"], entry["localDirectory"]);
-        assert_eq!(entry["sharedDirectory"], "/app/data/plugin_data/space/first_import");
+        assert_eq!(entry["sharedDirectory"], "/operitapp/data/plugin_data/space/first_import");
         assert_eq!(
             entry["aliasDirectory"],
             format!("{root}/namespaces/named_alias")
@@ -3606,7 +3606,7 @@ async fn registration_config_context_does_not_leak_into_runtime_execution() {
         .expect("runtime configuration result");
     assert_eq!(
         serde_json::from_str::<String>(&output).unwrap(),
-        "/app/data/extensions/device/plugins/configs/first_import"
+        "/operitapp/data/extensions/device/plugins/configs/first_import"
     );
     assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 1);
 }
@@ -3627,7 +3627,7 @@ async fn local_data_directory_is_stable_across_registration_and_runtime() {
         "exports.local_data = function() { return {local:ToolPkg.getLocalDataDir(),shared:ToolPkg.getSpaceDataDir()}; };",
         "local_data", &params, &BTreeMap::new(), None, true, None,
     ).await.expect("local runtime directory").expect("local directory output");
-    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"local":"/app/data/plugin_data/device/first_import","shared":"/app/data/plugin_data/space/first_import"}));
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"local":"/operitapp/data/plugin_data/device/first_import","shared":"/operitapp/data/plugin_data/space/first_import"}));
 }
 
 /// Rejects an unspecified registration scope instead of choosing an arbitrary storage location.
@@ -3747,7 +3747,7 @@ fn native_interface_resolves_plugin_config_dir() {
 
     assert_eq!(
         path,
-        "/app/data/extensions/device/plugins/configs/plugin_name"
+        "/operitapp/data/extensions/device/plugins/configs/plugin_name"
     );
 }
 
@@ -3897,7 +3897,7 @@ async fn completion_retains_detached_promise_context_until_host_event() {
         resumed,
         serde_json::json!({
             "owner": "original", "runs": 1,
-            "config": "/app/data/extensions/device/plugins/configs/workflow",
+            "config": "/operitapp/data/extensions/device/plugins/configs/workflow",
         })
     );
     assert_eq!(
@@ -4003,7 +4003,7 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
     assert_eq!(
         value,
         serde_json::json!({
-            "config": "/app/data/extensions/device/plugins/configs/workflow",
+            "config": "/operitapp/data/extensions/device/plugins/configs/workflow",
             "owner": "workflow",
         })
     );

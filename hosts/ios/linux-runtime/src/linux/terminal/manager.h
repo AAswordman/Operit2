@@ -111,7 +111,6 @@ class TerminalManager {
     uint32_t foreground_group(const TerminalEndpoint &endpoint, uint32_t pid) const;
     void foreground_group(const TerminalEndpoint &endpoint, uint32_t pid, uint32_t group);
     uint32_t session(const TerminalEndpoint &endpoint, uint32_t pid) const;
-    std::string controlling_path(uint32_t pid) const;
     void session_created(uint32_t pid, uint32_t previous_session);
     void process_forked(uint32_t child, uint32_t parent);
     void process_exited(uint32_t pid);

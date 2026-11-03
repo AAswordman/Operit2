@@ -24,11 +24,11 @@ void main() {
       expect(reference, contains('node_id="core-b"'));
       expect(
         reference,
-        contains('path="/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
+        contains('path="/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
       );
       expect(
         reference,
-        contains('id="/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
+        contains('id="/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
       );
       expect(reference, isNot(contains('/device-b/')));
       expect(reference, contains('filename="报价单&quot;.pdf"'));
@@ -49,7 +49,7 @@ void main() {
     final cursorResult = cursor.parseMessageContent(reference);
     expect(bubbleResult.processedText, isEmpty);
     expect(cursorResult.processedText, isEmpty);
-    const toolPath = '/app/data/data/chat_attachments/chat-a/attachment-a/report&copy.pdf';
+    const toolPath = '/operitapp/data/data/chat_attachments/chat-a/attachment-a/report&copy.pdf';
     expect(bubbleResult.trailingAttachments.single.id, toolPath);
     expect(cursorResult.trailingAttachments.single.id, toolPath);
     expect(
@@ -66,9 +66,9 @@ void main() {
     expect(cursorResult.trailingAttachments.single.size, 3);
 
     const paired =
-        '<attachment id="/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf" filename="file.pdf" '
+        '<attachment id="/operitapp/data/data/chat_attachments/chat-a/attachment-a/file.pdf" filename="file.pdf" '
         'type="application/pdf" node_id="core-b" '
-        'path="/app/data/data/chat_attachments/chat-a/attachment-a/file.pdf" size="3">body</attachment>';
+        'path="/operitapp/data/data/chat_attachments/chat-a/attachment-a/file.pdf" size="3">body</attachment>';
     expect(
       bubble.parseMessageContent(paired).trailingAttachments.single.content,
       'body',
@@ -90,7 +90,7 @@ void main() {
     );
     expect(
       viewModel.createAttachmentReference(attachment),
-      contains('path="/app/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
+      contains('path="/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
     );
   });
 

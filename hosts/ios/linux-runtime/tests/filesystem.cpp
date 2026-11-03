@@ -1,6 +1,7 @@
 #include "fs/filesystem.h"
 #include "linux/abi.h"
 #include "linux/syscalls.h"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -172,6 +173,41 @@ void descriptor_flags_and_ioctl() {
     int poll_copy = int(f.call(25, {uint64_t(poll), 1030, 60}));
     require(poll_copy == 60 && f.call(25, {60, 1}) == 1, "epoll F_DUPFD_CLOEXEC");
     require(f.call(22, {60, 0x12000, 1, 0, 0}) == 0, "epoll alias not usable");
+}
+void pipe_capacity_and_short_writes() {
+    Fixture f;
+    require(f.call(59, {0x11000, 2048}) == 0, "capacity pipe2");
+    const uint64_t reader = f.memory.load(0x11000, 4), writer = f.memory.load(0x11004, 4);
+    const int64_t capacity = f.call(25, {reader, 1032});
+    require(capacity >= 4096, "F_GETPIPE_SZ must report a usable Linux pipe capacity");
+    require(f.call(25, {writer, 1032}) == capacity, "pipe ends disagree on capacity");
+    const int64_t alias = f.call(23, {writer});
+    require(alias >= 0 && f.call(25, {uint64_t(alias), 1032}) == capacity,
+            "duplicated pipe lost its capacity");
+    require(f.call(25, {999, 1032}) == -9, "pipe capacity accepted an invalid descriptor");
+    const int64_t regular = f.open("/workspace/message");
+    require(regular >= 0 && f.call(25, {uint64_t(regular), 1032}) == -9,
+            "pipe capacity accepted a regular file");
+
+    const uint64_t data = 0x20000, length = uint64_t(capacity) + 4096;
+    f.memory.map(data, (length + page_size - 1) / page_size * page_size, read_perm | write_perm);
+    std::vector<uint8_t> payload(length, 'x');
+    f.memory.copy_in(data, payload.data(), payload.size());
+    require(f.call(64, {writer, data, uint64_t(capacity)}) == capacity,
+            "empty pipe cannot hold its advertised capacity");
+    require(f.call(29, {reader, 0x541b, 0x12000}) == 0 &&
+                f.memory.load(0x12000, 4) == uint64_t(capacity),
+            "FIONREAD disagrees with the full pipe capacity");
+    require(f.call(64, {writer, data, 1}) == -11, "full nonblocking pipe must return EAGAIN");
+    require(f.call(63, {reader, data, uint64_t(capacity)}) == capacity, "drain full pipe");
+    require(f.call(64, {uint64_t(alias), data, length}) == capacity,
+            "oversized pipe write must return a short count");
+    require(f.call(63, {reader, data, length}) == capacity, "drain short write");
+    std::vector<uint8_t> received(capacity);
+    f.memory.copy_out(data, received.data(), received.size());
+    require(std::all_of(received.begin(), received.end(), [](uint8_t byte) { return byte == 'x'; }),
+            "pipe capacity boundary corrupted the payload");
+    require(f.call(25, {reader, 1032}) == capacity, "draining changed the pipe capacity");
 }
 void filesystem_operations_and_directory_views() {
     Fixture f;
@@ -463,15 +499,9 @@ void resource_limits_enforce_guest_allocations() {
             "AS limit blocked equal-size fixed replacement");
 }
 
-void robust_owner_death_and_scheduler_queries() {
-    Fixture f;
-    require(f.call(121, {0, 0x13000}) == 0 && f.memory.load(0x13000, 4) == 0, "sched_getparam");
-    require(f.call(120, {0}) == 0 && f.call(120, {999}) == -3, "sched_getscheduler");
-    require(f.call(123, {0, 128, 0x13000}) == 8 && f.memory.load(0x13000, 8) == 1,
-            "actual guest CPU affinity");
-    f.memory.store(0x13000, 2, 8);
-    require(f.call(122, {0, 8, 0x13000}) == -22, "nonexistent execution CPU accepted");
+void verify_robust_owner_death(Fixture &f, bool private_wait) {
     constexpr uint64_t head = 0x14000, entry = 0x14100, futex = entry + 8;
+    constexpr uint64_t futex_wait = 0, futex_private_flag = 128;
     f.memory.store(head, entry, 8);
     f.memory.store(head + 8, 8, 8);
     f.memory.store(head + 16, 0, 8);
@@ -482,17 +512,36 @@ void robust_owner_death_and_scheduler_queries() {
                 f.memory.load(0x13008, 8) == 24,
             "get robust list");
     f.scheduler.spawn(f.scheduler.current().cpu, 0x18000, 0, 0);
-    f.scheduler.select();
-    require(f.call(98, {futex, 128, 0x80000001, 0}) == 0 &&
+    require(f.scheduler.select(false) && f.scheduler.current().tid == 2, "robust waiter selection");
+    require(f.call(98, {futex, futex_wait | (private_wait ? futex_private_flag : 0), 0x80000001, 0}) == 0 &&
                 f.scheduler.current().state == Task::State::Waiting,
             "robust mutex waiter");
-    f.scheduler.select();
-    require(f.scheduler.current().tid == 1, "robust owner selection");
+    require(f.scheduler.select(false) && f.scheduler.current().tid == 1, "robust owner selection");
     require(f.call(93, {0}) == 0, "owner exit");
-    f.scheduler.select();
-    require(f.scheduler.current().tid == 2 && f.scheduler.current().cpu.x[0] == 0 &&
-                f.memory.load(futex, 4) == 0xc0000000,
+    require(f.memory.load(futex, 4) == 0xc0000000, "robust owner-death flag");
+    if (private_wait) {
+        // Linux uses a shared futex wake during robust-list cleanup, even for a private mutex.
+        require(!f.scheduler.select(false), "robust owner exit woke a private-key waiter");
+        const auto key = f.scheduler.futex_address(f.memory, futex, true);
+        require(f.scheduler.wake_futex(key.address, 1, UINT32_MAX, key.space) == 1,
+                "private-key waiter was lost");
+    }
+    require(f.scheduler.select(false), "robust owner exit left waiter blocked");
+    require(f.scheduler.current().tid == 2 && f.scheduler.current().cpu.x[0] == 0,
             "robust owner death/wake");
+}
+
+void robust_owner_death_and_scheduler_queries() {
+    Fixture f;
+    require(f.call(121, {0, 0x13000}) == 0 && f.memory.load(0x13000, 4) == 0, "sched_getparam");
+    require(f.call(120, {0}) == 0 && f.call(120, {999}) == -3, "sched_getscheduler");
+    require(f.call(123, {0, 128, 0x13000}) == 8 && f.memory.load(0x13000, 8) == 1,
+            "actual guest CPU affinity");
+    f.memory.store(0x13000, 2, 8);
+    require(f.call(122, {0, 8, 0x13000}) == -22, "nonexistent execution CPU accepted");
+    verify_robust_owner_death(f, false);
+    Fixture private_wait;
+    verify_robust_owner_death(private_wait, true);
 }
 
 } // namespace
@@ -501,6 +550,7 @@ int main() {
         mount_resolution();
         mount_writes_and_readonly();
         descriptor_flags_and_ioctl();
+        pipe_capacity_and_short_writes();
         filesystem_operations_and_directory_views();
         blocking_io_and_broken_pipe();
         vector_file_io_and_directory_creation();

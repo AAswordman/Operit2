@@ -1,15 +1,18 @@
 #include "runtime/tasks/scheduler.h"
 #include "linux/events/inotify.h"
+#include "linux/io_uring/io_uring.h"
 #include "linux/network/message_batch.h"
 #include "linux/threads/futex_pi.h"
 #include "runtime/process/controller.h"
 #include <algorithm>
+#include <array>
 #include <thread>
 
 namespace operit::arm64 {
 namespace {
 bool can_run(const Task &task) noexcept {
-    return task.state == Task::State::Runnable && !task.stopped && !task.vfork_child;
+    return task.state == Task::State::Runnable && !task.stopped && !task.ptrace_stopped &&
+           !task.ptrace_deferred_exit && !task.vfork_child;
 }
 bool before_in_rotation(uint32_t left, uint32_t right, uint32_t cursor) noexcept {
     if ((left > cursor) != (right > cursor))
@@ -76,10 +79,18 @@ void Scheduler::complete(Task &task, int64_t value) {
     }
     task.cpu.x[0] = uint64_t(value);
     task.state = Task::State::Runnable;
+    // Real wakeup starts a new continuous-RT interval; yield/preemption do not.
+    task.realtime_runtime_nanoseconds = 0;
+    refresh_realtime(task);
     task.futex = 0;
     task.futex_space = 0;
+    task.futex_requeue_pi = false;
+    task.futex_vector.clear();
+    task.futex_vector_result = -1;
     task.deadline.reset();
     task.poll = {};
+    if (processes_)
+        processes_->wait_completed(task.tid);
 }
 void Scheduler::retire(Task &task) {
     ScopedTask context(*this, task.tid);
@@ -87,10 +98,14 @@ void Scheduler::retire(Task &task) {
         auto cleanup = std::move(task.wait_cleanup);
         cleanup();
     }
+    dequeue_realtime(task);
     task.state = Task::State::Exited;
     task.poll = {};
     task.futex = 0;
     task.futex_space = 0;
+    task.futex_requeue_pi = false;
+    task.futex_vector.clear();
+    task.futex_vector_result = -1;
     task.deadline.reset();
     task.cpu.exclusive_valid = false;
     // A thread disappears at exit; a group leader remains charged as a zombie
@@ -122,44 +137,182 @@ int Scheduler::effective_priority(uint32_t tid) const {
         guest_error(3);
     return threads::futex_pi_effective_priority(*this, task->tid);
 }
-std::vector<uint32_t> Scheduler::runnable_tids(size_t maximum) {
-    if (!maximum)
-        return {};
-    std::vector<std::pair<int, uint32_t>> candidates;
-    candidates.reserve(tasks_.size());
-    for (const auto &[tid, task] : tasks_)
-        if (can_run(task))
-            candidates.emplace_back(effective_priority(tid), tid);
-    std::sort(candidates.begin(), candidates.end(), [this](const auto &left, const auto &right) {
+uint64_t Scheduler::eligible_cpus(const Task &task) const noexcept {
+    const uint64_t available = execution_cpus_ >= 64 ? UINT64_MAX : (uint64_t{1} << execution_cpus_) - 1;
+    return task.cpu_affinity & available;
+}
+void Scheduler::dequeue_realtime(Task &task) {
+    if (task.realtime_queue_priority >= 100)
+        return;
+    auto found = realtime_queues_.find(task.realtime_queue_priority);
+    if (found != realtime_queues_.end()) {
+        found->second.remove(task.tid);
+        if (found->second.empty())
+            realtime_queues_.erase(found);
+    }
+    task.realtime_queue_priority = 100;
+}
+void Scheduler::refresh_realtime(Task &task) {
+    refresh_realtime(task, can_run(task) && eligible_cpus(task) ? effective_priority(task.tid) : 100);
+}
+void Scheduler::refresh_realtime(Task &task, int priority) {
+    // A PI owner leaving the RT scheduling class loses its watchdog timeout.
+    // Requested FIFO/RR policy changes retain it until a blocking wakeup.
+    if (task.realtime_watchdog_pi_boosted && priority >= 100 && can_run(task) && eligible_cpus(task))
+        task.realtime_runtime_nanoseconds = 0;
+    task.realtime_watchdog_pi_boosted = priority < 100 && task.base_priority() >= 100;
+    if (priority >= 100) {
+        dequeue_realtime(task);
+        return;
+    }
+    const int previous = task.realtime_queue_priority;
+    if (priority == previous)
+        return;
+    // Allocate the new entry before removing the old one. A priority decrease
+    // (including PI deboost) joins the head; an increase or wake joins the tail.
+    auto &queue = realtime_queues_[priority];
+    if (previous < 100 && priority > previous)
+        queue.push_front(task.tid);
+    else
+        queue.push_back(task.tid);
+    dequeue_realtime(task);
+    task.realtime_queue_priority = priority;
+}
+void Scheduler::requeue_realtime_tail(Task &task) {
+    const auto found = realtime_queues_.find(task.realtime_queue_priority);
+    if (found == realtime_queues_.end())
+        return;
+    auto &queue = found->second;
+    const auto entry = std::find(queue.begin(), queue.end(), task.tid);
+    if (entry != queue.end())
+        queue.splice(queue.end(), queue, entry);
+}
+void Scheduler::scheduling_changed(uint32_t tid) {
+    // Linux retains a task's unused RR slice across policy/priority changes.
+    // Only a newly created task starts with a fresh slice.
+    refresh_realtime(find(tid));
+}
+void Scheduler::account_runtime(uint32_t tid, uint64_t nanoseconds, bool realtime_limit_active) {
+    auto *task = lookup(tid);
+    if (!task || task->state == Task::State::Exited || !nanoseconds)
+        return;
+    // Like the Linux RT watchdog, start counting only while a finite limit is
+    // installed. Ordinary PI owners temporarily executing in RT count too.
+    if (realtime_limit_active && effective_priority(tid) < 100) {
+        auto &runtime = task->realtime_runtime_nanoseconds;
+        runtime = nanoseconds > UINT64_MAX - runtime ? UINT64_MAX : runtime + nanoseconds;
+    }
+    if (task->sched_policy != Task::SchedulingPolicy::RoundRobin)
+        return;
+    const auto remaining = task->rr_remaining_nanoseconds;
+    if (nanoseconds < remaining) {
+        task->rr_remaining_nanoseconds -= nanoseconds;
+        return;
+    }
+    task->rr_remaining_nanoseconds = round_robin_interval_nanoseconds -
+                                    (nanoseconds - remaining) % round_robin_interval_nanoseconds;
+    refresh_realtime(*task);
+    requeue_realtime_tail(*task);
+}
+void Scheduler::yield() {
+    auto &task = current();
+    refresh_realtime(task);
+    if (task.realtime_queue_priority < 100)
+        requeue_realtime_tail(task);
+    else
+        priority_cursors_[effective_priority(task.tid)] = task.tid;
+    // RR keeps the unused CPU-time budget across a voluntary yield.
+}
+std::vector<std::pair<int, uint32_t>> Scheduler::ordered_candidates() {
+    std::vector<std::pair<int, uint32_t>> ordinary;
+    ordinary.reserve(tasks_.size());
+    for (auto &[tid, task] : tasks_) {
+        const bool runnable = can_run(task) && eligible_cpus(task);
+        const int priority = runnable ? effective_priority(tid) : 100;
+        refresh_realtime(task, priority);
+        if (runnable && priority >= 100)
+            ordinary.emplace_back(priority, tid);
+    }
+    std::sort(ordinary.begin(), ordinary.end(), [this](const auto &left, const auto &right) {
         if (left.first != right.first)
             return left.first < right.first;
         return before_in_rotation(left.second, right.second, priority_cursor(left.first, current_));
     });
-    std::vector<uint32_t> result;
-    result.reserve(std::min(maximum, candidates.size()));
-    // TLS bindings identify syscall/signal callers, not the batch cursor.
-    for (const auto &[priority, tid] : candidates) {
-        if (result.size() == maximum)
-            break;
-        result.push_back(tid);
-        priority_cursors_[priority] = tid;
+    std::vector<std::pair<int, uint32_t>> result;
+    result.reserve(tasks_.size());
+    for (const auto &[priority, queue] : realtime_queues_)
+        for (const auto tid : queue)
+            result.emplace_back(priority, tid);
+    result.insert(result.end(), ordinary.begin(), ordinary.end());
+    return result;
+}
+std::vector<Scheduler::RunnableTask> Scheduler::runnable_batch(size_t maximum, size_t minimum) {
+    if (!maximum)
+        return {};
+    maximum = std::min<size_t>(maximum, std::min<uint32_t>(execution_cpus_, 64));
+    const auto candidates = ordered_candidates();
+    std::array<int, 64> owners;
+    owners.fill(-1);
+    // Augmenting paths preserve all earlier (higher priority / FIFO) selections
+    // while finding distinct CPUs. A pinned FIFO peer must not slip through as
+    // a second sequential executor job on the already occupied virtual CPU.
+    auto assign = [&](auto &self, size_t index, uint64_t &visited) -> bool {
+        const auto &task = tasks_.at(candidates[index].second);
+        uint64_t possible = eligible_cpus(task) & ~visited;
+        while (possible) {
+            const uint64_t preferred = task.last_cpu < 64 ? uint64_t{1} << task.last_cpu : 0;
+            const auto bit = possible & preferred ? preferred : possible & (~possible + 1);
+            possible &= ~bit;
+            if (visited & bit)
+                continue;
+            visited |= bit;
+            const auto cpu = uint32_t(__builtin_ctzll(bit));
+            const int previous = owners[cpu];
+            if (previous < 0 || self(self, size_t(previous), visited)) {
+                owners[cpu] = int(index);
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<size_t> chosen;
+    chosen.reserve(std::min(maximum, candidates.size()));
+    for (size_t index = 0; index < candidates.size() && chosen.size() < maximum; ++index) {
+        uint64_t visited = 0;
+        if (assign(assign, index, visited))
+            chosen.push_back(index);
+    }
+    // Machine falls back to its already selected serial task if fewer than
+    // two CPUs can run. Committing a singleton here would silently advance
+    // ordinary-task rotation twice and starve one of two CPU-pinned peers.
+    if (chosen.size() < minimum)
+        return {};
+    std::vector<RunnableTask> result;
+    result.reserve(chosen.size());
+    for (auto index : chosen) {
+        for (uint32_t cpu = 0; cpu < 64; ++cpu)
+            if (owners[cpu] == int(index)) {
+                const auto [priority, tid] = candidates[index];
+                result.push_back({tid, cpu});
+                if (priority >= 100)
+                    priority_cursors_[priority] = tid;
+                break;
+            }
     }
     if (!result.empty())
-        current_ = result.back();
+        current_ = result.back().tid;
+    return result;
+}
+std::vector<uint32_t> Scheduler::runnable_tids(size_t maximum) {
+    std::vector<uint32_t> result;
+    for (const auto &task : runnable_batch(maximum))
+        result.push_back(task.tid);
     return result;
 }
 bool Scheduler::process_alive(uint32_t pid) const {
     for (const auto &[tid, task] : tasks_) {
         (void)tid;
         if (task.pid == pid && task.state != Task::State::Exited)
-            return true;
-    }
-    return false;
-}
-bool Scheduler::has_runnable() const {
-    for (const auto &[tid, task] : tasks_) {
-        (void)tid;
-        if (can_run(task))
             return true;
     }
     return false;
@@ -172,8 +325,39 @@ Scheduler::FutexAddress Scheduler::futex_address(const Memory &memory, uint64_t 
                 found = shared_futexes_.emplace(*identity, next_futex_key_++).first;
             return {found->second, UINT64_MAX};
         }
+        // Linux also distinguishes a shared futex in a private anonymous mm
+        // from a FUTEX_PRIVATE key at the same virtual address.
+        const auto identity = std::make_pair(uint64_t(reinterpret_cast<uintptr_t>(&memory)), address);
+        auto found = shared_mm_futexes_.find(identity);
+        if (found == shared_mm_futexes_.end())
+            found = shared_mm_futexes_.emplace(identity, next_futex_key_++).first;
+        return {found->second, UINT64_MAX};
     }
     return {address, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&memory))};
+}
+Scheduler::ScopedFutexVectorVisibility::ScopedFutexVectorVisibility(Scheduler &scheduler, FutexAddress key)
+    : scheduler_(scheduler), key_(key) {
+    for (auto &[tid, task] : scheduler_.tasks_) {
+        (void)tid;
+        if (task.state != Task::State::Waiting)
+            continue;
+        for (const auto &entry : task.futex_vector) {
+            if (entry.queued && entry.address == key.address && entry.space == key.space) {
+                task.futex = key.address;
+                task.futex_space = key.space;
+                break;
+            }
+        }
+    }
+}
+Scheduler::ScopedFutexVectorVisibility::~ScopedFutexVectorVisibility() noexcept {
+    for (auto &[tid, task] : scheduler_.tasks_) {
+        (void)tid;
+        if (!task.futex_vector.empty() && task.futex == key_.address && task.futex_space == key_.space) {
+            task.futex = 0;
+            task.futex_space = 0;
+        }
+    }
 }
 uint32_t Scheduler::spawn_task(const CpuState &cpu, uint64_t stack, uint64_t tls, uint64_t clear_tid,
                                bool process) {
@@ -190,15 +374,20 @@ uint32_t Scheduler::spawn_task(const CpuState &cpu, uint64_t stack, uint64_t tls
     }
     if (tasks_.size() >= 1024 || next_tid_ >= INT32_MAX)
         guest_error(11);
+    refresh_realtime(current());
     Task task;
     task.tid = next_tid_;
     task.pid = process ? next_tid_ : current().pid;
     task.start_boottime_nanoseconds = process_boottime_nanoseconds();
     task.cpu = cpu;
+    // A traced syscall can retain its original number while x8 was edited.
+    if (current().ptrace_user_x8)
+        task.cpu.x[8] = *current().ptrace_user_x8;
     task.cpu.x[0] = 0;
     task.cpu.sp = stack;
     task.cpu.tls = tls;
     task.cpu.exclusive_valid = false;
+    task.seccomp = current().seccomp;
     task.signal_mask = current().signal_mask;
     task.signals = signals::fork_thread(current().signals, true, false);
     task.name = current().name;
@@ -216,6 +405,12 @@ uint32_t Scheduler::spawn_task(const CpuState &cpu, uint64_t stack, uint64_t tls
     }
     task.clear_tid = clear_tid;
     tasks_.emplace(next_tid_, std::move(task));
+    try {
+        refresh_realtime(tasks_.at(next_tid_));
+    } catch (...) {
+        tasks_.erase(next_tid_);
+        throw;
+    }
     exited_ = false;
     return next_tid_++;
 }
@@ -256,32 +451,113 @@ void Scheduler::reap_process(uint32_t pid) {
 void Scheduler::block(TaskDeadline deadline, int64_t timeout_result,
                       std::function<std::optional<int64_t>()> poll) {
     auto &task = current();
+    dequeue_realtime(task);
     task.state = Task::State::Waiting;
     task.deadline = deadline;
     task.timeout_result = timeout_result;
     task.poll = std::move(poll);
     task.futex = 0;
     task.futex_space = 0;
+    task.futex_requeue_pi = false;
+    task.futex_vector.clear();
+    task.futex_vector_result = -1;
 }
 void Scheduler::wait_futex(uint64_t address, uint32_t mask, TaskDeadline deadline, uint64_t space) {
     block(deadline, -110);
     current().futex = address;
     current().futex_space = space ? space : current().pid;
     current().futex_mask = mask;
+    // Linux's source futex plist orders realtime tasks by normal priority;
+    // ordinary tasks share priority 100 and retain insertion order.
+    current().futex_priority = std::min(current().base_priority(), 100);
+    current().futex_sequence = next_futex_sequence_++;
 }
-unsigned Scheduler::wake_futex(uint64_t address, unsigned count, uint32_t mask, uint64_t space) {
-    unsigned woken = 0;
-    space = space ? space : current().pid;
-    for (auto &[tid, task] : tasks_) {
-        (void)tid;
-        if (woken == count)
-            break;
-        if (task.state == Task::State::Waiting && task.futex == address && task.futex_space == space &&
-            (task.futex_mask & mask)) {
-            complete(task, 0);
-            ++woken;
+void Scheduler::wait_futex_vector(std::vector<Task::FutexVectorEntry> entries, TaskDeadline deadline,
+                                  std::function<std::optional<int64_t>()> clock_poll) {
+    for (auto &entry : entries)
+        entry.sequence = next_futex_sequence_++;
+    block(deadline, -110, std::move(clock_poll));
+    auto &task = current();
+    task.futex_priority = std::min(task.base_priority(), 100);
+    task.futex_vector = std::move(entries);
+}
+Scheduler::FutexMatch Scheduler::find_futex_waiter(FutexAddress key, uint32_t mask,
+                                                   uint64_t before_sequence) const {
+    FutexMatch first;
+    int first_priority = 0;
+    uint64_t first_sequence = 0;
+    for (const auto &item : tasks_) {
+        const auto tid = item.first;
+        const auto &task = item.second;
+        if (task.state != Task::State::Waiting)
+            continue;
+        const auto consider = [&](uint64_t address, uint64_t space, uint32_t entry_mask,
+                                  uint64_t sequence, size_t index) {
+            if (address != key.address || space != key.space || !(entry_mask & mask) ||
+                sequence >= before_sequence)
+                return;
+            if (!first.tid || std::make_pair(task.futex_priority, sequence) <
+                                  std::make_pair(first_priority, first_sequence)) {
+                first = {tid, index};
+                first_priority = task.futex_priority;
+                first_sequence = sequence;
+            }
+        };
+        if (task.futex_vector.empty()) {
+            consider(task.futex, task.futex_space, task.futex_mask, task.futex_sequence, SIZE_MAX);
+        } else {
+            for (size_t index = 0; index < task.futex_vector.size(); ++index) {
+                const auto &entry = task.futex_vector[index];
+                if (entry.queued)
+                    consider(entry.address, entry.space, entry.mask, entry.sequence, index);
+            }
         }
     }
+    return first;
+}
+uint32_t Scheduler::first_futex_waiter(FutexAddress key, uint32_t mask,
+                                        uint64_t before_sequence) const {
+    return find_futex_waiter(key, mask, before_sequence).tid;
+}
+void Scheduler::complete_futex_vectors() {
+    for (auto &[tid, task] : tasks_) {
+        (void)tid;
+        if (task.futex_vector_result >= 0)
+            complete(task, task.futex_vector_result);
+    }
+}
+unsigned Scheduler::wake_futex_deferred(FutexAddress key, unsigned count, uint32_t mask) {
+    unsigned woken = 0;
+    while (woken < count) {
+        const auto match = find_futex_waiter(key, mask, UINT64_MAX);
+        if (!match.tid)
+            break;
+        auto &task = tasks_.at(match.tid);
+        if (task.futex_requeue_pi) {
+            complete_futex_vectors();
+            guest_error(22);
+        }
+        if (match.vector_index == SIZE_MAX) {
+            complete(task, 0);
+        } else {
+            task.futex_vector[match.vector_index].queued = false;
+            task.futex_vector_result = int(match.vector_index);
+        }
+        ++woken;
+    }
+    return woken;
+}
+unsigned Scheduler::wake_futex(uint64_t address, unsigned count, uint32_t mask, uint64_t space) {
+    const auto woken = wake_futex_deferred({address, space ? space : current().pid}, count, mask);
+    complete_futex_vectors();
+    return woken;
+}
+unsigned Scheduler::wake_futex_pair(FutexAddress first, unsigned first_count, FutexAddress second,
+                                    unsigned second_count, bool wake_second) {
+    unsigned woken = wake_futex_deferred(first, first_count, UINT32_MAX);
+    if (wake_second)
+        woken += wake_futex_deferred(second, second_count, UINT32_MAX);
+    complete_futex_vectors();
     return woken;
 }
 unsigned Scheduler::requeue_futex(uint64_t from, uint64_t to, unsigned count, uint64_t space,
@@ -289,17 +565,39 @@ unsigned Scheduler::requeue_futex(uint64_t from, uint64_t to, unsigned count, ui
     unsigned moved = 0;
     space = space ? space : current().pid;
     target_space = target_space ? target_space : current().pid;
-    for (auto &[tid, task] : tasks_) {
-        (void)tid;
-        if (moved == count)
+    const auto cutoff = next_futex_sequence_;
+    while (moved < count) {
+        const auto match = find_futex_waiter({from, space}, UINT32_MAX, cutoff);
+        if (!match.tid)
             break;
-        if (task.state == Task::State::Waiting && task.futex == from && task.futex_space == space) {
+        auto &task = tasks_.at(match.tid);
+        if (task.futex_requeue_pi)
+            guest_error(22);
+        if (match.vector_index == SIZE_MAX) {
             task.futex = to;
             task.futex_space = target_space;
-            ++moved;
+            task.futex_sequence = next_futex_sequence_++;
+        } else {
+            auto &entry = task.futex_vector[match.vector_index];
+            entry.address = to;
+            entry.space = target_space;
+            entry.sequence = next_futex_sequence_++;
         }
+        ++moved;
     }
     return moved;
+}
+unsigned Scheduler::wake_and_requeue_futex(FutexAddress from, FutexAddress to, unsigned wake_count,
+                                           unsigned requeue_count) {
+    const auto woken = wake_futex_deferred(from, wake_count, UINT32_MAX);
+    try {
+        const auto moved = requeue_futex(from.address, to.address, requeue_count, from.space, to.space);
+        complete_futex_vectors();
+        return woken + moved;
+    } catch (...) {
+        complete_futex_vectors();
+        throw;
+    }
 }
 void Scheduler::wake(uint32_t tid, int64_t value) {
     auto *task = lookup(tid);
@@ -314,35 +612,44 @@ void Scheduler::interrupt(uint32_t tid, int64_t value) {
     if (value == -4) {
         if (auto partial = socket_messages::interrupt_message_wait(*task))
             value = *partial;
+        if (value == -4)
+            if (auto partial = io_uring::interrupt_wait(*task))
+                value = *partial;
         if (value != -4 && task->signals.restart)
             task->signals.restart->interrupted = false;
     }
+    value = threads::futex_pi_interrupt(*this, *task, value);
     if (task->state == Task::State::Waiting)
         complete(*task, value);
 }
 void Scheduler::stop_process(uint32_t pid) {
     for (auto &[tid, task] : tasks_) {
         (void)tid;
-        if (task.pid == pid && task.state != Task::State::Exited)
+        if (task.pid == pid && task.state != Task::State::Exited) {
+            dequeue_realtime(task);
             task.stopped = true;
+        }
     }
 }
 void Scheduler::continue_process(uint32_t pid) {
     for (auto &[tid, task] : tasks_) {
         (void)tid;
-        if (task.pid == pid)
+        if (task.pid == pid) {
+            if (task.stopped && task.state == Task::State::Runnable)
+                task.realtime_runtime_nanoseconds = 0;
             task.stopped = false;
+            if (task.state != Task::State::Exited)
+                refresh_realtime(task);
+        }
     }
 }
 void Scheduler::exit(int code, bool group) {
     const auto pid = current().pid;
     retire(current());
-    if (group)
-        for (auto &[tid, task] : tasks_) {
-            (void)tid;
-            if (task.pid == pid && task.state != Task::State::Exited)
-                retire(task);
-        }
+    if (group) {
+        exit_process(pid, code);
+        return;
+    }
     exited_ = live_tids().empty();
     if (exited_)
         exit_code_ = code & 255;
@@ -378,9 +685,20 @@ void Scheduler::replace_process_image(uint32_t pid, const CpuState &entry) {
     survivor.state = Task::State::Runnable;
     survivor.stopped = false;
     survivor.futex = survivor.futex_space = 0;
+    survivor.futex_requeue_pi = false;
+    survivor.futex_vector.clear();
+    survivor.futex_vector_result = -1;
     survivor.deadline.reset();
     survivor.poll = {};
     survivor.wait_cleanup = {};
+    if (survivor.realtime_queue_priority < 100) {
+        auto &queue = realtime_queues_.at(survivor.realtime_queue_priority);
+        for (auto &tid : queue)
+            if (tid == executing_tid) {
+                tid = pid;
+                break;
+            }
+    }
     survivor_node.key() = pid;
     tasks_.insert(std::move(survivor_node));
     // exec can change a non-leader TID into the process leader. Keep outer
@@ -403,7 +721,7 @@ TaskClock::time_point Scheduler::poll_waiting() {
     const auto now = TaskClock::now();
     auto next_poll = now + std::chrono::milliseconds(1);
     for (auto &[tid, task] : tasks_) {
-        if (task.state != Task::State::Waiting)
+        if (task.state != Task::State::Waiting || task.ptrace_deferred_exit)
             continue;
         ScopedTask context(*this, tid);
         if (task.poll) {
@@ -445,23 +763,13 @@ bool Scheduler::select(bool blocking) {
         return false;
     for (;;) {
         const auto next_poll = poll_waiting();
-        uint32_t selected = 0;
-        int best_priority = 0;
-        for (const auto &[tid, task] : tasks_) {
-            if (!can_run(task))
-                continue;
-            const int priority = effective_priority(tid);
-            if (!selected || priority < best_priority ||
-                (priority == best_priority &&
-                 before_in_rotation(tid, selected, priority_cursor(priority, current_tid())))) {
-                selected = tid;
-                best_priority = priority;
-            }
-        }
-        if (selected) {
+        const auto candidates = ordered_candidates();
+        if (!candidates.empty()) {
+            const auto [priority, selected] = candidates.front();
             if (current_tid() != selected)
                 current().cpu.exclusive_valid = false;
-            priority_cursors_[best_priority] = selected;
+            if (priority >= 100)
+                priority_cursors_[priority] = selected;
             set_current_tid(selected);
             return true;
         }

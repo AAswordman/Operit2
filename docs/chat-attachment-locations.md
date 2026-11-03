@@ -20,14 +20,14 @@
   不在消息发送或接收时覆盖为当前执行节点，不新建节点身份。
 - 原 `filePath` 保留，供本机预览和直接媒体读取。发送给 AI 的附件标签携带
   `node_id`，并通过 `path` 提供附件目录的 VFS 地址
-  `/app/data/data/chat_attachments/<chatId>/<attachmentId>/<原文件名>`。
-  VFS 的 `/app/data` 映射整个 Runtime 根，因此这里包含两层 `data`。
+  `/operitapp/data/data/chat_attachments/<chatId>/<attachmentId>/<原文件名>`。
+  VFS 的 `/operitapp/data` 映射整个 Runtime 根，因此这里包含两层 `data`。
 - 文件位于另一节点时，不能通过当前节点的文件 Host 或媒体池读取。远端图片、音频、
   视频回退成带来源信息的附件标签，不因错误的本地媒体读取而中断发送。
 - AI 可以直接使用已内嵌内容；确需读取原文件时，先检查节点可达性，再使用
   `switch_core` 在来源节点继续执行。此操作改变聊天执行节点，不是远程文件读取。
 - 来源离线时，需要明确提示重连或重新上传，不搜索其他设备的目录。旧消息引用的
-  `/app/data/temp/clean_on_exit` 附件文件在历史版本中已被启动清理删除，无法恢复，
+  `/operitapp/data/temp/clean_on_exit` 附件文件在历史版本中已被启动清理删除，无法恢复，
   同样提示重新上传。
 - 旧消息和旧附件没有节点信息时保持来源未知，不伪造来源。文本、通知、位置、包信息和
   `@工作区` 等内嵌附件不需要为了读取已附带内容切换节点。

@@ -3713,16 +3713,16 @@ mod workspace_path_tests {
         let mapper = PathMapper::builtinOnly(root.join("runtime"), workspace_root.clone());
         let mappings = resolve_workspace_path_mappings(
             &mapper,
-            Some("/app/workspaces/main"),
+            Some("/operitapp/workspaces/main"),
             &[
-                "/app/workspaces/main/".into(),
-                "/app/workspaces/other".into(),
+                "/operitapp/workspaces/main/".into(),
+                "/operitapp/workspaces/other".into(),
                 "".into(),
                 "/unknown/project".into(),
             ],
         );
         assert_eq!(mappings.len(), 2);
-        assert_eq!(mappings[0].vfsPath, "/app/workspaces/main");
+        assert_eq!(mappings[0].vfsPath, "/operitapp/workspaces/main");
         assert_eq!(
             mappings[0].physicalPath,
             workspace_root
@@ -3743,8 +3743,8 @@ mod workspace_path_tests {
     fn workspace_switch_resolves_new_path() {
         let root = std::env::temp_dir().join("Operit workspace switch");
         let mapper = PathMapper::builtinOnly(root.join("runtime"), root.join("workspaces"));
-        let first = resolve_workspace_path_mappings(&mapper, Some("/app/workspaces/first"), &[]);
-        let second = resolve_workspace_path_mappings(&mapper, Some("/app/workspaces/second"), &[]);
+        let first = resolve_workspace_path_mappings(&mapper, Some("/operitapp/workspaces/first"), &[]);
+        let second = resolve_workspace_path_mappings(&mapper, Some("/operitapp/workspaces/second"), &[]);
         assert_eq!(
             first[0].physicalPath,
             root.join("workspaces/first")
@@ -3765,8 +3765,8 @@ mod workspace_path_tests {
         let mapper = PathMapper::builtinOnly("/runtime".into(), "/workspaces".into());
         let mappings = resolve_workspace_path_mappings(
             &mapper,
-            Some("/app/workspaces/main"),
-            &["/mnt/macos/Users/test/External Project".into()],
+            Some("/operitapp/workspaces/main"),
+            &["/virtual/macos/Users/test/External Project".into()],
         );
         assert_eq!(mappings.len(), 2);
         assert_eq!(mappings[1].physicalPath, "/Users/test/External Project");
@@ -3776,7 +3776,7 @@ mod workspace_path_tests {
     fn browser_storage_keys_are_not_advertised_as_terminal_paths() {
         let mapper = PathMapper::builtinOnly("runtime".into(), "workspaces".into());
         assert!(
-            resolve_workspace_path_mappings(&mapper, Some("/app/workspaces/main"), &[]).is_empty()
+            resolve_workspace_path_mappings(&mapper, Some("/operitapp/workspaces/main"), &[]).is_empty()
         );
     }
 }

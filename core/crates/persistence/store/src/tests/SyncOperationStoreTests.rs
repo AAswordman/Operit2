@@ -1358,9 +1358,9 @@ fn compaction_does_not_infer_coverage_from_matching_key_sets() {
 }
 
 
-/// Builds a raw journal with one corrupt middle line and verifies reads skip it.
+/// A failed legacy import resets the ledger while raw diagnostics remain available.
 #[test]
-fn corrupt_lines_are_skipped_by_reads_and_reported_by_scans() {
+fn corrupt_legacy_ledger_resets_without_disabling_raw_diagnostics() {
     let storage = Arc::new(MemoryStorageHost::default());
     let store = SyncOperationStore::new(storage.clone(), "corrupt-journal");
     // Legacy files are compatibility input; current writes use SQLite.
@@ -1381,7 +1381,7 @@ fn corrupt_lines_are_skipped_by_reads_and_reported_by_scans() {
     // must rebuild from disk rather than keeping a process-pinned cache alive.
     drop(store);
     let reopened = SyncOperationStore::new(storage.clone(), "corrupt-journal");
-    assert!(reopened.operationsSince(&SyncClock::empty(), &[], 100).is_err());
+    assert!(reopened.operationsSince(&SyncClock::empty(), &[], 100).unwrap().is_empty());
 
     // The raw scan classifies every line instead of failing on the bad one.
     let scan = reopened.scanOperationLog("device-a").unwrap();
@@ -1396,7 +1396,8 @@ fn corrupt_lines_are_skipped_by_reads_and_reported_by_scans() {
 
     reopened.quarantineOperationLines("device-a", &[scan.findings[0].byteOffset]).unwrap();
     let repaired = reopened.operationsSince(&SyncClock::empty(), &["chat".into()], 100).unwrap();
-    assert_eq!(sequences(&repaired), vec![1,3]);
+    // Repairing retired input does not import old transactions after a committed reset.
+    assert!(repaired.is_empty());
 }
 
 /// A missing journal scans as absent rather than as an error.
@@ -1411,7 +1412,7 @@ fn missing_journal_scans_as_absent() {
 }
 
 /// Quarantine removes exactly the damaged lines, keeps them reversible and
-/// leaves the journal readable through the same and fresh store instances.
+/// leaves raw diagnostics readable without repopulating the SQL journal.
 #[test]
 fn quarantine_moves_damaged_lines_to_a_reversible_sidecar() {
     let storage = Arc::new(MemoryStorageHost::default());
@@ -1447,10 +1448,9 @@ fn quarantine_moves_damaged_lines_to_a_reversible_sidecar() {
     assert_eq!(rescan.decodedLines, 2);
     assert_eq!(rescan.highestSequence, 2);
     let reopened = SyncOperationStore::new(storage.clone(), "quarantine-journal");
-    assert_eq!(
-        sequences(&reopened.operationsSince(&SyncClock::empty(), &[], 100).unwrap()),
-        vec![1, 2]
-    );
+    assert!(reopened.operationsSince(&SyncClock::empty(), &[], 100).unwrap().is_empty());
+    // The repair preserves the valid legacy lines for diagnostics, not automatic re-import.
+    assert_eq!(storage.readBytes(path).unwrap(), original);
 
     // The sidecar preserves the removed bytes verbatim for manual recovery.
     let sidecar = storage.readBytes("quarantine-journal/operations/device-a.jsonl.quarantine").unwrap();

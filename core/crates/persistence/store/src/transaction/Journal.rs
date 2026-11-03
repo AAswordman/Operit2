@@ -203,6 +203,33 @@ impl Journal {
         Ok(!self.0.query("SELECT 1 FROM journal_meta WHERE key='legacy_imported'", vec![])?.is_empty())
     }
 
+    /// Retire an unreadable legacy ledger once; owners initialize again from their business files.
+    pub(crate) fn reset_failed_import(&mut self, clock: &crate::SyncOperationStore::SyncClock) -> Result<(), Error> {
+        self.transaction(|tx| {
+            // Keep allocation floors so resetting history cannot reuse an identity held by a peer.
+            for row in tx.query("SELECT origin,MAX(sequence),MAX(business_time) FROM (
+                SELECT origin,sequence,business_time FROM originals UNION ALL
+                SELECT origin,sequence,business_time FROM _operit_compacted UNION ALL
+                SELECT origin,last,0 FROM legacy_receipts) GROUP BY origin", vec![])? {
+                tx.execute("INSERT INTO transaction_authors(origin,sequence,logical_time) VALUES(?1,?2,?3)
+                    ON CONFLICT(origin) DO UPDATE SET sequence=MAX(sequence,excluded.sequence),logical_time=MAX(logical_time,excluded.logical_time)",
+                    vec![row.valueAt(0)?.clone(), row.valueAt(1)?.clone(), row.valueAt(2)?.clone()])?;
+            }
+            for (origin, sequence) in &clock.sequences {
+                tx.execute("INSERT INTO transaction_authors(origin,sequence,logical_time) VALUES(?1,?2,0)
+                    ON CONFLICT(origin) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)",
+                    vec![text(origin), SqliteValue::Integer(*sequence)])?;
+            }
+            let tables = tx.query("SELECT name FROM sqlite_master WHERE type='table'
+                AND name NOT LIKE 'sqlite_%' AND name<>'transaction_authors'", vec![])?;
+            for row in tables {
+                let name = row.valueAt(0)?.asString()?.replace('"', "\"\"");
+                tx.execute(&format!("DELETE FROM \"{name}\""), vec![])?;
+            }
+            Self::finish_import(tx)
+        })
+    }
+
     pub(crate) fn import_receipts(tx: &mut dyn RuntimeSqliteTransaction, state: &LegacyReceiveState) -> Result<(), Error> {
         state.receipt.validate().map_err(Error::Message)?;
         for (origin, ranges) in &state.receipt.ranges {

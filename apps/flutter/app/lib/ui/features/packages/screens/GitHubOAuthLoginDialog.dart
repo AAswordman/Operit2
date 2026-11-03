@@ -331,6 +331,7 @@ class _GitHubOAuthLoginDialogState extends State<GitHubOAuthLoginDialog> {
   Widget build(BuildContext context) {
     final loginStart = _loginStart;
     return Dialog(
+      constraints: const BoxConstraints(maxWidth: _dialogWidth),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(
         width: _dialogWidth,

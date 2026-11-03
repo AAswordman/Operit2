@@ -1,4 +1,5 @@
 #include "runtime/machine.h"
+#include "linux/io_uring/io_uring.h"
 #include "linux/process/pidfd.h"
 #include "linux/events/inotify.h"
 
@@ -76,10 +77,17 @@ int64_t Machine::process_timer(CpuState &cpu, Memory &memory) {
 void Machine::poll_runtime_events() {
     // Both Machine's quantum boundary and Scheduler's idle loop enter here
     // with all workers stopped, before retrying a blocked guest operation.
+    // Settle the preceding syscall before a timer/signal can wake its task
+    // and reset the continuous realtime timeout. Enforce the charged limits
+    // before servicing those wakeups as well.
+    stop_accounting();
+    io_uring::service_completions(io_uring_context_, scheduler_);
+    flush_ptrace_events();
+    service_ptrace_exits();
     bind_runtime_signal_queues();
     InotifyFile::service_all();
-    poll_process_timers();
     enforce_cpu_limits();
+    poll_process_timers();
 }
 
 signals::Deadline Machine::next_runtime_deadline() {

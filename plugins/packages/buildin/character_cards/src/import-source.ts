@@ -1,6 +1,4 @@
-import { hostFilePath } from "./host-path";
-
-/** Selects pasted JSON or a host file path without treating malformed JSON as a path. */
+/** Selects pasted JSON or a VFS file path without treating malformed JSON as a path. */
 export type ImportSource = { kind: "inline"; content: string } | { kind: "file"; path: string };
 
 /** Classifies one import argument by its leading JSON token; everything else is a file path. */
@@ -11,13 +9,10 @@ export function parseImportSource(raw: string): ImportSource {
   return { kind: "file", path: trimmed };
 }
 
-/** Reads a file-backed import through the host path's documented VFS mount. */
+/** Reads a file-backed import through the shared VFS API. */
 export async function readImportSource(source: ImportSource): Promise<string> {
   if (source.kind === "inline") return source.content;
-  const platform = (await Tools.System.terminal.info()).platform;
-  const path = hostFilePath(source.path, platform);
-  if (path === null) throw new Error(`unsupported import file path on ${platform}: ${source.path}`);
-  const file = await Tools.Files.read(path);
+  const file = await Tools.Files.read(source.path);
   const content = file.content.replace(/^\uFEFF/, "");
   if (content.trim() === "") throw new Error(`import file is empty: ${source.path}`);
   return content;

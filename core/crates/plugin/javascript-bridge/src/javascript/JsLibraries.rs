@@ -100,7 +100,7 @@ fn cleanOnExitVfsPath() -> String {
     let relativePath = RUNTIME_CLEAN_ON_EXIT_DIR_PATH
         .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .expect("clean-on-exit path must be rooted under runtime");
-    format!("/app/data/{relativePath}")
+    format!("/operitapp/data/{relativePath}")
 }
 
 #[allow(non_snake_case)]
@@ -984,8 +984,7 @@ fn assembleRuntimeBootstrapScript() -> String {
         loadPluginConfigJs(),
         loadRuntimeContextJs(),
         buildLazyLibraryBootstrapScript(),
-        format!("{}\n{}\n{}\n__operitInstallV1Runtime(globalThis);", include_str!("../../../sdk/src/js_sdk/toolpkg_route_runtime.js"),
-            include_str!("../../../sdk/src/compat/v1/internal_runtime.js"),
+        format!("{}\n{}\n__operitInstallV1Runtime(globalThis);", include_str!("../../../sdk/src/js_sdk/toolpkg_route_runtime.js"),
             JsExecutionScriptBuilder::buildExecutionRuntimeBridgeScript())
     )
 }

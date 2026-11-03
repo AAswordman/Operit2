@@ -46,12 +46,20 @@ struct BatchTask {
 } // namespace
 
 bool Machine::run_parallel(uint64_t &budget) {
-    if (execution_threads_ < 2 || budget < 8192)
-        return false;
-    auto tids = scheduler_.runnable_tids(execution_threads_);
-    if (tids.size() < 2)
+    // Ptrace operates on coordinated CPU and memory snapshots. Keep traced VMs
+    // serial until the parallel executor can stop individual jobs at a trap.
+    if (execution_threads_ < 2 || budget < 8192 || !ptrace_->empty())
         return false;
     stop_accounting();
+    const auto selected = scheduler_.runnable_batch(execution_threads_, 2);
+    if (selected.size() < 2)
+        return false;
+    for (const auto [tid, cpu] : selected) {
+        (void)cpu;
+        const auto &task = scheduler_.find(tid);
+        if (task.ptrace_syscall || task.ptrace_exit_pending)
+            return false;
+    }
     // No guest CPU is executing while access mode changes. Include aliases in
     // other address spaces before starting any worker in this batch.
     for (auto &[pid, process] : processes_) {
@@ -60,8 +68,8 @@ bool Machine::run_parallel(uint64_t &budget) {
             process->image.memory->set_parallel_access(true);
     }
     std::vector<BatchTask> batch;
-    batch.reserve(tids.size());
-    for (const auto tid : tids) {
+    batch.reserve(selected.size());
+    for (const auto [tid, cpu] : selected) {
         Scheduler::ScopedTask context(scheduler_, tid);
         auto &task = scheduler_.current();
         auto *process = find_process(task.pid);
@@ -69,11 +77,11 @@ bool Machine::run_parallel(uint64_t &budget) {
             continue;
         auto &image = process->image;
         image.memory->synchronize_shared();
-        const auto delivery = signals::deliver(*image.memory, task.cpu, *process->signals, task.signals,
-                                               task.signal_mask, image.signal_trampoline);
+        const auto delivery = deliver_signals(task, *process, cpu);
         if (delivery.effect != signals::Effect::None && delivery.effect != signals::Effect::Handler)
             signal_hooks().effect(process->pid, delivery);
-        if (task.state != Task::State::Runnable || task.stopped || main_exited_)
+        if (task.state != Task::State::Runnable || task.stopped || task.ptrace_stopped ||
+            task.ptrace_deferred_exit || main_exited_)
             continue;
         auto &engine = thread_executions_[tid];
         if (engine.memory != image.memory || engine.source != image.acceleration.get() ||
@@ -89,6 +97,7 @@ bool Machine::run_parallel(uint64_t &budget) {
         }
         BatchTask work;
         work.tid = tid;
+        work.cpu = cpu;
         work.pid = process->pid;
         work.task = &task;
         work.memory = image.memory.get();
@@ -97,7 +106,8 @@ bool Machine::run_parallel(uint64_t &budget) {
         batch.push_back(std::move(work));
     }
     batch.erase(std::remove_if(batch.begin(), batch.end(), [this](const BatchTask &work) {
-        return work.task->state != Task::State::Runnable || work.task->stopped ||
+        return work.task->state != Task::State::Runnable || work.task->stopped || work.task->ptrace_stopped ||
+               work.task->ptrace_deferred_exit ||
                processes_.at(work.pid)->state != Process::State::Running;
     }), batch.end());
     if (batch.empty()) {
@@ -110,7 +120,7 @@ bool Machine::run_parallel(uint64_t &budget) {
     jobs.reserve(batch.size());
     for (auto &work : batch) {
         work.budget = quantum;
-        eligible.push_back(work.task->cpu_affinity);
+        eligible.push_back(uint64_t{1} << work.cpu);
         jobs.emplace_back([&work](uint32_t cpu) {
             work.cpu = cpu;
             const auto before_cpu = worker_cpu_time();
@@ -144,6 +154,7 @@ bool Machine::run_parallel(uint64_t &budget) {
     // Every CPU is at the barrier. Account all execution before dispatching any
     // syscall that could fork, exec, change mappings, reap or terminate a peer.
     for (auto &work : batch) {
+        threads::rseq_event(work.task->rseq, threads::RseqEvent::Preempt);
         auto &process = *processes_.at(work.pid);
         process.instructions += work.instructions;
         process.decoded_blocks += work.blocks;
@@ -157,6 +168,9 @@ bool Machine::run_parallel(uint64_t &budget) {
         work.task->user_nanoseconds += work.usage.user_nanoseconds;
         work.task->system_nanoseconds += work.usage.system_nanoseconds;
         work.task->runtime_nanoseconds += work.usage.runtime_nanoseconds;
+        const auto limit = process.image.syscalls->resource_limits()->get(process::Resource::RealtimeTime);
+        scheduler_.account_runtime(work.tid, work.usage.runtime_nanoseconds,
+                                   limit.soft != process::resource_infinity);
         budget -= std::min(budget, work.instructions);
     }
     for (auto &work : batch) {
@@ -167,7 +181,9 @@ bool Machine::run_parallel(uint64_t &budget) {
             continue; // A preceding syscall in this batch executed a new image.
         auto &task = *remaining;
         auto &process = *owner;
-        if (task.state != Task::State::Runnable || task.stopped || process.state != Process::State::Running)
+        if (task.state != Task::State::Runnable || task.stopped || task.ptrace_stopped ||
+            task.ptrace_deferred_exit ||
+            process.state != Process::State::Running)
             continue;
         task.last_cpu = work.cpu;
         Scheduler::ScopedTask context(scheduler_, work.tid);
@@ -192,32 +208,17 @@ bool Machine::run_parallel(uint64_t &budget) {
         }
         if (work.execution.trap == Trap::Syscall) {
             begin_accounting(process.pid);
-            const auto number = task.cpu.x[8];
-            const auto code = int(task.cpu.x[0]) & 255;
-            signals::remember_syscall(task.signals, task.cpu, true);
-            process.image.syscalls->handle(task.cpu);
-            // Release this retired thread's queue before dispatching a peer's
-            // next syscall in the same batch. Process-wide exit clears all queues.
-            if (task.state == Task::State::Exited)
-                task.signals.pending.discard(UINT64_MAX);
-            if (number == 93 && task.state == Task::State::Exited) {
-                if (task.tid == process.pid)
-                    process.leader_status = code << 8;
-                const auto survivors = scheduler_.live_tids(process.pid);
-                if (!survivors.empty())
-                    for (auto &[pid, child] : processes_) {
-                        (void)pid;
-                        if (child->parent == process.pid && child->parent_tid == task.tid)
-                            child->parent_tid = survivors.front();
-                    }
+            if (!dispatch_guest_syscall(task, process, false)) {
+                stop_accounting();
+                continue;
             }
-            if (!scheduler_.process_alive(process.pid) && process.state != Process::State::Zombie)
-                finish_process(process,
-                               number == 94 ? code << 8 : process.leader_status.value_or(code << 8));
             ++process.voluntary_switches;
             ++task.voluntary_switches;
             if (process.pending_exec)
                 commit_exec(process);
+            auto &completed = scheduler_.current();
+            if (completed.state == Task::State::Runnable && !completed.ptrace_stopped)
+                wait_completed(completed.tid);
             drain_terminal_signals(process);
             stop_accounting();
         } else {

@@ -105,7 +105,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             assert!(!staged_path.parent().unwrap().exists(), "registration must remove its staging directory");
             assert!(attachment
                 .fileToolPath()
-                .starts_with(&format!("/app/data/data/chat_attachments/{expected_chat_id}/")));
+                .starts_with(&format!("/operitapp/data/data/chat_attachments/{expected_chat_id}/")));
             assert_eq!(
                 runtimeStorageOwnership("runtime/data/chat_attachments/chat/attachment/file.pdf").unwrap(),
                 RuntimeStorageOwnership::CoreNode

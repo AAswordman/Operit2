@@ -35,7 +35,7 @@ const samples = [
   { name: 'scaled', diff: basicDiff, scale: 1.5 },
   { name: 'empty', empty: true },
   { name: 'tree', diff: basicDiff, pane: 'tree' },
-  { name: 'preview', diff: basicDiff, pane: 'tree', preview: { path: '/app/workspaces/test/readme.txt', content: 'tree file body' } },
+  { name: 'preview', diff: basicDiff, pane: 'tree', preview: { path: '/operitapp/workspaces/test/readme.txt', content: 'tree file body' } },
 ];
 workspaceFixtures.samples = samples;
 for (const brightness of ['light', 'dark']) {
@@ -43,7 +43,7 @@ for (const brightness of ['light', 'dark']) {
   const page = await screen('../src/ui/workspace.ui.ts', {
     locale: sample.locale ?? 'zh', size: { width: sample.width ?? 800, height: 600 }, split: sample.split ?? false, wrap: sample.wrap ?? false,
     pane: sample.pane ?? 'changes', ...(sample.preview ? { preview: sample.preview } : {}),
-    ...(sample.pane || sample.full || sample.fullOff ? { workspacePath: '/app/workspaces/test' } : {}), input: { files: sample.empty ? [] : [
+    ...(sample.pane || sample.full || sample.fullOff ? { workspacePath: '/operitapp/workspaces/test' } : {}), input: { files: sample.empty ? [] : [
       { path: 'src/a.ts', diffContent: sample.diff, additions: sample.diff === longDiff ? 2 : sample.diff === gapDiff ? 2 : 1, deletions: sample.diff === gapDiff ? 2 : 1 },
     ] },
   }, { theme: { brightness, colors: {} }, tools: { Files: { list: async () => ({ entries: [

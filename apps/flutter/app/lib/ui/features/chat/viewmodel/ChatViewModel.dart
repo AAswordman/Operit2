@@ -444,7 +444,7 @@ class ChatViewModel {
               .every(
                 (part) => part.isNotEmpty && part != '.' && part != '..',
               )) {
-        toolPath = '/app/data/data/chat_attachments/$relative';
+        toolPath = '/operitapp/data/data/chat_attachments/$relative';
       }
     }
     buffer.write('id="${escape.convert(toolPath ?? attachment.filePath)}" ');

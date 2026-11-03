@@ -3,7 +3,7 @@
 #include <cassert>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
+#include "memory/page_mutex.h"
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -43,23 +43,18 @@ class AccessSynchronization {
         }
     }
     static void close() {
-        // Copy before closing: allocation failure must leave readers enabled.
-        std::vector<std::shared_ptr<ReaderSlot>> active;
-        std::unique_lock<std::mutex> registry(registry_mutex_);
-        active.reserve(readers_.size());
+        // New slots cannot publish until registration releases this mutex;
+        // existing readers can leave without acquiring it.
+        std::lock_guard<std::mutex> registry(registry_mutex_);
+        pending_.store(true, std::memory_order_seq_cst);
         for (auto it = readers_.begin(); it != readers_.end();) {
             if (auto reader = it->lock()) {
-                active.push_back(std::move(reader));
+                unsigned attempts = 0;
+                while (reader->active.load(std::memory_order_seq_cst))
+                    wait(attempts);
                 ++it;
             } else
                 it = readers_.erase(it);
-        }
-        pending_.store(true, std::memory_order_seq_cst);
-        registry.unlock();
-        for (const auto &reader : active) {
-            unsigned attempts = 0;
-            while (reader->active.load(std::memory_order_seq_cst))
-                wait(attempts);
         }
     }
 
@@ -149,12 +144,12 @@ class AccessSynchronization {
     class PageGuard {
         inline static thread_local PageGuard *held_ = nullptr;
         PageGuard *previous_ = nullptr;
-        std::shared_mutex *mutex_ = nullptr;
+        PageMutex *mutex_ = nullptr;
         bool writing_ = false;
 
       public:
         PageGuard() = default;
-        void lock(std::shared_mutex &mutex, bool writing) {
+        void lock(PageMutex &mutex, bool writing) {
             assert(!mutex_);
             for (auto *guard = held_; guard; guard = guard->previous_) {
                 if (guard->mutex_ != &mutex)

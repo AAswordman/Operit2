@@ -57,7 +57,7 @@ void main() {
       expect(result['cancelled'], false);
       expect(selected['name'], 'avatar.png');
       expect(selected['mimeType'], 'image/png');
-      expect(uri, startsWith('/app/data/temp/clean_on_exit/file_picker/'));
+      expect(uri, startsWith('/operitapp/data/temp/clean_on_exit/file_picker/'));
       expect(storage.files[uri], bytes);
       expect(selected['path'], uri);
       expect(base64Decode(selected['contentBase64'] as String), bytes);

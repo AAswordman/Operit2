@@ -5,6 +5,7 @@
 #include <vector>
 
 namespace operit::arm64 {
+inline constexpr uint64_t fixed_copy_loop_offset = 0x183c0 - 0x18290;
 struct ExecutableSnapshot {
     uint64_t address;
     std::vector<uint8_t> bytes;
@@ -20,6 +21,8 @@ class FixedComponents {
     uint64_t generation_ = 1, completed_ = 0;
     std::vector<Module> modules_;
     const FixedManifest *manifest(const std::vector<uint8_t> &elf) const;
+    void register_verified_image(const FixedManifest &image, uint64_t base,
+                                 std::vector<ExecutableSnapshot> executable);
 
   public:
     uint64_t calls = 0, bytes = 0;
@@ -36,7 +39,8 @@ class FixedComponents {
                 continue;
             const uint64_t offset = pc - module.base;
             for (const auto &symbol : module.manifest->symbols)
-                if (offset == symbol.value)
+                if (offset == symbol.value ||
+                    (symbol.function == FixedFunction::Copy && offset == symbol.value + fixed_copy_loop_offset))
                     return true;
         }
         return false;
@@ -44,6 +48,11 @@ class FixedComponents {
     bool recognizes(const std::vector<uint8_t> &elf) const;
     void register_image(const std::vector<uint8_t> &elf, uint64_t base,
                         std::vector<ExecutableSnapshot> executable);
+    template <typename SnapshotFactory>
+    void register_image_lazy(const std::vector<uint8_t> &elf, uint64_t base, SnapshotFactory &&snapshots) {
+        if (const auto *image = manifest(elf))
+            register_verified_image(*image, base, snapshots());
+    }
     uint64_t completed_instructions() const {
         return completed_;
     }

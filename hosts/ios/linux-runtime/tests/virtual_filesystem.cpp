@@ -232,6 +232,89 @@ void descriptions_and_paths() {
     require(f.call(61, {uint64_t(devices), 0x18000, 1}) == -22, "tiny getdents accepted");
     require(f.directory(devices).count("urandom"), "failed getdents advanced directory cursor");
 }
+void epoll_timespec_waits() {
+    Fixture f;
+    constexpr uint64_t event = 0x17000, timeout = 0x17100, mask = 0x17120;
+    constexpr uint64_t output = 0x18000, value = 0x19000;
+    const auto epoll = f.call(20, {524288});
+    const auto counter = f.call(19, {1, 2048});
+    require(epoll >= 3 && counter >= 3, "epoll/eventfd creation");
+    f.memory.store(event, 1, 4);
+    f.memory.store(event + 8, 0x1122334455667788, 8);
+    require(f.call(21, {uint64_t(epoll), 1, uint64_t(counter), event}) == 0, "epoll add counter");
+    auto wait = [&](uint64_t pointer = 0x17100, uint64_t mask_pointer = 0, uint64_t size = 8) {
+        return f.call(441, {uint64_t(epoll), output, 1, pointer, mask_pointer, size});
+    };
+    f.memory.store(timeout, uint64_t(-1), 8);
+    f.memory.store(timeout + 8, 0, 8);
+    require(wait() == -22, "epoll_pwait2 accepted negative seconds with a ready event");
+    f.memory.store(timeout, 0, 8);
+    f.memory.store(timeout + 8, 1000000000, 8);
+    require(wait() == -22, "epoll_pwait2 accepted invalid nanoseconds");
+    f.memory.store(timeout + 8, 0, 8);
+    f.memory.store(mask, 1u << 11, 8);
+    require(wait(0x500000) == -14, "epoll_pwait2 timeout pointer must be checked");
+    require(wait(timeout, mask, 4) == -22, "epoll_pwait2 sigset size");
+    const uint64_t original_mask = 1u << 9;
+    f.scheduler.current().signal_mask = original_mask;
+    f.memory.protect(event, 4096, read_perm);
+    require(wait(timeout, mask) == 1, "epoll_pwait2 ready event with read-only timespec");
+    require(f.memory.load(output, 4) == 1 && f.memory.load(output + 4, 4) == 0 &&
+                f.memory.load(output + 8, 8) == 0x1122334455667788,
+            "epoll_pwait2 AArch64 event layout or data");
+    require(f.scheduler.current().signal_mask == original_mask && f.memory.load(timeout, 8) == 0 &&
+                f.memory.load(timeout + 8, 8) == 0,
+            "epoll_pwait2 changed timeout or leaked temporary signal mask");
+    require(f.call(63, {uint64_t(counter), value, 8}) == 8, "consume eventfd readiness");
+    require(wait() == 0 && f.scheduler.current().state == Task::State::Runnable,
+            "epoll_pwait2 zero timeout must not block");
+    f.memory.protect(event, 4096, read_perm | write_perm);
+    const auto sibling = f.scheduler.spawn(f.scheduler.current().cpu, 0, 0, 0);
+    require(sibling > 1, "epoll waiter sibling");
+    f.memory.store(timeout, 1, 8);
+    f.memory.store(timeout + 8, 345678901, 8);
+    const auto before = TaskClock::now();
+    require(wait(timeout, mask) == 0, "epoll_pwait2 scheduling entry");
+    const auto after = TaskClock::now();
+    auto &waiting = f.scheduler.current();
+    const auto duration = std::chrono::seconds(1) + std::chrono::nanoseconds(345678901);
+    require(waiting.state == Task::State::Waiting && waiting.deadline &&
+                *waiting.deadline >= before + duration && *waiting.deadline <= after + duration,
+            "epoll_pwait2 lost timespec precision");
+    require(waiting.signal_mask == (1u << 11), "epoll_pwait2 temporary mask not installed");
+    require(f.scheduler.select() && f.scheduler.current().tid == sibling,
+            "epoll_pwait2 blocked another runnable guest task");
+    f.memory.store(value, 1, 8);
+    require(f.call(64, {uint64_t(counter), value, 8}) == 8, "wake epoll waiter");
+    require(f.scheduler.select() && f.scheduler.current().tid == 1 &&
+                f.scheduler.current().cpu.x[0] == 1 &&
+                f.scheduler.current().signal_mask == original_mask,
+            "epoll_pwait2 wake did not return the event and restore mask");
+    require(f.call(63, {uint64_t(counter), value, 8}) == 8, "consume second event");
+    require(wait(0, mask) == 0 && f.scheduler.current().state == Task::State::Waiting &&
+                !f.scheduler.current().deadline,
+            "epoll_pwait2 null timespec must wait without a deadline");
+    require(f.scheduler.select() && f.scheduler.current().tid == sibling, "infinite epoll wait scheduling");
+    f.memory.store(value, 1, 8);
+    require(f.call(64, {uint64_t(counter), value, 8}) == 8, "wake infinite epoll waiter");
+    require(f.scheduler.select() && f.scheduler.current().tid == 1 &&
+                f.scheduler.current().cpu.x[0] == 1 &&
+                f.scheduler.current().signal_mask == original_mask,
+            "epoll_pwait2 infinite wake cleanup");
+    require(f.call(63, {uint64_t(counter), value, 8}) == 8, "consume final event");
+    f.memory.store(timeout, uint64_t(INT64_MAX), 8);
+    f.memory.store(timeout + 8, 999999999, 8);
+    require(wait(timeout, mask) == 0 && f.scheduler.current().deadline &&
+                *f.scheduler.current().deadline == TaskClock::time_point::max(),
+            "epoll_pwait2 huge timeout must saturate without overflowing");
+    // Expire via the scheduler to verify the timeout cleanup without sleeping.
+    f.scheduler.current().deadline = TaskClock::now();
+    require(f.scheduler.select(), "epoll_pwait2 timeout scheduling");
+    const auto &expired = f.scheduler.find(1);
+    require(expired.state == Task::State::Runnable && expired.cpu.x[0] == 0 &&
+                expired.signal_mask == original_mask && !expired.deadline,
+            "epoll_pwait2 timeout did not restore the original signal mask");
+}
 } // namespace
 int main() {
     try {
@@ -239,6 +322,7 @@ int main() {
         devices();
         process_and_memory();
         descriptions_and_paths();
+        epoll_timespec_waits();
         std::puts("devfs and dynamic guest procfs passed");
         return 0;
     } catch (const std::exception &error) {

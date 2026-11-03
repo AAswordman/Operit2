@@ -525,7 +525,13 @@ fn execute_workspace_shell_command(
         .clone()
         .ok_or_else(|| "TerminalHost is not registered for this runtime.".to_string())?;
     let vfs = vfsForWorkspace(context)?;
-    let workingDir = workspace_command_working_dir(&vfs, workspacePath, &command.workingDir)?;
+    let workingDir = workspace_command_working_dir(workspacePath, &command.workingDir)?;
+    let directory = operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
+        terminalHost.as_ref(), None, &workingDir, &|path| {
+            vfs.resolvePath(path).and_then(|path| path.nativePath())
+                .map_err(operit_host_api::HostError::new)
+        },
+    ).map_err(|error| format!("failed to resolve workspace directory: {}", error.message))?;
     let sessionName = workspace_command_session_name(workspacePath, command);
     let session = terminalHost
         .createOrGetSession(&sessionName)
@@ -535,10 +541,15 @@ fn execute_workspace_shell_command(
                 error.message
             )
         })?;
-    let cdCommand = format!("cd {}", shell_quote(&workingDir));
-    terminalHost
-        .executeInSession(&session.sessionId, &cdCommand, 120000)
-        .map_err(|error| format!("failed to enter workspace directory: {}", error.message))?;
+    let entered = operit_host_api::TerminalWorkingDirectory::enterTerminalDirectory(
+        terminalHost.as_ref(), &session.sessionId, &session.terminalType, &directory,
+    );
+    if let Err(error) = entered {
+        if session.isNewSession {
+            let _ = terminalHost.closeSession(&session.sessionId);
+        }
+        return Err(format!("failed to enter workspace directory: {}", error.message));
+    }
     let commandOutput = terminalHost
         .executeInSession(&session.sessionId, commandText, 1800000)
         .map_err(|error| format!("failed to execute workspace command: {}", error.message))?;
@@ -596,7 +607,7 @@ fn resolve_workspace_tool_parameter_value(
 
     if startsWithHostDrivePath(trimmed) {
         return Err(format!(
-            "workspace tool parameter `{name}` must use a VFS path; use /mnt/windows/<drive>/... for Windows host paths"
+            "workspace tool parameter `{name}` must use a VFS path; use /virtual/windows/<drive>/... for Windows host paths"
         ));
     }
 
@@ -680,7 +691,6 @@ fn print_tool_execution_result(
 
 /// Resolves the physical working directory for a workspace command.
 fn workspace_command_working_dir(
-    vfs: &VisualFileSystem,
     workspacePath: &str,
     workingDir: &str,
 ) -> Result<String, String> {
@@ -697,7 +707,7 @@ fn workspace_command_working_dir(
     } else {
         PathMapper::joinVfsPath(workspacePath, trimmed)?
     };
-    vfs.resolvePath(&workingDirPath)?.nativePath()
+    PathMapper::normalizeVfsPath(&workingDirPath)
 }
 
 /// Builds the terminal session name for a workspace command.
@@ -717,11 +727,6 @@ fn workspace_command_session_name(workspacePath: &str, command: &CommandConfig) 
     } else {
         format!("Workspace: {name}")
     }
-}
-
-/// Quotes a path for the terminal shell used by workspace commands.
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Parses arguments shared by default workspace commands.

@@ -3,7 +3,6 @@
 import 'dart:async';
 
 import 'package:desktop_drop/desktop_drop.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:operit_ui/operit_ui.dart';
@@ -22,6 +21,7 @@ import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
+import '../common/ChatInputEnterActivator.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -900,7 +900,7 @@ class _InputBody extends StatelessWidget {
             onInsertAttachment: onInsertAttachment,
           ),
       ],
-      editor: _DesktopEnterSendShortcuts(
+      editor: _EnterSendShortcuts(
         controller: controller,
         canSendMessage: canSendMessage,
         onSendMessage: onSendMessage,
@@ -918,11 +918,6 @@ class _InputBody extends StatelessWidget {
                 chatPastedImageContentInsertionConfiguration(
                   onPasteImages: onPasteImages,
                 ),
-            onSubmitted: (_) {
-              if (canSendMessage) {
-                onSendMessage();
-              }
-            },
             onToggleExpansion: onToggleInputExpansion,
             expandTooltip: l10n.expandInput,
             collapseTooltip: l10n.collapseInput,
@@ -1657,8 +1652,8 @@ IconData _attachmentIcon(String mimeType) {
   return Icons.description;
 }
 
-class _DesktopEnterSendShortcuts extends StatelessWidget {
-  const _DesktopEnterSendShortcuts({
+class _EnterSendShortcuts extends StatelessWidget {
+  const _EnterSendShortcuts({
     required this.controller,
     required this.canSendMessage,
     required this.onSendMessage,
@@ -1672,25 +1667,29 @@ class _DesktopEnterSendShortcuts extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!_usesDesktopEnterSend) {
-      return child;
-    }
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.enter): _sendIfReady,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter): _sendIfReady,
-        const SingleActivator(LogicalKeyboardKey.enter, control: true):
-            _insertNewline,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter, control: true):
-            _insertNewline,
+        ChatInputEnterActivator(
+          LogicalKeyboardKey.enter,
+          controller: controller,
+        ): _sendIfReady,
+        ChatInputEnterActivator(
+          LogicalKeyboardKey.numpadEnter,
+          controller: controller,
+        ): _sendIfReady,
+        ChatInputEnterActivator(
+          LogicalKeyboardKey.enter,
+          controller: controller,
+          control: true,
+        ): _insertNewline,
+        ChatInputEnterActivator(
+          LogicalKeyboardKey.numpadEnter,
+          controller: controller,
+          control: true,
+        ): _insertNewline,
       },
       child: child,
     );
-  }
-
-  bool get _usesDesktopEnterSend {
-    return defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS;
   }
 
   void _sendIfReady() {

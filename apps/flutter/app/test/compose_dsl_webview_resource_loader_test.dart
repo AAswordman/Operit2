@@ -39,7 +39,7 @@ void main() {
         final loader = create(
           dispatch: (_) async => {
             'action': 'respond',
-            'response': {'filePath': '/app/avatar.image'},
+            'response': {'filePath': '/operitapp/avatar.image'},
           },
           read: (_) async => entry.value,
         );
@@ -62,7 +62,7 @@ void main() {
       final loader = create(
         dispatch: (_) async => {
           'action': 'respond',
-          'response': {'filePath': '/app/avatar.image'},
+          'response': {'filePath': '/operitapp/avatar.image'},
         },
         read: (_) {
           reads++;
@@ -109,7 +109,7 @@ void main() {
     final loader = create(
       dispatch: (_) async => {
         'action': 'respond',
-        'response': {'filePath': '/app/avatar.image'},
+        'response': {'filePath': '/operitapp/avatar.image'},
       },
       read: (_) => pending.future,
     );

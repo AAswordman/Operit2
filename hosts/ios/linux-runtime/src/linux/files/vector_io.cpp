@@ -16,6 +16,9 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#ifndef __APPLE__
+#include <sys/uio.h>
+#endif
 #include <functional>
 #include <poll.h>
 #include <sys/ioctl.h>
@@ -156,8 +159,24 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
     auto vectors = std::make_shared<files::IoVectors>(memory_, a[1], a[2]);
     if (signal_file && vectors->size() < sizeof(signals::SignalFileInfo))
         guest_error(22);
-    if (!vectors->size() && !description->inotify)
+    if (!vectors->size() && !description->inotify) {
+#ifndef __APPLE__
+        // Linux readv/preadv notify ACCESS even at EOF / with empty vectors.
+        // Preserve that native event instead of silently skipping the host
+        // syscall or manufacturing a duplicate in the inotify queue.
+        if (!writing && entry.host.get() >= 0 && !description->virtual_file &&
+            !description->is_anon_inode() && !description->socket && !description->terminal &&
+            !description->pipe && description->standard_stream < 0) {
+            const auto result = positioned ? ::preadv(entry.host.get(), nullptr, 0, off_t(offset))
+                                           : ::readv(entry.host.get(), nullptr, 0);
+            if (result < 0)
+                return -linux_errno(errno);
+        }
+#endif
+        if (!writing && description->inotify_open)
+            description->inotify_open->accessed();
         return 0;
+    }
     if ((flags & rwf_append) && (flags & rwf_noappend))
         guest_error(22);
     // Only claim flags whose guarantees are implemented on every backend.
@@ -404,8 +423,17 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
                 result = -linux_errno(errno);
         } else {
             auto guard = files::memory_file_lock(host_fd);
+#ifdef __APPLE__
             result = positioned ? ::pread(host_fd, data.data(), data.size(), off_t(offset))
                                 : ::read(host_fd, data.data(), data.size());
+#else
+            // The guest vectors have already been gathered into this buffer.
+            // Keep a native vector syscall so Linux's EOF ACCESS semantics are
+            // retained; a scalar pread would suppress that event.
+            struct iovec vector{data.data(), data.size()};
+            result = positioned ? ::preadv(host_fd, &vector, 1, off_t(offset))
+                                : ::readv(host_fd, &vector, 1);
+#endif
             if (result < 0)
                 result = -linux_errno(errno);
         }
@@ -413,6 +441,8 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
             throw Failure("invalid byte count or errno from vector I/O backend");
         if (result == -11)
             return {};
+        if (!writing && result >= 0 && description->inotify_open)
+            description->inotify_open->accessed();
         if (writing && result == -32 && !(flags & rwf_nosignal))
             broken_pipe(tid);
         if (terminal) {

@@ -575,7 +575,7 @@ test("cancelled or invalid avatar selections preserve the saved avatar and do no
     async __operitNativeComposeFilePickerCommand() { return selection; },
     async __operitInvokeHostAsync(command, args) { return command(...args); },
   });
-  const card = await plugin.api("character.create", { values: { name: "保留现有头像", avatarUri: "/app/data/existing.image" } });
+  const card = await plugin.api("character.create", { values: { name: "保留现有头像", avatarUri: "/operitapp/data/existing.image" } });
   const ui = mount(plugin, "edit", "card", card.id); await ui.load();
   for (const value of [selection, { cancelled: false, files: [{ path: "/not-mounted.png", size: 4 }] }, { cancelled: false, files: [{ path: "/large.png", size: 8 * 1024 * 1024 + 1 }] }]) {
     selection = value;

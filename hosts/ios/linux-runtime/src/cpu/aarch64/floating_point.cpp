@@ -9,9 +9,6 @@
 #endif
 
 namespace operit::arm64 {
-uint64_t read_floating_control(const CpuState &cpu) noexcept {
-    return cpu.fpcr & floating_control_mask;
-}
 uint64_t read_floating_status(const CpuState &cpu) noexcept {
     return cpu.fpsr & floating_status_mask;
 }

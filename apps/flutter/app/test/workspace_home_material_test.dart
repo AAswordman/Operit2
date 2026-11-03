@@ -134,7 +134,7 @@ void main() {
         terminal: 'shell',
         terminalType: 'shell',
         sessionKind: 'pty',
-        workingDir: '/app/data',
+        workingDir: '/operitapp/data',
         commandRunning: false,
       ),
     ];
@@ -184,7 +184,7 @@ void main() {
     final folder = find.text('项目目录');
     final addFolder = find.byTooltip('挂载文件夹');
     expect(folder, findsOneWidget);
-    expect(find.text('/app/workspaces/project'), findsOneWidget);
+    expect(find.text('/operitapp/workspaces/project'), findsOneWidget);
     expect(find.text('切换工作区'), findsNothing);
     expect(find.text('挂载新文件夹'), findsNothing);
     expect(
@@ -273,7 +273,7 @@ void main() {
             terminal: 'shell',
             terminalType: 'shell',
             sessionKind: 'pty',
-            workingDir: '/app/workspaces/project',
+            workingDir: '/operitapp/workspaces/project',
             commandRunning: false,
           ),
       ];
@@ -324,7 +324,7 @@ class _HomeFixture {
   static const name = 'Operit2Bug / a deliberately long workspace title';
   static const folder = WorkspaceMountedFolder(
     name: '项目目录',
-    path: '/app/workspaces/project',
+    path: '/operitapp/workspaces/project',
     relativePath: '.',
   );
   final terminals = ValueNotifier<int>(0);
@@ -362,7 +362,7 @@ class _HomeFixture {
       home: Scaffold(
         body: WorkspaceHomeContent(
           workspacePath: bound
-              ? '/app/workspaces/project/with/a/long/directory/path'
+              ? '/operitapp/workspaces/project/with/a/long/directory/path'
               : null,
           workspaceUsage: bound
               ? WorkspaceOverviewUsage(

@@ -11,6 +11,12 @@ bool inside_mount(const std::string &path, const std::string &mount) {
 }
 } // namespace
 int64_t Syscalls::dispatch_mount(CpuState &cpu) {
+    // The guest capability set is empty, independently of the host UID.
+    // A future capability model must check CAP_SYS_ADMIN in the user
+    // namespace that owns this mount namespace before permitting changes.
+    constexpr bool guest_cap_sys_admin = false;
+    if (!guest_cap_sys_admin)
+        guest_error(1);
     const auto &a = cpu.x;
     if (a[8] == 39) { // umount2
         if (a[1] > UINT32_MAX)

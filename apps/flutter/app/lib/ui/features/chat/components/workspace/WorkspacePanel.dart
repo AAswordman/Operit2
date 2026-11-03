@@ -1289,7 +1289,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   /// Returns a VFS locator whose filesystem is resolved by the selected terminal host.
   String _manualTerminalWorkingDirectory() {
     if (!widget.hasBoundWorkspace) {
-      return '/app/data';
+      return '/operitapp/data';
     }
     final workspaceDirectory = widget.workspacePath?.trim();
     if (workspaceDirectory == null || workspaceDirectory.isEmpty) {

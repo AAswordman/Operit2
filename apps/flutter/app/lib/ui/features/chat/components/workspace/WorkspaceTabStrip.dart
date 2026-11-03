@@ -125,8 +125,9 @@ class WorkspaceTabStrip extends StatelessWidget {
       l10n.workspaceCloseTabsToRight,
       l10n.workspaceCloseAllTabs,
     ];
+    // Use the overlay that owns the menu route; a pane may have its own overlay.
     final overlay =
-        Overlay.of(context).context.findRenderObject()! as RenderBox;
+        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
     final localPosition = overlay.globalToLocal(position);
     final action = await showMenu<int>(
       context: context,

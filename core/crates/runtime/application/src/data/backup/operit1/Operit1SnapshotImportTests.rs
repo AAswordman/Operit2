@@ -304,7 +304,7 @@ fn legacy_workspace_aliases_share_real_workspace_ids() {
         assert_eq!(archive.chats.len(), paths.len());
         let workspace = &archive.workspaces[0];
         assert_eq!(workspace.name, "demo");
-        assert_eq!(workspace.primaryFolder().path, "/app/workspaces/demo");
+        assert_eq!(workspace.primaryFolder().path, "/operitapp/workspaces/demo");
         workspace.validate().unwrap();
         for chat in &archive.chats[..4] {
             assert_eq!(chat.workspaceId.as_deref(), Some(workspace.id.as_str()));
@@ -313,7 +313,7 @@ fn legacy_workspace_aliases_share_real_workspace_ids() {
         assert_ne!(archive.chats[4].workspaceId, archive.chats[0].workspaceId);
         assert_eq!(
             archive.workspaces[1].primaryFolder().path,
-            "/app/workspaces/other"
+            "/operitapp/workspaces/other"
         );
     }
 }

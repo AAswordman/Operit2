@@ -2,6 +2,7 @@
 #include "linux/events/inotify.h"
 #include "linux/files/descriptor_access.h"
 #include "linux/files/memory_file.h"
+#include "linux/files/pipe_buffer.h"
 #include "linux/files/record_lock.h"
 #include "linux/syscalls.h"
 #include <fcntl.h>
@@ -44,6 +45,12 @@ int64_t Syscalls::descriptor_control(CpuState &cpu) {
         description.flags = (description.flags & ~mutable_flags) | (int(a[2]) & mutable_flags);
         return 0;
     }
+    case 1032: // F_GETPIPE_SZ
+        // Bash uses this value before writing a here-document into an empty
+        // pipe. Its fallback can exceed our native-backed pipe's capacity.
+        if (!description.pipe)
+            guest_error(9);
+        return description.pipe->capacity();
     case 1033: // F_ADD_SEALS
         files::memory_file_add_seals(entry, uint32_t(a[2]));
         return 0;
@@ -55,6 +62,8 @@ int64_t Syscalls::descriptor_control(CpuState &cpu) {
     case 36: // F_OFD_GETLK
     case 37: // F_OFD_SETLK
     case 38: // F_OFD_SETLKW
+        if (ipc::is_posix_mq_file(entry.description))
+            guest_error(95);
         return files::record_lock(memory_, filesystem_, scheduler_, entry, a[1], a[2]);
     default:
         return unsupported(cpu);

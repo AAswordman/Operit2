@@ -96,7 +96,6 @@ struct FileChange {
     bool attempted = false;
     ~FileChange() {
         if (attempted) {
-            memory.data_epoch.fetch_add(1, std::memory_order_relaxed);
             memory.code_epoch.fetch_add(1, std::memory_order_relaxed);
         }
     }

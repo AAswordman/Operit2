@@ -1,3 +1,4 @@
+import { createTerminal9p } from "./terminal_9p.js";
 import { createBrowserJavaScriptHost } from "./operit_javascript_runtime.js";
 import { createBrowserHttpStreamHost } from "./browser_http_stream.js";
 import { openBrowserFile } from "./browser_file_open.js";
@@ -421,6 +422,7 @@ interface DownloadRequest {
 }
 
 interface V86StarterConfiguration {
+  filesystem?: { handle9p: (request: Uint8Array, reply: (packet: Uint8Array) => void) => void };
   wasm_path: string;
   memory_size: number;
   vga_memory_size: number;
@@ -594,6 +596,7 @@ interface RuntimeWorkerHostCall {
   method: string;
   args: unknown[];
   control: SharedArrayBuffer;
+  filesystem?: SharedArrayBuffer;
 }
 
 interface RuntimeWorkerHostPayload {
@@ -752,6 +755,41 @@ interface ModelInstallWorkerError {
   function registerMainHostModule<T extends object>(module: T): T {
     mainHostModules.add(module);
     return module;
+  }
+
+  let terminalFilesystemBuffer: SharedArrayBuffer | null = null;
+  let terminalFilesystemControl: Int32Array | null = null;
+  let notifyTerminalFilesystemWorker: (() => void) | null = null;
+
+  /** Calls the OPFS owner directly, including while it waits for a guest command. */
+  async function callTerminalFilesystem(method: string, args: unknown[]): Promise<unknown> {
+    const buffer = terminalFilesystemBuffer;
+    if (buffer === null) throw new Error("Terminal filesystem owner is unavailable");
+    const header = new Int32Array(buffer, 0, 2), payload = new Uint8Array(buffer, 8);
+    while (Atomics.compareExchange(header, 0, 0, 4) !== 0) {
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    try {
+      const request = MessagePack.encode([method, args]);
+      if (request.length > payload.length) throw new Error("Terminal filesystem request exceeds channel capacity");
+      payload.set(request);
+      Atomics.store(header, 1, request.length);
+      Atomics.store(header, 0, 1);
+      const control = terminalFilesystemControl;
+      if (control !== null) {
+        Atomics.compareExchange(control, 0, 0, 3);
+        Atomics.notify(control, 0);
+      }
+      notifyTerminalFilesystemWorker?.();
+      while (Atomics.load(header, 0) !== 2) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      const response = MessagePack.decode(payload.slice(0, Atomics.load(header, 1)));
+      if (!Array.isArray(response) || response[0] !== 0) throw new Error(String(response[1]));
+      return response[1];
+    } finally {
+      Atomics.store(header, 0, 0);
+    }
   }
 
   const textEncoder = new TextEncoder();
@@ -3766,6 +3804,7 @@ self.onmessage = (event) => {
       }
       renderLinuxVmProgress(session, "Downloading runtime");
       const emulator = new module.V86({
+        filesystem: { handle9p: createTerminal9p({ call: callTerminalFilesystem }) },
         wasm_path: v86AssetUrl("v86.wasm"),
         memory_size: 512 * 1024 * 1024,
         vga_memory_size: 2 * 1024 * 1024,
@@ -3948,8 +3987,18 @@ self.onmessage = (event) => {
     javaScriptRuntime: registerMainHostModule(createBrowserJavaScriptHost()),
     terminal: registerMainHostModule({
       /** Starts one browser-local Linux VM terminal session. */
-      startPty(sessionId: string, rows: number, cols: number): void {
+      async startPty(sessionId: string, rows: number, cols: number): Promise<void> {
         startLinuxVmSession(sessionId, rows, cols);
+        try {
+          const result = await executeLinuxVmCommand(sessionId,
+            "mkdir -p /mnt/operit-host && mount -t 9p -o trans=virtio,version=9p2000,cache=none,msize=65536 host9p /mnt/operit-host", 120000);
+          if (result.timedOut || result.exitCode !== 0) {
+            throw new Error(`Cannot mount browser workspace: ${result.output}`);
+          }
+        } catch (error) {
+          closeLinuxVmPty(sessionId);
+          throw error;
+        }
       },
       /** Drains raw virtual serial bytes from one browser-local Linux VM terminal. */
       readPty(sessionId: string): Uint8Array {
@@ -4276,6 +4325,46 @@ self.onmessage = (event) => {
         const connection = sqliteTransaction(id);
         connection.db.run("ROLLBACK");
         sqliteTransactions.delete(id);
+      },
+    }),
+    terminalFilesystem: registerWorkerHostModule({
+      stat(path: string) {
+        const isFile = storageHasFile(filePrefix, path);
+        if (!isFile && path !== "" && !fileDirectoryExists(path)) throw new Error("No such file or directory");
+        return { isDirectory: !isFile, size: isFile ? storageRead(filePrefix, path).length : 0 };
+      },
+      list(path: string) {
+        return listFileDirectory(path).map(entry => ({
+          name: entry.path.split("/").pop() || entry.path, isDirectory: entry.isDirectory, size: entry.size,
+        }));
+      },
+      read(path: string, offset: number, count: number) {
+        return storageReadRange(filePrefix, path, offset, count);
+      },
+      write(path: string, offset: number, content: Uint8Array) {
+        const previous = storageRead(filePrefix, path);
+        const bytes = new Uint8Array(Math.max(previous.length, offset + content.length));
+        bytes.set(previous); bytes.set(content, offset); storageWrite(filePrefix, path, bytes);
+      },
+      truncate(path: string, size: number) {
+        const previous = storageRead(filePrefix, path), bytes = new Uint8Array(size);
+        bytes.set(previous.subarray(0, size)); storageWrite(filePrefix, path, bytes);
+      },
+      create(path: string) {
+        if (storageExists(filePrefix, path) || fileDirectoryExists(path)) throw new Error("File exists");
+        storageWrite(filePrefix, path, new Uint8Array());
+      },
+      mkdir(path: string) {
+        if (storageExists(filePrefix, path) || fileDirectoryExists(path)) throw new Error("File exists");
+        makeFileDirectory(path, false);
+      },
+      remove(path: string) {
+        if (fileDirectoryExists(path) && listFileDirectory(path).length) throw new Error("Directory not empty");
+        storageDelete(filePrefix, path, false); deleteFileDirectory(path, false);
+      },
+      rename(source: string, target: string) {
+        copyFileSystemEntry(source, target, true);
+        storageDelete(filePrefix, source, true); deleteFileDirectory(source, true);
       },
     }),
     fileSystem: registerWorkerHostModule({
@@ -5107,6 +5196,10 @@ self.onmessage = (event) => {
     const leaderHostCalls = new Map<number, RuntimeWorkerLeaderHostCallRoute>();
     const disconnectedHostPayloads = new Map<number, Uint8Array>();
 
+    notifyTerminalFilesystemWorker = () => {
+      if (runtimeWorker !== null) runtimeWorker.postMessage({ type: "terminalFilesystemWake" });
+      else coordinator.postMessage({ type: "terminalFilesystemWake" });
+    };
     coordinator.addEventListener("message", event => handleCoordinatorMessage(event.data));
     runtimeGlobal.addEventListener("pagehide", disconnectRuntimeWorker);
     void locks.request(runtimeOwnerLockName, { mode: "exclusive" }, runRuntimeLeadership).catch(rejectRuntimeRequests);
@@ -5152,6 +5245,10 @@ self.onmessage = (event) => {
     /** Routes one cross-page coordination message received from a different browser page. */
     function handleCoordinatorMessage(value: unknown): void {
       if (typeof value !== "object" || value === null) {
+        return;
+      }
+      if (Reflect.get(value, "type") === "terminalFilesystemWake") {
+        runtimeWorker?.postMessage({ type: "terminalFilesystemWake" });
         return;
       }
       if (isLeaderCoreRequest(value)) {
@@ -5630,6 +5727,10 @@ self.onmessage = (event) => {
     message: RuntimeWorkerHostCall,
     hostPayloads: Map<number, Uint8Array>,
   ): Promise<void> {
+    if (message.filesystem instanceof SharedArrayBuffer) {
+      terminalFilesystemBuffer = message.filesystem;
+      terminalFilesystemControl = new Int32Array(message.control);
+    }
     let encoded: Uint8Array;
     try {
       const host = runtimeGlobal.__operitHost as Record<string, Record<string, unknown>> | undefined;

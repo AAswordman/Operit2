@@ -1,5 +1,6 @@
 #include "base/host_io.h"
 #include "linux/error_mapping.h"
+#include "linux/events/inotify.h"
 #include "linux/files/descriptor_access.h"
 #include "linux/files/memory_file.h"
 #include "linux/files/pipe_buffer.h"
@@ -214,6 +215,8 @@ struct FileTransfer {
             return waiting(output, true);
         if (result <= 0)
             return result;
+        if (input.description->inotify_open)
+            input.description->inotify_open->accessed();
         commit_input(data, result);
         if (output.offset_pointer)
             memory.store(output.offset_pointer, output.offset + result, 8);

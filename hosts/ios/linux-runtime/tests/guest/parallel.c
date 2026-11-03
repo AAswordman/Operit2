@@ -43,7 +43,7 @@ int guest_main(u64 *stack) {
     for (unsigned index = 0; index < 4; ++index) {
         unsigned tid;
         while ((tid = __atomic_load_n(tids + index, __ATOMIC_SEQ_CST))) {
-            const i64 result = CALL(98, tids + index, 128, tid);
+            const i64 result = CALL(98, tids + index, 0, tid);
             CHECK(result == 0 || result == -11, 23);
         }
         CHECK(results[index] == calculate(index), 24);

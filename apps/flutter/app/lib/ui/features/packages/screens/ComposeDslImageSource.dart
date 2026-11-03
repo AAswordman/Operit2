@@ -125,19 +125,27 @@ Future<Uint8List> readComposeDslVfsBytes(
 /// Gives known VFS roots precedence even when wrapped in a file URI.
 String? composeDslVfsImagePath(String source) {
   final uri = Uri.tryParse(source);
-  if (uri?.scheme == 'vfs' || uri?.scheme == 'operit-vfs') {
+  final explicitVfs = uri?.scheme == 'vfs' || uri?.scheme == 'operit-vfs';
+  final String path;
+  if (explicitVfs) {
     final host = uri!.host;
-    return host.isEmpty || host == 'localhost' ? uri.path : '/$host${uri.path}';
+    path = host.isEmpty || host == 'localhost' ? uri.path : '/$host${uri.path}';
+  } else {
+    // Virtual file URIs keep decoded URI separators on every operating system.
+    path =
+        uri?.scheme == 'file' && (uri!.host.isEmpty || uri.host == 'localhost')
+        ? Uri.decodeComponent(uri.path)
+        : source;
   }
-  // Virtual file URIs keep decoded URI separators on every operating system.
-  final path =
-      uri?.scheme == 'file' && (uri!.host.isEmpty || uri.host == 'localhost')
-      ? Uri.decodeComponent(uri.path)
-      : source;
-  if (path == '/app' ||
+  if (explicitVfs ||
+      path == '/app' ||
       path.startsWith('/app/') ||
       path == '/mnt' ||
       path.startsWith('/mnt/') ||
+      path == '/operitapp' ||
+      path.startsWith('/operitapp/') ||
+      path == '/virtual' ||
+      path.startsWith('/virtual/') ||
       path.startsWith('runtime/')) {
     return path;
   }

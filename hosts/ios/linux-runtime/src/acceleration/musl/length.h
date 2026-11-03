@@ -1,6 +1,6 @@
 #pragma once
 #include "acceleration/fixed_execution.h"
-#include "acceleration/scalar_ops.h"
+#include "acceleration/conditions.h"
 
 namespace operit::arm64::fixed {
 inline void length(FixedExecution &c) {

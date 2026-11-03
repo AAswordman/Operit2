@@ -92,7 +92,7 @@ mod tests {
         assert!(descriptor
             .workspaceRoots
             .iter()
-            .any(|root| root.physicalRoot == "/" && root.vfsRoot == "/mnt/macos"));
+            .any(|root| root.physicalRoot == "/" && root.vfsRoot == "/virtual/macos"));
         assert!(host
             .listFiles("/")
             .unwrap()

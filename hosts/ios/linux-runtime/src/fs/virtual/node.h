@@ -28,7 +28,6 @@ struct VirtualNode {
     int standard_stream = -1;
     VirtualNode(Kind type, std::string key, mode_t mode);
     struct stat stat() const;
-    unsigned char directory_type() const;
     bool device() const;
 };
 struct VirtualOpen {

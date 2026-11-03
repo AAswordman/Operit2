@@ -42,7 +42,8 @@ test('Linux guest hosts own guest working directory resolution', () => {
     assert.match(resolve, /resolveHostDirectory\(workingDir\)/);
   }
   const guest = source('core/crates/foundation/host-api/src/TerminalWorkingDirectory.rs');
-  const resolve = guest.split('#[cfg(test)]')[0];
+  const resolve = section(guest, 'pub fn resolveLinuxGuestDirectory(', 'pub fn resolveSessionDirectory(');
+  assert.match(resolve, /strip_prefix\("\/virtual\/linux"\)/);
   assert.match(resolve, /strip_prefix\("\/mnt\/linux"\)/);
   assert.doesNotMatch(resolve, /target_os|target_arch|\.contains\(/);
 });
@@ -54,16 +55,24 @@ test('Flutter terminal wrapper delegates directory resolution to its exact host'
   assert.match(resolve, /self\.inner\.resolveWorkingDirectory\(/);
 });
 
+test('macOS ARM64 uses the real workspace resolver instead of guest home', () => {
+  const macos = source('hosts/apple/src/tools/terminal/terminal_macos.rs');
+  const resolve = section(macos, 'fn resolveWorkingDirectory(', 'fn terminalInfo(');
+  assert.match(resolve, /self\.arm64\.resolveWorkingDirectory\([\s\S]*?workingDir,\s*resolveHostDirectory,/);
+  assert.doesNotMatch(resolve, /\|_\|\s*Ok\("\/root"/);
+});
+
 /** Declares browser terminal isolation in the host instead of platform branches in Dart. */
 test('manual Flutter terminals use uniform VFS locators', () => {
   const panel = source('apps/flutter/app/lib/ui/features/chat/components/workspace/WorkspacePanel.dart');
   const directory = section(panel, 'String _manualTerminalWorkingDirectory(', 'String _nextManualTerminalSessionName(');
-  assert.match(directory, /return '\/app\/data'/);
+  assert.match(directory, /return '\/operitapp\/data'/);
   assert.doesNotMatch(directory, /v86|Platform|kIsWeb|operitRootPath/);
   const web = source('hosts/web/src/tools/terminal/mod.rs');
   const resolve = section(web, 'fn resolveWorkingDirectory(', 'fn terminalInfo(');
   assert.match(resolve, /requireLinuxVmTerminalType\(terminal, terminalType\)\?/);
-  assert.match(resolve, /Ok\("\/"\.to_string\(\)\)/);
+  assert.match(resolve, /resolveHostDirectory\(path\)/);
+  assert.match(resolve, /\/mnt\/operit-host\//);
 });
 
 /** Presents launch failures locally and keeps tools on their structured error path. */

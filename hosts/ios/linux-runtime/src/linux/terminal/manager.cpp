@@ -545,15 +545,6 @@ uint32_t TerminalManager::session(const TerminalEndpoint &endpoint, uint32_t pid
         guest_error(25);
     return endpoint.state->session;
 }
-std::string TerminalManager::controlling_path(uint32_t pid) const {
-    auto current = process(pid);
-    auto found = controlling_.find(pid);
-    if (found != controlling_.end())
-        if (auto state = found->second.lock();
-            state && state->master_alive && state->session == current.session)
-            return "/dev/pts/" + std::to_string(state->number);
-    guest_error(6);
-}
 void TerminalManager::session_created(uint32_t pid, uint32_t) {
     controlling_.erase(pid);
     const auto found = known_processes_.find(pid);

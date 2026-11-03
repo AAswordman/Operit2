@@ -801,9 +801,14 @@ impl StandardFileSystemTools {
                 })?;
                 match state.resolveQualifiedVfsPath(&value)? {
                     crate::runtime_support::QualifiedVfsResolution::LocalPath(innerPath) => {
+                        let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+                        let innerPath = crate::files::PathMapper::PathMapper::resolveFileToolPath(
+                            context.as_ref().and_then(|context| context.workspacePath.as_deref()),
+                            &innerPath,
+                        )?;
                         endpoints.push(TransferEndpoint {
                             nodeId: None,
-                            innerPath: innerPath.to_string(),
+                            innerPath,
                             typed: value.trim().to_string(),
                         });
                     }
@@ -832,9 +837,14 @@ impl StandardFileSystemTools {
                     }
                 }
             } else {
+                let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+                let innerPath = crate::files::PathMapper::PathMapper::resolveFileToolPath(
+                    context.as_ref().and_then(|context| context.workspacePath.as_deref()),
+                    &value,
+                )?;
                 endpoints.push(TransferEndpoint {
                     nodeId: None,
-                    innerPath: value.trim().to_string(),
+                    innerPath,
                     typed: value.trim().to_string(),
                 });
             }

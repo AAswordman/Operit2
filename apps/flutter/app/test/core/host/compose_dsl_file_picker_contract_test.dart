@@ -56,7 +56,7 @@ void main() {
         expect(result['cancelled'], false);
         final selected = (result['files'] as List).single as Map;
         if (request['picker'] == 'directory') {
-          expect(selected['path'], '/mnt/local/folders/selected-1');
+          expect(selected['path'], '/virtual/local/folders/selected-1');
           expect(selected['uri'], selected['path']);
           expect(storage.directories.single.root, '/selected/folder');
           expect(files.calls, 0);
@@ -103,7 +103,7 @@ void main() {
       return {
         'backend': 'android_documents',
         'root': 'content://documents/tree/opaque',
-        'namespace': '/mnt/android/documents',
+        'namespace': '/virtual/android/documents',
         'name': 'Documents',
       };
     });
@@ -122,7 +122,7 @@ void main() {
             )
             as Map;
     final selected = (result['files'] as List).single as Map;
-    expect(selected['path'], '/mnt/android/documents/selected-1');
+    expect(selected['path'], '/virtual/android/documents/selected-1');
     expect(selected['uri'], selected['path']);
     expect(storage.directories.single.backend, 'android_documents');
     expect(storage.directories.single.root, 'content://documents/tree/opaque');

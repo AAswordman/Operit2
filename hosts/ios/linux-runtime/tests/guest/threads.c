@@ -37,7 +37,7 @@ int guest_main(u64 *stack) {
     for (unsigned j = 0; j < 4; ++j) {
         unsigned tid;
         while ((tid = __atomic_load_n(tids + j, __ATOMIC_SEQ_CST)) != 0) {
-            i64 result = CALL(98, tids + j, 128, tid);
+            i64 result = CALL(98, tids + j, 0, tid);
             CHECK(result == 0 || result == -11, 23);
         }
     }

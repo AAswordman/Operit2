@@ -39,12 +39,11 @@ export function productionBootstrap() {
     embedded(sdk + 'toolpkg/ToolPkgApiRuntimeScript.rs'),
     source(bridge + 'JsToolPkgIpc.script.js'),
     embedded(sdk + 'toolpkg/ToolPkgRegistrationBridge.rs').replace('__OPERIT_TOOLPKG_REGISTRATION_ONLY__', 'false'),
-    '', '', // These tests exercise host operations, not generated Tools or external libraries.
+    source(sdk + 'compat/v1/internal_runtime.js'), '', // Keep the generated runtime surface in the production position.
     source(bridge + 'PluginConfig.script.js'),
     source(bridge + 'RuntimeContext.script.js'),
     lazyBootstrapLibraries(),
     source(sdk + 'js_sdk/toolpkg_route_runtime.js') + '\n' +
-      source(sdk + 'compat/v1/internal_runtime.js') + '\n' +
       source(sdk + 'JsExecutionRuntimeBridge.script.js'),
   ];
   let position = 0;

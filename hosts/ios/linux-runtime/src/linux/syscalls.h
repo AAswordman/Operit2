@@ -4,6 +4,10 @@
 #include "fs/filesystem.h"
 #include "linux/network/socket.h"
 #include "linux/network/unix_namespace.h"
+#include "linux/ipc/posix_mq.h"
+#include "linux/ipc/sysv_msg.h"
+#include "linux/ipc/sysv_sem.h"
+#include "linux/ipc/sysv_shared_memory.h"
 #include "linux/process/control.h"
 #include "linux/process/resource_limits.h"
 #include "linux/terminal/manager.h"
@@ -16,12 +20,15 @@
 
 namespace operit::arm64 {
 struct ProcSource;
+namespace io_uring { class CompletionContext; }
 class Syscalls {
     Memory &memory_;
     Filesystem &filesystem_;
     ort_arm64_config config_;
     DescriptorTable descriptors_;
     std::shared_ptr<TerminalManager> terminals_;
+    std::shared_ptr<io_uring::CompletionContext> io_uring_context_;
+    std::weak_ptr<Memory> io_uring_memory_;
     struct FsContext {
         std::string cwd = "/";
         uint32_t mask = 0022;
@@ -51,6 +58,17 @@ class Syscalls {
     Scheduler &scheduler_;
     std::shared_ptr<system::SamplingState> information_;
     std::shared_ptr<NetworkNamespace> network_ = std::make_shared<NetworkNamespace>();
+    std::shared_ptr<ipc::PosixMqAccounting> posix_mq_accounting_ = ipc::make_posix_mq_accounting();
+    std::shared_ptr<ipc::PosixMqNamespace> posix_mq_namespace_ = ipc::make_posix_mq_namespace(posix_mq_accounting_);
+    std::shared_ptr<ipc::MessageQueueNamespace> message_queue_namespace_;
+    std::shared_ptr<ipc::SemaphoreNamespace> semaphore_namespace_;
+    std::shared_ptr<ipc::SharedMemoryNamespace> shared_memory_namespace_ = ipc::make_shared_memory_namespace();
+    std::shared_ptr<ipc::SharedMemoryAddressSpace> shared_memory_space_ = ipc::make_shared_memory_address_space();
+    struct IpcCredentials {
+        uint32_t uid, euid, egid, fsuid, fsgid;
+        std::vector<uint32_t> groups;
+    };
+    IpcCredentials ipc_credentials();
     std::shared_ptr<SocketState> new_socket_state(int domain, int type, int protocol);
     NativeAddress read_socket_address(uint64_t address, uint64_t length, bool binding);
     std::vector<uint8_t> socket_address_bytes(const sockaddr *address, socklen_t length);
@@ -76,8 +94,11 @@ class Syscalls {
     int64_t vector_io(CpuState &cpu);
     void guest_stat(uint64_t destination, const struct stat &info);
     int64_t dispatch(CpuState &cpu);
+    int64_t dispatch_identity(CpuState &cpu);
+    int64_t dispatch_process_vm(CpuState &cpu);
     int64_t dispatch_path(CpuState &cpu);
     int64_t dispatch_mount(CpuState &cpu);
+    int64_t dispatch_namespace(CpuState &cpu);
     int64_t dispatch_file(CpuState &cpu);
     int64_t dispatch_file_control(CpuState &cpu);
     int64_t dispatch_open(CpuState &cpu);
@@ -85,6 +106,8 @@ class Syscalls {
     int64_t descriptor_control(CpuState &cpu);
     int64_t descriptor_ioctl(CpuState &cpu);
     int64_t dispatch_events(CpuState &cpu);
+    int64_t dispatch_io_uring(CpuState &cpu);
+    int64_t dispatch_ipc(CpuState &cpu);
     int64_t dispatch_timer(CpuState &cpu);
     bool interrupt_for_pending_signal();
     void broken_pipe(uint32_t tid);
@@ -103,11 +126,14 @@ class Syscalls {
     int64_t unsupported(const CpuState &cpu);
 
   public:
-    bool exited = false;
-    int exit_code = 0;
     uint64_t calls = 0, unsupported_count = 0, last_unsupported = 0;
     ~Syscalls() { process_anchor_->syscalls = nullptr; }
     Syscalls(Memory &memory, Filesystem &filesystem, const ort_arm64_config &config, Scheduler &scheduler);
+    void set_io_uring_context(std::shared_ptr<io_uring::CompletionContext> context,
+                              const std::shared_ptr<Memory> &memory) {
+        io_uring_context_ = std::move(context);
+        io_uring_memory_ = memory;
+    }
     void set_process_image(const std::string &path, uint64_t stack);
     void set_process_identity(uint32_t pid, uint32_t parent);
     const std::shared_ptr<TerminalManager> &terminal_manager() const { return terminals_; }
@@ -115,8 +141,12 @@ class Syscalls {
         return descriptors_.resource_limits();
     }
     void inherit_process(const Syscalls &parent, uint64_t clone_flags, bool exec = false);
+    void sync_shared_memory_mappings();
+    void inherit_shared_memory_space(const Syscalls &parent, bool shared, uint32_t child_pid);
+    void release_shared_memory_space(uint32_t pid) noexcept;
+    void commit_ipc_exec();
     void exec_reset(const std::string &path, uint64_t stack, uint64_t heap_end);
-    void release_task_resources(Task &task);
+    void release_task_resources(Task &task, bool preserve_sem_undo = false);
     void close_descriptors();
     TerminalOpen open_console(uint32_t columns, uint32_t rows);
     void set_heap(uint64_t end) {

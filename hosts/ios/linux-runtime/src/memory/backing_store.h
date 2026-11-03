@@ -4,6 +4,7 @@
 #include "linux/error_mapping.h"
 #include "linux/files/memory_file.h"
 #include "memory/fault.h"
+#include "memory/page_mutex.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -13,7 +14,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <tuple>
@@ -66,8 +66,12 @@ struct FileBacking {
     FD descriptor;
     uint64_t device, inode;
     bool writable;
+    // A mapped file retains its guest data-open until the final mapping/page
+    // reference disappears, just as the host descriptor retains the real file.
+    std::shared_ptr<void> open_reference;
 
-    FileBacking(int fd, bool permit_write) : descriptor(::fcntl(fd, F_DUPFD_CLOEXEC, 0)) {
+    FileBacking(int fd, bool permit_write, std::shared_ptr<void> reference = nullptr)
+        : descriptor(::fcntl(fd, F_DUPFD_CLOEXEC, 0)), open_reference(std::move(reference)) {
         if (descriptor.get() < 0)
             guest_error(linux_errno(errno));
         struct stat info{};
@@ -145,7 +149,7 @@ inline uint64_t FileMetadataCache::size(const FileBacking &file) {
 // for an active reservation; ordinary writes invalidate it without a global
 // atomic increment.
 struct ReservationState {
-    std::shared_mutex mutex;
+    PageMutex mutex;
     inline static std::atomic<uint64_t> next_token{1};
     uint64_t token = 0, mapping_revision = 0;
     void written() {

@@ -27,11 +27,6 @@ constexpr uint32_t known_mask = all_events | unmount | overflow | ignored | only
                                 is_directory | one_shot;
 constexpr uint32_t nonblock = 2048, cloexec = 524288;
 constexpr size_t event_header_size = 16;
-#ifdef __APPLE__
-constexpr uint32_t supported_events = all_events & ~(access | open | close_write | close_nowrite);
-#else
-constexpr uint32_t supported_events = all_events;
-#endif
 } // namespace inotify
 
 struct InotifyLimits {
@@ -50,6 +45,7 @@ struct InotifyLimits {
 // Arbitrary operations entirely outside the observed set cannot be replayed.
 // Observed transient names that disappeared between censuses report OVERFLOW.
 class InotifyFile final {
+    friend class InotifyOpenFile;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
@@ -88,28 +84,28 @@ class InotifyFile final {
     static void service_all();
 };
 
-// Integration (implemented by the syscall/descriptor owner, not this module):
-//  * OpenDescription: shared_ptr<InotifyFile> inotify; forward-declare the class.
-//  * arm64 26: construct with uint32_t(flags), insert(duplicate_handle(),
-//    "", flags), set description->inotify and scheduler_io=true.
-//    Validate the syscall's int/u32 arguments after truncation to Linux widths.
-//  * arm64 27/28: get(fd) first (EBADF), require description->inotify (EINVAL),
-//    then add_watch(filesystem, pathname, mask, cwd) / remove_watch(int32_t(wd)).
-//  * io: before zero-length/general stream handling, reject writes (EBADF) and
-//    positioned reads (ESPIPE); in its existing attempt lambda, try_read into a
-//    temporary buffer and copy only returned bytes. nullopt uses the existing
-//    NONBLOCK/may_block check, signal interruption and Scheduler::block callback.
-//    Retain the shared description in the callback, as other stream reads do.
-//  * poll/select: call poll_events(native_events) in the per-description loop.
-//    Existing EventPoll::control works with the duplicated marker pipe as-is.
-//  * epoll wait's attempt: service_all() before EventPoll::wait(maximum, 0).
-//  * safe points: service_all() at the START of Scheduler::poll_waiting(), and
-//    Machine::run's coordinator loop before selecting/running the next batch.
-//    A safe point only in runnable guest syscalls cannot wake an idle watcher.
-//  * FIONREAD: available(); descriptor_stat: add to the anon_inode 0600 branch.
-//    Keep Descriptor::path empty. process_fd_link's target is "anon_inode:inotify";
-//    open_stream rejects reopening with ENXIO alongside counter/poll/timer.
-//    Include in existing anon-FD guards where applicable (lseek/flock/mmap etc.).
-//    F_SETFL/FIONBIO must retain scheduler_io's native NONBLOCK behavior.
-//  * build: add linux/events/inotify.cpp to the runtime library sources.
+// Tracks the dentry used by a guest data-open, independently of path display
+// strings. Keep ONE reference in OpenDescription, so dup/fork/SCM_RIGHTS share
+// OPEN and final CLOSE. Linux already reports these through native inotify.
+class InotifyOpenFile final {
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    explicit InotifyOpenFile(std::unique_ptr<Impl> impl);
+    void emit(uint32_t event) noexcept;
+    static void overflow_all() noexcept;
+
+  public:
+    static std::shared_ptr<InotifyOpenFile> opened(const Path &path, int descriptor,
+                                                  bool writable, bool anonymous = false) noexcept;
+    ~InotifyOpenFile();
+    InotifyOpenFile(const InotifyOpenFile &) = delete;
+    InotifyOpenFile &operator=(const InotifyOpenFile &) = delete;
+    void accessed() noexcept;
+    // Call only AFTER successful namespace mutations. Pinned parent + name
+    // distinguishes hardlinks, and preserves the old dentry after unlink.
+    static void unlinked(const Path &path) noexcept;
+    static void renamed(const Path &source, const Path &target) noexcept;
+    static void exchanged(const Path &source, const Path &target) noexcept;
+};
+
 } // namespace operit::arm64

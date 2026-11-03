@@ -8,10 +8,24 @@ fn workspaceFixture(id: &str, name: &str) -> Workspace {
         name: name.to_string(),
         folders: vec![WorkspaceFolder {
             name: name.to_string(),
-            path: format!("/app/workspaces/{name}"),
+            path: format!("/operitapp/workspaces/{name}"),
         }],
         createdAt: 1,
         updatedAt: 1,
+    }
+}
+
+/// Persists VFS addresses without changing the root selected by the caller.
+#[test]
+fn workspace_addresses_round_trip_without_renaming() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (paths, _, _) = openTestStore("workspace-vfs-roots");
+    let store = WorkspacePreferenceStore::new(paths);
+    for (index, path) in ["/app/workspaces/project", "/operitapp/workspaces/project", "/mnt/local/folders/id", "/virtual/local/folders/id"].into_iter().enumerate() {
+        let mut workspace = workspaceFixture(&format!("workspace-root-{index}"), "Project");
+        workspace.folders[0].path = path.into();
+        assert_eq!(store.upsert(workspace.clone()).unwrap(), workspace);
+        assert_eq!(store.getById(&workspace.id).unwrap(), Some(workspace));
     }
 }
 

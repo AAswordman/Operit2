@@ -13,7 +13,7 @@ class _FailingTerminalBridge extends OperitRuntimeBridge {
   final calls = <CoreCallRequest>[];
   final failure = const CoreLinkError(
     code: 'BACKEND',
-    message: '/mnt/linux is not mounted',
+    message: '/virtual/linux is not mounted',
   );
 
   /// Records the exact terminal request and returns its backend failure unchanged.
@@ -55,7 +55,7 @@ void main() {
                         sessionName: 'manual-test',
                         terminal: terminal,
                         terminalType: terminalType,
-                        workingDirectory: '/mnt/linux/root',
+                        workingDirectory: '/virtual/linux/root',
                         rows: 24,
                         columns: 80,
                       );
@@ -75,7 +75,7 @@ void main() {
       expect(find.text('终端启动失败'), findsOneWidget);
       expect(
         find.text(
-          '$terminal / $terminalType\n\nBACKEND: /mnt/linux is not mounted',
+          '$terminal / $terminalType\n\nBACKEND: /virtual/linux is not mounted',
         ),
         findsOneWidget,
       );
@@ -85,7 +85,7 @@ void main() {
         'sessionName': 'manual-test',
         'terminal': terminal,
         'terminalType': terminalType,
-        'workingDir': '/mnt/linux/root',
+        'workingDir': '/virtual/linux/root',
         'rows': 24,
         'cols': 80,
       });
@@ -154,7 +154,7 @@ void main() {
     );
     await tester.tap(find.text('Open terminal'));
     await tester.pumpWidget(const SizedBox.shrink());
-    pending.completeError(StateError('/mnt/linux is not mounted'));
+    pending.completeError(StateError('/virtual/linux is not mounted'));
     await tester.pump();
     await launch;
     expect(find.byType(AlertDialog), findsNothing);

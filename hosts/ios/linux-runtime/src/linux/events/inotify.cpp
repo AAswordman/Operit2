@@ -60,12 +60,30 @@ struct Event {
 struct Instances {
     std::mutex mutex;
     std::set<InotifyFile *> files;
+#ifdef __APPLE__
+    std::set<InotifyOpenFile *> opens;
+#endif
 };
 Instances &instances() {
     static Instances registry;
     return registry;
 }
 #ifdef __APPLE__
+// collect() runs with an instance mutex held. This separate count lock never
+// remains held while acquiring an instance lock (registry -> instance -> count).
+struct GuestOpens {
+    std::mutex mutex;
+    std::map<Identity, size_t> counts;
+};
+GuestOpens &guest_opens() {
+    static GuestOpens registry;
+    return registry;
+}
+bool guest_open(const Identity &key) {
+    auto &registry = guest_opens();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    return registry.counts.count(key) != 0;
+}
 bool same_time(const timespec &a, const timespec &b) {
     return a.tv_sec == b.tv_sec && a.tv_nsec == b.tv_nsec;
 }
@@ -425,8 +443,13 @@ struct InotifyFile::Impl {
         if (attributes_changed(before, after) || (hint & attributes))
             events.push_back({wd, inotify::attrib | type, 0, name});
     }
-    void collect() {
+    void collect(const std::set<Identity> &exchanged) {
         Hints hints;
+        // Darwin RENAME_SWAP posts NOTE_RENAME for only the source vnode.
+        // A successful guest exchange confirms that both inodes moved; supply
+        // the missing reverse hint before correlating the snapshot changes.
+        for (const auto &key : exchanged)
+            hints[key] |= NOTE_RENAME;
         drain(hints);
         const auto now = Clock::now();
         if (hints.empty() && now < next_census)
@@ -496,12 +519,19 @@ struct InotifyFile::Impl {
                 continue;
             }
             metadata(events, frame.wd, {}, watch.root.info, frame.root, hint);
-            if ((hint & NOTE_DELETE) && !frame.root.st_nlink) {
+            // Linux retains a watch on an unlinked inode until the final guest
+            // open description closes. NOTE_DELETE may already be consumed by
+            // then, so test nlink on every census, including after final CLOSE.
+            if (!frame.root.st_nlink && !guest_open(identity(frame.root))) {
                 self_events.push_back({frame.wd, inotify::delete_self, 0, {}});
                 deleted.insert(frame.wd);
                 continue;
             }
-            if (hint & NOTE_RENAME)
+            // APFS posts NOTE_RENAME even for a rename between hardlinks
+            // to the same inode. A real move also changes the inode ctime.
+            if ((hint & NOTE_RENAME) &&
+                (exchanged.count(identity(frame.root)) ||
+                 !same_time(watch.root.info.st_ctimespec, frame.root.st_ctimespec)))
                 self_events.push_back({frame.wd, inotify::move_self, 0, {}});
             if (frame.scanned) {
                 size_t structural = 0;
@@ -523,9 +553,15 @@ struct InotifyFile::Impl {
                         ++structural;
                     }
                 }
-                // Directory WRITE without a net name change includes transient
-                // create/delete or rename cycles. Names cannot be recovered.
-                if ((hint & NOTE_WRITE) && !structural)
+                // APFS also posts NOTE_WRITE for rename(a,b) when both names
+                // already refer to the same inode. That no-op leaves directory
+                // mtime/ctime unchanged and loses no events. A transient
+                // create/delete or rename cycle changes directory metadata even
+                // when the final names match; its names cannot be recovered.
+                const bool directory_changed =
+                    !same_time(watch.root.info.st_mtimespec, frame.root.st_mtimespec) ||
+                    !same_time(watch.root.info.st_ctimespec, frame.root.st_ctimespec);
+                if ((hint & NOTE_WRITE) && !structural && directory_changed)
                     overflow();
             }
             for (auto &detached : watch.unlinked) {
@@ -733,11 +769,16 @@ struct InotifyFile::Impl {
         return wd;
     }
 #endif
-    void pump() {
+    void pump(const std::set<Identity> &exchanged = {}) {
         if (failure)
             return;
         try {
+#ifdef __APPLE__
+            collect(exchanged);
+#else
+            (void)exchanged;
             collect();
+#endif
         } catch (const GuestError &error) {
             backend_failure(error.number);
         }
@@ -752,8 +793,6 @@ void InotifyFile::validate_mask(uint32_t mask) {
     if ((mask & ~inotify::known_mask) || !(mask & inotify::all_events) ||
         ((mask & inotify::mask_add) && (mask & inotify::mask_create)))
         guest_error(22);
-    if (mask & (inotify::all_events & ~inotify::supported_events))
-        guest_error(95);
 }
 InotifyFile::InotifyFile(uint32_t flags) : InotifyFile(flags, InotifyLimits{}) {}
 InotifyFile::InotifyFile(uint32_t flags, InotifyLimits limits) {
@@ -845,5 +884,252 @@ void InotifyFile::service_all() {
     std::lock_guard<std::mutex> lock(registry.mutex);
     for (auto *file : registry.files)
         file->pump();
+}
+
+struct InotifyOpenFile::Impl {
+#ifdef __APPLE__
+    FD descriptor;
+    std::shared_ptr<FD> parent;
+    Identity key{}, parent_key{};
+    std::string name;
+    bool directory = false, writable = false, linked = true;
+    bool registered = false, counted = false, announced = false;
+#endif
+};
+InotifyOpenFile::InotifyOpenFile(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+void InotifyOpenFile::overflow_all() noexcept {
+#ifdef __APPLE__
+    try {
+        auto &registry = instances();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        for (auto *file : registry.files) {
+            try {
+                std::lock_guard<std::mutex> instance_lock(file->impl_->mutex);
+                file->impl_->overflow();
+            } catch (...) {
+                // Allocation exhaustion must not turn a completed guest I/O
+                // into an unrelated errno. Existing queued events stay intact.
+            }
+        }
+    } catch (...) {
+    }
+#endif
+}
+std::shared_ptr<InotifyOpenFile> InotifyOpenFile::opened(const Path &path, int descriptor,
+                                                       bool writable, bool anonymous) noexcept {
+#ifdef __APPLE__
+    if (path.virtual_path)
+        return {};
+    try {
+        struct stat info{};
+        check_host(::fstat(descriptor, &info));
+        auto impl = std::make_unique<Impl>();
+        impl->descriptor = duplicate(descriptor);
+        impl->key = identity(info);
+        impl->directory = S_ISDIR(info.st_mode);
+        impl->writable = writable;
+        impl->linked = !anonymous;
+        if (!anonymous && !path.mount_root && !path.name.empty() && path.name != "." &&
+            path.name != "..") {
+            check_host(::fstat(path.parent.get(), &info));
+            impl->parent = std::make_shared<FD>(duplicate(path.parent.get()));
+            impl->parent_key = identity(info);
+            impl->name = path.name;
+        }
+        auto result = std::shared_ptr<InotifyOpenFile>(new InotifyOpenFile(std::move(impl)));
+        {
+            auto &registry = instances();
+            std::lock_guard<std::mutex> lock(registry.mutex);
+            registry.opens.insert(result.get());
+            result->impl_->registered = true;
+            auto &counts = guest_opens();
+            std::lock_guard<std::mutex> count_lock(counts.mutex);
+            ++counts.counts[result->impl_->key];
+            result->impl_->counted = true;
+            result->impl_->announced = true;
+        }
+        result->emit(inotify::open);
+        return result;
+    } catch (...) {
+        overflow_all();
+    }
+#else
+    (void)path;
+    (void)descriptor;
+    (void)writable;
+    (void)anonymous;
+#endif
+    return {};
+}
+void InotifyOpenFile::emit(uint32_t event) noexcept {
+#ifdef __APPLE__
+    try {
+        auto &registry = instances();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        for (auto *file : registry.files) {
+            auto &backend = *file->impl_;
+            std::lock_guard<std::mutex> instance_lock(backend.mutex);
+            // CREATE / MODIFY / MOVE must precede a subsequent data event.
+            backend.next_census = {};
+            backend.pump();
+            if (backend.failure)
+                continue;
+            std::vector<std::pair<int32_t, std::string>> targets;
+            for (const auto &[wd, watch] : backend.watches) {
+                if (watch.root.node->key == impl_->key)
+                    targets.emplace_back(wd, std::string{});
+                if (impl_->parent && watch.root.node->key == impl_->parent_key &&
+                    (impl_->linked || !(watch.mask & inotify::exclude_unlinked)))
+                    targets.emplace_back(wd, impl_->name);
+            }
+            for (const auto &[wd, name] : targets)
+                backend.emit(wd, event | (impl_->directory ? inotify::is_directory : 0), name);
+        }
+    } catch (...) {
+        overflow_all();
+    }
+#else
+    (void)event;
+#endif
+}
+void InotifyOpenFile::accessed() noexcept {
+    emit(inotify::access);
+}
+InotifyOpenFile::~InotifyOpenFile() {
+#ifdef __APPLE__
+    if (!impl_->registered)
+        return;
+    if (impl_->announced)
+        emit(impl_->writable ? inotify::close_write : inotify::close_nowrite);
+    try {
+        auto &registry = instances();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        registry.opens.erase(this);
+        if (impl_->counted) {
+            auto &counts = guest_opens();
+            std::lock_guard<std::mutex> count_lock(counts.mutex);
+            auto found = counts.counts.find(impl_->key);
+            if (found != counts.counts.end() && !--found->second)
+                counts.counts.erase(found);
+        }
+        // Release a deferred DELETE_SELF only after CLOSE has been queued.
+        for (auto *file : registry.files) {
+            auto &backend = *file->impl_;
+            std::lock_guard<std::mutex> instance_lock(backend.mutex);
+            backend.next_census = {};
+            backend.pump();
+        }
+    } catch (...) {
+        overflow_all();
+    }
+#endif
+}
+void InotifyOpenFile::unlinked(const Path &path) noexcept {
+#ifdef __APPLE__
+    if (path.virtual_path)
+        return;
+    try {
+        struct stat parent{};
+        check_host(::fstat(path.parent.get(), &parent));
+        auto &registry = instances();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        for (auto *file : registry.opens) {
+            auto &open = *file->impl_;
+            if (open.parent && open.linked && open.parent_key == identity(parent) && open.name == path.name)
+                open.linked = false;
+        }
+    } catch (...) {
+        overflow_all();
+    }
+#else
+    (void)path;
+#endif
+}
+void InotifyOpenFile::renamed(const Path &source, const Path &target) noexcept {
+#ifdef __APPLE__
+    if (source.virtual_path || target.virtual_path)
+        return;
+    try {
+        struct stat from{}, to{}, moved{}, remaining{};
+        check_host(::fstat(source.parent.get(), &from));
+        check_host(::fstat(target.parent.get(), &to));
+        check_host(::fstatat(target.parent.get(), target.name.c_str(), &moved, AT_SYMLINK_NOFOLLOW));
+        // rename(a,b) is a no-op if a and b are hardlinks to the same inode.
+        if (::fstatat(source.parent.get(), source.name.c_str(), &remaining, AT_SYMLINK_NOFOLLOW) == 0 &&
+            identity(remaining) == identity(moved))
+            return;
+        auto parent = std::make_shared<FD>(duplicate(target.parent.get()));
+        auto &registry = instances();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        for (auto *file : registry.opens) {
+            auto &open = *file->impl_;
+            if (!open.parent || !open.linked)
+                continue;
+            if (open.parent_key == identity(from) && open.name == source.name && open.key == identity(moved)) {
+                open.name = target.name;
+                open.parent = parent;
+                open.parent_key = identity(to);
+            } else if (open.parent_key == identity(to) && open.name == target.name) {
+                // The overwritten dentry may still have open descriptions.
+                open.linked = false;
+            }
+        }
+    } catch (...) {
+        overflow_all();
+    }
+#else
+    (void)source;
+    (void)target;
+#endif
+}
+void InotifyOpenFile::exchanged(const Path &source, const Path &target) noexcept {
+#ifdef __APPLE__
+    if (source.virtual_path || target.virtual_path)
+        return;
+    try {
+        struct stat from{}, to{}, at_source{}, at_target{};
+        check_host(::fstat(source.parent.get(), &from));
+        check_host(::fstat(target.parent.get(), &to));
+        check_host(::fstatat(source.parent.get(), source.name.c_str(), &at_source, AT_SYMLINK_NOFOLLOW));
+        check_host(::fstatat(target.parent.get(), target.name.c_str(), &at_target, AT_SYMLINK_NOFOLLOW));
+        if (identity(at_source) == identity(at_target))
+            return; // Identical names or hardlinks to the same inode do not move.
+        auto source_parent = std::make_shared<FD>(duplicate(source.parent.get()));
+        auto target_parent = std::make_shared<FD>(duplicate(target.parent.get()));
+        auto &registry = instances();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        // Inspect the post-exchange inodes, and move each existing description
+        // once. Calling renamed twice would instead unlink the opposite side.
+        for (auto *file : registry.opens) {
+            auto &open = *file->impl_;
+            if (!open.parent || !open.linked)
+                continue;
+            if (open.parent_key == identity(from) && open.name == source.name &&
+                open.key == identity(at_target)) {
+                open.name = target.name;
+                open.parent = target_parent;
+                open.parent_key = identity(to);
+            } else if (open.parent_key == identity(to) && open.name == target.name &&
+                       open.key == identity(at_source)) {
+                open.name = source.name;
+                open.parent = source_parent;
+                open.parent_key = identity(from);
+            }
+        }
+        const std::set<Identity> exchanged{identity(at_source), identity(at_target)};
+        for (auto *file : registry.files) {
+            auto &backend = *file->impl_;
+            std::lock_guard<std::mutex> instance_lock(backend.mutex);
+            // Reconcile both directions now, before a later census can consume
+            // the swapped names with only Darwin's one-sided native hint.
+            backend.pump(exchanged);
+        }
+    } catch (...) {
+        overflow_all();
+    }
+#else
+    (void)source;
+    (void)target;
+#endif
 }
 } // namespace operit::arm64

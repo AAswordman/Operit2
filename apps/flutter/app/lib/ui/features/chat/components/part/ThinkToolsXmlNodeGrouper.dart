@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import '../../../../../l10n/generated/app_localizations.dart';
 
 import '../../../../../util/ChatMarkupRegex.dart';
+import '../../../../common/interactions/ChainedScrollController.dart';
 import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 
@@ -194,7 +195,7 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
   bool _scrollScheduled = false;
   ScrollDirection _bodyScrollDirection = ScrollDirection.idle;
   final Set<int> _activeBodyScrollPointers = <int>{};
-  final ScrollController _bodyScrollController = ScrollController();
+  final ScrollController _bodyScrollController = ChainedScrollController();
   final Stopwatch _stopwatch = Stopwatch();
   Timer? _tickerTimer;
   Duration? _completedDuration;

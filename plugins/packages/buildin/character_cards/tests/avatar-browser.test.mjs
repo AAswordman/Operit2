@@ -17,7 +17,7 @@ test.before(async () => {
   const installed = await readFile(new URL("../resources/character-memory.html", import.meta.url), "utf8");
   const avatar = await readFile(new URL("../resources/operit-avatar.png", import.meta.url));
   const { createAvatarResources } = loadModule("src/avatar-resources.ts", {
-    ToolPkg: { async readResource() { return "/app/default.png"; } },
+    ToolPkg: { async readResource() { return "/operitapp/default.png"; } },
   });
   resources = createAvatarResources("https://characters.operit.local/");
   // Explicit HTTP/browser adapter: native VFS and MIME inference have separate Flutter tests.
@@ -29,7 +29,7 @@ test.before(async () => {
     if (decision?.action !== "respond") { response.writeHead(404); response.end(); return; }
     const path = decision.response.filePath;
     counts.set(path, (counts.get(path) ?? 0) + 1);
-    if (path === "/app/missing.image") { response.writeHead(404); response.end(); return; }
+    if (path === "/operitapp/missing.image") { response.writeHead(404); response.end(); return; }
     response.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" }); response.end(avatar);
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -44,7 +44,7 @@ test.after(async () => {
 
 async function open({ view = "characters", reject = false, installed = false, missing = false } = {}) {
   const data = fixture();
-  data.snapshot.cards = Array.from({ length: 20 }, (_, index) => ({ ...data.snapshot.cards[0], id: "card-" + index, name: "Visible character " + index, avatarUri: index === 19 ? missing ? "/app/missing.image" : "/app/custom image.image" : null }));
+  data.snapshot.cards = Array.from({ length: 20 }, (_, index) => ({ ...data.snapshot.cards[0], id: "card-" + index, name: "Visible character " + index, avatarUri: index === 19 ? missing ? "/operitapp/missing.image" : "/operitapp/custom image.image" : null }));
   data.snapshot.groups = [];
   data.snapshot.active = { CharacterCard: { id: "card-0" } };
   const context = await browser.newContext({ viewport: { width: 800, height: 600 } });
@@ -87,7 +87,7 @@ for (const view of ["characters", "memory"]) {
       });
       assert.equal(await page.evaluate(() => window.originalCard === document.querySelector("[data-avatar-uri]") && window.originalPage === document.querySelector(".page")), true);
       assert.equal(await page.evaluate(() => new Set([...document.querySelectorAll("[data-avatar-uri] img")].map(image => image.getAttribute("src"))).size), 2);
-      assert.deepEqual(await page.evaluate(() => window.avatarCalls), [null, "/app/custom image.image"]);
+      assert.deepEqual(await page.evaluate(() => window.avatarCalls), [null, "/operitapp/custom image.image"]);
     } finally { await context.close(); }
   });
 }
@@ -136,14 +136,14 @@ test("rebuilt installed document loads its same-origin avatar resources", async 
 });
 
 test("unreadable image keeps its placeholder while other avatars load", async () => {
-  const before = counts.get("/app/missing.image") ?? 0;
+  const before = counts.get("/operitapp/missing.image") ?? 0;
   const { page, context } = await open({ missing: true });
   try {
     await page.getByText("Visible character 0", { exact: true }).waitFor();
     await page.evaluate(() => window.releaseAvatars());
     await page.waitForFunction(() => document.querySelectorAll("[data-avatar-uri] img").length === 19);
-    assert.ok((counts.get("/app/missing.image") ?? 0) > before);
-    assert.equal(await page.locator('[data-avatar-uri="/app/missing.image"] > svg').count(), 1);
+    assert.ok((counts.get("/operitapp/missing.image") ?? 0) > before);
+    assert.equal(await page.locator('[data-avatar-uri="/operitapp/missing.image"] > svg').count(), 1);
     assert.equal(await page.locator('[data-action="edit-card"]').count(), 20);
   } finally { await context.close(); }
 });
