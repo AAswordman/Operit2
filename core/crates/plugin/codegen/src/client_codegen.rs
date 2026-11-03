@@ -649,7 +649,31 @@ fn ts_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -> 
 fn ts_public_type(ty: &str, serializable_types: &HashMap<String, SerializableType>) -> String {
     let mut result = ts_type(ty, serializable_types);
     for name in serializable_types.keys().map(|value| dart_class_name(value)).collect::<BTreeSet<_>>() {
-        result = result.replace(&name, &format!("models.{name}"));
+        result = replace_type_identifier(&result, &name, &format!("models.{name}"));
+    }
+    result
+}
+
+/// Replaces a whole TypeScript identifier without touching longer names or imports.
+fn replace_type_identifier(value: &str, name: &str, replacement: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let name_chars: Vec<char> = name.chars().collect();
+    let mut result = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < chars.len() {
+        let boundary_before = index == 0
+            || (!chars[index - 1].is_alphanumeric() && chars[index - 1] != '_' && chars[index - 1] != '.');
+        let end = index + name_chars.len();
+        let boundary_after = end <= chars.len()
+            && (end == chars.len()
+                || (!chars[end].is_alphanumeric() && chars[end] != '_'));
+        if boundary_before && boundary_after && chars[index..end] == name_chars[..] {
+            result.push_str(replacement);
+            index = end;
+        } else {
+            result.push(chars[index]);
+            index += 1;
+        }
     }
     result
 }
@@ -834,5 +858,24 @@ mod parameter_tests {
         assert!(render_dart(&objects, &models).contains("options.toMessagePackValue()"));
         assert!(render_typescript_models(&objects, &models).contains("'is_enabled': value.enabled"));
         assert!(render_kotlin_models(&objects, &models).contains("\"is_enabled\" to this.enabled"));
+    }
+
+    /// Prevents a short DTO name from being replaced inside a longer DTO name.
+    #[test]
+    fn typescript_model_names_qualify_as_whole_identifiers() {
+        let model = |full_type: &str| SerializableType {
+            full_type: full_type.to_string(),
+            supports_serialize: true,
+            supports_deserialize: true,
+            kind: SerializableTypeKind::Struct { fields: Vec::new() },
+        };
+        let models = HashMap::from([
+            ("dto::Snapshot".to_string(), model("dto::Snapshot")),
+            ("dto::ExtensionCatalogSnapshot".to_string(), model("dto::ExtensionCatalogSnapshot")),
+        ]);
+        assert_eq!(
+            ts_public_type("dto::ExtensionCatalogSnapshot", &models),
+            "models.ExtensionCatalogSnapshot"
+        );
     }
 }
