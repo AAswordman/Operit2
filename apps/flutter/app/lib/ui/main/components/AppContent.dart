@@ -138,8 +138,7 @@ class _AppContentState extends State<AppContent> {
 
   /// Resolves the page identity used by both caching and snapshot ownership.
   String get _currentScreenKey {
-    return widget.currentScreen.stableScreenKey() ??
-        widget.currentRouteEntry.instanceId;
+    return widget.currentScreen.pageKey(widget.currentRouteEntry);
   }
 
   /// Retains each page widget independently of its visibility in the stack.

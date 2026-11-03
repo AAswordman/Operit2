@@ -12,6 +12,7 @@ import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../../features/packages/screens/UnifiedMarketScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
 import '../../features/settings/screens/SettingsScreen.dart';
+import '../navigation/AppNavigationModels.dart';
 
 abstract class OperitScreen {
   /// Creates a route with explicit ownership of its bottom system inset.
@@ -39,8 +40,10 @@ abstract class OperitScreen {
     return null;
   }
 
-  bool preserveTopBarTitleWhenReplacingWith(OperitScreen nextScreen) {
-    return false;
+  /// Identifies the mounted page that shows [entry]. Routes with a stable key
+  /// share one cached page; any other entry gets a page of its own.
+  String pageKey(RouteEntry entry) {
+    return stableScreenKey() ?? entry.instanceId;
   }
 
   Widget build(BuildContext context);
@@ -58,11 +61,6 @@ class AiChatScreenRoute extends OperitScreen {
   @override
   String? stableScreenKey() {
     return 'AiChat';
-  }
-
-  @override
-  bool preserveTopBarTitleWhenReplacingWith(OperitScreen nextScreen) {
-    return nextScreen is AiChatScreenRoute;
   }
 
   @override
