@@ -77,6 +77,9 @@ int send_limit_signal(Scheduler &scheduler, uint32_t tid, int signal, bool proce
 // value is 0/no expiry, a positive generated signal, or a negative delivery errno.
 int enforce_cpu_limit(Scheduler &scheduler, uint32_t tid, ResourceLimits &limits,
                       uint64_t user_nanoseconds, uint64_t system_nanoseconds);
+// Per-thread RT service, process-directed SI_KERNEL limit signals.
+int enforce_realtime_limit(Scheduler &scheduler, uint32_t tid, ResourceLimits &limits,
+                           uint64_t runtime_nanoseconds);
 
 // No guest-memory access is allowed while this returned guard is held. The
 // memfd guard serializes offset inspection, FSIZE prefix reduction and seals

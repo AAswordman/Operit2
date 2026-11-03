@@ -4,6 +4,14 @@ import 'package:xterm/xterm.dart';
 
 /// Registers regression tests for VT220 character sets and keypad modes.
 void main() {
+  test('reports one-based cursor coordinates across split queries', () {
+    final output = <String>[];
+    final terminal = Terminal(onOutput: output.add);
+    terminal.write('\x1b[6n\x1b[12;15H\x1b[');
+    terminal.write('6n');
+    expect(output, ['\x1b[1;1R', '\x1b[12;15R']);
+  });
+
   test('designates G2 and G3 character sets', () {
     final debugger = TerminalDebugger();
 

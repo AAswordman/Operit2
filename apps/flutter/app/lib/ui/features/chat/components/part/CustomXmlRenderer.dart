@@ -13,6 +13,7 @@ import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../common/interactions/ChainedScrollController.dart';
 import '../../../../common/interactions/MessagePressShield.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../common/markdown/Utf16Text.dart';
@@ -581,7 +582,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     _expanded = _targetExpandedFor(widget);
     _bodyFullHeight = widget.fullHeight && widget.initiallyExpanded;
     _expandSession = _expanded ? 1 : 0;
-    _scrollController = ScrollController();
+    _scrollController = ChainedScrollController();
   }
 
   /// Syncs expansion state when caller defaults change.

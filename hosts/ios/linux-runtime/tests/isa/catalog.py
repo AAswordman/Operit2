@@ -20,6 +20,7 @@ def cases():
         for op in ('add','adds','sub','subs','and','ands','orr','eor','bic','bics','orn','eon'):
             for shift in ('', ', lsl #3', ', lsr #1', ', asr #7'):
                 add('integer-arithmetic',f'{op} {a}, {b}, {c}{shift}')
+        add('integer-arithmetic',f'cmp {a}, {b}')
         for op in ('adc','adcs','sbc','sbcs','udiv','sdiv','lsl','lsr','asr','ror'):
             add('integer-arithmetic',f'{op} {a}, {b}, {c}')
         for op in ('rbit','rev16','rev','clz','cls'):

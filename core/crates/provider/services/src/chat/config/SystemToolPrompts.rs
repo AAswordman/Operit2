@@ -522,18 +522,15 @@ fn join_non_empty_lines(lines: Vec<String>) -> String {
 
 #[allow(non_snake_case)]
 fn hostPromptHeader(host_environment: &HostEnvironmentDescriptor, use_english: bool) -> String {
-    let headerPaths = hostHeaderVfsPaths(host_environment);
-    let separator = if use_english { ", " } else { "、" };
-    let pathList = formatBacktickedPaths(&headerPaths, separator);
     if use_english {
         format!(
-            "Current file VFS host: {} (`{}`).\n- Use VFS paths only: {pathList}.\n- When `/mnt` is listed, it contains the mounted entries available on this host.\n- Hidden Android aliases `/sdcard` and `/data` can be opened directly on Android hosts but are not listed at root.\n- Bare paths target this device; prefixing a path with `nodeName:` (names from `list_core_nodes`) reads files on another device in the space. File operations run on the target device; copying or moving across devices streams the file between them, which may take time for large files.",
+            "Current file host: {} (`{}`). Relative file paths require a workspace and resolve against its primary folder; absolute VFS paths address other locations. Without a workspace, list `/` to discover accessible locations or ask the user to select a folder; do not guess paths. VFS paths are not necessarily terminal paths. Prefix a path with `nodeName:` to address another device.",
             host_environment.displayName,
             host_environment.id
         )
     } else {
         format!(
-            "当前文件 VFS Host：{}（`{}`）。\n- 只使用 VFS 路径：{pathList}。\n- 当 `/mnt` 出现在根目录时，其中只包含当前 Host 已挂载入口。\n- Android 隐藏别名 `/sdcard` 和 `/data` 可在 Android Host 上直接访问，但不会在根目录列表展示。\n- 裸路径指向本机；在路径前加 `nodeName:`（名字来自 `list_core_nodes`）可读取空间内其他设备上的文件。文件操作在目标设备上执行；跨设备的复制或移动会在设备间流式传输文件，大文件可能耗时较长。",
+            "当前文件 Host：{}（`{}`）。文件相对路径需要绑定工作区，以主文件夹为基准；访问其他位置使用 VFS 绝对路径。没有工作区时，可列出 `/` 查找可访问的位置，或请用户选择目录，不要猜测路径。VFS 路径不一定是终端路径。使用 `nodeName:` 前缀访问其他设备。",
             host_environment.displayName,
             host_environment.id
         )
@@ -573,52 +570,14 @@ fn applyHostEnvironmentToTool(
 
 #[allow(non_snake_case)]
 fn hostPathParameterDescription(
-    host_environment: &HostEnvironmentDescriptor,
+    _host_environment: &HostEnvironmentDescriptor,
     use_english: bool,
 ) -> String {
-    let examples = host_environment.examplePaths.join(", ");
-    let vfsExamples = hostToolPathExamples(host_environment).join(", ");
     if use_english {
-        format!("VFS path, e.g. {vfsExamples}. Host examples: {examples}")
+        "Workspace-relative path (e.g. `.` or `src/file`), or absolute VFS path.".to_string()
     } else {
-        let vfsExamplesCn = hostToolPathExamples(host_environment).join("、");
-        format!("VFS 路径，例如 {vfsExamplesCn}。Host 示例：{examples}")
+        "工作区相对路径（如 `.` 或 `src/file`），或 VFS 绝对路径。".to_string()
     }
-}
-
-#[allow(non_snake_case)]
-fn hostHeaderVfsPaths(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
-    let mut paths = vec!["/app", "/app/workspaces"];
-    match host_environment.id.as_str() {
-        "windows" => paths.push("/mnt/windows/<drive>"),
-        "android" => paths.push("/mnt/android/sdcard"),
-        "linux" => paths.push("/mnt/linux"),
-        "web" => {}
-        _ => {}
-    }
-    paths
-}
-
-#[allow(non_snake_case)]
-fn hostToolPathExamples(host_environment: &HostEnvironmentDescriptor) -> Vec<&'static str> {
-    let mut paths = vec!["/app/workspaces/<workspace-id>"];
-    match host_environment.id.as_str() {
-        "windows" => paths.push("/mnt/windows/d"),
-        "android" => paths.push("/mnt/android/sdcard"),
-        "linux" => paths.push("/mnt/linux"),
-        "web" => {}
-        _ => {}
-    }
-    paths
-}
-
-#[allow(non_snake_case)]
-fn formatBacktickedPaths(paths: &[&str], separator: &str) -> String {
-    paths
-        .iter()
-        .map(|path| format!("`{path}`"))
-        .collect::<Vec<_>>()
-        .join(separator)
 }
 
 #[allow(non_snake_case)]
@@ -930,7 +889,7 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
 
 fn file_system_tools_en() -> SystemToolPromptCategory {
     category("File System Tools", vec![
-        tool("list_files", "List files in a directory.", vec![param("path", "string", "VFS directory path, e.g. \"/app/workspaces/<workspace-id>\" or \"/mnt/android/sdcard/Download\"", true, None)]),
+        tool("list_files", "List files in a directory.", vec![param("path", "string", "VFS directory path, e.g. \"/operitapp/workspaces/<workspace-id>\" or \"/virtual/android/sdcard/Download\"", true, None)]),
         tool("read_file", "Read the content of a file. For image files (jpg, jpeg, png, gif, bmp), it automatically extracts text using OCR.", vec![
             param("path", "string", "VFS file path", true, None),
             param("intent", "string", "optional, your question about the media/file (used for backend recognition)", false, None),
@@ -956,7 +915,7 @@ fn file_system_tools_en() -> SystemToolPromptCategory {
 
 fn file_system_tools_cn() -> SystemToolPromptCategory {
     category("文件系统工具", vec![
-        tool("list_files", "列出目录中的文件。", vec![param("path", "string", "VFS 目录路径，例如 \"/app/workspaces/<workspace-id>\" 或 \"/mnt/android/sdcard/Download\"", true, None)]),
+        tool("list_files", "列出目录中的文件。", vec![param("path", "string", "VFS 目录路径，例如 \"/operitapp/workspaces/<workspace-id>\" 或 \"/virtual/android/sdcard/Download\"", true, None)]),
         tool("read_file", "读取文件内容。对于图片文件(jpg, jpeg, png, gif, bmp)，自动使用OCR提取文本。", vec![
             param("path", "string", "VFS 文件路径", true, None),
             param("intent", "string", "可选，用户对媒体/文件的问题（用于后端识别模型）", false, None),

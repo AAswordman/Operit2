@@ -7,6 +7,8 @@
 
 namespace operit::arm64 {
 struct stat Syscalls::descriptor_stat(const Descriptor &entry) {
+    if (ipc::is_posix_mq_file(entry.description))
+        guest_error(95); // Guest mqueue metadata is not the readiness pipe's metadata.
     if (entry.description->terminal)
         return terminals_->stat(*entry.description->terminal);
     if (entry.host.get() < 0 && entry.description->virtual_file)

@@ -805,7 +805,7 @@ mod tests {
     /// VFS paths and Windows drive syntax keep local semantics.
     #[test]
     fn qualifiedPathSplittingKeepsLocalPathsIntact() {
-        assert_eq!(splitQualifiedVfsPath("cas:/mnt/nas/data"), Some(("cas", "/mnt/nas/data")));
+        assert_eq!(splitQualifiedVfsPath("cas:/virtual/nas/data"), Some(("cas", "/virtual/nas/data")));
         assert_eq!(splitQualifiedVfsPath("cas:C:/Users/report.docx"), Some(("cas", "C:/Users/report.docx")));
         assert_eq!(splitQualifiedVfsPath("  cas:x/y "), Some(("cas", "x/y")));
         // Display names may contain spaces; the colon split runs first.
@@ -813,14 +813,14 @@ mod tests {
             splitQualifiedVfsPath("EliteMini Series:/Users/x"),
             Some(("EliteMini Series", "/Users/x"))
         );
-        for local in ["/app/workspaces/chat-a", "/mnt/linux/home", "", "relative/path"] {
+        for local in ["/operitapp/workspaces/chat-a", "/virtual/linux/home", "", "relative/path"] {
             assert_eq!(splitQualifiedVfsPath(local), None, "{local}");
         }
         // Single-letter prefixes reserve the Windows drive syntax.
         assert_eq!(splitQualifiedVfsPath("C:/Users"), None);
         assert_eq!(splitQualifiedVfsPath("c:data"), None);
         // Prefixes with separators are path text, not node references.
-        assert_eq!(splitQualifiedVfsPath("/mnt/linux/foo:bar"), None);
+        assert_eq!(splitQualifiedVfsPath("/virtual/linux/foo:bar"), None);
         assert_eq!(splitQualifiedVfsPath(":no-prefix"), None);
     }
 
@@ -832,17 +832,17 @@ mod tests {
             status("core-2-local", "desk", "harmoon", true),
             status("core-1-cas", "cas", "harmoon", true),
         ]);
-        match state.resolveQualifiedVfsPath("cas:/mnt/nas/data").unwrap() {
+        match state.resolveQualifiedVfsPath("cas:/virtual/nas/data").unwrap() {
             QualifiedVfsResolution::RemoteTarget { node, pathPrefix, innerPath } => {
                 assert_eq!(node.nodeId, "core-1-cas");
                 assert_eq!(pathPrefix, "cas");
-                assert_eq!(innerPath, "/mnt/nas/data");
+                assert_eq!(innerPath, "/virtual/nas/data");
             }
             other => panic!("expected a remote target, got {other:?}"),
         }
         // This device's own name short-circuits to the inner local path.
-        match state.resolveQualifiedVfsPath("desk:/mnt/linux/home").unwrap() {
-            QualifiedVfsResolution::LocalPath(inner) => assert_eq!(inner, "/mnt/linux/home"),
+        match state.resolveQualifiedVfsPath("desk:/virtual/linux/home").unwrap() {
+            QualifiedVfsResolution::LocalPath(inner) => assert_eq!(inner, "/virtual/linux/home"),
             other => panic!("expected a local path, got {other:?}"),
         }
         // The exact node id and a unique id prefix resolve like switch_core.
@@ -852,8 +852,8 @@ mod tests {
         }
         // Unqualified input passes through unchanged.
         assert_eq!(
-            state.resolveQualifiedVfsPath("/app/workspaces/chat-a").unwrap(),
-            QualifiedVfsResolution::LocalPath("/app/workspaces/chat-a")
+            state.resolveQualifiedVfsPath("/operitapp/workspaces/chat-a").unwrap(),
+            QualifiedVfsResolution::LocalPath("/operitapp/workspaces/chat-a")
         );
     }
 
@@ -864,7 +864,7 @@ mod tests {
             status("core-1", "cas", "harmoon", true),
             status("core-2", "cas", "harmoon", true),
         ]);
-        let unknown = state.resolveQualifiedVfsPath("lighthouse:/mnt/nas").unwrap_err();
+        let unknown = state.resolveQualifiedVfsPath("lighthouse:/virtual/nas").unwrap_err();
         assert!(unknown.contains("'lighthouse' is not a member"), "{unknown}");
         assert!(unknown.contains("cas (core-1)"), "{unknown}");
         let ambiguous = state.resolveQualifiedVfsPath("harmoon:/sdcard").unwrap_err();

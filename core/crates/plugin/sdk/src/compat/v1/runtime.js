@@ -37,7 +37,7 @@ function __operitInstallV1Runtime(runtime) {
         var directory = owner + '-' + (hash >>> 0).toString(16);
         var escaped = owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return {
-            source: '/app/data/cache/toolpkg/' + directory,
+            source: '/operitapp/data/cache/toolpkg/' + directory,
             destination: '/tmp/operit-v1/toolpkg/' + directory,
             pattern: new RegExp('/data/(?:user/0|data)/com\\.ai\\.assistance\\.operit/files/toolpkg_cache/' +
                 escaped + '-(?:\\*|[a-fA-F0-9]+)(?=/|$|[\\s\\x22\\x27;|&<>)])', 'g')
@@ -184,14 +184,14 @@ function __operitInstallV1Runtime(runtime) {
      * @param {unknown} path
      * @returns {path is string}
      */
-    function isLinux(path) { return typeof path === 'string' && (path === '/mnt/linux' || path.startsWith('/mnt/linux/')); }
+    function isLinux(path) { return typeof path === 'string' && (path === '/virtual/linux' || path.startsWith('/virtual/linux/') || path === '/mnt/linux' || path.startsWith('/mnt/linux/')); }
 
     /** Converts one explicit Linux VFS address into the selected runtime's absolute path.
      * @param {string} path
      */
     function linuxPath(path) {
         if (!isLinux(path)) throw new Error('V1 runtime file operation requires a Linux VFS address');
-        var suffix = path.slice('/mnt/linux'.length);
+        var suffix = path.slice(path.startsWith('/virtual/linux') ? '/virtual/linux'.length : '/mnt/linux'.length);
         return suffix === '' ? '/' : suffix;
     }
 
@@ -202,7 +202,7 @@ function __operitInstallV1Runtime(runtime) {
      */
     async function file(operation, args) {
         var value = await invoke('file', { operation: operation, args: args });
-        value.path = '/mnt/linux' + (value.path === '/' ? '' : value.path);
+        value.path = '/virtual/linux' + (value.path === '/' ? '' : value.path);
         // The managed runtime returns a flat receipt; the canonical text-write contract wraps it.
         if (operation === 'write') return { operation: value, aiDiffInstructions: '' };
         return value;
@@ -221,12 +221,12 @@ function __operitInstallV1Runtime(runtime) {
                 var originalPath = path;
                 var mappedPath = await cachePath(path);
                 if (mappedPath !== path) {
-                    path = '/mnt/linux' + mappedPath;
+                    path = '/virtual/linux' + mappedPath;
                     args[0] = typeof args[0] === 'object' ? Object.assign({}, args[0], { path: path }) : path;
                 }
                 if (['move', 'copy', 'unzip'].includes(name)) {
                     var mappedDestination = await cachePath(args[1]);
-                    if (mappedDestination !== args[1]) args[1] = '/mnt/linux' + mappedDestination;
+                    if (mappedDestination !== args[1]) args[1] = '/virtual/linux' + mappedDestination;
                 }
                 var sourceLinux = isLinux(path);
                 var hasDestination = name === 'move' || name === 'copy' || name === 'unzip';

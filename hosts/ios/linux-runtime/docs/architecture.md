@@ -38,7 +38,7 @@ Guest 采用 4 KiB 页、稀疏映射、访问权限、TLB、COW 与文件 / 共
 
 可执行页写入、映射和权限变化需要使旧解码失效。磁盘上的 `Interpreter::revalidate` 已调用 `Memory::validate_code`，后者检查页同步、epoch 与内容；此次调用改动的构建 / 回归状态只在交付状态记录。独占访问、原子操作与共享内存保护由 Memory 及 executor 协同，不能沿用旧“单线程因此无需并发一致性”的描述。seals / 共享写映射与代码缓存的一致性仍需对应生命周期测试。
 
-`cpu/aarch64/` 按职责拆分 decoder、execute、exclusive、floating_point、vector arithmetic / unary / widen / indexed / shift / narrow / memory / floating。`vector_lanes.h` 与 `vector_multiply.h` 统一部分 lane、饱和 / QC、doubling / polynomial 运算，`floating_context.h` 管理宿主浮点环境。合法形式、尺寸 / lane 与保留编码须按族检查，不能靠解码后空操作代表支持。
+`cpu/aarch64/` 按职责拆分 decoder、execute、exclusive、floating_point、vector arithmetic / unary / widen / indexed / shift / narrow / memory / floating。`vector_lanes.h` 与 `vector_multiply.h` 统一部分 lane、饱和 / QC、doubling / polynomial 运算，`floating_point.h` 中的 `FloatingPointEnvironment` 管理宿主浮点环境。合法形式、尺寸 / lane 与保留编码须按族检查，不能靠解码后空操作代表支持。
 
 ## Linux ABI、文件系统与事件
 
@@ -56,9 +56,9 @@ Filesystem 用已打开 FD 锚定 root / 绑定源，逐段处理路径、symlin
 
 加速默认关闭。完整 ELF 的 SHA-256 必须命中固定清单，入口 PC 也须匹配；实现与宿主库预先编译。当前范围为 musl 的 `memcpy`、`memmove`、`memset`、`strlen`，没有任意 guest 程序 AOT 或动态代码生成。
 
-装载器对匹配映像保留代码快照。epoch 变化后检查权限与内容，修改 / 卸载时回到解释器。替换遵守 AAPCS 参数、返回值与 LR，所有数据读写仍经 guest 内存检查；未命中、范围无效或超过单次边界时回退。memmove 重叠与零长度遵循显式处理。
+装载器对匹配映像保留代码快照。epoch 变化后检查权限与内容，修改 / 卸载时回到解释器。替换遵守 AAPCS 参数、返回值与 LR，所有数据读写仍经 guest 内存检查；未命中或范围无效时回退。已认证 musl 的长 memcpy 可按页和预算分段续跑；共享、文件映射、可执行目标或物理页别名不使用批量复制。memmove 重叠与零长度遵循显式处理。
 
-一次替换消耗一步预算，`instructions` 因而是“解释指令 + 替换调用”的混合数。两种模式应比较相同输出的执行 / wall 时间，并报告 accelerated_calls / bytes，不能用 instructions/second 直接推出加速比。历史测量见 [迁移与性能记录](status-and-migration.md)。
+替换按实际完成的 guest 指令数消耗预算，可以在预算边界暂停。`accelerated_calls` 计加速片段，不等同于完整函数调用；`accelerated_bytes` 只统计单段完成的函数，不包含所有续跑的长拷贝，不能作为全部加速字节数。两种模式应比较相同输出的执行 / wall 时间，不能只用计数器推断加速比。历史测量见 [迁移与性能记录](status-and-migration.md)。
 
 ## 验证入口与证据边界
 

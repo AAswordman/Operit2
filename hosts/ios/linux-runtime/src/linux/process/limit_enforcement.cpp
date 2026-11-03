@@ -130,6 +130,14 @@ int enforce_cpu_limit(Scheduler &scheduler, uint32_t tid, ResourceLimits &limits
     const int status = send_limit_signal(scheduler, tid, signal, true);
     return status < 0 ? status : signal;
 }
+int enforce_realtime_limit(Scheduler &scheduler, uint32_t tid, ResourceLimits &limits,
+                           uint64_t runtime_nanoseconds) {
+    const int signal = limits.check_realtime_time(runtime_nanoseconds);
+    if (!signal)
+        return 0;
+    const int status = send_limit_signal(scheduler, tid, signal, true);
+    return status < 0 ? status : signal;
+}
 files::MemoryFileGuard guard_file_write(const ResourceLimits &limits, int host_fd, uint64_t count,
                                         std::optional<uint64_t> offset, std::optional<bool> append,
                                         const std::function<void()> &file_size_signal) {

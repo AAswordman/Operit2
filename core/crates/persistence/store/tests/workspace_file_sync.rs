@@ -194,7 +194,7 @@ fn invalid_paths_are_rejected() {
     for path in [
         "workspaces/../outside",
         "workspaces/x/../../secret",
-        "/mnt/macos/file",
+        "/virtual/macos/file",
         "workspaces/x\\outside",
         "workspaces/x//file",
     ] {

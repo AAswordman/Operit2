@@ -59,3 +59,23 @@ python3 hosts/ios/linux-runtime/tests/probe_node.py \
 ```
 
 可附加 `--external-network` 或 `--host-node /absolute/path/to/node`。JS 文件经只读绑定提供，不复制到 root。实际返回码由本次执行决定，不将历史失败写成固定预期，也不将旧通过当作当前回归结果。
+
+## Worker 性能复测（不编译）
+
+`tests/profile_workers.py` 只调用已有 CLI，不运行 guest fixture 编译入口。默认保留原脚本四 Worker / 40000 次计数 / 15000ms 截止，分别测 cpus=1、4，记录二进制和脚本 hash、wall / CPU / stats。`--phases` 增加独立临时副本，并用宿主单调时钟记录阶段日志到达时间；`--sample-seconds 8` 另开一次 macOS 采样。这些诊断不进入原脚本验收结果。
+
+当前性能目标是 **5 秒总 wall**：从新 CLI 进程启动到完整原脚本退出，包含 Node / 四 Worker 初始化。默认 `--repeats 3 --target-seconds 5`，性能目标适用于 `--cpus` 中最大值（默认四核）；可用 `--target-cpus` 显式指定。各轮交替单 / 四核顺序，每次启动独立 CLI，不提前预热 guest；不保证宿主文件页缓存为空。三次功能均通过且三次总 wall 都不超过 5 秒才算性能通过，不能只取最快一次或中位数。报告分别给出 `functional_passed` 与 `performance.passed`，总 `passed` 必须两者满足；单核仍须功能通过，默认不要求单核也达 5 秒。`arm64-worker-profile-validation` 只校验这些判定规则，不能证明引擎已达标。
+
+在仓库根目录、用户已完成构建后运行：
+
+```sh
+python3 hosts/ios/linux-runtime/tests/profile_workers.py \
+  --runtime tools/ios-runtime/arm64/build/host/operit-arm64 \
+  --root tools/ios-runtime/arm64/build/node-npm-check-kxc_6965/root \
+  --output tools/ios-runtime/arm64/build/worker-performance-after.json \
+  --host-node /Users/ylvira/.local/bin/node \
+  --repeats 3 --target-cpus 4 --target-seconds 5 \
+  --phases --sample-seconds 8
+```
+
+新 C++ 的 resident TLB 前进性、prepared 助手页集 / 失败回退、COW / 写保护及并发页访问回归登记为 `arm64-memory-concurrency`；固定助手 harness 另覆盖热复制前进性、反向并发复制与跨页回退；本轮没有构建或运行该目标。测量及当前源码的精确边界见交付状态本轮性能排查一节。

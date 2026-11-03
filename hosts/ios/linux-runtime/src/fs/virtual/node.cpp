@@ -2,8 +2,7 @@
 #include "base/random.h"
 #include "base/support.h"
 #include <cstring>
-#include <dirent.h>
-#include <limits>
+#include <algorithm>
 #include <unistd.h>
 
 namespace operit::arm64 {
@@ -43,9 +42,6 @@ struct stat VirtualNode::stat() const {
         value.st_rdev = 256 | minor; // Linux major 1, minor < 256.
     }
     return value;
-}
-unsigned char VirtualNode::directory_type() const {
-    return kind == Kind::Directory ? DT_DIR : kind == Kind::Symlink ? DT_LNK : device() ? DT_CHR : DT_REG;
 }
 void VirtualOpen::capture() {
     if (!captured) {

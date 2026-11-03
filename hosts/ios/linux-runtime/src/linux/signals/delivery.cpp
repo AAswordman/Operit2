@@ -7,7 +7,8 @@ void resume_interrupted(CpuState &cpu, ThreadState &thread, bool handler_restart
     if (!thread.restart || !thread.restart->interrupted)
         return;
     const auto &restart = *thread.restart;
-    if (restart.restartable && handler_restarts && (!handler || !restart.without_handler_only) &&
+    if (restart.restartable && (handler_restarts || restart.always_restart) &&
+        (!handler || !restart.without_handler_only) &&
         restart.after_svc >= 4 && int64_t(cpu.x[0]) == -4) {
         std::copy(restart.registers.begin(), restart.registers.end(), cpu.x.begin());
         cpu.pc = restart.after_svc - 4;
@@ -24,7 +25,9 @@ void finish_mask(ThreadState &thread, uint64_t &mask) {
 }
 } // namespace
 Delivery deliver(Memory &memory, CpuState &cpu, ProcessState &process, ThreadState &thread, uint64_t &mask,
-                 uint64_t trampoline) {
+                 uint64_t trampoline, const std::function<bool(CpuState &)> &before_handler,
+                 std::optional<Queued> *tracer_signal,
+                 const std::function<bool(const Queued &)> &before_delivery) {
     const uint64_t live_mask = thread.interrupted_mask.value_or(mask) & ~unblockable;
     const uint64_t allowed = ~live_mask;
     unsigned bad_frames = 0;
@@ -32,6 +35,12 @@ Delivery deliver(Memory &memory, CpuState &cpu, ProcessState &process, ThreadSta
         auto pending = thread.pending.take(bit(kill_signal));
         if (!pending)
             pending = process.pending.take(bit(kill_signal));
+        bool resumed = false;
+        if (!pending && tracer_signal && *tracer_signal) {
+            pending = std::move(*tracer_signal);
+            tracer_signal->reset();
+            resumed = true;
+        }
         if (!pending)
             pending = thread.pending.take(allowed, true);
         if (!pending)
@@ -45,6 +54,8 @@ Delivery deliver(Memory &memory, CpuState &cpu, ProcessState &process, ThreadSta
             }
             return {};
         }
+        if (!resumed && before_delivery && before_delivery(*pending))
+            return {};
         const int signal = pending->info.signal;
         Action action = process.actions->entries.at(signal - 1);
         if (signal == kill_signal || signal == stop_signal)
@@ -70,6 +81,12 @@ Delivery deliver(Memory &memory, CpuState &cpu, ProcessState &process, ThreadSta
             saved.x[0] = uint64_t(int64_t{-4});
         else
             resume_interrupted(saved, thread, action.flags & sa_restart, true);
+        if (before_handler && !before_handler(saved)) {
+            if (++bad_frames > 1 || signal == segv_signal)
+                return {Effect::Core, segv_signal, Info::fault(segv_signal, saved.pc, 1)};
+            force_fault(process, thread, mask, segv_signal, saved.pc, 1);
+            continue;
+        }
         const uint64_t saved_mask = thread.restore_mask.value_or(mask);
         if (action.flags & sa_resethand)
             process.actions->entries[signal - 1] = {};

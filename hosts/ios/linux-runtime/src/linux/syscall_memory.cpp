@@ -1,4 +1,5 @@
 #include "linux/syscalls.h"
+#include "linux/io_uring/io_uring.h"
 
 namespace operit::arm64 {
 int64_t Syscalls::dispatch_memory(CpuState &cpu) {
@@ -6,16 +7,20 @@ int64_t Syscalls::dispatch_memory(CpuState &cpu) {
     switch (a[8]) {
     case 214: // brk
         return process_brk(a[0]);
-    case 215: // munmap
+    case 215: { // munmap
         if (a[0] % page_size || !a[1] || a[1] > address_limit - page_size)
             guest_error(22);
+        const Memory::AccessGuard memory_access(memory_);
         memory_.unmap(a[0], align_up(a[1]));
+        sync_shared_memory_mappings();
         return 0;
+    }
     case 216: { // mremap
         if (a[1] > address_limit - page_size || a[2] > address_limit - page_size || a[3] > 7)
             guest_error(22);
         const uint64_t old_size = align_up(a[1]), new_size = align_up(a[2]);
         const Memory::AccessGuard memory_access(memory_);
+        ipc::shared_memory_check_remap(shared_memory_space_, memory_, a[0], old_size, a[4], new_size, a[3]);
         resource_limits()->check_remap(memory_, a[0], old_size, new_size, unsigned(a[3]), a[4]);
         const uint64_t address =
             memory_.remap(a[0], old_size, new_size, unsigned(a[3]), a[4], mmap_next_);
@@ -23,6 +28,7 @@ int64_t Syscalls::dispatch_memory(CpuState &cpu) {
             mmap_next_ = address + align_up(a[2]) < address_limit - page_size
                              ? address + align_up(a[2]) + page_size
                              : page_size;
+        sync_shared_memory_mappings();
         return address;
     }
     case 222: { // mmap
@@ -70,9 +76,13 @@ int64_t Syscalls::dispatch_memory(CpuState &cpu) {
             }
         }
         resource_limits()->check_mapping(memory_, address, length, unsigned(a[2]), shared, replace);
-        if (file)
+        if (file && file->description->io_uring)
+            io_uring::map_ring(file->description->io_uring, memory_, address, length, unsigned(a[2]),
+                               a[3], a[5], replace);
+        else if (file)
             memory_.map_file(address, length, unsigned(a[2]), file->host.get(),
-                             {file->path, a[5], 0, 0, shared}, replace, !file->description->is_read_only());
+                             {file->path, a[5], 0, 0, shared}, replace, !file->description->is_read_only(),
+                             file->description->inotify_open);
         else
             memory_.map(address, length, unsigned(a[2]), replace, shared);
         if (a[3] & map_populate && !(a[3] & map_nonblock)) {
@@ -82,6 +92,7 @@ int64_t Syscalls::dispatch_memory(CpuState &cpu) {
                 // Linux MAP_POPULATE permits a partially populated mapping.
             }
         }
+        sync_shared_memory_mappings();
         if (!fixed)
             mmap_next_ =
                 address + length < address_limit - page_size ? address + length + page_size : page_size;
@@ -95,6 +106,7 @@ int64_t Syscalls::dispatch_memory(CpuState &cpu) {
             const Memory::AccessGuard memory_access(memory_);
             resource_limits()->check_protection(memory_, a[0], length, unsigned(a[2]));
             memory_.protect(a[0], length, unsigned(a[2]));
+            sync_shared_memory_mappings();
         }
         return 0;
     case 227: // msync
@@ -115,11 +127,14 @@ int64_t Syscalls::dispatch_memory(CpuState &cpu) {
         }
         return 0;
     }
-    case 233: // madvise
+    case 233: { // madvise
         if (a[1] > address_limit - page_size)
             guest_error(22);
+        const Memory::AccessGuard memory_access(memory_);
         memory_.advise(a[0], align_up(a[1]), int32_t(a[2]));
+        sync_shared_memory_mappings();
         return 0;
+    }
     default:
         return unsupported(cpu);
     }

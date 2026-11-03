@@ -21,6 +21,7 @@ struct ProcessWait {
 struct ProcessWaitResult {
     uint32_t pid = 0, uid = 0;
     int status = 0;
+    bool trace_stop = false, process_reaped = false;
     uint64_t user_microseconds = 0, system_microseconds = 0, maximum_rss = 0;
     uint64_t minor_faults = 0, major_faults = 0, voluntary_switches = 0, involuntary_switches = 0;
 };
@@ -79,6 +80,10 @@ class ProcessController {
     virtual signals::Deadline next_runtime_deadline() = 0;
     virtual int64_t process_timer(CpuState &cpu, Memory &memory) = 0;
     virtual signals::Hooks signal_hooks() = 0;
+    virtual void wait_completed(uint32_t) {}
+    virtual int64_t ptrace_request(CpuState &) { return -38; }
+    // True means exit is deferred until an attached tracer resumes the task.
+    virtual bool task_exiting(uint32_t, uint32_t, bool, int) { return false; }
     // Signal integration: a child event targets its parent PID, not an arbitrary
     // host process. The signal layer supplies actual pending-queue delivery.
     std::function<void(uint32_t, uint32_t, unsigned, int)> child_event;

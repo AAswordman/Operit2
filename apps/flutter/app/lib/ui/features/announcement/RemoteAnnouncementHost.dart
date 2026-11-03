@@ -156,26 +156,20 @@ class _RemoteAnnouncementDialogState extends State<RemoteAnnouncementDialog> {
       canPop: false,
       child: AlertDialog(
         title: Text(announcement.title),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 320),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SelectableText(announcement.body),
-                if (_error case final error?) ...[
-                  const SizedBox(height: 16),
-                  Text(
-                    error,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+        scrollable: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(announcement.body),
+            if (_error case final error?) ...[
+              const SizedBox(height: 16),
+              Text(
+                error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(

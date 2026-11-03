@@ -14,6 +14,47 @@ std::optional<ProcessWaitResult> Machine::wait(const ProcessWait &request) {
     constexpr uint32_t untraced = 2, exited = 4, continued = 8, nowait = 0x1000000;
     constexpr uint32_t nothread = 0x20000000, all = 0x40000000, clone = 0x80000000;
     bool eligible = false;
+    auto fill_usage = [](ProcessWaitResult &result, Process &child) {
+        child.maximum_rss = std::max(child.maximum_rss, child.image.memory->resident());
+        result.user_microseconds = (child.user_nanoseconds + child.child_user_nanoseconds) / 1000;
+        result.system_microseconds = (child.system_nanoseconds + child.child_system_nanoseconds) / 1000;
+        result.maximum_rss = std::max(child.maximum_rss, child.child_maximum_rss) / 1024;
+        result.minor_faults = child.minor_faults + child.child_minor_faults;
+        result.major_faults = child.major_faults + child.child_major_faults;
+        result.voluntary_switches = child.voluntary_switches + child.child_voluntary_switches;
+        result.involuntary_switches = child.involuntary_switches + child.child_involuntary_switches;
+    };
+    debug::WaitRequest trace_request;
+    trace_request.kind = request.kind == ProcessWait::Kind::Pid     ? debug::WaitRequest::Kind::Tid
+                         : request.kind == ProcessWait::Kind::Group ? debug::WaitRequest::Kind::Group
+                                                                    : debug::WaitRequest::Kind::Any;
+    trace_request.id = request.id;
+    trace_request.options = request.options;
+    if (const auto event = ptrace_->wait(request.caller_tid, trace_request, eligible)) {
+        ProcessWaitResult result;
+        result.pid = event->tid;
+        result.uid = event->uid;
+        result.status = event->status;
+        result.trace_stop = !event->exited;
+        const auto *task = scheduler_.lookup(event->tid);
+        auto *child = task ? find_process(task->pid) : nullptr;
+        if (child)
+            fill_usage(result, *child);
+        if (event->exited && !(request.options & nowait) && child &&
+            event->tid == child->pid && child->trace_exit_held) {
+            if (child->parent == waiting_pid) {
+                child->trace_exit_held = false;
+                if (child->state == Process::State::Zombie) {
+                    child->reaped = true;
+                    waiting->account_waited_child(*child);
+                    result.process_reaped = true;
+                }
+            } else {
+                release_ptrace_exit(event->tid);
+            }
+        }
+        return result;
+    }
     for (auto &[pid, child] : processes_) {
         if (child->reaped || child->parent != waiting_pid)
             continue;
@@ -28,6 +69,8 @@ std::optional<ProcessWaitResult> Machine::wait(const ProcessWait &request) {
         eligible = true;
         int status = 0;
         bool available = false, zombie = child->state == Process::State::Zombie;
+        if (zombie && child->trace_exit_held)
+            continue;
         if (zombie && (request.options & exited)) {
             available = true;
             status = child->status;
@@ -48,17 +91,11 @@ std::optional<ProcessWaitResult> Machine::wait(const ProcessWait &request) {
         result.pid = pid;
         result.uid = process::pidfd_credentials(*this, pid).real_uid;
         result.status = status;
-        child->maximum_rss = std::max(child->maximum_rss, child->image.memory->resident());
-        result.user_microseconds = (child->user_nanoseconds + child->child_user_nanoseconds) / 1000;
-        result.system_microseconds = (child->system_nanoseconds + child->child_system_nanoseconds) / 1000;
-        result.maximum_rss = std::max(child->maximum_rss, child->child_maximum_rss) / 1024;
-        result.minor_faults = child->minor_faults + child->child_minor_faults;
-        result.major_faults = child->major_faults + child->child_major_faults;
-        result.voluntary_switches = child->voluntary_switches + child->child_voluntary_switches;
-        result.involuntary_switches = child->involuntary_switches + child->child_involuntary_switches;
+        fill_usage(result, *child);
         if (zombie && !(request.options & nowait)) {
             child->reaped = true;
             waiting->account_waited_child(*child);
+            result.process_reaped = true;
         }
         return result;
     }

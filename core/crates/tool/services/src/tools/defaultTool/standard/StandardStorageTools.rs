@@ -81,11 +81,13 @@ pub(crate) fn resolve_plugin_storage_path(
     if normalized.starts_with("runtime/") {
         return Ok(normalized);
     }
-    if normalized == "/app/data" || normalized.starts_with("/app/data/") {
-        let relative = PathMapper::relativePath("/app/data", &normalized)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| String::from("Storage VFS path is not inside the runtime root"))?;
-        return Ok(format!("runtime/{relative}"));
+    for root in ["/app/data", "/operitapp/data"] {
+        if normalized != root && !normalized.starts_with(&format!("{root}/")) { continue; }
+        let relative = PathMapper::relativePath(root, &normalized)
+            .map_err(|error| error.to_string())?;
+        if let Some(relative) = relative {
+            return Ok(format!("runtime/{relative}"));
+        }
     }
     let root = roots.runtime_dir().to_string_lossy().replace('\\', "/");
     let relative = normalized

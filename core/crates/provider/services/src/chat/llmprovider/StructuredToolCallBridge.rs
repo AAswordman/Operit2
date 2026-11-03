@@ -1432,8 +1432,8 @@ mod tests {
         );
         let history = vec![
             PromptTurn::new(PromptTurnKind::ASSISTANT, concat!(
-                "<tool name=\"grep_code\"><param name=\"path\">/app/data</param><param name=\"pattern\">first</param></tool>",
-                "<tool name=\"grep_code\"><param name=\"path\">/app/data</param><param name=\"pattern\">second</param></tool>",
+                "<tool name=\"grep_code\"><param name=\"path\">/operitapp/data</param><param name=\"pattern\">first</param></tool>",
+                "<tool name=\"grep_code\"><param name=\"path\">/operitapp/data</param><param name=\"pattern\">second</param></tool>",
             )),
             PromptTurn::new(PromptTurnKind::TOOL_RESULT, batch.message.clone()),
         ];

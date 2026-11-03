@@ -1022,7 +1022,7 @@ mod tests {
         let fixture = BackupFixture::new();
         let manager = &fixture.manager;
         let vfs = manager.vfs();
-        let workspace = "/app/workspaces/project";
+        let workspace = "/operitapp/workspaces/project";
         vfs.makeDirectory(&joinPath(workspace, ".operit"), true)
             .unwrap();
         let file = joinPath(workspace, "main.rs");
@@ -1083,7 +1083,7 @@ mod tests {
         let fixture = BackupFixture::new();
         let manager = &fixture.manager;
         let vfs = manager.vfs();
-        for workspace in ["/app/workspaces/first", "/app/workspaces/second"] {
+        for workspace in ["/operitapp/workspaces/first", "/operitapp/workspaces/second"] {
             vfs.makeDirectory(&joinPath(workspace, ".operit"), true)
                 .unwrap();
             vfs.writeFile(&joinPath(workspace, ".operit/config.json"), "{}", false)
@@ -1092,7 +1092,7 @@ mod tests {
             vfs.writeFile(&file, "original", false).unwrap();
             fixture.edit(workspace, "chat-a", &file, 100, "edited");
         }
-        let first = "/app/workspaces/first";
+        let first = "/operitapp/workspaces/first";
         let other = joinPath(first, "other.rs");
         vfs.writeFile(&other, "original", false).unwrap();
         fixture.edit(first, "chat-b", &other, 200, "edited");
@@ -1105,7 +1105,7 @@ mod tests {
                 .exists
         );
         assert!(manager
-            .loadTurnSnapshot(&vfs, "/app/workspaces/second", Some("chat-a"))
+            .loadTurnSnapshot(&vfs, "/operitapp/workspaces/second", Some("chat-a"))
             .is_some());
         assert!(manager
             .loadTurnSnapshot(&vfs, first, Some("chat-b"))
@@ -1159,16 +1159,16 @@ mod tests {
 
     #[test]
     fn affected_paths_cover_their_descendants() {
-        let affected = BTreeSet::from(["/app/workspaces/w/dir".to_string()]);
+        let affected = BTreeSet::from(["/operitapp/workspaces/w/dir".to_string()]);
 
-        assert!(isCoveredByAffectedPath(&affected, "/app/workspaces/w/dir"));
+        assert!(isCoveredByAffectedPath(&affected, "/operitapp/workspaces/w/dir"));
         assert!(isCoveredByAffectedPath(
             &affected,
-            "/app/workspaces/w/dir/new.rs"
+            "/operitapp/workspaces/w/dir/new.rs"
         ));
         assert!(!isCoveredByAffectedPath(
             &affected,
-            "/app/workspaces/w/other.rs"
+            "/operitapp/workspaces/w/other.rs"
         ));
     }
 

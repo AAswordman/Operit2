@@ -13,8 +13,11 @@ use operit_tools::tools::ToolResultDataClasses::{
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
+    AITool, ToolExecutionManager, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
+use operit_tools::files::PathMapper::PathMapper;
+use operit_host_api::TerminalWorkingDirectory::{directoryChangeCommand, enterTerminalDirectory};
+
 const TERMINAL_SESSION_TIMEOUT_MS: u64 = 1800000;
 const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
 
@@ -22,6 +25,7 @@ const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
 /// Terminal tool facade backed by the host terminal API.
 pub struct StandardTerminalTools {
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
+    pathMapper: Option<PathMapper>,
 }
 
 #[derive(Clone, Copy)]
@@ -47,7 +51,31 @@ pub struct TerminalToolExecutor {
 impl StandardTerminalTools {
     /// Creates terminal tools from an optional host implementation.
     pub fn new(terminalHost: Option<Arc<dyn TerminalHost>>) -> Self {
-        Self { terminalHost }
+        Self { terminalHost, pathMapper: None }
+    }
+
+    /// Supplies the runtime VFS for workspace-bound terminal launches.
+    pub fn withPathMapper(mut self, mapper: PathMapper) -> Self {
+        self.pathMapper = Some(mapper);
+        self
+    }
+
+    fn workspaceDirectory(&self) -> Option<String> {
+        ToolExecutionManager::currentToolRuntimeContext()
+            .and_then(|context| context.workspacePath)
+            .filter(|path| !path.trim().is_empty())
+    }
+
+    fn resolveWorkspaceDirectory(
+        &self, host: &dyn TerminalHost, terminal: &str, terminalType: &str, path: &str,
+    ) -> HostResult<String> {
+        host.resolveWorkingDirectory(terminal, terminalType, path, &|path| {
+            self.pathMapper.as_ref()
+                .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
+                .resolve(path)
+                .and_then(|path| path.nativePath())
+                .map_err(HostError::new)
+        })
     }
 
     #[allow(non_snake_case)]
@@ -71,13 +99,30 @@ impl StandardTerminalTools {
     pub fn createOrGetSession(&self, tool: &AITool) -> ToolResult {
         let sessionName = parameterValue(tool, "session_name");
         let requestedType = optionalParameterValue(tool, "type");
-        match self
-            .host()
-            .and_then(|host| match requestedType.as_deref() {
+        match self.host().and_then(|host| {
+            let directory = self.workspaceDirectory().map(|workspace| {
+                operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
+                    host, requestedType.as_deref(), &workspace, &|path| {
+                        self.pathMapper.as_ref()
+                            .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
+                            .resolve(path).and_then(|path| path.nativePath()).map_err(HostError::new)
+                    },
+                )
+            }).transpose()?;
+            let session = match requestedType.as_deref() {
                 Some(terminalType) => host.createOrGetTypedSession(&sessionName, terminalType),
                 None => host.createOrGetSession(&sessionName),
-            })
-            .and_then(|data| terminalSessionCreationResultData(&data))
+            }?;
+            if let Some(directory) = directory {
+                if let Err(error) = enterTerminalDirectory(
+                    host, &session.sessionId, &session.terminalType, &directory,
+                ) {
+                    if session.isNewSession { let _ = host.closeSession(&session.sessionId); }
+                    return Err(error);
+                }
+            }
+            terminalSessionCreationResultData(&session)
+        })
         {
             Ok(data) => toolSuccessData(
                 tool,
@@ -160,7 +205,25 @@ impl StandardTerminalTools {
         let timeoutMs = timeoutParameterValue(tool, "timeout_ms", HIDDEN_TERMINAL_TIMEOUT_MS);
         match self
             .host()
-            .and_then(|host| host.executeHiddenCommand(&command, &executorKey, timeoutMs))
+            .and_then(|host| {
+                let scopedCommand = if let Some(workspace) = self.workspaceDirectory() {
+                    let info = host.terminalInfo()?;
+                    let directory = self.resolveWorkspaceDirectory(
+                        host, &info.terminal, &info.terminalType, &workspace,
+                    )?;
+                    let cd = directoryChangeCommand(&info.terminalType, &directory)?;
+                    if info.terminalType == "powershell" {
+                        format!("{cd};\n{command}")
+                    } else {
+                        format!("{cd} && {{\n{command}\n}}")
+                    }
+                } else {
+                    command.clone()
+                };
+                let mut result = host.executeHiddenCommand(&scopedCommand, &executorKey, timeoutMs)?;
+                result.command = command.clone();
+                Ok(result)
+            })
         {
             Ok(data) => {
                 if data.exitCode == 0 || data.timedOut {

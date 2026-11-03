@@ -50,7 +50,7 @@ void prepare_generation(Hooks &hooks, const ProcessRef &process, const Info &inf
     }
 }
 bool retained_when_ignored(const ThreadRef &thread, int signal) {
-    return (thread.mask && (*thread.mask & bit(signal))) ||
+    return thread.traced || (thread.mask && (*thread.mask & bit(signal))) ||
            (thread.signals && thread.signals->wait_set && (*thread.signals->wait_set & bit(signal)));
 }
 bool notify(Hooks &hooks, const ProcessRef &process, const ThreadRef &thread, const Info &info, bool force) {
@@ -61,7 +61,8 @@ bool notify(Hooks &hooks, const ProcessRef &process, const ThreadRef &thread, co
             hooks.wake(thread.tid, false);
         return true;
     }
-    if (force || (!(*thread.mask & bit(info.signal)) && !ignored(*process.signals, info.signal))) {
+    if (force || (!(*thread.mask & bit(info.signal)) &&
+                  (thread.traced || !ignored(*process.signals, info.signal)))) {
         if (hooks.wake)
             hooks.wake(thread.tid, true);
         return true;

@@ -119,12 +119,18 @@ Future<Uint8List> _readAttachmentImageBytes(
 
 /// Resolves a persisted VFS attachment through the runtime's actual storage root.
 Future<Uint8List> readChatAttachmentFileBytes(String attachmentPath) async {
-  const prefix = '/app/data/data/chat_attachments/';
-  if (attachmentPath.startsWith(prefix)) {
-    final root = await _mediaPoolClients.application.chatAttachmentsPath();
-    attachmentPath = '$root/${attachmentPath.substring(prefix.length)}';
+  attachmentPath = _localPathForAttachment(attachmentPath);
+  for (final prefix in const [
+    '/operitapp/data/data/chat_attachments/',
+    '/app/data/data/chat_attachments/',
+  ]) {
+    if (attachmentPath.startsWith(prefix)) {
+      final root = await _mediaPoolClients.application.chatAttachmentsPath();
+      attachmentPath = '$root/${attachmentPath.substring(prefix.length)}';
+      break;
+    }
   }
-  return XFile(_localPathForAttachment(attachmentPath)).readAsBytes();
+  return XFile(attachmentPath).readAsBytes();
 }
 
 /// Converts a file URI attachment id into the local path used by XFile.

@@ -93,6 +93,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @property(nonatomic, copy) NSString *mountPoint;
 @property(nonatomic, assign) BOOL readOnly;
 @property(nonatomic, assign) BOOL automatic;
+@property(nonatomic, assign) BOOL workspace;
 @end
 @implementation ORTArm64Binding
 @end
@@ -286,10 +287,11 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   // The command line and prompt preceding its begin record are PTY echo of the
   // protocol wrapper, rather than command output.
   if (execution && !execution.started && !execution.done) return;
-  [self.screenOutput appendData:data];
-  if (self.screenOutput.length > ORTOutputCapacity)
-    [self.screenOutput replaceBytesInRange:NSMakeRange(0, self.screenOutput.length - ORTOutputCapacity)
-                                withBytes:nullptr length:0];
+  for (NSMutableData *buffer in @[self.screenOutput, self.pendingOutput]) {
+    [buffer appendData:data];
+    if (buffer.length > ORTOutputCapacity)
+      [buffer replaceBytesInRange:NSMakeRange(0, buffer.length - ORTOutputCapacity) withBytes:nullptr length:0];
+  }
   if (execution && execution.started && !execution.done) {
     if (data.length > ORTCommandCapacity - execution.outputCount) {
       [self fail:@"ARM64 command output exceeded the 16 MiB capture limit"];
@@ -298,8 +300,6 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
     execution.outputCount += data.length;
     [execution.frames appendData:data];
     dispatch_semaphore_signal(execution.changed);
-  } else {
-    [self.pendingOutput appendData:data];
   }
 }
 - (void)record:(NSString *)record {
@@ -911,6 +911,40 @@ static BOOL ORTMount(NSDictionary *request, NSString **error) {
   configuration.mounts = ORTSortedBindings([ORTConfiguration.mounts arrayByAddingObject:binding]);
   return ORTInstallConfiguration(configuration, closeExisting, error);
 }
+// Workspace mounts belong to future sessions. Existing VMs retain their own
+// immutable configuration and sandbox grants until they close.
+static BOOL ORTPrepareWorkspaceMount(NSDictionary *request, NSString **error) {
+  ORTArm64Binding *binding = ORTBinding(request, error);
+  if (!binding || !ORTPrepareRoot(error)) return NO;
+  binding.workspace = YES;
+  binding.automatic = YES;
+  NSMutableArray<ORTArm64Binding *> *mounts = [NSMutableArray array];
+  for (ORTArm64Binding *existing in ORTConfiguration.mounts)
+    if (!existing.workspace) [mounts addObject:existing];
+  NSString *relative = nil;
+  BOOL readOnly = NO;
+  ORTArm64DirectoryAccess *backing = ORTBackingDirectory(ORTConfiguration, mounts,
+                                                        binding.mountPoint, &relative, &readOnly);
+  NSString *effective = relative.length ? [backing.path stringByAppendingPathComponent:relative] : backing.path;
+  if (readOnly || ![effective isEqualToString:binding.directory.path]) {
+    for (ORTArm64Binding *existing in mounts)
+      if ([existing.mountPoint isEqualToString:binding.mountPoint]) {
+        *error = @"ARM64 workspace conflicts with an existing directory binding";
+        return NO;
+      }
+    [mounts addObject:binding];
+  }
+  ORTArm64RootConfiguration *configuration = [ORTArm64RootConfiguration new];
+  configuration.root = ORTConfiguration.root;
+  configuration.source = ORTConfiguration.source;
+  configuration.bindAppSandbox = ORTConfiguration.bindAppSandbox;
+  configuration.identifier = ORTConfiguration.identifier;
+  configuration.mounts = ORTSortedBindings(mounts);
+  if (ORTSameConfiguration(configuration, ORTConfiguration)) return ORTCheckDirectories(configuration, error);
+  if (!ORTValidateConfiguration(configuration, error)) return NO;
+  ORTConfiguration = configuration;
+  return YES;
+}
 static ORTArm64TerminalSession *ORTStart(NSString *name, NSString *cwd, uint32_t rows, uint32_t cols, NSString **error) {
   if (![cwd hasPrefix:@"/"]) { *error = @"ARM64 working directory must be absolute"; return nil; }
   if (!ORTPrepareRoot(error)) return nil;
@@ -1053,11 +1087,16 @@ static NSDictionary *ORTExecute(ORTArm64TerminalSession *session, NSString *comm
     if (session.execution || session.commandRunning) { error = @"ARM64 terminal already has a command in progress"; return; }
     NSString *script = ORTWriteCommand(session, execution, command, &error);
     if (!script) return;
+    // Discard pending line-editor input, including stale terminal replies.
     NSString *line = [NSString stringWithFormat:
-      @"command printf '\\036%@:begin:%@\\037'; . %@; command printf '\\036%@:done:%@:%%s:%%s\\037' \"$?\" \"$PWD\"\n",
+      @"\025command printf '\\036%@:begin:%@\\037'; . %@; command printf '\\036%@:done:%@:%%s:%%s\\037' \"$?\" \"$PWD\"\n",
       session.protocolToken, execution.identifier, ORTQuote(script), session.protocolToken, execution.identifier];
     NSData *input = [line dataUsingEncoding:NSUTF8StringEncoding];
     if (input.length > ORTCommandCapacity) { error = @"ARM64 command input exceeded 16 MiB"; return; }
+    // Echo the submitted command to the UI without adding it to tool output.
+    NSString *display = [[command stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"]
+                         stringByReplacingOccurrencesOfString:@"\n" withString:@"\r\n"];
+    [session publish:[[display stringByAppendingString:@"\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
     session.execution = execution;
     session.commandRunning = YES;
     [session.queuedInput appendData:input];
@@ -1146,6 +1185,10 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
     });
     return ORTResult(state);
   }
+  if ([command isEqualToString:@"terminalWorkspaceMount"]) {
+    dispatch_sync(ORTRegistryQueue, ^{ ORTPrepareWorkspaceMount(request, &error); });
+    return error ? ORTError(error) : ORTResult(@{});
+  }
   if ([command isEqualToString:@"managedRuntimeMount"]) {
     dispatch_sync(ORTRegistryQueue, ^{ ORTMount(request, &error); });
     return error ? ORTError(error) : ORTResult(@{});
@@ -1167,7 +1210,8 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
         ORTArm64TerminalSession *existing = ORTSessions[identifier];
         __block BOOL active = NO;
         if (existing) dispatch_sync(existing.queue, ^{
-          active = !existing.closed && [existing.configurationId isEqualToString:ORTConfiguration.identifier];
+          active = !existing.closed && [existing.configurationId isEqualToString:ORTConfiguration.identifier]
+              && ORTSameConfiguration(existing.configuration, ORTConfiguration);
           if (active && !ORTCheckDirectories(existing.configuration, &error)) active = NO;
         });
         if (error) return;

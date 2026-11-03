@@ -20,9 +20,9 @@ void main() {
   testWidgets(
     'custom avatar reads its VFS file and survives message rebuilds',
     (tester) async {
-      const path = '/app/config/plugins/character_cards/avatars/custom.image';
+      const path = '/operitapp/config/plugins/character_cards/avatars/custom.image';
       const changedPath =
-          '/app/config/plugins/character_cards/avatars/new.image';
+          '/operitapp/config/plugins/character_cards/avatars/new.image';
       final bridge = _AvatarFileBridge(_png);
       final clients = GeneratedCoreProxyClients(bridge);
 
@@ -46,7 +46,7 @@ void main() {
   testWidgets(
     'an updated runtime bridge reads the same avatar in its own store',
     (tester) async {
-      const path = '/app/config/avatars/bridge.image';
+      const path = '/operitapp/config/avatars/bridge.image';
       final first = _AvatarFileBridge(_png);
       final second = _AvatarFileBridge(_png);
       await _pumpAvatar(tester, path, GeneratedCoreProxyClients(first));
@@ -83,7 +83,7 @@ void main() {
           width: 40,
           height: 40,
           child: ChatAvatarImage(
-            avatarUri: '/app/config/avatars/animated.image',
+            avatarUri: '/operitapp/config/avatars/animated.image',
             fit: BoxFit.cover,
             clients: GeneratedCoreProxyClients(bridge),
           ),
@@ -106,7 +106,7 @@ void main() {
       tester.widget<RawImage>(find.byType(RawImage)).image,
       isNot(same(firstFrame)),
     );
-    expect(bridge.paths, ['/app/config/avatars/animated.image']);
+    expect(bridge.paths, ['/operitapp/config/avatars/animated.image']);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

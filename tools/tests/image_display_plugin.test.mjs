@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const packageRoot = new URL('../../plugins/packages/buildin/image_display/', import.meta.url);
-const directory = '/app/data/plugin_data/space/com.operit.image_display';
+const directory = '/operitapp/data/plugin_data/space/com.operit.image_display';
 
 /** Loads the packaged entry with observable prompt registration and storage access. */
 function runtime(getSpaceDataDir) {

@@ -2,6 +2,7 @@
 #include "linux/events/epoll.h"
 #include "linux/events/inotify.h"
 #include "linux/files/pipe_buffer.h"
+#include "linux/io_uring/io_uring.h"
 #include "linux/signals/signal_file.h"
 #include "linux/syscalls.h"
 #include "runtime/process/controller.h"
@@ -126,6 +127,8 @@ int64_t Syscalls::dispatch_poll(CpuState &cpu) {
         std::vector<pollfd> native;
         std::vector<std::optional<short>> local_ready;
         for (const auto &item : *entries) {
+            if (item.description && item.description->io_uring)
+                io_uring::refresh_readiness(item.description->io_uring);
             // A blocked poll retains its description even after another thread
             // closes the guest FD, so refresh these retained files as well.
             auto ready = signals::signal_file_poll(item.description, hooks, native_events(item.events));
@@ -148,7 +151,10 @@ int64_t Syscalls::dispatch_poll(CpuState &cpu) {
             uint16_t flags = guest_events(native_ready, item.events);
             if (item.fd >= 0 && !item.description)
                 flags = 32;
-            if (item.description && item.description->virtual_file)
+            auto mq_ready = ipc::posix_mq_poll(item.description, item.events);
+            if (mq_ready)
+                flags = uint16_t(*mq_ready);
+            else if (item.description && item.description->virtual_file)
                 flags = item.events & (1 | 4 | 64 | 256);
             results[i] = flags;
             if (flags)

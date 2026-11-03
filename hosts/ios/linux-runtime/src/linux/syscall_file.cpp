@@ -3,6 +3,7 @@
 #include "linux/abi.h"
 #include "linux/error_mapping.h"
 #include "linux/events/event_counter.h"
+#include "linux/events/inotify.h"
 #include "linux/files/descriptor_access.h"
 #include "linux/files/metadata.h"
 #include "linux/files/memory_file.h"
@@ -206,6 +207,8 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
     case 13: // flistxattr
     case 16: {
         auto &entry = descriptors_.get(uint32_t(a[0]));
+        if (ipc::is_posix_mq_file(entry.description))
+            guest_error(95);
         if (entry.description->flags & files::arm64_open::path)
             guest_error(9);
         return files::xattr(memory_, a[8], a, nullptr, &entry);
@@ -215,9 +218,13 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
         files::statfs(memory_, a[1], path);
         return 0;
     }
-    case 44: // fstatfs
-        files::statfs(memory_, a[1], descriptors_.get(uint32_t(a[0])));
+    case 44: { // fstatfs
+        auto &entry = descriptors_.get(uint32_t(a[0]));
+        if (ipc::is_posix_mq_file(entry.description))
+            guest_error(95);
+        files::statfs(memory_, a[1], entry);
         return 0;
+    }
     case 291: { // statx
         const uint32_t flags = a[2];
         if ((flags & ~(256u | 2048u | 4096u | 0x6000u)) || (flags & 0x6000u) == 0x6000u)
@@ -252,6 +259,7 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
         return descriptors_.duplicate_to(
             uint32_t(a[0]), uint32_t(a[1]), a[2] & 524288, [this](const Descriptor &entry) {
                 files::record_lock_close(scheduler_, scheduler_.current().pid, entry);
+                ipc::posix_mq_close(entry.description, scheduler_.current().pid);
             });
     case 25:
         return descriptor_control(cpu);
@@ -323,6 +331,7 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
                 guest_error(21);
             guest_error(linux_errno(error));
         }
+        InotifyOpenFile::unlinked(path);
         return 0;
     }
     case 38: { // renameat
@@ -334,10 +343,13 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
             guest_error(18);
         check_host(
             ::renameat(source.parent.get(), source.name.c_str(), target.parent.get(), target.name.c_str()));
+        InotifyOpenFile::renamed(source, target);
         return 0;
     }
     case 46: {
         auto &entry = descriptors_.get(uint32_t(a[0]));
+        if (ipc::is_posix_mq_file(entry.description))
+            guest_error(95);
         if (entry.description->flags & files::arm64_open::path)
             guest_error(9);
         if (int64_t(a[1]) < 0 || entry.description->is_anon_inode())
@@ -368,6 +380,7 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
     case 57: {
         auto &entry = descriptors_.get(uint32_t(a[0]));
         files::record_lock_close(scheduler_, scheduler_.current().pid, entry);
+        ipc::posix_mq_close(entry.description, scheduler_.current().pid);
         descriptors_.close(uint32_t(a[0]));
         return 0;
     }
@@ -452,6 +465,8 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
             used += record_size;
             ++entry.description->mount_cursor;
         }
+        if (entry.description->inotify_open)
+            entry.description->inotify_open->accessed();
         memory_.copy_in(a[1], data.data(), used);
         return used;
     }

@@ -67,7 +67,7 @@ async function reply(chatId: string, text: string): Promise<void> {
 
 ```ts
 { type: "segment", index: 0, segment: { kind: "text", text: "你好。" } }
-{ type: "segment", index: 1, segment: { kind: "image", source: "/app/data/cache/...", emotion: "happy" } }
+{ type: "segment", index: 1, segment: { kind: "image", source: "/operitapp/data/cache/...", emotion: "happy" } }
 { type: "completed", result: /* originating native Chat receipt */ }
 ```
 

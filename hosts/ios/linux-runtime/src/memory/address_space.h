@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -138,13 +139,11 @@ class Memory {
         ++epoch_;
         refresh_mapping_summary();
         exclusive_revision_.fetch_add(1, std::memory_order_relaxed);
-        data_epoch.fetch_add(1, std::memory_order_relaxed);
         if (executable)
             code_epoch.fetch_add(1, std::memory_order_relaxed);
     }
     void written(const Translation &translation) {
         translation.reservation->written();
-        data_epoch.fetch_add(1, std::memory_order_relaxed);
         if (translation.permissions & exec_perm || translation.shared)
             code_epoch.fetch_add(1, std::memory_order_relaxed);
         if (translation.shared)
@@ -179,14 +178,10 @@ class Memory {
         ExecutionScope(const ExecutionScope &) = delete;
         ExecutionScope &operator=(const ExecutionScope &) = delete;
     };
-    std::atomic<uint64_t> code_epoch{1}, data_epoch{1};
+    std::atomic<uint64_t> code_epoch{1};
     explicit Memory(uint64_t limit) : limit_(limit) {}
-    // Query and change only at a CPU barrier. This query describes fully
-    // unsynchronized access; serial CPUs still synchronize actual file pages
-    // and raw spans while anonymous and privately copied pages bypass locks.
-    bool can_serial_access() const noexcept {
-        return !file_mapping_;
-    }
+    // Change only at a CPU barrier. Serial CPUs still synchronize actual file
+    // pages and raw spans; anonymous and privately copied pages bypass locks.
     void set_parallel_access(bool enabled) noexcept {
         parallel_access_.store(enabled, std::memory_order_relaxed);
     }
@@ -242,7 +237,8 @@ class Memory {
     }
     uint64_t find_free(uint64_t start, uint64_t size) const;
     bool accessible(uint64_t address, uint64_t size, unsigned permissions) const {
-        const AccessGuard access(*this);
+        const memory_detail::AccessSynchronization::ReadGuard access(
+            parallel_access_.load(std::memory_order_relaxed) || file_mapping_);
         if (size == 0)
             return true;
         if (!valid_range(address, size))
@@ -261,11 +257,53 @@ class Memory {
         }
         return true;
     }
+    // Capture only weak page references: queued host I/O must neither keep an
+    // address space alive nor write into a later mapping at the same address.
+    // Both capture and validation are called at the coordinator barrier.
+    std::function<bool(const Memory &)> capture_write_lease(
+        const std::vector<std::pair<uint64_t, uint64_t>> &ranges) const {
+        const AccessGuard access(*this);
+        struct PageLease {
+            uint64_t address;
+            std::weak_ptr<Page> page;
+        };
+        std::vector<PageLease> pages;
+        for (const auto &[address, length] : ranges) {
+            if (!accessible(address, length, write_perm))
+                return {};
+            if (!length)
+                continue;
+            const uint64_t end = address + length;
+            for (uint64_t page = align_down(address); page < end; page += page_size) {
+                const auto found = pages_.find(page);
+                if (found == pages_.end())
+                    return {};
+                pages.push_back({page, found->second});
+            }
+        }
+        const uint64_t identity = identity_;
+        return [identity, ranges, pages = std::move(pages)](const Memory &memory) {
+            const AccessGuard guard(memory);
+            if (memory.identity_ != identity)
+                return false;
+            for (const auto &[address, length] : ranges)
+                if (!memory.accessible(address, length, write_perm))
+                    return false;
+            for (const auto &entry : pages) {
+                const auto expected = entry.page.lock();
+                const auto found = memory.pages_.find(entry.address);
+                if (!expected || found == memory.pages_.end() || found->second != expected)
+                    return false;
+            }
+            return true;
+        };
+    }
     void unmap(uint64_t address, uint64_t size);
     void map(uint64_t address, uint64_t size, unsigned permissions, bool replace = false,
              bool shared = false);
     void map_file(uint64_t address, uint64_t size, unsigned permissions, int descriptor,
-                  const Backing &backing, bool replace = false, bool permit_write = true);
+                  const Backing &backing, bool replace = false, bool permit_write = true,
+                  std::shared_ptr<void> open_reference = nullptr);
     void protect(uint64_t address, uint64_t size, unsigned permissions);
     void sync(uint64_t address, uint64_t size, unsigned flags);
     uint64_t remap(uint64_t address, uint64_t old_size, uint64_t new_size, unsigned flags,
@@ -273,22 +311,44 @@ class Memory {
     void advise(uint64_t address, uint64_t size, int advice);
     std::vector<uint8_t> residency(uint64_t address, uint64_t size);
 
+    // Coordinator-only: all guest workers sharing these pages must be stopped.
+    // The host buffer must be valid and must not overlap guest page storage.
+    // Bypass current VMA permissions for reads and private COW writes, without
+    // changing them. Shared writes require current and maximum write access.
+    // An empty transfer succeeds; otherwise a null buffer or any inaccessible
+    // page fails. On failure no bytes are transferred, although pages may have
+    // been faulted in or privately copied during preparation.
+    // Synchronize shared aliases with synchronize_shared() before they resume.
+    // Concurrent external file truncation is not supported by the mmap backend.
+    bool ptrace_read(uint64_t address, void *destination, size_t size);
+    bool ptrace_write(uint64_t address, const void *source, size_t size);
+
   private:
-    [[gnu::noinline]] void refill(Translation &cached, uint64_t address, unsigned permissions) {
+    bool ptrace_transfer(uint64_t address, void *buffer, size_t size, bool writing);
+
+    [[gnu::noinline]] void refill(Translation &cached, uint64_t address, unsigned permissions,
+                                 bool force = false) {
         const uint64_t page = align_down(address);
         auto region = regions_.upper_bound(address);
         if (region == regions_.begin())
             throw MemoryFault(address, permissions, MemoryFault::Kind::Unmapped);
         --region;
         auto &mapping = region->second;
-        if (address >= mapping.end || (mapping.permissions & permissions) != permissions)
-            throw MemoryFault(address, permissions,
-                              address >= mapping.end ? MemoryFault::Kind::Unmapped
-                                                     : MemoryFault::Kind::Protection);
+        if (address >= mapping.end)
+            throw MemoryFault(address, permissions, MemoryFault::Kind::Unmapped);
+        const bool force_write_denied =
+            force && (permissions & write_perm) &&
+            (!(mapping.maximum_permissions & write_perm) ||
+             (mapping.backing.shared &&
+              (!(mapping.permissions & write_perm) ||
+               (mapping.object && mapping.object->file && !mapping.object->file->writable) ||
+               (mapping.object && mapping.object->seal_token && !mapping.object->seal_token->may_write()))));
+        if ((!force && (mapping.permissions & permissions) != permissions) || force_write_denied)
+            throw MemoryFault(address, permissions, MemoryFault::Kind::Protection);
         const uint64_t offset = mapping.object_offset + page - region->first;
         auto *file = mapping.object ? mapping.object->file.get() : nullptr;
         if (file)
-            file->check_page(offset, address, permissions, &file_metadata_);
+            file->check_page(offset, address, permissions, force ? nullptr : &file_metadata_);
         auto found = pages_.find(page);
         if (found == pages_.end()) {
             if (resident() + page_size > limit_)
@@ -306,6 +366,10 @@ class Memory {
             // Other workers may have cached the previous physical page.
             ++epoch_;
         }
+        cache_translation(cached, page, region->first, mapping, storage);
+    }
+    void cache_translation(Translation &cached, uint64_t page, uint64_t start,
+                           const Region &mapping, const std::shared_ptr<Page> &storage) {
         unsigned available = mapping.permissions;
         if (!mapping.backing.shared && (storage.use_count() > 1 || storage->file))
             available &= ~write_perm;
@@ -313,12 +377,37 @@ class Memory {
                              epoch_,
                              storage->data(),
                              storage->reservation(),
-                             file,
-                             offset,
+                             mapping.object ? mapping.object->file.get() : nullptr,
+                             mapping.object_offset + page - start,
                              file_metadata_.generation(),
                              available,
                              mapping.backing.shared,
                              bool(storage->file)};
+    }
+    // A software TLB collision is not a mapping change. With the reader gate
+    // held, an existing resident page can be cached without stopping all CPUs.
+    // Allocation and private-file/fork COW still require the writer path.
+    bool refill_resident(Translation &cached, uint64_t address, unsigned permissions) {
+        auto region = regions_.upper_bound(address);
+        if (region == regions_.begin())
+            return false;
+        --region;
+        const auto &mapping = region->second;
+        if (address >= mapping.end || (mapping.permissions & permissions) != permissions)
+            return false;
+        const uint64_t page = align_down(address);
+        const auto found = pages_.find(page);
+        if (found == pages_.end())
+            return false;
+        const auto &storage = found->second;
+        if (!mapping.backing.shared && (permissions & write_perm) &&
+            (storage.use_count() > 1 || storage->file))
+            return false;
+        if (mapping.object && mapping.object->file)
+            mapping.object->file->check_page(mapping.object_offset + page - region->first,
+                                             address, permissions, &file_metadata_);
+        cache_translation(cached, page, region->first, mapping, storage);
+        return true;
     }
     [[gnu::noinline]] void validate_file(Translation &cached, uint64_t address, unsigned permissions) {
         cached.file->check_page(cached.file_offset, address, permissions, &file_metadata_);
@@ -341,34 +430,46 @@ class Memory {
         Translation *entry_ = nullptr;
         uint64_t address_;
 
+        [[gnu::noinline]] void prepare(Memory &memory, Translation &entry, uint64_t address,
+                                       unsigned permissions, bool parallel) {
+            while (entry.tag != align_down(address) || entry.epoch != memory.epoch_ ||
+                   (entry.permissions & permissions) != permissions) {
+                // Prepared helpers may retain a reader even in serial execution.
+                if ((parallel || memory_detail::AccessSynchronization::read_depth()) &&
+                    memory.refill_resident(entry, address, permissions))
+                    return;
+                read_.unlock();
+                assert(!memory_detail::AccessSynchronization::read_depth());
+                {
+                    const AccessGuard update(memory);
+                    memory.translate_locked(address, permissions);
+                }
+                read_.lock(parallel);
+            }
+        }
+
       public:
-        PageAccess(Memory &memory, uint64_t address, unsigned permissions, bool exclusive = false)
+        [[gnu::always_inline]] PageAccess(Memory &memory, uint64_t address, unsigned permissions,
+                                        bool exclusive = false)
             : address_(address) {
             const bool parallel = memory.parallel_access_.load(std::memory_order_relaxed);
-            for (;;) {
-                if (parallel)
-                    read_.lock(true);
-                auto &entry = memory.translation(address, parallel);
-                if (entry.tag == align_down(address) && entry.epoch == memory.epoch_ &&
-                    (entry.permissions & permissions) == permissions) {
-                    const bool synchronize = parallel || entry.file_storage;
-                    if (!parallel)
-                        read_.lock(synchronize);
-                    if (entry.file && (!file_metadata_.generation() ||
-                                       entry.file_generation != file_metadata_.generation()))
-                        memory.validate_file(entry, address, permissions);
-                    entry_ = &entry;
-                    if (synchronize && !memory_detail::AccessSynchronization::exclusive())
-                        lock_.lock(entry.reservation->mutex, exclusive || (permissions & write_perm));
-                    return;
-                }
-                read_.unlock();
-                // AtomicAccess prepares its complete permission set before
-                // retaining a page lock; nested copies therefore stay hits.
-                assert(!memory_detail::AccessSynchronization::read_depth());
-                const AccessGuard update(memory);
-                memory.translate_locked(address, permissions);
-            }
+            read_.lock(parallel);
+            auto &entry = memory.translation(address, parallel);
+            if (entry.tag != align_down(address) || entry.epoch != memory.epoch_ ||
+                (entry.permissions & permissions) != permissions)
+                prepare(memory, entry, address, permissions, parallel);
+            if (!parallel)
+                read_.lock(entry.file_storage);
+            if (entry.file && (!file_metadata_.generation() ||
+                               entry.file_generation != file_metadata_.generation()))
+                memory.validate_file(entry, address, permissions);
+            entry_ = &entry;
+            // Immutable private pages need only the mapping reader gate.
+            const bool immutable = !(entry.permissions & write_perm) && !entry.shared &&
+                                   !entry.file_storage && !exclusive;
+            if ((parallel || entry.file_storage) && !immutable &&
+                !memory_detail::AccessSynchronization::exclusive())
+                lock_.lock(entry.reservation->mutex, exclusive || (permissions & write_perm));
         }
         uint8_t *data() const {
             return entry_->data + address_ % page_size;
@@ -380,6 +481,133 @@ class Memory {
         PageAccess &operator=(const PageAccess &) = delete;
     };
   public:
+    // Prepare a bounded set of already resident pages for a compiled helper.
+    // Keep mappings stable under a reader gate, then acquire physical page
+    // locks in one order. A cold page or COW declines before any page is held;
+    // the caller can release the gate and use the ordinary writer path.
+    class PreparedAccess {
+        struct Entry {
+            memory_detail::ReservationState *page = nullptr;
+            bool writing = false;
+        };
+        static constexpr size_t capacity = 16;
+        Memory &memory_;
+        memory_detail::AccessSynchronization::ReadGuard read_;
+        std::array<Entry, capacity> entries_{};
+        std::array<memory_detail::AccessSynchronization::PageGuard, capacity> locks_{};
+        size_t count_ = 0;
+        bool available_ = true, locked_ = false;
+
+      public:
+        explicit PreparedAccess(Memory &memory)
+            : memory_(memory), read_(memory.parallel_access_.load(std::memory_order_relaxed) ||
+                                     memory.file_mapping_) {}
+        bool add(uint64_t address, uint64_t size, unsigned permissions) {
+            assert(!locked_);
+            if (!available_)
+                return false;
+            if (!size)
+                return true;
+            if (!valid_range(address, size) || size > capacity * page_size) {
+                cancel();
+                return false;
+            }
+            while (size) {
+                if (count_ == capacity) {
+                    cancel();
+                    return false;
+                }
+                auto &entry = memory_.translation(address);
+                // This also rejects a private page that still needs COW.
+                // No mapping or physical storage is changed on this path.
+                try {
+                    if (!memory_.refill_resident(entry, address, permissions)) {
+                        cancel();
+                        return false;
+                    }
+                } catch (const MemoryFault &) {
+                    // Eligibility probes cannot move a guest fault ahead of
+                    // the helper instruction/register updates that cause it.
+                    cancel();
+                    return false;
+                }
+                entries_[count_++] = {entry.reservation, bool(permissions & write_perm)};
+                const uint64_t count = std::min<uint64_t>(size, page_size - address % page_size);
+                address += count;
+                size -= count;
+            }
+            return true;
+        }
+        bool lock() {
+            assert(!locked_);
+            if (!available_)
+                return false;
+            std::sort(entries_.begin(), entries_.begin() + count_, [](const Entry &left, const Entry &right) {
+                return std::less<memory_detail::ReservationState *>{}(left.page, right.page);
+            });
+            size_t distinct = 0;
+            for (size_t index = 0; index < count_; ++index) {
+                if (distinct && entries_[distinct - 1].page == entries_[index].page)
+                    entries_[distinct - 1].writing |= entries_[index].writing;
+                else
+                    entries_[distinct++] = entries_[index];
+            }
+            count_ = distinct;
+            if (!memory_detail::AccessSynchronization::exclusive()) {
+                for (size_t index = 0; index < count_; ++index)
+                    locks_[index].lock(entries_[index].page->mutex, entries_[index].writing);
+            }
+            locked_ = true;
+            return true;
+        }
+        // Complete a bounded pipelined copy while the corresponding resident
+        // pages are already locked. File/shared/executable pages and physical
+        // aliases retain the ordinary per-instruction implementation.
+        bool copy_pipeline(uint64_t destination, uint64_t source, const void *first, void *last,
+                           size_t size) {
+            assert(locked_);
+            if (size < 64 || !valid_range(source, size) || !valid_range(destination, size) ||
+                size > page_size - source % page_size || size > page_size - destination % page_size)
+                return false;
+            auto lookup = [&](uint64_t address, unsigned permissions, Translation &result) {
+                auto &entry = memory_.translation(address);
+                try {
+                    if ((entry.tag != align_down(address) || entry.epoch != memory_.epoch_ ||
+                         (entry.permissions & permissions) != permissions) &&
+                        !memory_.refill_resident(entry, address, permissions))
+                        return false;
+                } catch (const MemoryFault &) {
+                    return false;
+                }
+                result = entry;
+                for (size_t index = 0; index < count_; ++index)
+                    if (entries_[index].page == entry.reservation &&
+                        (!(permissions & write_perm) || entries_[index].writing))
+                        return true;
+                return false;
+            };
+            Translation input, output;
+            if (!lookup(source, read_perm, input) || !lookup(destination, write_perm, output) ||
+                input.reservation == output.reservation || input.shared || output.shared || input.file ||
+                output.file || (output.permissions & exec_perm))
+                return false;
+            auto *from = input.data + source % page_size;
+            auto *to = output.data + destination % page_size;
+            memory_.written(output);
+            std::memcpy(to, first, 64);
+            if (size > 64)
+                std::memcpy(to + 64, from, size - 64);
+            std::memcpy(last, from + size - 64, 64);
+            return true;
+        }
+        void cancel() noexcept {
+            assert(!locked_);
+            available_ = false;
+            read_.unlock();
+        }
+        PreparedAccess(const PreparedAccess &) = delete;
+        PreparedAccess &operator=(const PreparedAccess &) = delete;
+    };
     class AtomicAccess {
         PageAccess page_;
 
@@ -397,6 +625,15 @@ class Memory {
         if (permissions & write_perm)
             written(translation(address));
         return data;
+    }
+    // Guest data and instructions share the same backing bytes. Maintenance
+    // still validates the operand (including file-backing faults), establishes
+    // ordering, and makes every interpreter retire/revalidate its decoded code.
+    // Do not pass guest virtual addresses to native host cache instructions.
+    void synchronize_code(uint64_t address) {
+        PageAccess access(*this, address, read_perm);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        code_epoch.fetch_add(1, std::memory_order_seq_cst);
     }
     bool validate_code(uint64_t address, const void *expected, size_t size, uint64_t &validated_epoch) {
         if (!size) {

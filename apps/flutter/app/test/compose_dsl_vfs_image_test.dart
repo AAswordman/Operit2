@@ -20,11 +20,30 @@ final png = base64Decode(
 
 /// Verifies shared VFS image resolution and the production Markdown rendering path.
 void main() {
+  test(
+    'both VFS image roots pass through without native fallback',
+    () {
+      expect(
+        composeDslVfsImagePath('/app/data/image.png'),
+        '/app/data/image.png',
+      );
+      expect(
+        composeDslVfsImagePath('/mnt/macos/image.png'),
+        '/mnt/macos/image.png',
+      );
+      expect(
+        composeDslVfsImagePath('file:///app/data/image.png'),
+        '/app/data/image.png',
+      );
+      expect(composeDslVfsImagePath('/application/image.png'), isNull);
+      expect(composeDslVfsImagePath('/mnt-other/image.png'), isNull);
+    },
+  );
   testWidgets(
     'Markdown shared images read Core VFS and reuse the decoded image',
     (tester) async {
       const path =
-          '/app/data/plugin_data/space/com.operit.image_display/chart.png';
+          '/operitapp/data/plugin_data/space/com.operit.image_display/chart.png';
       final bridge = _VfsFileBridge({
         '__type': 'BinaryFileContentData',
         'path': path,
@@ -86,7 +105,7 @@ void main() {
       MaterialApp(
         home: MarkdownRemoteImage(
           url:
-              '/app/data/plugin_data/space/com.operit.image_display/missing.png',
+              '/operitapp/data/plugin_data/space/com.operit.image_display/missing.png',
           clients: GeneratedCoreProxyClients(bridge),
         ),
       ),
@@ -100,7 +119,8 @@ void main() {
   test(
     'VFS uses the generated Core binary file service without rewriting the path',
     () async {
-      const path = '/app/data/cache/toolpkg_resource_exports/operit-avatar.png';
+      const path =
+          '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png';
       final bridge = _VfsFileBridge({
         '__type': 'BinaryFileContentData',
         'path': path,
@@ -134,7 +154,7 @@ void main() {
       await expectLater(
         readComposeDslVfsBytes(
           GeneratedCoreProxyClients(rejected),
-          '/app/denied.png',
+          '/operitapp/denied.png',
         ),
         throwsA(
           isA<StateError>().having(
@@ -148,7 +168,7 @@ void main() {
       await expectLater(
         readComposeDslVfsBytes(
           GeneratedCoreProxyClients(wrongType),
-          '/app/wrong.png',
+          '/operitapp/wrong.png',
         ),
         throwsA(
           isA<StateError>().having(
@@ -164,9 +184,10 @@ void main() {
     'known virtual roots and explicit virtual URIs resolve before OS files',
     () async {
       final cases = <String, String>{
-        '/app/data/cache/toolpkg_resource_exports/operit-avatar.png':
-            '/app/data/cache/toolpkg_resource_exports/operit-avatar.png',
-        '/mnt/macos/Users/test/avatar.png': '/mnt/macos/Users/test/avatar.png',
+        '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png':
+            '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png',
+        '/virtual/macos/Users/test/avatar.png':
+            '/virtual/macos/Users/test/avatar.png',
         'file:///app/data/avatar.png': '/app/data/avatar.png',
         'file:///app/data/avatar%20one.png': '/app/data/avatar one.png',
         'file://localhost/app/data/avatar.png': '/app/data/avatar.png',
@@ -298,19 +319,22 @@ void main() {
           onTextInput: (_, text) async => null,
         ),
       );
-      await tester.pumpWidget(render('/app/data/cache/avatar.png'));
+      await tester.pumpWidget(render('/operitapp/data/cache/avatar.png'));
       await tester.pumpAndSettle();
-      expect(reads, ['/app/data/cache/avatar.png']);
+      expect(reads, ['/operitapp/data/cache/avatar.png']);
       expect(tester.takeException(), isNull);
       final first = tester.widget<Image>(find.byType(Image)).image;
       expect(first, isA<ComposeDslVfsImage>());
-      await tester.pumpWidget(render('/app/data/cache/avatar.png'));
+      await tester.pumpWidget(render('/operitapp/data/cache/avatar.png'));
       await tester.pumpAndSettle();
       expect(reads, hasLength(1));
       expect(tester.widget<Image>(find.byType(Image)).image, same(first));
       await tester.pumpWidget(render('file:///mnt/macos/avatar.png'));
       await tester.pumpAndSettle();
-      expect(reads, ['/app/data/cache/avatar.png', '/mnt/macos/avatar.png']);
+      expect(reads, [
+        '/operitapp/data/cache/avatar.png',
+        '/mnt/macos/avatar.png',
+      ]);
       expect(
         tester.widget<Image>(find.byType(Image)).image,
         isNot(same(first)),
@@ -339,7 +363,7 @@ void main() {
           'type': 'Image',
           'props': {
             'key': 'pet',
-            'path': '/app/data/pet/eat.webp',
+            'path': '/operitapp/data/pet/eat.webp',
             'animationKey': animationKey,
             'width': width,
             'height': 44,
@@ -392,7 +416,7 @@ void main() {
       home: buildComposeDslLayoutForTest(
         node: {
           'type': 'Image',
-          'props': {'path': '/app/avatar.image'},
+          'props': {'path': '/operitapp/avatar.image'},
           'children': [],
           'slots': {},
         },
@@ -436,7 +460,7 @@ void main() {
         return pending.future;
       }
 
-      const path = '/app/data/shared-avatar.png';
+      const path = '/operitapp/data/shared-avatar.png';
       final providers = await Future.wait(
         List.generate(
           20,
@@ -507,7 +531,7 @@ void main() {
           home: buildComposeDslLayoutForTest(
             node: {
               'type': 'Image',
-              'props': {'path': '/app/data/missing.png'},
+              'props': {'path': '/operitapp/data/missing.png'},
               'children': [],
               'slots': {},
             },

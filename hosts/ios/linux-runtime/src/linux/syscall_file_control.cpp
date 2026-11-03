@@ -8,6 +8,8 @@
 namespace operit::arm64 {
 int64_t Syscalls::dispatch_file_control(CpuState &cpu) {
     const auto &a = cpu.x;
+    if (a[8] != 436 && ipc::is_posix_mq_file(descriptors_.get(uint32_t(a[0])).description))
+        guest_error(95);
     switch (a[8]) {
     case 47:
         return files::fallocate(memory_, descriptors_, a[0], uint32_t(a[1]), int64_t(a[2]),
@@ -26,6 +28,7 @@ int64_t Syscalls::dispatch_file_control(CpuState &cpu) {
         return files::close_range(descriptors_, uint32_t(a[0]), uint32_t(a[1]), uint32_t(a[2]),
                                    [this](const Descriptor &entry) {
             files::record_lock_close(scheduler_, scheduler_.current().pid, entry);
+            ipc::posix_mq_close(entry.description, scheduler_.current().pid);
         });
     default:
         return unsupported(cpu);

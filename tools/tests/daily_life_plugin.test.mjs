@@ -10,7 +10,7 @@ const root = new URL('../../', import.meta.url);
 const require = createRequire(new URL('plugins/packages/buildin/workflow/package.json', root));
 const ts = require('typescript');
 const packagePath = 'plugins/packages/buildin/daily_life/';
-const dataDirectory = '/app/data/plugin_data/space/com.operit.daily_life';
+const dataDirectory = '/operitapp/data/plugin_data/space/com.operit.daily_life';
 const storePath = `${dataDirectory}/reminders.preferences.json`;
 const reminderKeyPrefix = 'reminder_';
 const startTime = Date.parse('2030-01-01T00:00:00Z');
@@ -153,7 +153,7 @@ function fixture({ visitResults = [], notify, storeState = null, failReminderEdi
     toolCall: async (name, params) => {
       assert.equal(name, 'capture_screenshot');
       assert.deepEqual(plain(params), {});
-      return '/app/data/temp/screenshot.png';
+      return '/operitapp/data/temp/screenshot.png';
     },
     Tools: {
       Storage: {
@@ -273,7 +273,7 @@ test('basic tools continue using their existing Date and system Host capabilitie
   const f = fixture();
   assert.equal((await f.tools.get_current_date()).timestamp, startTime);
   assert.deepEqual(plain(await f.tools.device_status()), { device: 'fixture-device' });
-  assert.equal(await f.tools.take_screenshot(), '/app/data/temp/screenshot.png');
+  assert.equal(await f.tools.take_screenshot(), '/operitapp/data/temp/screenshot.png');
 });
 
 /** Checks weather preserves the web-visit Host response and the original search route. */
@@ -281,7 +281,7 @@ test('weather makes one web-visit Host call and returns its result unchanged', a
   const hostResult = {
     url: 'https://www.baidu.com/s?wd=Shanghai%20weather', title: 'Shanghai weather',
     content: 'Weather page extracted by the Host', metadata: {}, links: [], imageLinks: [],
-    visitKey: 'host-visit-key', contentSavedTo: '/app/data/temp/visit_web/weather.txt',
+    visitKey: 'host-visit-key', contentSavedTo: '/operitapp/data/temp/visit_web/weather.txt',
   };
   const f = fixture({ visitResults: [hostResult] });
   const result = await f.tools.search_weather({ location: 'Shanghai' });

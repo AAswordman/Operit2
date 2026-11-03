@@ -50,7 +50,7 @@ int64_t Syscalls::dispatch_events(CpuState &cpu) {
             events = uint32_t(memory_.load(a[3], 4));
             data = memory_.load(a[3] + 8, 8);
         }
-        if (target.description->virtual_file)
+        if (target.description->virtual_file && !ipc::is_posix_mq_file(target.description))
             guest_error(1);
         int native = target.host.get();
         if (target.description->poll)
@@ -64,10 +64,10 @@ int64_t Syscalls::dispatch_events(CpuState &cpu) {
         poll.description->poll->control(int(a[1]), int(a[2]), native, target.description, events, data);
         return 0;
     }
-    case 22: { // epoll_pwait: never block another runnable guest thread.
+    case 22:  // epoll_pwait
+    case 441: { // epoll_pwait2: keep timespec precision in the guest scheduler.
         auto description = descriptors_.get(uint32_t(a[0])).description;
-        auto poll = description->poll;
-        if (!poll)
+        if (!description->poll)
             guest_error(22);
         if (!a[2] || a[2] > 4096)
             guest_error(22);
@@ -78,6 +78,16 @@ int64_t Syscalls::dispatch_events(CpuState &cpu) {
             check_buffer(a[4], 8, read_perm);
         }
         check_buffer(a[1], a[2] * 16, write_perm);
+        // Validate the complete timeout before polling or installing the mask.
+        // A null pwait2 timeout waits indefinitely; its timespec is input-only.
+        TaskDeadline deadline;
+        if (a[8] == 441)
+            deadline = thread_deadline(a[3], false, false);
+        else {
+            const int timeout = int32_t(a[3]);
+            if (timeout >= 0)
+                deadline = TaskClock::now() + std::chrono::milliseconds(timeout);
+        }
         auto read_events = [this, description, address = a[1],
                             maximum = int(a[2])]() -> std::optional<int64_t> {
             // This callback also runs for scheduler retries in the waiting task's
@@ -103,8 +113,7 @@ int64_t Syscalls::dispatch_events(CpuState &cpu) {
                 signals::end_temporary_mask(task.signals, task.signal_mask);
                 return *count;
             }
-            const int timeout = int32_t(a[3]);
-            if (!timeout) {
+            if (deadline && *deadline <= TaskClock::now()) {
                 signals::end_temporary_mask(task.signals, task.signal_mask);
                 return 0;
             }
@@ -112,9 +121,6 @@ int64_t Syscalls::dispatch_events(CpuState &cpu) {
                 signals::end_temporary_mask(task.signals, task.signal_mask);
                 return -4;
             }
-            TaskDeadline deadline;
-            if (timeout > 0)
-                deadline = TaskClock::now() + std::chrono::milliseconds(timeout);
             scheduler_.block(deadline, 0, std::move(read_events));
             task.wait_cleanup = [this, tid = task.tid] {
                 auto &waiting = scheduler_.find(tid);

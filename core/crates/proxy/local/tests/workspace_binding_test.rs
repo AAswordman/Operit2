@@ -64,7 +64,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                     "flutter-bind-first",
                     target,
                     "bindChatToWorkspace",
-                    toCoreValue(json!({"chatId": chat_id, "workspace": "/app/workspaces/project"}))
+                    toCoreValue(json!({"chatId": chat_id, "workspace": "/operitapp/workspaces/project"}))
                         .unwrap(),
                 ),
             )
@@ -121,19 +121,19 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
             assert_ne!(chat_id, inherited_chat_id);
 
             for (request_id, path, succeeds) in [
-                ("flutter-rebind", "/app/workspaces/project", true),
+                ("flutter-rebind", "/operitapp/workspaces/project", true),
                 (
                     "flutter-rebind-normalized",
-                    " /app/workspaces/project/ ",
+                    " /operitapp/workspaces/project/ ",
                     true,
                 ),
                 ("flutter-invalid-path", "relative/project", false),
                 (
                     "flutter-name-conflict",
-                    "/app/workspaces/other/project",
+                    "/operitapp/workspaces/other/project",
                     false,
                 ),
-                ("flutter-retry-after-error", "/app/workspaces/project", true),
+                ("flutter-retry-after-error", "/operitapp/workspaces/project", true),
             ] {
                 let response = CoreLinkSharedClient::call(
                     &proxy,
@@ -182,7 +182,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
                     target,
                     "bindChatToWorkspace",
                     toCoreValue(
-                        json!({"chatId": inherited_chat_id, "workspace": "/app/workspaces/extra"}),
+                        json!({"chatId": inherited_chat_id, "workspace": "/operitapp/workspaces/extra"}),
                     )
                     .unwrap(),
                 ),
@@ -203,7 +203,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
             assert_eq!(workspace.id, original_workspace.id);
             assert_eq!(workspace.folders.len(), 2);
             assert_eq!(workspace.folders[0], original_workspace.folders[0]);
-            assert_eq!(workspace.folders[1].path, "/app/workspaces/extra");
+            assert_eq!(workspace.folders[1].path, "/operitapp/workspaces/extra");
         })
         .await;
 }

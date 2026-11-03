@@ -114,17 +114,6 @@ int64_t Syscalls::dispatch_system(CpuState &cpu) {
         memory_.copy_in(a[1], &value, sizeof(value));
         return 0;
     }
-    case 124:
-        ::sched_yield();
-        return 0;
-    case 144: // setgid: retaining the actual identity requires no host mutation.
-        if (uint32_t(a[0]) != ::getgid() || ::getegid() != ::getgid())
-            guest_error(1);
-        return 0;
-    case 146: // setuid
-        if (uint32_t(a[0]) != ::getuid() || ::geteuid() != ::getuid())
-            guest_error(1);
-        return 0;
     case 158: { // getgroups: permissions follow the actual backing-file identity.
         const int capacity = int32_t(a[0]);
         if (capacity < 0)
@@ -180,14 +169,6 @@ int64_t Syscalls::dispatch_system(CpuState &cpu) {
         }
         return 0;
     }
-    case 174:
-        return ::getuid();
-    case 175:
-        return ::geteuid();
-    case 176:
-        return ::getgid();
-    case 177:
-        return ::getegid();
     case 278: { // getrandom
         if (a[2] & ~uint64_t{3})
             guest_error(22);

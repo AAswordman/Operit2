@@ -6,7 +6,7 @@
 
 `src/fs/filesystem.*`、`src/fs/mount/` 以已打开的宿主 FD 锚定 root 和挂载源。路径遍历统一处理 `.`、`..`、symlink、虚拟节点与挂载边界；guest 绝对 symlink 回到 guest 根，不能将宿主路径直接暴露给 guest。
 
-调用方可提供外部 root；运行时不要求其带制备工具标记，也不要求宿主 mount / chroot 权限，访问能力来自宿主 App 的目录授权。公开 `ort_arm64_bind` 在 load 前登记目录绑定，CLI 提供读写 / 只读选项。guest mount 路径已有 bind / remount、proc / dev / devpts / tmpfs 与 umount 实现，支持范围受具体 filesystem 类型和 flags 限制；未支持组合报错。跨挂载改名、busy / detach、并发卸载和 FD 身份需独立用例。
+调用方可提供外部 root；运行时不要求其带制备工具标记，也不要求宿主 mount / chroot 权限，访问能力来自宿主 App 的目录授权。公开 `ort_arm64_bind` 在 load 前登记目录绑定，CLI 提供读写 / 只读选项。底层文件系统包含 bind / remount、proc / dev / devpts / tmpfs 与 umount 实现，但当前 guest capability 集合为空，因此 guest 的 `mount` / `umount2` 必须返回 `EPERM`，不能修改共享挂载树。运行时初始化的虚拟节点和宿主侧绑定不经过 guest syscall 权限检查；后续开放 guest 挂载必须先实现相应用户及挂载命名空间的真实权限模型。
 
 `DescriptorTable` 的数字 FD 与共享 `OpenDescription` 分开。dup / fork 共享 offset 与可变 file status，FD_CLOEXEC 属于各自数字 FD。只读挂载约束不只影响 open，还需覆盖写、metadata、共享映射和空间分配。
 
@@ -43,6 +43,8 @@ Darwin 的 `O_TMPFILE` 只支持带 `O_EXCL`、不允许后续链接落盘的匿
 
 eventfd、epoll、timerfd、inotify 等通过共享打开对象保存状态。`OpenDescription::is_anon_inode` 为 metadata 提供公共分类，当前包含 inotify。这类 FD 的 read / poll / ioctl / seek 需要按各自 ABI 检查，不能套用普通文件 offset。
 
-Darwin inotify 使用 kqueue / vnode 与目录快照；OPEN / ACCESS / CLOSE 事件和虚拟节点 watch 不支持，guest 文件操作事件桥接尚未落盘。host 文件变化通知不等于完整 guest 事件语义。新增 guest 测试与 Node watcher 的运行层级只记在交付状态。
+Darwin inotify 使用 kqueue / vnode 与目录快照观察结构和元数据变化，并通过 `InotifyOpenFile` 桥接 guest 的 OPEN / ACCESS / CLOSE。共享 OpenDescription 持有一次 data-open；dup / fork / SCM_RIGHTS 共用该引用，mmap 的 FileBacking 也保留它，最后引用释放才产生 CLOSE。普通 / 定位 / 向量读取、getdents 与文件传输接入 ACCESS；事件按 pinned parent inode 与确切名字归属，rename / unlink 更新该归属，避免把事件发给另一条硬链接；IN_EXCL_UNLINK、one-shot 和未链接 inode 的 CLOSE → DELETE_SELF → IGNORED 顺序均有新增用例。
+
+新桥接尚未编译或运行。虚拟节点 watch、exec 装载路径的 data-open，以及匿名 O_TMPFILE 的父目录临时名字事件仍未接；完全由宿主外部进程执行的 OPEN / ACCESS / CLOSE 没有 kqueue 事件源，不能据此宣称覆盖。新增 `arm64-inotify`、guest fixture 与 Node watcher 的实际运行层级只记在交付状态。
 
 回归入口包括 `tests/virtual_filesystem.cpp`、`tests/filesystem.cpp`、`tests/python/virtual_filesystem.py` 与新增 `tests/guest/inotify.c`。入口列出不表示本轮已执行。

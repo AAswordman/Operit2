@@ -7,7 +7,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const root = new URL('../../', import.meta.url);
-const cleanOnExit = '/app/data/temp/clean_on_exit';
+const cleanOnExit = '/operitapp/data/temp/clean_on_exit';
 
 /** Loads a production package with strict VFS file tools and identity-owned disk storage. */
 async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
@@ -19,10 +19,10 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
   const logs = [];
   const completions = [];
   function resolve(vfsPath) {
-    if (!vfsPath.startsWith('/app/data/')) {
+    if (!vfsPath.startsWith('/operitapp/data/')) {
       throw new Error(`Unknown VFS root: ${vfsPath}`);
     }
-    return path.join(runtimeRoot, vfsPath.slice('/app/data/'.length));
+    return path.join(runtimeRoot, vfsPath.slice('/operitapp/data/'.length));
   }
   const context = vm.createContext({
     exports: {},

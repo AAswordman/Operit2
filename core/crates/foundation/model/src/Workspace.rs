@@ -142,6 +142,17 @@ impl Workspace {
 mod tests {
     use super::*;
 
+    #[test]
+    fn workspace_folder_preserves_vfs_addresses() {
+        let folder: WorkspaceFolder = serde_json::from_value(serde_json::json!({
+            "name": "project", "path": "/app/workspaces/demo"
+        })).unwrap();
+        assert_eq!(folder.path, "/app/workspaces/demo");
+        let folder = WorkspaceFolder { name: "external".into(), path: "/mnt/local/folders/id".into() };
+        assert_eq!(serde_json::to_value(folder).unwrap()["path"], "/mnt/local/folders/id");
+    }
+
+
     fn singleFolderWorkspace(name: &str, path: &str) -> Workspace {
         Workspace::fromSingleFolder(
             name.to_string(),
@@ -153,10 +164,10 @@ mod tests {
 
     #[test]
     fn mountFolderAppendsNewFolders() {
-        let mut workspace = singleFolderWorkspace("harmoon", "/mnt/linux/home/harmoon");
+        let mut workspace = singleFolderWorkspace("harmoon", "/virtual/linux/home/harmoon");
         let changed = workspace.mountFolder(WorkspaceFolder {
             name: "debug".to_string(),
-            path: "/mnt/linux/home/harmoon/projects".to_string(),
+            path: "/virtual/linux/home/harmoon/projects".to_string(),
         });
         assert!(changed);
         assert_eq!(workspace.folders.len(), 2);
@@ -165,10 +176,10 @@ mod tests {
 
     #[test]
     fn mountFolderIgnoresAlreadyMountedPaths() {
-        let mut workspace = singleFolderWorkspace("harmoon", "/mnt/linux/home/harmoon");
+        let mut workspace = singleFolderWorkspace("harmoon", "/virtual/linux/home/harmoon");
         let changed = workspace.mountFolder(WorkspaceFolder {
             name: "home".to_string(),
-            path: "/mnt/linux/home/harmoon".to_string(),
+            path: "/virtual/linux/home/harmoon".to_string(),
         });
         assert!(!changed);
         assert_eq!(workspace.folders.len(), 1);
@@ -177,7 +188,7 @@ mod tests {
 
     #[test]
     fn mountFolderRebindsKnownNameToMovedPath() {
-        let mut workspace = singleFolderWorkspace("harmoon", "/mnt/linux/home/harmoon");
+        let mut workspace = singleFolderWorkspace("harmoon", "/virtual/linux/home/harmoon");
         let changed = workspace.mountFolder(WorkspaceFolder {
             name: "harmoon".to_string(),
             path: "/home/harmoon".to_string(),
@@ -202,9 +213,9 @@ mod tests {
     #[test]
     fn folderNamesPreserveRealFolders() {
         for (path, expected) in [
-            ("/mnt/linux/home/harmoon", "harmoon"),
-            (" /app/workspaces/demo/ ", "demo"),
-            ("/mnt/android/sdcard/Projects", "Projects"),
+            ("/virtual/linux/home/harmoon", "harmoon"),
+            (" /operitapp/workspaces/demo/ ", "demo"),
+            ("/virtual/android/sdcard/Projects", "Projects"),
         ] {
             assert_eq!(Workspace::folderNameFromPath(path).unwrap(), expected);
         }

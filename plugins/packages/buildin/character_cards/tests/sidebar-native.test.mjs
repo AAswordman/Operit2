@@ -25,7 +25,7 @@ function mount(current, data, adapters = {}) {
       assert.equal(name, 'character-memory.domain');
       if (adapters.domain) return adapters.domain(request);
       throw new Error('No labelled domain adapter supplied'); } },
-    readResource: async (key, path) => { calls.push({ resource: key, path }); return adapters.readResource ? adapters.readResource(key, path) : '/app/data/cache/toolpkg_resource_exports/operit-avatar.png'; },
+    readResource: async (key, path) => { calls.push({ resource: key, path }); return adapters.readResource ? adapters.readResource(key, path) : '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png'; },
   } };
   globals.Tools = { Files: { readBinary: adapters.readBinary ?? (async path => ({ path, size: 12, contentBase64: 'iVBORw0KGgo=' })) }, ...(adapters.chat ? { Chat: adapters.chat } : {}) };
   const compiledModules = { ...modules };
@@ -73,7 +73,7 @@ test('native role sidebar restores rounded nested legacy layout without timestam
   assert.equal(keyedNode(tree, 'sidebar-create-bar').props.height, 34);
   assert.equal(keyedNode(tree, 'sidebar-create-bar').props.shape.type, 'pill');
   assert.equal(keyedNode(tree, 'sidebar-avatar-card:travel').props.width, 22);
-  assert.equal(keyedNode(tree, 'sidebar-avatar-card:travel').props.uri, '/app/data/cache/toolpkg_resource_exports/operit-avatar.png');
+  assert.equal(keyedNode(tree, 'sidebar-avatar-card:travel').props.uri, '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png');
   assert.equal(keyedNode(tree, 'sidebar-section-card:travel').props.paddingStart, 20);
   assert.equal(composeNodes(tree, node => node.props.key === 'sidebar-section-card:empty').length, 0);
   const group = keyedNode(tree, 'sidebar-group-1');
@@ -674,7 +674,7 @@ test('native custom avatars carry paths without reading their contents', async (
 test('prepared role data and avatars appear in the first DSL tree before IPC completes', async () => {
   const chats = [summary('c1')], current = context(chats), data = catalog(chats);
   const chatSidebarPrepared = { context: JSON.stringify({ input: current.input, chats }), data,
-    defaultAvatar: '/app/data/cache/toolpkg_resource_exports/operit-avatar.png' };
+    defaultAvatar: '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png' };
   let finish;
   const pending = new Promise(resolve => { finish = resolve; });
   const session = mount({ ...current, chatSidebarPrepared }, data, { catalog: () => pending });
@@ -716,7 +716,7 @@ test('twenty default avatars serialize resource paths without any binary reads',
   assert.equal(avatars.size, 20);
   assert.equal(reads, 0);
   assert.equal(screen.calls.filter(call => call.resource).length, 1);
-  for (const uri of avatars.values()) assert.equal(uri, '/app/data/cache/toolpkg_resource_exports/operit-avatar.png');
+  for (const uri of avatars.values()) assert.equal(uri, '/operitapp/data/cache/toolpkg_resource_exports/operit-avatar.png');
 });
 
 
@@ -728,11 +728,11 @@ test('sidebar content and onLoad complete while default avatar lookup remains pe
   const loaded = await screen.load();
   assert.ok(composeNodes(loaded.tree, node => node.type === 'Text' && node.props.text === '旅行角色').length > 0);
   assert.ok(composeNodes(loaded.tree, node => node.type === 'Text' && node.props.text === '对话 c1').length > 0);
-  assert.equal(composeNodes(loaded.tree, node => node.type === 'Image' && node.props.uri === '/app/default.png').length, 0);
-  complete('/app/default.png');
+  assert.equal(composeNodes(loaded.tree, node => node.type === 'Image' && node.props.uri === '/operitapp/default.png').length, 0);
+  complete('/operitapp/default.png');
   await new Promise(resolve => setImmediate(resolve));
   const rendered = screen.render();
-  assert.ok(composeNodes(rendered.tree, node => node.type === 'Image' && node.props.uri === '/app/default.png').length > 0);
+  assert.ok(composeNodes(rendered.tree, node => node.type === 'Image' && node.props.uri === '/operitapp/default.png').length > 0);
 });
 
 // Host inputs alone must trigger classification; production never manually clicks a lifecycle callback.

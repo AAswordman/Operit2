@@ -636,11 +636,11 @@ fn appleEnvironmentDescriptor() -> HostEnvironmentDescriptor {
             descriptor.workspaceRoots = vec![operit_host_api::WorkspaceRootDescriptor {
                 id: "macos.filesystem".to_string(),
                 displayName: "macOS 文件系统".to_string(),
-                vfsRoot: "/mnt/macos".to_string(),
+                vfsRoot: "/virtual/macos".to_string(),
                 physicalRoot: "/".to_string(),
             }];
-            descriptor.pathStyleDescriptionEn.push_str(" The full native filesystem is exposed at /mnt/macos in VFS.");
-            descriptor.pathStyleDescriptionCn.push_str(" 完整本机文件系统在 VFS 中对应 /mnt/macos。");
+            descriptor.pathStyleDescriptionEn.push_str(" The full native filesystem is exposed at /virtual/macos in VFS.");
+            descriptor.pathStyleDescriptionCn.push_str(" 完整本机文件系统在 VFS 中对应 /virtual/macos。");
         }
         descriptor.capabilities.push("screen.capture".to_string());
         descriptor.structuredCapabilities.push(HostCapability {

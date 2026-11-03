@@ -268,10 +268,10 @@ async fn device_tools_direct_calls_skip_ai_policy_and_preserve_transport_semanti
     params.insert("__operit_toolpkg_api_version".into(), "2.0.0".into());
     let result = engine.execute_script_function_async(
         r#"exports.run=async function(params) {
-            await Tools.Files.mkdir('/app/data/direct-sdk',true);
-            await Tools.Files.write('/app/data/direct-sdk/probe.txt','direct');
-            var local=await Tools.Files.exists('/app/data/direct-sdk/probe.txt');
-            var remote=await Tools.device(params.node).Files.exists('/app/data/direct-sdk/probe.txt');
+            await Tools.Files.mkdir('/operitapp/data/direct-sdk',true);
+            await Tools.Files.write('/operitapp/data/direct-sdk/probe.txt','direct');
+            var local=await Tools.Files.exists('/operitapp/data/direct-sdk/probe.txt');
+            var remote=await Tools.device(params.node).Files.exists('/operitapp/data/direct-sdk/probe.txt');
             await Tools.device(params.node).call('blocked_probe',{});
             await Tools.device(params.node).call('internal_probe',{});
             return {local:local.exists,remote:remote.exists};

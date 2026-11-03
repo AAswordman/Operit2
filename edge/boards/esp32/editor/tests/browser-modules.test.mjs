@@ -17,7 +17,7 @@ test('editor serves every browser dependency including microphone and full draft
   await Promise.race([new Promise(resolve=>child.stdout.on('data',()=>{if(output.includes('editor running'))resolve();})),
     exited.then(()=>{throw Error(output);})]);
   const base=`http://127.0.0.1:${port}`;
-  const seen=new Set(),queue=['/app.js','/simulator.js'];
+  const seen=new Set(),queue=['/operitapp.js','/simulator.js'];
   while(queue.length){
     const route=queue.shift();if(seen.has(route))continue;seen.add(route);
     const response=await fetch(base+route);

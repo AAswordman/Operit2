@@ -389,7 +389,7 @@ mod tests {
             "fileFieldName":"file","modelFieldName":"model","languageFieldName":"language",
             "responseTextJsonPath":"text","headers":[],"createdAt":1,"updatedAt":2});
         let workspace = json!({"id":"remote-workspace","name":"Remote workspace",
-            "folders":[{"name":"Root","path":"/app/workspaces/remote"}],"createdAt":1,"updatedAt":2});
+            "folders":[{"name":"Root","path":"/operitapp/workspaces/remote"}],"createdAt":1,"updatedAt":2});
         for (path, index, key, record) in [
             (
                 RuntimeStorageLayout::TTS_CONFIGS_PREFERENCES_PATH,

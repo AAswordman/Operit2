@@ -69,7 +69,6 @@ class Filesystem {
     bool shares_mounts(const Filesystem &other) const {
         return namespace_ == other.namespace_;
     }
-    bool mount_read_only(uint64_t id) const;
     Path resolve(const std::string &path, const std::string &base = "/", bool follow_final = true,
                  ResolveIntent intent = ResolveIntent::Lookup) const;
     // Pass the live directory FD from the descriptor table, never reopen guest.

@@ -329,7 +329,7 @@ impl TerminalHost for OhosTerminalHost {
             OhosTerminalBackend::QemuVroot => {
                 operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(
                     workingDir,
-                    resolveHostDirectory,
+                    &|path| resolveHostDirectory(path).map(|native| format!("{VROOT_HOST_MOUNT_ROOT}{native}")),
                 )
             }
             OhosTerminalBackend::NativeShell => resolveHostDirectory(workingDir),
@@ -543,13 +543,11 @@ fn createVrootShell(runtime: &OhosVrootRuntime) -> HostResult<NativePtyTerminalH
             "./bin/busybox".to_string(),
             "sh".to_string(),
             "-c".to_string(),
-            format!(
-                "cd \"{VROOT_HOST_MOUNT_ROOT}$OPERIT_OHOS_HOST_WORKING_DIR\" && exec /bin/sh -i"
-            ),
+            "cd \"$OPERIT_OHOS_HOST_WORKING_DIR\" && exec /bin/sh -i".to_string(),
         ],
         description: "OpenHarmony QEMU-vroot Alpine Linux shell".to_string(),
         processWorkingDirectory: rootfsDirectory.to_string_lossy().to_string(),
-        defaultSessionWorkingDirectory: runtime.workspaceRoot.to_string_lossy().to_string(),
+        defaultSessionWorkingDirectory: format!("{VROOT_HOST_MOUNT_ROOT}{}", runtime.workspaceRoot.to_string_lossy()),
         environment: vec![(
             "LD_LIBRARY_PATH".to_string(),
             QEMU_VROOT_LIBRARY_DIRECTORY.to_string(),

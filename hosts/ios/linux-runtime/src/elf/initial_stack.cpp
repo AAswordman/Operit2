@@ -1,6 +1,6 @@
 #include "base/random.h"
 #include "elf/loader.h"
-#include "linux/error_mapping.h"
+#include "linux/threads/rseq.h"
 
 namespace operit::arm64 {
 uint64_t build_initial_stack(Memory &memory, const char *const *argv, const char *const *envp,
@@ -66,6 +66,8 @@ uint64_t build_initial_stack(Memory &memory, const char *const *argv, const char
                                                        {23, 0},
                                                        {25, random_address},
                                                        {26, 0},
+                                                       {27, threads::rseq_feature_size},
+                                                       {28, threads::rseq_alignment},
                                                        {31, executable},
                                                        {0, 0}};
     for (const auto &entry : auxiliary) {

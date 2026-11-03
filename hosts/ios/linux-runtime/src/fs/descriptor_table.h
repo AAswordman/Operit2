@@ -11,12 +11,14 @@
 
 namespace operit::arm64 {
 namespace files { class PipeBuffer; }
+namespace io_uring { class Ring; }
 struct SocketState;
 struct TerminalEndpoint;
 class EventCounter;
 class EventPoll;
 class TimerFile;
 class InotifyFile;
+class InotifyOpenFile;
 struct OpenDescription {
     int flags;
     uint64_t inode = 0;
@@ -36,6 +38,8 @@ struct OpenDescription {
     std::shared_ptr<EventPoll> poll;
     // The host FD is only a readiness marker; this object owns event records.
     std::shared_ptr<InotifyFile> inotify;
+    std::shared_ptr<InotifyOpenFile> inotify_open;
+    std::shared_ptr<io_uring::Ring> io_uring;
     explicit OpenDescription(int f) : flags(f & ~(64 | 128 | 256 | 512 | 524288)) {}
     bool is_anon_inode() const;
     bool is_read_only() const;

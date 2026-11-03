@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../common/interactions/ChainedScrollController.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../theme/OperitTheme.dart';
@@ -351,15 +352,17 @@ class _ChatAreaState extends State<ChatArea>
       ],
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final viewportHeight = constraints.maxHeight;
-        if (_viewportHeight != viewportHeight) {
-          _viewportHeight = viewportHeight;
-          _scheduleViewportResizeUpdate();
-        }
-        return viewport;
-      },
+    return ChainedScrollScope(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final viewportHeight = constraints.maxHeight;
+          if (_viewportHeight != viewportHeight) {
+            _viewportHeight = viewportHeight;
+            _scheduleViewportResizeUpdate();
+          }
+          return viewport;
+        },
+      ),
     );
   }
 

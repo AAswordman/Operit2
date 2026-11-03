@@ -22,7 +22,7 @@ class MemoryFilePickerStorage implements ComposeDslFilePickerStorage {
   @override
   Future<String> createFile(String name) async {
     final path =
-        '/app/data/temp/clean_on_exit/file_picker/${allocated.length}/$name';
+        '/operitapp/data/temp/clean_on_exit/file_picker/${allocated.length}/$name';
     allocated.add(path);
     return path;
   }

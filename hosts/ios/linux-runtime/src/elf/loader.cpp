@@ -124,7 +124,7 @@ Image ElfLoader::load(const std::string &path, uint64_t pie_base, bool interpret
     if (!memory_.accessible(image.entry, 4, exec_perm))
         throw Failure("ELF entry is not executable");
     // Fingerprint before allocating snapshots: unrecognized ELF mappings can be arbitrarily large.
-    if (acceleration_.recognizes(data)) {
+    acceleration_.register_image_lazy(data, base, [&] {
         std::vector<ExecutableSnapshot> executable;
         for (const auto &mapping : mappings)
             if (mapping.permissions & exec_perm) {
@@ -132,8 +132,8 @@ Image ElfLoader::load(const std::string &path, uint64_t pie_base, bool interpret
                 memory_.copy_out(mapping.start, snapshot.bytes.data(), snapshot.bytes.size(), exec_perm);
                 executable.push_back(std::move(snapshot));
             }
-        acceleration_.register_image(data, base, std::move(executable));
-    }
+        return executable;
+    });
     return image;
 }
 } // namespace operit::arm64

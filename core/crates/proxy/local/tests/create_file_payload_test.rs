@@ -56,7 +56,7 @@ async fn create_file_accepts_content_alias_and_prefers_nonblank_new() {
         let name = format!("payload-{index}.txt");
         let mut parameters = vec![ToolParameter {
             name: "path".into(),
-            value: format!("/app/workspaces/project/{name}"),
+            value: format!("/operitapp/workspaces/project/{name}"),
         }];
         for (key, value) in [("new", new), ("content", content)] {
             if let Some(value) = value {

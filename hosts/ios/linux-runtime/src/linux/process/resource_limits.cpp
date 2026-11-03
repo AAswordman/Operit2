@@ -111,6 +111,11 @@ bool ResourceLimits::change_supported(Resource resource) {
     case Resource::Stack:
     case Resource::OpenFiles:
     case Resource::AddressSpace:
+    // Scheduling setters enforce these against the target guest limits.
+    case Resource::Nice:
+    case Resource::RealtimePriority:
+    // Machine enforces continuous realtime CPU service at execution safe points.
+    case Resource::RealtimeTime:
     // Linux retains these ABI values but does not enforce RSS or LOCKS.
     case Resource::Rss:
     case Resource::Locks:
@@ -152,6 +157,23 @@ int ResourceLimits::check_cpu_time(uint64_t user_nanoseconds, uint64_t system_na
         return 9;
     if (limit.soft != resource_infinity && seconds >= limit.soft) {
         ++limit.soft;
+        return 24;
+    }
+    return 0;
+}
+int ResourceLimits::check_realtime_time(uint64_t runtime_nanoseconds) {
+    if (!runtime_nanoseconds)
+        return 0; // The watchdog has not observed any CPU service yet.
+    const uint64_t microseconds = runtime_nanoseconds / 1000;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto &limit = limits_[static_cast<uint32_t>(Resource::RealtimeTime)];
+    if (limit.hard != resource_infinity && microseconds >= limit.hard)
+        return 9;
+    if (limit.soft != resource_infinity && microseconds >= limit.soft) {
+        // Keep the hard check separate: Linux's soft-limit promotion may pass
+        // the hard ceiling. Saturate instead of wrapping an extreme ABI value.
+        constexpr uint64_t second = 1000000;
+        limit.soft = limit.soft > resource_infinity - second ? resource_infinity : limit.soft + second;
         return 24;
     }
     return 0;
@@ -259,16 +281,6 @@ void ResourceLimits::check_brk(const Memory &memory, uint64_t start_data, uint64
     const auto old_end = align_up(old_brk), new_end = align_up(requested);
     if (new_end > old_end)
         check_mapping(memory, old_end, new_end - old_end, read_perm | write_perm, false);
-}
-void ResourceLimits::check_stack(uint64_t bytes, int error) const {
-    if (bytes > (get(Resource::Stack).soft & ~(page_size - 1)))
-        guest_error(error);
-}
-uint64_t ResourceLimits::stack_mapping_size(uint64_t maximum) const {
-    const uint64_t size = std::min(maximum, get(Resource::Stack).soft) & ~(page_size - 1);
-    if (!size)
-        guest_error(12);
-    return size;
 }
 uint64_t ResourceLimits::exec_argument_limit() const {
     constexpr uint64_t minimum = 32 * page_size;

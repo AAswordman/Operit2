@@ -179,7 +179,7 @@ test('absolute message resources remain usable without a bound workspace', async
       assert.equal(args[4], '');
       assert.equal(args[5], 'D:\\repo\\a.ts');
     }
-    return JSON.stringify({ vfsPath: '/mnt/windows/d/repo/a.ts', nativePath: 'D:\\repo\\a.ts' });
+    return JSON.stringify({ vfsPath: '/virtual/windows/d/repo/a.ts', nativePath: 'D:\\repo\\a.ts' });
   };
   const page = await screen('../src/ui/workspace.ui.ts', { input: { files: [{ ...review, path: 'D:\\repo\\a.ts' }] } }, { tools: native.tools });
   await page.settle();

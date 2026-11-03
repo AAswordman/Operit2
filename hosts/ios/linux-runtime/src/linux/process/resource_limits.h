@@ -76,6 +76,10 @@ class ResourceLimits {
     // Returns 0, SIGXCPU(24), or SIGKILL(9). A soft expiry advances rlim_cur
     // by one CPU second under the same mutex used by prlimit64.
     int check_cpu_time(uint64_t user_nanoseconds, uint64_t system_nanoseconds);
+    // RTTIME uses microsecond limits against one thread's continuous RT CPU
+    // service. Soft expiry advances the shared soft limit by one CPU second;
+    // hard expiry wins. Scheduler resets the thread counter on a real wake.
+    int check_realtime_time(uint64_t runtime_nanoseconds);
     // Regular-file writes may commit a prefix. Only a nonempty write starting
     // at/above the soft limit fails with EFBIG; the caller then queues SIGXFSZ.
     uint64_t file_write_count(uint64_t offset, uint64_t count) const;
@@ -100,8 +104,6 @@ class ResourceLimits {
                    uint64_t start_brk, uint64_t old_brk, uint64_t requested) const;
     void check_exec_image(const Memory &memory) const;
     void check_data_size(uint64_t bytes) const;
-    void check_stack(uint64_t bytes, int error = 12) const;
-    uint64_t stack_mapping_size(uint64_t maximum = uint64_t{8} << 20) const;
     uint64_t exec_argument_limit() const;
     void check_exec_arguments(uint64_t bytes) const;
 };

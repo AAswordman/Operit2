@@ -28,7 +28,7 @@ void main() {
           Widget toolRow() => ToolCallRow(
             presentation: ToolPresentation.fromCall(
               'read_file',
-              '<param name="path">/app/work</param>',
+              '<param name="path">/operitapp/work</param>',
               display: const ToolDisplayDeclaration(
                 labels: {'en': 'Read', 'zh': 'Read'},
                 icon: 'file',
@@ -87,7 +87,7 @@ void main() {
               .first;
           final toolTitle = find.text('Read').first;
           final preview = find.text('Review files').first;
-          final target = find.text('/app/work').first;
+          final target = find.text('/operitapp/work').first;
           final thinkingIcon = find.byIcon(Icons.psychology_outlined).first;
           final toolIcon = find.byIcon(Icons.description_outlined).first;
 

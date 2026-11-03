@@ -8827,17 +8827,6 @@ function onServiceInitialize(_event) {
   });
 }
 
-// src/host-path.ts
-function hostFilePath(path, platform) {
-  const normalized = path.replace(/\\/g, "/");
-  if (normalized.startsWith("/app/") || normalized.startsWith("/mnt/")) return normalized;
-  if (platform === "windows" && /^[a-z]:\//i.test(normalized)) return `/mnt/windows/${normalized[0].toLowerCase()}/${normalized.slice(3)}`;
-  if (!normalized.startsWith("/")) return null;
-  if (platform === "macos" || platform === "linux") return `/mnt/${platform}${normalized}`;
-  if (platform === "android") return `/mnt/android/root${normalized}`;
-  return null;
-}
-
 // src/import-source.ts
 function parseImportSource(raw) {
   const trimmed = raw.trim();
@@ -8848,10 +8837,7 @@ function parseImportSource(raw) {
 function readImportSource(source) {
   return __async(this, null, function* () {
     if (source.kind === "inline") return source.content;
-    const platform = (yield Tools.System.terminal.info()).platform;
-    const path = hostFilePath(source.path, platform);
-    if (path === null) throw new Error(`unsupported import file path on ${platform}: ${source.path}`);
-    const file = yield Tools.Files.read(path);
+    const file = yield Tools.Files.read(source.path);
     const content = file.content.replace(/^\uFEFF/, "");
     if (content.trim() === "") throw new Error(`import file is empty: ${source.path}`);
     return content;

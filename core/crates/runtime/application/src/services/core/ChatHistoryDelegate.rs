@@ -1973,7 +1973,7 @@ impl ChatHistoryDelegate {
         } else if selection.starts_with("content://") {
             // Keep compatibility with callers that submit a raw authorized tree URI.
             Some(operit_tools::files::MountRegistry::MountSource {
-                namespace: "/mnt/android/documents".into(),
+                namespace: "/virtual/android/documents".into(),
                 backend: "android_documents".into(),
                 root: selection.into(),
                 name: "Documents".into(),

@@ -126,7 +126,7 @@ void main() {
 
   for (final source in [
     'https://example.com/photo.png',
-    '/app/data/photo.png',
+    '/operitapp/data/photo.png',
   ]) {
     testWidgets('preview retains the owning runtime for $source', (
       tester,

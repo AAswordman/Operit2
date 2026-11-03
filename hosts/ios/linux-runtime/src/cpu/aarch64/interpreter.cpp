@@ -9,12 +9,25 @@
 #include "cpu/aarch64/vector_narrow.h"
 #include "cpu/aarch64/vector_shift.h"
 #include <algorithm>
+#include <cstring>
 
 namespace operit::arm64 {
 namespace {
 constexpr size_t generation_capacity = 65536;
 constexpr size_t maximum_block_instructions = 64;
 static_assert(maximum_block_instructions <= UINT8_MAX);
+
+#if defined(__aarch64__)
+double read_fp64(const CpuState &cpu, unsigned reg) {
+    double value;
+    std::memcpy(&value, cpu.v[reg].data(), sizeof(value));
+    return value;
+}
+void write_fp64(CpuState &cpu, unsigned reg, double value) {
+    cpu.v[reg].fill(0);
+    std::memcpy(cpu.v[reg].data(), &value, sizeof(value));
+}
+#endif
 
 // Keeping retirement local avoids a memory update for every guest instruction.
 // The cursor advances only after an instruction succeeds, including during unwinding.
@@ -47,9 +60,16 @@ Interpreter::Block Interpreter::decode_block(uint64_t address, Memory &memory,
     std::array<Instruction, maximum_block_instructions> instructions;
     size_t count = 0;
     do {
-        instructions[count] = decode(words[count]);
+        auto &instruction = instructions[count];
+        instruction = decode(words[count]);
         ++count;
-    } while (count < available && !instructions[count - 1].terminal);
+        if (instruction.op == Op::ConditionalBranch || instruction.op == Op::CompareBranch ||
+            instruction.op == Op::TestBranch) {
+            // These operations do not use auxiliary; cache the taken prefix's retirement count.
+            instruction.auxiliary = count;
+        } else if (instruction.terminal)
+            break;
+    } while (count < available);
     block.instruction_count = static_cast<uint8_t>(count);
     block.words.assign(words.begin(), words.begin() + count);
     block.instructions.reserve(count);
@@ -66,16 +86,17 @@ Interpreter::Block Interpreter::decode_block(uint64_t address, Memory &memory,
 
 Interpreter::Block *Interpreter::find_block(uint64_t address, Memory &memory,
                                             const void *const *dispatch) {
+    const auto refresh = [&](Block &block) {
+        if (block.epoch == memory.code_epoch || revalidate(block, memory))
+            ++cache_hits;
+        else
+            block = decode_block(address, memory, dispatch);
+        return &block;
+    };
     auto &current = blocks_[active_generation_];
     auto found = current.find(address);
-    if (found != current.end()) {
-        if (found->second.epoch == memory.code_epoch || revalidate(found->second, memory)) {
-            ++cache_hits;
-            return &found->second;
-        }
-        found->second = decode_block(address, memory, dispatch);
-        return &found->second;
-    }
+    if (found != current.end())
+        return refresh(found->second);
     if (current.size() >= generation_capacity) {
         active_generation_ ^= 1;
         blocks_[active_generation_].clear();
@@ -83,18 +104,9 @@ Interpreter::Block *Interpreter::find_block(uint64_t address, Memory &memory,
         lookups_.fill({});
     }
     auto &active = blocks_[active_generation_];
-    auto &previous = blocks_[active_generation_ ^ 1];
-    auto old = previous.find(address);
-    if (old != previous.end()) {
-        auto node = previous.extract(old);
-        auto *block = &active.insert(std::move(node)).position->second;
-        if (block->epoch == memory.code_epoch || revalidate(*block, memory)) {
-            ++cache_hits;
-            return block;
-        }
-        *block = decode_block(address, memory, dispatch);
-        return block;
-    }
+    auto old = blocks_[active_generation_ ^ 1].extract(address);
+    if (!old.empty())
+        return refresh(active.insert(std::move(old)).position->second);
     return &active.emplace(address, decode_block(address, memory, dispatch)).first->second;
 }
 
@@ -139,6 +151,7 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
         &&AddImmediate64,
         &&AddRegister32,
         &&AddRegister64,
+        &&CompareRegister64,
         &&AddCarry32,
         &&AddCarry64,
         &&LogicalImmediate32,
@@ -198,6 +211,13 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
         &&RegisterToVectorHigh,
         &&VectorImmediate,
         &&VectorLogical,
+        &&ScalarFma64,
+        &&ScalarSqrt64,
+        &&ScalarUnsignedToDouble64,
+        &&ScalarAdd64,
+        &&ScalarCompare64,
+        &&ScalarSelect64,
+        &&VectorFma2D,
         &&ResolveSimd,
     };
     static_assert(std::size(dispatch) == static_cast<unsigned>(Dispatch::Count) + 1);
@@ -329,6 +349,87 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
         SIMD_OPERATION(Floating, execute_floating_point)
 #undef SIMD_OPERATION
 
+#if defined(__aarch64__)
+    ScalarFma64: {
+        const double a = read_fp64(cpu, cursor->rn), b = read_fp64(cpu, cursor->rm),
+                     c = read_fp64(cpu, cursor->ra);
+        double result;
+        {
+            FloatingPointEnvironment environment(cpu);
+            asm volatile("fmadd %d0, %d1, %d2, %d3" : "=w"(result) : "w"(a), "w"(b), "w"(c));
+        }
+        write_fp64(cpu, cursor->rd, result);
+        goto checked_advance;
+    }
+    ScalarSqrt64: {
+        const double value = read_fp64(cpu, cursor->rn);
+        double result;
+        {
+            FloatingPointEnvironment environment(cpu);
+            asm volatile("fsqrt %d0, %d1" : "=w"(result) : "w"(value));
+        }
+        write_fp64(cpu, cursor->rd, result);
+        goto checked_advance;
+    }
+    ScalarUnsignedToDouble64: {
+        const uint64_t value = cpu.get(cursor->rn);
+        double result;
+        {
+            FloatingPointEnvironment environment(cpu);
+            asm volatile("ucvtf %d0, %x1" : "=w"(result) : "r"(value));
+        }
+        write_fp64(cpu, cursor->rd, result);
+        goto checked_advance;
+    }
+    ScalarAdd64: {
+        const double a = read_fp64(cpu, cursor->rn), b = read_fp64(cpu, cursor->rm);
+        double result;
+        {
+            FloatingPointEnvironment environment(cpu);
+            asm volatile("fadd %d0, %d1, %d2" : "=w"(result) : "w"(a), "w"(b));
+        }
+        write_fp64(cpu, cursor->rd, result);
+        goto checked_advance;
+    }
+    ScalarCompare64: {
+        const double a = read_fp64(cpu, cursor->rn), b = read_fp64(cpu, cursor->rm);
+        uint64_t flags;
+        {
+            FloatingPointEnvironment environment(cpu);
+            asm volatile("fcmp %d1, %d2\n\tmrs %0, nzcv" : "=r"(flags) : "w"(a), "w"(b) : "cc");
+        }
+        cpu.nzcv = (flags >> 28) & 15;
+        goto checked_advance;
+    }
+    ScalarSelect64: {
+        const double value = read_fp64(cpu, cpu.condition(cursor->flags) ? cursor->rn : cursor->rm);
+        write_fp64(cpu, cursor->rd, value);
+        goto checked_advance;
+    }
+    VectorFma2D: {
+        using Vector = double __attribute__((vector_size(16)));
+        Vector value, a, b;
+        std::memcpy(&value, cpu.v[cursor->rd].data(), sizeof(value));
+        std::memcpy(&a, cpu.v[cursor->rn].data(), sizeof(a));
+        std::memcpy(&b, cpu.v[cursor->rm].data(), sizeof(b));
+        {
+            FloatingPointEnvironment environment(cpu);
+            asm volatile("fmla %0.2d, %1.2d, %2.2d" : "+w"(value) : "w"(a), "w"(b));
+        }
+        std::memcpy(cpu.v[cursor->rd].data(), &value, sizeof(value));
+        goto checked_advance;
+    }
+#else
+    ScalarFma64:
+    ScalarSqrt64:
+    ScalarUnsignedToDouble64:
+    ScalarAdd64:
+    ScalarCompare64:
+    ScalarSelect64:
+    VectorFma2D:
+        goto General;
+#endif
+
     Noop:
         goto advance;
     Syscall:
@@ -352,18 +453,22 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
             pc = target;
             goto terminal;
         }
-    ConditionalBranch:
-        pc += scalar::condition(cpu, cursor->flags) ? cursor->immediate : 4;
-        goto terminal;
-    CompareBranch32:
-        pc += ((cpu.get(cursor->rd, 32) == 0) != bool(cursor->flags)) ? cursor->immediate : 4;
-        goto terminal;
-    CompareBranch64:
-        pc += ((cpu.get(cursor->rd) == 0) != bool(cursor->flags)) ? cursor->immediate : 4;
-        goto terminal;
-    TestBranch:
-        pc += (((cpu.get(cursor->rd) >> cursor->shift) & 1) == cursor->flags) ? cursor->immediate : 4;
-        goto terminal;
+    // Fallthrough retains the former block boundary's code-epoch check.
+#define CONDITIONAL_BRANCH(Name, ...)                                                                        \
+    Name:                                                                                                   \
+    if (__VA_ARGS__)                                                                                        \
+        goto conditional_taken;                                                                             \
+    goto checked_advance;
+        CONDITIONAL_BRANCH(ConditionalBranch, scalar::condition(cpu, cursor->flags))
+        CONDITIONAL_BRANCH(CompareBranch32, (cpu.get(cursor->rd, 32) == 0) != bool(cursor->flags))
+        CONDITIONAL_BRANCH(CompareBranch64, (cpu.get(cursor->rd) == 0) != bool(cursor->flags))
+        CONDITIONAL_BRANCH(TestBranch, ((cpu.get(cursor->rd) >> cursor->shift) & 1) == cursor->flags)
+#undef CONDITIONAL_BRANCH
+    conditional_taken:
+        // Skip the decoded suffix without charging it to the guest budget.
+        pc += cursor->immediate;
+        count += cursor->auxiliary;
+        goto block_retired;
     Address:
         cpu.set(cursor->rd,
                 cursor->flags ? (pc & ~uint64_t{4095}) + (cursor->immediate << 12) : pc + cursor->immediate);
@@ -379,6 +484,10 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
         goto advance;
     Keep64:
         cpu.set(cursor->rd, (cpu.get(cursor->rd) & cursor->auxiliary) | cursor->immediate);
+        goto advance;
+    CompareRegister64:
+        scalar::arithmetic<64>(cpu, cpu.get(cursor->rn), cpu.get(cursor->rm),
+                               decoded::set_flags | decoded::subtract);
         goto advance;
 
 #define REGISTER_OPERATION(Name, Family, ...)                                                                \

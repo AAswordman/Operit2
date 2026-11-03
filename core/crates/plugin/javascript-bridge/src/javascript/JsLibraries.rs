@@ -100,7 +100,7 @@ fn cleanOnExitVfsPath() -> String {
     let relativePath = RUNTIME_CLEAN_ON_EXIT_DIR_PATH
         .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .expect("clean-on-exit path must be rooted under runtime");
-    format!("/app/data/{relativePath}")
+    format!("/operitapp/data/{relativePath}")
 }
 
 #[allow(non_snake_case)]

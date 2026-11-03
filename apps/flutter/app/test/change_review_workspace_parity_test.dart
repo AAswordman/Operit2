@@ -121,7 +121,7 @@ void main() {
                 : (_) async => [
                     WorkspaceFileEntry(
                       name: 'readme.txt',
-                      path: '/app/workspaces/test/readme.txt',
+                      path: '/operitapp/workspaces/test/readme.txt',
                       relativePath: 'readme.txt',
                       isDirectory: false,
                       size: 14,

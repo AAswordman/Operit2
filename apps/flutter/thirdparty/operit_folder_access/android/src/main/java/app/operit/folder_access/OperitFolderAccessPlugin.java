@@ -86,7 +86,7 @@ public final class OperitFolderAccessPlugin implements FlutterPlugin, ActivityAw
             Map<String, String> source = new HashMap<>();
             source.put("backend", "android_documents");
             source.put("root", uri.toString());
-            source.put("namespace", "/mnt/android/documents");
+            source.put("namespace", "/virtual/android/documents");
             source.put("name", name);
             result.success(source);
         } catch (Exception error) { result.error("TREE_GRANT_FAILED", error.getMessage(), null); }

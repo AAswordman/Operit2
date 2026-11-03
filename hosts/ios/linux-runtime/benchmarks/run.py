@@ -26,7 +26,7 @@ def main():
     }
     report = {'host': platform.platform(), 'machine': platform.machine(), 'repeats': args.repeats,
               'warmup': args.warmup, 'clock': 'CLI steady_clock guest execution; wall includes load and startup',
-              'warning': 'Host measurements only. Fixed helpers count as one execution step; do not compare instruction throughput across modes.',
+              'warning': 'Host measurements only. Fixed helpers apply only to authenticated ELF images.',
               'workloads': {}}
     for name, (guest_args, expected) in workloads.items():
         samples = {mode: [] for mode in ('interpreter', 'fixed-helpers')}

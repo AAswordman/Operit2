@@ -62,7 +62,7 @@ async fn workspace_deletion_preserves_chats_and_mounted_files() {
             );
             let private_mount = registry
                 .register(
-                    "/mnt/macos/folders",
+                    "/virtual/macos/folders",
                     "native",
                     external.to_str().unwrap(),
                     "External",
@@ -70,7 +70,7 @@ async fn workspace_deletion_preserves_chats_and_mounted_files() {
                 .unwrap();
             let shared_mount = registry
                 .register(
-                    "/mnt/macos/folders",
+                    "/virtual/macos/folders",
                     "native",
                     project.to_str().unwrap(),
                     "Shared",
@@ -89,8 +89,8 @@ async fn workspace_deletion_preserves_chats_and_mounted_files() {
                     .createWorkspace(
                         "Project".into(),
                         vec![
-                            folder("project", "/app/workspaces/project".into()),
-                            folder("extra", "/app/workspaces/extra".into()),
+                            folder("project", "/operitapp/workspaces/project".into()),
+                            folder("extra", "/operitapp/workspaces/extra".into()),
                             folder("external", private_mount.vfsPath()),
                             folder("shared", shared_mount.vfsPath()),
                         ],
@@ -100,7 +100,7 @@ async fn workspace_deletion_preserves_chats_and_mounted_files() {
                     .createWorkspace(
                         "Survivor".into(),
                         vec![
-                            folder("nested", "/app/workspaces/project/nested".into()),
+                            folder("nested", "/operitapp/workspaces/project/nested".into()),
                             folder("shared", shared_mount.vfsPath()),
                         ],
                     )

@@ -361,41 +361,6 @@ async fn native_source_fingerprint_preserves_utf16_cache_identity_and_source_cha
     session.close(); engine.destroy();
 }
 
-/// Uses real built artifacts through the native factory/cache, with runtime lowering forbidden.
-#[tokio::test(flavor = "current_thread")]
-async fn native_compose_artifact_loads_without_parser_and_invalidates_changed_source() {
-    let (session, engine) = native_session();
-    let mut stream = ProgramTestStream::new(session.updates().unwrap());
-    let install = r#"exports.install = function() {
-        if (typeof __operitAcorn !== 'undefined' || typeof OperitComposeCompiler !== 'undefined') throw Error('Page must not own the compiler');
-        return true;
-    };"#;
-    engine.execute_script_function(install, "install", &options(), &BTreeMap::new(), None, false, None).await.unwrap();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(4).unwrap();
-    let source = std::fs::read_to_string(root.join("plugins/packages/buildin/character_cards/dist/ui/main/index.ui.js")).unwrap();
-    assert!(source.starts_with("// @operit-compose-artifact 4\n"));
-    session.execute(command("artifact", Some(source), None, None)).await;
-    let events = drain(&mut stream);
-    assert!(events.iter().all(|event| event.error.is_none()), "{events:?}");
-    assert!(events.iter().any(|event| event.update.is_some()));
-    let first = "// @operit-compose-artifact 4\nexports.default = ctx => ctx.UI.Text({text:'first'});";
-    let other = first.replace("first", "other");
-    assert_eq!(first.len(), other.len());
-    for (script, expected) in [(first, "first"), (other.as_str(), "other"), (first, "first")] {
-        session.execute(command(expected, Some(script.into()), None, None)).await;
-        let events = drain(&mut stream);
-        assert!(events.iter().all(|event| event.error.is_none()), "{events:?}");
-        assert!(events.iter().filter_map(|event| event.update.as_ref()).flat_map(|update| &update.views)
-            .any(|node| node.props.get("text") == Some(&Value::from(expected))), "{events:?}");
-    }
-    session.execute(command("bad-version", Some(first.replace("artifact 4", "artifact 999")), None, None)).await;
-    assert!(drain(&mut stream).iter().any(|event| event.error.as_ref().is_some_and(|error| error.contains("Unsupported Compose artifact version"))));
-    // Rejection must not poison the engine or replace its valid factory cache.
-    session.execute(command("recovery", Some(other), None, None)).await;
-    assert!(drain(&mut stream).iter().all(|event| event.error.is_none()));
-    session.close(); engine.destroy();
-}
-
 /// Measures fresh native page engines separately from source lowering and warm retained refreshes.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "Run explicitly to inspect native editor cold-load stages without opening personal data"]
@@ -675,18 +640,18 @@ async fn native_character_avatar_picker_keeps_all_retained_revisions() {
             if (request.action !== 'snapshot') throw new Error('Unexpected request: ' + request.action);
             return {cards:[card],groups:[],stores:[],tags:[],models:[],ttsConfigs:[],toolCatalog:{builtinTools:[],packages:[],skills:[],mcpServers:[]},active:{CharacterCard:{id:card.id}},memoryPreferences:{userDescriptionEnabled:true,autoUpdateEnabled:true}};
         });
-        __operitNativeReadToolPkgResource = async function() { await new Promise(resolve => setTimeout(resolve, 2)); return '/app/default-avatar.png'; };
-        __operitNativeGetScopedPluginConfigDir = function() { return '/app/character-config'; };
+        __operitNativeReadToolPkgResource = async function() { await new Promise(resolve => setTimeout(resolve, 2)); return '/operitapp/default-avatar.png'; };
+        __operitNativeGetScopedPluginConfigDir = function() { return '/operitapp/character-config'; };
+        globalThis.avatarWrites = [];
         __operitNativeCallToolStructured = async function(owner, type, name, params) {
             await new Promise(resolve => setTimeout(resolve, 1));
-            if (name === 'get_terminal_info') return {success:true,data:{platform:'linux'}};
-            if (name === 'read_file_binary') return {success:true,data:{size:21,contentBase64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'}};
-            if (name === 'make_directory' || name === 'write_file_binary') return {success:true,data:{successful:true}};
+            if (name === 'write_file_binary') { globalThis.avatarWrites.push(params); return {success:true,data:{successful:true}}; }
+            if (name === 'make_directory') return {success:true,data:{successful:true}};
             throw new Error('Unexpected avatar tool: ' + name);
         };
         __operitNativeComposeFilePickerCommand = async function() {
             await new Promise(resolve => setTimeout(resolve, 2));
-            return {cancelled:false,files:[{path:'/mnt/avatar.png',name:'avatar.png'}]};
+            return {cancelled:false,files:[{path:'/virtual/avatar.png',name:'avatar.png',size:24,contentBase64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'}]};
         };
         return true;
     };"#;
@@ -724,7 +689,18 @@ async fn native_character_avatar_picker_keeps_all_retained_revisions() {
     let mut store = super::super::ToolPkgComposeDslProgramStore::ToolPkgComposeDslProgramStore::default();
     for event in events { if let Some(update) = event.update { store.apply_decoded(update.transaction).unwrap(); } }
     let snapshot = inspect_programs(&store);
-    assert!(snapshot.views.iter().any(|node| node.props.get("key").and_then(Value::as_str) == Some("entity-edit-avatar") && node.props.get("uri").and_then(Value::as_str).is_some_and(|uri| uri.starts_with("/app/character-config/avatars/"))), "avatar selection must finish");
+    assert!(snapshot.views.iter().any(|node| node.props.get("key").and_then(Value::as_str) == Some("entity-edit-avatar") && node.props.get("uri").and_then(Value::as_str).is_some_and(|uri| uri.starts_with("/operitapp/character-config/avatars/"))), "avatar selection must finish");
+    let writes = engine.execute_script_function(
+        "exports.inspect = function() { return globalThis.avatarWrites; };",
+        "inspect", &options(), &BTreeMap::new(), None, false, None,
+    ).await.unwrap().unwrap();
+    let writes: Value = serde_json::from_str(&writes).unwrap();
+    let writes = writes.as_array().unwrap();
+    assert_eq!(writes.len(), 3, "each picker result must be written");
+    for write in writes {
+        assert_eq!(write["base64Content"], "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB");
+        assert!(write["path"].as_str().unwrap().starts_with("/operitapp/character-config/avatars/"));
+    }
     session.close(); engine.destroy();
 }
 

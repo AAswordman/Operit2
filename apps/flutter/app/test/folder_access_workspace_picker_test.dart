@@ -28,7 +28,7 @@ void main() {
         return <String, String>{
           'backend': 'android_documents',
           'root': 'content://com.termux.documents/tree/opaque%2Fproject',
-          'namespace': '/mnt/android/documents',
+          'namespace': '/virtual/android/documents',
           'name': 'Project',
         };
       });
@@ -53,7 +53,7 @@ void main() {
       final source = FolderMountSource.fromMap(<String, Object?>{
         'backend': 'android_documents',
         'root': 'content://provider/tree/id%2Fopaque',
-        'namespace': '/mnt/android/documents',
+        'namespace': '/virtual/android/documents',
         'name': '项目 name',
       });
       expect(source.name, '项目 name');
@@ -61,12 +61,27 @@ void main() {
         source.encode(),
         contains('"root":"content://provider/tree/id%2Fopaque"'),
       );
-      expect(source.encode(), contains('"namespace":"/mnt/android/documents"'));
+      expect(
+        source.encode(),
+        contains('"namespace":"/virtual/android/documents"'),
+      );
       final native = FolderMountSource.native(r'C:\My Projects\');
       expect(native.name, 'My Projects');
-      expect(native.namespace, '/mnt/local/folders');
+      expect(native.namespace, '/virtual/local/folders');
     },
   );
+
+  test('legacy folder descriptors encode only the canonical namespace', () {
+    final source = FolderMountSource.fromMap(<String, Object?>{
+      'backend': 'native',
+      'root': '/mnt/physical-root',
+      'namespace': '/mnt/local/folders',
+      'name': 'Legacy',
+    });
+    expect(source.namespace, '/virtual/local/folders');
+    expect(source.root, '/mnt/physical-root');
+    expect(source.encode(), contains('"namespace":"/virtual/local/folders"'));
+  });
 
   test('Android storage roots still use the native-path picker', () async {
     final picker = _NativePathPicker();

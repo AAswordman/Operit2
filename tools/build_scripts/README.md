@@ -146,7 +146,7 @@ commands pass through to the selected Xcode toolchain. The SDK itself is unchang
 
 The application reads isolation from the running process signature. The
 unsandbox Host registers native zsh/bash login PTYs with controlling-terminal
-job control and exposes the native `/` filesystem through VFS `/mnt/macos`.
+job control and exposes the native `/` filesystem through VFS `/virtual/macos`.
 The sandbox Host retains its no-controlling-TTY PTY adapter and folder bookmarks.
 AI permission modes and approvals apply to both; unsandbox remains subject to
 the current account and macOS privacy permissions.

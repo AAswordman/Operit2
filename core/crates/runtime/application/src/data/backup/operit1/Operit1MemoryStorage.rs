@@ -113,9 +113,9 @@ fn validateWorkspaceIdSegment(value: &str) -> Result<(), String> {
 #[allow(non_snake_case)]
 fn workspaceVfsPath(workspaceId: &str, rest: &str) -> String {
     if rest.trim().is_empty() {
-        format!("/app/workspaces/{workspaceId}")
+        format!("/operitapp/workspaces/{workspaceId}")
     } else {
-        format!("/app/workspaces/{workspaceId}/{rest}")
+        format!("/operitapp/workspaces/{workspaceId}/{rest}")
     }
 }
 

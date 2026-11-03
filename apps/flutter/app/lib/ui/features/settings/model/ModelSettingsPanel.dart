@@ -4231,6 +4231,7 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
     final dialogWidth = (viewport.width - 32).clamp(320.0, 760.0).toDouble();
     final dialogHeight = (viewport.height - 48).clamp(320.0, 700.0).toDouble();
     return Dialog(
+      constraints: BoxConstraints(maxWidth: dialogWidth),
       insetPadding: const EdgeInsets.all(16),
       child: SizedBox(
         width: dialogWidth,

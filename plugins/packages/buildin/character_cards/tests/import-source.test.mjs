@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadModule, plain } from "./runtime.mjs";
 
-/** Supplies only the platform identity and file reads the import source contract declares. */
-function host(platform, files) {
+/** Supplies only the shared file API required by file imports. */
+function host(files) {
   const reads = [];
   return {
     reads,
     Tools: {
-      System: { terminal: { async info() { return { platform }; } } },
       Files: {
         /** Reads only declared fixture paths and reports absent files explicitly. */
         async read(path) {
@@ -36,35 +35,43 @@ test("malformed JSON that starts like a document remains inline", () => {
   assert.deepEqual(plain(api.parseImportSource("[1,")), { kind: "inline", content: "[1," });
 });
 
-/** Verifies each documented host path maps through its platform mount and a UTF-8 BOM is removed. */
-test("file imports map through the platform mount and strip a UTF-8 BOM", async () => {
-  const cases = [
-    ["linux", "/home/test/backup.json", "/mnt/linux/home/test/backup.json"],
-    ["macos", "/Users/test/backup.json", "/mnt/macos/Users/test/backup.json"],
-    ["windows", "C:\\Users\\test\\backup.json", "/mnt/windows/c/Users/test/backup.json"],
-    ["android", "/sdcard/backup.json", "/mnt/android/root/sdcard/backup.json"],
+/** Imports VFS addresses without requiring platform information or rewriting the address. */
+test("file imports use the shared file API and strip a UTF-8 BOM", async () => {
+  const paths = [
+    "/app/data/backup.json",
+    "/operitapp/data/backup.json",
+    "/mnt/shared/backup.json",
+    "/virtual/shared/backup.json",
   ];
-  for (const [platform, argument, mapped] of cases) {
-    const disk = host(platform, { [mapped]: '\uFEFF{"version":"2.0"}' });
+  for (const path of paths) {
+    const disk = host({ [path]: '\uFEFF{"version":"2.0"}' });
     const api = loadModule("src/import-source.ts", { Tools: disk.Tools });
-    const source = api.parseImportSource(argument);
-    assert.deepEqual(plain(source), { kind: "file", path: argument });
+    const source = api.parseImportSource(path);
+    assert.deepEqual(plain(source), { kind: "file", path });
     assert.equal(await api.readImportSource(source), '{"version":"2.0"}');
-    assert.deepEqual(disk.reads, [mapped]);
+    assert.deepEqual(disk.reads, [path]);
   }
 });
 
-/** Rejects unsupported and empty file sources without silently importing one as JSON. */
-test("unsupported paths, missing files, and empty files remain explicit failures", async () => {
+/** Leaves address validation to the file API and preserves its error. */
+test("file service errors propagate without platform probing or path rewriting", async () => {
+  const failure = new Error("Invalid VFS address");
+  for (const path of ["backup.json", "/tmp/missing.json", "C:\\Users\\test\\backup.json", "content://documents/backup.json"]) {
+    const reads = [];
+    const api = loadModule("src/import-source.ts", { Tools: { Files: { async read(path) { reads.push(path); throw failure; } } } });
+    await assert.rejects(api.readImportSource(api.parseImportSource(path)), error => error === failure);
+    assert.deepEqual(reads, [path]);
+  }
+});
+
+/** Rejects empty import arguments and blank file contents explicitly. */
+test("empty arguments and empty files remain explicit failures", async () => {
   const api = loadModule("src/import-source.ts");
   assert.throws(() => api.parseImportSource("   "), /JSON content or a file path/);
 
-  const relative = loadModule("src/import-source.ts", { Tools: host("linux", {}).Tools });
-  await assert.rejects(relative.readImportSource({ kind: "file", path: "backup.json" }), /unsupported import file path on linux/);
-
-  const missing = loadModule("src/import-source.ts", { Tools: host("linux", {}).Tools });
-  await assert.rejects(missing.readImportSource({ kind: "file", path: "/tmp/missing.json" }), /File does not exist/);
-
-  const empty = loadModule("src/import-source.ts", { Tools: host("linux", { "/mnt/linux/tmp/backup.json": " \n" }).Tools });
-  await assert.rejects(empty.readImportSource({ kind: "file", path: "/tmp/backup.json" }), /import file is empty/);
+  const path = "/app/data/backup.json";
+  const disk = host({ [path]: " \n" });
+  const empty = loadModule("src/import-source.ts", { Tools: disk.Tools });
+  await assert.rejects(empty.readImportSource({ kind: "file", path }), /import file is empty/);
+  assert.deepEqual(disk.reads, [path]);
 });

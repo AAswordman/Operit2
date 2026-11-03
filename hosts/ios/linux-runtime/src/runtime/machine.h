@@ -1,5 +1,6 @@
 #pragma once
 #include "runtime/console/console.h"
+#include "linux/debug/ptrace.h"
 #include "linux/process/limit_enforcement.h"
 #include "runtime/process/process.h"
 #include "runtime/tasks/executor.h"
@@ -10,7 +11,15 @@ class Machine final : public ProcessController {
     ort_arm64_config config_;
     Scheduler scheduler_;
     process::UidLimitAccounting uid_limits_;
+    std::shared_ptr<io_uring::CompletionContext> io_uring_context_;
     std::map<uint32_t, std::unique_ptr<Process>> processes_;
+    std::unique_ptr<debug::Ptrace> ptrace_;
+    struct PtraceNotification { uint32_t tracer, tracee; int status; };
+    struct PtraceSignal { uint32_t tid; signals::Queued signal; bool attach; };
+    std::vector<PtraceNotification> ptrace_notifications_;
+    std::vector<PtraceSignal> ptrace_signals_;
+    std::vector<uint32_t> ptrace_releases_;
+    bool ptrace_exit_deferred_ = false;
     std::optional<Console> console_;
     uint32_t execution_threads_ = 1, maximum_parallel_tasks_ = 1;
     std::unique_ptr<ParallelExecutor> executor_;
@@ -42,11 +51,12 @@ class Machine final : public ProcessController {
     void commit_exec(Process &process);
     void finish_process(Process &process, int status);
     void release_vfork(Process &process);
-    void release_tasks(Process &process);
+    void release_tasks(Process &process, bool preserve_current_sem_undo = false);
     void notify_parent(Process &process, int status, unsigned signal = 17);
     void collect_reaped();
     signals::ThreadRef signal_thread(Task &task);
     signals::ProcessRef signal_process(Process &process);
+    signals::Delivery deliver_signals(Task &task, Process &process, uint32_t cpu);
     void configure_terminal(Process &process);
     void drain_terminal_signals(Process &process);
     ProcessTimerHooks timer_hooks();
@@ -55,6 +65,13 @@ class Machine final : public ProcessController {
     void discard_pending_signals(Process &process);
     void poll_process_timers();
     void enforce_cpu_limits();
+    void initialize_ptrace();
+    void flush_ptrace_events();
+    void release_ptrace_exit(uint32_t tid);
+    void prepare_ptrace_exit(uint32_t pid, uint32_t tid, bool group, int status);
+    bool defer_ptrace_exit(uint32_t pid, uint32_t tid, bool group, int status);
+    void service_ptrace_exits();
+    bool dispatch_guest_syscall(Task &task, Process &process, bool resumed);
 
   public:
     std::string error;
@@ -93,5 +110,8 @@ class Machine final : public ProcessController {
     signals::Deadline next_runtime_deadline() override;
     int64_t process_timer(CpuState &cpu, Memory &memory) override;
     signals::Hooks signal_hooks() override;
+    void wait_completed(uint32_t tid) override;
+    int64_t ptrace_request(CpuState &cpu) override;
+    bool task_exiting(uint32_t pid, uint32_t tid, bool group, int status) override;
 };
 } // namespace operit::arm64

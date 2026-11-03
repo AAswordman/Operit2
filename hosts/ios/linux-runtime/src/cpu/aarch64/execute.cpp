@@ -1,3 +1,4 @@
+#include "cpu/aarch64/cache.h"
 #include "cpu/aarch64/exclusive.h"
 #include "cpu/aarch64/floating_point.h"
 #include "cpu/aarch64/instruction_fault.h"
@@ -419,8 +420,10 @@ bool execute(CpuState &cpu, Memory &memory, const Instruction &i) {
                 cpu.set(i.rd, read_floating_status(cpu));
             else
                 write_floating_status(cpu, cpu.get(i.rd));
-        } else if (reading && code == 0xd807)
-            cpu.set(i.rd, 0x10); // DC ZVA prohibited
+        } else if (reading && code == 0xd801)
+            cpu.set(i.rd, cache_profile::ctr_el0);
+        else if (reading && code == 0xd807)
+            cpu.set(i.rd, cache_profile::dczid_el0);
         else if (reading && code == 0xdf00)
             cpu.set(i.rd, 1000000000);
         else if (reading && (code == 0xdf02 || code == 0xdf01)) {
@@ -428,6 +431,18 @@ bool execute(CpuState &cpu, Memory &memory, const Instruction &i) {
             cpu.set(i.rd, std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
         } else
             unsupported(r);
+        break;
+    }
+    case Op::Cache: {
+        if (!cache_profile::maintenance(r))
+            unsupported(r);
+        const uint64_t address = cpu.get(i.rd);
+        if ((r & 0xffffffe0) == cache_profile::dc_zva) {
+            const std::array<uint8_t, cache_profile::line_bytes> zeros{};
+            memory.copy_in<cache_profile::line_bytes>(
+                address & ~(cache_profile::line_bytes - 1), zeros.data());
+        } else
+            memory.synchronize_code(address);
         break;
     }
     case Op::Barrier:

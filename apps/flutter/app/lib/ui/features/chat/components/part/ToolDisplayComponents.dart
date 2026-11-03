@@ -8,6 +8,7 @@ import 'package:operit_ui/operit_ui.dart'
 import 'package:flutter/services.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
+import '../../../../common/interactions/ChainedScrollController.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import 'ChatActivityDisclosure.dart';
 import 'ChatActivityRowStyle.dart';
@@ -554,8 +555,7 @@ class DirectoryListingDisplay extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 240),
-        child: SingleChildScrollView(
-          primary: false,
+        child: ChainedSingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -725,8 +725,7 @@ class _ToolInlineDetailSurfaceState extends State<ToolInlineDetailSurface> {
                   ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 240),
-                    child: SingleChildScrollView(
-                      primary: false,
+                    child: ChainedSingleChildScrollView(
                       child: SelectableText(
                         widget.text,
                         style: ChatActivityRowStyle.textStyle(context).copyWith(

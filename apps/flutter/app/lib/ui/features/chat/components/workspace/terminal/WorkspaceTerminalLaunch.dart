@@ -22,9 +22,8 @@ Future<void> launchWorkspaceTerminal({
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('终端启动失败'),
-        content: SingleChildScrollView(
-          child: SelectableText('$terminal / $terminalType\n\n$error'),
-        ),
+        scrollable: true,
+        content: SelectableText('$terminal / $terminalType\n\n$error'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(),

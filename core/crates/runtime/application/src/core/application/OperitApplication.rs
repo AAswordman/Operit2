@@ -155,11 +155,11 @@ impl OperitApplication {
                 runtimeStorageHost.clone(),
             );
             let logFile = pathMapper
-                .resolve("/app/data/logs/operit.log")
+                .resolve("/operitapp/data/logs/operit.log")
                 .expect("runtime log path must resolve through the file-system host")
                 .physicalPath;
             let packageLogFile = pathMapper
-                .resolve("/app/data/logs/toolpkg.log")
+                .resolve("/operitapp/data/logs/toolpkg.log")
                 .expect("ToolPkg log path must resolve through the file-system host")
                 .physicalPath;
             if let Err(error) =
@@ -287,7 +287,7 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     fn cleanOnExitFiles(&self) -> Result<(), String> {
         let fileSystem = self.runtimeFileSystem()?;
-        const CLEAN_ON_EXIT_PATH: &str = "/app/data/temp/clean_on_exit";
+        const CLEAN_ON_EXIT_PATH: &str = "/operitapp/data/temp/clean_on_exit";
         fileSystem.makeDirectory(CLEAN_ON_EXIT_PATH, true)?;
         for entry in fileSystem.listFiles(CLEAN_ON_EXIT_PATH)? {
             let path = PathMapper::joinVfsPath(CLEAN_ON_EXIT_PATH, &entry.name)?;

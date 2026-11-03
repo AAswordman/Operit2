@@ -22,7 +22,7 @@ int guest_main(u64 *stack) {
             ++env;
         }
         u64 *aux = env + 1;
-        int page = 0, entry = 0, random = 0, machine = 0;
+        int page = 0, entry = 0, random = 0, machine = 0, rseq_size = 0, rseq_align = 0;
         while (aux[0]) {
             if (aux[0] == 6)
                 page = aux[1] == 4096;
@@ -34,9 +34,33 @@ int guest_main(u64 *stack) {
             }
             if (aux[0] == 15)
                 machine = equal((const char *)aux[1], "aarch64");
+            if (aux[0] == 27)
+                rseq_size = aux[1] == 28;
+            if (aux[0] == 28)
+                rseq_align = aux[1] == 32;
             aux += 2;
         }
         CHECK(page && entry && random && machine, 5);
+        CHECK(rseq_size && rseq_align, 9);
+        i64 fd = CALL(56, -100, "/proc/self/auxv", 0);
+        CHECK(fd >= 0, 80);
+        u64 proc_aux[64];
+        i64 bytes = CALL(63, fd, proc_aux, sizeof(proc_aux));
+        CHECK(bytes > 0 && bytes % 16 == 0, 81);
+        CHECK(CALL(57, fd, 0, 0) == 0, 82);
+        rseq_size = rseq_align = 0;
+        for (i64 j = 0; j + 1 < bytes / 8; j += 2) {
+            if (proc_aux[j] == 27)
+                rseq_size = proc_aux[j + 1] == 28;
+            if (proc_aux[j] == 28)
+                rseq_align = proc_aux[j + 1] == 32;
+        }
+        CHECK(rseq_size && rseq_align, 83);
+    } else if (equal(mode, "exec-stack")) {
+        const char *args[] = {"/workload", "stack", "argument with spaces", 0};
+        const char *env[] = {"RSEQ_AUXV=1", 0};
+        CALL(221, "/workload", args, env);
+        fail(84);
     } else if (equal(mode, "memory")) {
         u64 length = 8UL << 30;
         i64 area = map(0, length, 0, 34);

@@ -47,7 +47,7 @@ type PersistedTerminalOutput = {
         "zh": "超级管理员",
         "en": "Super Admin"
     },
-    "description": { "zh": "超级管理员工具集，提供终端命令和会话控制的高级功能。", "en": "Super admin toolkit providing advanced terminal command and session control capabilities." },
+    "description": { "zh": "提供终端命令和会话控制。绑定工作区时，每次获取会话都会尝试进入主工作区，失败会报错；未绑定时不要假定当前目录是下载目录。终端路径与文件工具的 VFS 路径可能不同，切勿直接互换。请按实际权限操作。", "en": "Runs terminal commands and manages sessions. With a workspace, each session acquisition attempts to enter the primary workspace and reports failures; without one, do not assume the current directory is Downloads. Terminal paths may differ from file-tool VFS paths; do not interchange them. Respect actual permissions." },
     "enabledByDefault": true,
     "category": "System",
     "tools": [
@@ -308,7 +308,7 @@ type PersistedTerminalOutput = {
                 {
                     "name": "shell",
                     "display": {"label": {"zh": "运行 Shell", "en": "Run Shell"}, "icon": "terminal", "targetParameter": "command"},
-                    "description": { "zh": "在 iOS Shell 终端会话中执行命令并收集输出结果。默认使用 iSH Alpine Linux Shell；在具备相应权限时也可使用系统 Shell。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an iOS shell terminal session and collect output. The default backend is the iSH Alpine Linux shell; a system shell may also be available on privileged hosts. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "description": { "zh": "在 iOS Shell 终端会话中执行命令并收集输出结果。使用 Operit ARM64 Linux 环境；系统 Shell 需要特殊权限，且本工具不能选择该后端。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an iOS shell terminal session and collect output. It uses the Operit ARM64 Linux environment; the system shell requires special privileges and cannot be selected through this tool. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
                     "parameters": [
                         {
                             "name": "command",
@@ -340,7 +340,7 @@ type PersistedTerminalOutput = {
                 {
                     "name": "bash",
                     "display": {"label": {"zh": "运行 Bash", "en": "Run Bash"}, "icon": "terminal", "targetParameter": "command"},
-                    "description": { "zh": "在 Android proot Linux Bash 终端会话中执行命令并收集输出结果。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an Android proot Linux Bash terminal session and collect output. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "description": { "zh": "在 Android proot Linux Bash 终端会话中执行命令并收集输出结果；它是用户态 Linux 环境，与 Android 系统 shell 的文件视图和权限可能不同。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an Android proot Linux Bash session. This userspace Linux environment can have a different file view and permissions from the Android system shell. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
                     "parameters": [
                         {
                             "name": "command",
@@ -365,7 +365,7 @@ type PersistedTerminalOutput = {
                 {
                     "name": "shell",
                     "display": {"label": {"zh": "运行 Shell", "en": "Run Shell"}, "icon": "terminal", "targetParameter": "command"},
-                    "description": { "zh": "在 Android adb shell 终端会话中执行命令并收集输出结果。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an Android adb shell terminal session and collect output. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "description": { "zh": "在 Android 系统 /system/bin/sh 终端会话中执行命令并收集输出结果。该进程使用应用权限，不是 adb shell；它与 proot Bash 的环境和可见路径可能不同。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in the Android system /system/bin/sh terminal session. It uses app permissions, not adb shell privileges; its environment and visible paths may differ from proot Bash. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
                     "parameters": [
                         {
                             "name": "command",
@@ -390,6 +390,23 @@ type PersistedTerminalOutput = {
             ]
         },
         {
+            "id": "ohos",
+            "condition": "platform.ohos",
+            "inheritTools": true,
+            "tools": [
+                {
+                    "name": "shell",
+                    "display": {"label": {"zh": "运行 Shell", "en": "Run Shell"}, "icon": "terminal", "targetParameter": "command"},
+                    "description": {"zh": "在 OpenHarmony QEMU-vroot Alpine Linux 环境中执行命令；系统 /bin/sh 是另一种终端，本工具不能选择它。环境可用性以实际启动结果为准。会话按对话维护；前台默认超时 15 秒，后台无默认超时。", "en": "Execute commands in the OpenHarmony QEMU-vroot Alpine Linux environment. The system /bin/sh is a separate backend and cannot be selected through this tool. Availability depends on the actual runtime. Sessions are maintained per chat; foreground commands default to 15 seconds and background commands have no default timeout."},
+                    "parameters": [
+                        {"name": "command", "description": {"zh": "要执行的 Shell 命令", "en": "Shell command to execute."}, "type": "string", "required": true},
+                        {"name": "background", "description": {"zh": "true 为后台执行；省略或 false 为前台执行。", "en": "Set true for background execution; omit or use false for foreground."}, "type": "string", "required": false},
+                        {"name": "timeoutMs", "description": {"zh": "可选超时毫秒数，最低 3000。", "en": "Optional timeout in milliseconds, minimum 3000."}, "type": "string", "required": false}
+                    ]
+                }
+            ]
+        },
+        {
             "id": "web",
             "condition": "platform.web",
             "inheritTools": true,
@@ -397,7 +414,7 @@ type PersistedTerminalOutput = {
                 {
                     "name": "shell",
                     "display": {"label": {"zh": "运行 Shell", "en": "Run Shell"}, "icon": "terminal", "targetParameter": "command"},
-                    "description": { "zh": "在浏览器本地 Linux 虚拟机 Shell 终端会话中执行命令并收集输出结果。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用默认超时。命令超时时会取消当前执行中的命令并保留终端会话。", "en": "Execute commands in a browser-local Linux VM shell session and collect output. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s when timeoutMs is omitted; background=true does not use the default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "description": { "zh": "在浏览器本地 Linux 虚拟机 Shell 中执行命令；它不是宿主系统终端，VFS 路径不一定是虚拟机内的路径。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用默认超时。命令超时时会取消当前执行中的命令并保留终端会话。", "en": "Execute commands in a browser-local Linux VM shell, not a host terminal. VFS paths are not necessarily VM paths. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s when timeoutMs is omitted; background=true does not use the default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
                     "parameters": [
                         {
                             "name": "command",

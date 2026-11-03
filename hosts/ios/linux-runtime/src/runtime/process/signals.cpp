@@ -2,6 +2,22 @@
 #include "linux/process/pidfd.h"
 
 namespace operit::arm64 {
+signals::Delivery Machine::deliver_signals(Task &task, Process &process, uint32_t cpu) {
+    auto &memory = *process.image.memory;
+    if (task.last_cpu != cpu)
+        threads::rseq_event(task.rseq, threads::RseqEvent::Migrate);
+    task.last_cpu = cpu;
+    if (!threads::rseq_resume(memory, task.cpu, task.rseq, cpu, cpu))
+        signals::force_fault(*process.signals, task.signals, task.signal_mask, 11, task.rseq.address, 1);
+    return signals::deliver(memory, task.cpu, *process.signals, task.signals, task.signal_mask,
+                            process.image.signal_trampoline, [&](CpuState &saved) {
+                                threads::rseq_event(task.rseq, threads::RseqEvent::Signal);
+                                return threads::rseq_resume(memory, saved, task.rseq, cpu, cpu);
+                            }, &task.ptrace_signal, [&](const signals::Queued &queued) {
+                                return ptrace_->signal_delivery_stop(task.tid, queued);
+                            });
+}
+
 void Machine::discard_pending_signals(Process &process) {
     // Run discard observers before releasing the owning timers' reservations.
     process.signals->pending.discard(UINT64_MAX);
@@ -23,7 +39,8 @@ signals::ThreadRef Machine::signal_thread(Task &task) {
     auto *owner = find_process(task.pid);
     if (owner)
         bind_signal_queue(task.signals.pending, task.pid);
-    return {task.tid, task.pid, &task.cpu, &task.signals, &task.signal_mask};
+    return {task.tid, task.pid, &task.cpu, &task.signals, &task.signal_mask,
+            ptrace_ && ptrace_->traced(task.tid)};
 }
 signals::ProcessRef Machine::signal_process(Process &process) {
     bind_signal_queue(process.signals->pending, process.pid);
@@ -62,6 +79,12 @@ signals::Hooks Machine::signal_hooks() {
     };
     hooks.wake = [this](uint32_t tid, bool interrupt) {
         auto *task = scheduler_.lookup(tid);
+        if (task && task->ptrace_stopped) {
+            auto *process = find_process(task->pid);
+            if (process && (signals::pending_mask(*process->signals, task->signals) &
+                            signals::bit(signals::kill_signal)))
+                ptrace_->fatal_signal(tid);
+        }
         if (task && interrupt && task->state == Task::State::Waiting) {
             auto *process = find_process(task->pid);
             const auto pending = process ? signals::pending_mask(*process->signals, task->signals) : 0;
@@ -103,7 +126,7 @@ void Machine::configure_terminal(Process &process) {
     TerminalHooks hooks;
     hooks.process = [this](uint32_t pid) {
         const auto &process = require_process(pid);
-        if (process.reaped || process.state != Process::State::Running)
+        if (process.state != Process::State::Running)
             guest_error(3);
         return TerminalProcess{process.pid, process.session, process.group, process.parent};
     };

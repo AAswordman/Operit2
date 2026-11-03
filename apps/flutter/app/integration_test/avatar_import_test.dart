@@ -126,10 +126,10 @@ void main() {
         .whereType<String>()
         .firstWhere(
           (value) =>
-              value.startsWith('/app/data/') && value.contains('/avatars/'),
+              value.startsWith('/operitapp/data/') && value.contains('/avatars/'),
         );
     expect(imported, isNot(source.path));
-    final stored = File('$runtime/${imported.substring('/app/data/'.length)}');
+    final stored = File('$runtime/${imported.substring('/operitapp/data/'.length)}');
     expect(await stored.readAsBytes(), bytes);
     await source.delete();
     expect(await source.exists(), false);

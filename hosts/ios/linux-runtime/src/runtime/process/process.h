@@ -24,7 +24,8 @@ struct Process {
     uint32_t pid = 1, parent = 0, group = 1, session = 1, parent_tid = 1;
     std::unique_ptr<ProcessTimers> timers;
     unsigned exit_signal = 17;
-    bool execed = false, reaped = false;
+    bool execed = false, reaped = false, trace_exit_held = false;
+    std::optional<int> ptrace_group_exit;
     int status = 0;
     std::optional<int> leader_status;
     uint32_t vfork_parent = 0;

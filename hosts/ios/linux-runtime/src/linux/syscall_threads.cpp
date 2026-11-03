@@ -1,17 +1,171 @@
 #include "linux/syscalls.h"
 #include "linux/threads/futex_pi.h"
+#include "linux/threads/scheduling.h"
 #include "runtime/process/controller.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <new>
 #include <time.h>
+#include <tuple>
 #include <unistd.h>
 
 namespace operit::arm64 {
 namespace {
 using SchedulingPolicy = Task::SchedulingPolicy;
 constexpr uint32_t sched_reset_on_fork = 0x40000000u;
+constexpr uint32_t futex2_size_u32 = 2, futex2_private = 128;
+struct Futex2Entry {
+    uint64_t value, address;
+    uint32_t flags;
+    Scheduler::FutexAddress key{};
+};
+void validate_futex2_flags(uint32_t flags) {
+    // Linux v6.12 implements only the 32-bit size, without NUMA.
+    if ((flags & ~uint32_t{futex2_private | 3}) || (flags & 3) != futex2_size_u32)
+        guest_error(22);
+}
+std::vector<Futex2Entry> parse_futex2_entries(Memory &memory, uint64_t address, uint32_t count) {
+    std::vector<Futex2Entry> entries;
+    entries.reserve(count);
+    for (uint32_t index = 0; index < count; ++index) {
+        const uint64_t offset = uint64_t(index) * 24;
+        if (address > UINT64_MAX - offset || !memory.accessible(address + offset, 24, read_perm))
+            guest_error(14);
+        const uint64_t item = address + offset;
+        Futex2Entry entry{memory.load(item, 8), memory.load(item + 8, 8),
+                          uint32_t(memory.load(item + 16, 4)), {}};
+        const uint32_t reserved = uint32_t(memory.load(item + 20, 4));
+        validate_futex2_flags(entry.flags);
+        if (reserved || entry.value > UINT32_MAX)
+            guest_error(22);
+        entries.push_back(entry);
+    }
+    return entries;
+}
+Scheduler::FutexAddress futex2_key(Scheduler &scheduler, Memory &memory, uint64_t address, uint32_t flags) {
+    if (address & 3)
+        guest_error(22);
+    if (address > address_limit - 4)
+        guest_error(14);
+    // A private key is the mm/address pair, even when the page is unmapped.
+    if (!(flags & futex2_private)) {
+        if (!memory.accessible(address, 4, read_perm))
+            guest_error(14);
+        if (!memory.accessible(address, 4, write_perm) && !memory.shared_identity(address)) {
+            const auto mappings = memory.mappings();
+            const auto mapping = std::find_if(mappings.begin(), mappings.end(), [address](const auto &item) {
+                return item.start <= address && address < item.end;
+            });
+            // Linux refuses readonly anonymous pages, but permits file-backed pages.
+            if (mapping == mappings.end() || !mapping->backing.inode)
+                guest_error(14);
+        }
+    }
+    return scheduler.futex_address(memory, address, flags & futex2_private);
+}
+unsigned futex_requeue_same_key(Scheduler &scheduler, Scheduler::FutexAddress key,
+                                unsigned wake_count, unsigned requeue_count) {
+    struct Entry {
+        int priority;
+        uint64_t sequence;
+        bool requeue_pi;
+    };
+    std::vector<Entry> entries;
+    for (const auto tid : scheduler.live_tids()) {
+        const auto *task = scheduler.lookup(tid);
+        if (!task || task->state != Task::State::Waiting)
+            continue;
+        if (task->futex_vector.empty()) {
+            if (task->futex == key.address && task->futex_space == key.space)
+                entries.push_back({task->futex_priority, task->futex_sequence, task->futex_requeue_pi});
+        } else {
+            for (const auto &entry : task->futex_vector)
+                if (entry.queued && entry.address == key.address && entry.space == key.space)
+                    entries.push_back({task->futex_priority, entry.sequence, false});
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto &left, const auto &right) {
+        return std::tie(left.priority, left.sequence) < std::tie(right.priority, right.sequence);
+    });
+    const uint64_t limit = uint64_t(wake_count) + requeue_count;
+    uint64_t processed = 0;
+    bool invalid = false;
+    for (const auto &entry : entries) {
+        if (processed == limit)
+            break;
+        if (entry.requeue_pi) {
+            invalid = true;
+            break;
+        }
+        ++processed;
+    }
+    const auto to_wake = unsigned(std::min<uint64_t>(processed, wake_count));
+    const auto woken = scheduler.wake_futex(key.address, to_wake, UINT32_MAX, key.space);
+    if (invalid)
+        guest_error(22);
+    // Requeue to the same key counts entries but leaves their ordering intact.
+    return woken + unsigned(processed - to_wake);
+}
+bool futex2_realtime_expired(const threads::FutexPiTimeout &timeout) {
+    timespec now{};
+    if (::clock_gettime(CLOCK_REALTIME, &now))
+        throw Failure("cannot sample futex clock");
+    return timeout.seconds < now.tv_sec ||
+           (timeout.seconds == now.tv_sec && timeout.nanoseconds <= now.tv_nsec);
+}
+struct Futex2Timeout {
+    TaskDeadline deadline;
+    std::optional<threads::FutexPiTimeout> realtime;
+    bool expired() const {
+        return (deadline && *deadline <= TaskClock::now()) ||
+               (realtime && futex2_realtime_expired(*realtime));
+    }
+    std::function<std::optional<int64_t>()> clock_poll() const {
+        if (!realtime)
+            return {};
+        return [timeout = *realtime]() -> std::optional<int64_t> {
+            return futex2_realtime_expired(timeout) ? std::optional<int64_t>(-110) : std::nullopt;
+        };
+    }
+};
+Futex2Timeout futex2_timeout(Memory &memory, uint64_t address, int32_t clock) {
+    Futex2Timeout result;
+    if (!address)
+        return result;
+    // Linux clock IDs, not the host's CLOCK_* numeric values.
+    if (clock != 0 && clock != 1)
+        guest_error(22);
+    const auto timeout = *threads::futex_pi_timeout(memory, address, clock == 0);
+    if (timeout.realtime) {
+        result.realtime = timeout;
+        return result;
+    }
+    timespec clock_now{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &clock_now))
+        throw Failure("cannot sample futex clock");
+    const auto now = TaskClock::now();
+    if (timeout.seconds < clock_now.tv_sec ||
+        (timeout.seconds == clock_now.tv_sec && timeout.nanoseconds <= clock_now.tv_nsec)) {
+        result.deadline = now;
+        return result;
+    }
+    int64_t seconds = timeout.seconds - clock_now.tv_sec;
+    int64_t nanoseconds = timeout.nanoseconds - clock_now.tv_nsec;
+    if (nanoseconds < 0) {
+        --seconds;
+        nanoseconds += 1000000000;
+    }
+    const auto capacity = TaskClock::time_point::max() - now;
+    const auto whole_seconds = std::chrono::duration_cast<std::chrono::seconds>(capacity);
+    if (seconds > whole_seconds.count() ||
+        (seconds == whole_seconds.count() && std::chrono::nanoseconds(nanoseconds) > capacity - whole_seconds))
+        result.deadline = TaskClock::time_point::max();
+    else
+        result.deadline = now + std::chrono::seconds(seconds) + std::chrono::nanoseconds(nanoseconds);
+    return result;
+}
 bool realtime_policy(SchedulingPolicy policy) noexcept {
     return policy == SchedulingPolicy::Fifo || policy == SchedulingPolicy::RoundRobin;
 }
@@ -45,7 +199,8 @@ scheduling_limits(Scheduler &scheduler, const Task &target,
 }
 void check_scheduling_change(Scheduler &scheduler, const Task &target, SchedulingPolicy policy,
                              uint32_t priority, bool reset_on_fork,
-                             const std::shared_ptr<process::ResourceLimits> &caller_limits) {
+                             const std::shared_ptr<process::ResourceLimits> &caller_limits,
+                             std::optional<int32_t> requested_nice = std::nullopt) {
     // capget/capset expose an empty effective guest capability set. In
     // particular, host uid 0 never supplies guest CAP_SYS_NICE. All exceptions
     // below therefore require the target's actual guest resource limits.
@@ -53,6 +208,12 @@ void check_scheduling_change(Scheduler &scheduler, const Task &target, Schedulin
         guest_error(1);
     if (target.sched_reset_on_fork && !reset_on_fork)
         guest_error(1);
+    if (requested_nice && (policy == SchedulingPolicy::Other || policy == SchedulingPolicy::Batch) &&
+        *requested_nice < target.nice) {
+        const auto limits = scheduling_limits(scheduler, target, caller_limits);
+        if (uint64_t(20 - *requested_nice) > limits->get(process::Resource::Nice).soft)
+            guest_error(1);
+    }
     if (realtime_policy(policy)) {
         const auto limits = scheduling_limits(scheduler, target, caller_limits);
         const auto maximum = limits->get(process::Resource::RealtimePriority).soft;
@@ -150,11 +311,13 @@ void Syscalls::release_robust_list(Task &task) {
     }
     release(pending, true);
 }
-void Syscalls::release_task_resources(Task &task) {
+void Syscalls::release_task_resources(Task &task, bool preserve_sem_undo) {
     // Runs for exit, fatal signals and exec while the old address space exists.
     // Cancel a queued lock first, then release every contended PI lock it owns,
     // including locks missing from a corrupt or unfinished robust list.
     threads::futex_pi_task_exit(scheduler_, memory_, task);
+    if (!preserve_sem_undo)
+        ipc::semaphore_task_exit(task.semaphore_task, scheduler_, task.tid);
     try {
         release_robust_list(task);
     } catch (const MemoryFault &) {
@@ -183,6 +346,9 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
     case 94: {
         const auto pid = task.pid;
         const auto code = int(a[0]) & 255;
+        if (auto *controller = scheduler_.processes();
+            controller && controller->task_exiting(pid, task.tid, a[8] == 94, code << 8))
+            return 0;
         if (a[8] == 94) {
             for (auto tid : scheduler_.live_tids(pid))
                 release_task_resources(scheduler_.find(tid));
@@ -190,8 +356,6 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
             release_task_resources(task);
         }
         scheduler_.exit(code, a[8] == 94);
-        exited = !scheduler_.process_alive(pid);
-        exit_code = code;
         return 0;
     }
     case 96:
@@ -231,6 +395,7 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
         target.sched_policy = policy;
         target.rt_priority = priority;
         target.sched_reset_on_fork = reset_on_fork;
+        scheduler_.scheduling_changed(target.tid);
         return 0;
     }
     case 120: { // sched_getscheduler returns the requested policy, not a PI boost.
@@ -243,6 +408,62 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
         const auto &target = scheduling_target(scheduler_, a[0]);
         check_buffer(a[1], 4, write_perm);
         memory_.store(a[1], target.rt_priority, 4);
+        return 0;
+    }
+    case 274: { // sched_setattr: guest attributes only, never mutate host scheduling.
+        using Attributes = threads::SchedulingAttributes;
+        if (int32_t(a[0]) < 0 || !a[1] || uint32_t(a[2]))
+            guest_error(22);
+        const Memory::AccessGuard access(memory_);
+        const auto attributes = Attributes::read(memory_, a[1]);
+        if (int32_t(attributes.policy) < 0 || (attributes.flags & ~Attributes::known_flags))
+            guest_error(22);
+        auto &target = scheduling_target(scheduler_, a[0]);
+        const bool keep_policy = attributes.flags & Attributes::keep_policy;
+        const bool keep_parameters = attributes.flags & Attributes::keep_parameters;
+        const uint32_t policy_number = keep_policy ? uint32_t(target.sched_policy) : attributes.policy;
+        if (!valid_scheduling_policy(policy_number))
+            guest_error(policy_number == 6 ? 95 : 22); // No SCHED_DEADLINE executor yet.
+        if (attributes.flags & (Attributes::utilization | Attributes::reclaim | Attributes::deadline_overrun))
+            guest_error(95);
+        if (!keep_parameters && attributes.runtime)
+            guest_error(95); // A custom CPU-time slice must not be accepted and ignored.
+        const auto policy = SchedulingPolicy(policy_number);
+        const auto priority = keep_parameters ? target.rt_priority : attributes.priority;
+        const auto nice = keep_parameters ? target.nice : attributes.nice;
+        const bool reset = keep_policy ? target.sched_reset_on_fork
+                                      : bool(attributes.flags & Attributes::reset_on_fork);
+        if (priority > 99 || (realtime_policy(policy) != (priority != 0)))
+            guest_error(22);
+        check_scheduling_change(scheduler_, target, policy, priority, reset, resource_limits(), nice);
+        // KEEP_PARAMS retains the scheduler parameters (including policy), as
+        // in Linux. Permission and policy/priority validation still precede it.
+        if (!keep_parameters) {
+            target.sched_policy = policy;
+            target.rt_priority = priority;
+            if (policy == SchedulingPolicy::Other || policy == SchedulingPolicy::Batch)
+                target.nice = nice;
+        }
+        target.sched_reset_on_fork = reset;
+        scheduler_.scheduling_changed(target.tid);
+        return 0;
+    }
+    case 275: { // sched_getattr: preserve short buffers and leave future tails untouched.
+        using Attributes = threads::SchedulingAttributes;
+        const auto size = uint32_t(a[2]);
+        if (int32_t(a[0]) < 0 || !a[1] || uint32_t(a[3]) ||
+            size < Attributes::version0_size || size > page_size)
+            guest_error(22);
+        const auto &target = scheduling_target(scheduler_, a[0]);
+        Attributes attributes;
+        attributes.policy = uint32_t(target.sched_policy);
+        attributes.flags = target.sched_reset_on_fork ? Attributes::reset_on_fork : 0;
+        if (realtime_policy(target.sched_policy))
+            attributes.priority = target.rt_priority;
+        else
+            attributes.nice = target.nice;
+        const Memory::AccessGuard access(memory_);
+        attributes.write(memory_, a[1], size);
         return 0;
     }
     case 122: { // sched_setaffinity uses actual virtual CPU execution slots.
@@ -270,6 +491,18 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
         const uint64_t available = cpus == 64 ? UINT64_MAX : (uint64_t{1} << cpus) - 1;
         memory_.store(a[2], target.cpu_affinity & available, 8);
         return 8;
+    }
+    case 124: // sched_yield rotates the guest queue, not the host calling thread.
+        scheduler_.yield();
+        return 0;
+    case 127: { // sched_rr_get_interval: guest RR has a 100ms CPU-time slice.
+        const auto &target = scheduling_target(scheduler_, a[0]);
+        const Memory::AccessGuard access(memory_);
+        check_buffer(a[1], 16, write_perm);
+        memory_.store(a[1], 0, 8);
+        memory_.store(a[1] + 8, target.sched_policy == SchedulingPolicy::RoundRobin
+                                      ? round_robin_interval_nanoseconds : 0, 8);
+        return 0;
     }
     case 125: // sched_get_priority_max
     case 126: { // sched_get_priority_min
@@ -315,6 +548,7 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
                         guest_error(13); // Raising nice priority needs RLIMIT_NICE or guest CAP_SYS_NICE.
                 }
                 target.nice = requested_nice;
+                scheduler_.scheduling_changed(target.tid);
             } catch (const GuestError &failure) {
                 if (!error)
                     error = failure.number;
@@ -328,15 +562,125 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
     }
     case 178:
         return task.tid;
+    case 449: { // futex_waitv
+        try {
+            const uint32_t count = uint32_t(a[1]);
+            if (uint32_t(a[2]) || !count || count > 128 || !a[0])
+                guest_error(22);
+            const Memory::AccessGuard access(memory_);
+            const auto timeout = futex2_timeout(memory_, a[3], int32_t(a[4]));
+            auto entries = parse_futex2_entries(memory_, a[0], count);
+            for (auto &entry : entries)
+                entry.key = futex2_key(scheduler_, memory_, entry.address, entry.flags);
+            std::vector<Task::FutexVectorEntry> queued;
+            queued.reserve(entries.size());
+            for (const auto &entry : entries) {
+                if (uint32_t(memory_.load(entry.address, 4)) != entry.value)
+                    guest_error(11);
+                queued.push_back({entry.key.address, entry.key.space, 0, UINT32_MAX, true});
+            }
+            if (timeout.expired())
+                guest_error(110);
+            if (interrupt_for_pending_signal())
+                guest_error(4);
+            scheduler_.wait_futex_vector(std::move(queued), timeout.deadline, timeout.clock_poll());
+            return 0;
+        } catch (const std::bad_alloc &) {
+            guest_error(12);
+        }
+    }
+    case 454: { // futex_wake
+        try {
+            const uint32_t flags = uint32_t(a[3]);
+            validate_futex2_flags(flags);
+            if (!a[1] || a[1] > UINT32_MAX)
+                guest_error(22);
+            const Memory::AccessGuard access(memory_);
+            const auto key = futex2_key(scheduler_, memory_, a[0], flags);
+            const int32_t count = int32_t(a[2]);
+            if (!count)
+                return 0;
+            threads::futex_pi_check_non_pi(scheduler_, key);
+            // v6.12's strict wake treats zero specially; a negative nr still
+            // wakes the first matching queue entry.
+            return scheduler_.wake_futex(key.address, count < 0 ? 1u : uint32_t(count), uint32_t(a[1]),
+                                         key.space);
+        } catch (const std::bad_alloc &) {
+            guest_error(12);
+        }
+    }
+    case 455: { // futex_wait
+        try {
+            const uint32_t flags = uint32_t(a[3]);
+            validate_futex2_flags(flags);
+            if (a[1] > UINT32_MAX || a[2] > UINT32_MAX)
+                guest_error(22);
+            const Memory::AccessGuard access(memory_);
+            const auto timeout = futex2_timeout(memory_, a[4], int32_t(a[5]));
+            if (!a[2])
+                guest_error(22);
+            const auto key = futex2_key(scheduler_, memory_, a[0], flags);
+            if (uint32_t(memory_.load(a[0], 4)) != uint32_t(a[1]))
+                guest_error(11);
+            if (timeout.expired())
+                guest_error(110);
+            if (interrupt_for_pending_signal())
+                guest_error(4);
+            auto clock_poll = timeout.clock_poll();
+            scheduler_.wait_futex(key.address, uint32_t(a[2]), timeout.deadline, key.space);
+            task.poll = std::move(clock_poll);
+            return 0;
+        } catch (const std::bad_alloc &) {
+            guest_error(12);
+        }
+    }
+    case 456: { // futex_requeue
+        try {
+            if (uint32_t(a[1]) || !a[0])
+                guest_error(22);
+            const Memory::AccessGuard access(memory_);
+            auto entries = parse_futex2_entries(memory_, a[0], 2);
+            if (int32_t(a[2]) < 0 || int32_t(a[3]) < 0)
+                guest_error(22);
+            for (auto &entry : entries)
+                entry.key = futex2_key(scheduler_, memory_, entry.address, entry.flags);
+            if (uint32_t(memory_.load(entries[0].address, 4)) != entries[0].value)
+                guest_error(11);
+            if (int32_t(a[2]) || int32_t(a[3]))
+                threads::futex_pi_check_non_pi(scheduler_, entries[0].key);
+            const auto &source = entries[0].key;
+            const auto &target = entries[1].key;
+            if (source.address == target.address && source.space == target.space)
+                return futex_requeue_same_key(scheduler_, source, uint32_t(a[2]), uint32_t(a[3]));
+            return scheduler_.wake_and_requeue_futex(source, target, uint32_t(a[2]), uint32_t(a[3]));
+        } catch (const std::bad_alloc &) {
+            guest_error(12);
+        }
+    }
     case 98: { // futex: syscall dispatch runs after all guest workers stop.
         if (a[1] & ~uint64_t{0x1ff})
             guest_error(38);
         const unsigned operation = a[1] & 127;
-        if ((a[1] & 256) && operation != 9 && operation != 13)
+        if ((a[1] & 256) && operation != 9 && operation != 11 && operation != 13)
             guest_error(38);
         if (a[0] & 3)
             guest_error(22);
+        if (operation == 11)
+            return threads::futex_wait_requeue_pi(
+                scheduler_, memory_, a[0], uint32_t(a[2]), a[4], a[1] & 128,
+                threads::futex_pi_timeout(memory_, a[3], a[1] & 256),
+                [this] { return interrupt_for_pending_signal(); });
+        if (operation == 12) {
+            const Memory::AccessGuard access(memory_);
+            const auto target = scheduler_.futex_address(memory_, a[4], a[1] & 128);
+            Scheduler::ScopedFutexVectorVisibility visibility(scheduler_, target);
+            return threads::futex_cmp_requeue_pi(scheduler_, memory_, a[0], a[4], a[1] & 128,
+                                                 uint32_t(a[2]), uint32_t(a[3]), uint32_t(a[5]));
+        }
         if (operation == 6 || operation == 7 || operation == 8 || operation == 13) {
+            const Memory::AccessGuard access(memory_);
+            const auto key = scheduler_.futex_address(memory_, a[0], a[1] & 128);
+            Scheduler::ScopedFutexVectorVisibility visibility(scheduler_, key);
             if (operation == 7) // FUTEX_UNLOCK_PI
                 return threads::futex_pi_unlock(scheduler_, memory_, a[0], a[1] & 128);
             const bool trylock = operation == 8; // FUTEX_TRYLOCK_PI ignores timeout.
@@ -377,9 +721,14 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
                 guest_error(11);
             const auto target = scheduler_.futex_address(memory_, a[4], a[1] & 128);
             threads::futex_pi_check_non_pi(scheduler_, target);
-            unsigned woken = scheduler_.wake_futex(key.address, uint32_t(a[2]), UINT32_MAX, key.space);
-            return woken + scheduler_.requeue_futex(key.address, target.address, uint32_t(a[3]), key.space,
-                                                    target.space);
+            if (key.address == target.address && key.space == target.space) {
+                try {
+                    return futex_requeue_same_key(scheduler_, key, uint32_t(a[2]), uint32_t(a[3]));
+                } catch (const std::bad_alloc &) {
+                    guest_error(12);
+                }
+            }
+            return scheduler_.wake_and_requeue_futex(key, target, uint32_t(a[2]), uint32_t(a[3]));
         }
         if (operation == 5) { // FUTEX_WAKE_OP
             if (a[4] & 3 || int32_t(a[2]) < 0 || int32_t(a[3]) < 0)
@@ -425,11 +774,7 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
                              : cmp == 3 ? signed_old <= comparison
                              : cmp == 4 ? signed_old > comparison
                                         : signed_old >= comparison;
-            unsigned woken = scheduler_.wake_futex(key.address, uint32_t(a[2]), UINT32_MAX, key.space);
-            if (condition) {
-                woken += scheduler_.wake_futex(target.address, uint32_t(a[3]), UINT32_MAX, target.space);
-            }
-            return woken;
+            return scheduler_.wake_futex_pair(key, uint32_t(a[2]), target, uint32_t(a[3]), condition);
         }
         return unsupported(cpu);
     }

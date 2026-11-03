@@ -420,7 +420,9 @@ impl Drop for CharacterPluginWriter {
 fn legacyResourceStoragePath(source: &str) -> Result<String, String> {
     for (public, storage) in [
         ("/app/data/", "runtime/"),
+        ("/operitapp/data/", "runtime/"),
         ("/app/workspaces/", "workspaces/"),
+        ("/operitapp/workspaces/", "workspaces/"),
     ] {
         if let Some(relative) = source.strip_prefix(public) {
             return Ok(format!("{storage}{relative}"));
@@ -451,8 +453,8 @@ fn legacyResourceStoragePath(source: &str) -> Result<String, String> {
 /// Converts a verified storage identity into the public Files API path used by plugin records.
 pub(crate) fn publicResourcePath(path: &str) -> Result<String, String> {
     for (storage, public) in [
-        ("runtime/", "/app/data"),
-        ("workspaces/", "/app/workspaces"),
+        ("runtime/", "/operitapp/data"),
+        ("workspaces/", "/operitapp/workspaces"),
     ] {
         if let Some(relative) = path.strip_prefix(storage) {
             return operit_tools::files::PathMapper::PathMapper::joinVfsPath(public, relative);

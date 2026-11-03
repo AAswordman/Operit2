@@ -29,9 +29,8 @@ void load_process_executable(ProcessImage &image, const std::string &path,
         if (bytes.size() >= 2 && bytes[0] == '#' && bytes[1] == '!') {
             if (recursion == 5)
                 guest_error(40);
-            const auto end =
-                std::find(bytes.begin(), bytes.begin() + std::min<size_t>(bytes.size(), 256), uint8_t('\n'));
-            if (end == bytes.begin() + std::min<size_t>(bytes.size(), 256) && bytes.size() >= 256)
+            const auto end = std::find(bytes.begin(), bytes.end(), uint8_t('\n'));
+            if (end == bytes.end() && bytes.size() >= 256)
                 guest_error(8);
             std::string line(bytes.begin() + 2, end);
             const auto begin = line.find_first_not_of(" \t");

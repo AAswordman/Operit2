@@ -1,6 +1,7 @@
 #include "runtime/machine.h"
 #include "cpu/aarch64/instruction_fault.h"
 #include "linux/files/record_lock.h"
+#include "linux/io_uring/io_uring.h"
 #include "linux/process/pidfd.h"
 #include "runtime/process/image_loader.h"
 #include <algorithm>
@@ -11,6 +12,7 @@
 
 namespace operit::arm64 {
 Machine::Machine(const ort_arm64_config &config) : config_(config) {
+    io_uring_context_ = io_uring::make_completion_context();
     scheduler_.set_process_controller(this);
     const auto available = std::max(1u, std::thread::hardware_concurrency());
     execution_threads_ = config.execution_threads ? config.execution_threads : std::min(4u, available);
@@ -25,6 +27,7 @@ Machine::Machine(const ort_arm64_config &config) : config_(config) {
     image.acceleration = std::make_unique<FixedComponents>(config.enable_fixed_acceleration != 0);
     image.interpreter = std::make_unique<Interpreter>();
     image.syscalls = std::make_unique<Syscalls>(*image.memory, *image.filesystem, config, scheduler_);
+    image.syscalls->set_io_uring_context(io_uring_context_, image.memory);
     image.syscalls->set_process_identity(1, 0);
     processes_.emplace(1, std::move(process));
     configure_terminal(*processes_.at(1));
@@ -35,6 +38,7 @@ Machine::Machine(const ort_arm64_config &config) : config_(config) {
     credentials.effective_gid = credentials.saved_gid = ::getegid();
     process::pidfd_process_created(*this, 1, credentials);
     scheduler_.current().task_limit_charge = uid_limits_.track_task(credentials.real_uid);
+    initialize_ptrace();
     bind_runtime_signal_queues();
 }
 Machine::~Machine() {
@@ -128,8 +132,8 @@ ort_arm64_result Machine::run(uint64_t budget) {
             while (budget && !main_exited_) {
                 poll_runtime_events();
                 if (schedule_pending_) {
-                    if (!scheduler_.has_runnable())
-                        stop_accounting();
+                    // RR expiry must be settled before choosing the next task.
+                    stop_accounting();
                     if (!scheduler_.select(false)) {
                         if (!scheduler_.exited())
                             status = ORT_ARM64_WAITING;
@@ -145,21 +149,40 @@ ort_arm64_result Machine::run(uint64_t budget) {
                 auto &task = scheduler_.current();
                 const uint64_t available = execution_threads_ == 64 ? UINT64_MAX :
                                            (uint64_t{1} << execution_threads_) - 1;
-                task.last_cpu = uint32_t(__builtin_ctzll(task.cpu_affinity & available));
+                const auto cpu = uint32_t(__builtin_ctzll(task.cpu_affinity & available));
                 auto &image = process.image;
                 image.memory->set_parallel_access(false);
                 image.memory->synchronize_shared();
-                auto delivery = signals::deliver(*image.memory, task.cpu, *process.signals, task.signals,
-                                                 task.signal_mask, image.signal_trampoline);
+                const bool in_traced_syscall = task.ptrace_syscall || task.ptrace_exit_pending;
+                const bool fatal_pending = signals::pending_mask(*process.signals, task.signals) &
+                                           signals::bit(signals::kill_signal);
+                signals::Delivery delivery;
+                if (!in_traced_syscall || fatal_pending)
+                    delivery = deliver_signals(task, process, cpu);
+                if (task.ptrace_stopped) {
+                    schedule_pending_ = true;
+                    quantum_remaining_ = 4096;
+                    continue;
+                }
                 if (delivery.effect != signals::Effect::None && delivery.effect != signals::Effect::Handler) {
                     auto hooks = signal_hooks();
                     hooks.effect(process.pid, delivery);
-                    if (task.state != Task::State::Runnable || task.stopped || main_exited_) {
+                    if (task.state != Task::State::Runnable || task.stopped || task.ptrace_deferred_exit ||
+                        main_exited_) {
                         schedule_pending_ = !main_exited_;
                         quantum_remaining_ = 4096;
                         continue;
                     }
                 }
+                if (task.ptrace_exit_pending) {
+                    wait_completed(task.tid);
+                    if (task.ptrace_stopped) {
+                        schedule_pending_ = true;
+                        quantum_remaining_ = 4096;
+                        continue;
+                    }
+                }
+                const bool resumed_syscall = bool(task.ptrace_syscall);
                 const auto before = image.interpreter->executed_instructions;
                 const auto queue_fault = [&](int number, int code, uint64_t address, bool executed) {
                     const auto completed = image.interpreter->executed_instructions - before;
@@ -176,12 +199,14 @@ ort_arm64_result Machine::run(uint64_t budget) {
                         quantum_remaining_ = 4096;
                     }
                 };
-                Execution execution;
+                Execution execution{Trap::Syscall, 0};
                 try {
-                    execution =
-                        image.interpreter->run(task.cpu, *image.memory, std::min(budget, quantum_remaining_),
-                                               image.acceleration.get());
+                    if (!resumed_syscall)
+                        execution = image.interpreter->run(task.cpu, *image.memory,
+                                                           std::min(budget, quantum_remaining_),
+                                                           image.acceleration.get());
                 } catch (const InstructionFault &fault) {
+                    threads::rseq_event(task.rseq, threads::RseqEvent::Preempt);
                     const bool breakpoint = fault.kind == InstructionFault::Kind::Breakpoint;
                     if (config_.trace_syscalls)
                         std::fprintf(stderr,
@@ -197,6 +222,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     queue_fault(breakpoint ? 5 : 4, 1, fault.pc, true);
                     continue;
                 } catch (const MemoryFault &fault) {
+                    threads::rseq_event(task.rseq, threads::RseqEvent::Preempt);
                     const int number = fault.kind == MemoryFault::Kind::Bus ? 7 : 11;
                     const int code = fault.kind == MemoryFault::Kind::Unmapped ? 1 : 2;
                     if (config_.trace_syscalls)
@@ -212,35 +238,29 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     queue_fault(number, code, fault.address, false);
                     continue;
                 }
+                threads::rseq_event(task.rseq, threads::RseqEvent::Preempt);
                 budget -= execution.instructions;
                 quantum_remaining_ -= execution.instructions;
                 if (execution.trap == Trap::Syscall) {
-                    const auto number = task.cpu.x[8];
-                    const auto code = int(task.cpu.x[0]) & 255;
-                    signals::remember_syscall(task.signals, task.cpu, true);
-                    image.syscalls->handle(task.cpu);
-                    if (task.state == Task::State::Exited)
-                        task.signals.pending.discard(UINT64_MAX);
-                    if (number == 93 && task.state == Task::State::Exited) {
-                        if (task.tid == process.pid)
-                            process.leader_status = code << 8;
-                        const auto survivors = scheduler_.live_tids(process.pid);
-                        if (!survivors.empty())
-                            for (auto &[pid, child] : processes_) {
-                                (void)pid;
-                                if (child->parent == process.pid && child->parent_tid == task.tid)
-                                    child->parent_tid = survivors.front();
-                            }
+                    // Charge instructions under the old scheduling policy before
+                    // a syscall can change it; syscall CPU time starts anew.
+                    stop_accounting();
+                    begin_accounting(process.pid);
+                    if (!dispatch_guest_syscall(task, process, resumed_syscall)) {
+                        schedule_pending_ = true;
+                        quantum_remaining_ = 4096;
+                        continue;
                     }
-                    if (!scheduler_.process_alive(process.pid) && process.state != Process::State::Zombie)
-                        finish_process(process,
-                                       number == 94 ? code << 8 : process.leader_status.value_or(code << 8));
                 }
                 process.maximum_rss = std::max(process.maximum_rss, image.memory->resident());
                 if (process.pending_exec)
                     commit_exec(process);
-                if (execution.trap == Trap::Syscall)
+                if (execution.trap == Trap::Syscall) {
+                    auto &completed = scheduler_.current();
+                    if (completed.state == Task::State::Runnable && !completed.ptrace_stopped)
+                        wait_completed(completed.tid);
                     drain_terminal_signals(process);
+                }
                 if (execution.trap == Trap::Syscall || !quantum_remaining_) {
                     schedule_pending_ = !main_exited_;
                     quantum_remaining_ = 4096;

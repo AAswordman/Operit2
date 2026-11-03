@@ -109,6 +109,56 @@ void main() {
       }
     }
   }
+  testWidgets('tab context menu stays at the click in an offset pane overlay', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final paneKey = GlobalKey();
+    await tester.pumpWidget(
+      _app(
+        Stack(
+          children: [
+            Positioned(
+              left: 900,
+              top: 64,
+              right: 0,
+              bottom: 0,
+              child: Overlay(
+                key: paneKey,
+                initialEntries: [
+                  OverlayEntry(
+                    builder: (context) => Align(
+                      alignment: Alignment.topLeft,
+                      child: WorkspaceTabStrip(
+                        tabs: _tabs(),
+                        selectedIndex: 2,
+                        onSelected: (_) {},
+                        onClosed: (_) {},
+                        onCloseTabs: (_) async {},
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final click = tester.getCenter(find.text('bash'));
+    await _rightClick(tester, 'bash');
+    final pane = tester.getRect(find.byKey(paneKey));
+    final menuItem = tester.getRect(find.byType(PopupMenuItem<int>).first);
+    expect(menuItem.left, greaterThanOrEqualTo(pane.left));
+    expect(click.dx, inInclusiveRange(menuItem.left, menuItem.right));
+    expect(menuItem.top - click.dy, inInclusiveRange(0, 10));
+    expect(tester.takeException(), isNull);
+  });
+
   for (final width in [390.0, 1024.0]) {
     for (final entry in <String, List<int>>{
       '关闭': [2],

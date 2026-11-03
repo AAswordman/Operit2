@@ -35,12 +35,12 @@ ToolCallRow _directory({
     isStreaming: false,
     presentation: ToolPresentation.fromCall(
       'arbitrary:directory',
-      '<param name="path">/app/workspaces/11111</param>',
+      '<param name="path">/operitapp/workspaces/11111</param>',
       result: result,
       isSuccess: true,
       display: _directoryDisplay,
       resultData: {
-        'path': '/app/workspaces/11111',
+        'path': '/operitapp/workspaces/11111',
         'entries': [
           for (var index = 0; index < count; index++)
             {
@@ -128,8 +128,8 @@ void main() {
     await tester.tap(find.text('List'));
     await tester.pumpAndSettle();
 
-    expect(find.text('/app/workspaces/11111'), findsOneWidget);
-    expect(find.text('path: /app/workspaces/11111'), findsNothing);
+    expect(find.text('/operitapp/workspaces/11111'), findsOneWidget);
+    expect(find.text('path: /operitapp/workspaces/11111'), findsNothing);
     expect(find.text('Raw directory output'), findsNothing);
     expect(find.byType(ListTile), findsNothing);
     expect(find.byType(ExpansionTile), findsNothing);
@@ -139,7 +139,7 @@ void main() {
 
     await tester.tap(find.text('Parameters'));
     await tester.pumpAndSettle();
-    expect(find.text('path: /app/workspaces/11111'), findsOneWidget);
+    expect(find.text('path: /operitapp/workspaces/11111'), findsOneWidget);
     await tester.tap(find.text('Result'));
     await tester.pumpAndSettle();
     expect(find.text('Raw directory output'), findsOneWidget);
@@ -170,7 +170,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('This folder is empty'), findsOneWidget);
-    expect(find.text('/app/workspaces/11111'), findsOneWidget);
+    expect(find.text('/operitapp/workspaces/11111'), findsOneWidget);
   });
 
   testWidgets('long directory listings scroll within a bounded result', (

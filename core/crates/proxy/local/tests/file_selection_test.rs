@@ -81,7 +81,7 @@ async fn selected_json_is_readable_through_vfs_after_stream_commit() {
     );
     sent.unwrap();
     written.unwrap();
-    assert!(path.starts_with("/app/data/temp/clean_on_exit/file_picker/"));
+    assert!(path.starts_with("/operitapp/data/temp/clean_on_exit/file_picker/"));
     assert!(path.ends_with("/Reborn2.4.2.json"));
     assert_eq!(fixture.vfs.readFile(&path).unwrap().as_bytes(), content);
     assert_eq!(
@@ -141,13 +141,13 @@ fn directory_selection_returns_a_readable_vfs_mount() {
     std::fs::create_dir(&selected).unwrap();
     std::fs::write(selected.join("book.json"), b"{}").unwrap();
     let source = serde_json::json!({
-        "namespace": "/mnt/local/folders",
+        "namespace": "/virtual/local/folders",
         "backend": "native",
         "root": selected,
         "name": "selected",
     });
     let path = fixture.service.mountDirectory(source.to_string()).unwrap();
-    assert!(path.starts_with("/mnt/local/folders/"));
+    assert!(path.starts_with("/virtual/local/folders/"));
     assert!(fixture.vfs.fileExists(&path).unwrap().isDirectory);
     assert_eq!(
         fixture.vfs.readFile(&format!("{path}/book.json")).unwrap(),

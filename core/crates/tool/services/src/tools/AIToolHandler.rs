@@ -184,7 +184,7 @@ impl AIToolHandler {
         let relative = path
             .strip_prefix("runtime/")
             .ok_or("Configuration is outside runtime storage")?;
-        PathMapper::joinVfsPath("/app/data", relative)
+        PathMapper::joinVfsPath("/operitapp/data", relative)
     }
 
     /// Creates persistent local plugin data through the filesystem Host and returns its public VFS path.
@@ -198,7 +198,7 @@ impl AIToolHandler {
             .makeDirectory(&directory.to_string_lossy(), true)
             .map_err(|error| error.to_string())?;
         let relative = path.strip_prefix("runtime/").ok_or("Local plugin data is outside runtime storage")?;
-        PathMapper::joinVfsPath("/app/data", relative)
+        PathMapper::joinVfsPath("/operitapp/data", relative)
     }
 
     fn truncateLogValue(value: &str, maxChars: usize) -> String {
@@ -1032,8 +1032,10 @@ impl AIToolHandler {
             "Runtime storage Host does not expose its workspace root".to_string()
         ))?;
         let mapper = PathMapper::new(runtimeRoot, workspaceRoot, storage.clone());
+        let path = PathMapper::resolveFileToolPath(runtimeContext.workspacePath.as_deref(), path)
+            .map_err(WorkspaceBoundaryError::InvalidRequest)?;
         let resolvedPath = mapper
-            .resolve(path)
+            .resolve(&path)
             .map_err(WorkspaceBoundaryError::InvalidRequest)?;
         for folder in &workspaceFolders {
             let resolvedWorkspace = mapper
@@ -1481,7 +1483,7 @@ impl JsExecutionHost for AIToolHandler {
         let relative = path
             .strip_prefix("runtime/")
             .ok_or("Configuration is outside runtime storage")?;
-        PathMapper::joinVfsPath("/app/data", relative)
+        PathMapper::joinVfsPath("/operitapp/data", relative)
     }
 
     /// Resolves the executing package owner while keeping arbitrary configuration aliases supported.
@@ -1969,11 +1971,11 @@ mod tests {
         for scope_path in ["device/example/cache.sqlite", "space/example/memory.sqlite"] {
             let relative = format!("plugin_data/{scope_path}");
             let expected = format!("runtime/{relative}");
-            for path in [format!("/app/data/{relative}"), expected.clone(), format!("storage-root/runtime/{relative}")] {
+            for path in [format!("/operitapp/data/{relative}"), expected.clone(), format!("storage-root/runtime/{relative}")] {
                 assert_eq!(crate::tools::defaultTool::standard::StandardStorageTools::resolve_plugin_storage_path(&path, &roots).unwrap(), expected);
             }
         }
-        for path in ["/app/workspaces/example/cache.sqlite", "/app/data/../../escape.sqlite", "storage-root/other/cache.sqlite", "/app/database/cache.sqlite"] {
+        for path in ["/operitapp/workspaces/example/cache.sqlite", "/operitapp/data/../../escape.sqlite", "storage-root/other/cache.sqlite", "/operitapp/database/cache.sqlite"] {
             assert!(crate::tools::defaultTool::standard::StandardStorageTools::resolve_plugin_storage_path(path, &roots).is_err(), "{path}");
         }
     }
@@ -3024,7 +3026,7 @@ mod tests {
     fn fullModeDoesNotRequireRuntimeWorkspaceForFilePaths() {
         let result = AIToolHandler::checkWorkspaceBoundary(
             &AiPermissionMode::Full,
-            &pathTool("/mnt/android/sdcard"),
+            &pathTool("/virtual/android/sdcard"),
             &filePathAccessSpec(ToolEffect::READ),
             None,
         );
@@ -3037,13 +3039,13 @@ mod tests {
     fn workspaceScopedModesAllowExternalFileReadsWithoutRuntimeWorkspace() {
         let readOnlyResult = AIToolHandler::checkWorkspaceBoundary(
             &AiPermissionMode::ReadOnly,
-            &pathTool("/mnt/android/sdcard"),
+            &pathTool("/virtual/android/sdcard"),
             &filePathAccessSpec(ToolEffect::READ),
             None,
         );
         let workspaceWriteResult = AIToolHandler::checkWorkspaceBoundary(
             &AiPermissionMode::WorkspaceWrite,
-            &pathTool("/mnt/android/sdcard"),
+            &pathTool("/virtual/android/sdcard"),
             &filePathAccessSpec(ToolEffect::READ),
             None,
         );
@@ -3057,7 +3059,7 @@ mod tests {
     fn workspaceWriteRequiresRuntimeWorkspaceForFileWrites() {
         let result = AIToolHandler::checkWorkspaceBoundary(
             &AiPermissionMode::WorkspaceWrite,
-            &pathTool("/mnt/android/sdcard"),
+            &pathTool("/virtual/android/sdcard"),
             &filePathAccessSpec(ToolEffect::WRITE),
             None,
         );

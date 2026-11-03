@@ -46,8 +46,8 @@ desktop.ini
 **/flutter_export_environment.sh
 **/ephemeral/
 **/.plugin_symlinks/
-**/app.*.symbols
-**/app.*.map.json
+**/operitapp.*.symbols
+**/operitapp.*.map.json
 
 # Flutter platform build outputs
 **/android/.gradle/

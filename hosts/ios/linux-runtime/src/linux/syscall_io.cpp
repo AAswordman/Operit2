@@ -19,6 +19,8 @@ int64_t Syscalls::io(bool writing, uint64_t fd, uint64_t address, uint64_t lengt
     auto &entry = descriptors_.get(static_cast<uint32_t>(fd));
     files::require_descriptor_io(entry, writing);
     auto description = entry.description;
+    if (description->io_uring)
+        guest_error(22);
     if (description->inotify) {
         if (writing)
             guest_error(9);
@@ -191,6 +193,8 @@ int64_t Syscalls::io(bool writing, uint64_t fd, uint64_t address, uint64_t lengt
             else
                 description->socket->received(result, false);
         }
+        if (!writing && result > 0 && description->inotify_open)
+            description->inotify_open->accessed();
         if (!writing && result > 0)
             memory_.copy_in(address, data.data(), static_cast<size_t>(result));
         return result;

@@ -10,7 +10,7 @@ use operit_util::RuntimeStorageLayout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH;
 use uuid::Uuid;
 
 const MAX_CHUNK_BYTES: usize = 1024 * 1024;
-const VFS_SELECTION_ROOT: &str = "/app/data/temp/clean_on_exit/file_picker/";
+const VFS_SELECTION_ROOT: &str = "/operitapp/data/temp/clean_on_exit/file_picker/";
 
 /// Publishes host-selected files and directories through the runtime's VFS.
 #[derive(Clone)]
@@ -164,8 +164,8 @@ mod tests {
         }
         for path in [
             "/private/var/mobile/tmp/book.json",
-            "/app/data/config/a.json",
-            "/app/data/temp/clean_on_exit/file_picker/../a.json",
+            "/operitapp/data/config/a.json",
+            "/operitapp/data/temp/clean_on_exit/file_picker/../a.json",
         ] {
             assert!(selectionStoragePath(path).is_err());
         }

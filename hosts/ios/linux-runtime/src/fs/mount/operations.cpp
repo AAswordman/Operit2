@@ -3,7 +3,6 @@
 #include "fs/mount/storage.h"
 #include "linux/error_mapping.h"
 #include <algorithm>
-#include <cerrno>
 #include <fcntl.h>
 #include <set>
 #include <sys/stat.h>
@@ -225,14 +224,6 @@ void Filesystem::unshare_mounts() {
     for (const auto &point : namespace_->points)
         copy->points.push_back(std::make_shared<mounts::Point>(*point));
     namespace_ = std::move(copy);
-}
-bool Filesystem::mount_read_only(uint64_t id) const {
-    if (!id)
-        return namespace_->root->flags & mounts::read_only;
-    for (const auto &point : namespace_->points)
-        if (point->id == id)
-            return point->read_only();
-    guest_error(22);
 }
 std::string Filesystem::mount_table() const {
     std::string result = "rootfs / hostfs " + mount_options(namespace_->root->flags) + " 0 0\n";

@@ -152,6 +152,7 @@ interface WorkerHostCall {
   method: string;
   args: unknown[];
   control: SharedArrayBuffer;
+  filesystem?: SharedArrayBuffer;
   clientId?: string;
 }
 
@@ -193,6 +194,9 @@ interface WorkerRuntimeGlobals {
 const workerGlobal = globalThis as typeof globalThis & WorkerRuntimeGlobals;
 const controlStateIndex = 0;
 const controlLengthIndex = 1;
+const terminalFilesystemBuffer = new SharedArrayBuffer(1024 * 1024 + 8);
+const terminalFilesystemHeader = new Int32Array(terminalFilesystemBuffer, 0, 2);
+const terminalFilesystemPayload = new Uint8Array(terminalFilesystemBuffer, 8);
 const controlReady = 1;
 const controlPayloadReady = 2;
 const runtimeStorageDataFileName = "operit_runtime_storage.data";
@@ -243,6 +247,10 @@ function importWorkerScript(path: string): Promise<void> {
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const message = event.data;
   if (typeof message !== "object" || message === null) {
+    return;
+  }
+  if (Reflect.get(message, "type") === "terminalFilesystemWake") {
+    serviceTerminalFilesystem();
     return;
   }
   const type = Reflect.get(message, "type");
@@ -502,6 +510,42 @@ function mainHostModule(module: string): object {
   return proxy;
 }
 
+/** Services guest filesystem requests while Rust is blocked on a UI terminal call. */
+function serviceTerminalFilesystem(): void {
+  if (Atomics.compareExchange(terminalFilesystemHeader, 0, 1, 3) !== 1) return;
+  let encoded: Uint8Array;
+  try {
+    const length = Atomics.load(terminalFilesystemHeader, 1);
+    if (length <= 0 || length > terminalFilesystemPayload.length) throw new Error("Invalid terminal filesystem request");
+    const request = MessagePack.decode(terminalFilesystemPayload.slice(0, length));
+    if (!Array.isArray(request) || typeof request[0] !== "string" || !Array.isArray(request[1])) {
+      throw new Error("Invalid terminal filesystem operation");
+    }
+    const host = workerGlobal.__operitHost as Record<string, Record<string, unknown>>;
+    const module = host.terminalFilesystem;
+    const method = module?.[request[0]];
+    if (typeof method !== "function" || !Object.hasOwn(module, request[0])) throw new Error("Unknown terminal filesystem operation");
+    encoded = MessagePack.encode([0, method.apply(module, request[1])]);
+    if (encoded.length > terminalFilesystemPayload.length) throw new Error("Terminal filesystem response exceeds channel capacity");
+  } catch (error) {
+    encoded = MessagePack.encode([1, errorMessage(error)]);
+  }
+  terminalFilesystemPayload.set(encoded);
+  Atomics.store(terminalFilesystemHeader, 1, encoded.length);
+  Atomics.store(terminalFilesystemHeader, 0, 2);
+  Atomics.notify(terminalFilesystemHeader, 0);
+}
+
+/** Keeps filesystem I/O live while a terminal command waits for its guest. */
+function waitForMainHost(control: Int32Array): void {
+  while (Atomics.load(control, controlStateIndex) === 0 || Atomics.load(control, controlStateIndex) === 3) {
+    Atomics.compareExchange(control, controlStateIndex, 3, 0);
+    serviceTerminalFilesystem();
+    // The timeout also serves VMs on another page while this page owns the call.
+    Atomics.wait(control, controlStateIndex, 0, 20);
+  }
+}
+
 /** Calls one UI-thread host method while blocking only this dedicated runtime worker. */
 function callMainHost(module: string, method: string, args: unknown[]): unknown {
   if (activeHostClientId === null) {
@@ -516,10 +560,11 @@ function callMainHost(module: string, method: string, args: unknown[]): unknown 
     module,
     method,
     args,
+    filesystem: terminalFilesystemBuffer,
     control: controlBuffer,
     clientId: activeHostClientId,
   });
-  Atomics.wait(control, controlStateIndex, 0);
+  waitForMainHost(control);
   if (Atomics.load(control, controlStateIndex) !== controlReady) {
     throw new Error("main-thread host did not provide response metadata");
   }
@@ -536,7 +581,7 @@ function callMainHost(module: string, method: string, args: unknown[]): unknown 
     control: controlBuffer,
     clientId: activeHostClientId,
   });
-  Atomics.wait(control, controlStateIndex, 0);
+  waitForMainHost(control);
   if (Atomics.load(control, controlStateIndex) !== controlPayloadReady) {
     throw new Error("main-thread host did not provide response payload");
   }

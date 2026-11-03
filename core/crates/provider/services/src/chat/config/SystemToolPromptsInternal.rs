@@ -75,7 +75,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("session_name", "string", "terminal session name", true, None),
-                        param("type", "string", "Exact interpreter type: bash, powershell, or shell, as advertised by get_terminal_info. Omission requests the host default. Unsupported types are rejected.", false, None)
+                        param("type", "string", "Exact interpreter type, such as bash, zsh, powershell, or shell, as advertised by get_terminal_info. Omission requests the host default. Unsupported types are rejected.", false, None)
                     ],
                     "",
                     "",
@@ -110,7 +110,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("command", "string", "command to execute", true, None),
-                        param("type", "string", "Exact interpreter type: bash, powershell, or shell, as advertised by get_terminal_info. Omission requests the host default. Unsupported types are rejected.", false, None),
+                        param("type", "string", "Exact interpreter type, such as bash, zsh, powershell, or shell, as advertised by get_terminal_info. Omission requests the host default. Unsupported types are rejected.", false, None),
                         param("executor_key", "string", "optional, hidden executor key used to reuse the same background shell context", false, Some("default".to_string())),
                         param("timeout_ms", "integer", "optional, command timeout in milliseconds", false, Some("120000".to_string()))
                     ],
@@ -1311,7 +1311,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("session_name", "string", "终端会话名称", true, None),
-                        param("type", "string", "明确指定解释器类型：bash、powershell 或 shell，以 get_terminal_info 公布的能力为准。省略表示请求 Host 默认终端；不支持的类型直接报错。", false, None)
+                        param("type", "string", "明确指定解释器类型，如 bash、zsh、powershell 或 shell，以 get_terminal_info 公布的能力为准。省略表示请求 Host 默认终端；不支持的类型直接报错。", false, None)
                     ],
                     "",
                     "",
@@ -1346,7 +1346,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("command", "string", "要执行的命令", true, None),
-                        param("type", "string", "明确指定解释器类型：bash、powershell 或 shell，以 get_terminal_info 公布的能力为准。省略表示请求 Host 默认终端；不支持的类型直接报错。", false, None),
+                        param("type", "string", "明确指定解释器类型，如 bash、zsh、powershell 或 shell，以 get_terminal_info 公布的能力为准。省略表示请求 Host 默认终端；不支持的类型直接报错。", false, None),
                         param("executor_key", "string", "可选，用于复用同一个后台 shell 上下文的隐藏执行器 key", false, Some("default".to_string())),
                         param("timeout_ms", "integer", "可选，超时时间（毫秒）", false, Some("120000".to_string()))
                     ],

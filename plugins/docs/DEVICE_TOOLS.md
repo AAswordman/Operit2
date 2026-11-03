@@ -10,11 +10,11 @@ the v1 declarations, and v1 execution contexts reject it before submitting work.
 
 ```ts
 const desktop = Tools.device(desktopNodeId);
-const file = await desktop.Files.read('/app/data/example.txt');
-const sameFile = await desktop.Files.read({ path: '/app/data/example.txt' });
+const file = await desktop.Files.read('/operitapp/data/example.txt');
+const sameFile = await desktop.Files.read({ path: '/operitapp/data/example.txt' });
 
 // Local calls retain their existing behavior.
-const localFile = await Tools.Files.read('/app/data/example.txt');
+const localFile = await Tools.Files.read('/operitapp/data/example.txt');
 ```
 
 The selected Core executes its own registered tool with its own filesystem,
@@ -53,7 +53,7 @@ existing plugin bridge representation.
 
 ```ts
 const desktop = Tools.device(desktopNodeId, { timeoutMs: 30_000 });
-const pending = desktop.Files.read('/app/data/large.txt');
+const pending = desktop.Files.read('/operitapp/data/large.txt');
 
 // Cancels pending calls from this device view. Other views are unaffected,
 // and the view can be used for new calls after cancellation.

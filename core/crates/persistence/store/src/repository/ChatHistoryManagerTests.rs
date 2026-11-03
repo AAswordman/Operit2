@@ -57,7 +57,7 @@ fn workspaceMetadataFixture(name: &str) -> (ChatHistoryManager, Arc<AppDatabase>
         name: "Project".to_string(),
         folders: vec![WorkspaceFolder {
             name: "project".to_string(),
-            path: "/app/workspaces/project".to_string(),
+            path: "/operitapp/workspaces/project".to_string(),
         }],
         createdAt: 1,
         updatedAt: 1,
@@ -96,19 +96,19 @@ fn workspace_preferences_refresh_chat_metadata_without_sql_changes() {
     assert_eq!(arrived.workspaceName.as_deref(), Some("Project"));
     assert_eq!(
         arrived.workspacePrimaryPath.as_deref(),
-        Some("/app/workspaces/project")
+        Some("/operitapp/workspaces/project")
     );
     assert_eq!(arrived, manager.loadChatHistories().unwrap().remove(0));
 
     workspace.name = "Renamed project".to_string();
-    workspace.folders[0].path = "/app/workspaces/renamed".to_string();
+    workspace.folders[0].path = "/operitapp/workspaces/renamed".to_string();
     workspace.updatedAt = 2;
     manager.workspaceStore.upsert(workspace).unwrap();
     let renamed = receiveWorkspaceChat(&receiver);
     assert_eq!(renamed.workspaceName.as_deref(), Some("Renamed project"));
     assert_eq!(
         renamed.workspacePrimaryPath.as_deref(),
-        Some("/app/workspaces/renamed")
+        Some("/operitapp/workspaces/renamed")
     );
     assert_eq!(renamed, manager.loadChatHistories().unwrap().remove(0));
     assert_eq!(

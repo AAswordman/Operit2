@@ -345,7 +345,7 @@ fn writeVisitResultToFile(
     fileSystemHost: &dyn FileSystemHost,
     resultData: &VisitWebResultData,
 ) -> Result<String, String> {
-    const VISIT_OUTPUT_DIRECTORY: &str = "/app/data/temp/visit_web";
+    const VISIT_OUTPUT_DIRECTORY: &str = "/operitapp/data/temp/visit_web";
     fileSystemHost
         .makeDirectory(VISIT_OUTPUT_DIRECTORY, true)
         .map_err(|error| error.to_string())?;

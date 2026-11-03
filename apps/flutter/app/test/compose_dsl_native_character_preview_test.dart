@@ -22,7 +22,7 @@ Map<String, dynamic> _fixture(String name) {
     if (node['type'] == 'Image') {
       final props = node['props'] as Map<String, dynamic>;
       if (props['path'] != null)
-        props['path'] = '/app/preview/operit-avatar.png';
+        props['path'] = '/operitapp/preview/operit-avatar.png';
     }
     for (final child in node['children'] as List) {
       visit(child as Map<String, dynamic>);

@@ -331,6 +331,12 @@ impl RuntimeTerminalService {
                 cols as u16,
             )
             .map_err(|error| error.message)?;
+        if let Err(error) = operit_host_api::TerminalWorkingDirectory::enterTerminalDirectory(
+            self.terminalHost.as_ref(), &sessionId, &terminalType, &resolvedWorkingDir,
+        ) {
+            let _ = self.terminalHost.closePtySession(&sessionId);
+            return Err(error.message);
+        }
         self.ensureTerminalPtyOutputStream(sessionId.clone());
         publish_terminal_sessions(self.terminalHost.as_ref())?;
         Ok(sessionId)
@@ -444,8 +450,9 @@ impl RuntimeTerminalService {
 /// Resolves host-owned directories after the selected terminal has dispatched its namespace.
 fn resolve_terminal_working_dir(context: &HostManager, workingDir: &str) -> Result<String, String> {
     let trimmed = workingDir.trim();
-    if trimmed == "/app" || trimmed.starts_with("/app/")
-        || trimmed == "/mnt" || trimmed.starts_with("/mnt/")
+    if ["/app", "/operitapp", "/mnt", "/virtual"].iter().any(|root| {
+        trimmed == *root || trimmed.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
+    })
     {
         return terminal_vfs(context)?
             .resolvePath(trimmed)

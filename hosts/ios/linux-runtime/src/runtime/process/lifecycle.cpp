@@ -1,4 +1,5 @@
 #include "runtime/machine.h"
+#include "linux/namespaces/namespaces.h"
 #include "linux/process/pidfd.h"
 #include "runtime/process/image_loader.h"
 #include <algorithm>
@@ -6,7 +7,7 @@
 namespace operit::arm64 {
 namespace {
 constexpr uint64_t clone_vm = 0x100, clone_fs = 0x200, clone_files = 0x400;
-constexpr uint64_t clone_sighand = 0x800, clone_vfork = 0x4000, clone_parent = 0x8000;
+constexpr uint64_t clone_sighand = 0x800, clone_ptrace = 0x2000, clone_vfork = 0x4000, clone_parent = 0x8000;
 constexpr uint64_t clone_thread = 0x10000, clone_settls = 0x80000, clone_parent_settid = 0x100000;
 constexpr uint64_t clone_child_cleartid = 0x200000, clone_child_settid = 0x1000000;
 constexpr uint64_t clone_clear_sighand = uint64_t{1} << 32;
@@ -105,7 +106,8 @@ void limit_exec_image(ProcessImage &image, const process::ResourceLimits &limits
 }
 } // namespace
 uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
-    constexpr uint64_t allowed = clone_vm | clone_fs | clone_files | clone_sighand | clone_vfork |
+    namespaces::check_clone(request.flags, false); // Guest capabilities are empty.
+    constexpr uint64_t allowed = clone_vm | clone_fs | clone_files | clone_sighand | clone_ptrace | clone_vfork |
                                  clone_parent | clone_settls | clone_parent_settid | clone_child_cleartid |
                                  clone_child_settid | clone_clear_sighand | clone_thread | 0x40000 |
                                  0x400000 | 0x800000;
@@ -116,6 +118,14 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
         guest_error(22);
     auto &parent = current_process();
     const auto credentials = process::pidfd_credentials(*this, parent.pid);
+    const auto inherit_semaphore_task = [this, &request](Task &child) {
+        if (request.flags & 0x40000) { // CLONE_SYSVSEM
+            auto &parent_task = scheduler_.current();
+            if (!parent_task.semaphore_task)
+                parent_task.semaphore_task = ipc::make_semaphore_task();
+            child.semaphore_task = ipc::clone_semaphore_task(*parent_task.semaphore_task, true);
+        }
+    };
     if (request.flags & clone_thread) {
         constexpr uint64_t required = clone_vm | clone_fs | clone_files | clone_sighand;
         if ((request.flags & required) != required || (request.flags & (clone_vfork | clone_clear_sighand)) ||
@@ -135,6 +145,7 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
                              (request.flags & clone_child_cleartid) ? request.child_tid : 0);
         try {
             scheduler_.find(tid).task_limit_charge = std::move(task_limit_charge);
+            inherit_semaphore_task(scheduler_.find(tid));
             if (request.flags & clone_parent_settid)
                 parent.image.memory->store(request.parent_tid, tid, 4);
             if (request.flags & clone_child_settid)
@@ -143,6 +154,7 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
             scheduler_.discard(tid);
             throw;
         }
+        ptrace_->clone(scheduler_.current_tid(), tid, request.flags, request.exit_signal);
         return tid;
     }
     if ((request.flags & clone_parent) && parent.pid == 1)
@@ -168,6 +180,7 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
             if (action.handler != 1)
                 action = {};
     auto &image = child->image;
+    parent.image.syscalls->sync_shared_memory_mappings();
     image.memory = (request.flags & clone_vm) ? parent.image.memory
                                               : std::shared_ptr<Memory>(parent.image.memory->fork_clone());
     image.filesystem = std::make_unique<Filesystem>(*parent.image.filesystem);
@@ -178,6 +191,7 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
     image.heap_end = parent.image.heap_end;
     image.signal_trampoline = parent.image.signal_trampoline;
     image.syscalls = std::make_unique<Syscalls>(*image.memory, *image.filesystem, config_, scheduler_);
+    image.syscalls->set_io_uring_context(io_uring_context_, image.memory);
     image.syscalls->inherit_process(*parent.image.syscalls, request.flags);
     if (request.flags & clone_child_settid)
         require_write(*image.memory, request.child_tid, 4);
@@ -188,6 +202,9 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
     try {
         auto &task = scheduler_.find(tid);
         task.task_limit_charge = std::move(task_limit_charge);
+        inherit_semaphore_task(task);
+        task.rseq = threads::rseq_fork(scheduler_.current().rseq, request.flags & clone_vm);
+        image.syscalls->inherit_shared_memory_space(*parent.image.syscalls, request.flags & clone_vm, tid);
         image.syscalls->set_process_identity(tid, child->parent);
         task.signals = signals::fork_thread(scheduler_.current().signals, request.flags & clone_vm,
                                             request.flags & clone_vfork);
@@ -208,11 +225,17 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
         scheduler_.current().vfork_child = tid;
         scheduler_.block({}, tid);
     }
+    ptrace_->clone(scheduler_.current_tid(), tid, request.flags, request.exit_signal);
     return tid;
 }
 void Machine::exec(const std::string &path, const std::vector<std::string> &arguments,
                    const std::vector<std::string> &environment, const std::string &working_directory) {
     auto &process = current_process();
+    if (!ptrace_->can_exec(scheduler_.current().tid, process.pid))
+        guest_error(95);
+    for (const auto tid : scheduler_.live_tids(process.pid))
+        if (tid != scheduler_.current_tid() && ptrace_->wants_exit_event(tid))
+            guest_error(95); // Retiring traced sibling threads during exec needs its own event barrier.
     const auto limits = process.image.syscalls->resource_limits();
     if (process::pidfd_nproc_check_pending(*this, process.pid)) {
         const auto credentials = process::pidfd_credentials(*this, process.pid);
@@ -230,6 +253,7 @@ void Machine::exec(const std::string &path, const std::vector<std::string> &argu
     limit_exec_image(*replacement, *limits);
     replacement->syscalls =
         std::make_unique<Syscalls>(*replacement->memory, *replacement->filesystem, config_, scheduler_);
+    replacement->syscalls->set_io_uring_context(io_uring_context_, replacement->memory);
     replacement->syscalls->inherit_process(*process.image.syscalls, 0, true);
     replacement->syscalls->set_process_identity(process.pid, process.parent);
     auto &task = scheduler_.current();
@@ -262,15 +286,18 @@ void Machine::archive_image(Process &process) {
         process.acceleration_bytes += image.acceleration->bytes;
     }
 }
-void Machine::release_tasks(Process &process) {
+void Machine::release_tasks(Process &process, bool preserve_current_sem_undo) {
     for (auto tid : scheduler_.live_tids(process.pid))
-        process.image.syscalls->release_task_resources(scheduler_.find(tid));
+        process.image.syscalls->release_task_resources(scheduler_.find(tid),
+                                                       preserve_current_sem_undo && tid == scheduler_.current_tid());
 }
 void Machine::release_vfork(Process &process) {
     if (process.vfork_parent) {
+        ptrace_->vfork_done(process.vfork_parent, process.pid);
         if (auto *parent = scheduler_.lookup(process.vfork_parent))
             parent->vfork_child = 0;
         scheduler_.wake(process.vfork_parent, process.pid);
+        ptrace_->preserve_event_syscall_result(process.vfork_parent);
         process.vfork_parent = 0;
     }
 }
@@ -280,7 +307,12 @@ void Machine::commit_exec(Process &process) {
     // Settle both serial execution and syscall CPU time before exec rekeys a
     // nonleader TID or removes any task carrying its accumulated counters.
     stop_accounting();
-    release_tasks(process);
+    process.image.syscalls->commit_ipc_exec();
+    const auto exec_tid = scheduler_.current_tid();
+    for (const auto tid : scheduler_.live_tids(process.pid))
+        if (tid != exec_tid)
+            prepare_ptrace_exit(process.pid, tid, false, 0);
+    release_tasks(process, true);
     // Drop all retired peers' signals while the old timer bookkeeping
     // exists. The surviving task and process retain ordinary pending signals,
     // including ITIMER_REAL's SI_KERNEL notifications, across exec.
@@ -296,6 +328,7 @@ void Machine::commit_exec(Process &process) {
     }
     if (process.timers)
         process.timers->exec_reset();
+    process.image.syscalls->release_shared_memory_space(process.pid);
     archive_image(process);
     auto survivor_signals = std::move(scheduler_.current().signals);
     // exec unshares the disposition table even when CLONE_SIGHAND shared it.
@@ -304,9 +337,11 @@ void Machine::commit_exec(Process &process) {
     signals::exec_reset(*fresh_signals, survivor_signals);
     process.signals = std::move(fresh_signals);
     scheduler_.replace_process_image(process.pid, process.pending_exec->entry);
+    threads::rseq_reset(scheduler_.current().rseq);
     scheduler_.current().signals = std::move(survivor_signals);
     process.image = std::move(*process.pending_exec);
     process.pending_exec.reset();
+    ptrace_->exec(exec_tid, process.pid);
     // This runtime does not grant set-ID/file capabilities on exec. A normal
     // exec restores dumpability while retaining the original pidfd identity.
     auto credentials = process::pidfd_credentials(*this, process.pid);
@@ -360,6 +395,7 @@ void Machine::finish_process(Process &process, int status) {
     process.status = status;
     process.maximum_rss = std::max(process.maximum_rss, process.image.memory->resident());
     process.image.syscalls->terminal_manager()->process_exited(process.pid);
+    process.image.syscalls->release_shared_memory_space(process.pid);
     process.image.syscalls->close_descriptors();
     process::pidfd_process_exited(*this, process.pid);
     drain_terminal_signals(process);
@@ -385,15 +421,17 @@ void Machine::finish_process(Process &process, int status) {
             child->parent = process.pid == 1 ? 0 : 1;
             child->parent_tid = child->parent;
             child->image.syscalls->set_process_identity(child->pid, child->parent);
-            if (child->state == Process::State::Zombie) {
+            if (child->state == Process::State::Zombie && !child->trace_exit_held) {
                 if (child->parent)
                     notify_parent(*child, child->status, child->exit_signal);
                 auto_reap(*child);
             }
         }
     }
-    notify_parent(process, status, process.exit_signal);
-    auto_reap(process);
+    if (!process.trace_exit_held) {
+        notify_parent(process, status, process.exit_signal);
+        auto_reap(process);
+    }
     if (process.pid == 1) {
         main_exited_ = true;
         main_exit_code_ = (status & 0x7f) ? 128 + (status & 0x7f) : (status >> 8) & 255;
@@ -401,6 +439,7 @@ void Machine::finish_process(Process &process, int status) {
             if (pid == 1)
                 continue;
             if (child->state != Process::State::Zombie) {
+                prepare_ptrace_exit(pid, 0, true, 9);
                 release_tasks(*child);
                 scheduler_.exit_process(pid, 137);
                 discard_pending_signals(*child);
@@ -409,6 +448,7 @@ void Machine::finish_process(Process &process, int status) {
                 child->state = Process::State::Zombie;
                 child->status = 9;
                 child->image.syscalls->terminal_manager()->process_exited(pid);
+                child->image.syscalls->release_shared_memory_space(pid);
                 child->image.syscalls->close_descriptors();
                 process::pidfd_process_exited(*this, pid);
             }
@@ -426,8 +466,12 @@ void Machine::terminate(uint32_t pid, unsigned signal, bool core) {
         guest_error(3);
     if (process->state == Process::State::Zombie)
         return;
+    const int status = (signal & 127) | (core ? 128 : 0);
+    if (defer_ptrace_exit(pid, 0, true, status))
+        return;
+    prepare_ptrace_exit(pid, 0, true, status);
     release_tasks(*process);
     scheduler_.exit_process(pid, 128 + signal);
-    finish_process(*process, (signal & 127) | (core ? 128 : 0));
+    finish_process(*process, status);
 }
 } // namespace operit::arm64

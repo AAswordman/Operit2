@@ -157,6 +157,12 @@ impl StandardFileSystemTools {
                         return Err(CROSS_NODE_TRANSFER_MESSAGE.to_string());
                     }
                     localPathSeen = true;
+                    let context = ToolExecutionManager::currentToolRuntimeContext();
+                    let resolved = PathMapper::resolveFileToolPath(
+                        context.as_ref().and_then(|context| context.workspacePath.as_deref()),
+                        &value,
+                    )?;
+                    Self::rewritePathParameter(&mut call, name, &resolved);
                 }
                 continue;
             }
@@ -169,7 +175,12 @@ impl StandardFileSystemTools {
                         return Err(CROSS_NODE_TRANSFER_MESSAGE.to_string());
                     }
                     localPathSeen = true;
-                    Self::rewritePathParameter(&mut call, name, &innerPath);
+                    let context = ToolExecutionManager::currentToolRuntimeContext();
+                    let resolved = PathMapper::resolveFileToolPath(
+                        context.as_ref().and_then(|context| context.workspacePath.as_deref()),
+                        &innerPath,
+                    )?;
+                    Self::rewritePathParameter(&mut call, name, &resolved);
                 }
                 QualifiedVfsResolution::RemoteTarget { node, pathPrefix, innerPath } => {
                     if localPathSeen {
@@ -248,12 +259,12 @@ impl StandardFileSystemTools {
         let mut workspacePaths = Vec::new();
         for path in paths {
             let canonical = PathMapper::canonicalizeVfsPath(path)?;
-            if let Some(relative) = PathMapper::relativePath("/app/workspaces", &canonical)? {
+            if let Some(relative) = PathMapper::relativePath("/operitapp/workspaces", &canonical)? {
                 if !relative.is_empty() {
                     workspacePaths.push(format!("workspaces/{relative}"));
                 }
             }
-            if let Some(relative) = PathMapper::relativePath("/app/data", &canonical)? {
+            if let Some(relative) = PathMapper::relativePath("/operitapp/data", &canonical)? {
                 storagePaths.push(format!("runtime/{relative}"));
             }
         }

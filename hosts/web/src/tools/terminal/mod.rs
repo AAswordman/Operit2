@@ -49,11 +49,18 @@ impl TerminalHost for WebTerminalHost {
         &self,
         terminal: &str,
         terminalType: &str,
-        _workingDir: &str,
-        _resolveHostDirectory: &dyn Fn(&str) -> HostResult<String>,
+        workingDir: &str,
+        resolveHostDirectory: &dyn Fn(&str) -> HostResult<String>,
     ) -> HostResult<String> {
         requireLinuxVmTerminalType(terminal, terminalType)?;
-        Ok("/".to_string())
+        operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(
+            workingDir,
+            &|path| {
+                if path == "/" { return Ok("/".to_string()); }
+                let native = resolveHostDirectory(path)?;
+                Ok(format!("/mnt/operit-host/{}", native.trim_start_matches('/')))
+            },
+        )
     }
 
     /// Describes the Linux VM terminal available in browser builds.
@@ -85,11 +92,6 @@ impl TerminalHost for WebTerminalHost {
         let normalizedSessionName = requiredText(sessionName, "session_name")?;
         requireLinuxVmTerminalType(terminal, terminalType)?;
         let normalizedWorkingDir = requiredText(workingDir, "working_directory")?;
-        if normalizedWorkingDir != "/" {
-            return Err(HostError::new(
-                "browser-local Linux VM terminals currently expose only the guest root directory: /",
-            ));
-        }
         if rows == 0 || cols == 0 {
             return Err(HostError::new("terminal dimensions must be positive"));
         }

@@ -1,4 +1,5 @@
 #include "cpu/aarch64/decoder.h"
+#include "cpu/aarch64/cache.h"
 #include "cpu/aarch64/instruction_fault.h"
 #include <optional>
 
@@ -150,7 +151,10 @@ void specialize(Instruction &i) {
                 break;
             i.flags |= type << decoded::shift_type;
         }
-        i.dispatch = wide ? D::AddRegister64 : D::AddRegister32;
+        if ((r & 0xffe0fc1f) == 0xeb00001f)
+            i.dispatch = D::CompareRegister64;
+        else
+            i.dispatch = wide ? D::AddRegister64 : D::AddRegister32;
         break;
     }
     case Op::AddCarry:
@@ -308,6 +312,24 @@ void specialize(Instruction &i) {
     }
     case Op::Simd: {
         const uint32_t move = r & 0xfffffc00;
+#if defined(__aarch64__)
+        if ((r & 0xffe08000) == 0x1f400000)
+            i.dispatch = D::ScalarFma64;
+        else if (move == 0x1e61c000)
+            i.dispatch = D::ScalarSqrt64;
+        else if (move == 0x9e630000)
+            i.dispatch = D::ScalarUnsignedToDouble64;
+        else if ((r & 0xffe0fc00) == 0x1e602800)
+            i.dispatch = D::ScalarAdd64;
+        else if ((r & 0xffe0fc1f) == 0x1e602000)
+            i.dispatch = D::ScalarCompare64;
+        else if ((r & 0xffe00c00) == 0x1e600c00) {
+            i.flags = (r >> 12) & 15;
+            i.dispatch = D::ScalarSelect64;
+        } else if ((r & 0xffe0fc00) == 0x4e60cc00)
+            i.dispatch = D::VectorFma2D;
+        else
+#endif
         if (move == 0x9e660000 || move == 0x1e260000)
             i.dispatch = move == 0x9e660000 ? D::VectorToRegister64 : D::VectorToRegister32;
         else if (move == 0x9e670000 || move == 0x1e270000)
@@ -427,6 +449,8 @@ Instruction decode(uint32_t raw) {
         i.op = Op::LoadStore;
     else if ((raw & 0xfff00000) == 0xd5300000 || (raw & 0xfff00000) == 0xd5100000)
         i.op = Op::System;
+    else if (cache_profile::maintenance(raw))
+        i.op = Op::Cache;
     else if ((raw & 0x3f000000) == 0x08000000 || (raw & 0xfffff0ff) == 0xd503305f)
         i.op = Op::Exclusive;
     else if ((raw & 0x0e000000) == 0x0c000000)

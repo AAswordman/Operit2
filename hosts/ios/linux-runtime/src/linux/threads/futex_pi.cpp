@@ -26,6 +26,9 @@ struct Waiter {
     std::optional<FutexPiTimeout> timeout;
     std::weak_ptr<PiLock> lock;
     bool queued = false;
+    std::optional<Key> source;
+    Key target{};
+    bool requeue_pi = false;
 };
 struct PiLock {
     Key key;
@@ -162,6 +165,18 @@ bool ordinary_waiters(const Scheduler &scheduler, Key key) {
             return true;
     }
     return false;
+}
+std::function<void()> wait_cleanup(const std::shared_ptr<State> &state,
+                                    const std::shared_ptr<Waiter> &waiter) {
+    std::weak_ptr<State> weak_state = state;
+    std::weak_ptr<Waiter> weak_waiter = waiter;
+    return [weak_state, weak_waiter] {
+        std::lock_guard<std::recursive_mutex> guard(registry().mutex);
+        auto owner = weak_state.lock();
+        auto pending = weak_waiter.lock();
+        if (owner && pending)
+            detach(*owner, pending);
+    };
 }
 void finish_error(State &state, const std::shared_ptr<Waiter> &waiter, int error) {
     const uint32_t tid = waiter->tid;
@@ -306,16 +321,8 @@ int64_t futex_pi_lock(Scheduler &scheduler, Memory &memory, uint64_t address, bo
     auto lock = found == state->locks.end() ? std::make_shared<PiLock>(PiLock{key, owner, {}})
                                             : found->second;
     auto waiter = std::make_shared<Waiter>(Waiter{task.tid, task.pid, {&memory, address, private_futex},
-                                                timeout, lock, false});
-    std::weak_ptr<State> weak_state = state;
-    std::weak_ptr<Waiter> weak_waiter = waiter;
-    std::function<void()> cleanup = [weak_state, weak_waiter] {
-        std::lock_guard<std::recursive_mutex> guard(registry().mutex);
-        auto state = weak_state.lock();
-        auto waiter = weak_waiter.lock();
-        if (state && waiter)
-            detach(*state, waiter);
-    };
+                                                timeout, lock, false, {}, {}, false});
+    auto cleanup = wait_cleanup(state, waiter);
     std::function<std::optional<int64_t>()> clock_poll;
     if (timeout && timeout->realtime) {
         // Only the absolute clock is sampled. Lock acquisition is exclusively
@@ -340,6 +347,160 @@ int64_t futex_pi_lock(Scheduler &scheduler, Memory &memory, uint64_t address, bo
     return 0;
 } catch (const std::bad_alloc &) {
     guest_error(12);
+}
+int64_t futex_wait_requeue_pi(Scheduler &scheduler, Memory &memory, uint64_t source,
+                              uint32_t expected, uint64_t target, bool private_futex,
+                              std::optional<FutexPiTimeout> timeout,
+                              const std::function<bool()> &interrupted) try {
+    const Memory::AccessGuard access(memory);
+    std::lock_guard<std::recursive_mutex> guard(registry().mutex);
+    if (source == target || (source & 3))
+        guest_error(22);
+    require_word(memory, target);
+    if (!memory.accessible(source, 4, read_perm))
+        guest_error(14);
+    const Key from = key_of(scheduler.futex_address(memory, source, private_futex));
+    const Key to = key_of(scheduler.futex_address(memory, target, private_futex));
+    if (from == to)
+        guest_error(22);
+    futex_pi_check_non_pi(scheduler, {from.second, from.first});
+    if (uint32_t(memory.load(source, 4)) != expected)
+        guest_error(11);
+    if (expired(timeout))
+        guest_error(110);
+    auto state = state_for(scheduler);
+    auto &task = scheduler.current();
+    if (!task.tid || task.tid > futex_tid_mask || task.state != Task::State::Runnable ||
+        task.wait_cleanup || state->waiting.count(task.tid))
+        guest_error(22);
+    if (task.signals.restart) {
+        task.signals.restart->restartable = true;
+        task.signals.restart->always_restart = true;
+    }
+    if (interrupted && interrupted())
+        guest_error(4);
+    auto waiter = std::make_shared<Waiter>(Waiter{task.tid, task.pid,
+                                                {&memory, target, private_futex}, timeout, {}, false, {}, {}, false});
+    waiter->source = from;
+    waiter->target = to;
+    waiter->requeue_pi = true;
+    auto cleanup = wait_cleanup(state, waiter);
+    std::function<std::optional<int64_t>()> clock_poll;
+    if (timeout && timeout->realtime)
+        clock_poll = [timeout]() -> std::optional<int64_t> {
+            return expired(timeout) ? std::optional<int64_t>(-110) : std::nullopt;
+        };
+    const auto deadline = monotonic_deadline(timeout);
+    state->waiting.emplace(task.tid, waiter);
+    waiter->queued = true;
+    scheduler.wait_futex(from.second, UINT32_MAX, deadline, from.first);
+    task.futex_requeue_pi = true;
+    task.poll = std::move(clock_poll);
+    task.wait_cleanup = std::move(cleanup);
+    return 0;
+} catch (const std::bad_alloc &) {
+    guest_error(12);
+}
+int64_t futex_cmp_requeue_pi(Scheduler &scheduler, Memory &memory, uint64_t source,
+                             uint64_t target, bool private_futex, uint32_t wake_count,
+                             uint32_t requeue_count, uint32_t expected) try {
+    const Memory::AccessGuard access(memory);
+    std::lock_guard<std::recursive_mutex> guard(registry().mutex);
+    if (source == target || (source & 3) || wake_count != 1 || int32_t(requeue_count) < 0)
+        guest_error(22);
+    require_word(memory, target);
+    if (!memory.accessible(source, 4, read_perm))
+        guest_error(14);
+    const Key from = key_of(scheduler.futex_address(memory, source, private_futex));
+    const Key to = key_of(scheduler.futex_address(memory, target, private_futex));
+    if (from == to)
+        guest_error(22);
+    if (uint32_t(memory.load(source, 4)) != expected)
+        guest_error(11);
+    futex_pi_check_non_pi(scheduler, {from.second, from.first});
+    // Validate a target read even when the source queue is empty, as Linux does.
+    (void)memory.load(target, 4);
+    auto state = state_for(scheduler);
+    uint64_t moved = 0;
+    while (moved < uint64_t(requeue_count) + 1) {
+        const auto tid = scheduler.first_futex_waiter({from.second, from.first});
+        if (!tid)
+            break;
+        auto *task = scheduler.lookup(tid);
+        auto found = state->waiting.find(tid);
+        // Mixed operations and wrong target keys are errors at the offending
+        // entry. Earlier successful transfers remain committed, as on Linux.
+        if (!task->futex_requeue_pi || found == state->waiting.end() ||
+            !found->second->source || *found->second->source != from || found->second->target != to)
+            guest_error(22);
+        auto waiter = found->second;
+        if (expired(waiter->timeout)) {
+            finish_error(*state, waiter, 110);
+            continue;
+        }
+        const uint32_t value = uint32_t(memory.load(target, 4));
+        const uint32_t owner = value & futex_tid_mask;
+        auto current_lock = state->locks.find(to);
+        if (owner == tid)
+            guest_error(35);
+        if (ordinary_waiters(scheduler, to) ||
+            (current_lock != state->locks.end() && current_lock->second->owner != owner))
+            guest_error(22);
+        if (!owner) {
+            if (current_lock != state->locks.end())
+                guest_error(22);
+            memory.store(target, tid | (value & futex_owner_died) |
+                                     (requeue_count ? futex_waiters : 0), 4);
+            // Never report a successful wait without committing its ownership.
+            detach(*state, waiter);
+            scheduler.wake(tid, 0);
+        } else {
+            memory.store(target, value | futex_waiters, 4);
+            const auto *owner_task = scheduler.lookup(owner);
+            if (!owner_task || owner_task->state == Task::State::Exited)
+                guest_error(3);
+            if (cycle(*state, owner, tid))
+                guest_error(35);
+            auto lock = current_lock == state->locks.end()
+                            ? std::make_shared<PiLock>(PiLock{to, owner, {}}) : current_lock->second;
+            lock->waiters.push_back(waiter);
+            try {
+                state->locks.emplace(to, lock);
+            } catch (...) {
+                lock->waiters.pop_back();
+                throw;
+            }
+            waiter->lock = lock;
+            waiter->source.reset();
+            task->futex = task->futex_space = 0;
+            task->futex_requeue_pi = false;
+            if (task->signals.restart)
+                task->signals.restart->always_restart = false;
+        }
+        ++moved;
+    }
+    return int64_t(moved);
+} catch (const std::bad_alloc &) {
+    guest_error(12);
+}
+int64_t futex_pi_interrupt(Scheduler &scheduler, Task &task, int64_t result) {
+    if (result != -4)
+        return result;
+    std::lock_guard<std::recursive_mutex> guard(registry().mutex);
+    auto state = registry().states.find(&scheduler);
+    if (state == registry().states.end())
+        return result;
+    auto found = state->second->waiting.find(task.tid);
+    if (found == state->second->waiting.end() || !found->second->requeue_pi)
+        return result;
+    const bool before_requeue = bool(found->second->source);
+    if (task.signals.restart) {
+        task.signals.restart->always_restart = before_requeue;
+        task.signals.restart->restartable = before_requeue;
+        if (!before_requeue)
+            task.signals.restart->interrupted = false;
+    }
+    return before_requeue ? -4 : -11;
 }
 int64_t futex_pi_unlock(Scheduler &scheduler, Memory &memory, uint64_t address, bool private_futex) try {
     const Memory::AccessGuard access(memory);

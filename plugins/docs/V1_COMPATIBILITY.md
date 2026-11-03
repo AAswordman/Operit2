@@ -111,10 +111,10 @@ All functions in the copied v1 `Files` namespace have signature adapters:
 Environment interpretation follows the old API, not the OS running Operit2:
 
 - Omitted environment means the documented v1 `android` environment.
-- Linux absolute paths map to `/mnt/linux`.
+- Linux absolute paths map to `/virtual/linux`.
 - Android `/sdcard` and `/data` use the existing VFS roots.
 - `/storage/emulated/0` maps to `/sdcard`.
-- `/app` and `/mnt` paths returned by current resource/config APIs remain VFS paths.
+- `/operitapp` and `/virtual` paths returned by current resource/config APIs remain VFS paths.
 - Unmapped Android roots and unsupported environment names are explicit errors.
 
 The SDK-internal v1 compatibility layer executes the supported Linux file operations
@@ -227,7 +227,7 @@ dispatch there:
 The existing v1 runtime adapter also translates the executing container's old
 `/data/user/0/com.ai.assistance.operit/files/toolpkg_cache/<package>-*` namespace
 (and the `/data/data` spelling). Concrete hexadecimal cache suffixes are accepted.
-It reads the already extracted `/app/data/cache/toolpkg` tree through canonical
+It reads the already extracted `/operitapp/data/cache/toolpkg` tree through canonical
 Files APIs and imports it through the internal compatibility file adapter into the terminal's existing
 `/tmp/operit-v1/toolpkg` directory. File calls using these legacy addresses and
 terminal commands then access that same copy. No host bindings or mounts are added.

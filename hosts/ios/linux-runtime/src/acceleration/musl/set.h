@@ -1,6 +1,7 @@
 #pragma once
 #include "acceleration/fixed_execution.h"
 #include "acceleration/scalar_ops.h"
+#include "cpu/aarch64/cache.h"
 
 namespace operit::arm64::fixed {
 inline void set(FixedExecution &c) {
@@ -262,7 +263,7 @@ L184b8:
     {
         if (!c.begin<0x184b8, 4>())
             return;
-        x[5] = 0x10;
+        x[5] = cache_profile::dczid_el0;
         x[5] = x[5] & 0x1f;
         scalar::arithmetic<64>(cpu, x[5], 0x4, decoded::set_flags | decoded::subtract);
         if (scalar::condition(cpu, 1)) {
