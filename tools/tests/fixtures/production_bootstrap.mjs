@@ -1,5 +1,6 @@
 import { readSdkScript, composeContextScript, composeManifest, composeSource, wrapComposeScript } from "../../runtime/compose_scripts.mjs";
 import assert from 'node:assert/strict';
+import { generatedToolsSource } from './scoped_host_runtime.mjs';
 import { readFileSync } from 'node:fs';
 const root=new URL('../../../',import.meta.url);
 const bridge='core/crates/plugin/javascript-bridge/src/javascript/';
@@ -39,13 +40,12 @@ export function productionBootstrap() {
     embedded(sdk + 'toolpkg/ToolPkgApiRuntimeScript.rs'),
     source(bridge + 'JsToolPkgIpc.script.js'),
     embedded(sdk + 'toolpkg/ToolPkgRegistrationBridge.rs').replace('__OPERIT_TOOLPKG_REGISTRATION_ONLY__', 'false'),
-    '', '', // These tests exercise host operations, not generated Tools or external libraries.
+    generatedToolsSource(), '', // Keep generated Tools in the complete bootstrap; omit utility libraries.
     source(bridge + 'PluginConfig.script.js'),
     source(bridge + 'RuntimeContext.script.js'),
     lazyBootstrapLibraries(),
     source(sdk + 'js_sdk/toolpkg_route_runtime.js') + '\n' +
-      source(sdk + 'compat/v1/internal_runtime.js') + '\n' +
-      source(sdk + 'JsExecutionRuntimeBridge.script.js'),
+      source(sdk + 'JsExecutionRuntimeBridge.script.js') + '\n__operitInstallV1Runtime(globalThis);',
   ];
   let position = 0;
   const result = text.slice(start, end).replace(/\{\{|\}\}|\{\}/g, token => {

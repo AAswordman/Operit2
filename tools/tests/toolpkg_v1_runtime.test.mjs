@@ -132,7 +132,7 @@ test('internal v1 compatibility selects Windows, Linux and OHOS policies and APK
 test('Rust bootstrap includes the adapter and host capabilities expose OHOS', () => {
   assert.match(source('core/crates/plugin/codegen/src/runtime_bindings.rs'), /"compat\/v1\/runtime\.js"/);
   assert.match(source('core/crates/plugin/codegen/src/runtime_bindings.rs'), /"compat\/v1\/internal_runtime\.js"/);
-  assert.match(source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs'), /compat\/v1\/internal_runtime\.js/);
+  assert.doesNotMatch(source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs'), /compat\/v1\/internal_runtime\.js/);
   assert.doesNotMatch(source('core/crates/plugin/sdk/src/compat/v1/runtime.js'), /v1_runtime:/);
   assert.equal(existsSync(join(root, 'plugins/packages/buildin/v1_runtime.ts')), false);
   assert.match(source('core/crates/tool/services/src/tools/packTool/RuntimePackageManager.rs'), /"platform\.ohos"\.to_string\(\),\s*ConditionValue::Bool\(platformName == "ohos"\)/);

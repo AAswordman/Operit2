@@ -107,6 +107,9 @@ test('production bootstrap exposes public wrappers without the removed global ob
     assert.equal(typeof context[name], 'function');
   }
   for (const name of ['CryptoJS', 'Jimp', 'pako', 'Java', 'Kotlin', 'ToolPkg']) assert.ok(context[name]);
+  assert.equal(typeof context.__operitV1InternalRuntime.create_session, 'function');
+  assert.equal(typeof context.Tools.System.terminal.create, 'function');
+  assert.notEqual(context.Tools.System.terminal.create, context.__operitCanonicalTools.System.terminal.create);
 });
 
 /** Confirms crypto and compression preserve application strings and throw actual host failures. */
