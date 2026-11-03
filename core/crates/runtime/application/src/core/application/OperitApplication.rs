@@ -5,6 +5,7 @@ use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::PreferenceSpaceMerge;
 use crate::data::preferences::ThemeConfigManager::ThemeConfigManager;
@@ -26,6 +27,9 @@ use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost
 #[cfg(feature = "javascript")]
 use operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
+use operit_providers::market::MarketStatsApiService::{
+    setDefaultGitHubTokenSource, GitHubTokenSource,
+};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMAIN};
@@ -95,6 +99,18 @@ use operit_util::AppLogger::AppLogger;
 use operit_util::OperitPaths;
 
 static HOST_MANAGER: OnceLock<Mutex<Option<HostManager>>> = OnceLock::new();
+
+/// Gives marketplace clients the access token of the saved GitHub login.
+struct GitHubLoginTokenSource;
+
+impl GitHubTokenSource for GitHubLoginTokenSource {
+    /// Reads the token on every request so signing in or out applies immediately.
+    fn current_access_token(&self) -> Result<Option<String>, String> {
+        GitHubAuthPreferences::getInstance()
+            .getCurrentAccessToken()
+            .map_err(|error| error.to_string())
+    }
+}
 
 /// Owns process-wide runtime initialization and exposes host-facing application operations.
 pub struct OperitApplication {
@@ -168,6 +184,7 @@ impl OperitApplication {
         if let Some(httpHost) = hostManager.httpHost.clone() {
             setDefaultHttpHost(httpHost);
         }
+        setDefaultGitHubTokenSource(Arc::new(GitHubLoginTokenSource));
         if let Some(webSocketHost) = hostManager.webSocketHost.clone() {
             setDefaultWebSocketHost(webSocketHost);
         }

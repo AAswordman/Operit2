@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData, TimeUtils::currentTimeMillis};
 use operit_util::AppLogger::AppLogger;
@@ -503,24 +503,35 @@ pub struct GitHubUser {
 
 // ---- Service ----
 
+/// Supplies the access token of the signed-in GitHub account.
+///
+/// GitHub login state belongs to the parent runtime, which installs the source
+/// once at startup. Clients read it for every request, so signing in or out
+/// applies to clients that already exist.
+pub trait GitHubTokenSource: Send + Sync {
+    /// Returns the current access token, or `None` when no account is signed in.
+    fn current_access_token(&self) -> Result<Option<String>, String>;
+}
+
+static GITHUB_TOKEN_SOURCE: OnceLock<Arc<dyn GitHubTokenSource>> = OnceLock::new();
+
+/// Installs the process-wide GitHub token source shared by every marketplace client.
+#[allow(non_snake_case)]
+pub fn setDefaultGitHubTokenSource(source: Arc<dyn GitHubTokenSource>) {
+    let _ = GITHUB_TOKEN_SOURCE.set(source);
+}
+
 #[derive(Clone)]
 /// Client for static marketplace metadata and authenticated marketplace APIs.
 pub struct MarketStatsApiService {
     http_host: Arc<dyn HttpHost>,
-    github_token: Option<String>,
 }
 
 impl MarketStatsApiService {
-    /// Creates a marketplace API client without a GitHub token.
+    /// Creates a marketplace API client that signs requests with the installed GitHub login.
     pub fn new() -> Self {
-        Self::new_with_github_token(None)
-    }
-
-    /// Creates a marketplace API client with an optional GitHub token.
-    pub fn new_with_github_token(github_token: Option<String>) -> Self {
         Self {
             http_host: operit_host_api::HostManager::defaultHttpHost(),
-            github_token,
         }
     }
 
@@ -1138,6 +1149,16 @@ impl MarketStatsApiService {
         serde_json::from_str::<T>(&body).map_err(|e| e.to_string())
     }
 
+    /// Reads the signed-in GitHub account's access token from the installed source.
+    fn github_token(&self) -> Result<Option<String>, String> {
+        let source = GITHUB_TOKEN_SOURCE
+            .get()
+            .ok_or_else(|| "GitHub token source is not installed".to_string())?;
+        Ok(source
+            .current_access_token()?
+            .filter(|token| !token.trim().is_empty()))
+    }
+
     fn send_github(
         &self,
         method: &str,
@@ -1145,11 +1166,7 @@ impl MarketStatsApiService {
         mut headers: Vec<(String, String)>,
         body: Vec<u8>,
     ) -> Result<HttpResponseData, String> {
-        if let Some(token) = self
-            .github_token
-            .as_deref()
-            .filter(|t| !t.trim().is_empty())
-        {
+        if let Some(token) = self.github_token()? {
             headers.push(("Authorization".to_string(), format!("Bearer {token}")));
         }
         self.request(method, url, headers, body, true)
@@ -1170,13 +1187,10 @@ impl MarketStatsApiService {
                 format!("Bearer {}", auth.session),
             ));
         } else if url.ends_with("/auth/github") {
-            if let Some(token) = self
-                .github_token
-                .as_deref()
-                .filter(|t| !t.trim().is_empty())
-            {
-                headers.push(("Authorization".to_string(), format!("Bearer {token}")));
-            }
+            let token = self
+                .github_token()?
+                .ok_or_else(|| "GitHub login required".to_string())?;
+            headers.push(("Authorization".to_string(), format!("Bearer {token}")));
         }
         let resp = self.request(method, url, headers, body, true)?;
         let body = body_text(&resp.body);

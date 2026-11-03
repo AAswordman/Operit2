@@ -114,6 +114,12 @@ Examples:
   local-model-side requests for model data roots, installed registry snapshots,
   registry persistence, and available manifests. `operit-runtime` owns the
   concrete implementation.
+- `operit-providers::market::MarketStatsApiService::GitHubTokenSource` defines
+  the request for the signed-in GitHub account's access token. Marketplace
+  clients created by the proxy or the CLI read it for every request, so sign-in
+  and sign-out apply to existing clients. `operit-runtime` installs the
+  implementation backed by `GitHubAuthPreferences` when it creates
+  `OperitApplication`.
 - `operit-plugin-sdk::javascript::JsExecutionHost` defines the complete
   JavaScript-to-application execution boundary. `operit-tools` implements it
   with the real tool, package, resource, and IPC logic.
