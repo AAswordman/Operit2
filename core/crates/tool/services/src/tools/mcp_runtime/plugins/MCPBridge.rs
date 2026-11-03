@@ -734,79 +734,25 @@ struct ResolvedRuntimeCommand {
     args: Vec<String>,
 }
 
+/// Passes the configured stdio command to the host resolver verbatim instead
+/// of rewriting it through a managed-runtime allowlist. Explicit paths surface
+/// through `executablePath`; bare names rely on each host's command resolution
+/// (PATH lookup on desktop, rootfs PATH inside proot/iSH environments).
 #[allow(non_snake_case)]
 fn resolveMcpRuntimeCommand(
     command: &str,
     args: &[String],
 ) -> Result<ResolvedRuntimeCommand, String> {
-    let commandName = command
-        .trim()
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match commandName.as_str() {
-        "node" | "node.exe" => Ok(ResolvedRuntimeCommand {
-            program: ManagedRuntimeProgram::Node,
-            executablePath: pathOverride(command, &["node", "node.exe"]),
-            args: args.to_vec(),
-        }),
-        "python" | "python.exe" | "python3" => Ok(ResolvedRuntimeCommand {
-            program: ManagedRuntimeProgram::Python,
-            executablePath: pathOverride(command, &["python", "python.exe", "python3"]),
-            args: args.to_vec(),
-        }),
-        "pnpm" | "pnpm.cmd" => Ok(ResolvedRuntimeCommand {
-            program: ManagedRuntimeProgram::Pnpm,
-            executablePath: pathOverride(command, &["pnpm", "pnpm.cmd"]),
-            args: args.to_vec(),
-        }),
-        "npx" | "npx.cmd" => {
-            let filteredArgs = args
-                .iter()
-                .filter(|arg| arg.as_str() != "-y" && arg.as_str() != "--yes")
-                .cloned()
-                .collect::<Vec<_>>();
-            let mut runtimeArgs = vec!["dlx".to_string()];
-            runtimeArgs.extend(filteredArgs);
-            Ok(ResolvedRuntimeCommand {
-                program: ManagedRuntimeProgram::Pnpm,
-                executablePath: None,
-                args: runtimeArgs,
-            })
-        }
-        "uv" | "uv.exe" => Ok(ResolvedRuntimeCommand {
-            program: ManagedRuntimeProgram::Uv,
-            executablePath: pathOverride(command, &["uv", "uv.exe"]),
-            args: args.to_vec(),
-        }),
-        "uvx" | "uvx.exe" => {
-            let mut runtimeArgs = vec!["tool".to_string(), "run".to_string()];
-            runtimeArgs.extend(args.iter().cloned());
-            Ok(ResolvedRuntimeCommand {
-                program: ManagedRuntimeProgram::Uv,
-                executablePath: None,
-                args: runtimeArgs,
-            })
-        }
-        _ => Err(format!(
-            "Unsupported MCP command '{command}'. Managed runtime supports node, python, uv, pnpm, npx, and uvx."
-        )),
+    let expanded = expandPath(command).trim().to_string();
+    if expanded.is_empty() {
+        return Err("MCP command must not be empty".to_string());
     }
-}
-
-#[allow(non_snake_case)]
-fn pathOverride(command: &str, wellKnownNames: &[&str]) -> Option<String> {
-    let expanded = expandPath(command);
-    let trimmed = expanded.trim();
-    if wellKnownNames
-        .iter()
-        .any(|name| trimmed.eq_ignore_ascii_case(name))
-    {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    let isExplicitPath = expanded.contains('/') || expanded.contains('\\');
+    Ok(ResolvedRuntimeCommand {
+        program: ManagedRuntimeProgram::Command(expanded.clone()),
+        executablePath: isExplicitPath.then(|| expanded.clone()),
+        args: args.to_vec(),
+    })
 }
 
 #[allow(non_snake_case)]
@@ -818,6 +764,10 @@ fn buildRuntimeEnv(service: &RegisteredService) -> BTreeMap<String, String> {
             .or_insert_with(|| format!("{cwd}/.npm-cache"));
     }
     env.entry("npm_config_prefer_offline".to_string())
+        .or_insert_with(|| "true".to_string());
+    // npx cold-cache install prompts hang headless stdio servers; npm honors
+    // this override instead of an interactive confirmation.
+    env.entry("npm_config_yes".to_string())
         .or_insert_with(|| "true".to_string());
     env.entry("UV_LINK_MODE".to_string())
         .or_insert_with(|| "copy".to_string());
@@ -1735,6 +1685,88 @@ mod startup_tests {
         assert_eq!(response["success"], false);
         assert_eq!(response["error"]["message"], serverError.to_string());
         assert_eq!(writes.lock().unwrap().len(), 1);
+    }
+
+    /// Passes every configured command through to the host command resolver
+    /// verbatim, so native stdio MCP servers start without an allowlist.
+    #[test]
+    fn commandsResolveThroughHostCommandResolverVerbatim() {
+        let runtime =
+            resolveMcpRuntimeCommand("wordcraft-cli", &["mcp".to_string()]).unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Command("wordcraft-cli".into()));
+        assert_eq!(runtime.executablePath, None);
+        assert_eq!(runtime.args, vec!["mcp".to_string()]);
+
+        let runtime = resolveMcpRuntimeCommand("node", &["server.js".to_string()]).unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Command("node".into()));
+        assert_eq!(runtime.executablePath, None);
+
+        let runtime = resolveMcpRuntimeCommand(
+            "npx",
+            &["-y".to_string(), "pkg".to_string()],
+        )
+        .unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Command("npx".into()));
+        assert_eq!(runtime.args, vec!["-y".to_string(), "pkg".to_string()]);
+
+        let runtime = resolveMcpRuntimeCommand("uvx", &["ruff".to_string()]).unwrap();
+        assert_eq!(runtime.program, ManagedRuntimeProgram::Command("uvx".into()));
+        assert_eq!(runtime.args, vec!["ruff".to_string()]);
+    }
+
+    /// Passes explicit executable paths straight through for hosts that validate
+    /// and launch them directly.
+    #[test]
+    fn explicitCommandPathsBypassPathLookup() {
+        let runtime = resolveMcpRuntimeCommand(
+            "/opt/tools/wordcraft-cli",
+            &["mcp".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            runtime.program,
+            ManagedRuntimeProgram::Command("/opt/tools/wordcraft-cli".into())
+        );
+        assert_eq!(
+            runtime.executablePath,
+            Some("/opt/tools/wordcraft-cli".to_string())
+        );
+    }
+
+    /// Rejects blank commands before they reach the host resolver.
+    #[test]
+    fn blankCommandsStayRejected() {
+        assert!(resolveMcpRuntimeCommand("   ", &[]).is_err());
+    }
+
+    /// Auto-confirms npm-family install prompts so cold-cache npx startups do
+    /// not hang a headless stdio server waiting on an invisible confirmation.
+    #[test]
+    fn runtimeEnvAutoConfirmsNpmInstallPrompts() {
+        let service = RegisteredService {
+            name: "test-env".to_string(),
+            serviceType: "stdio".to_string(),
+            command: "npx".to_string(),
+            args: Vec::new(),
+            cwd: None,
+            endpoint: None,
+            connectionType: None,
+            bearerToken: None,
+            headers: BTreeMap::new(),
+            description: String::new(),
+            env: BTreeMap::from([(
+                "npm_config_yes".to_string(),
+                "false".to_string(),
+            )]),
+            startupGate: Arc::new(tokio::sync::Mutex::new(())),
+        };
+        let env = buildRuntimeEnv(&service);
+        assert_eq!(env["npm_config_yes"], "false");
+        assert_eq!(env["npm_config_prefer_offline"], "true");
+
+        let mut overrideService = service.clone();
+        overrideService.env = BTreeMap::new();
+        assert_eq!(buildRuntimeEnv(&overrideService)["npm_config_yes"], "true");
     }
 }
 
