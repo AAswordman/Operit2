@@ -12,9 +12,13 @@ void main() {
   final packages = ScreenRouteRegistry.routeIdOf(
     ScreenRouteRegistry.packageManager,
   );
+  final market = ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.market);
+  final detail = ScreenRouteRegistry.routeIdOf(
+    const ExtensionDetailScreenRoute(kind: '', id: ''),
+  );
   final model = AppNavigationModel(
     routes: <RouteSpec>[
-      for (final routeId in <String>[chat, packages])
+      for (final routeId in <String>[chat, packages, market, detail])
         RouteSpec(routeId: routeId, runtime: RouteRuntime.native),
     ],
     navigationEntries: const <NavigationEntrySpec>[],
@@ -27,8 +31,12 @@ void main() {
   }
 
   test('a tab link shows the page the package sidebar entry opened', () {
-    expect(page(packages, {'initialTab': 'plugins'}), page(packages));
-    expect(page(packages, {'initialTab': 'skills'}), isNot(page(packages)));
+    expect(page(packages, {'initialTab': 'extensions'}), page(packages));
+    expect(page(packages, {'initialTab': 'devices'}), isNot(page(packages)));
+  });
+
+  test('the market entry shares the package page on its market tab', () {
+    expect(page(market), page(packages, {'initialTab': 'market'}));
   });
 
   test('activating another conversation keeps the single chat page', () {
@@ -36,5 +44,11 @@ void main() {
       page(chat, {'conversationActivatedAt': 1}),
       page(chat, {'conversationActivatedAt': 2}),
     );
+  });
+
+  test('reopening a detail keeps its page; another extension gets its own', () {
+    final opened = page(detail, {'kind': 'toolpkg', 'id': 'a'});
+    expect(page(detail, {'kind': 'toolpkg', 'id': 'a'}), opened);
+    expect(page(detail, {'kind': 'toolpkg', 'id': 'b'}), isNot(opened));
   });
 }

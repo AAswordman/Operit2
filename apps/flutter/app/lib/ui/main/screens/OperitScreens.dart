@@ -7,9 +7,13 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../features/chat/screens/AIChatScreen.dart';
 import '../../features/packages/components/PackageTab.dart';
+import '../../features/packages/market/MarketStatsSupport.dart';
+import '../../features/packages/screens/ExtensionDetailScreen.dart';
+import '../../features/packages/screens/MarketCreatorScreen.dart';
+import '../../features/packages/screens/MarketEntryDetailScreen.dart';
 import '../../features/packages/screens/PackageManagerScreen.dart';
+import '../../features/packages/screens/StoreBrowseScreen.dart';
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
-import '../../features/packages/screens/UnifiedMarketScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
 import '../../features/settings/screens/SettingsScreen.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -70,7 +74,7 @@ class AiChatScreenRoute extends OperitScreen {
 }
 
 class PackageManagerScreenRoute extends OperitScreen {
-  const PackageManagerScreenRoute({this.initialTab = PackageTab.plugins})
+  const PackageManagerScreenRoute({this.initialTab = PackageTab.extensions})
     : super(routeTypeName: 'PackageManager', title: '包管理', keepAlive: true);
 
   final PackageTab initialTab;
@@ -91,38 +95,120 @@ class PackageManagerScreenRoute extends OperitScreen {
   }
 }
 
+/// The sidebar market entry; it shows the extension center's market section
+/// and shares that page with the package manager route.
 class MarketScreenRoute extends OperitScreen {
-  const MarketScreenRoute({
-    this.initialTab = MarketHomeTab.all,
-    this.categoryId,
-    this.categoryName,
-  }) : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
+  const MarketScreenRoute()
+    : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
 
-  final MarketHomeTab initialTab;
+  @override
+  String? stableScreenKey() {
+    return 'PackageManager:${PackageTab.market.name}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const PackageManagerScreen(initialTab: PackageTab.market);
+  }
+}
+
+class ExtensionDetailScreenRoute extends OperitScreen {
+  const ExtensionDetailScreenRoute({required this.kind, required this.id})
+    : super(routeTypeName: 'ExtensionDetail', title: '扩展详情');
+
+  final String kind;
+  final String id;
+
+  @override
+  Map<String, Object?> routeArgs() {
+    return <String, Object?>{'kind': kind, 'id': id};
+  }
+
+  @override
+  String? stableScreenKey() {
+    return 'ExtensionDetail:$kind:$id';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ExtensionDetailScreen(kind: kind, id: id);
+  }
+}
+
+class MarketEntryDetailScreenRoute extends OperitScreen {
+  const MarketEntryDetailScreenRoute({required this.entryId})
+    : super(routeTypeName: 'MarketEntryDetail', title: '市场详情');
+
+  final String entryId;
+
+  @override
+  Map<String, Object?> routeArgs() {
+    return <String, Object?>{'entryId': entryId};
+  }
+
+  @override
+  String? stableScreenKey() {
+    return 'MarketEntryDetail:$entryId';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MarketEntryDetailScreen(entryId: entryId);
+  }
+}
+
+/// Full marketplace listing for one sort, type or category.
+class MarketBrowseScreenRoute extends OperitScreen {
+  const MarketBrowseScreenRoute({
+    required this.heading,
+    this.type,
+    this.categoryId,
+    this.sort = MarketSortOption.updated,
+  }) : super(routeTypeName: 'MarketBrowse', title: '市场');
+
+  final String heading;
+  final String? type;
   final String? categoryId;
-  final String? categoryName;
+  final MarketSortOption sort;
 
   @override
   Map<String, Object?> routeArgs() {
     return <String, Object?>{
-      'initialTab': initialTab.name,
-      if (categoryId != null) 'categoryId': categoryId,
-      if (categoryName != null) 'categoryName': categoryName,
+      'heading': heading,
+      'type': ?type,
+      'categoryId': ?categoryId,
+      'sort': sort.name,
     };
   }
 
   @override
   String? stableScreenKey() {
-    return 'Market:${initialTab.name}:${categoryId ?? 'root'}';
+    return 'MarketBrowse:${type ?? ''}:${categoryId ?? ''}:${sort.name}';
   }
 
   @override
   Widget build(BuildContext context) {
-    return UnifiedMarketScreen(
-      initialTab: initialTab,
+    return StoreBrowseScreen(
+      heading: heading,
+      type: type,
       categoryId: categoryId,
-      categoryName: categoryName,
+      initialSort: sort,
     );
+  }
+}
+
+class MarketCreatorScreenRoute extends OperitScreen {
+  const MarketCreatorScreenRoute()
+    : super(routeTypeName: 'MarketCreator', title: '创作者中心');
+
+  @override
+  String? stableScreenKey() {
+    return 'MarketCreator';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const MarketCreatorScreen();
   }
 }
 
