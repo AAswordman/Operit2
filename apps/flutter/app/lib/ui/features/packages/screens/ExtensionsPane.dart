@@ -491,10 +491,12 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
   }
 
   Widget _diagnosticAction(core_proxy.ExtensionCatalogDiagnostic diagnostic) {
-    if (diagnostic.packageKind == 'skill') {
-      return const Tooltip(
-        message: '技能扫描错误会在目录刷新时重新计算',
-        child: Icon(Icons.info_outline_rounded),
+    if (!diagnostic.canDelete) {
+      return Tooltip(
+        message: diagnostic.packageKind == 'skill'
+            ? '技能扫描错误会在目录刷新时重新计算'
+            : '此加载错误没有可删除的安装来源',
+        child: const Icon(Icons.info_outline_rounded),
       );
     }
     if (_controller.isBusy('diagnostic:${diagnostic.sourcePath}')) {
@@ -504,7 +506,7 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
       );
     }
     return IconButton(
-      tooltip: '删除失败记录',
+      tooltip: '删除失败来源',
       onPressed: () => _run(() => _controller.deleteDiagnostic(diagnostic)),
       icon: const Icon(Icons.delete_outline_rounded),
     );
@@ -665,7 +667,7 @@ class _AttentionBlock extends StatelessWidget {
                   color: theme.colorScheme.error,
                 ),
                 title: '${diagnostics.length} 个文件加载失败',
-                subtitle: '它们不会出现在列表里，查看原因或删除失败记录',
+                subtitle: '查看加载原因，可删除损坏的安装来源',
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: onShowDiagnostics,
               ),

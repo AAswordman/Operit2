@@ -81,6 +81,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('load diagnostics only offer deletion for installed sources', (
+    tester,
+  ) async {
+    final bridge = _CatalogBridge();
+    bridge.diagnostics.addAll(const <core_proxy.ExtensionCatalogDiagnostic>[
+      core_proxy.ExtensionCatalogDiagnostic(
+        sourcePath: 'assets/plugins/buildin/failed.toolpkg',
+        packageId: null,
+        displayName: 'Bundled load failure',
+        code: 'toolpkg_load_failed',
+        message: 'Syntax error',
+        packageKind: 'toolpkg',
+        canDelete: false,
+      ),
+      core_proxy.ExtensionCatalogDiagnostic(
+        sourcePath: '/runtime/extensions/device/packages/broken.toolpkg',
+        packageId: null,
+        displayName: 'Broken installed archive',
+        code: 'toolpkg_load_failed',
+        message: 'Invalid archive',
+        packageKind: 'toolpkg',
+        canDelete: true,
+      ),
+    ]);
+    await tester.pumpWidget(_manager(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2 个文件加载失败'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('此加载错误没有可删除的安装来源'), findsOneWidget);
+    expect(find.byTooltip('删除失败来源'), findsOneWidget);
+    await tester.tap(find.byTooltip('删除失败来源'));
+    await tester.pumpAndSettle();
+
+    expect(bridge.deletedDiagnostics, <String>[
+      '/runtime/extensions/device/packages/broken.toolpkg',
+    ]);
+    expect(find.text('Broken installed archive'), findsNothing);
+    expect(find.text('Bundled load failure'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('devices pane separates shared and device-only extensions', (
     tester,
   ) async {
@@ -173,6 +215,8 @@ class _CatalogBridge extends OperitRuntimeBridge {
   bool enabled = false;
   final imports = <String>[];
   final scopeMoves = <String>[];
+  final diagnostics = <core_proxy.ExtensionCatalogDiagnostic>[];
+  final deletedDiagnostics = <String>[];
   void Function(bool enabled)? onEnabledChanged;
 
   @override
@@ -225,6 +269,12 @@ class _CatalogBridge extends OperitRuntimeBridge {
       case 'getExtensionCatalogSnapshot':
         snapshotReads += 1;
         return _snapshot().toJson();
+      case 'deleteExtensionCatalogDiagnostic':
+        final diagnostic = (request.args as Map)['diagnostic'] as Map;
+        final path = diagnostic['sourcePath'] as String;
+        deletedDiagnostics.add(path);
+        diagnostics.removeWhere((item) => item.sourcePath == path);
+        return true;
       case 'getInstalledMarketVersions':
         return <String, String>{};
       case 'getPublishablePackageSources':
@@ -327,7 +377,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
           subpackageCount: 0,
         ),
       ],
-      diagnostics: const <core_proxy.ExtensionCatalogDiagnostic>[],
+      diagnostics: List<core_proxy.ExtensionCatalogDiagnostic>.of(diagnostics),
     );
   }
 }

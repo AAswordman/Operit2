@@ -1754,6 +1754,7 @@ class ExtensionCatalogDiagnostic {
     required this.code,
     required this.message,
     required this.package_kind,
+    required this.can_delete,
   });
 
   /// Decodes `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogDiagnostic` from a MessagePack value map.
@@ -1764,6 +1765,7 @@ class ExtensionCatalogDiagnostic {
     code: value['code'] as String,
     message: value['message'] as String,
     package_kind: value['packageKind'] as String,
+    can_delete: value['canDelete'] as bool,
   );
 
   /// Encodes this model into a MessagePack-compatible value map.
@@ -1774,6 +1776,7 @@ class ExtensionCatalogDiagnostic {
     'code': code,
     'message': message,
     'packageKind': package_kind,
+    'canDelete': can_delete,
   };
 
   final String source_path;
@@ -1782,6 +1785,7 @@ class ExtensionCatalogDiagnostic {
   final String code;
   final String message;
   final String package_kind;
+  final bool can_delete;
 }
 
 /// Generated SDK model for Rust type `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogEntry`.

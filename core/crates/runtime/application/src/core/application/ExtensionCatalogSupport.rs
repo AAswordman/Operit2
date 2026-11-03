@@ -64,6 +64,7 @@ pub struct ExtensionCatalogDiagnostic {
     pub code: String,
     pub message: String,
     pub package_kind: String,
+    pub can_delete: bool,
 }
 
 /// The complete local extension catalog used by the redesigned manager UI.
@@ -105,7 +106,14 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
     let enabled_names = BTreeSet::from_iter(manager.getEnabledPackageNames());
     let customized_names = BTreeSet::from_iter(manager.getCustomizedPackageNames()?);
     let bundled_candidates = manager.getBundledExternalPackageCandidates();
-    let load_issues = manager.getToolPkgLoadIssues();
+    let load_issues = manager
+        .getToolPkgLoadIssues()
+        .into_iter()
+        .map(|issue| {
+            let can_delete = manager.canDeleteToolPkgLoadIssue(&issue)?;
+            Ok((issue, can_delete))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     for source in manager.getPublishablePackageSources() {
         if let Some(version) = source.inferredVersion {
             package_versions.insert(source.packageName, version);
@@ -395,13 +403,14 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
 
     let mut diagnostics = load_issues
         .into_iter()
-        .map(|issue| ExtensionCatalogDiagnostic {
+        .map(|(issue, can_delete)| ExtensionCatalogDiagnostic {
             source_path: issue.sourcePath,
             package_id: issue.packageName,
             display_name: issue.displayName,
             code: issue.code,
             message: issue.message,
             package_kind: issue.packageKind,
+            can_delete,
         })
         .collect::<Vec<_>>();
     diagnostics.extend(skill_errors.into_iter().map(|(id, message)| {
@@ -412,6 +421,7 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
             code: "skill_load_failed".into(),
             message,
             package_kind: "skill".into(),
+            can_delete: false,
         }
     }));
     diagnostics.sort_by(|left, right| {

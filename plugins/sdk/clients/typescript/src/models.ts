@@ -1447,6 +1447,7 @@ export interface ExtensionCatalogDiagnostic {
   readonly code: string;
   readonly message: string;
   readonly package_kind: string;
+  readonly can_delete: boolean;
 }
 
 export function decodeExtensionCatalogDiagnostic(value: unknown): ExtensionCatalogDiagnostic {
@@ -1458,6 +1459,7 @@ export function decodeExtensionCatalogDiagnostic(value: unknown): ExtensionCatal
     code: input['code'] as string,
     message: input['message'] as string,
     package_kind: input['packageKind'] as string,
+    can_delete: input['canDelete'] as boolean,
   };
 }
 
@@ -1470,6 +1472,7 @@ export function encodeExtensionCatalogDiagnostic(value: ExtensionCatalogDiagnost
     'code': value.code,
     'message': value.message,
     'packageKind': value.package_kind,
+    'canDelete': value.can_delete,
   };
 }
 

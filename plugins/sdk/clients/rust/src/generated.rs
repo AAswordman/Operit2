@@ -784,6 +784,8 @@ pub struct SdkExtensionCatalogDiagnostic {
     pub message: String,
     #[serde(rename = "packageKind")]
     pub package_kind: String,
+    #[serde(rename = "canDelete")]
+    pub can_delete: bool,
 }
 
 /// Generated SDK model for `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogEntry`.

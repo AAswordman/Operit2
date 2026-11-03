@@ -1390,7 +1390,8 @@ data class ExtensionCatalogDiagnostic(
     val display_name: String,
     val code: String,
     val message: String,
-    val package_kind: String
+    val package_kind: String,
+    val can_delete: Boolean
 )
 
 fun decodeExtensionCatalogDiagnostic(value: Any?): ExtensionCatalogDiagnostic {
@@ -1402,6 +1403,7 @@ fun decodeExtensionCatalogDiagnostic(value: Any?): ExtensionCatalogDiagnostic {
         code = input["code"] as String as String,
         message = input["message"] as String as String,
         package_kind = input["packageKind"] as String as String,
+        can_delete = input["canDelete"] as Boolean as Boolean,
     )
 }
 
@@ -1413,6 +1415,7 @@ fun ExtensionCatalogDiagnostic.toMessagePackValue(): Map<String, Any?> = mapOf(
     "code" to this.code,
     "message" to this.message,
     "packageKind" to this.package_kind,
+    "canDelete" to this.can_delete,
 )
 
 data class ExtensionCatalogEntry(
