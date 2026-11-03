@@ -571,6 +571,7 @@ impl ModelsListSummariesResultData {
 #[allow(non_snake_case)]
 #[serde(deny_unknown_fields)]
 pub struct TtsAudioSegment {
+    #[serde(with = "serde_bytes")]
     pub audio: Vec<u8>,
     pub contentType: String,
 }
