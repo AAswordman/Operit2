@@ -9,9 +9,17 @@
     "en": "Message Translation"
   },
   "description": {
-    "zh": "在聊天消息长按菜单中加入翻译入口，并通过 ToolPkg Compose DSL 弹窗显示原文与译文。",
-    "en": "Adds a Translate entry to the chat message long-press menu and displays the source text and translation in a ToolPkg Compose DSL dialog."
+    "zh": "长按任意聊天消息就能翻译，原文和译文对照显示。",
+    "en": "Long-press any chat message to translate it; the original and translation are shown together."
   },
+  "logo": "package_logo",
   "enabled_by_default": true,
-  "subpackages": []
+  "subpackages": [],
+  "resources": [
+    {
+      "key": "package_logo",
+      "path": "resources/logo.svg",
+      "mime": "image/svg+xml"
+    }
+  ]
 }

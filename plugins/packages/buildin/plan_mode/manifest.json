@@ -9,9 +9,10 @@
     "en": "Plan Mode"
   },
   "description": {
-    "zh": "为聊天注入计划模式开关、插件计划协作工具，以及 <plantodo> 计划渲染与一键开始实施流程。",
-    "en": "Adds a planning-mode toggle, plugin-owned chat plans, and <plantodo> rendering with implementation handoff."
+    "zh": "开启后 AI 先和你商量好计划、不改动文件，你确认后一键开始实施。",
+    "en": "When on, the AI plans with you first, changing no files until you approve and start it."
   },
+  "logo": "package_logo",
   "enabled_by_default": true,
   "subpackages": [
     {
@@ -25,6 +26,13 @@
         "zh": "读取和完成当前聊天的插件计划。",
         "en": "Read and complete the current chat plan in plugin storage."
       }
+    }
+  ],
+  "resources": [
+    {
+      "key": "package_logo",
+      "path": "resources/logo.svg",
+      "mime": "image/svg+xml"
     }
   ],
   "installation_scope": "space"
