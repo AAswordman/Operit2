@@ -9,6 +9,8 @@ final class OperitApplicationClient {
   final OperitPluginSdkClient _client;
   /// Watches `pluginLoadingProgressFlow` through the Core Link route.
   Stream<PluginLoadingProgress> pluginLoadingProgressFlow() => _client.watchTyped<PluginLoadingProgress>("core/application", 'pluginLoadingProgressFlow', <String, Object?>{}, (value) => PluginLoadingProgress.fromMessagePackValue(value as Map<String, Object?>));
+  /// Calls `getExtensionCatalogSnapshot` through the Core Link route.
+  Future<ExtensionCatalogSnapshot> getExtensionCatalogSnapshot() async { return await _client.callTyped<ExtensionCatalogSnapshot>("core/application", 'getExtensionCatalogSnapshot', <String, Object?>{}, (value) => ExtensionCatalogSnapshot.fromMessagePackValue(value as Map<String, Object?>)); }
 }
 
 /// Generated client for Core object `application.packageManager`.

@@ -16,6 +16,9 @@ use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggl
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
+use crate::core::application::ExtensionCatalogSupport::{
+    ExtensionCatalogDiagnostic, ExtensionCatalogSnapshot, ExtensionCatalogUpdateCheck,
+};
 #[cfg(feature = "javascript")]
 use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
@@ -567,6 +570,32 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn extensionCatalogRevisionFlow(&self) -> StateFlow<i64> {
         operit_store::ExtensionStore::catalogRevisionFlow()
+    }
+
+    /// Returns one normalized local catalog for the redesigned package manager.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_plugin_sdk_expose]
+    pub fn getExtensionCatalogSnapshot(
+        &self,
+    ) -> Result<ExtensionCatalogSnapshot, String> {
+        super::ExtensionCatalogSupport::snapshot(self)
+    }
+
+    /// Checks installed marketplace entries against their latest published versions.
+    #[allow(non_snake_case)]
+    pub fn checkExtensionCatalogUpdates(
+        &self,
+    ) -> Result<Vec<ExtensionCatalogUpdateCheck>, String> {
+        super::ExtensionCatalogSupport::check_updates(self)
+    }
+
+    /// Deletes one package-manager diagnostic after the redesigned card confirms it.
+    #[allow(non_snake_case)]
+    pub fn deleteExtensionCatalogDiagnostic(
+        &self,
+        diagnostic: ExtensionCatalogDiagnostic,
+    ) -> Result<bool, String> {
+        super::ExtensionCatalogSupport::delete_diagnostic(self, diagnostic)
     }
 
     /// Lists explicit installation scopes, including subpackages that inherit their container scope.
