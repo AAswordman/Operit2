@@ -3,7 +3,8 @@
 `RuntimeSettingsPanel.dart` 负责设备空间数据与操作，`DeviceSpaceGraph.dart`
 呈现交互。布局和画布绘制分别位于 `DeviceSpaceGraphLayout.dart` 与
 `DeviceSpaceGraphPainter.dart`，复用现有 Core topology 投影和断开接口。
-`DeviceSpaceGraphSphere.dart` 负责圆形节点的立体材质和浮雕设备符号。
+圆形节点的立体材质、浮雕设备符号和平台图标在 `lib/ui/common/device/DeviceSphere.dart`，
+扩展管理的设备页也复用同一个球体；图中的节点由轨道相位驱动它的位姿与浮起。
 
 默认显示设备关系：当前设备位于中心，其余空间成员沿倾斜的椭圆轨道缓慢
 环绕，约 28 秒一周。透视投影、远小近大的缩放、远淡近亮和按深度排序的
