@@ -930,6 +930,17 @@ impl MarketStatsApiService {
         )
     }
 
+    /// Withdraws an entry owned by the authenticated user from the public marketplace.
+    pub fn withdraw_entry(&self, entry_id: &str) -> Result<(), String> {
+        let entry_id = entry_id.trim();
+        if entry_id.is_empty() {
+            return Err("entry id is empty".to_string());
+        }
+        let url = self.v2_url(&["entries", entry_id])?;
+        self.send_url("DELETE", url.as_str(), Vec::new(), Vec::new(), true)?;
+        Ok(())
+    }
+
     /// Publishes a new artifact version for an existing marketplace entry.
     pub fn publish_artifact_version(
         &self,
