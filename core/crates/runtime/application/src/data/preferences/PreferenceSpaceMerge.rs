@@ -724,11 +724,19 @@ mod tests {
                 .writeBytesAtomically(
                     &path,
                     &serde_json::to_vec(&json!({
-                        "record":record.to_string(),"__operit_preferences_schema_version":2,
+                        "record":record.to_string(),"__operit_preferences_schema_version":0,
                     }))
                     .unwrap(),
                 )
                 .unwrap();
+            // Anchor the archived source before the opaque record codec upgrades it.
+            let source = PreferencesDataStore::newWithStorage(fixture.host.clone(), &path)
+                .withSchema(0, |_, _| Ok(()));
+            let checkpoint = source.syncSnapshot().unwrap();
+            assert!(source.repairSyncedSnapshot(&checkpoint.token().unwrap(), &checkpoint).unwrap());
+            // Released schema-2 files could still hold the archived JSON string.
+            PreferencesDataStore::newWithStorage(fixture.host.clone(), &path)
+                .withSchema(2, |_, _| Ok(())).data().unwrap();
             let mut operation = historical(
                 &path,
                 "record",
@@ -1140,6 +1148,9 @@ mod tests {
         source_store.prepareSync().unwrap();
         applyOperations(source.host.clone(),&schema(),&[],&[],|_,_|true).unwrap();
         let authority = source_store.syncSnapshot().unwrap();
+        // Preserve source context before installing the authority's canonical correction.
+        let target_source = (old_schema.stores[0].open)(target.host.clone(), path);
+        assert!(target_source.repairSyncedSnapshot(&target_source.syncSnapshot().unwrap().token().unwrap(), &checkpoint).unwrap());
         let target_store = UserPreferencesManager::store(target.host.clone());
         target_store.prepareSync().unwrap();
         assert!(target_store.repairSyncedSnapshot(&target_store.syncSnapshot().unwrap().token().unwrap(),&authority).unwrap());
