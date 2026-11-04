@@ -8,7 +8,7 @@ use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use super::StreamingResponseLines::{decodeStreamingTail, takeNextStreamingLine};
-use super::ThinkingConfiguration::ThinkingConfigurationApplier;
+use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
     SendMessageRequest, TokenCounts,
@@ -177,7 +177,7 @@ impl ClaudeProvider {
             object.insert("system".to_string(), system);
         }
         if !object.contains_key("max_tokens") {
-            object.insert("max_tokens".to_string(), json!(4096));
+            object.insert("max_tokens".to_string(), json!(DEFAULT_MAX_TOKENS));
         }
         if self.enable_tool_call && !request.available_tools.is_empty() {
             object.insert(
@@ -186,20 +186,12 @@ impl ClaudeProvider {
             );
         }
         let mut request_object = Value::Object(object);
-        ThinkingConfigurationApplier::apply(
-            &mut request_object,
-            &self.provider_type,
-            &self.model_name,
-            &self.api_endpoint,
-            request.enable_thinking,
-            request.thinking_quality_level,
-            &request.thinking_configurations,
-            &request.thinking_option_id,
-        )?;
+        ThinkingDialect::Anthropic.apply(&mut request_object, &request.thinking)?;
         let object = request_object
             .as_object_mut()
             .expect("thinking request remains an object");
         self.add_parameters(object, &request.model_parameters);
+        fit_max_tokens_to_thinking_budget(object, &request.model_parameters)?;
         self.apply_stable_cache_breakpoints(object);
         self.calculate_and_store_input_tokens(object, true);
         Ok(request_object)
@@ -548,52 +540,6 @@ impl ClaudeProvider {
                 parameter.apiName.as_str()
             };
             json_object.insert(api_name.to_string(), parameter.currentValue.clone());
-        }
-    }
-
-    fn apply_thinking_format(
-        &self,
-        json_object: &mut Map<String, Value>,
-        request: &SendMessageRequest,
-    ) {
-        if !request.enable_thinking {
-            return;
-        }
-
-        let thinking = match self.thinking_format() {
-            ClaudeThinkingFormat::Adaptive => json!({
-                "type": "adaptive",
-                "display": "summarized"
-            }),
-            ClaudeThinkingFormat::Enabled => json!({
-                "type": "enabled",
-                "budget_tokens": self.thinking_budget_tokens(json_object)
-            }),
-        };
-        json_object.insert("thinking".to_string(), thinking);
-    }
-
-    fn thinking_format(&self) -> ClaudeThinkingFormat {
-        let model_name = normalize_claude_model_name(&self.model_name);
-        if has_claude_family(&model_name, "fable")
-            || has_claude_family(&model_name, "mythos")
-            || has_claude_family_at_least(&model_name, "opus", 4, 6)
-            || has_claude_family_at_least(&model_name, "sonnet", 4, 6)
-        {
-            ClaudeThinkingFormat::Adaptive
-        } else {
-            ClaudeThinkingFormat::Enabled
-        }
-    }
-
-    fn thinking_budget_tokens(&self, json_object: &Map<String, Value>) -> i64 {
-        let max_tokens = json_object
-            .get("max_tokens")
-            .and_then(Value::as_i64)
-            .filter(|value| *value > 0);
-        match max_tokens {
-            Some(value) => value.min(1024),
-            None => 1024,
         }
     }
 
@@ -1335,135 +1281,39 @@ impl ClaudeProvider {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ClaudeThinkingFormat {
-    Adaptive,
-    Enabled,
-}
+/// `max_tokens` a request gets when the user sets none; a thinking budget comes on top.
+const DEFAULT_MAX_TOKENS: i64 = 4096;
 
-fn normalize_claude_model_name(value: &str) -> String {
-    let mut normalized = String::new();
-    let mut previous_was_separator = false;
-    let mut previous_kind = ModelNameCharKind::Separator;
-
-    for ch in value.trim().chars().flat_map(char::to_lowercase) {
-        let current_kind = ModelNameCharKind::from_char(ch);
-        if current_kind == ModelNameCharKind::Separator {
-            if !previous_was_separator && !normalized.is_empty() {
-                normalized.push('-');
-                previous_was_separator = true;
-            }
-            previous_kind = ModelNameCharKind::Separator;
-            continue;
-        }
-
-        if should_split_model_name_part(previous_kind, current_kind, previous_was_separator) {
-            normalized.push('-');
-        }
-        normalized.push(ch);
-        previous_was_separator = false;
-        previous_kind = current_kind;
-    }
-
-    normalized.trim_matches('-').to_string()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ModelNameCharKind {
-    Letter,
-    Digit,
-    Separator,
-}
-
-impl ModelNameCharKind {
-    fn from_char(ch: char) -> Self {
-        if ch.is_ascii_alphabetic() {
-            Self::Letter
-        } else if ch.is_ascii_digit() {
-            Self::Digit
-        } else {
-            Self::Separator
-        }
-    }
-}
-
-fn should_split_model_name_part(
-    previous_kind: ModelNameCharKind,
-    current_kind: ModelNameCharKind,
-    previous_was_separator: bool,
-) -> bool {
-    !previous_was_separator
-        && matches!(
-            (previous_kind, current_kind),
-            (ModelNameCharKind::Letter, ModelNameCharKind::Digit)
-                | (ModelNameCharKind::Digit, ModelNameCharKind::Letter)
-        )
-}
-
-fn has_claude_family(normalized_model_name: &str, family: &str) -> bool {
-    normalized_model_name.split('-').any(|part| part == family)
-}
-
-fn has_claude_family_at_least(
-    normalized_model_name: &str,
-    family: &str,
-    min_major: i32,
-    min_minor: i32,
-) -> bool {
-    match claude_family_version(normalized_model_name, family) {
-        Some((major, minor)) => major > min_major || major == min_major && minor >= min_minor,
-        None => false,
-    }
-}
-
-fn claude_family_version(normalized_model_name: &str, family: &str) -> Option<(i32, i32)> {
-    let parts = normalized_model_name
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    let family_index = parts.iter().position(|part| *part == family)?;
-
-    let before_family = take_last_version_parts(&parts[..family_index]);
-    if let Some(version) = numeric_version(&before_family) {
-        return Some(version);
-    }
-
-    let after_family = take_first_version_parts(&parts[family_index + 1..]);
-    numeric_version(&after_family)
-}
-
-fn take_last_version_parts(parts: &[&str]) -> Vec<String> {
-    let mut version_parts = parts
-        .iter()
-        .rev()
-        .take_while(|part| is_version_part(part))
-        .map(|part| (*part).to_string())
-        .collect::<Vec<_>>();
-    version_parts.reverse();
-    let start = version_parts.len().saturating_sub(2);
-    version_parts[start..].to_vec()
-}
-
-fn take_first_version_parts(parts: &[&str]) -> Vec<String> {
-    parts
-        .iter()
-        .take_while(|part| is_version_part(part))
-        .take(2)
-        .map(|part| (*part).to_string())
-        .collect()
-}
-
-fn is_version_part(value: &str) -> bool {
-    value.len() < 8 && value.chars().all(|ch| ch.is_ascii_digit())
-}
-
-fn numeric_version(parts: &[String]) -> Option<(i32, i32)> {
-    let major = parts.first()?.parse::<i32>().ok()?;
-    let minor = match parts.get(1) {
-        Some(value) => value.parse::<i32>().ok()?,
-        None => 0,
+/// Makes room for a thinking budget, which Anthropic counts inside `max_tokens` and which must
+/// stay below it. The default grows to hold the budget; a `max_tokens` the user set does not.
+fn fit_max_tokens_to_thinking_budget(
+    object: &mut Map<String, Value>,
+    parameters: &[operit_model::ModelParameter::ModelParameter<Value>],
+) -> Result<(), AiServiceError> {
+    let Some(budget) = object
+        .get("thinking")
+        .and_then(|thinking| thinking.get("budget_tokens"))
+        .and_then(Value::as_i64)
+    else {
+        return Ok(());
     };
-    Some((major, minor))
+    let Some(max_tokens) = object.get("max_tokens").and_then(Value::as_i64) else {
+        return Ok(());
+    };
+    if max_tokens > budget {
+        return Ok(());
+    }
+    let user_set = parameters
+        .iter()
+        .any(|parameter| parameter.isEnabled && parameter.apiName == "max_tokens");
+    if user_set {
+        return Err(AiServiceError::RequestFailed(format!(
+            "max_tokens ({max_tokens}) must be larger than the thinking budget ({budget}); \
+             lower the thinking level or raise max_tokens"
+        )));
+    }
+    object.insert("max_tokens".to_string(), json!(budget + DEFAULT_MAX_TOKENS));
+    Ok(())
 }
 
 fn append_converter_events(chunks: &mut Vec<String>, events: Vec<StreamingJsonXmlEvent>) {

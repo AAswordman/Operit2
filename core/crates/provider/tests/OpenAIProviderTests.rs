@@ -8,6 +8,7 @@ use super::{
 };
 use crate::chat::llmprovider::AIService::SendMessageRequest;
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ImagePoolManager::ImagePoolManager;
@@ -78,10 +79,7 @@ fn sendRequest(chat_history: Vec<PromptTurn>) -> SendMessageRequest {
     SendMessageRequest {
         chat_history,
         model_parameters: Vec::new(),
-        enable_thinking: false,
-        thinking_quality_level: 1,
-        thinking_configurations: "[]".to_string(),
-        thinking_option_id: String::new(),
+        thinking: RequestThinking::default(),
         stream: false,
         available_tools: Vec::new(),
         preserve_think_in_history: false,

@@ -53,11 +53,13 @@ pub(super) fn parse_item(
     Ok(AvailableProviderModel {
         modelId: model_id,
         source: AvailableProviderModelSource::Remote,
+        catalogModelId: None,
         pricing: read_pricing(item, operation)?,
         context: read_context(item, operation)?,
         capabilities,
         builtinTools: Vec::new(),
-        request: Some(request),
+        request,
+        listed: None,
     })
 }
 
@@ -131,20 +133,19 @@ fn read_capabilities(
     }))
 }
 
-/// Reads request-shape metadata from one provider model item.
+/// Reads request-shape metadata from one provider model item; `None` when the list says nothing.
 fn read_request(
     item: &Value,
     operation: &ProviderOperationSpec,
-) -> Result<ModelRequestSpec, String> {
+) -> Result<Option<ModelRequestSpec>, String> {
     let supports_structured_tools = read_optional_bool(
         item,
         operation.result.supportsStructuredToolsJsonPath.as_deref(),
-    )?
-    .unwrap_or(false);
-    Ok(ModelRequestSpec {
+    )?;
+    Ok(supports_structured_tools.map(|supports_structured_tools| ModelRequestSpec {
         supportsStructuredTools: supports_structured_tools,
         ..ModelRequestSpec::default()
-    })
+    }))
 }
 
 /// Reads a required string from one JSON path or literal spec.
