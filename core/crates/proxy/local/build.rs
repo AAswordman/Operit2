@@ -24,6 +24,8 @@ fn main() {
     println!("cargo:rerun-if-changed={}", manifest_dir.join("../../plugin/sdk/src/toolpkg").display());
     // Node facade DTOs/methods are scanned too, not just application objects.
     println!("cargo:rerun-if-changed={}", manifest_dir.join("../../node/runtime/src").display());
+    // Model DTOs such as provider and model profiles appear in the client contracts.
+    println!("cargo:rerun-if-changed={}", manifest_dir.join("../../foundation/model/src").display());
     let output = scan_core_proxy(CoreProxyScanConfig::from_proxy_manifest_dir(manifest_dir));
     write_rust_proxy_artifacts(
         &out_dir,
