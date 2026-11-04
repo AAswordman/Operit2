@@ -552,9 +552,9 @@ fn buildWorkspaceRuleFileSection(
 #[allow(non_snake_case)]
 fn getAttachmentGuidelines(use_english: bool) -> &'static str {
     if use_english {
-        "ATTACHMENTS:\n- Attachment `path` is relative to the current file directory `.`. File tools and terminal sessions use this same base. Read supplied relative attachment paths directly with file tools, including any `..` segments; files within `.` use the same relative paths in terminals. Do not reconstruct a VFS or native path from its filename or `id`. Use embedded content directly.\n- Do not scan root/home directories or search all filesystems to rediscover a supplied attachment. If a terminal cannot enter the current file directory, report a launch/mount failure and use file tools or another available terminal.\n- `.operit/sync.json` controls automatic sync. Small attachments share their contents; large attachments share a relative `.operit-ref.json` locator. Read that file for the source node and original VFS path. External mounts are not automatically synchronized.\n- `node_id` records the source CoreNode. First check the supplied relative path on the current node. If absent, use `list_core_nodes` to check source reachability and access that source through file tools. For a native original, use `switch_core` and that Host's resolved terminal path. Relative VFS paths that leave `.` do not imply the same physical layout in a terminal.\n- Without a `path`, use embedded content or request re-upload; never invent a source node."
+        "ATTACHMENTS:\n- Attachment `path` is relative to `.`. File tools and terminal sessions use this same base. Read supplied relative attachment paths directly, including `..`; use embedded content directly.\n- Small attachments contain the file; large attachments use `.operit-ref.json` with the source `node_id` and VFS path.\n- Check the current node first. For a missing file, use `list_core_nodes` and access its source with file tools. For terminal access, use `switch_core` and the source Host's resolved path.\n- If the path is missing, use embedded content or request re-upload. For terminal startup errors, report the error and use file tools."
     } else {
-        "附件：\n- 附件 `path` 相对于当前文件目录 `.`。文件工具与终端使用同一个基准。文件工具直接读取附件提供的相对路径，包括其中的 `..`；当前目录内的文件在终端使用相同相对路径。不要从文件名或 `id` 猜测 VFS 或本机路径。已内嵌的内容可直接使用。\n- 不要翻根目录、主目录或全盘搜索来重新定位已给出的附件。终端无法进入当前文件目录时，按启动或挂载失败处理，使用文件工具或另一个可用终端。\n- `.operit/sync.json` 控制自动同步。小附件共享文件本体，大附件共享相对路径的 `.operit-ref.json` 定位文件；读取定位文件获取来源节点和原件的 VFS 路径。外部挂载不自动同步。\n- `node_id` 记录来源 CoreNode。先检查当前节点上的相对路径；副本缺失时，用 `list_core_nodes` 检查来源是否可达，再通过文件工具访问来源。需要用终端处理本机原件时，用 `switch_core` 切换来源节点并使用该 Host 解析的终端路径。离开 `.` 的 VFS 相对路径不代表终端具有相同的物理目录布局。\n- 没有 `path` 时使用内嵌内容或请求重新上传，不要编造来源节点。"
+        "附件：\n- 附件 `path` 相对于 `.`，文件工具与终端使用同一个基准。直接读取附件提供的相对路径，支持 `..`；内嵌内容直接使用。\n- 小附件保存文件本体；大附件通过 `.operit-ref.json` 记录来源 `node_id` 和 VFS 路径。\n- 先读取当前节点；文件缺失时，通过 `list_core_nodes` 检查来源并用文件工具读取。终端访问来源文件时，使用 `switch_core` 和来源 Host 解析的路径。\n- 路径缺失时使用内嵌内容或请求重新上传；终端启动失败时报告错误并使用文件工具。"
     }
 }
 
@@ -565,18 +565,18 @@ fn getFileSyncGuidelines(use_english: bool) -> String {
         .expect("The default file sync policy must serialize");
     let guidance = if use_english {
         "FILE SYNC POLICY:
-- Each app-managed workspace or conversation output root has `.operit/sync.json`. Read it before installing dependencies, building, downloading datasets or generating many files. Preserve the user's existing rules and limits; add exclusions before producing transient files. External mounts do not synchronize automatically.
-- `version` is 1. `ignoreFiles` lists relative ignore-file paths; `.gitignore` also enables nested `.gitignore` files. `exclude` adds Gitignore patterns relative to this root: `dir/` excludes a directory, `*.tmp` matches files, `!path` re-includes a path. Write valid JSON without comments.
-- Proactively exclude dependencies, build outputs, caches, logs, temporary files and bulk source data that do not need sharing. Keep the default exclusions and add task-specific paths such as `.venv/`, `.cache/`, `coverage/` or the actual generated directory. With many small files, exclude whole directories; byte limits do not limit file count. Excluded directories are pruned without copying files or creating a locator for every child. Keep final deliverables available, and do not exclude all of `.operit/`, which holds attachments, locators and this policy.
-- `maxFileBytes` and `maxTotalBytes` are byte limits for automatic file copying per file and per managed root. Do not raise them just to synchronize build or dependency trees. Oversized originals remain at their source and share `.operit-ref.json` locators; a locator is not the original. Tightening exclusions or limits stops future copying without deleting existing local or remote copies. This is not a device-wide storage quota.
-- Default schema and limits (merge changes into the existing file):"
+- Read `.operit/sync.json` before installing dependencies, building, downloading or generating files in bulk. Preserve existing rules and limits; add exclusions first.
+- Use valid JSON: `version` is 1; `ignoreFiles` lists relative ignore files; `.gitignore` includes nested rules; `exclude` uses Gitignore patterns (`dir/`, `*.tmp`, `!path`).
+- Exclude dependency, build, cache, log, temporary and bulk-data directories (e.g. `.venv/`, `.cache/`, `coverage/`). Keep `.operit/` and final deliverables available. External mounts and symlinks are managed at their source.
+- `maxFileBytes` and `maxTotalBytes` limit automatic copying per file and root, in bytes. Oversized files share `.operit-ref.json` locators; originals stay at the source. Policy changes affect subsequent copying and retain existing copies.
+- Default policy; merge changes into the existing file:"
     } else {
-        "文件同步策略：
-- 每个应用管理的工作区或对话产出根目录都有 `.operit/sync.json`。安装依赖、构建、下载数据集或批量生成文件前，先读取策略，保留用户已有规则和限额，在产生日志、缓存等文件前补充排除。外部挂载不自动同步。
-- `version` 为 1；`ignoreFiles` 填相对忽略文件路径，其中 `.gitignore` 同时启用各级子目录的 `.gitignore`；`exclude` 添加相对于该根目录的 Gitignore 规则，例如 `dir/` 排除目录、`*.tmp` 匹配文件、`!path` 反选。必须写合法 JSON，不能加注释。
-- 主动排除无需共享的依赖、构建产物、缓存、日志、临时文件和批量原始数据；保留默认排除，按实际任务追加 `.venv/`、`.cache/`、`coverage/` 或具体产物目录。小文件数量很多时按整个目录排除，不能只依赖字节上限，因为字节限额不限制文件数量。排除的目录会直接跳过，不复制内容，也不为其中每个文件生成索引。保留需要交付的最终文件，不要整体排除 `.operit/`，其中包含附件、定位文件和同步策略。
-- `maxFileBytes` 和 `maxTotalBytes` 的单位是字节，分别限制单文件和每个受管理根目录的自动复制量。不要为了同步依赖或构建目录而擅自放大限额。超限原件保留在来源，分享 `.operit-ref.json` 索引；索引不等于原件。收紧规则只停止后续复制，不删除本机或其他设备已有副本；这不是设备总磁盘配额。
-- 默认结构与限额如下，修改时合并现有内容："
+        "文件同步：
+- 安装依赖、构建、下载或批量生成文件前，读取 `.operit/sync.json`，保留已有规则和限额，先补充排除项。
+- 使用合法 JSON：`version` 为 1；`ignoreFiles` 填相对路径，`.gitignore` 包含各级规则；`exclude` 使用 Gitignore 语法（`dir/`、`*.tmp`、`!path`）。
+- 按目录排除依赖、构建、缓存、日志、临时文件和批量数据（如 `.venv/`、`.cache/`、`coverage/`）；保留 `.operit/` 与最终交付文件。外部挂载和软链接由来源管理。
+- `maxFileBytes`、`maxTotalBytes` 分别限制单文件和目录的自动复制字节量。超限文件分享 `.operit-ref.json`，原件留在来源。规则调整作用于后续复制，已有副本保留。
+- 默认配置如下，修改时合并已有内容："
     };
     format!("{guidance}
 ```json
@@ -596,9 +596,9 @@ fn getWorkspaceGuidelines(
     let Some(workspace_path) = workspace_path.filter(|p| !p.trim().is_empty()) else {
         let Some(output) = output_path else { return String::new(); };
         let text = if use_english {
-            "CONVERSATION OUTPUT DIRECTORY:\n- No workspace is bound. `.` is this conversation family's persistent output area, not a workspace. Its saved binding does not change each day.\n- File tools and terminal sessions start from `.`. Use relative paths for attachments, outputs and Markdown image/file links, such as `.operit/attachments/id/file.pdf`, `report.md` and `images/chart.png`."
+            "CONVERSATION OUTPUT DIRECTORY:\n- `.` is the conversation output area.\n- File tools and terminal sessions start from `.`. Use relative paths for attachments, outputs and Markdown links."
         } else {
-            "对话产出目录：\n- 当前没有绑定工作区。`.` 是这组父子对话固定的产出区域，不是工作区；保存的目录绑定不会每天变化。\n- 文件工具与终端使用同一个起始目录 `.`。附件、产出及 Markdown 图片和文件引用统一使用相对路径，例如 `.operit/attachments/id/file.pdf`、`report.md`、`images/chart.png`。"
+            "对话产出目录：\n- `.` 是对话产出区域。\n- 文件工具与终端从 `.` 开始，附件、产出及 Markdown 引用使用相对路径。"
         };
         return format!("{text}\n\n{}", buildWorkspaceTerminalPathSection(terminal_path_mappings, output, use_english, true));
     };
@@ -613,11 +613,11 @@ fn getWorkspaceGuidelines(
         .join("\n");
     let base_guidelines = if use_english {
         format!(
-            "WORKSPACE GUIDELINES:\n- Primary workspace: `.`. File-tool paths for the workspace folders:\n{mounted_folders}\n- File tools and terminal sessions start from `.`. Use relative paths for attachments, outputs and Markdown image/file links. Other mounts use their listed file-tool path; terminal access requires that Host's resolved path.\n- `nodeName:path` addresses another device. `.operit/sync.json` controls file sync, including `.gitignore`, exclusions and size limits. Small files synchronize eventually; oversized files use `.operit-ref.json` locators. External mounts and symlinks are not synchronized. Verify files have arrived before use."
+            "WORKSPACE:\n- `.` is the primary workspace. Folder paths:\n{mounted_folders}\n- File tools and terminal sessions start from `.`. Use relative paths for attachments, outputs and Markdown links. Use Host-resolved paths for terminal access to other mounts.\n- `nodeName:path` addresses another device. Files synchronize eventually; verify arrival before use."
         )
     } else {
         format!(
-            "工作区指南：\n- 主工作区：`.`。工作区文件夹的文件工具路径：\n{mounted_folders}\n- 文件工具与终端使用同一个起始目录 `.`。附件、产出及 Markdown 图片和文件引用统一使用相对路径。其他挂载使用列出的文件工具路径，需要终端访问时使用该 Host 解析的路径。\n- `nodeName:path` 指向其他设备。`.operit/sync.json` 可编辑 `.gitignore`、排除规则和大小上限。小文件最终一致同步，超限文件用 `.operit-ref.json` 定位；外部挂载和软链接不自动同步，使用前请确认文件已到达。"
+            "工作区：\n- `.` 是主工作区。文件夹路径：\n{mounted_folders}\n- 文件工具与终端从 `.` 开始，附件、产出及 Markdown 引用使用相对路径。终端访问其他挂载时使用 Host 解析的路径。\n- `nodeName:path` 指向其他设备。文件最终一致同步，使用前确认已到达。"
         )
     };
     let terminal_section = buildWorkspaceTerminalPathSection(terminal_path_mappings, workspace_path, use_english, false);
@@ -642,9 +642,9 @@ fn buildWorkspaceTerminalPathSection(
     };
     if mappings.is_empty() {
         return format!("{header}:\n{}", if use_english {
-            "- No terminal path mapping is available. Use file tools; do not guess a terminal path."
+            "- Use file tools; terminal mapping is unavailable."
         } else {
-            "- 当前没有可用的终端路径映射。请使用文件工具，不要猜测终端路径。"
+            "- 当前使用文件工具，终端路径映射待配置。"
         });
     }
     let paths = mappings.iter().map(|mapping| {
@@ -658,9 +658,9 @@ fn buildWorkspaceTerminalPathSection(
         }
     }).collect::<Vec<_>>().join("\n");
     let guidance = if use_english {
-        "Each selected Host starts its sessions at `.`. Use the same relative paths for files inside this directory. Before changing shell directories, record `pwd` so you can return; file-tool relative paths keep their original base. A mapping error means the terminal cannot access that directory; use file tools and report the error."
+        "Each selected Host starts its sessions at `.`. Record `pwd` before `cd`; file tools keep their original base. For mapping errors, report the error and use file tools."
     } else {
-        "所选 Host 从 `.` 启动终端，目录内的文件使用同一相对路径。切换 shell 目录前记录 `pwd` 以便返回；文件工具的相对路径基准不随 shell 的 cd 改变。映射失败表示终端无法访问此目录，请使用文件工具并明确报告错误。"
+        "所选 Host 从 `.` 启动终端。`cd` 前记录 `pwd`，文件工具始终使用原基准。映射失败时报告错误并使用文件工具。"
     };
     format!("{header} (Host):\n{paths}\n- {guidance}")
 }
@@ -750,9 +750,9 @@ mod tests {
             assert!(!prompt.contains("resolve `id`"));
             assert!(!prompt.contains("物理路径 `id`"));
             assert!(prompt.contains(if use_english {
-                "First check the supplied relative path on the current node"
+                "Check the current node first"
             } else {
-                "先检查当前节点上的相对路径"
+                "先读取当前节点"
             }));
         }
     }
@@ -768,11 +768,11 @@ mod tests {
             .await.expect("Tool-prompt policies must succeed in this test");
             if use_english {
                 assert!(prompt.contains("synchronize eventually"));
-                assert!(prompt.contains("External mounts and symlinks are not synchronized"));
+                assert!(prompt.contains("External mounts and symlinks are managed at their source"));
                 assert!(prompt.contains(".operit/sync.json"));
             } else {
                 assert!(prompt.contains("最终一致"));
-                assert!(prompt.contains("外部挂载和软链接不自动同步"));
+                assert!(prompt.contains("外部挂载和软链接由来源管理"));
                 assert!(prompt.contains(".operit/sync.json"));
             }
         }
@@ -798,10 +798,10 @@ mod tests {
                 for pattern in ["node_modules/", "build/", ".gitignore", ".venv/", ".cache/", "coverage/", "!path"] {
                     assert!(prompt.contains(pattern), "missing exclusion guidance {pattern}");
                 }
-                assert!(prompt.contains(if use_english { "before producing transient files" } else { "在产生日志、缓存等文件前补充排除" }));
-                assert!(prompt.contains(if use_english { "byte limits do not limit file count" } else { "字节限额不限制文件数量" }));
-                assert!(prompt.contains(if use_english { "Preserve the user's existing rules and limits" } else { "保留用户已有规则和限额" }));
-                assert!(prompt.contains(if use_english { "do not exclude all of `.operit/`" } else { "不要整体排除 `.operit/`" }));
+                assert!(prompt.contains(if use_english { "add exclusions first" } else { "先补充排除项" }));
+                assert!(prompt.contains(if use_english { "Exclude dependency, build, cache, log, temporary and bulk-data directories" } else { "按目录排除" }));
+                assert!(prompt.contains(if use_english { "Preserve existing rules and limits" } else { "保留已有规则和限额" }));
+                assert!(prompt.contains(if use_english { "Keep `.operit/` and final deliverables available" } else { "保留 `.operit/` 与最终交付文件" }));
             }
         }
     }
@@ -820,7 +820,7 @@ mod tests {
         })
         .await.expect("Tool-prompt policies must succeed in this test");
 
-        assert!(prompt.contains("Primary workspace: `.`"));
+        assert!(prompt.contains("`.` is the primary workspace"));
         assert!(prompt.contains("../../../virtual/windows/d/Code/stm32"));
         assert!(prompt.contains("Use relative paths for attachments, outputs and Markdown"));
         assert!(!prompt.contains("/operitapp/workspaces/test"));
@@ -940,9 +940,9 @@ mod tests {
                             "直接读取附件提供的相对路径"
                         }));
                         assert!(prompt.contains(if use_english {
-                            "report a launch/mount failure"
+                            "For terminal startup errors"
                         } else {
-                            "按启动或挂载失败处理"
+                            "终端启动失败时报告错误"
                         }));
                         assert!(!prompt.contains("Relative file paths require a workspace"));
                         assert!(!prompt.contains("Without a workspace, list `/`"));
@@ -959,7 +959,7 @@ mod tests {
         let mut options = workspacePromptOptions(true);
         options.terminal_path_mappings.clear();
         let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
-        assert!(prompt.contains("No terminal path mapping is available"));
+        assert!(prompt.contains("terminal mapping is unavailable"));
         assert!(!prompt.contains("Terminal absolute path:"));
     }
 
@@ -1038,7 +1038,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn unbound_output_directory_is_relative_and_is_not_described_as_a_workspace() {
+    async fn unbound_output_directory_uses_a_concise_relative_base() {
         for use_english in [true, false] {
             let prompt = SystemPromptConfig::getSystemPrompt(SystemPromptOptions {
                 use_english, output_path: Some("/operitapp/outputs/family".into()),
@@ -1047,7 +1047,7 @@ mod tests {
             assert!(!prompt.contains("/operitapp/outputs/family"));
             assert!(prompt.contains("`.`"));
             assert!(prompt.contains(".operit-ref.json"));
-            assert!(prompt.contains(if use_english { "not a workspace" } else { "不是工作区" }));
+            assert!(prompt.contains(if use_english { "`.` is the conversation output area." } else { "`.` 是对话产出区域。" }));
             assert!(!prompt.contains(if use_english { "Sessions start in the primary workspace" } else { "会话从主工作区启动" }));
         }
     }
