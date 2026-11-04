@@ -34,7 +34,7 @@ export async function bundles() {
 /** Packages the exact current sources and their executable Compose modules. */
 export async function buildPackage() {
   const files = await bundles();
-  for (const name of ['manifest.json', 'package.json', 'tsconfig.json', ...await sources('src'), ...await sources('scripts')]) {
+  for (const name of ['manifest.json', 'package.json', 'tsconfig.json', ...await sources('src'), ...await sources('scripts'), ...await sources('resources')]) {
     files[name] = new Uint8Array(await readFile(path.join(root, name)));
   }
   for (const [name, bytes] of Object.entries(files)) {

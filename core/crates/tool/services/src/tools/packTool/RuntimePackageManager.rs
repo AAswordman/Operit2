@@ -240,6 +240,11 @@ pub struct ToolPkgLoadIssue {
     pub packageKind: String,
 }
 
+struct FailedPackageDeletionTarget {
+    owner: Option<String>,
+    sourcePath: Option<String>,
+}
+
 #[derive(Clone, Default)]
 struct PackageScanSnapshot {
     availablePackages: BTreeMap<String, ToolPackage>,
@@ -1345,6 +1350,59 @@ impl RuntimePackageManager {
         true
     }
 
+    /// Resolves installed records and files that a load failure can actually remove.
+    #[allow(non_snake_case)]
+    fn failedPackageDeletionTarget(
+        &self,
+        issue: &ToolPkgLoadIssue,
+    ) -> Result<FailedPackageDeletionTarget, String> {
+        let source = Path::new(&issue.sourcePath);
+        let installedScope = ["device", "space"].into_iter().find(|scope| {
+            let root = ExtensionStore::root("package", scope).expect("valid package scope");
+            source.parent() == Some(self.storePaths.runtime_storage_path(&root).as_path())
+        });
+        let records = ExtensionStore::default().records("package")?;
+        // Even an unreadable archive can still have a registered installation owner.
+        let owner = if issue.packageName.is_none() {
+            records
+                .iter()
+                .find(|record| {
+                    Some(record.scope.as_str()) == installedScope
+                        && source.file_name().and_then(|name| name.to_str())
+                            == Some(record.sourceName.as_str())
+                })
+                .map(|record| record.id.clone())
+        } else {
+            issue.packageName.clone()
+        };
+        let sourceOnly = issue.code == "duplicate_package"
+            && owner
+                .as_ref()
+                .is_some_and(|name| self.availablePackages().contains_key(name));
+        let owner = owner.filter(|name| {
+            !sourceOnly && records.iter().any(|record| record.id == *name)
+        });
+        // Parse failures may have no identity or installation record. Only remove a file
+        // directly inside an installation directory, never an asset or a scan directory.
+        let sourcePath = if installedScope.is_some() {
+            let info = self
+                .fileSystemHost
+                .fileExists(&issue.sourcePath)
+                .map_err(|error| error.to_string())?;
+            (info.exists && !info.isDirectory).then(|| issue.sourcePath.clone())
+        } else {
+            None
+        };
+        Ok(FailedPackageDeletionTarget { owner, sourcePath })
+    }
+
+    /// Reports deletion eligibility using the same installed targets as the delete operation.
+    #[allow(non_snake_case)]
+    pub fn canDeleteToolPkgLoadIssue(&self, issue: &ToolPkgLoadIssue) -> Result<bool, String> {
+        let target = self.failedPackageDeletionTarget(issue)?;
+        Ok(target.owner.is_some() || target.sourcePath.is_some())
+    }
+
     /// Deletes the persisted source of a current load failure without requiring a loaded package.
     #[allow(non_snake_case)]
     pub fn deleteToolPkgLoadIssue(&mut self, issue: ToolPkgLoadIssue) -> Result<(), String> {
@@ -1358,45 +1416,20 @@ impl RuntimePackageManager {
                     && current.packageKind == issue.packageKind
             })
             .ok_or("Package load issue is no longer present; refresh the package list")?;
-
-        let source = Path::new(&issue.sourcePath);
-        let installedScope = ["device", "space"].into_iter().find(|scope| {
-            let root = ExtensionStore::root("package", scope).expect("valid package scope");
-            source.parent() == Some(self.storePaths.runtime_storage_path(&root).as_path())
-        });
-        // Even an unreadable archive can still have a registered installation owner.
-        let owner = if issue.packageName.is_none() {
-            ExtensionStore::default()
-                .records("package")?
-                .into_iter()
-                .find(|record| {
-                    Some(record.scope.as_str()) == installedScope
-                        && source.file_name().and_then(|name| name.to_str())
-                            == Some(record.sourceName.as_str())
-                })
-                .map(|record| record.id)
-        } else {
-            issue.packageName.clone()
-        };
-        let sourceOnly = issue.code == "duplicate_package"
-            && owner
-                .as_ref()
-                .is_some_and(|name| self.availablePackages().contains_key(name));
+        let target = self.failedPackageDeletionTarget(&issue)?;
         let mut removed = false;
-        if let Some(name) = owner.as_deref().filter(|_| !sourceOnly) {
+        if let Some(name) = target.owner.as_deref() {
             self.disablePackage(name);
             removed = ExtensionStore::default().deleteFailedPackageInstallations(name)?;
         }
-        // Parse failures may have no identity or installation record. Only remove a file
-        // directly inside an installation directory, never an asset or a scan directory.
-        if installedScope.is_some() {
+        if let Some(sourcePath) = target.sourcePath {
             let info = self
                 .fileSystemHost
-                .fileExists(&issue.sourcePath)
+                .fileExists(&sourcePath)
                 .map_err(|error| error.to_string())?;
             if info.exists && !info.isDirectory {
                 self.fileSystemHost
-                    .deleteFile(&issue.sourcePath, false)
+                    .deleteFile(&sourcePath, false)
                     .map_err(|error| error.to_string())?;
                 removed = true;
             }

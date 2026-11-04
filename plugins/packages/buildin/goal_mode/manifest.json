@@ -9,9 +9,17 @@
     "en": "Goal Mode"
   },
   "description": {
-    "zh": "为当前聊天持续维护目标、监督任务完成，并在输入框上方显示目标状态。",
-    "en": "Tracks a persistent chat goal, supervises task completion, and displays its status above the composer."
+    "zh": "给对话定一个目标，AI 会持续推进直到真正完成，状态显示在输入框上方。",
+    "en": "Give a chat a goal; the AI keeps at it until it is truly done, with status above the input."
   },
+  "logo": "package_logo",
   "enabled_by_default": true,
+  "resources": [
+    {
+      "key": "package_logo",
+      "path": "resources/logo.svg",
+      "mime": "image/svg+xml"
+    }
+  ],
   "installation_scope": "space"
 }

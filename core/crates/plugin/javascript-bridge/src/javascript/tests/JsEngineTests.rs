@@ -1369,6 +1369,27 @@ fn execute_function_with_active_module_context() {
     );
 }
 
+/// Initializes the complete generated Tools runtime and the v1 installer in one native context.
+#[test]
+fn bootstrap_initializes_internal_v1_runtime_with_generated_tools() {
+    let mut state = newTestJsEngineState(None);
+    let output = state.evalJavaScriptString(r#"
+        JSON.stringify({
+            internal: typeof globalThis.__operitV1InternalRuntime.create_session,
+            canonical: typeof __operitCanonicalTools.System.terminal.create,
+            public: typeof Tools.System.terminal.create,
+            installed: Tools.System.terminal.create !== __operitCanonicalTools.System.terminal.create
+        })
+    "#).expect("complete bootstrap must initialize without duplicate declarations");
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output, serde_json::json!({
+        "internal": "function",
+        "canonical": "function",
+        "public": "function",
+        "installed": true
+    }));
+}
+
 #[test]
 fn bootstrap_exposes_ui_android_okhttp_api() {
     let mut state = newTestJsEngineState(None);

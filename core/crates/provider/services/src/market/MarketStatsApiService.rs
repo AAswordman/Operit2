@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use operit_host_api::{HttpHost, HttpRequestData, HttpResponseData, TimeUtils::currentTimeMillis};
 use operit_util::AppLogger::AppLogger;
@@ -307,7 +307,8 @@ pub struct MarketPublisherEntrySummary {
     pub r#type: String,
     #[serde(default)]
     pub relation: String,
-    #[serde(rename = "stateCode", default)]
+    /// The market leaves the state out while an entry still waits for review.
+    #[serde(rename = "stateCode", default = "pending_state_code")]
     pub state_code: String,
     #[serde(rename = "listingState")]
     pub listing_state: Option<String>,
@@ -503,24 +504,35 @@ pub struct GitHubUser {
 
 // ---- Service ----
 
+/// Supplies the access token of the signed-in GitHub account.
+///
+/// GitHub login state belongs to the parent runtime, which installs the source
+/// once at startup. Clients read it for every request, so signing in or out
+/// applies to clients that already exist.
+pub trait GitHubTokenSource: Send + Sync {
+    /// Returns the current access token, or `None` when no account is signed in.
+    fn current_access_token(&self) -> Result<Option<String>, String>;
+}
+
+static GITHUB_TOKEN_SOURCE: OnceLock<Arc<dyn GitHubTokenSource>> = OnceLock::new();
+
+/// Installs the process-wide GitHub token source shared by every marketplace client.
+#[allow(non_snake_case)]
+pub fn setDefaultGitHubTokenSource(source: Arc<dyn GitHubTokenSource>) {
+    let _ = GITHUB_TOKEN_SOURCE.set(source);
+}
+
 #[derive(Clone)]
 /// Client for static marketplace metadata and authenticated marketplace APIs.
 pub struct MarketStatsApiService {
     http_host: Arc<dyn HttpHost>,
-    github_token: Option<String>,
 }
 
 impl MarketStatsApiService {
-    /// Creates a marketplace API client without a GitHub token.
+    /// Creates a marketplace API client that signs requests with the installed GitHub login.
     pub fn new() -> Self {
-        Self::new_with_github_token(None)
-    }
-
-    /// Creates a marketplace API client with an optional GitHub token.
-    pub fn new_with_github_token(github_token: Option<String>) -> Self {
         Self {
             http_host: operit_host_api::HostManager::defaultHttpHost(),
-            github_token,
         }
     }
 
@@ -748,14 +760,20 @@ impl MarketStatsApiService {
 
     /// Loads entries owned by the authenticated user.
     pub fn get_my_entries(&self) -> Result<MarketMyEntriesResponse, String> {
-        self.decode_v2("GET", &["my", "entries"], Vec::new(), Vec::new(), true)
+        let url = self.v2_url(&["my", "entries"])?;
+        self.decode_my_entries(url.as_str())
     }
 
     /// Loads authenticated user entries filtered by type.
     pub fn get_my_entries_by_type(&self, r#type: &str) -> Result<MarketMyEntriesResponse, String> {
         let mut url = self.v2_url(&["my", "entries"])?;
         url.query_pairs_mut().append_pair("type", r#type);
-        self.decode_url("GET", url.as_str(), Vec::new(), Vec::new(), true)
+        self.decode_my_entries(url.as_str())
+    }
+
+    fn decode_my_entries(&self, url: &str) -> Result<MarketMyEntriesResponse, String> {
+        let body = self.send_url("GET", url, Vec::new(), Vec::new(), true)?;
+        parse_my_entries(&body)
     }
 
     /// Loads full data for one entry submitted by the authenticated publisher.
@@ -910,6 +928,17 @@ impl MarketStatsApiService {
             serde_json::to_vec(&patch).map_err(|e| e.to_string())?,
             true,
         )
+    }
+
+    /// Withdraws an entry owned by the authenticated user from the public marketplace.
+    pub fn withdraw_entry(&self, entry_id: &str) -> Result<(), String> {
+        let entry_id = entry_id.trim();
+        if entry_id.is_empty() {
+            return Err("entry id is empty".to_string());
+        }
+        let url = self.v2_url(&["entries", entry_id])?;
+        self.send_url("DELETE", url.as_str(), Vec::new(), Vec::new(), true)?;
+        Ok(())
     }
 
     /// Publishes a new artifact version for an existing marketplace entry.
@@ -1138,6 +1167,16 @@ impl MarketStatsApiService {
         serde_json::from_str::<T>(&body).map_err(|e| e.to_string())
     }
 
+    /// Reads the signed-in GitHub account's access token from the installed source.
+    fn github_token(&self) -> Result<Option<String>, String> {
+        let source = GITHUB_TOKEN_SOURCE
+            .get()
+            .ok_or_else(|| "GitHub token source is not installed".to_string())?;
+        Ok(source
+            .current_access_token()?
+            .filter(|token| !token.trim().is_empty()))
+    }
+
     fn send_github(
         &self,
         method: &str,
@@ -1145,24 +1184,21 @@ impl MarketStatsApiService {
         mut headers: Vec<(String, String)>,
         body: Vec<u8>,
     ) -> Result<HttpResponseData, String> {
-        if let Some(token) = self
-            .github_token
-            .as_deref()
-            .filter(|t| !t.trim().is_empty())
-        {
+        if let Some(token) = self.github_token()? {
             headers.push(("Authorization".to_string(), format!("Bearer {token}")));
         }
         self.request(method, url, headers, body, true)
     }
 
-    fn decode_url<T: for<'de> Deserialize<'de>>(
+    /// Sends one marketplace request and returns the response body of a successful status.
+    fn send_url(
         &self,
         method: &str,
         url: &str,
         mut headers: Vec<(String, String)>,
         body: Vec<u8>,
         use_session: bool,
-    ) -> Result<T, String> {
+    ) -> Result<String, String> {
         if use_session {
             let auth = self.exchange_github_token_for_market_session()?;
             headers.push((
@@ -1170,13 +1206,10 @@ impl MarketStatsApiService {
                 format!("Bearer {}", auth.session),
             ));
         } else if url.ends_with("/auth/github") {
-            if let Some(token) = self
-                .github_token
-                .as_deref()
-                .filter(|t| !t.trim().is_empty())
-            {
-                headers.push(("Authorization".to_string(), format!("Bearer {token}")));
-            }
+            let token = self
+                .github_token()?
+                .ok_or_else(|| "GitHub login required".to_string())?;
+            headers.push(("Authorization".to_string(), format!("Bearer {token}")));
         }
         let resp = self.request(method, url, headers, body, true)?;
         let body = body_text(&resp.body);
@@ -1187,6 +1220,18 @@ impl MarketStatsApiService {
                 summarize_body(&body)
             ));
         }
+        Ok(body)
+    }
+
+    fn decode_url<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        use_session: bool,
+    ) -> Result<T, String> {
+        let body = self.send_url(method, url, headers, body, use_session)?;
         serde_json::from_str::<T>(&body).map_err(|e| e.to_string())
     }
 
@@ -1269,6 +1314,36 @@ impl MarketStatsApiService {
 // ── Artifact project models ────────────────────────────────
 
 // ── Helpers ────────────────────────────────────────────────
+
+/// State of a publisher entry the market sent without one: it is waiting for review.
+fn pending_state_code() -> String {
+    "pending".to_string()
+}
+
+/// Reads the body of `/my/entries`, where the market wraps the entry list in a
+/// publisher listing, and hands out the entries directly.
+fn parse_my_entries(body: &str) -> Result<MarketMyEntriesResponse, String> {
+    #[derive(Deserialize)]
+    struct Wire {
+        #[serde(default)]
+        ok: bool,
+        #[serde(default)]
+        entries: Listing,
+    }
+    #[derive(Default, Deserialize)]
+    struct Listing {
+        #[serde(rename = "generatedAt", default)]
+        generated_at: Option<String>,
+        #[serde(default)]
+        entries: Vec<MarketPublisherEntrySummary>,
+    }
+    let wire: Wire = serde_json::from_str(body).map_err(|e| e.to_string())?;
+    Ok(MarketMyEntriesResponse {
+        ok: wire.ok,
+        entries: wire.entries.entries,
+        generated_at: wire.entries.generated_at,
+    })
+}
 
 fn entry_shard(id: &str) -> String {
     let mut hash = 2166136261u32;
@@ -1426,7 +1501,7 @@ pub use MarketStatsApiService as MarketStatsApiServiceModule;
 
 #[cfg(test)]
 mod tests {
-    use super::MarketStatsApiService;
+    use super::{parse_my_entries, MarketStatsApiService};
     use operit_host_api::HostManager::setDefaultHttpHost;
     use operit_host_api::{
         HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData,
@@ -1528,6 +1603,23 @@ mod tests {
                 "market test HTTP downloads are not configured",
             ))
         }
+    }
+
+    /// The market nests the entry list inside a publisher listing and may omit
+    /// the state of an entry that still waits for review.
+    #[test]
+    fn my_entries_are_read_from_the_publisher_listing_the_market_wraps_them_in() {
+        let body = r#"{"ok":true,"entries":{"ok":true,"generatedAt":"2026-11-03T00:00:00Z","shard":"ab","entries":[
+            {"id":"e1","title":"One","type":"package","relation":"owner","stateCode":"approved","listingState":"listed","categoryId":"tools","updatedAt":"2026-11-02T08:00:00Z","reasonCodes":["policy-violation"]},
+            {"id":"e2","title":"Two","type":"skill","relation":"contributor"}]}}"#;
+        let parsed = parse_my_entries(body).expect("nested publisher listing should parse");
+        assert!(parsed.ok);
+        assert_eq!(parsed.generated_at.as_deref(), Some("2026-11-03T00:00:00Z"));
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(parsed.entries[0].state_code, "approved");
+        assert_eq!(parsed.entries[0].reason_codes, vec!["policy-violation"]);
+        assert_eq!(parsed.entries[1].state_code, "pending");
+        assert_eq!(parsed.entries[1].listing_state, None);
     }
 
     #[test]

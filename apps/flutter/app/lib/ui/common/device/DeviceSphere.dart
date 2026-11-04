@@ -1,10 +1,105 @@
 // ignore_for_file: file_names
 
-part of 'DeviceSpaceGraph.dart';
+import 'dart:math' as math;
 
-/// A lit sphere and a raised glyph share the orbital pose and interaction lift.
-class _GraphDeviceSphere extends StatelessWidget {
-  const _GraphDeviceSphere({
+import 'package:flutter/material.dart';
+
+/// Icon for a device platform reported by the device space.
+IconData devicePlatformIcon(String platform) {
+  final name = platform.trim().toLowerCase();
+  if (name.contains('android')) return Icons.android_rounded;
+  if (name.contains('windows')) return Icons.laptop_windows_rounded;
+  if (name.contains('mac') || name.contains('darwin')) {
+    return Icons.laptop_mac_rounded;
+  }
+  if (name.contains('linux')) return Icons.dns_outlined;
+  if (name.contains('ios')) return Icons.phone_iphone_rounded;
+  return Icons.devices_other_rounded;
+}
+
+/// Where a sphere sits on its orbit; light and glyph tilt follow it.
+abstract interface class DeviceSpherePose {
+  /// -1 far side to 1 near side.
+  double get depth;
+
+  /// -1 left to 1 right of the orbit center.
+  double get lateral;
+}
+
+/// The pose of a sphere that is not orbiting.
+class DeviceSphereRest implements DeviceSpherePose {
+  const DeviceSphereRest();
+
+  @override
+  double get depth => 0;
+
+  @override
+  double get lateral => 0;
+}
+
+/// Sphere and glyph tones; light and dark keep the same scene with separate
+/// contrast for paper and night.
+class DeviceSpherePalette {
+  const DeviceSpherePalette(this.scheme);
+
+  final ColorScheme scheme;
+
+  bool get dark => scheme.brightness == Brightness.dark;
+  Color get accent => scheme.primary;
+  Color get ink => scheme.onSurface;
+
+  Color sphereBase({required bool current, required bool online}) {
+    final wash = current
+        ? (dark ? 0.38 : 0.22)
+        : online
+        ? (dark ? 0.20 : 0.13)
+        : (dark ? 0.12 : 0.14);
+    final ground = current
+        ? scheme.primaryContainer
+        : dark
+        ? scheme.surfaceContainerHigh
+        : scheme.surfaceContainerHighest;
+    return Color.alphaBlend(accent.withValues(alpha: wash), ground);
+  }
+
+  Color sphereLit(Color base, {required bool current}) => Color.lerp(
+    base,
+    Colors.white,
+    current ? (dark ? 0.56 : 0.20) : (dark ? 0.40 : 0.10),
+  )!;
+
+  Color sphereShade(Color base) =>
+      Color.lerp(base, Colors.black, dark ? 0.72 : 0.52)!;
+
+  double get contactShadow => dark ? 0.45 : 0.22;
+  double get aura => dark ? 1 : 1.45;
+  double get glint => dark ? 0.62 : 0.22;
+  double get rimWhite => dark ? 0.68 : 0.12;
+  double get rimArc => dark ? 0.32 : 0.20;
+  double get glyphHighlight => dark ? 0.70 : 0.18;
+  double get glyphShadow => dark ? 0.18 : 0.10;
+
+  Color glyphCurrent() => dark
+      ? Color.lerp(accent, Colors.white, 0.86)!
+      : scheme.onPrimaryContainer;
+
+  Color glyphRemote({required bool online}) => Color.lerp(
+    ink,
+    accent,
+    online ? (dark ? 0.20 : 0.34) : (dark ? 0.08 : 0.18),
+  )!;
+
+  Color glyphEdge(Color accentColor) =>
+      Color.lerp(accentColor, Colors.black, dark ? 0.62 : 0.48)!;
+}
+
+/// A lit sphere with a raised device glyph, the app's picture of a device.
+///
+/// The device space graph drives [pose] and [elevation] from its orbit; other
+/// screens use [DeviceSphere.still].
+class DeviceSphere extends StatelessWidget {
+  const DeviceSphere({
+    super.key,
     required this.diameter,
     required this.icon,
     required this.iconSize,
@@ -12,8 +107,23 @@ class _GraphDeviceSphere extends StatelessWidget {
     required this.online,
     required this.motion,
     required this.elevation,
-    required this.frame,
+    required this.pose,
   });
+
+  /// A resting sphere; [lift] raises it like a hovered graph node.
+  const DeviceSphere.still({
+    super.key,
+    required this.diameter,
+    required this.icon,
+    required this.current,
+    required this.online,
+    Animation<double> lift = kAlwaysDismissedAnimation,
+  }) : iconSize = diameter * (current ? 0.42 : 0.44),
+       motion = lift,
+       elevation = lift,
+       pose = _restPose;
+
+  static DeviceSpherePose _restPose() => const DeviceSphereRest();
 
   final double diameter;
   final IconData icon;
@@ -22,17 +132,17 @@ class _GraphDeviceSphere extends StatelessWidget {
   final bool online;
   final Listenable motion;
   final Animation<double> elevation;
-  final ValueGetter<_GraphNodeFrame> frame;
+  final ValueGetter<DeviceSpherePose> pose;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final palette = _GraphPalette(scheme);
+    final palette = DeviceSpherePalette(scheme);
     final accent = current || online ? scheme.primary : scheme.outline;
     final glyphColor = current
         ? palette.glyphCurrent()
         : palette.glyphRemote(online: online);
-    final animation = Listenable.merge([motion, elevation]);
+    final animation = Listenable.merge(<Listenable>[motion, elevation]);
     return ExcludeSemantics(
       child: SizedBox.square(
         dimension: diameter,
@@ -41,12 +151,12 @@ class _GraphDeviceSphere extends StatelessWidget {
           children: <Widget>[
             Positioned.fill(
               child: CustomPaint(
-                painter: _GraphSpherePainter(
+                painter: _DeviceSpherePainter(
                   scheme: scheme,
                   current: current,
                   online: online,
                   elevation: elevation,
-                  frame: frame,
+                  pose: pose,
                   animation: animation,
                 ),
               ),
@@ -54,7 +164,7 @@ class _GraphDeviceSphere extends StatelessWidget {
             Positioned.fill(
               child: AnimatedBuilder(
                 animation: animation,
-                child: _GraphRaisedGlyph(
+                child: DeviceRaisedGlyph(
                   icon: icon,
                   size: iconSize,
                   color: glyphColor,
@@ -62,7 +172,7 @@ class _GraphDeviceSphere extends StatelessWidget {
                   shadow: scheme.shadow,
                 ),
                 builder: (context, child) {
-                  final pose = frame();
+                  final pose = this.pose();
                   final lift = elevation.value;
                   final tilt = Matrix4.identity()
                     ..setEntry(3, 2, 0.0018)
@@ -91,8 +201,9 @@ class _GraphDeviceSphere extends StatelessWidget {
 }
 
 /// Stacked silhouettes form the side wall, bevel and illuminated icon face.
-class _GraphRaisedGlyph extends StatelessWidget {
-  const _GraphRaisedGlyph({
+class DeviceRaisedGlyph extends StatelessWidget {
+  const DeviceRaisedGlyph({
+    super.key,
     required this.icon,
     required this.size,
     required this.color,
@@ -108,7 +219,7 @@ class _GraphRaisedGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = _GraphPalette(Theme.of(context).colorScheme);
+    final palette = DeviceSpherePalette(Theme.of(context).colorScheme);
     final thickness = size * 0.075;
     final edgeColor = palette.glyphEdge(accent);
     return SizedBox.square(
@@ -169,13 +280,13 @@ class _GraphRaisedGlyph extends StatelessWidget {
   }
 }
 
-class _GraphSpherePainter extends CustomPainter {
-  _GraphSpherePainter({
+class _DeviceSpherePainter extends CustomPainter {
+  _DeviceSpherePainter({
     required this.scheme,
     required this.current,
     required this.online,
     required this.elevation,
-    required this.frame,
+    required this.pose,
     required Listenable animation,
   }) : super(repaint: animation);
 
@@ -183,7 +294,7 @@ class _GraphSpherePainter extends CustomPainter {
   final bool current;
   final bool online;
   final Animation<double> elevation;
-  final ValueGetter<_GraphNodeFrame> frame;
+  final ValueGetter<DeviceSpherePose> pose;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -192,9 +303,9 @@ class _GraphSpherePainter extends CustomPainter {
     const center = Offset(50, 50);
     const radius = 48.5;
     const sphere = Rect.fromLTWH(1.5, 1.5, 97, 97);
-    final pose = frame();
+    final pose = this.pose();
     final lift = elevation.value;
-    final palette = _GraphPalette(scheme);
+    final palette = DeviceSpherePalette(scheme);
     final accent = current || online ? scheme.primary : scheme.outline;
     final base = palette.sphereBase(current: current, online: online);
     final lit = palette.sphereLit(base, current: current);
@@ -329,10 +440,10 @@ class _GraphSpherePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _GraphSpherePainter oldDelegate) =>
+  bool shouldRepaint(covariant _DeviceSpherePainter oldDelegate) =>
       oldDelegate.scheme != scheme ||
       oldDelegate.current != current ||
       oldDelegate.online != online ||
-      oldDelegate.frame != frame ||
+      oldDelegate.pose != pose ||
       oldDelegate.elevation != elevation;
 }

@@ -1690,6 +1690,242 @@ class ManifestFile {
   final String media_type;
 }
 
+/// Generated SDK model for Rust type `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogCandidate`.
+class ExtensionCatalogCandidate {
+  const ExtensionCatalogCandidate({
+    required this.id,
+    required this.kind,
+    required this.display_name,
+    required this.description,
+    required this.version,
+    required this.authors,
+    required this.category,
+    required this.required_scope,
+    required this.tool_count,
+    required this.subpackage_count,
+  });
+
+  /// Decodes `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogCandidate` from a MessagePack value map.
+  factory ExtensionCatalogCandidate.fromMessagePackValue(Map<String, Object?> value) => ExtensionCatalogCandidate(
+    id: value['id'] as String,
+    kind: value['kind'] as String,
+    display_name: value['displayName'] as String,
+    description: value['description'] as String,
+    version: value['version'] as String,
+    authors: (value['authors'] as List<Object?>).map((item) => item as String).toList(growable: false),
+    category: value['category'] as String,
+    required_scope: value['requiredScope'] == null ? null : value['requiredScope'] as String,
+    tool_count: (value['toolCount'] as num).toInt(),
+    subpackage_count: (value['subpackageCount'] as num).toInt(),
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'id': id,
+    'kind': kind,
+    'displayName': display_name,
+    'description': description,
+    'version': version,
+    'authors': authors.map((item) => item).toList(growable: false),
+    'category': category,
+    'requiredScope': required_scope == null ? null : required_scope!,
+    'toolCount': tool_count,
+    'subpackageCount': subpackage_count,
+  };
+
+  final String id;
+  final String kind;
+  final String display_name;
+  final String description;
+  final String version;
+  final List<String> authors;
+  final String category;
+  final String? required_scope;
+  final int tool_count;
+  final int subpackage_count;
+}
+
+/// Generated SDK model for Rust type `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogDiagnostic`.
+class ExtensionCatalogDiagnostic {
+  const ExtensionCatalogDiagnostic({
+    required this.source_path,
+    required this.package_id,
+    required this.display_name,
+    required this.code,
+    required this.message,
+    required this.package_kind,
+    required this.can_delete,
+  });
+
+  /// Decodes `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogDiagnostic` from a MessagePack value map.
+  factory ExtensionCatalogDiagnostic.fromMessagePackValue(Map<String, Object?> value) => ExtensionCatalogDiagnostic(
+    source_path: value['sourcePath'] as String,
+    package_id: value['packageId'] == null ? null : value['packageId'] as String,
+    display_name: value['displayName'] as String,
+    code: value['code'] as String,
+    message: value['message'] as String,
+    package_kind: value['packageKind'] as String,
+    can_delete: value['canDelete'] as bool,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'sourcePath': source_path,
+    'packageId': package_id == null ? null : package_id!,
+    'displayName': display_name,
+    'code': code,
+    'message': message,
+    'packageKind': package_kind,
+    'canDelete': can_delete,
+  };
+
+  final String source_path;
+  final String? package_id;
+  final String display_name;
+  final String code;
+  final String message;
+  final String package_kind;
+  final bool can_delete;
+}
+
+/// Generated SDK model for Rust type `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogEntry`.
+class ExtensionCatalogEntry {
+  const ExtensionCatalogEntry({
+    required this.id,
+    required this.kind,
+    required this.source,
+    required this.display_name,
+    required this.description,
+    required this.version,
+    required this.authors,
+    required this.category,
+    required this.scope,
+    required this.activation_state,
+    required this.runtime_state,
+    required this.update_state,
+    required this.is_customized,
+    required this.market_entry_id,
+    required this.installed_market_version_id,
+    required this.logo_resource_key,
+    required this.logo_mime_type,
+    required this.tool_count,
+    required this.subpackage_count,
+    required this.ui_module_count,
+    required this.has_ui,
+    required this.chat_sidebar_entry_ids,
+    required this.dependency_issue_count,
+  });
+
+  /// Decodes `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogEntry` from a MessagePack value map.
+  factory ExtensionCatalogEntry.fromMessagePackValue(Map<String, Object?> value) => ExtensionCatalogEntry(
+    id: value['id'] as String,
+    kind: value['kind'] as String,
+    source: value['source'] as String,
+    display_name: value['displayName'] as String,
+    description: value['description'] as String,
+    version: value['version'] as String,
+    authors: (value['authors'] as List<Object?>).map((item) => item as String).toList(growable: false),
+    category: value['category'] as String,
+    scope: value['scope'] as String,
+    activation_state: value['activationState'] as String,
+    runtime_state: value['runtimeState'] as String,
+    update_state: value['updateState'] as String,
+    is_customized: value['isCustomized'] as bool,
+    market_entry_id: value['marketEntryId'] == null ? null : value['marketEntryId'] as String,
+    installed_market_version_id: value['installedMarketVersionId'] == null ? null : value['installedMarketVersionId'] as String,
+    logo_resource_key: value['logoResourceKey'] == null ? null : value['logoResourceKey'] as String,
+    logo_mime_type: value['logoMimeType'] == null ? null : value['logoMimeType'] as String,
+    tool_count: (value['toolCount'] as num).toInt(),
+    subpackage_count: (value['subpackageCount'] as num).toInt(),
+    ui_module_count: (value['uiModuleCount'] as num).toInt(),
+    has_ui: value['hasUi'] as bool,
+    chat_sidebar_entry_ids: (value['chatSidebarEntryIds'] as List<Object?>).map((item) => item as String).toList(growable: false),
+    dependency_issue_count: (value['dependencyIssueCount'] as num).toInt(),
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'id': id,
+    'kind': kind,
+    'source': source,
+    'displayName': display_name,
+    'description': description,
+    'version': version,
+    'authors': authors.map((item) => item).toList(growable: false),
+    'category': category,
+    'scope': scope,
+    'activationState': activation_state,
+    'runtimeState': runtime_state,
+    'updateState': update_state,
+    'isCustomized': is_customized,
+    'marketEntryId': market_entry_id == null ? null : market_entry_id!,
+    'installedMarketVersionId': installed_market_version_id == null ? null : installed_market_version_id!,
+    'logoResourceKey': logo_resource_key == null ? null : logo_resource_key!,
+    'logoMimeType': logo_mime_type == null ? null : logo_mime_type!,
+    'toolCount': tool_count,
+    'subpackageCount': subpackage_count,
+    'uiModuleCount': ui_module_count,
+    'hasUi': has_ui,
+    'chatSidebarEntryIds': chat_sidebar_entry_ids.map((item) => item).toList(growable: false),
+    'dependencyIssueCount': dependency_issue_count,
+  };
+
+  final String id;
+  final String kind;
+  final String source;
+  final String display_name;
+  final String description;
+  final String version;
+  final List<String> authors;
+  final String category;
+  final String scope;
+  final String activation_state;
+  final String runtime_state;
+  final String update_state;
+  final bool is_customized;
+  final String? market_entry_id;
+  final String? installed_market_version_id;
+  final String? logo_resource_key;
+  final String? logo_mime_type;
+  final int tool_count;
+  final int subpackage_count;
+  final int ui_module_count;
+  final bool has_ui;
+  final List<String> chat_sidebar_entry_ids;
+  final int dependency_issue_count;
+}
+
+/// Generated SDK model for Rust type `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogSnapshot`.
+class ExtensionCatalogSnapshot {
+  const ExtensionCatalogSnapshot({
+    required this.revision,
+    required this.installed,
+    required this.bundled_available,
+    required this.diagnostics,
+  });
+
+  /// Decodes `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogSnapshot` from a MessagePack value map.
+  factory ExtensionCatalogSnapshot.fromMessagePackValue(Map<String, Object?> value) => ExtensionCatalogSnapshot(
+    revision: (value['revision'] as num).toInt(),
+    installed: (value['installed'] as List<Object?>).map((item) => ExtensionCatalogEntry.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    bundled_available: (value['bundledAvailable'] as List<Object?>).map((item) => ExtensionCatalogCandidate.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    diagnostics: (value['diagnostics'] as List<Object?>).map((item) => ExtensionCatalogDiagnostic.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'revision': revision,
+    'installed': installed.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'bundledAvailable': bundled_available.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'diagnostics': diagnostics.map((item) => item.toMessagePackValue()).toList(growable: false),
+  };
+
+  final int revision;
+  final List<ExtensionCatalogEntry> installed;
+  final List<ExtensionCatalogCandidate> bundled_available;
+  final List<ExtensionCatalogDiagnostic> diagnostics;
+}
+
 /// Generated SDK model for Rust type `operit_tools::ConversationMarkupManager::ToolResult`.
 class ToolResult {
   const ToolResult({

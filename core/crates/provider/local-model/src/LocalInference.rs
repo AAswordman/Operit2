@@ -54,6 +54,7 @@ pub struct LocalTtsRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct LocalTtsResponse {
+    #[serde(with = "serde_bytes")]
     pub audioBytes: Vec<u8>,
     pub outputFormat: String,
 }
