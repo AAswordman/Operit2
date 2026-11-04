@@ -1490,7 +1490,10 @@ impl ChatServiceCore {
         let summaryMessage = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
             messagesToSummarize,
-            false)
+            false,
+            currentChatId.clone(),
+            &configuration,
+        )
         .await
         {
             Ok(Some(summaryMessage)) => summaryMessage,

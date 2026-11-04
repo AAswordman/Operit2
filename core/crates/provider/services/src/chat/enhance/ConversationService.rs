@@ -16,6 +16,7 @@ use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::ToolExecutionManager::ToolExecutionManager;
 use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
 
 const APPLY_FILE_TOOL_NAME: &str = "apply_file";
@@ -428,7 +429,9 @@ impl ConversationService {
         };
         let mut summaryHistory = stripGeminiThoughtSignatureMetaTurns(messages);
         let mut summaryPrompt = FunctionalPrompts::summaryUserMessage(useEnglish).to_string();
-        let baseSummaryMetadata = std::collections::HashMap::from([
+        let executionContext = ToolExecutionManager::currentToolRuntimeContext();
+        let summaryChatId = executionContext.as_ref().and_then(|context| context.callerChatId.clone());
+        let mut baseSummaryMetadata = std::collections::HashMap::from([
             ("providerModel".to_string(), json!(providerModel)),
             (
                 "sourceMessageCount".to_string(),
@@ -436,9 +439,17 @@ impl ConversationService {
             ),
         ]);
 
+        if let Some(context) = executionContext {
+            baseSummaryMetadata.insert("executionContext".to_string(), json!({
+                "chatId": context.callerChatId,
+                "participantId": context.callerParticipantId,
+            }));
+        }
+
         let beforePrepareContext =
             SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
                 stage: "before_prepare_summary_prompt".to_string(),
+                chat_id: summaryChatId.clone(),
                 use_english: Some(useEnglish),
                 previous_summary: previousSummary.clone(),
                 chat_history: summaryHistory,
@@ -472,6 +483,7 @@ impl ConversationService {
         let beforeSendContext =
             SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
                 stage: "before_send_to_model".to_string(),
+                chat_id: summaryChatId.clone(),
                 use_english: Some(useEnglish),
                 previous_summary: previousSummary.clone(),
                 chat_history: summaryHistory,
@@ -583,6 +595,7 @@ impl ConversationService {
         let afterGenerateContext =
             SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
                 stage: "after_generate_summary".to_string(),
+                chat_id: summaryChatId,
                 use_english: Some(useEnglish),
                 previous_summary: previousSummary,
                 chat_history: summaryHistory,

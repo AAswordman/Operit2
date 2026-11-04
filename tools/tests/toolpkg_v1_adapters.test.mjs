@@ -284,6 +284,37 @@ test('legacy caller IDs are provider-scoped and absent from the current contract
   assert.equal(context.getCallerCardId(), undefined);
 });
 
+/** V1 hooks use the native invocation snapshot even without legacy tool parameters. */
+test('v1 hook memory uses the neutral caller transport and rejects foreign participants', async t => {
+  const { domain, context, tools, calls } = await roleProvider(t);
+  const card = await domain('character.create', { values: { name: 'Hook memory owner' } });
+  context.params = {
+    eventPayload: { metadata: { executionContext: { chatId: 'forged-chat', participantId: 'forged-card' } } },
+    __operit_package_chat_id: 'hook-chat',
+    __operit_package_caller_participant_id: card.id,
+    __operit_package_caller_owner: 'com.operit.character_cards',
+  };
+  assert.equal(context.getCallerCardId(), card.id);
+  await tools.Memory.create('Hook memory', 'Owned by the captured role');
+  const result = await tools.Memory.query('Hook memory');
+  assert.equal(result.memories[0].title, 'Hook memory');
+  const query = calls.findLast(call => call.name === 'character_memory:query_memory');
+  assert.equal(query.args[0].__operit_package_caller_participant_id, card.id);
+  assert.equal(query.args[0].__operit_package_chat_id, 'hook-chat');
+  assert.equal(query.args[0].__operit_package_caller_owner, 'com.operit.character_cards');
+
+  delete context.params.__operit_package_caller_participant_id;
+  delete context.params.__operit_package_caller_owner;
+  assert.equal(context.getCallerCardId(), undefined);
+  await assert.rejects(tools.Memory.query('*'), /caller_card_id or target_owner_key parameter is required/);
+  const count = calls.length;
+  context.params.__operit_package_caller_participant_id = card.id;
+  context.params.__operit_package_caller_owner = 'another.provider';
+  assert.throws(() => context.getCallerCardId(), /another provider participant/);
+  await assert.rejects(tools.Memory.query('*'), /another provider participant/);
+  assert.equal(calls.length, count, 'another provider must not enter character memory tools');
+});
+
 /** Checks the historical image globals stay synchronous and disappear on API 2. */
 test('v1 image registration returns a link and maps Android paths', () => {
   const { context } = engine();

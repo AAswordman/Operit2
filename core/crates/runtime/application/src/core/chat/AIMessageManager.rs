@@ -522,7 +522,10 @@ impl AIMessageManager {
     pub async fn summarizeMemory(
         enhancedAiService: &mut EnhancedAIService,
         messages: Vec<ChatMessage>,
-        autoContinue: bool) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
+        autoContinue: bool,
+        chatId: String,
+        configuration: &ChatConfigurationResult,
+    ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
     {
         let lastSummaryIndex = messages
             .iter()
@@ -568,7 +571,7 @@ impl AIMessageManager {
 
         let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
         let summary = enhancedAiService
-            .generateSummary(conversationToSummarize, previousSummary)
+            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration)
             .await?;
         let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
         if summary.trim().is_empty() {
