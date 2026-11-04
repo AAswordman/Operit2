@@ -332,6 +332,7 @@ pub const RUNTIME_SYNC_PREFERENCE_LAYOUT_PATH: &str = "runtime/sync/preference_l
 pub const RUNTIME_SYNC_PREFERENCES_PAYLOADS_DIR_PATH: &str = "runtime/sync/preferences_payloads";
 pub const RUNTIME_MODEL_CONNECTION_TEST_CACHE_DIR_PATH: &str =
     "runtime/cache/model_connection_test";
+pub const RUNTIME_MODELS_DEV_CACHE_DIR_PATH: &str = "runtime/cache/models_dev";
 pub const RUNTIME_LOCAL_MODELS_DIR_PATH: &str = "runtime/models/local";
 pub const RUNTIME_LOCAL_ENGINES_DIR_PATH: &str = "runtime/models/local/engines";
 pub const RUNTIME_LOCAL_MODEL_MANIFESTS_DIR_PATH: &str = "runtime/models/local/manifests";

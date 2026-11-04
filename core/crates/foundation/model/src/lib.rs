@@ -54,6 +54,10 @@ pub mod ModelCatalog;
 pub mod ModelConfigData;
 #[path = "ModelParameter.rs"]
 pub mod ModelParameter;
+#[path = "ModelThinking.rs"]
+pub mod ModelThinking;
+#[path = "ModelsDevCatalog.rs"]
+pub mod ModelsDevCatalog;
 #[path = "OpenAIModels.rs"]
 pub mod OpenAIModels;
 #[path = "OperitChatArchive.rs"]
