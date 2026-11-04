@@ -105,13 +105,13 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
             outputDirectory != null &&
             outputDirectory.isNotEmpty) ...<Widget>[
           const SizedBox(height: 8),
-          ListTile(
+          _WorkspaceFolderTile(
             key: const ValueKey('chat-output-directory'),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-            leading: const Icon(Icons.folder_open_outlined),
-            title: const Text('对话产出'),
-            subtitle: Text('附件与生成文件 · $outputDirectory'),
-            trailing: const Icon(Icons.chevron_right),
+            folder: WorkspaceMountedFolder(
+              name: '对话产出',
+              path: outputDirectory,
+              relativePath: '',
+            ),
             onTap: () => widget.onOpenFolder(
               WorkspaceMountedFolder(
                 name: '对话产出',
@@ -820,7 +820,11 @@ class _WorkspaceHeaderCard extends StatelessWidget {
 
 class _WorkspaceFolderTile extends StatelessWidget {
   /// Creates an inline navigation row for one mounted folder.
-  const _WorkspaceFolderTile({required this.folder, required this.onTap});
+  const _WorkspaceFolderTile({
+    super.key,
+    required this.folder,
+    required this.onTap,
+  });
 
   final WorkspaceMountedFolder folder;
   final VoidCallback onTap;

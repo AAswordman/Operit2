@@ -87,7 +87,12 @@ void main() {
           addTearDown(tester.view.resetPhysicalSize);
           addTearDown(tester.view.resetDevicePixelRatio);
           await tester.pumpWidget(
-            fixture.app(brightness: brightness, scale: scale, bound: false),
+            fixture.app(
+              brightness: brightness,
+              scale: scale,
+              bound: false,
+              fileDirectory: '/operitapp/outputs/2026-11-04_20-19-26-115',
+            ),
           );
           await tester.pumpAndSettle();
 
