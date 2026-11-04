@@ -2764,9 +2764,9 @@ fn cleanup_completion_marker_does_not_skip_the_remaining_startup_trigger() {
     assert!(operit_store::PreferenceLayout::retirements(fixture.host.clone()).unwrap().contains(CHARACTER_CARDS_PREFERENCES_PATH));
 }
 
-/// A completed layout consumes retired originals without rewriting the plugin's current values.
+/// Unknown sources retain receipts; a completed layout also consumes newly arriving retired history.
 #[test]
-fn character_layout_retires_old_transactions_only_after_import_and_cleanup() {
+fn character_layout_retires_late_transactions_after_import_and_cleanup() {
     for retained_document in [false, true] {
         assert_character_layout_retirement(retained_document);
     }
@@ -2817,7 +2817,10 @@ fn assert_character_layout_retirement(retained_document: bool) {
         PreferenceMerge::registry(fixture.host.clone(), &schema, [], |_, _| true).unwrap();
     let before = registry.receive(&[]).unwrap();
     assert!(before.pending.is_empty());
-    assert_eq!(before.skipped, originals.len());
+    // Discovery has already compacted unregistered owners without applying their data.
+    assert_eq!(before.skipped, 0);
+    let discovered = journal.preferenceHistory().unwrap();
+    assert!(originals.iter().all(|operation| !discovered.contains(operation)));
     assert!(before.errors.is_empty());
     let document = format!("{memory_root}/USER.md");
     if retained_document {
@@ -2834,6 +2837,12 @@ fn assert_character_layout_retirement(retained_document: bool) {
     let card = fixture.writer().get("cards", "legacy").unwrap();
     let owner = fixture.writer().get("owners", "character:legacy").unwrap();
     let active = fixture.writer().get("meta", "state").unwrap();
+    let late = originals.iter().cloned().map(|mut operation| {
+        operation.originDeviceId = "late-peer".into();
+        operation.opId = format!("late-peer:{}", operation.sequence);
+        operation
+    }).collect::<Vec<_>>();
+    journal.receiveOperations(&late).unwrap();
     for attempt in 0..2 {
         // Startup publishes persisted layout rules, and a retry has no new incoming batch.
         crate::data::preferences::PreferenceSpaceMerge::prepareLayout(fixture.host.clone())
@@ -2869,8 +2878,10 @@ fn assert_character_layout_retirement(retained_document: bool) {
     }
     let history = journal.preferenceHistory().unwrap();
     let receipt = journal.receipt().unwrap();
-    for operation in originals {
-        assert!(history.contains(&operation));
+    for operation in &late {
+        assert!(history.contains(operation));
+    }
+    for operation in originals.iter().chain(&late) {
         assert!(receipt.containsSequence(&operation.originDeviceId, operation.sequence));
     }
 }

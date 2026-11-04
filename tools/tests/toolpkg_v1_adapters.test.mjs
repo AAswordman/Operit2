@@ -412,7 +412,7 @@ test('VoiceBar v1 clicks retain the host speech request after the synchronous UI
 
 /** Exercises genuine public API handlers and memory tool IPC against the existing disk-backed plugin. */
 async function roleProvider(t, version = '1.0.0') {
-  const disk = await createDiskHarness(t), apis = new Map();
+  const disk = await createDiskHarness(t, { legacyIdentity: 'default' }), apis = new Map();
   const plugin = loadModule('src/public-api.ts', { ...disk.globals, ToolPkg: {
     ...disk.globals.ToolPkg,
     /** Captures the actual exported callbacks registered by the production provider. */
@@ -467,7 +467,7 @@ async function roleProvider(t, version = '1.0.0') {
 test('legacy chat roles and creation use the real prerequisite provider', async t => {
   const runtime = await roleProvider(t);
   const library = await runtime.domain('memory.shared.create', { name: 'Actual shared library' });
-  const card = await runtime.domain('character.create', { values: { name: 'Real legacy role', chatModelBindingMode: 'FIXED_MODEL', chatModelId: 'configured-model', memoryBindingMode: 'SHARED', sharedMemoryId: library.id } });
+  const card = await runtime.domain('character.create', { values: { name: 'Real legacy role', chatModelBindingMode: 'FIXED_MODEL', chatModelId: 'configured-model', chatProviderId: 'configured-provider', memoryBindingMode: 'SHARED', sharedMemoryId: library.id } });
   const listed = await runtime.tools.Chat.listCharacterCards();
   assert.ok(listed.cards.some(entry => entry.id === card.id && entry.name === card.name));
   const created = await runtime.tools.Chat.createNew('native-folder', false, card.id);
@@ -478,7 +478,7 @@ test('legacy chat roles and creation use the real prerequisite provider', async 
     { name: 'Chat.updateGroup', args: [['new-chat'], 'native-folder'] },
   ]);
   const before = runtime.calls.filter(entry => entry.name === 'Chat.createNew').length;
-  await assert.rejects(runtime.tools.Chat.createNew(undefined, undefined, 'missing-role'), /character does not identify exactly one record: missing-role/);
+  await assert.rejects(runtime.tools.Chat.createNew(undefined, undefined, 'missing-role'), /Character not found: missing-role/);
   assert.equal(runtime.calls.filter(entry => entry.name === 'Chat.createNew').length, before);
   runtime.context.version = '2.0.0';
   const options = Object.freeze({ sourceChatId: 'source-chat', input: { owner: 'opaque' } });
@@ -541,14 +541,24 @@ test('legacy memory operations reach the actual disk-backed provider', async t =
 
 /** Verifies lossless numeric relationship IDs round-trip through actual create, query, update and delete operations. */
 test('legacy numeric memory links round-trip through decimal-string provider identities', async t => {
-  const { tools, calls } = await roleProvider(t, '1.0.1');
+  const { tools, calls, disk } = await roleProvider(t, '1.0.1');
   await tools.Memory.create('Source', 'Source content');
   await tools.Memory.create('Target', 'Target content');
   const created = await tools.Memory.link({ sourceTitle: 'Source', targetTitle: 'Target', description: 'Actual link' });
   assert.equal(created.description, 'Actual link');
+  await assert.rejects(tools.Memory.queryLinks(), /Invalid memory relationship identity/);
+  // Imported legacy links have decimal identities; newly allocated UUIDs cannot become v1 numbers.
+  const database = await disk.storage.objects.open({ path: disk.directory + '/memory.sqlite' });
+  const [stored] = await database.collection('links').list();
+  const { ownerKey, record } = stored.value;
+  await database.commit([
+    { op: 'delete', collection: 'links', key: stored.key, expectedVersion: stored.version },
+    { op: 'put', collection: 'links', key: ownerKey + '/42', value: { ownerKey, record: { ...record, id: '42' } }, expectedVersion: null },
+  ]);
+  await database.close();
   const query = await tools.Memory.queryLinks();
   assert.equal(query.totalCount, 1);
-  assert.ok(Number.isSafeInteger(query.links[0].linkId));
+  assert.equal(query.links[0].linkId, 42);
   const updated = await tools.Memory.updateLink({ linkId: query.links[0].linkId, weight: 0.9 });
   assert.equal(updated.weight, 0.9);
   assert.equal(calls.at(-1).args[0].link_id, String(query.links[0].linkId));

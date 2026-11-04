@@ -110,12 +110,16 @@ fn commutes<const VERSION: u32>(
         .syncSnapshot()
         .unwrap();
     let receiver = Fixture::new();
+    // Opaque migrations need the source checkpoint, even after a canonical correction.
+    let source = legacy::<VERSION>(receiver.host.clone(), path);
+    assert!(source
+        .repairSyncedSnapshot(&source.syncSnapshot().unwrap().token().unwrap(), &baseline)
+        .unwrap());
     let store = open(receiver.host.clone(), path).unwrap();
     let empty = store.syncSnapshot().unwrap();
     assert!(store
         .repairSyncedSnapshot(&empty.token().unwrap(), &normalized)
         .unwrap());
-    // The receiver has only the canonical snapshot, without the authority's old source file.
     for host in [actual.host.clone(), receiver.host.clone()] {
         for _ in 0..2 {
             applyOperations(host.clone(), &schema(), &[], operations, |_, _| true).unwrap();
