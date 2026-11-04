@@ -203,6 +203,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'unbound output directory opens through the existing file browser callback',
+    (tester) async {
+      final fixture = _HomeFixture();
+      addTearDown(fixture.dispose);
+      const output = '/operitapp/outputs/2026-11-04_01-52-04-000';
+      await tester.pumpWidget(fixture.app(bound: false, fileDirectory: output));
+      await tester.pumpAndSettle();
+      expect(find.textContaining(output), findsOneWidget);
+      expect(find.text('工作区（可选）'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('chat-output-directory')));
+      expect(fixture.openedFolder!.path, output);
+      expect(fixture.openedFolder!.relativePath, '');
+      expect(fixture.calls, ['folder']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('workspace menu contains only a native unbind item', (
     tester,
   ) async {
@@ -333,6 +351,7 @@ class _HomeFixture {
     const <WorkspaceTerminalSessionInfo>[],
   );
   final calls = <String>[];
+  WorkspaceMountedFolder? openedFolder;
 
   /// Mounts the actual overview with a Material theme and no runtime requests.
   Widget app({
@@ -344,6 +363,7 @@ class _HomeFixture {
     ],
     bool foldersLoading = false,
     String? foldersError,
+    String? fileDirectory,
   }) {
     return MaterialApp(
       theme: ThemeData(
@@ -364,6 +384,7 @@ class _HomeFixture {
           workspacePath: bound
               ? '/operitapp/workspaces/project/with/a/long/directory/path'
               : null,
+          fileDirectory: fileDirectory,
           workspaceUsage: bound
               ? WorkspaceOverviewUsage(
                   workspaceName: name,
@@ -377,7 +398,10 @@ class _HomeFixture {
           terminalSessionCountListenable: terminals,
           browserSessionCountListenable: browsers,
           terminalSessionsListenable: sessions,
-          onOpenFolder: (_) => calls.add('folder'),
+          onOpenFolder: (folder) {
+            openedFolder = folder;
+            calls.add('folder');
+          },
           onAddFolder: () => calls.add('mount'),
           onCreateWorkspace: () => calls.add('create'),
           onChooseExistingWorkspace: () => calls.add('choose'),

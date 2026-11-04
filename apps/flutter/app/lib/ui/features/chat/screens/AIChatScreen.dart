@@ -329,6 +329,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   StreamSubscription<void>? _chatUiCatalogSubscription;
   String? _currentChatId;
   String? _currentWorkspacePath;
+  String? _currentFileDirectory;
   List<core_proxy.Workspace> _workspaces = const <core_proxy.Workspace>[];
   StreamSubscription<List<core_proxy.Workspace>>? _workspacesSubscription;
   String? _toastMessage;
@@ -1770,7 +1771,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     }
     final chatChanged = _currentChatId != state.currentChatId;
     final workspaceChanged =
-        _currentWorkspacePath != state.currentWorkspacePath;
+        _currentWorkspacePath != state.currentWorkspacePath ||
+        _currentFileDirectory != state.currentFileDirectory;
     if (chatChanged) {
       _saveCurrentInputDraft();
       _currentChatId = state.currentChatId;
@@ -1788,6 +1790,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       unawaited(_reloadChatUiContext());
     }
     _currentWorkspacePath = state.currentWorkspacePath;
+    _currentFileDirectory = state.currentFileDirectory;
     final chatFlowErrorMessage = _chatFlowErrorMessage;
     if (_chatFlowError != null) {
       _loading = false;
@@ -2682,6 +2685,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         currentChatId: _currentChatId,
         hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
         workspacePath: _currentWorkspacePath,
+        fileDirectory: _currentFileDirectory,
         chatCore: _viewModel.chatCore,
         onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
         onListWorkspaceBindingDirectories:
@@ -2908,6 +2912,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       currentChatId: _currentChatId,
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
       workspacePath: _currentWorkspacePath,
+      fileDirectory: _currentFileDirectory,
       chatCore: _viewModel.chatCore,
       onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
       onListWorkspaceBindingDirectories:

@@ -1,7 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart' as selector;
 import 'package:flutter/services.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart'
+    show FileSelectorPlatform;
+
+part 'src/selected_file_input.dart';
 
 /// A platform-selected mount source, not an assumed physical file path.
 class FolderMountSource {
@@ -82,6 +89,97 @@ abstract final class OperitFolderAccess {
 abstract class OperitFolderAccessPlatform {
   static OperitFolderAccessPlatform instance = _FileSelectorFolderAccess();
 
+  /// Metadata and bounded input ownership use the same registered adapter as
+  /// folder selection. App code does not choose a platform or interpret paths.
+  Future<List<SelectedFileInput>> pickFileInputs({
+    bool imagesOnly = false,
+  }) async {
+    final files = await selector.openFiles(
+      acceptedTypeGroups: imagesOnly
+          ? const [
+              selector.XTypeGroup(
+                label: 'image',
+                extensions: [
+                  'jpg',
+                  'jpeg',
+                  'png',
+                  'webp',
+                  'bmp',
+                  'gif',
+                  'heic',
+                ],
+                mimeTypes: ['image/*'],
+              ),
+            ]
+          : const [],
+    );
+    final inputs = <SelectedFileInput>[];
+    try {
+      for (final file in files) {
+        inputs.add(await fileInput(file));
+      }
+      return inputs;
+    } catch (_) {
+      for (final input in inputs) {
+        try {
+          await input.close();
+        } catch (_) {
+          /* Keep the selection error. */
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<SelectedFileInput?> pickSnapshotInput({
+    required List<selector.XTypeGroup> acceptedTypeGroups,
+  }) async {
+    final delegate = FileSelectorPlatform.instance;
+    final file = await delegate.openFileWithProgress(
+      acceptedTypeGroups: acceptedTypeGroups,
+      onProgress: (_, _) {},
+    );
+    if (file == null) return null;
+    try {
+      final input = await fileInput(file);
+      input._release = () => delegate.releaseFile(file);
+      return input;
+    } catch (_) {
+      await delegate.releaseFile(file);
+      rethrow;
+    }
+  }
+
+  /// A source is optional: opaque picker URIs and byte-backed files must remain
+  /// streams unless their owning adapter can provide persistent authorization.
+  Future<FolderMountSource?> fileSource(
+    selector.XFile file, {
+    String? name,
+  }) async => null;
+
+  Future<SelectedFileInput> fileInput(
+    selector.XFile file, {
+    String? name,
+    String? mimeType,
+  }) async {
+    final length = await file.length();
+    final source = await fileSource(file, name: name);
+    return SelectedFileInput.fromStream(
+      name: name ?? file.name,
+      byteLength: length,
+      mimeType: mimeType ?? file.mimeType,
+      sourceJson: source == null
+          ? null
+          : jsonEncode({
+              'namespace': source.namespace,
+              'backend': source.backend,
+              'root': source.root,
+              'name': source.name,
+            }),
+      stream: SelectedFileInput._readXFile(file, length),
+    );
+  }
+
   Future<String?> pickDirectory({String? initialDirectory});
 
   Future<FolderMountSource?> pickWorkspaceDirectory({
@@ -103,6 +201,25 @@ abstract class OperitFolderAccessPlatform {
 
 class _FileSelectorFolderAccess extends OperitFolderAccessPlatform {
   @override
+  Future<FolderMountSource?> fileSource(
+    selector.XFile file, {
+    String? name,
+  }) async {
+    // File selectors also return opaque URIs and in-memory blobs. Only native
+    // absolute paths belong to the native backend; never treat a token as one.
+    final path = file.path;
+    if (!path.startsWith('/') && !RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path)) {
+      return null;
+    }
+    return FolderMountSource(
+      backend: 'native',
+      root: path,
+      namespace: '/virtual/local/attachments',
+      name: name ?? file.name,
+    );
+  }
+
+  @override
   Future<List<String>> pickDirectories({String? initialDirectory}) async =>
       (await selector.getDirectoryPaths(
         initialDirectory: initialDirectory,
@@ -115,8 +232,20 @@ class _FileSelectorFolderAccess extends OperitFolderAccessPlatform {
 
 /// Installed by Flutter's generated macOS plugin registrant. No runtime
 /// platform checks or distribution policy live in Dart.
-class OperitFolderAccessMacOS extends OperitFolderAccessPlatform {
+class OperitFolderAccessMacOS extends _FileSelectorFolderAccess {
   static const MethodChannel _channel = MethodChannel('operit/folder_access');
+
+  @override
+  Future<FolderMountSource?> fileSource(
+    selector.XFile file, {
+    String? name,
+  }) async {
+    final source = await super.fileSource(file, name: name);
+    if (source != null) {
+      await _channel.invokeMethod<void>('retainFile', {'path': source.root});
+    }
+    return source;
+  }
 
   @override
   Future<List<String>> pickDirectories({String? initialDirectory}) async =>
@@ -144,6 +273,92 @@ class OperitFolderAccessAndroid extends _FileSelectorFolderAccess {
   static void registerWith() {
     OperitFolderAccessPlatform.instance = OperitFolderAccessAndroid();
   }
+
+  @override
+  Future<List<SelectedFileInput>> pickFileInputs({
+    bool imagesOnly = false,
+  }) async {
+    final values = await _fileInputChannel.invokeListMethod<Object?>(
+      imagesOnly ? 'pickImages' : 'pickFiles',
+      imagesOnly ? null : const <String, Object?>{'mimeTypes': <String>[]},
+    );
+    final files = <SelectedFileInput>[];
+    try {
+      for (final value in values ?? <Object?>[]) {
+        final info = Map<String, Object?>.from(value! as Map);
+        final token = info['token'];
+        final name = info['name'];
+        final length = info['byteLength'];
+        if (token is! String ||
+            name is! String ||
+            (length != null && (length is! int || length < 0))) {
+          throw StateError('Document input returned invalid file metadata');
+        }
+        files.add(
+          SelectedFileInput._native(
+            token: token,
+            name: name,
+            byteLength: length as int?,
+            mimeType: info['mimeType'] as String?,
+            sourceJson: info['sourceJson'] as String?,
+          ),
+        );
+      }
+      return files;
+    } catch (_) {
+      for (final value in values ?? <Object?>[]) {
+        if (value is Map && value['token'] is String) {
+          try {
+            await _fileInputChannel.invokeMethod<void>('close', {
+              'token': value['token'],
+            });
+          } catch (_) {
+            /* Keep the metadata error. */
+          }
+        }
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<SelectedFileInput?> pickSnapshotInput({
+    required List<selector.XTypeGroup> acceptedTypeGroups,
+  }) async {
+    final info = await _snapshotInputChannel.invokeMapMethod<String, Object?>(
+      'pick',
+    );
+    if (info == null) return null;
+    final token = info['token'];
+    final name = info['name'];
+    final length = info['byteLength'];
+    if (token is! String || name is! String || length is! int || length < 0) {
+      if (token is String) {
+        try {
+          await _snapshotInputChannel.invokeMethod<void>('close', {
+            'token': token,
+          });
+        } catch (_) {
+          /* Keep the metadata error. */
+        }
+      }
+      throw StateError('Snapshot input returned invalid metadata');
+    }
+    return SelectedFileInput._native(
+      token: token,
+      name: name,
+      byteLength: length,
+      channel: _snapshotInputChannel,
+    );
+  }
+
+  // A generic XFile on Android carries no persisted SAF grant. Only the native
+  // picker above may return a document source descriptor after retaining access.
+  @override
+  Future<FolderMountSource?> fileSource(
+    selector.XFile file, {
+    String? name,
+  }) async => null;
 
   /// Retains the SAF authorization returned by Android's single-tree selector.
   @override

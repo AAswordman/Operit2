@@ -14,6 +14,7 @@ import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../screens/ScreenRouteRegistry.dart';
 
 class TabletLayout extends StatefulWidget {
   const TabletLayout({
@@ -116,84 +117,115 @@ class _TabletLayoutState extends State<TabletLayout> {
   @override
   Widget build(BuildContext context) {
     final appearance = navigationDrawerAppearanceOf(context);
-    final targetSidebarWidth = _isSidebarWidthExpanded
-        ? widget.tabletSidebarWidth
-        : widget.collapsedTabletSidebarWidth;
+    final isChatRoute =
+        widget.selectedRouteId ==
+        ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat);
+    final showConversationPanel = isChatRoute && _isSidebarWidthExpanded;
+    final contentInsets = DesktopContentPanel.contentInsets;
 
     return Row(
       children: <Widget>[
-        AnimatedContainer(
-          duration: _sidebarWidthAnimationDuration,
-          curve: Curves.fastOutSlowIn,
-          width: targetSidebarWidth,
+        SizedBox(
+          key: const ValueKey('desktop-primary-navigation'),
+          width: widget.collapsedTabletSidebarWidth,
           height: double.infinity,
-          decoration: usesDesktopWindowChrome
-              ? null
-              : BoxDecoration(
-                  border: Border(
-                    right: BorderSide(color: appearance.dividerColor, width: 1),
-                  ),
-                ),
           child: RepaintBoundary(
-            // Sidebar state and status animations repaint independently of chat.
             child: _sidebarSurface(
               appearance: appearance,
-              child: AnimatedSwitcher(
-                duration: _sidebarContentFadeDuration,
-                child: _isSidebarContentExpanded
-                    ? ValueListenableBuilder<DrawerConversationState>(
-                        key: const ValueKey<String>('expandedSidebarContent'),
-                        valueListenable: widget.drawerConversationState,
-                        builder: (context, drawerState, _) {
-                          return DrawerContent(
-                            bridge: widget.bridge,
-                            key: const ValueKey<String>(
-                              'expandedDrawerContent',
-                            ),
-                            navigationEntries: widget.navigationEntries,
-                            pluginEntries: widget.pluginSidebarEntries,
-                            selectedRouteId: widget.selectedRouteId,
-                            appearance: appearance,
-                            histories: drawerState.histories,
-                            activeStreamingChatIds:
-                                drawerState.activeStreamingChatIds,
-                            currentChatId: drawerState.currentChatId,
-                            errorMessage: drawerState.errorMessage,
-                            loading: drawerState.loading,
-                            onNavigationEntrySelected:
-                                widget.onNavigationEntrySelected,
-                            onConversationActivated:
-                                widget.onConversationActivated,
-                            onCollapseSidebar: widget.onCollapseSidebar,
-                          );
-                        },
-                      )
-                    : ValueListenableBuilder<DrawerConversationState>(
-                        key: const ValueKey<String>('collapsedSidebarContent'),
-                        valueListenable: widget.drawerConversationState,
-                        builder: (context, drawerState, _) {
-                          return CollapsedDrawerContent(
-                            bridge: widget.bridge,
-                            navigationEntries: widget.navigationEntries,
-                            pluginEntries: widget.pluginSidebarEntries,
-                            selectedRouteId: widget.selectedRouteId,
-                            appearance: appearance,
-                            currentChatId: drawerState.currentChatId,
-                            histories: drawerState.histories,
-                            onNavigationEntrySelected:
-                                widget.onNavigationEntrySelected,
-                            onConversationActivated:
-                                widget.onConversationActivated,
-                          );
-                        },
-                      ),
+              child: Padding(
+                padding: EdgeInsets.only(
+                  top: contentInsets.top,
+                  bottom: contentInsets.bottom,
+                ),
+                child: ValueListenableBuilder<DrawerConversationState>(
+                  valueListenable: widget.drawerConversationState,
+                  builder: (context, drawerState, _) => CollapsedDrawerContent(
+                    bridge: widget.bridge,
+                    navigationEntries: widget.navigationEntries,
+                    pluginEntries: widget.pluginSidebarEntries,
+                    selectedRouteId: widget.selectedRouteId,
+                    appearance: appearance,
+                    currentChatId: drawerState.currentChatId,
+                    histories: drawerState.histories,
+                    onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                    onConversationActivated: widget.onConversationActivated,
+                  ),
+                ),
               ),
             ),
           ),
         ),
         Expanded(
           child: DesktopContentPanel(
-            child: RepaintBoundary(child: widget.content),
+            child: Row(
+              children: <Widget>[
+                AnimatedContainer(
+                  key: const ValueKey('desktop-conversation-panel'),
+                  duration: _sidebarWidthAnimationDuration,
+                  curve: Curves.fastOutSlowIn,
+                  width: showConversationPanel ? widget.tabletSidebarWidth : 0,
+                  height: double.infinity,
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minWidth: widget.tabletSidebarWidth,
+                      maxWidth: widget.tabletSidebarWidth,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: appearance.containerColor,
+                          border: Border(
+                            right: BorderSide(color: appearance.dividerColor),
+                          ),
+                        ),
+                        child: isChatRoute
+                            ? AnimatedSwitcher(
+                                duration: _sidebarContentFadeDuration,
+                                child: _isSidebarContentExpanded
+                                    ? ValueListenableBuilder<
+                                        DrawerConversationState
+                                      >(
+                                        key: const ValueKey(
+                                          'conversationSidebarContent',
+                                        ),
+                                        valueListenable:
+                                            widget.drawerConversationState,
+                                        builder: (context, drawerState, _) =>
+                                            DrawerContent(
+                                              bridge: widget.bridge,
+                                              navigationEntries:
+                                                  widget.navigationEntries,
+                                              pluginEntries: const [],
+                                              selectedRouteId:
+                                                  widget.selectedRouteId,
+                                              appearance: appearance,
+                                              histories: drawerState.histories,
+                                              activeStreamingChatIds:
+                                                  drawerState
+                                                      .activeStreamingChatIds,
+                                              currentChatId:
+                                                  drawerState.currentChatId,
+                                              errorMessage:
+                                                  drawerState.errorMessage,
+                                              loading: drawerState.loading,
+                                              onNavigationEntrySelected: widget
+                                                  .onNavigationEntrySelected,
+                                              onConversationActivated: widget
+                                                  .onConversationActivated,
+                                              onCollapseSidebar:
+                                                  widget.onCollapseSidebar,
+                                              conversationsOnly: true,
+                                            ),
+                                      )
+                                    : const SizedBox.shrink(),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(child: RepaintBoundary(child: widget.content)),
+              ],
+            ),
           ),
         ),
       ],

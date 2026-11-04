@@ -42,13 +42,9 @@ impl VfsMount {
         if self.backend == "native" && !Path::new(&self.root).is_absolute() {
             return Err("Native mount root must be an absolute host path".into());
         }
-        if self.backend == "android_documents" {
-            let uri = url::Url::parse(&self.root).map_err(|e| e.to_string())?;
-            if uri.scheme() != "content" || uri.host_str().is_none() || !uri.path().starts_with("/tree/")
-                || uri.query().is_some() || uri.fragment().is_some() {
-                return Err("Android document mount requires an authorized content tree URI".into());
-            }
-        }
+        // Resource roots are opaque here. Their registered filesystem Host
+        // validates the provider, grant and native authorization on access.
+
         Ok(())
     }
 }
@@ -297,8 +293,8 @@ mod tests {
         for ns in ["/mnt", "/mnt/android", "/mnt/android/root", "/mnt/android/sdcard", "/mnt/windows/c", "/mnt/../documents", "/app/data/mounts", "/virtual", "/virtual/android", "/virtual/android/root", "/virtual/android/sdcard", "/virtual/windows/c", "/virtual/../documents", "/operitapp/data/mounts"] {
             assert!(temp.registry().register(ns, "test", "opaque", "Bad").is_err(), "{ns}");
         }
-        for uri in ["/data/data/com.termux", "content://provider/document/id", "https://provider/tree/id", "content://provider/tree/id?x=1"] {
-            assert!(temp.registry().register("/virtual/android/documents", "android_documents", uri, "Bad").is_err(), "{uri}");
+        for root in ["", "invalid\0root"] {
+            assert!(temp.registry().register("/virtual/test/documents", "test", root, "Bad").is_err());
         }
         assert!(temp.registry().register("/virtual/local/folders", "native", "relative", "Bad").is_err());
         assert!(temp.registry().list().unwrap().is_empty());

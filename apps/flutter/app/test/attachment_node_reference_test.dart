@@ -13,7 +13,9 @@ void main() {
     'attachment references retain the actual source and portable tool path',
     () {
       const attachment = AttachmentInfo(
-        filePath: '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf',
+        vfsPath: '/operitapp/outputs/family/.operit/attachments/id/report.pdf',
+        filePath:
+            '/device-b/runtime/data/chat_outputs/family/.operit/attachments/id/report.pdf',
         nodeId: 'core-b',
         fileName: '报价单".pdf',
         mimeType: 'application/pdf',
@@ -24,11 +26,15 @@ void main() {
       expect(reference, contains('node_id="core-b"'));
       expect(
         reference,
-        contains('path="/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
+        contains(
+          'path="/operitapp/outputs/family/.operit/attachments/id/report.pdf"',
+        ),
       );
       expect(
         reference,
-        contains('id="/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
+        contains(
+          'id="/operitapp/outputs/family/.operit/attachments/id/report.pdf"',
+        ),
       );
       expect(reference, isNot(contains('/device-b/')));
       expect(reference, contains('filename="报价单&quot;.pdf"'));
@@ -37,7 +43,10 @@ void main() {
 
   test('both message styles still parse location metadata and escaped paths', () {
     const attachment = AttachmentInfo(
-      filePath: '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report&copy.pdf',
+      vfsPath:
+          '/operitapp/outputs/family/.operit/attachments/id/report&copy.pdf',
+      filePath:
+          '/device-b/runtime/data/chat_outputs/family/.operit/attachments/id/report&copy.pdf',
       nodeId: 'core-b',
       fileName: '报价单".pdf',
       mimeType: 'application/pdf',
@@ -49,7 +58,8 @@ void main() {
     final cursorResult = cursor.parseMessageContent(reference);
     expect(bubbleResult.processedText, isEmpty);
     expect(cursorResult.processedText, isEmpty);
-    const toolPath = '/operitapp/data/data/chat_attachments/chat-a/attachment-a/report&copy.pdf';
+    const toolPath =
+        '/operitapp/outputs/family/.operit/attachments/id/report&copy.pdf';
     expect(bubbleResult.trailingAttachments.single.id, toolPath);
     expect(cursorResult.trailingAttachments.single.id, toolPath);
     expect(
@@ -64,6 +74,13 @@ void main() {
     expect(cursorResult.trailingAttachments.single.content, attachment.content);
     expect(bubbleResult.trailingAttachments.single.size, 3);
     expect(cursorResult.trailingAttachments.single.size, 3);
+    for (final attachments in [
+      bubbleResult.trailingAttachments,
+      cursorResult.trailingAttachments,
+    ]) {
+      expect(attachments.single.path, toolPath);
+      expect(attachments.single.nodeId, 'core-b');
+    }
 
     const paired =
         '<attachment id="/operitapp/data/data/chat_attachments/chat-a/attachment-a/file.pdf" filename="file.pdf" '
@@ -79,20 +96,43 @@ void main() {
     );
   });
 
-  test('Windows attachment paths produce the same file-tool locator', () {
-    const attachment = AttachmentInfo(
-      filePath: r'C:\runtime\data\chat_attachments\chat-a\attachment-a\report.pdf',
-      nodeId: 'core-windows',
-      fileName: 'report.pdf',
-      mimeType: 'application/pdf',
-      fileSize: 0,
-      content: '',
-    );
-    expect(
-      viewModel.createAttachmentReference(attachment),
-      contains('path="/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf"'),
-    );
+  test('media pooling preserves the stable file location in both styles', () {
+    const markup =
+        '<link type="image" id="pooled-image"/>'
+        '<attachment id="/operitapp/outputs/family/photo.png" filename="photo.png" type="image/png" '
+        'path="/operitapp/outputs/family/photo.png" node_id="origin" size="3"/>';
+    for (final attachments in [
+      bubble.parseMessageContent(markup).imageAttachments,
+      cursor.parseMessageContent(markup).imageAttachments,
+    ]) {
+      final image = attachments.single;
+      expect(image.id, 'pooled-image');
+      expect(image.path, '/operitapp/outputs/family/photo.png');
+      expect(image.nodeId, 'origin');
+    }
   });
+
+  test(
+    'Windows attachments use their recorded locator without interpreting the drive',
+    () {
+      const attachment = AttachmentInfo(
+        vfsPath: '/operitapp/outputs/family/.operit/attachments/id/report.pdf',
+        filePath:
+            r'C:\runtime\data\chat_attachments\chat-a\attachment-a\report.pdf',
+        nodeId: 'core-windows',
+        fileName: 'report.pdf',
+        mimeType: 'application/pdf',
+        fileSize: 0,
+        content: '',
+      );
+      expect(
+        viewModel.createAttachmentReference(attachment),
+        contains(
+          'path="/operitapp/outputs/family/.operit/attachments/id/report.pdf"',
+        ),
+      );
+    },
+  );
 
   test('legacy JSON has no invented source node', () {
     final attachment = AttachmentInfo.fromJson(<String, Object?>{
@@ -113,7 +153,8 @@ void main() {
     'MessagePack preserves a source node and accepts legacy maps without it',
     () {
       final payload = <String, Object?>{
-        'filePath': '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf',
+        'filePath':
+            '/device-b/runtime/data/chat_attachments/chat-a/attachment-a/report.pdf',
         'nodeId': 'core-b',
         'fileName': 'report.pdf',
         'mimeType': 'application/pdf',
@@ -136,6 +177,7 @@ void main() {
 
   test('inline text remains self-contained and XML attributes are escaped', () {
     const attachment = AttachmentInfo(
+      vfsPath: null,
       filePath: 'pasted_text_1',
       nodeId: null,
       fileName: 'pasted_text.txt',

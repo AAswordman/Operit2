@@ -387,6 +387,10 @@ export namespace Chat {
    */
   export interface SendAttachment {
     /**
+     * Preserves a saved VFS locator independently of the local media path.
+     */
+    vfsPath?: string | null;
+    /**
      * Contains the original logical file path, not a reconstructed placeholder.
      */
     filePath: string;

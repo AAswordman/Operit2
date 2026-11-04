@@ -99,7 +99,7 @@ impl RuntimeFileSyncStore {
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
-        if storagePath.starts_with("workspaces/") {
+        if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(storagePath) {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
                 .trackPaths(&[storagePath], || self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string()));
         }
@@ -141,16 +141,25 @@ impl RuntimeFileSyncStore {
             let originals = self.syncOperationStore.withJournal(|journal|journal.headers(None)).map_err(|e|e.to_string())?
                 .into_iter().filter(|record|record.domain == RUNTIME_FILE_SYNC_DOMAIN).collect::<Vec<_>>();
             let paths = originals.iter().map(|record|record.entity_id.clone()).collect::<std::collections::BTreeSet<_>>();
-            let mut count = 0;
+            let mut replaced = std::collections::BTreeSet::new();
+            let managed = crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone());
             for path in paths {
                 if requireSpaceFile(&path).is_err() || crate::PluginStorage::ownsFile(self.storageHost.clone(),&path).map_err(|e|e.to_string())? { continue; }
+                let limit = if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(&path) {
+                    match managed.captureLimit(&path)? { Some(limit) => Some(limit), None => continue }
+                } else { None };
                 if self.storageHost.exists(&path).map_err(|e|e.to_string())? {
-                    self.recordSnapshot(&path,&self.storageHost.readBytes(&path).map_err(|e|e.to_string())?,false)?;
+                    let bytes = match limit {
+                        Some(limit) => crate::FileSyncPolicy::readLimited(self.storageHost.as_ref(), &path, limit)?,
+                        None => self.storageHost.readBytes(&path).map_err(|e|e.to_string())?,
+                    };
+                    self.recordSnapshot(&path, &bytes, false)?;
                 } else { self.recordDeletion(&path)?; }
-                count += 1;
+                replaced.insert(path);
             }
             self.syncOperationStore.withJournal(|journal|journal.transaction(|tx|crate::Transaction::Journal::retire_ids(tx,
-                originals.into_iter().map(|record|record.op_id)))).map_err(|e|e.to_string())?;
+                originals.into_iter().filter(|record| replaced.contains(&record.entity_id)).map(|record|record.op_id)))).map_err(|e|e.to_string())?;
+            let count = replaced.len();
             Ok(count)
         })
     }
@@ -182,7 +191,7 @@ impl RuntimeFileSyncStore {
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
-        if storagePath.starts_with("workspaces/") {
+        if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(storagePath) {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
                 .track(|| {
                     if self.storageHost.exists(storagePath).map_err(|e| e.to_string())? {
@@ -217,17 +226,21 @@ impl RuntimeFileSyncStore {
     /// Tracks VFS mutations using declared storage ownership, without knowledge of file consumers.
     /// Capturing before the operation preserves tombstones for recursive deletion and moves.
     pub fn trackChanges<T>(&self, paths: &[String], change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        let before = self.captureFiles(paths)?;
-        let result = change();
-        let after = self.captureFiles(paths)?;
-        // Publish observed changes without rewriting files or reading unchanged contents.
-        for (path, stamp) in &after {
-            if before.get(path) != Some(stamp) {
-                self.recordSnapshot(path, &self.storageHost.readBytes(path).map_err(|e|e.to_string())?, false)?;
+        // One outer scanner lock covers managed paths, including mutations of their
+        // ancestors. The inner capture deliberately skips them to avoid duplicate
+        // snapshots and bypassing their policy.
+        crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone()).track(|| {
+            let before = self.captureFiles(paths)?;
+            let result = change();
+            let after = self.captureFiles(paths)?;
+            for (path, stamp) in &after {
+                if before.get(path) != Some(stamp) {
+                    self.recordSnapshot(path, &self.storageHost.readBytes(path).map_err(|e|e.to_string())?, false)?;
+                }
             }
-        }
-        for path in before.keys().filter(|path| !after.contains_key(*path)) { self.recordDeletion(path)?; }
-        result
+            for path in before.keys().filter(|path| !after.contains_key(*path)) { self.recordDeletion(path)?; }
+            result
+        })
     }
 
     /// Captures metadata for registered files under the requested VFS paths.
@@ -235,7 +248,10 @@ impl RuntimeFileSyncStore {
         let mut files = std::collections::BTreeMap::new();
         for path in paths {
             if !self.storageHost.exists(path).map_err(|e|e.to_string())? { continue; }
-            let parent = path.rsplit_once('/').ok_or("Invalid runtime file path")?.0;
+            let Some((parent, _)) = path.rsplit_once('/') else {
+                for entry in self.storageHost.list(path).map_err(|e|e.to_string())? { self.captureEntry(entry, &mut files)?; }
+                continue;
+            };
             let entry = self.storageHost.list(parent).map_err(|e|e.to_string())?.into_iter()
                 .find(|entry| entry.path == *path).ok_or("Missing runtime file entry")?;
             self.captureEntry(entry, &mut files)?;
@@ -246,6 +262,7 @@ impl RuntimeFileSyncStore {
     /// Visits each listed entry once, excluding registered databases and device-local files.
     fn captureEntry(&self, entry: operit_host_api::RuntimeStorageEntry, files: &mut std::collections::BTreeMap<String, (i64, i64)>) -> Result<(), String> {
         let path = &entry.path;
+        if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(path) { return Ok(()); }
         if crate::PluginStorage::ownsFile(self.storageHost.clone(), path).map_err(|e|e.to_string())? { return Ok(()); }
         if entry.isDirectory {
             for child in self.storageHost.list(path).map_err(|e|e.to_string())? {
@@ -271,7 +288,7 @@ impl RuntimeFileSyncStore {
             return Err("Registered database files require record-level storage operations".into());
         }
         let syncRootPath = syncRootPath.into();
-        if storagePath.starts_with("workspaces/") {
+        if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(storagePath) {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(storageHost, syncRootPath)
                 .apply(storagePath, operation, payload);
         }

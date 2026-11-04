@@ -1065,6 +1065,7 @@ async fn runAdmittedChatTurn(
     let (participantId, message, attachments, replyTimestamp, continuation) = match &admitted.work {
         AdmittedChatTurnWork::Submit { input, turn } => {
             let attachments = input.attachments.iter().map(|attachment| operit_model::AttachmentInfo::AttachmentInfo {
+                vfsPath: attachment.vfsPath.as_value().cloned(),
                 filePath: attachment.filePath.clone(), nodeId: attachment.nodeId.as_value().cloned(), fileName: attachment.fileName.clone(),
                 mimeType: attachment.mimeType.clone(), fileSize: attachment.fileSize, content: attachment.content.clone(),
             }).collect::<Vec<_>>();

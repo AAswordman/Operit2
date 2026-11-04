@@ -15,6 +15,8 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
+use operit_tools::files::PathMapper::PathMapper;
+use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
 
 const APPLY_FILE_TOOL_NAME: &str = "apply_file";
 
@@ -168,6 +170,43 @@ impl ConversationService {
             })
             .await?;
         Ok(after_context.prepared_history)
+    }
+
+    /// Converts stored locators only in the provider-facing copy of conversation history.
+    pub(crate) fn use_relative_attachment_paths(history: &mut [PromptTurn], base: &str) {
+        static ATTRIBUTES: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        let attributes = ATTRIBUTES.get_or_init(|| Regex::new(
+            r#"(?i)(\b(?:id|path)\s*=\s*)(?:"([^"]*)"|'([^']*)')"#,
+        ).expect("attachment attribute regex must compile"));
+        for turn in history {
+            if turn.kind != PromptTurnKind::USER { continue; }
+            let mut content = turn.content.clone();
+            for (start, end) in ChatMarkupRegex::attachment_ranges(&turn.content).into_iter().rev() {
+                let Some(openEnd) = content[start..end].find('>') else { continue; };
+                let end = start + openEnd;
+                let rewritten = attributes.replace_all(&content[start..end], |capture: &regex::Captures<'_>| {
+                    let path = unescape_xml_attribute(capture.get(2).or_else(|| capture.get(3)).unwrap().as_str());
+                    if !["/app/", "/operitapp/", "/mnt/", "/virtual/"].iter().any(|root| path.starts_with(root)) {
+                        return capture[0].to_string();
+                    }
+                    match PathMapper::relativeFileToolPath(base, &path) {
+                        Ok(relative) => format!("{}\"{}\"", &capture[1], relative.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;").replace('\'', "&#39;")),
+                        Err(_) => capture[0].to_string(),
+                    }
+                }).into_owned();
+                content.replace_range(start..end, &rewritten);
+            }
+            for (start, end) in ChatMarkupRegex::workspace_attachment_ranges(&content).into_iter().rev() {
+                let Some(openEnd) = content[start..end].find('>') else { continue; };
+                let bodyStart = start + openEnd + 1;
+                let Some(closeStart) = content[bodyStart..end].rfind('<') else { continue; };
+                let bodyEnd = bodyStart + closeStart;
+                if let Ok(relative) = PathMapper::relativeFileToolPath(base, &content[bodyStart..bodyEnd]) {
+                    content.replace_range(bodyStart..bodyEnd, &relative);
+                }
+            }
+            turn.content = content;
+        }
     }
 
     /// Splits mixed text and XML-like assistant output into ordered tag segments.
@@ -1004,5 +1043,69 @@ fn build_media_intent_prompt(media_type: &str, path: &str, user_intent: Option<&
     match user_intent {
         Some(intent) => format!("{}:{}\n{}", media_type, path, intent),
         None => format!("{}:{}", media_type, path),
+    }
+}
+
+
+#[cfg(test)]
+mod relative_attachment_tests {
+    use super::*;
+
+    fn prepared(content: &str, base: &str) -> String {
+        let stored = PromptTurn::new(PromptTurnKind::USER, content);
+        let mut history = vec![stored.clone()];
+        ConversationService::use_relative_attachment_paths(&mut history, base);
+        assert_eq!(stored.content, content);
+        history.remove(0).content
+    }
+
+    #[test]
+    fn workspace_and_output_attachments_expose_the_same_relative_path() {
+        for base in ["/operitapp/workspaces/project", "/operitapp/outputs/family"] {
+            let source = format!(r#"<attachment id="{base}/.operit/attachments/id/report.pdf" path="{base}/.operit/attachments/id/report.pdf" node_id="source">body</attachment>"#);
+            let visible = prepared(&source, base);
+            assert!(visible.contains(r#"id=".operit/attachments/id/report.pdf""#));
+            assert!(visible.contains(r#"path=".operit/attachments/id/report.pdf""#));
+            assert!(visible.contains(r#"node_id="source""#));
+            assert!(visible.ends_with(">body</attachment>"));
+            assert!(!visible.contains("/operitapp/"));
+        }
+    }
+
+    #[test]
+    fn history_is_rebased_from_stable_locators_after_a_workspace_change() {
+        let content = r#"<attachment id="/operitapp/outputs/family/.operit/attachments/id/file.pdf" path="/operitapp/outputs/family/.operit/attachments/id/file.pdf"/>"#;
+        assert!(prepared(content, "/operitapp/outputs/family").contains(r#"path=".operit/attachments/id/file.pdf""#));
+        let visible = prepared(content, "/operitapp/workspaces/project");
+        let path = unescape_xml_attribute(&attr_value(&visible, "path").unwrap());
+        assert_eq!(PathMapper::resolveFileToolPath(Some("/operitapp/workspaces/project"), &path).unwrap(),
+            "/operitapp/outputs/family/.operit/attachments/id/file.pdf");
+    }
+
+    #[test]
+    fn attributes_keep_escaping_and_attachment_bodies_are_not_rewritten() {
+        let base = "/app/workspaces/a&b";
+        let content = r#"prefix <attachment path = '/operitapp/workspaces/a&amp;b/中文 &quot;file&#39;.pdf' id="/operitapp/workspaces/a&amp;b/中文 &quot;file&#39;.pdf" content="/operitapp/workspaces/unchanged">/operitapp/body</attachment> suffix"#;
+        let visible = prepared(content, base);
+        assert_eq!(unescape_xml_attribute(&attr_value(&visible, "path").unwrap()), "中文 \"file'.pdf");
+        assert!(visible.contains(r#"content="/operitapp/workspaces/unchanged""#));
+        assert!(visible.ends_with(">/operitapp/body</attachment> suffix"));
+    }
+
+    #[test]
+    fn multimodal_and_inline_identifiers_are_preserved_while_reference_paths_are_relative() {
+        let content = r#"<image_link id="pool-id"/><attachment id="pasted_text_1" content="inline"/><attachment id="/operitapp/outputs/family/.operit/attachments/id/big.zip.operit-ref.json" path="/operitapp/outputs/family/.operit/attachments/id/big.zip.operit-ref.json"/>"#;
+        let visible = prepared(content, "/operitapp/outputs/family");
+        assert!(visible.starts_with(r#"<image_link id="pool-id"/><attachment id="pasted_text_1" content="inline"/>"#));
+        assert!(visible.contains(r#"path=".operit/attachments/id/big.zip.operit-ref.json""#));
+    }
+
+    #[test]
+    fn workspace_notices_use_dot_without_modifying_other_message_roles() {
+        let content = "<workspace_attachment>/operitapp/workspaces/project</workspace_attachment>";
+        assert_eq!(prepared(content, "/app/workspaces/project"), "<workspace_attachment>.</workspace_attachment>");
+        let mut history = vec![PromptTurn::new(PromptTurnKind::ASSISTANT, content)];
+        ConversationService::use_relative_attachment_paths(&mut history, "/app/workspaces/project");
+        assert_eq!(history[0].content, content);
     }
 }

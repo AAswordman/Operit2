@@ -23,6 +23,7 @@ getrandom = "0.2"
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
 operit-model = { version = "2.0.0-preview.17", path = "../../foundation/model", optional = true }
 operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util", default-features = false }
+ignore = "0.4"
 regex = { workspace = true, optional = true }
 jieba-rs = { version = "=0.8.1", optional = true }
 serde.workspace = true
@@ -34,6 +35,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler", default-features = false }
 image.workspace = true
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 rusqlite.workspace = true

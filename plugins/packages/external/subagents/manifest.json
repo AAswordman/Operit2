@@ -6,8 +6,8 @@
   "main": "dist/main.js",
   "display_name": { "zh": "子代理", "en": "Subagents" },
   "description": {
-    "zh": "创建独立执行的子代理，在聊天输入框上方查看任务和执行过程，支持等待、打断对话和关闭。",
-    "en": "Run independent agents with composer status, execution details, bounded waits, interruption and closure."
+    "zh": "AI 创建独立执行的子代理，在输入框上方查看任务，在工作区打开子会话，支持等待、打断对话和关闭。",
+    "en": "AI-created agents with composer status, reusable workspace conversations, bounded waits, interruption and closure."
   },
   "enabled_by_default": false,
   "installation_scope": "space",

@@ -458,6 +458,9 @@ pub struct ChatStartServiceOptions {
 #[allow(non_snake_case)]
 #[serde(deny_unknown_fields)]
 pub struct ChatSendAttachment {
+    /// Preserves a saved VFS locator independently of the local media path.
+    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
+    pub vfsPath: JsOptional<String>,
     /// Contains the original logical file path, not a reconstructed placeholder.
     pub filePath: String,
     /// Identifies the actual originating node or explicitly contains null.

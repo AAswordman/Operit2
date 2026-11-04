@@ -80,7 +80,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   StreamSubscription<String?>? _drawerCurrentChatSubscription;
   StreamSubscription<List<String>>? _drawerActiveStreamingChatIdsSubscription;
   late final ValueNotifier<bool> _drawerOpenState;
-  bool _isTabletSidebarExpanded = false;
+  bool _isTabletSidebarExpanded = true;
   bool _isNavigatingBack = false;
   bool _requestedInitialToolPkgNavigationRefresh = false;
   StreamSubscription<void>? _toolPkgCatalogChangeSubscription;
@@ -804,7 +804,10 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                             collapsedTabletSidebarWidth: 56,
                             onNavigationEntrySelected:
                                 _navigateToNavigationEntry,
-                            onConversationActivated: _activateConversationRoute,
+                            onConversationActivated: () {
+                              setState(() => _isTabletSidebarExpanded = true);
+                              _activateConversationRoute();
+                            },
                             onCollapseSidebar: () {
                               setState(() {
                                 _isTabletSidebarExpanded = false;

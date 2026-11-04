@@ -101,7 +101,7 @@ impl WorkspaceService {
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
         let workspace = self.boundWorkspace(&chatId)?;
         let relativePath = PathMapper::normalizeRelativePath(&relativePath)?;
-        if relativePath.is_empty() {
+        if let Some(workspace) = workspace.as_ref().filter(|_| relativePath.is_empty()) {
             let mut workspaceEntries = workspace
                 .folders
                 .iter()
@@ -118,13 +118,13 @@ impl WorkspaceService {
                 .sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
             return Ok(workspaceEntries);
         }
-        let directoryPath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
+        let directoryPath = self.filePathForChat(&chatId, &relativePath)?;
         let vfs = self.vfsForWorkspace(&directoryPath);
         let entries = vfs.listFiles(&directoryPath)?;
         let mut workspaceEntries = Vec::new();
         for entry in entries {
             let childRelativePath = joinRelativePath(&relativePath, &entry.name)?;
-            let path = resolveWorkspaceRelativePath(&workspace, &childRelativePath)?;
+            let path = PathMapper::joinVfsPath(&directoryPath, &entry.name)?;
             workspaceEntries.push(WorkspaceFileEntry {
                 name: entry.name,
                 path,
@@ -150,7 +150,8 @@ impl WorkspaceService {
         chatId: String,
         searchQuery: String,
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
-        let workspace = self.boundWorkspace(&chatId)?;
+        let workspace = self.boundWorkspace(&chatId)?
+            .ok_or_else(|| format!("Chat has no bound workspace: {chatId}"))?;
         let vfs = self.vfsForWorkspace(&workspace.primaryFolder().path);
         let normalizedQuery = searchQuery.trim().to_ascii_lowercase();
         let recursive = !normalizedQuery.is_empty();
@@ -224,8 +225,7 @@ impl WorkspaceService {
         chatId: String,
         relativePath: String,
     ) -> Result<String, String> {
-        let workspace = self.boundWorkspace(&chatId)?;
-        let filePath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
+        let filePath = self.filePathForChat(&chatId, &relativePath)?;
         self.vfsForWorkspace(&filePath).readFile(&filePath)
     }
 
@@ -236,8 +236,7 @@ impl WorkspaceService {
         chatId: String,
         relativePath: String,
     ) -> Result<WorkspaceFileBytes, String> {
-        let workspace = self.boundWorkspace(&chatId)?;
-        let filePath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
+        let filePath = self.filePathForChat(&chatId, &relativePath)?;
         let bytes = self.vfsForWorkspace(&filePath).readFileBytes(&filePath)?;
         Ok(WorkspaceFileBytes {
             base64Content: STANDARD.encode(bytes),
@@ -252,8 +251,7 @@ impl WorkspaceService {
         relativePath: String,
         content: String,
     ) -> Result<(), String> {
-        let workspace = self.boundWorkspace(&chatId)?;
-        let filePath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
+        let filePath = self.filePathForChat(&chatId, &relativePath)?;
         self.trackWorkspaceChange(&filePath, || self.vfsForWorkspace(&filePath)
             .writeFile(&filePath, &content, false))
     }
@@ -266,8 +264,7 @@ impl WorkspaceService {
         relativePath: String,
         base64Content: String,
     ) -> Result<(), String> {
-        let workspace = self.boundWorkspace(&chatId)?;
-        let filePath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
+        let filePath = self.filePathForChat(&chatId, &relativePath)?;
         let bytes = STANDARD
             .decode(base64Content.as_bytes())
             .map_err(|error| error.to_string())?;
@@ -278,8 +275,7 @@ impl WorkspaceService {
     /// Opens a chat-bound workspace file through the host file opener.
     #[allow(non_snake_case)]
     pub fn openWorkspaceFile(&self, chatId: String, relativePath: String) -> Result<(), String> {
-        let workspace = self.boundWorkspace(&chatId)?;
-        let filePath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
+        let filePath = self.filePathForChat(&chatId, &relativePath)?;
         self.vfsForWorkspace(&filePath).openFile(&filePath)
     }
 
@@ -376,35 +372,40 @@ impl WorkspaceService {
 
     /// Returns the named workspace bound to a chat.
     #[allow(non_snake_case)]
-    fn boundWorkspace(&self, chatId: &str) -> Result<Workspace, String> {
+    fn boundWorkspace(&self, chatId: &str) -> Result<Option<Workspace>, String> {
         let chat = self
             .chatDao
             .getChatById(chatId)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Chat does not exist: {chatId}"))?;
-        let workspaceId = chat
-            .workspaceId
-            .ok_or_else(|| format!("Chat has no bound workspace: {chatId}"))?;
-        self.workspaceStore
-            .getById(&workspaceId)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("Chat has no bound workspace: {chatId}"))
+        match chat.workspaceId {
+            Some(id) => self.workspaceStore.getById(&id).map_err(|error| error.to_string()),
+            None => Ok(None),
+        }
     }
 
-    /// Returns the primary folder path bound to a chat.
+    /// Reuses the same persisted base as file tools when this chat has no workspace.
     #[allow(non_snake_case)]
-    fn workspaceRoot(&self, chatId: String) -> Result<String, String> {
-        Ok(self.boundWorkspace(&chatId)?.primaryFolder().path.clone())
+    fn filePathForChat(&self, chatId: &str, relativePath: &str) -> Result<String, String> {
+        if let Some(workspace) = self.boundWorkspace(chatId)? {
+            return resolveWorkspaceRelativePath(&workspace, relativePath);
+        }
+        let manager = operit_store::repository::ChatHistoryManager::ChatHistoryManager::default()
+            .map_err(|error| error.to_string())?;
+        let directory = manager.fileDirectoryForChat(chatId).map_err(|error| error.to_string())?;
+        PathMapper::joinVfsPath(&directory, relativePath)
     }
 
     fn trackWorkspaceChange<T>(&self, path: &str, change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         let relative = PathMapper::relativePath(PathMapper::workspaceCollectionPath(), path)?;
         let workspacePath = relative
             .filter(|relative| !relative.is_empty())
-            .map(|relative| format!("workspaces/{relative}"));
+            .map(|relative| format!("workspaces/{relative}"))
+            .or_else(|| path.strip_prefix("/operitapp/outputs/")
+                .or_else(|| path.strip_prefix("/app/outputs/"))
+                .map(|relative| format!("{}/{relative}", operit_util::RuntimeStorageLayout::RUNTIME_CHAT_OUTPUTS_DIR_PATH)));
         match workspacePath {
-            // Re-hash the touched file so same-size rewrites publish immediately
-            // instead of waiting for the periodic full-hash round.
+            // Observe UI edits immediately instead of waiting for the next scan.
             Some(workspacePath) => {
                 operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
                     self.runtimeStorageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
@@ -427,15 +428,6 @@ impl WorkspaceService {
         )
     }
 
-    /// Resolves a workspace-relative path into a normalized VFS path.
-    #[allow(non_snake_case)]
-    fn resolveWorkspacePath(
-        &self,
-        workspaceRoot: &str,
-        relativePath: &str,
-    ) -> Result<String, String> {
-        PathMapper::joinVfsPath(workspaceRoot, relativePath)
-    }
 }
 
 /// Resolves a workspace-relative path against one of the mounted folders.

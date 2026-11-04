@@ -55,7 +55,17 @@ impl Node {
                 .writeBlob(&reference, &self.host.readBytes(&path).unwrap())
                 .unwrap();
         }
-        to.workspace().applyOperation(op, false).unwrap();
+        if WorkspaceFileSyncStore::owns(op) {
+            to.workspace().applyOperation(op, false).unwrap();
+        } else {
+            if to.log().shouldApplyOperation(op).unwrap() {
+                RuntimeFileSyncStore::applySyncedOperation(
+                    to.host.clone(), SYNC, &op.entityId, &op.operation, op.payload.clone(),
+                ).unwrap();
+                to.log().recordAppliedOperation(op).unwrap();
+            }
+            to.log().appendOperation(op).unwrap();
+        }
     }
     fn write(&self, path: &str, bytes: &[u8]) {
         self.host.writeBytes(path, bytes).unwrap();
@@ -332,6 +342,7 @@ fn file_to_directory_and_back_replicate_in_order() {
 struct CountingHost {
     inner: Arc<NativeRuntimeStorageHost>,
     workspaceReads: AtomicUsize,
+    directoryListings: std::sync::Mutex<Vec<String>>,
 }
 
 impl RuntimeStorageHost for CountingHost {
@@ -352,6 +363,7 @@ impl RuntimeStorageHost for CountingHost {
         self.inner.readBytes(path)
     }
     fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        if path.starts_with("workspaces/") && offset == 0 { self.workspaceReads.fetch_add(1, Ordering::SeqCst); }
         self.inner.readBytesRange(path, offset, length)
     }
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -377,6 +389,7 @@ impl RuntimeStorageHost for CountingHost {
         self.inner.exists(path)
     }
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+        self.directoryListings.lock().unwrap().push(prefix.to_string());
         self.inner.list(prefix)
     }
 }
@@ -390,7 +403,7 @@ impl CountedNode {
     /// Reuses the native node fixture while instrumenting only workspace content reads.
     fn new() -> Self {
         let node = Node::new();
-        let host = Arc::new(CountingHost { inner: node.host.clone(), workspaceReads: AtomicUsize::new(0) });
+        let host = Arc::new(CountingHost { inner: node.host.clone(), workspaceReads: AtomicUsize::new(0), directoryListings: Default::default() });
         Self { host, _node: node }
     }
     fn workspace(&self) -> WorkspaceFileSyncStore {
@@ -475,5 +488,177 @@ fn structured_same_size_writes_publish_immediately() {
     assert_eq!(
         b.host.readBytes("workspaces/project/file.txt").unwrap(),
         b"world"
+    );
+}
+
+
+#[test]
+fn editable_policy_gitignore_nested_negation_and_build_pruning() {
+    let a = Node::new();
+    a.write("workspaces/p/.gitignore", b"*.cache\n!keep.cache\n.operit/\n");
+    a.write("workspaces/p/build/generated", b"never upload");
+    a.write("workspaces/p/remove.cache", b"ignore");
+    a.write("workspaces/p/keep.cache", b"keep");
+    a.write("workspaces/p/sub/.gitignore", b"*.txt\n!important.txt\n");
+    a.write("workspaces/p/sub/no.txt", b"ignore");
+    a.write("workspaces/p/sub/important.txt", b"keep");
+    operit_store::FileSyncPolicy::FileSyncPolicy::ensure(a.host.as_ref(), "workspaces/p").unwrap();
+    a.workspace().scan().unwrap();
+    let paths: Vec<_> = a.ops().into_iter().map(|o| o.entityId).collect();
+    assert!(paths.contains(&"workspaces/p/.operit/sync.json".into()));
+    assert!(paths.contains(&"workspaces/p/keep.cache".into()));
+    assert!(paths.contains(&"workspaces/p/sub/important.txt".into()));
+    assert!(!paths.iter().any(|p| p.contains("generated") || p.ends_with("remove.cache") || p.ends_with("no.txt")));
+}
+
+/// Exclusions must prune whole trees before traversal and locator generation, even with a tiny byte limit.
+#[test]
+fn excluded_trees_are_not_traversed_or_replaced_by_many_locators() {
+    let node = CountedNode::new();
+    let mut policy = operit_store::FileSyncPolicy::FileSyncPolicy::default();
+    policy.maxFileBytes = 1;
+    policy.exclude.push("bulk-input/".into());
+    node.host.writeBytes("workspaces/project/.operit/sync.json", &serde_json::to_vec(&policy).unwrap()).unwrap();
+    for directory in ["node_modules", "build", "bulk-input"] {
+        for index in 0..12 {
+            node.host.writeBytes(&format!("workspaces/project/{directory}/nested/{index}.bin"), b"large enough to need a locator if traversed").unwrap();
+        }
+    }
+    node.host.writeBytes("workspaces/project/report.md", b"x").unwrap();
+    node.workspace().scan().unwrap();
+    let listed = node.host.directoryListings.lock().unwrap();
+    let operations = node._node.ops();
+    for directory in ["node_modules", "build", "bulk-input"] {
+        let prefix = format!("workspaces/project/{directory}");
+        assert!(!listed.iter().any(|path| path.starts_with(&prefix)), "excluded tree was traversed: {prefix}");
+        assert!(!operations.iter().any(|operation| operation.entityId.starts_with(&prefix)), "excluded tree created files or locators: {prefix}");
+    }
+    assert!(operations.iter().any(|operation| operation.entityId == "workspaces/project/report.md"));
+}
+
+#[test]
+fn adding_ignore_rules_does_not_delete_peer_files_and_invalid_policy_is_safe() {
+    let a = Node::new(); let b = Node::new();
+    a.write("workspaces/p/a.txt", b"keep both copies");
+    a.workspace().scan().unwrap(); a.send(&b);
+    a.write("workspaces/p/.operit/sync.json", br#"{"exclude":["*.txt"]}"#);
+    a.workspace().scan().unwrap(); a.send(&b);
+    assert_eq!(b.host.readBytes("workspaces/p/a.txt").unwrap(), b"keep both copies");
+    assert!(!a.ops().iter().any(|o| o.operation == "delete"));
+    let count = a.ops().len();
+    a.write("workspaces/p/.operit/sync.json", b"{ invalid");
+    assert!(a.workspace().scan().is_err());
+    assert_eq!(a.ops().len(), count);
+}
+
+#[test]
+fn oversize_file_syncs_locator_without_uploading_original_and_can_shrink() {
+    let a = Node::new(); let b = Node::new();
+    operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(a.host.clone()).initialize().unwrap();
+    a.write("workspaces/p/.operit/sync.json", br#"{"maxFileBytes":4}"#);
+    a.write("workspaces/p/big.bin", b"large source stays here");
+    a.workspace().scan().unwrap(); a.send(&b);
+    assert!(!b.host.exists("workspaces/p/big.bin").unwrap());
+    let pointer = b.host.readBytes("workspaces/p/big.bin.operit-ref.json").unwrap();
+    let reference: operit_store::FileSyncPolicy::FileReference = serde_json::from_slice(&pointer).unwrap();
+    assert_eq!(reference.path, "/operitapp/workspaces/p/big.bin");
+    assert_eq!(reference.fileSize, 23);
+    assert!(!a.ops().iter().any(|o| o.entityId == "workspaces/p/big.bin"));
+    a.write("workspaces/p/big.bin", b"tiny");
+    a.workspace().scan().unwrap(); a.send(&b);
+    assert_eq!(b.host.readBytes("workspaces/p/big.bin").unwrap(), b"tiny");
+    assert!(!b.host.exists("workspaces/p/big.bin.operit-ref.json").unwrap());
+}
+
+#[test]
+fn total_budget_and_output_and_attachment_roots_use_same_policy() {
+    let a = Node::new(); let b = Node::new();
+    operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(a.host.clone()).initialize().unwrap();
+    a.write("runtime/data/chat_outputs/2026-11-04/.operit/sync.json", br#"{"maxTotalBytes":4}"#);
+    a.write("runtime/data/chat_outputs/2026-11-04/a.md", b"one");
+    a.write("runtime/data/chat_outputs/2026-11-04/b.md", b"two");
+    a.write("runtime/data/chat_attachments/chat/file.txt", b"small attachment");
+    a.workspace().scan().unwrap(); a.send(&b);
+    assert_eq!(b.host.readBytes("runtime/data/chat_outputs/2026-11-04/a.md").unwrap(), b"one");
+    assert!(!b.host.exists("runtime/data/chat_outputs/2026-11-04/b.md").unwrap());
+    assert!(b.host.exists("runtime/data/chat_outputs/2026-11-04/b.md.operit-ref.json").unwrap());
+    assert_eq!(b.host.readBytes("runtime/data/chat_attachments/chat/file.txt").unwrap(), b"small attachment");
+    assert_eq!(b.workspace().scan().unwrap(), 0);
+}
+
+#[test]
+fn ignored_incoming_file_is_restored_when_rule_is_removed() {
+    let a = Node::new(); let b = Node::new();
+    b.write("workspaces/p/.operit/sync.json", br#"{"exclude":["*.txt"]}"#);
+    a.write("workspaces/p/a.txt", b"arrived while ignored");
+    a.workspace().scan().unwrap(); a.send(&b);
+    assert!(!b.host.exists("workspaces/p/a.txt").unwrap());
+    b.write("workspaces/p/.operit/sync.json", b"{}");
+    b.workspace().scan().unwrap();
+    assert_eq!(b.host.readBytes("workspaces/p/a.txt").unwrap(), b"arrived while ignored");
+}
+
+/// Bindings and their relative files use the same existing Space file protocol.
+#[test]
+fn output_bindings_and_files_replicate_through_runtime_file_sync() {
+    use operit_store::ChatOutputStore::ChatOutputStore;
+    let a = Node::new();
+    let b = Node::new();
+    let outputs = ChatOutputStore::new(a.host.clone());
+    let base = outputs.bind("parent", 1793740800123, None).unwrap();
+    outputs.bind("child", 1793827200123, Some(&base)).unwrap();
+    outputs.prepare("parent").unwrap();
+    let root = ChatOutputStore::storagePath(&base).unwrap();
+    a.write(&format!("{root}/report.md"), b"![chart](images/chart.png)");
+    a.write(&format!("{root}/images/chart.png"), &[0, 255, 17]);
+    a.write(
+        &format!("{root}/.operit/attachments/input/note.txt"),
+        b"shared input",
+    );
+    a.write(
+        "runtime/data/attachment_sources/local/large.bin",
+        b"local source",
+    );
+    a.workspace().scan().unwrap();
+    a.send(&b);
+
+    let peer_outputs = ChatOutputStore::new(b.host.clone());
+    assert_eq!(
+        peer_outputs.directory("parent").unwrap(),
+        Some(base.clone())
+    );
+    assert_eq!(peer_outputs.directory("child").unwrap(), Some(base.clone()));
+    assert_eq!(
+        peer_outputs.bind("parent", 1794604800123, None).unwrap(),
+        base
+    );
+    assert_eq!(
+        b.host.readBytes(&format!("{root}/report.md")).unwrap(),
+        b"![chart](images/chart.png)"
+    );
+    assert_eq!(
+        b.host
+            .readBytes(&format!("{root}/images/chart.png"))
+            .unwrap(),
+        [0, 255, 17]
+    );
+    assert_eq!(
+        b.host
+            .readBytes(&format!("{root}/.operit/attachments/input/note.txt"))
+            .unwrap(),
+        b"shared input"
+    );
+    assert!(!b
+        .host
+        .exists("runtime/data/attachment_sources/local/large.bin")
+        .unwrap());
+    assert_eq!(peer_outputs.prepare("child").unwrap(), Some(base.clone()));
+    assert_eq!(b.workspace().scan().unwrap(), 0);
+    // Opening a new store after restart retains the received binding.
+    assert_eq!(
+        ChatOutputStore::new(b.host.clone())
+            .directory("child")
+            .unwrap(),
+        Some(base)
     );
 }

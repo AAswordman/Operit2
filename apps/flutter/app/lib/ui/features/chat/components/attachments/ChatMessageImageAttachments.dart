@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../../util/ChatMarkupRegex.dart';
 import '../../../../common/components/OperitDialog.dart';
 
 import '../style/input/common/ChatAttachmentImagePreview.dart';
@@ -18,7 +19,29 @@ class AttachmentData {
     this.size = 0,
     this.content = '',
     this.mediaPoolType,
+    this.path,
+    this.nodeId,
   });
+
+  /// Both message styles retain the same stable file location from the stored tag.
+  factory AttachmentData.fromMarkupMatch(RegExpMatch match) {
+    final tag = match.group(0)!.split('>').first;
+    final location = <String, String>{
+      for (final attribute in _locationAttributes.allMatches(tag))
+        attribute.group(1)!: decodeChatXmlText(attribute.group(2)!),
+    };
+    return AttachmentData(
+      id: decodeChatXmlText(match.group(1)!),
+      filename: decodeChatXmlText(match.group(2)!),
+      type: decodeChatXmlText(match.group(3)!),
+      size: int.tryParse(match.group(4) ?? '') ?? 0,
+      content: decodeChatXmlText(match.group(5) ?? ''),
+      path: location['path'],
+      nodeId: location['node_id'],
+    );
+  }
+
+  static final _locationAttributes = RegExp(r'\s(path|node_id)="([^"]*)"');
 
   final String id;
   final String filename;
@@ -26,6 +49,8 @@ class AttachmentData {
   final int size;
   final String content;
   final String? mediaPoolType;
+  final String? path;
+  final String? nodeId;
 
   String get _mime => type.toLowerCase().split(';').first.trim();
 
@@ -154,6 +179,8 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
           size: attachment.size,
           content: attachment.content,
           mediaPoolType: attachment.mediaPoolType,
+          path: attachment.path,
+          nodeId: attachment.nodeId,
         ),
         onDismiss: () => Navigator.of(dialogContext).pop(),
       ),
@@ -247,8 +274,10 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
                 top: 0,
                 right: 0,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.72),
                     borderRadius: BorderRadius.circular(10),
@@ -354,11 +383,14 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest
-                    .withValues(alpha: 0.7),
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.7,
+                ),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.5,
+                  ),
                 ),
               ),
               child: Row(
@@ -428,6 +460,7 @@ class _AttachmentThumbnailCard extends StatelessWidget {
         attachmentPath: attachment.id,
         fileName: attachment.filename,
         mediaPoolType: attachment.mediaPoolType,
+        sourceNodeId: attachment.nodeId,
         fit: BoxFit.cover,
       );
     } else {
@@ -440,11 +473,7 @@ class _AttachmentThumbnailCard extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: <Widget>[
-            Icon(
-              icon,
-              size: 26,
-              color: colorScheme.primary,
-            ),
+            Icon(icon, size: 26, color: colorScheme.primary),
             const SizedBox(height: 4),
             Text(
               label,
@@ -473,8 +502,9 @@ class _AttachmentThumbnailCard extends StatelessWidget {
           borderRadius: borderRadius,
           boxShadow: <BoxShadow>[
             BoxShadow(
-              color:
-                  Colors.black.withValues(alpha: elevation > 2 ? 0.22 : 0.12),
+              color: Colors.black.withValues(
+                alpha: elevation > 2 ? 0.22 : 0.12,
+              ),
               blurRadius: elevation * 2,
               offset: Offset(0, elevation / 2),
             ),
@@ -493,10 +523,7 @@ class _AttachmentThumbnailCard extends StatelessWidget {
               if (interactive && onTap != null)
                 Material(
                   color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: borderRadius,
-                    onTap: onTap,
-                  ),
+                  child: InkWell(borderRadius: borderRadius, onTap: onTap),
                 ),
             ],
           ),

@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../common/markdown/MarkdownFileScope.dart';
 import '../../../common/interactions/ChainedScrollController.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
@@ -1048,7 +1049,11 @@ class _ChatAreaState extends State<ChatArea>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          chatMessage,
+          MarkdownFileScope.forParts(
+            parts: message.parts,
+            clients: widget.clients,
+            child: chatMessage,
+          ),
           if (!selectionMode)
             if (widget.currentChatId case final chatId?)
               ChatMessageSlotHost(

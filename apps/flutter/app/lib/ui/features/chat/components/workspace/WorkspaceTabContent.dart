@@ -28,6 +28,7 @@ class WorkspaceTabContent extends StatelessWidget {
     super.key,
     required this.tab,
     required this.workspacePath,
+    this.fileDirectory,
     required this.workspaceUsage,
     required this.terminalSessionCountListenable,
     required this.browserSessionCountListenable,
@@ -62,6 +63,7 @@ class WorkspaceTabContent extends StatelessWidget {
 
   final WorkspaceTab tab;
   final String? workspacePath;
+  final String? fileDirectory;
   final WorkspaceOverviewUsage workspaceUsage;
   final ValueListenable<int> terminalSessionCountListenable;
   final ValueListenable<int> browserSessionCountListenable;
@@ -111,6 +113,7 @@ class WorkspaceTabContent extends StatelessWidget {
       case WorkspaceTabKind.home:
         return WorkspaceHomeContent(
           workspacePath: workspacePath,
+          fileDirectory: fileDirectory,
           workspaceUsage: workspaceUsage,
           terminalSessionCountListenable: terminalSessionCountListenable,
           browserSessionCountListenable: browserSessionCountListenable,
@@ -145,7 +148,7 @@ class WorkspaceTabContent extends StatelessWidget {
           },
         );
       case WorkspaceTabKind.files:
-        final rootPath = workspacePath?.trim();
+        final rootPath = fileDirectory?.trim() ?? workspacePath?.trim();
         if (rootPath == null || rootPath.isEmpty) {
           return _WorkspaceSimplePane(
             icon: Icons.folder_off_outlined,

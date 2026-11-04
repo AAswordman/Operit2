@@ -3,8 +3,9 @@ use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder};
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_util::OperitPaths;
-use std::fs;
+use operit_runtime::services::AttachmentTransferManager::AttachmentTransferManager;
+use operit_store::FileSyncPolicy::FileSyncPolicy;
+use operit_util::stream::ReverseStream::ReverseStream;
 use std::path::PathBuf;
 
 use super::app::{OperitTui, QueuedAttachmentToken, QueuedAttachmentTokenKind};
@@ -140,7 +141,7 @@ impl OperitTui {
             }
             (KeyCode::Char('j'), KeyModifiers::CONTROL) => self.insert_char('\n'),
             (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
-                self.attach_clipboard_image()?;
+                self.attach_clipboard_image().await?;
             }
             (KeyCode::Backspace, _) => self.delete_before_cursor(),
             (KeyCode::Delete, _) => self.delete_at_cursor(),
@@ -418,6 +419,7 @@ impl OperitTui {
         let file_name = format!("pasted-text-{}.txt", self.paste_attachment_counter);
         AttachmentInfo {
             nodeId: None,
+            vfsPath: None,
             filePath: format!("tui-paste:{file_name}"),
             fileName: file_name,
             mimeType: "text/plain".to_string(),
@@ -426,36 +428,58 @@ impl OperitTui {
         }
     }
 
-    /// Creates one file-backed PNG attachment for a clipboard image payload.
-    fn create_clipboard_image_attachment(
+    /// Imports clipboard PNG bytes through the same policy and writer as other selections.
+    async fn create_clipboard_image_attachment(
         &mut self,
         png: Vec<u8>,
     ) -> Result<AttachmentInfo, String> {
+        let chat_id = self.current_chat_id()?;
         self.paste_attachment_counter += 1;
         let file_name = format!(
             "clipboard-image-{}-{}.png",
             currentTimeMillis(),
             self.paste_attachment_counter
         );
-        let file_path = clipboard_image_attachment_path(&file_name)?;
-        fs::write(&file_path, &png)
-            .map_err(|error| format!("clipboard image write failed: {file_name}: {error}"))?;
-        let file_path_text = file_path
-            .to_str()
-            .ok_or_else(|| format!("clipboard image path is not UTF-8: {}", file_path.display()))?
-            .to_string();
-        let mut attachment = AttachmentInfo::new(
-            file_path_text,
-            file_name,
-            "image/png".to_string(),
-            png.len() as i64,
-        );
-        attachment.nodeId = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::localNodeId();
-        Ok(attachment)
+        let host = self.core.application().generatedClientMut().0.hostManager().clone();
+        let transfer = AttachmentTransferManager::getInstance(&host)?;
+        let policy: FileSyncPolicy = serde_json::from_str(&transfer.selectedAttachmentPolicy(chat_id.clone())?)
+            .map_err(|error| error.to_string())?;
+        let size = i64::try_from(png.len()).map_err(|_| "Clipboard image size overflow")?;
+        if size as u64 > policy.maxTotalBytes {
+            return Err("Clipboard image exceeds the retention limit in .operit/sync.json".into());
+        }
+        let large = size as u64 > policy.maxFileBytes;
+        let id = transfer.beginAttachmentUpload(file_name.clone(), Some(size))?;
+        let (mut sender, input) = ReverseStream::channel();
+        let producer = async {
+            for chunk in png.chunks(1024 * 1024) {
+                sender.send(chunk.to_vec()).await?;
+            }
+            sender.send(Vec::new()).await?;
+            sender.close();
+            Ok::<_, String>(())
+        };
+        let consumer = async {
+            if large {
+                transfer.writeAttachmentSource(id.clone(), file_name.clone(), Some(size),
+                    i64::try_from(policy.maxTotalBytes).unwrap_or(i64::MAX), input).await
+            } else {
+                transfer.writeSelectedAttachment(chat_id.clone(), id.clone(), file_name.clone(), Some(size), input).await
+            }
+        };
+        let (produced, written) = tokio::join!(producer, consumer);
+        written?;
+        produced?;
+        if large {
+            let reference = transfer.completeAttachmentSource(id, file_name, Some(size))?;
+            transfer.createReferenceAttachment(chat_id, reference)
+        } else {
+            transfer.completeSelectedAttachment(chat_id, id, file_name, Some(size))
+        }
     }
 
     /// Reads a clipboard image and queues it as a direct file attachment.
-    fn attach_clipboard_image(&mut self) -> Result<(), String> {
+    async fn attach_clipboard_image(&mut self) -> Result<(), String> {
         let Ok(mut clipboard) = arboard::Clipboard::new() else {
             self.status_message = self.text().clipboard_unavailable().to_string();
             return Ok(());
@@ -473,7 +497,7 @@ impl OperitTui {
                 ColorType::Rgba8.into(),
             )
             .map_err(|error| error.to_string())?;
-        let attachment = self.create_clipboard_image_attachment(png)?;
+        let attachment = self.create_clipboard_image_attachment(png).await?;
         let token = format!("@{}", attachment.fileName);
         self.insert_attachment_token(&token);
         self.status_message = self
@@ -481,11 +505,11 @@ impl OperitTui {
             .attached_clipboard_image(&attachment.fileName, &format_bytes(attachment.fileSize));
         self.queued_attachment_tokens.push(QueuedAttachmentToken {
             token,
-            kind: QueuedAttachmentTokenKind::Path {
-                path: attachment.filePath.clone(),
+            kind: QueuedAttachmentTokenKind::Inline {
+                file_path: attachment.filePath.clone(),
             },
         });
-        self.queued_attachment_paths.push(attachment.filePath);
+        self.queued_inline_attachments.push(attachment);
         Ok(())
     }
 
@@ -612,17 +636,6 @@ fn format_bytes(size: i64) -> String {
     } else {
         format!("{:.1} MB", size as f64 / 1024.0 / 1024.0)
     }
-}
-
-/// Writes the media marker and returns the persisted target path for a clipboard image.
-fn clipboard_image_attachment_path(file_name: &str) -> Result<PathBuf, String> {
-    let dir = OperitPaths::chatAttachmentsDir()?;
-    fs::create_dir_all(&dir)
-        .map_err(|error| format!("clipboard image directory creation failed: {error}"))?;
-    let marker = dir.join(".nomedia");
-    fs::write(&marker, b"")
-        .map_err(|error| format!("clipboard image media marker creation failed: {error}"))?;
-    Ok(dir.join(file_name))
 }
 
 /// Parses pasted text as filesystem paths when every parsed part is a file.

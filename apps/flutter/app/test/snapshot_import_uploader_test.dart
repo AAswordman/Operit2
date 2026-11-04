@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import 'package:operit_folder_access/operit_folder_access.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/host/SelectedFileInput.dart';
@@ -25,6 +25,8 @@ Stream<Uint8List> _failingFileEvents() async* {
 /// Checks bounded upload chunking, content preservation, and source lifecycle errors.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final originalFileAccess = OperitFolderAccessPlatform.instance;
+  tearDown(() => OperitFolderAccessPlatform.instance = originalFileAccess);
 
   test('coalesces 64 KiB file events into 1 MiB upload chunks', () async {
     final original = Uint8List.fromList(
@@ -112,7 +114,7 @@ void main() {
   test('the document channel requests bounded 1 MiB upload chunks', () async {
     const channel = MethodChannel('operit/snapshot_import_input');
     final methods = <String>[];
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    OperitFolderAccessAndroid.registerWith();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           methods.add(call.method);
@@ -140,7 +142,6 @@ void main() {
       await file.close();
       expect(methods, <String>['pick', 'readChunk', 'close']);
     } finally {
-      debugDefaultTargetPlatformOverride = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
     }

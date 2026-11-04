@@ -33,14 +33,22 @@ data class DocumentMetadata(
 
 /** Each URI is constructed using the original authorized tree, never a raw file path. */
 class ContentResolverDocumentTreeAccess(context: Context) : DocumentTreeAccess {
-    private val resolver = context.applicationContext.contentResolver
+    private val resolverContext = context.applicationContext
+    private val resolver = resolverContext.contentResolver
     private fun tree(value: String): Uri {
         val uri = Uri.parse(value)
-        require(uri.scheme == "content" && DocumentsContract.isTreeUri(uri)) { "Expected a content tree URI" }
+        require(uri.scheme == "content" && !uri.authority.isNullOrEmpty() && uri.query == null && uri.fragment == null &&
+            (DocumentsContract.isTreeUri(uri) || DocumentsContract.isDocumentUri(resolverContext, uri))) {
+            "Expected an authorized content document or tree URI"
+        }
         return uri
     }
-    private fun document(tree: String, id: String): Uri =
-        DocumentsContract.buildDocumentUriUsingTree(tree(tree), id)
+    private fun document(tree: String, id: String): Uri {
+        val uri = tree(tree)
+        if (DocumentsContract.isTreeUri(uri)) return DocumentsContract.buildDocumentUriUsingTree(uri, id)
+        require(id == DocumentsContract.getDocumentId(uri)) { "A selected file does not authorize sibling documents" }
+        return uri
+    }
 
     override fun hasReadGrant(tree: String): Boolean {
         val uri = tree(tree)
@@ -50,7 +58,10 @@ class ContentResolverDocumentTreeAccess(context: Context) : DocumentTreeAccess {
         val uri = tree(tree)
         return resolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
     }
-    override fun rootId(tree: String): String = DocumentsContract.getTreeDocumentId(tree(tree))
+    override fun rootId(tree: String): String {
+        val uri = tree(tree)
+        return if (DocumentsContract.isTreeUri(uri)) DocumentsContract.getTreeDocumentId(uri) else DocumentsContract.getDocumentId(uri)
+    }
 
     private val columns = arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
         Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS)

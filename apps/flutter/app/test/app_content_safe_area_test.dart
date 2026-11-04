@@ -190,6 +190,10 @@ void main() {
                 ),
               );
               await tester.pumpAndSettle();
+              expect(
+                find.byIcon(Icons.segment),
+                tablet ? findsNothing : findsOneWidget,
+              );
               final page = find.byKey(const ValueKey<String>('safe-area-page'));
               final composer = find.byType(
                 agent ? AgentChatInputSection : ClassicChatInputSection,

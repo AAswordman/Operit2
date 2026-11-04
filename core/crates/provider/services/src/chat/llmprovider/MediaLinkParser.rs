@@ -284,13 +284,14 @@ fn parse_link_tag(tag_text: &str) -> Option<(String, String, Option<String>)> {
     ))
 }
 
-/// Decodes XML entities used inside media-link attributes.
-fn unescape_xml_attribute(value: &str) -> String {
+/// Decodes XML entities used inside media-link and attachment attributes.
+pub(crate) fn unescape_xml_attribute(value: &str) -> String {
     value
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+        .replace("&#39;", "'")
         .replace("&amp;", "&")
 }
 

@@ -224,6 +224,95 @@ void main() {
   );
 
   test(
+    'per-agent tab identities survive rapid repeated opens in either pane',
+    () async {
+      final bridge = CatalogBridge();
+      final session = WorkspaceSession();
+      final requests = List.generate(
+        6,
+        (_) => resolve(bridge, {
+          'workspaceTabId': 'parent-a/agent-a',
+          'workspaceTabTitle': 'Agent A',
+          'parentChatId': 'parent-a',
+          'agentId': 'agent-a',
+        }),
+      );
+      final pages = await Future.wait(requests);
+      for (final page in pages) {
+        session.openPluginPage(page);
+      }
+      expect(session.tabs.length, 2);
+      expect(session.tabs.last.title, 'Agent A');
+      expect(pages.first.input, {
+        'parentChatId': 'parent-a',
+        'agentId': 'agent-a',
+      });
+      final firstIdentity = pages.first.identity;
+      final other = await resolve(bridge, {
+        'workspaceTabId': 'parent-a/agent-b',
+        'workspaceTabTitle': 'Agent B',
+        'parentChatId': 'parent-a',
+        'agentId': 'agent-b',
+      });
+      session.openPluginPage(other);
+      expect(session.tabs.length, 3);
+      expect(other.identity, isNot(firstIdentity));
+      expect(session.tabs.last.title, 'Agent B');
+      session.openPluginPage(pages.first);
+      expect(session.tabs.length, 3);
+      expect(session.selectedIndex, 1);
+      session.secondaryTabs.add(session.tabs.removeAt(1));
+      session.selectedIndex = 1;
+      session.splitAxis = WorkspaceSplitAxis.horizontal;
+      for (final page in pages) {
+        session.openPluginPage(page);
+      }
+      expect(session.tabs.length, 2);
+      expect(session.secondaryTabs.length, 1);
+      expect(session.secondarySelectedIndex, 0);
+      expect(session.secondaryTabs.single.identityToken, firstIdentity);
+      // Closing and reopening creates exactly one fresh tab for the same child.
+      session.secondaryTabs.clear();
+      session.openPluginPage(pages.first);
+      session.openPluginPage(pages.last);
+      expect(session.tabs.length, 3);
+      expect(session.tabs.last.identityToken, firstIdentity);
+      session.dispose();
+    },
+  );
+
+  test(
+    'tab IDs stay scoped to the owner and route with default route reuse',
+    () async {
+      final bridge = CatalogBridge();
+      final defaultPage = await resolve(bridge);
+      expect(defaultPage.title, 'Page');
+      final page = await resolve(bridge, {'workspaceTabId': 'agent'});
+      expect(page.identity, isNot(defaultPage.identity));
+      bridge.owner = 'other-owner';
+      final otherOwner = (await PluginWorkspacePresentation.fromNavigation(
+        clients: GeneratedCoreProxyClients(bridge),
+        sourceOwnerPackageName: 'other-owner',
+        routeId: 'route',
+        args: const {'workspaceTabId': 'agent'},
+        language: 'en',
+      ))!;
+      expect(otherOwner.identity, isNot(page.identity));
+    },
+  );
+
+  test('invalid workspace tab metadata is rejected', () async {
+    for (final key in ['workspaceTabId', 'workspaceTabTitle']) {
+      for (final value in ['', '  ', 1, <String>[]]) {
+        await expectLater(
+          resolve(CatalogBridge(), {key: value}),
+          throwsArgumentError,
+        );
+      }
+    }
+  });
+
+  test(
     'ordinary navigation infers workspace placement and reuses the route',
     () async {
       final bridge = CatalogBridge();

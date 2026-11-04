@@ -178,6 +178,9 @@ pub struct ChatState {
     pub currentChatId: String,
     pub currentChatTitle: String,
     pub currentWorkspacePath: Option<String>,
+    /// Actual base shared by file tools and terminal launches, including unbound chats.
+    #[serde(default)]
+    pub currentFileDirectory: Option<String>,
     pub isLoading: bool,
     pub inputProcessingState: InputProcessingState,
     pub hasOlderDisplayHistory: bool,
@@ -1985,7 +1988,7 @@ impl ChatServiceCore {
             return;
         }
         if let Some(payloadJson) = _filePath.strip_prefix(PASTED_IMAGE_ATTACHMENT_PREFIX) {
-            self.attachPastedImage(payloadJson);
+            self.attachPastedImage(payloadJson).await;
             return;
         }
 
@@ -2049,6 +2052,7 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     fn attachPastedText(&mut self, content: String) {
         let attachmentInfo = AttachmentInfo {
+            vfsPath: None,
             nodeId: None,
             filePath: format!(
                 "pasted_text_{}_{}",
@@ -2067,7 +2071,7 @@ impl ChatServiceCore {
 
     /// Adds the supplied pasted image as a persisted chat-attachment file.
     #[allow(non_snake_case)]
-    fn attachPastedImage(&mut self, payloadJson: &str) {
+    async fn attachPastedImage(&mut self, payloadJson: &str) {
         let payload: PastedImageAttachmentPayload = match serde_json::from_str(payloadJson) {
             Ok(value) => value,
             Err(error) => {
@@ -2114,26 +2118,22 @@ impl ChatServiceCore {
                 return;
             }
         };
-        let tempFile = match createChatAttachmentFromBytes(
-            self.fileSystemHost.as_ref(),
-            &chatId,
-            &fileName,
-            &decoded,
-        ) {
+        let result = async {
+            let context = self.enhancedAiService.as_ref()
+                .ok_or("Chat runtime is not ready for file attachments")?.tool_handler.getContext();
+            super::AttachmentTransferManager::AttachmentTransferManager::getInstance(&context)?
+                .importBytesAttachment(chatId, fileName, &decoded).await
+        }.await;
+        let mut attachmentInfo = match result {
             Ok(value) => value,
             Err(message) => {
                 self.messageProcessingDelegate.showToast(message);
                 return;
             }
         };
-        let attachmentInfo = AttachmentInfo {
-            nodeId: localAttachmentNodeId(),
-            filePath: tempFile.to_string_lossy().into_owned(),
-            fileName,
-            mimeType,
-            fileSize,
-            content: String::new(),
-        };
+        if !attachmentInfo.fileName.ends_with(operit_store::FileSyncPolicy::REFERENCE_SUFFIX) {
+            attachmentInfo.mimeType = mimeType;
+        }
         self.attachments.push(attachmentInfo);
         self.messageProcessingDelegate
             .showToast("已添加粘贴图片附件".to_string());
@@ -2191,6 +2191,7 @@ impl ChatServiceCore {
         let captureId = format!("screen_ocr_{}", currentTimeMillis());
         let content = format!("屏幕内容{positionInfo}\n\n{ocrText}\n\n{OCR_INLINE_INSTRUCTION}");
         self.attachments.push(AttachmentInfo {
+            vfsPath: None,
             nodeId: None,
             filePath: captureId,
             fileName: "screen_content.txt".to_string(),
@@ -2235,6 +2236,7 @@ impl ChatServiceCore {
 
         let content = result.result.toString();
         let attachmentInfo = AttachmentInfo {
+            vfsPath: None,
             nodeId: None,
             filePath: format!("notifications_{}", currentTimeMillis()),
             fileName: "notifications.json".to_string(),
@@ -2278,6 +2280,7 @@ impl ChatServiceCore {
 
         let content = result.result.toString();
         let attachmentInfo = AttachmentInfo {
+            vfsPath: None,
             nodeId: None,
             filePath: format!("location_{}", currentTimeMillis()),
             fileName: "location.json".to_string(),
@@ -2345,6 +2348,7 @@ impl ChatServiceCore {
             }
 
             let attachmentInfo = AttachmentInfo {
+                vfsPath: None,
                 nodeId: None,
                 filePath: packageAttachmentPath(packageName),
                 fileName: packageAttachmentDisplayName(packageName),
@@ -2388,6 +2392,7 @@ impl ChatServiceCore {
             )
         };
         let attachmentInfo = AttachmentInfo {
+            vfsPath: None,
             nodeId: None,
             filePath: workspaceMentionAttachmentPath(&normalizedRelativePath),
             fileName: normalizedRelativePath.clone(),
@@ -2448,44 +2453,12 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     fn createAttachmentInfo(&self, filePath: &str) -> Result<AttachmentInfo, String> {
         let chatId = self.attachmentChatId()?;
-        let localPath = resolveAttachmentPath(filePath)?;
-        let localPathText = localPath.to_string_lossy();
-        let source = self
-            .fileSystemHost
-            .fileExists(&localPathText)
-            .map_err(|error| error.message)?;
-        if !source.exists {
-            return Err("附件文件不存在".to_string());
-        }
-        if source.isDirectory {
-            return Err(format!("无法添加附件: {}", localPath.display()));
-        }
-
-        let fileName = localPath
-            .file_name()
-            .and_then(|value| value.to_str())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| format!("无法添加附件: {}", localPath.display()))?
-            .to_string();
-        let mimeType = getMimeTypeFromPath(&localPath).to_string();
-        let tempFile = createChatAttachmentFromPath(self.fileSystemHost.as_ref(), &chatId, &localPath, &fileName)?;
-        let fileSize = self
-            .fileSystemHost
-            .fileExists(&tempFile.to_string_lossy())
-            .map_err(|error| format!("无法读取附件大小: {}", error.message))?
-            .size;
-
-        Ok(AttachmentInfo {
-            nodeId: localAttachmentNodeId(),
-            filePath: tempFile.to_string_lossy().into_owned(),
-            fileName,
-            mimeType,
-            fileSize,
-            content: String::new(),
-        })
+        let source = resolveAttachmentPath(filePath)?.to_string_lossy().into_owned();
+        let context = self.enhancedAiService.as_ref().ok_or("Chat runtime is not ready for file attachments")?.tool_handler.getContext();
+        super::AttachmentTransferManager::AttachmentTransferManager::getInstance(&context)?.importNativeAttachment(chatId, source)
     }
 
-    /// Moves a committed Host upload into its selected chat without reading the file again.
+    /// Registers an attachment already committed to this chat's final attachment directory.
     pub fn attachUploadedFile(
         &mut self,
         attachment: AttachmentInfo,
@@ -2494,7 +2467,6 @@ impl ChatServiceCore {
         if self.chatHistoryDelegate.currentChatIdFlow.value() != expectedChatId {
             return Err("Chat changed while uploading the attachment".to_string());
         }
-        let mut attachment = attachment;
         super::AttachmentTransferManager::validateAttachmentFileName(&attachment.fileName)?;
         let chatId = self.attachmentChatId()?;
         if attachment.nodeId != localAttachmentNodeId()
@@ -2511,9 +2483,13 @@ impl ChatServiceCore {
                 "Uploaded attachment is missing or has an unexpected byte length".to_string(),
             );
         }
-        super::AttachmentTransferManager::adoptUploadedAttachment(
-            self.fileSystemHost.as_ref(), &mut attachment, &chatId,
-        )?;
+        if !super::AttachmentTransferManager::isSelectedAttachment(&attachment, &chatId)? {
+            return Err("Attachment must be imported into the current chat file directory before registration".into());
+        }
+        let resolved = self.vfsForWorkspace()?.resolvePath(&attachment.fileToolPath())?.nativePath()?;
+        if resolved != attachment.filePath {
+            return Err("Attachment VFS locator does not match its stored file".into());
+        }
         if !self
             .attachments
             .iter()
@@ -3082,23 +3058,39 @@ impl ChatServiceCore {
                         .unwrap_or_else(ChatExecutionState::idle)
                 }
             });
-        let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
+        // Resolve the persisted directory when chat metadata changes, not for each token.
+        let fileContextFlow = self.chatHistoryDelegate.chatHistoriesFlow().map({
+            let manager = self.chatHistoryDelegate.chatHistoryManager.clone();
+            let selectedChatId = selectedChatId.clone();
+            move |chats| {
+                let chat = chats.iter().find(|chat| chat.id == selectedChatId);
+                let directory = chat.and_then(|_| match manager.fileDirectoryForChat(&selectedChatId) {
+                    Ok(directory) => Some(directory),
+                    Err(error) => {
+                        operit_host_api::logHostError("ChatFileDirectory", &error.to_string());
+                        None
+                    }
+                });
+                (
+                    chat.map(|chat| chat.title.clone()).unwrap_or_default(),
+                    chat.and_then(|chat| chat.workspacePrimaryPath.clone()),
+                    directory,
+                )
+            }
+        });
         let pendingQueueStateFlow = self.pendingQueueStateFlow().asStateFlow();
         let toolPermissionRequestsFlow = chatToolPermissionRequestsFlow(selectedChatId.clone());
         combine5(
             &executionStateFlow,
             &displayWindowStateFlow,
-            &chatHistoriesFlow,
+            &fileContextFlow,
             &pendingQueueStateFlow,
             &toolPermissionRequestsFlow,
             move |executionState,
                   displayWindowState,
-                  chatHistories,
+                  (currentChatTitle, currentWorkspacePath, currentFileDirectory),
                   pendingQueuesByChatId,
                   toolPermissionRequests| {
-                let currentChat = chatHistories
-                    .iter()
-                    .find(|chat| chat.id == selectedChatId);
                 let pendingQueueState = pendingQueuesByChatId.get(&selectedChatId);
                 let pendingQueueMessages = pendingQueueState
                     .map(|state| state.messages.clone())
@@ -3108,11 +3100,9 @@ impl ChatServiceCore {
                     .unwrap_or(true);
                 ChatState {
                     currentChatId: selectedChatId.clone(),
-                    currentChatTitle: currentChat
-                        .map(|chat| chat.title.clone())
-                        .unwrap_or_default(),
-                    currentWorkspacePath: currentChat
-                        .and_then(|chat| chat.workspacePrimaryPath.clone()),
+                    currentChatTitle,
+                    currentWorkspacePath,
+                    currentFileDirectory,
                     isLoading: executionState.isLoading,
                     inputProcessingState: executionState.inputProcessingState,
                     hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,
@@ -3454,56 +3444,6 @@ fn fileUrlToPathBuf(url: &Url) -> Result<PathBuf, ()> {
         return Err(());
     }
     Ok(PathBuf::from(url.path()))
-}
-
-#[allow(non_snake_case)]
-/// Copies one original file into a dedicated chat-owned attachment directory.
-fn createChatAttachmentFromPath(
-    fileSystemHost: &dyn FileSystemHost,
-    chatId: &str,
-    sourcePath: &Path,
-    fileName: &str,
-) -> Result<PathBuf, String> {
-    let tempFile = super::AttachmentTransferManager::prepareChatAttachmentPath(
-        fileSystemHost, chatId, &uuid::Uuid::new_v4().simple().to_string(), fileName,
-    )?;
-    fileSystemHost
-        .copyFile(
-            &sourcePath.to_string_lossy(),
-            &tempFile.to_string_lossy(),
-            false,
-        )
-        .map_err(|error| format!("无法复制附件: {}", error.message))?;
-    let copied = fileSystemHost
-        .fileExists(&tempFile.to_string_lossy())
-        .map_err(|error| format!("无法读取附件文件: {}", error.message))?;
-    if !copied.exists || copied.isDirectory {
-        return Err(format!("无法添加附件: {}", sourcePath.display()));
-    }
-    Ok(tempFile)
-}
-
-/// Stores pasted image bytes with their original name under the selected chat.
-#[allow(non_snake_case)]
-fn createChatAttachmentFromBytes(
-    fileSystemHost: &dyn FileSystemHost,
-    chatId: &str,
-    fileName: &str,
-    bytes: &[u8],
-) -> Result<PathBuf, String> {
-    let tempFile = super::AttachmentTransferManager::prepareChatAttachmentPath(
-        fileSystemHost, chatId, &uuid::Uuid::new_v4().simple().to_string(), fileName,
-    )?;
-    fileSystemHost
-        .writeFileBytes(&tempFile.to_string_lossy(), bytes)
-        .map_err(|error| format!("无法保存粘贴图片: {}", error.message))?;
-    let saved = fileSystemHost
-        .fileExists(&tempFile.to_string_lossy())
-        .map_err(|error| format!("无法读取粘贴图片: {}", error.message))?;
-    if !saved.exists || saved.isDirectory || saved.size == 0 {
-        return Err(format!("无法添加粘贴图片: {fileName}"));
-    }
-    Ok(tempFile)
 }
 
 #[allow(non_snake_case)]

@@ -1,6 +1,8 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+
+import 'MarkdownFileScope.dart';
 import 'package:flutter/gestures.dart';
 
 import 'MarkdownCodeTypeface.dart';
@@ -77,7 +79,10 @@ InlineSpan _inlineSpan(
       style = _decorate(style, TextDecoration.underline);
       break;
     case MarkdownNodeType.link:
-      linkUrl = node.linkUrl;
+      linkUrl = node.linkUrl == null
+          ? null
+          : (MarkdownFileScope.maybeOf(context)?.resolve(node.linkUrl!) ??
+                node.linkUrl);
       final color = Theme.of(context).colorScheme.primary;
       style = _decorate(
         style,
@@ -116,7 +121,14 @@ InlineSpan _inlineSpan(
     style: style,
     recognizer: linkUrl == null
         ? null
-        : gestures.recognizerFor(linkUrl, onLinkClick),
+        : gestures.recognizerFor(
+            linkUrl,
+            onLinkClick ??
+                (url) => openMarkdownFileLink(
+                  url,
+                  MarkdownFileScope.maybeOf(context)?.clients,
+                ),
+          ),
   );
 }
 

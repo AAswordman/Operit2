@@ -159,7 +159,7 @@ impl StandardFileSystemTools {
                     localPathSeen = true;
                     let context = ToolExecutionManager::currentToolRuntimeContext();
                     let resolved = PathMapper::resolveFileToolPath(
-                        context.as_ref().and_then(|context| context.workspacePath.as_deref()),
+                        context.as_ref().map(|context| context.fileDirectory(self.runtimeStorageHost.clone())).transpose()?.flatten().as_deref(),
                         &value,
                     )?;
                     Self::rewritePathParameter(&mut call, name, &resolved);
@@ -177,7 +177,7 @@ impl StandardFileSystemTools {
                     localPathSeen = true;
                     let context = ToolExecutionManager::currentToolRuntimeContext();
                     let resolved = PathMapper::resolveFileToolPath(
-                        context.as_ref().and_then(|context| context.workspacePath.as_deref()),
+                        context.as_ref().map(|context| context.fileDirectory(self.runtimeStorageHost.clone())).transpose()?.flatten().as_deref(),
                         &innerPath,
                     )?;
                     Self::rewritePathParameter(&mut call, name, &resolved);
@@ -256,33 +256,20 @@ impl StandardFileSystemTools {
         change: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
         let mut storagePaths = Vec::new();
-        let mut workspacePaths = Vec::new();
         for path in paths {
             let canonical = PathMapper::canonicalizeVfsPath(path)?;
-            if let Some(relative) = PathMapper::relativePath("/operitapp/workspaces", &canonical)? {
-                if !relative.is_empty() {
-                    workspacePaths.push(format!("workspaces/{relative}"));
+            for (vfsRoot, storageRoot) in [
+                ("/operitapp/workspaces", "workspaces"),
+                ("/operitapp/outputs", "runtime/data/chat_outputs"),
+                ("/operitapp/data", "runtime"),
+            ] {
+                if let Some(relative) = PathMapper::relativePath(vfsRoot, &canonical)? {
+                    storagePaths.push(if relative.is_empty() { storageRoot.into() } else { format!("{storageRoot}/{relative}") });
                 }
             }
-            if let Some(relative) = PathMapper::relativePath("/operitapp/data", &canonical)? {
-                storagePaths.push(format!("runtime/{relative}"));
-            }
         }
-        let tracked = || {
-            RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
-                .trackChanges(&storagePaths, change)
-        };
-        if workspacePaths.is_empty() {
-            tracked()
-        } else {
-            operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
-                self.runtimeStorageHost.clone(),
-                RUNTIME_SYNC_DIR_PATH,
-            )
-            // Re-hash the touched workspace files so same-size rewrites publish
-            // immediately instead of waiting for the periodic full-hash round.
-            .trackPaths(&workspacePaths, tracked)
-        }
+        RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
+            .trackChanges(&storagePaths, change)
     }
 
     /// Writes text and publishes changed Space files, including appended bytes.

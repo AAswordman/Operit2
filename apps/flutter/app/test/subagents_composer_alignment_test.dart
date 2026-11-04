@@ -186,7 +186,10 @@ void main() {
                 expect(pluginRect.height, closeTo(queueRect.height, 0.1));
                 expect(pluginRect.height, lessThanOrEqualTo(48));
                 expect(find.byType(TextButton), findsNothing);
-                expect(find.byType(IconButton), findsNWidgets(3));
+                expect(
+                  find.byType(IconButton),
+                  findsNWidgets(plugin == 'subagents' ? 2 : 3),
+                );
                 final titleFinder = find.byKey(
                   ValueKey<Object?>('$plugin.title'),
                 );

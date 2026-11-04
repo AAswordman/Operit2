@@ -68,16 +68,20 @@ void main() {
       }
       expect(total, size);
       final selected = await SelectedFileInput.fromXFile(file, name: '文档.apk');
+      expect(selected.sourceJson, isNull);
       final bridge = UploadBridge();
       await ChatViewModel(
         bridge: bridge,
-      ).attachSelectedFile(selected, expectedChatId: null);
+        attachmentSourceBridge: bridge,
+      ).attachSelectedFile(selected, expectedChatId: 'browser-chat');
       expect(bridge.received, size);
-      expect(bridge.closed, isTrue);
+      expect(bridge.completed, isTrue);
       expect(bridge.methods, [
+        'selectedAttachmentPolicy',
         'beginAttachmentUpload',
-        'writeAttachmentUpload',
-        'completeAttachmentUpload',
+        'writeAttachmentSource',
+        'completeAttachmentSource',
+        'createReferenceAttachment',
         'attachUploadedFile',
       ]);
       await expectLater(selected.readChunk(), throwsStateError);

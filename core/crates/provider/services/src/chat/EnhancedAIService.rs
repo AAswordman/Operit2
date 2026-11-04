@@ -658,24 +658,24 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
             // Use the same host-owned roots as file tools, not a guessed storage location.
             // Resolve afresh for every request so workspace switches cannot retain stale paths.
             let context = self.tool_handler.getContext();
-            let workspace_path_mappings = context
-                .runtimeStorageHost
-                .as_ref()
-                .and_then(|storage| {
-                    Some(PathMapper::new(
-                        storage.runtimeRootDir()?,
-                        storage.workspaceRootDir()?,
-                        storage.clone(),
-                    ))
-                })
-                .map(|mapper| {
-                    resolve_workspace_path_mappings(
-                        &mapper,
-                        request.workspace_path.as_deref(),
-                        &request.workspace_folders,
-                    )
-                })
-                .unwrap_or_default();
+            let output_path = if request.workspace_path.as_deref().filter(|p| !p.trim().is_empty()).is_none() {
+                match (context.runtimeStorageHost.as_ref(), request.chat_id.as_deref()) {
+                    (Some(storage), Some(chat)) => operit_store::ChatOutputStore::ChatOutputStore::new(storage.clone()).prepare(chat)?,
+                    _ => None,
+                }
+            } else { None };
+            let mapper = context.runtimeStorageHost.as_ref().and_then(|storage| {
+                Some(PathMapper::new(
+                    storage.runtimeRootDir()?, storage.workspaceRootDir()?, storage.clone(),
+                ))
+            });
+            let primary_directory = request.workspace_path.as_deref().or(output_path.as_deref());
+            let workspace_path_mappings = mapper.as_ref().map(|mapper| {
+                resolve_workspace_path_mappings(mapper, primary_directory, &request.workspace_folders)
+            }).unwrap_or_default();
+            let terminal_path_mappings = resolve_terminal_path_mappings(
+                context.terminalHost.as_deref(), mapper.as_ref(), primary_directory, &request.workspace_folders,
+            );
             let package_manager = self.tool_handler.getOrCreatePackageManager();
             let (enabled_packages, mcp_servers) = {
                 let package_manager_guard = package_manager
@@ -724,8 +724,10 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                 base: SystemPromptOptions {
                     chat_id: request.chat_id.clone(),
                     workspace_path: request.workspace_path.clone(),
+                    output_path,
                     workspace_folders: request.workspace_folders.clone(),
                     workspace_path_mappings,
+                    terminal_path_mappings,
                     use_english,
                     custom_system_prompt_template,
                     enable_tools: true,
@@ -962,7 +964,12 @@ impl EnhancedAIService {
             &runtime.chatConfiguration, chatId.clone(), workspacePath.clone(),
             workspaceFolders.clone(), &runtime.toolExposureMode,
         )?;
-        ToolExecutionManager::scopeToolRuntimeContext(toolContext, self.conversation_service
+        let hostContext = self.tool_handler.getContext();
+        let fileDirectory = match hostContext.runtimeStorageHost {
+            Some(storage) => toolContext.fileDirectory(storage).map_err(AiServiceError::RequestFailed)?,
+            None => workspacePath.clone(),
+        };
+        let mut history = ToolExecutionManager::scopeToolRuntimeContext(toolContext, self.conversation_service
             .prepare_conversation_history(
                 PrepareConversationHistoryRequest {
                     chat_history: chatHistory,
@@ -992,7 +999,11 @@ impl EnhancedAIService {
                 &history_hooks,
                 &system_prompt_composer,
                 runtime.useEnglish,
-            )).await.map_err(AiServiceError::RequestFailed)
+            )).await.map_err(AiServiceError::RequestFailed)?;
+        if let Some(base) = fileDirectory {
+            ConversationService::use_relative_attachment_paths(&mut history, &base);
+        }
+        Ok(history)
     }
 
     pub async fn generateSummary(
@@ -3624,6 +3635,46 @@ fn value_to_btree_map(source: HashMap<String, Value>) -> BTreeMap<String, String
 }
 
 /// Resolves the primary root and every mounted folder without searching for directories.
+/// Uses the exact same Host resolver as terminal execution. Prompt composition
+/// has no platform policy and never turns a physical root into a guest path.
+fn resolve_terminal_path_mappings(
+    host: Option<&dyn operit_host_api::TerminalHost>,
+    mapper: Option<&PathMapper>,
+    primary: Option<&str>,
+    folders: &[String],
+) -> Vec<crate::chat::config::SystemPromptConfig::TerminalPathMapping> {
+    use crate::chat::config::SystemPromptConfig::TerminalPathMapping;
+    let Some(host) = host else { return Vec::new(); };
+    let info = match host.terminalInfo() {
+        Ok(info) => info,
+        Err(error) => return primary.into_iter().map(|path| TerminalPathMapping {
+            terminal: "Host".into(), terminal_type: String::new(), vfs_path: path.into(), path: Err(error.to_string()),
+        }).collect(),
+    };
+    let mut directories = BTreeSet::new();
+    let directories = primary.into_iter().chain(folders.iter().map(String::as_str))
+        .filter(|path| !path.trim().is_empty() && directories.insert(path.to_string()))
+        .collect::<Vec<_>>();
+    let resolve_host = |path: &str| {
+        mapper.ok_or_else(|| operit_host_api::HostError::new("File path mapping is unavailable"))?
+            .resolve(path).and_then(|mapping| mapping.nativePath())
+            .map_err(operit_host_api::HostError::new)
+    };
+    let mut kinds = info.types.into_iter().filter(|kind| kind.available).collect::<Vec<_>>();
+    if !kinds.iter().any(|kind| kind.terminal == info.terminal && kind.terminalType == info.terminalType) {
+        kinds.insert(0, operit_host_api::TerminalTypeInfo {
+            terminal: info.terminal, terminalType: info.terminalType, available: true, description: String::new(),
+        });
+    }
+    kinds.into_iter().flat_map(|kind| directories.iter().map(|path| {
+        TerminalPathMapping {
+            terminal: kind.terminal.clone(), terminal_type: kind.terminalType.clone(), vfs_path: (*path).into(),
+            path: host.resolveWorkingDirectory(&kind.terminal, &kind.terminalType, path, &resolve_host)
+                .map_err(|error| error.to_string()),
+        }
+    }).collect::<Vec<_>>()).collect()
+}
+
 fn resolve_workspace_path_mappings(
     mapper: &PathMapper,
     workspace_path: Option<&str>,

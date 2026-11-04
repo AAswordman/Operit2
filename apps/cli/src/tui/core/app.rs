@@ -74,7 +74,7 @@ use crate::cli::network_control_ui::{
 };
 use crate::cli::CliInstallProgress;
 use crate::tui::NetworkUiEvent;
-use crate::{build_attachment_info, parse_shell_args, ChatSendArgs, ShellArgs};
+use crate::{parse_shell_args, ChatSendArgs, ShellArgs};
 use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -1060,6 +1060,7 @@ impl OperitTui {
                     currentChatId: active_chat_id.clone(),
                     currentChatTitle: String::new(),
                     currentWorkspacePath: None,
+                    currentFileDirectory: None,
                     isLoading: false,
                     inputProcessingState: InputProcessingState::Error {
                         message: route_permission_error
@@ -2600,7 +2601,7 @@ impl OperitTui {
                 .map_err(|error| error.to_string())?;
         }
         let chat_id = self.current_chat_id()?;
-        let mut attachments = build_attachments(&send_args.attachmentPaths)?;
+        let mut attachments = build_attachments(&mut self.core, &chat_id, &send_args.attachmentPaths).await?;
         attachments.extend(inline_attachments);
         let reply_to_message = match send_args.replyToTimestamp {
             Some(timestamp) => Some(
@@ -7562,11 +7563,19 @@ fn chat_histories_to_list(chat_histories: Vec<ChatHistory>) -> Vec<ChatListItem>
         .collect()
 }
 
-fn build_attachments(paths: &[String]) -> Result<Vec<AttachmentInfo>, String> {
-    paths
-        .iter()
-        .map(|path| build_attachment_info(path))
-        .collect()
+async fn build_attachments(
+    core: &mut TuiCore, chat_id: &str, paths: &[String],
+) -> Result<Vec<AttachmentInfo>, String> {
+    let mut attachments = Vec::with_capacity(paths.len());
+    for path in paths {
+        let source = std::fs::canonicalize(path)
+            .map_err(|error| format!("Attachment source is unavailable: {path}: {error}"))?;
+        let attachment = core.services_attachment_transfer_manager()
+            .importNativeAttachment(chat_id.to_string(), source.to_string_lossy().into_owned())
+            .await.map_err(|error| error.to_string())?;
+        attachments.push(attachment);
+    }
+    Ok(attachments)
 }
 
 fn strip_attachment_tokens(

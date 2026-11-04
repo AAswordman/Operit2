@@ -53,16 +53,34 @@ class _ParsedCodeBlock {
 }
 
 _ParsedCodeBlock _parseCodeBlock(String text) {
-  final lines = text.trim().split('\n');
-  final firstLine = lines.isEmpty ? '' : lines.first;
-  final language = firstLine.startsWith('```')
-      ? firstLine.substring(3).trim()
-      : '';
-  final codeLines = lines.skipWhile((line) => line.startsWith('```')).toList();
-  while (codeLines.isNotEmpty && codeLines.last.trimRight().endsWith('```')) {
-    codeLines.removeLast();
+  final lines = text.replaceAll('\r\n', '\n').split('\n');
+  final opening = RegExp(r'^( {0,3})(`{3,})([^`]*)$').firstMatch(lines.first);
+  if (opening == null) {
+    return _ParsedCodeBlock(code: lines.join('\n'), language: '');
   }
-  return _ParsedCodeBlock(code: codeLines.join('\n'), language: language);
+  final indent = opening.group(1)!.length;
+  final fenceLength = opening.group(2)!.length;
+  var end = lines.length;
+  final lastLine = lines.last.isEmpty ? end - 2 : end - 1;
+  if (lastLine >= 1) {
+    final closing = RegExp(
+      r'^ {0,3}(`{3,})[ \t\r]*$',
+    ).firstMatch(lines[lastLine]);
+    if (closing != null && closing.group(1)!.length >= fenceLength) {
+      end = lastLine;
+    }
+  }
+  final codeLines = lines.sublist(1, end).map((line) {
+    var removed = 0;
+    while (removed < indent && removed < line.length && line[removed] == ' ') {
+      removed++;
+    }
+    return line.substring(removed);
+  });
+  return _ParsedCodeBlock(
+    code: codeLines.join('\n'),
+    language: opening.group(3)!.trim(),
+  );
 }
 
 class _MarkdownText extends StatefulWidget {

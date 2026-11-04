@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:operit_folder_access/operit_folder_access.dart'
+    show FolderMountSource, OperitFolderAccessMacOS, OperitFolderAccessPlatform;
 
 import 'package:file_selector_ohos/src/file_selector_api.g.dart';
 import 'package:file_selector_ohos/src/file_selector_ohos.dart';
@@ -21,7 +25,7 @@ class OhosMetadataApi extends FileSelectorApi {
 
 /// Like Web cross_file: a read without an explicit range would allocate the file.
 class RangeOnlyFile extends XFile {
-  RangeOnlyFile(this.size) : super('/not-read/large.apk');
+  RangeOnlyFile(this.size, {String path = '/not-read/large.apk'}) : super(path);
   final int size;
   final ranges = <(int, int)>[];
   @override
@@ -43,6 +47,8 @@ class RangeOnlyFile extends XFile {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final originalFileAccess = OperitFolderAccessPlatform.instance;
+  tearDown(() => OperitFolderAccessPlatform.instance = originalFileAccess);
 
   test('143 MB input is read lazily in bounded source ranges', () async {
     final source = RangeOnlyFile(143388128);
@@ -60,6 +66,26 @@ void main() {
     await file.close();
   });
 
+  test(
+    'Windows native sources retain their exact path without an eager read',
+    () async {
+      final source = RangeOnlyFile(143388128, path: r'D:\Downloads\large.apk');
+      final input = await SelectedFileInput.fromXFile(
+        source,
+        name: 'large.apk',
+      );
+      expect(source.ranges, isEmpty);
+      expect(jsonDecode(input.sourceJson!), {
+        'backend': 'native',
+        'root': source.path,
+        'namespace': '/virtual/local/attachments',
+        'name': 'large.apk',
+      });
+      await input.close();
+      expect(source.ranges, isEmpty);
+    },
+  );
+
   test('unused and cancelled inputs never read the remaining file', () async {
     final unusedSource = RangeOnlyFile(143388128);
     final unused = await SelectedFileInput.fromXFile(unusedSource);
@@ -71,6 +97,55 @@ void main() {
     await file.close();
     expect(source.ranges, [(0, selectedFileChunkBytes)]);
   });
+
+  test(
+    'registered adapter supplies sources without app platform selection',
+    () async {
+      final adapter = _CustomFileAccess();
+      OperitFolderAccessPlatform.instance = adapter;
+      final source = RangeOnlyFile(143388128);
+      final input = await SelectedFileInput.fromXFile(
+        source,
+        name: 'selected.apk',
+      );
+      expect(source.ranges, isEmpty);
+      expect(jsonDecode(input.sourceJson!), {
+        'backend': 'custom-resource',
+        'root': 'authorized-resource',
+        'namespace': '/virtual/custom/attachments',
+        'name': 'selected.apk',
+      });
+      expect(adapter.files, [source]);
+      await input.close();
+      expect(source.ranges, isEmpty);
+    },
+  );
+
+  test(
+    'macOS adapter retains the grant before exposing a source without reading',
+    () async {
+      const accessChannel = MethodChannel('operit/folder_access');
+      final retained = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(accessChannel, (call) async {
+            expect(call.method, 'retainFile');
+            retained.add(call.arguments['path'] as String);
+            return null;
+          });
+      OperitFolderAccessMacOS.registerWith();
+      final source = RangeOnlyFile(143388128);
+      try {
+        final input = await SelectedFileInput.fromXFile(source);
+        expect(retained, [source.path]);
+        expect(jsonDecode(input.sourceJson!)['root'], source.path);
+        expect(source.ranges, isEmpty);
+        await input.close();
+      } finally {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(accessChannel, null);
+      }
+    },
+  );
 
   const channel = MethodChannel(
     'dev.flutter.packages.file_selector_ohos/input',
@@ -175,4 +250,23 @@ void main() {
       expect(calls.last.method, 'close');
     });
   }
+}
+
+class _CustomFileAccess extends OperitFolderAccessPlatform {
+  final files = <XFile>[];
+  @override
+  Future<FolderMountSource?> fileSource(XFile file, {String? name}) async {
+    files.add(file);
+    return FolderMountSource(
+      backend: 'custom-resource',
+      root: 'authorized-resource',
+      namespace: '/virtual/custom/attachments',
+      name: name ?? file.name,
+    );
+  }
+
+  @override
+  Future<String?> pickDirectory({String? initialDirectory}) async => null;
+  @override
+  Future<List<String>> pickDirectories({String? initialDirectory}) async => [];
 }

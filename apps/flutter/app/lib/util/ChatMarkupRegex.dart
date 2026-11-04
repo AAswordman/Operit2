@@ -167,5 +167,6 @@ String decodeChatXmlText(String input) {
       .replaceAll('&gt;', '>')
       .replaceAll('&quot;', '"')
       .replaceAll('&apos;', "'")
+      .replaceAll('&#39;', "'")
       .replaceAll('&amp;', '&');
 }

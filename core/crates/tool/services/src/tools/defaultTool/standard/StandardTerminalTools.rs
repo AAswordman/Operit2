@@ -26,6 +26,7 @@ const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
 pub struct StandardTerminalTools {
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     pathMapper: Option<PathMapper>,
+    storage: Option<Arc<dyn operit_host_api::RuntimeStorageHost>>,
 }
 
 #[derive(Clone, Copy)]
@@ -51,22 +52,36 @@ pub struct TerminalToolExecutor {
 impl StandardTerminalTools {
     /// Creates terminal tools from an optional host implementation.
     pub fn new(terminalHost: Option<Arc<dyn TerminalHost>>) -> Self {
-        Self { terminalHost, pathMapper: None }
+        Self { terminalHost, pathMapper: None, storage: None }
     }
 
-    /// Supplies the runtime VFS for workspace-bound terminal launches.
+    /// Supplies the runtime VFS for the current chat file directory.
     pub fn withPathMapper(mut self, mapper: PathMapper) -> Self {
         self.pathMapper = Some(mapper);
         self
     }
 
-    fn workspaceDirectory(&self) -> Option<String> {
-        ToolExecutionManager::currentToolRuntimeContext()
-            .and_then(|context| context.workspacePath)
-            .filter(|path| !path.trim().is_empty())
+    pub fn withStorage(mut self, storage: Arc<dyn operit_host_api::RuntimeStorageHost>) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
-    fn resolveWorkspaceDirectory(
+    fn fileDirectory(&self) -> HostResult<Option<String>> {
+        let Some(context) = ToolExecutionManager::currentToolRuntimeContext() else { return Ok(None); };
+        let directory = if let Some(storage) = &self.storage {
+            context.fileDirectory(storage.clone()).map_err(HostError::new)?
+        } else {
+            context.workspacePath.clone().filter(|p| !p.trim().is_empty())
+        };
+        if directory.is_none() && context.callerChatId.is_some() {
+            return Err(HostError::new(
+                "Current chat file directory is unavailable; cannot start a terminal in the home directory",
+            ));
+        }
+        Ok(directory)
+    }
+
+    fn resolveFileDirectory(
         &self, host: &dyn TerminalHost, terminal: &str, terminalType: &str, path: &str,
     ) -> HostResult<String> {
         host.resolveWorkingDirectory(terminal, terminalType, path, &|path| {
@@ -100,7 +115,7 @@ impl StandardTerminalTools {
         let sessionName = parameterValue(tool, "session_name");
         let requestedType = optionalParameterValue(tool, "type");
         match self.host().and_then(|host| {
-            let directory = self.workspaceDirectory().map(|workspace| {
+            let directory = self.fileDirectory()?.map(|workspace| {
                 operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
                     host, requestedType.as_deref(), &workspace, &|path| {
                         self.pathMapper.as_ref()
@@ -206,9 +221,9 @@ impl StandardTerminalTools {
         match self
             .host()
             .and_then(|host| {
-                let scopedCommand = if let Some(workspace) = self.workspaceDirectory() {
+                let scopedCommand = if let Some(workspace) = self.fileDirectory()? {
                     let info = host.terminalInfo()?;
-                    let directory = self.resolveWorkspaceDirectory(
+                    let directory = self.resolveFileDirectory(
                         host, &info.terminal, &info.terminalType, &workspace,
                     )?;
                     let cd = directoryChangeCommand(&info.terminalType, &directory)?;
@@ -782,6 +797,146 @@ mod tests {
         );
         assert_eq!(events.len(), 2);
         assert!(events.iter().all(|event| event.success));
+    }
+
+    /// Real interactive and hidden shells share the file-tool base, and a
+    /// missing directory must fail before a user command can execute.
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn shells_enter_workspace_or_persistent_outputs_and_reject_missing_directories() {
+        use operit_host_api::RuntimeStorageHost;
+        use operit_host_native_storage::NativeRuntimeStorageHost;
+        use operit_host_native_terminal::NativePtyTerminalHost;
+        use operit_tools::ToolExecutionManager::{ToolExposureMode, ToolParameter, ToolRuntimeContext};
+        let root = std::env::temp_dir().join(format!(
+            "operit-terminal-directory-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(root.join("workspaces/project")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let storage = Arc::new(NativeRuntimeStorageHost::new(
+            root.join("runtime"),
+            root.join("workspaces"),
+        ));
+        operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage.clone())
+            .writeNodeId("shell-test".into())
+            .unwrap();
+        let output = operit_store::ChatOutputStore::ChatOutputStore::new(storage.clone())
+            .bind("chat", 1793740800123, None)
+            .unwrap();
+        let mapper = PathMapper::new(
+            root.join("runtime"),
+            root.join("workspaces"),
+            storage.clone(),
+        );
+        let host = Arc::new(NativePtyTerminalHost::loginShell("/bin/bash", "bash", "/").unwrap());
+        let tools = StandardTerminalTools::new(Some(host.clone()))
+            .withPathMapper(mapper.clone())
+            .withStorage(storage.clone());
+        let tool = |name: &str, params: &[(&str, &str)]| AITool {
+            name: name.into(),
+            parameters: params
+                .iter()
+                .map(|(name, value)| ToolParameter {
+                    name: (*name).into(),
+                    value: (*value).into(),
+                })
+                .collect(),
+        };
+        for workspace in [
+            None,
+            Some("/operitapp/workspaces/project"),
+            Some("/operitapp/workspaces/missing"),
+        ] {
+            let context = ToolRuntimeContext {
+                callerChatId: Some("chat".into()),
+                callerParticipantId: None,
+                workspacePath: workspace.map(str::to_string),
+                workspaceFolders: Vec::new(),
+                toolExposureMode: ToolExposureMode::FULL,
+                extensionOwner: "test".into(),
+                executionData: Default::default(),
+            };
+            ToolExecutionManager::scopeToolRuntimeContext(context, async {
+                let created = tools.createOrGetSession(&tool(
+                    "terminal_create",
+                    &[("session_name", "directory-test"), ("type", "bash")],
+                ));
+                if workspace == Some("/operitapp/workspaces/missing") {
+                    assert!(!created.success);
+                    let hidden = tools.executeHiddenCommand(&tool(
+                        "terminal_execute",
+                        &[("command", "printf should-not-run")],
+                    ));
+                    assert!(!hidden.success);
+                    return;
+                }
+                assert!(created.success, "{:?}", created.error);
+                let ToolResultData::TerminalSessionCreationResultData(session) = created.result else {
+                    panic!("Expected session");
+                };
+                let base = workspace.unwrap_or(&output);
+                let pwd_command = "printf '__operit_pwd__%s__operit_pwd_end__\\n' \"$PWD\"";
+                let expected = mapper.resolve(base).unwrap().nativePath().unwrap();
+                let result = tools.executeCommandInSession(&tool(
+                    "terminal_exec",
+                    &[("session_id", &session.sessionId), ("command", pwd_command)],
+                ));
+                assert!(result.success, "{:?}", result.error);
+                let ToolResultData::TerminalCommandResultData(command) = result.result else {
+                    panic!("Expected command");
+                };
+                assert_eq!(command.exitCode, 0);
+                assert!(
+                    command
+                        .output
+                        .contains(&format!("__operit_pwd__{expected}__operit_pwd_end__")),
+                    "{}",
+                    command.output
+                );
+                let hidden =
+                    tools.executeHiddenCommand(&tool("terminal_execute", &[("command", pwd_command)]));
+                assert!(hidden.success, "{:?}", hidden.error);
+                let ToolResultData::HiddenTerminalCommandResultData(command) = hidden.result else {
+                    panic!("Expected hidden command");
+                };
+                assert_eq!(command.exitCode, 0);
+                assert!(
+                    command
+                        .output
+                        .contains(&format!("__operit_pwd__{expected}__operit_pwd_end__")),
+                    "{}",
+                    command.output
+                );
+                // Reuse must cd back after the user changes the live session.
+                host.executeInSession(&session.sessionId, "cd /", 5000)
+                    .unwrap();
+                let reused = tools.createOrGetSession(&tool(
+                    "terminal_create",
+                    &[("session_name", "directory-test")],
+                ));
+                assert!(reused.success, "{:?}", reused.error);
+                let pwd = host
+                    .executeInSession(&session.sessionId, pwd_command, 5000)
+                    .unwrap();
+                assert_eq!(pwd.exitCode, 0);
+                assert!(
+                    pwd.output
+                        .contains(&format!("__operit_pwd__{expected}__operit_pwd_end__")),
+                    "{}",
+                    pwd.output
+                );
+                host.closeSession(&session.sessionId).unwrap();
+            })
+            .await;
+        }
+        assert!(storage
+            .exists(&format!(
+                "{}/.operit/sync.json",
+                operit_store::ChatOutputStore::ChatOutputStore::storagePath(&output).unwrap()
+            ))
+            .unwrap());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))]

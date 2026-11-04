@@ -382,6 +382,16 @@ void main() {
         'type': 'file',
         'attachment': {..._fileValue()['attachment'] as Map, 'fileSize': -1},
       },
+      for (final field in ['vfsPath', 'nodeId']) ...[
+        {
+          'type': 'file',
+          'attachment': {..._fileValue()['attachment'] as Map, field: null},
+        },
+        {
+          'type': 'file',
+          'attachment': {..._fileValue()['attachment'] as Map}..remove(field),
+        },
+      ],
       {
         'type': 'file',
         'attachment': {
@@ -544,7 +554,9 @@ Map<String, Object?> _textValue() => {
 Map<String, Object?> _fileValue() => {
   'type': 'file',
   'attachment': {
-    'filePath': '/uploads/received.bin',
+    'filePath':
+        '/runtime/data/chat_outputs/test/.operit/attachments/id/received.bin',
+    'vfsPath': '/operitapp/outputs/test/.operit/attachments/id/received.bin',
     'nodeId': 'test-node',
     'fileName': 'received.bin',
     'mimeType': 'application/octet-stream',

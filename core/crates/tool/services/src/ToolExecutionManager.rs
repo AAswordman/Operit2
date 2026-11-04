@@ -52,6 +52,17 @@ pub struct ToolRuntimeContext {
 }
 
 impl ToolRuntimeContext {
+    /// A real workspace takes precedence over the chat's persistent output area.
+    pub fn fileDirectory(&self, storage: Arc<dyn operit_host_api::RuntimeStorageHost>) -> Result<Option<String>, String> {
+        if let Some(path) = self.workspacePath.as_ref().filter(|path| !path.trim().is_empty()) {
+            return Ok(Some(path.clone()));
+        }
+        match self.callerChatId.as_deref() {
+            Some(id) => operit_store::ChatOutputStore::ChatOutputStore::new(storage).prepare(id),
+            None => Ok(None),
+        }
+    }
+
     /// Rejects unauthenticated or malformed turn identities before entering any policy dispatch.
     pub fn validateExecutionContext(&self) -> Result<(), String> {
         if self.extensionOwner.trim().is_empty()

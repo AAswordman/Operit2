@@ -502,13 +502,25 @@ impl NativeRuntimeStorageHost {
         }
     }
 
+    fn managedRoot(&self, path: &str) -> HostResult<Option<&Path>> {
+        let normalized = normalizeStoragePath(path)?.join("/");
+        if normalized == "workspaces" || normalized.starts_with("workspaces/") {
+            return Ok(Some(self.workspaceRoot.as_path()));
+        }
+        if ["runtime/data/chat_outputs", "runtime/data/chat_attachments", "runtime/data/attachment_sources"].iter().any(|root|
+            normalized == *root || normalized.starts_with(&format!("{root}/")) || root.starts_with(&format!("{normalized}/"))) {
+            return Ok(Some(self.runtimeRoot.as_path()));
+        }
+        Ok(None)
+    }
+
     // Enforce non-following workspace access at the actual storage boundary too:
     // recheck components before reads/writes, rather than trusting an earlier listing.
     fn resolveFile(&self, path: &str) -> HostResult<PathBuf> {
         let resolved = self.resolve(path)?;
         let segments = normalizeStoragePath(path)?;
-        if segments.first().map(String::as_str) == Some("workspaces") {
-            let mut current = self.workspaceRoot.clone();
+        if let Some(root) = self.managedRoot(path)? {
+            let mut current = root.to_path_buf();
             for segment in segments.iter().skip(1) {
                 current.push(segment);
                 match fs::symlink_metadata(&current) {
@@ -685,7 +697,7 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
 
     fn exists(&self, path: &str) -> HostResult<bool> {
         let resolved = self.resolve(path)?;
-        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+        if self.managedRoot(path)?.is_some() {
             // A dangling link is still an occupied destination, never a new writable file.
             return match fs::symlink_metadata(resolved) {
                 Ok(_) => Ok(true),
@@ -703,14 +715,14 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
         let directory = self.resolve(prefix)?;
         let mut entries = Vec::new();
-        let managedWorkspace = normalizeStoragePath(prefix)?.first().map(String::as_str)
-            == Some("workspaces");
-        if managedWorkspace {
+        let managedRoot = self.managedRoot(prefix)?;
+        let managedWorkspace = managedRoot.is_some();
+        if let Some(root) = managedRoot {
             // Never descend into links, even when a caller lists a linked directory directly.
             // The configured workspace root itself is trusted; only its descendants are scanned.
-            let relative = directory.strip_prefix(&self.workspaceRoot)
+            let relative = directory.strip_prefix(root)
                 .map_err(|_| HostError::new("Workspace listing escaped its root"))?;
-            let mut current = self.workspaceRoot.clone();
+            let mut current = root.to_path_buf();
             for component in relative.components() {
                 current.push(component);
                 match fs::symlink_metadata(&current) {
@@ -1192,36 +1204,40 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn workspace_listing_skips_file_directory_broken_and_cyclic_links() {
+    fn managed_file_listing_skips_file_directory_broken_and_cyclic_links() {
         use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!("operit-workspace-links-{}", uuid::Uuid::new_v4()));
-        let workspace = root.join("workspaces");
-        let body = workspace.join("project");
+        let root = std::env::temp_dir().join(format!("operit-managed-links-{}", uuid::Uuid::new_v4()));
         let outside = root.join("outside");
-        fs::create_dir_all(&body).unwrap();
         fs::create_dir_all(&outside).unwrap();
-        fs::write(body.join("normal.txt"), b"portable").unwrap();
         fs::write(outside.join("secret.txt"), b"local only").unwrap();
-        symlink(outside.join("secret.txt"), body.join("file-link")).unwrap();
-        symlink(&outside, body.join("directory-link")).unwrap();
-        symlink(&body, body.join("loop")).unwrap();
-        symlink(body.join("missing"), body.join("broken-link")).unwrap();
-        symlink(&outside, workspace.join("linked-workspace")).unwrap();
-        let host = NativeRuntimeStorageHost::new(root.join("runtime"), workspace);
-        let entries = host.list("workspaces/project").unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].path, "workspaces/project/normal.txt");
-        assert_eq!(host.list("workspaces").unwrap().len(), 1);
-        for path in ["workspaces/project/loop", "workspaces/project/loop/loop",
-            "workspaces/project/directory-link", "workspaces/linked-workspace"] {
-            assert!(host.list(path).unwrap().is_empty(), "{path}");
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        for prefix in ["workspaces", "runtime/data/chat_outputs", "runtime/data/chat_attachments", "runtime/data/attachment_sources"] {
+            let managed = root.join(prefix);
+            let body = managed.join("project");
+            fs::create_dir_all(&body).unwrap();
+            fs::write(body.join("normal.txt"), b"portable").unwrap();
+            symlink(outside.join("secret.txt"), body.join("file-link")).unwrap();
+            symlink(&outside, body.join("directory-link")).unwrap();
+            symlink(&body, body.join("loop")).unwrap();
+            symlink(body.join("missing"), body.join("broken-link")).unwrap();
+            symlink(&outside, managed.join("linked-directory")).unwrap();
+            let entries = host.list(&format!("{prefix}/project")).unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].path, format!("{prefix}/project/normal.txt"));
+            assert_eq!(host.list(prefix).unwrap().len(), 1);
+            for suffix in ["project/loop", "project/loop/loop", "project/directory-link", "linked-directory"] {
+                let path = format!("{prefix}/{suffix}");
+                assert!(host.list(&path).unwrap().is_empty(), "{path}");
+            }
+            for suffix in ["project/file-link", "project/directory-link/new.txt", "project/broken-link"] {
+                assert!(host.writeBytes(&format!("{prefix}/{suffix}"), b"overwrite").is_err());
+            }
+            let link = format!("{prefix}/project/file-link");
+            assert!(host.readBytes(&link).is_err());
+            assert!(host.readBytesRange(&link, 0, 4).is_err());
+            assert!(!outside.join("new.txt").exists());
+            assert_eq!(fs::read(outside.join("secret.txt")).unwrap(), b"local only");
         }
-        assert!(host.writeBytes("workspaces/project/file-link", b"overwrite").is_err());
-        assert!(host.writeBytes("workspaces/project/directory-link/new.txt", b"overwrite").is_err());
-        assert!(host.writeBytes("workspaces/project/broken-link", b"overwrite").is_err());
-        assert!(host.readBytes("workspaces/project/file-link").is_err());
-        assert!(!outside.join("new.txt").exists());
-        assert_eq!(fs::read(outside.join("secret.txt")).unwrap(), b"local only");
         fs::remove_dir_all(root).unwrap();
     }
 

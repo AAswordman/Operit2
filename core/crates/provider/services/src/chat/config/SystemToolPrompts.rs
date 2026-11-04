@@ -524,13 +524,13 @@ fn join_non_empty_lines(lines: Vec<String>) -> String {
 fn hostPromptHeader(host_environment: &HostEnvironmentDescriptor, use_english: bool) -> String {
     if use_english {
         format!(
-            "Current file host: {} (`{}`). Relative file paths require a workspace and resolve against its primary folder; absolute VFS paths address other locations. Without a workspace, list `/` to discover accessible locations or ask the user to select a folder; do not guess paths. VFS paths are not necessarily terminal paths. Prefix a path with `nodeName:` to address another device.",
+            "Current file host: {} (`{}`). Relative paths use the current file directory `.`: the primary workspace when bound, otherwise the conversation family's persistent output area. File tools and terminal sessions use this same base. Read supplied relative attachment paths directly; do not scan root/home directories or run a global search to rediscover them. If a terminal cannot enter the current file directory, report a launch/mount failure and use file tools or another available terminal; do not guess its location. For a task that explicitly needs another location, inspect its accessible VFS mount with file tools and use the Host-resolved terminal path. VFS paths outside `.` are not necessarily terminal paths. Prefix a path with `nodeName:` to address another device.",
             host_environment.displayName,
             host_environment.id
         )
     } else {
         format!(
-            "当前文件 Host：{}（`{}`）。文件相对路径需要绑定工作区，以主文件夹为基准；访问其他位置使用 VFS 绝对路径。没有工作区时，可列出 `/` 查找可访问的位置，或请用户选择目录，不要猜测路径。VFS 路径不一定是终端路径。使用 `nodeName:` 前缀访问其他设备。",
+            "当前文件 Host：{}（`{}`）。相对路径以当前文件目录 `.` 为基准：绑定工作区时是主文件夹，否则是这组父子对话固定的产出区域。文件工具与终端使用同一个基准。直接读取附件提供的相对路径，不要翻根目录、主目录或全盘搜索来重新定位附件。终端无法进入当前文件目录时，按启动或挂载失败处理，使用文件工具或另一个可用终端，不要猜测位置。任务明确需要访问其他位置时，通过文件工具查询对应的可访问 VFS 挂载，终端使用 Host 解析的路径。离开 `.` 的 VFS 路径不一定是终端路径。使用 `nodeName:` 前缀访问其他设备。",
             host_environment.displayName,
             host_environment.id
         )
@@ -574,9 +574,9 @@ fn hostPathParameterDescription(
     use_english: bool,
 ) -> String {
     if use_english {
-        "Workspace-relative path (e.g. `.` or `src/file`), or absolute VFS path.".to_string()
+        "Path relative to the current file directory `.` (workspace or persistent conversation output), e.g. `.operit/attachments/id/file.pdf` or `report.md`. Use an absolute VFS path only for another location.".to_string()
     } else {
-        "工作区相对路径（如 `.` 或 `src/file`），或 VFS 绝对路径。".to_string()
+        "相对于当前文件目录 `.` 的路径（工作区或固定对话产出目录），例如 `.operit/attachments/id/file.pdf` 或 `report.md`；访问其他位置时才使用 VFS 绝对路径。".to_string()
     }
 }
 

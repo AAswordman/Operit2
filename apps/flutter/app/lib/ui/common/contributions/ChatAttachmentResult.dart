@@ -34,6 +34,7 @@ sealed class ChatAttachmentResult {
         }, 'file result');
         final file = _attachmentObject(data['attachment'], 'file metadata');
         _attachmentFields(file, const <String>{
+          'vfsPath',
           'filePath',
           'nodeId',
           'fileName',
@@ -41,20 +42,19 @@ sealed class ChatAttachmentResult {
           'fileSize',
           'content',
         }, 'file metadata');
-        final nodeId = file['nodeId'];
+        final vfsPath = _attachmentText(file['vfsPath'], 'vfsPath');
+        final nodeId = _attachmentText(file['nodeId'], 'nodeId');
         final size = file['fileSize'];
-        if ((nodeId != null && (nodeId is! String || nodeId.trim().isEmpty)) ||
-            size is! int ||
-            size < 0 ||
-            file['content'] != '') {
+        if (size is! int || size < 0 || file['content'] != '') {
           throw const FormatException(
             'File completion requires valid committed-file metadata.',
           );
         }
         return ChatUiFileAttachment(
           attachment: core_proxy.AttachmentInfo(
+            vfsPath: vfsPath,
             filePath: _attachmentText(file['filePath'], 'filePath'),
-            nodeId: nodeId as String?,
+            nodeId: nodeId,
             fileName: _attachmentName(file['fileName']),
             mimeType: _attachmentText(file['mimeType'], 'mimeType'),
             fileSize: size,
@@ -81,7 +81,7 @@ class ChatUiTextAttachment extends ChatAttachmentResult {
   String get mediaType => 'text/plain';
 }
 
-/// Carries an existing Host upload that still requires canonical runtime validation.
+/// Carries a final attachment with its source node and VFS locator for runtime validation.
 class ChatUiFileAttachment extends ChatAttachmentResult {
   /// Creates a file result without copying bytes or inventing trusted metadata.
   const ChatUiFileAttachment({required this.attachment});

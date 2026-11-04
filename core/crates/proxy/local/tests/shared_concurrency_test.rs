@@ -81,6 +81,11 @@ impl RuntimeStorageHost for TestRuntimeStorageHost {
         self.inner.readBytes(path)
     }
 
+    /// Preserves the native bounded-read capability used by persistent chat directories.
+    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        self.inner.readBytesRange(path, offset, length)
+    }
+
     /// Atomically publishes one complete in-memory test entry.
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
         self.writeBytes(path, content)
@@ -1407,3 +1412,6 @@ mod ui_resource_tests;
 
 #[path = "support/failed_package_tests.rs"]
 mod failed_package_tests;
+
+#[path = "support/relative_terminal_tests.rs"]
+mod relative_terminal_tests;

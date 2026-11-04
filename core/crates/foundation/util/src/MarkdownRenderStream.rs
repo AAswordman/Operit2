@@ -880,6 +880,150 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
 mod tests {
     use super::*;
 
+    /// Compare semantic blocks without depending on transport chunk coalescing.
+    fn block_bodies(events: &[MarkdownStreamEvent]) -> Vec<(Option<String>, String)> {
+        let mut blocks = Vec::<(Option<String>, String)>::new();
+        let mut indexes = HashMap::new();
+        for event in events.iter().filter(|event| event.parentBlockId.is_none()) {
+            if event.eventType == "markdownBlockStart" {
+                indexes.insert(event.blockId.unwrap(), blocks.len());
+                blocks.push((event.nodeType.clone(), String::new()));
+            } else if matches!(
+                event.eventType.as_str(),
+                "markdownBlockChunk" | "markdownInlineChunk"
+            ) {
+                let index = indexes[&event.blockId.unwrap()];
+                blocks[index].1.push_str(event.value.as_deref().unwrap());
+            }
+        }
+        blocks
+    }
+
+    #[test]
+    fn fenced_blocks_close_with_indentation_padding_and_crlf_at_every_split() {
+        for indent in 0..=3 {
+            for newline in ["\n", "\r\n"] {
+                for length in [3, 4] {
+                    for extra in [0, 1] {
+                        for padding in ["", " ", "\t", " \t"] {
+                            let opening = "`".repeat(length);
+                            let closing = "`".repeat(length + extra);
+                            let source = format!(
+                                "{}{}c{newline}{}代码{newline}{}{closing}{padding}{newline}\n## 后续标题\n- **仍有格式**\n",
+                                " ".repeat(indent), opening,
+                                " ".repeat(indent), " ".repeat(indent),
+                            );
+                            let expected = block_bodies(&MarkdownRenderEventStream::fromContent(
+                                source.clone(),
+                            ));
+                            assert_eq!(
+                                expected
+                                    .iter()
+                                    .filter(|(kind, _)| kind.as_deref() == Some("CodeBlock"))
+                                    .count(),
+                                1,
+                                "{source:?}"
+                            );
+                            assert!(
+                                expected
+                                    .iter()
+                                    .any(|(kind, body)| kind.as_deref() == Some("Header")
+                                        && body.contains("后续标题")),
+                                "{source:?}"
+                            );
+                            assert!(
+                                expected
+                                    .iter()
+                                    .any(|(kind, body)| kind.as_deref() == Some("UnorderedList")
+                                        && body.contains("仍有格式")),
+                                "{source:?}"
+                            );
+                            for boundary in source
+                                .char_indices()
+                                .map(|(i, _)| i)
+                                .chain(std::iter::once(source.len()))
+                            {
+                                let mut stream = MarkdownRenderEventStream::new(String::new());
+                                let mut events = stream.pushChunk(&source[..boundary]);
+                                events.extend(stream.pushChunk(&source[boundary..]));
+                                events.extend(stream.finish());
+                                assert_eq!(
+                                    block_bodies(&events),
+                                    expected,
+                                    "{source:?}, boundary={boundary}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fenced_blocks_keep_short_or_invalid_closing_lines_literal() {
+        for literal in ["```", "```` x", "```` `", "    ````", "```` \t x"] {
+            let source =
+                format!("````markdown\n{literal}\n## 代码中的标题\n```` \t\n\n## 后续标题\n");
+            let blocks = block_bodies(&MarkdownRenderEventStream::fromContent(source));
+            let code = blocks
+                .iter()
+                .filter(|(kind, _)| kind.as_deref() == Some("CodeBlock"))
+                .collect::<Vec<_>>();
+            assert_eq!(code.len(), 1, "literal={literal:?}");
+            assert!(code[0].1.contains("## 代码中的标题"), "literal={literal:?}");
+            let headings = blocks
+                .iter()
+                .filter(|(kind, _)| kind.as_deref() == Some("Header"))
+                .collect::<Vec<_>>();
+            assert_eq!(headings.len(), 1, "literal={literal:?}");
+            assert!(headings[0].1.contains("后续标题"));
+        }
+        for source in ["    ```\n", "```lang`invalid\n"] {
+            assert!(
+                !block_bodies(&MarkdownRenderEventStream::fromContent(source.into()))
+                    .iter()
+                    .any(|(kind, _)| kind.as_deref() == Some("CodeBlock")),
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hostfs_report_keeps_four_code_blocks_and_all_later_formatting() {
+        let source = include_str!("../tests/fixtures/hostfs_report.md");
+        let expected_events = MarkdownRenderEventStream::fromContent(source.into());
+        let expected = block_bodies(&expected_events);
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|(kind, _)| kind.as_deref() == Some("CodeBlock"))
+                .count(),
+            4
+        );
+        let headings = expected
+            .iter()
+            .filter(|(kind, _)| kind.as_deref() == Some("Header"))
+            .collect::<Vec<_>>();
+        assert_eq!(headings.len(), 6);
+        assert!(headings[4].1.contains("五、小观察"));
+        assert!(headings[5].1.contains("六、当前工作区内容"));
+        for size in [1, 2, 3, 7, 16, 64, 256] {
+            let mut stream = MarkdownRenderEventStream::new(String::new());
+            let mut events = Vec::new();
+            for chunk in source.chars().collect::<Vec<_>>().chunks(size) {
+                events.extend(stream.pushChunk(&chunk.iter().collect::<String>()));
+            }
+            events.extend(stream.finish());
+            assert_eq!(block_bodies(&events), expected, "size={size}");
+            assert_eq!(
+                styled_chars(&events),
+                styled_chars(&expected_events),
+                "size={size}"
+            );
+        }
+    }
+
     /// Both Markdown strong-emphasis delimiters must produce the same semantic
     /// nodes regardless of where the transport splits their delimiters.
     #[test]
@@ -1189,6 +1333,159 @@ mod tests {
                 };
                 assert_eq!(markdownSegmentContent(&group, &segment, None), expected);
             }
+        }
+    }
+
+    #[test]
+    fn tool_result_before_report_does_not_turn_c_headers_into_xml() {
+        let report = include_str!("../tests/fixtures/hostfs_report.md");
+        let prefix = "<tool_result name=\"read_file\"><content>ok</content></tool_result>\n";
+        let source = format!("{prefix}{report}");
+        let expected_events = MarkdownRenderEventStream::fromContent(source.clone());
+        let expected = block_bodies(&expected_events);
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|(kind, _)| kind.as_deref() == Some("XmlBlock"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|(kind, _)| kind.as_deref() == Some("Header"))
+                .count(),
+            6
+        );
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|(kind, _)| kind.as_deref() == Some("CodeBlock"))
+                .count(),
+            4
+        );
+        let text = styled_chars(&expected_events);
+        let literal = text
+            .iter()
+            .filter(|(_, styles)| styles.iter().any(|style| style == "InlineCode"))
+            .map(|(ch, _)| *ch)
+            .collect::<String>();
+        assert!(literal.contains("#include <unistd.h>"));
+        for size in [1, 2, 3, 7, 16, 64, 256] {
+            let mut stream = MarkdownRenderEventStream::new(String::new());
+            let mut events = Vec::new();
+            for chunk in source.chars().collect::<Vec<_>>().chunks(size) {
+                events.extend(stream.pushChunk(&chunk.iter().collect::<String>()));
+            }
+            events.extend(stream.finish());
+            assert_eq!(block_bodies(&events), expected, "size={size}");
+            assert_eq!(styled_chars(&events), text, "size={size}");
+        }
+    }
+
+    #[test]
+    fn inline_code_and_escaped_angles_do_not_start_xml_at_any_split() {
+        for literal in [
+            "`#include <unistd.h>`",
+            "`:<tool>literal</tool>`",
+            "`` :<tool>literal `tick`</tool> ``",
+            "`<br>`",
+            r"\<tool>literal\</tool>",
+        ] {
+            let source = format!(
+                "<tool_result>ok</tool_result>\n正文：{literal} 后续 **粗体**\n\n## 后续标题\n"
+            );
+            let expected_events = MarkdownRenderEventStream::fromContent(source.clone());
+            let expected = block_bodies(&expected_events);
+            assert_eq!(
+                expected
+                    .iter()
+                    .filter(|(kind, _)| kind.as_deref() == Some("XmlBlock"))
+                    .count(),
+                1,
+                "{source:?}"
+            );
+            assert!(
+                expected
+                    .iter()
+                    .any(|(kind, body)| kind.as_deref() == Some("Header")
+                        && body.contains("后续标题")),
+                "{source:?}"
+            );
+            let styled = styled_chars(&expected_events);
+            assert!(styled
+                .iter()
+                .filter(|(_, styles)| styles.iter().any(|style| style == "Bold"))
+                .map(|(ch, _)| *ch)
+                .collect::<String>()
+                .contains("粗体"));
+            for boundary in source
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(source.len()))
+            {
+                let mut stream = MarkdownRenderEventStream::new(String::new());
+                let mut events = stream.pushChunk(&source[..boundary]);
+                events.extend(stream.pushChunk(&source[boundary..]));
+                events.extend(stream.finish());
+                assert_eq!(
+                    block_bodies(&events),
+                    expected,
+                    "{source:?}, boundary={boundary}"
+                );
+                assert_eq!(
+                    styled_chars(&events),
+                    styled,
+                    "{source:?}, boundary={boundary}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn xml_boundaries_expire_after_prose_and_reject_invalid_tag_names() {
+        for source in [
+            "<tool_result>ok</tool_result>正文 <ordinary>literal\n\n## 后续标题\n",
+            "<unistd.h>\n\n## 后续标题\n",
+            "<std::vector>\n\n## 后续标题\n",
+        ] {
+            let blocks = block_bodies(&MarkdownRenderEventStream::fromContent(source.into()));
+            assert!(
+                blocks
+                    .iter()
+                    .any(|(kind, body)| kind.as_deref() == Some("Header")
+                        && body.contains("后续标题")),
+                "{source:?}"
+            );
+            let xml_count = if source.starts_with("<tool_result>") {
+                1
+            } else {
+                0
+            };
+            assert_eq!(
+                blocks
+                    .iter()
+                    .filter(|(kind, _)| kind.as_deref() == Some("XmlBlock"))
+                    .count(),
+                xml_count,
+                "{source:?}"
+            );
+        }
+        for source in [
+            "<think>plan</think><tool>run</tool><tool_result>ok</tool_result>",
+            "<think>plan</think> \n<tool>run</tool>\n<tool_result>ok</tool_result>",
+            "正文：<think>plan</think>，<tool>run</tool>。<tool_result>ok</tool_result>",
+        ] {
+            let events = MarkdownRenderEventStream::fromContent(source.into());
+            let blocks = block_bodies(&events);
+            assert_eq!(
+                blocks
+                    .iter()
+                    .filter(|(kind, _)| kind.as_deref() == Some("XmlBlock"))
+                    .count(),
+                3,
+                "{source:?}"
+            );
         }
     }
 

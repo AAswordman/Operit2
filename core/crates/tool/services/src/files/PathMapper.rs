@@ -33,6 +33,7 @@ const VFS_ROOTS: &[VfsRoot] = &[
 
 const APP_DATA: &str = "data";
 const APP_WORKSPACES: &str = WORKSPACE_DIR_PATH;
+const APP_OUTPUTS: &str = "outputs";
 
 const MNT_WINDOWS: &str = "windows";
 const MNT_ANDROID: &str = "android";
@@ -201,13 +202,18 @@ impl PathMapper {
             return Ok(text.to_string());
         }
         let base = workspace.filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "Relative file paths require a current workspace".to_string())?;
-        let mut relative = text;
-        while let Some(rest) = relative.strip_prefix("./") {
-            relative = rest;
+            .ok_or_else(|| "Relative file paths require a current file directory".to_string())?;
+        let base = normalizeAbsoluteVfsPath(base)?;
+        let mut segments: Vec<_> = base.split('/').filter(|part| !part.is_empty()).collect();
+        for part in text.split('/') {
+            match part {
+                "" | "." => {},
+                ".." => { segments.pop().ok_or("Relative file path escapes the VFS root")?; },
+                value if value.contains(['\\', '\0']) => return Err("Invalid relative file path".into()),
+                value => segments.push(value),
+            }
         }
-        if relative == "." { relative = ""; }
-        Self::joinVfsPath(base, relative)
+        Ok(format!("/{}", segments.join("/")))
     }
 
     /// Normalizes a path relative to an existing VFS root.
@@ -252,6 +258,26 @@ impl PathMapper {
         Ok(Some(fullSegments[rootSegments.len()..].join("/")))
     }
 
+    /// Expresses a stable VFS locator from the current file directory, including sibling paths.
+    /// Root aliases are compared using the same mount identities as path resolution.
+    #[allow(non_snake_case)]
+    pub fn relativeFileToolPath(base: &str, path: &str) -> Result<String, String> {
+        let base = normalizeAbsoluteVfsPath(base)?;
+        let path = normalizeAbsoluteVfsPath(path)?;
+        let baseSegments = pathSegments(&base);
+        let pathSegments = pathSegments(&path);
+        let shared = baseSegments.iter().zip(&pathSegments).enumerate().take_while(|(index, (left, right))| {
+            match (*index, **left, **right) {
+                (0, ROOT_APP | ROOT_OPERITAPP, ROOT_APP | ROOT_OPERITAPP)
+                | (0, ROOT_MNT | ROOT_VIRTUAL, ROOT_MNT | ROOT_VIRTUAL) => true,
+                _ => left == right,
+            }
+        }).count();
+        let mut relative = vec![".."; baseSegments.len() - shared];
+        relative.extend_from_slice(&pathSegments[shared..]);
+        Ok(if relative.is_empty() { ".".into() } else { relative.join("/") })
+    }
+
     /// Returns synthetic entries for VFS directories that are not backed by a host directory.
     #[allow(non_snake_case)]
     pub fn virtualDirectoryEntries(&self, path: &str) -> Result<Option<Vec<FileEntry>>, String> {
@@ -270,7 +296,7 @@ impl PathMapper {
                     .map(|root| directoryEntry(root.name))
                     .collect())
             }
-            [ROOT_APP | ROOT_OPERITAPP] => Some(vec![directoryEntry(APP_DATA), directoryEntry(APP_WORKSPACES)]),
+            [ROOT_APP | ROOT_OPERITAPP] => Some(vec![directoryEntry(APP_DATA), directoryEntry(APP_WORKSPACES), directoryEntry(APP_OUTPUTS)]),
             [ROOT_MNT | ROOT_VIRTUAL] => { let entries = mntMountEntries(); if entries.is_empty() { None } else { Some(entries) } }
             [ROOT_MNT | ROOT_VIRTUAL, MNT_ANDROID] if androidRootMounted() => {
                 let mut entries = vec![directoryEntry(MNT_ANDROID_ROOT)];
@@ -321,6 +347,10 @@ impl PathMapper {
             [root @ (ROOT_APP | ROOT_OPERITAPP), APP_DATA, rest @ ..] => Ok(ResolvedVfsPath {
                 vfsPath: joinNormalizedSegments(&[root, APP_DATA], rest),
                 physicalPath: physicalPathString(joinPhysical(&self.runtimeStoreRoot, rest)),
+            }),
+            [root @ (ROOT_APP | ROOT_OPERITAPP), APP_OUTPUTS, rest @ ..] => Ok(ResolvedVfsPath {
+                vfsPath: joinNormalizedSegments(&[root, APP_OUTPUTS], rest),
+                physicalPath: physicalPathString(joinPhysical(&self.runtimeStoreRoot.join("data/chat_outputs"), rest)),
             }),
             [root @ (ROOT_APP | ROOT_OPERITAPP), APP_WORKSPACES, rest @ ..] => Ok(ResolvedVfsPath {
                 vfsPath: joinNormalizedSegments(&[root, APP_WORKSPACES], rest),
@@ -764,8 +794,26 @@ mod tests {
             assert_eq!(PathMapper::resolveFileToolPath(base, path).unwrap(), expected);
         }
         assert!(PathMapper::resolveFileToolPath(None, "src/file").is_err());
-        assert!(PathMapper::resolveFileToolPath(base, "../outside").is_err());
-        assert!(PathMapper::resolveFileToolPath(base, "src/../../outside").is_err());
+        assert_eq!(PathMapper::resolveFileToolPath(base, "../outside").unwrap(), "/app/workspaces/outside");
+        assert_eq!(PathMapper::resolveFileToolPath(base, "src/../../outside").unwrap(), "/app/workspaces/outside");
+        assert!(PathMapper::resolveFileToolPath(base, "../../../../outside").is_err());
+    }
+
+    #[test]
+    fn attachment_relative_paths_round_trip_across_managed_directories_and_aliases() {
+        for (base, target, expected) in [
+            ("/operitapp/workspaces/project", "/operitapp/workspaces/project/.operit/attachments/id/中文 & file.pdf", ".operit/attachments/id/中文 & file.pdf"),
+            ("/operitapp/outputs/family", "/operitapp/outputs/family/.operit/attachments/id/file.pdf", ".operit/attachments/id/file.pdf"),
+            ("/operitapp/workspaces/project", "/operitapp/outputs/family/file.pdf", "../../outputs/family/file.pdf"),
+            ("/app/workspaces/project", "/operitapp/workspaces/project/file.pdf", "file.pdf"),
+            ("/mnt/local/project", "/virtual/local/project/file.pdf", "file.pdf"),
+            ("/operitapp/workspaces/project", "/operitapp/workspaces/project", "."),
+        ] {
+            let relative = PathMapper::relativeFileToolPath(base, target).unwrap();
+            assert_eq!(relative, expected);
+            let resolved = PathMapper::resolveFileToolPath(Some(base), &relative).unwrap();
+            assert_eq!(PathMapper::relativeFileToolPath(&resolved, target).unwrap(), ".");
+        }
     }
 
     /// Resolves relative, mounted and native resource paths at one runtime boundary.

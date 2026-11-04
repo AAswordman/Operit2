@@ -17,6 +17,7 @@ class WorkspaceHomeContent extends StatefulWidget {
   const WorkspaceHomeContent({
     super.key,
     required this.workspacePath,
+    this.fileDirectory,
     required this.workspaceUsage,
     required this.terminalSessionCountListenable,
     required this.browserSessionCountListenable,
@@ -38,6 +39,7 @@ class WorkspaceHomeContent extends StatefulWidget {
   });
 
   final String? workspacePath;
+  final String? fileDirectory;
   final WorkspaceOverviewUsage workspaceUsage;
   final ValueListenable<int> terminalSessionCountListenable;
   final ValueListenable<int> browserSessionCountListenable;
@@ -74,6 +76,7 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
     final title = boundWorkspaceName != null && boundWorkspaceName.isNotEmpty
         ? boundWorkspaceName
         : '工作区总览';
+    final outputDirectory = widget.fileDirectory?.trim();
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       children: <Widget>[
@@ -98,6 +101,26 @@ class _WorkspaceHomeContentState extends State<WorkspaceHomeContent> {
             onCreateWorkspace: widget.onCreateWorkspace,
             onChooseExistingWorkspace: widget.onChooseExistingWorkspace,
           ),
+        if (!hasBoundWorkspace &&
+            outputDirectory != null &&
+            outputDirectory.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          ListTile(
+            key: const ValueKey('chat-output-directory'),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+            leading: const Icon(Icons.folder_open_outlined),
+            title: const Text('对话产出'),
+            subtitle: Text('附件与生成文件 · $outputDirectory'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => widget.onOpenFolder(
+              WorkspaceMountedFolder(
+                name: '对话产出',
+                path: outputDirectory,
+                relativePath: '',
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         if (hasBoundWorkspace) widget.pluginContent,
         _WorkspaceWorkstationGrid(

@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
+import org.json.JSONObject
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.plugin.common.BinaryMessenger
@@ -96,6 +98,7 @@ class DocumentInputChannel(private val activity: MainActivity) {
             } else {
                 Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                     type = if (mimeTypes.size == 1) mimeTypes.first() else "*/*"
                     if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
                     putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
@@ -136,7 +139,15 @@ class DocumentInputChannel(private val activity: MainActivity) {
             val files = descriptors.map { (uri, info) ->
                 val token = UUID.randomUUID().toString()
                 openInputs[token] = OpenDocumentInput(uri)
-                info + ("token" to token)
+                val durable = try {
+                    activity.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    DocumentsContract.isDocumentUri(activity, uri) && activity.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+                } catch (_: Exception) { false }
+                val source = if (durable) JSONObject()
+                    .put("namespace", "/virtual/android/attachments")
+                    .put("backend", "android_documents").put("root", uri.toString())
+                    .put("name", info["name"]).toString() else null
+                info + mapOf("token" to token, "sourceJson" to source)
             }
             if (pick.multiple) files else files.first()
         }

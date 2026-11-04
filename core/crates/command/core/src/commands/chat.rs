@@ -1,8 +1,4 @@
-use std::fs;
-use std::path::Path;
-
 use crate::output::CoreCommandOutput;
-use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
@@ -587,22 +583,34 @@ async fn send_chat_message_with_application(
         application.toolHandler.clone(),
         application.providerRuntimeContext.clone(),
     );
-    {
+    let chatId = {
         let mut holder = application.chatRuntimeHolder.lock().await;
         let core = holder.getCore(ChatRuntimeSlot::MAIN);
         if core.enhancedAiService.is_none() {
             core.enhancedAiService = Some(service);
         }
-    }
-    let attachments = sendArgs
-        .attachmentPaths
-        .iter()
-        .map(|path| build_attachment_info(path))
-        .collect::<Result<Vec<_>, _>>()?;
+        let chatId = sendArgs.chatId.clone()
+            .or_else(|| core.chatHistoryDelegate.currentChatIdFlow.value())
+            .ok_or("Chat send has no selected conversation")?;
+        core.chatHistoryDelegate.requireChatExists(&chatId)?;
+        chatId
+    };
+    let attachments = if sendArgs.attachmentPaths.is_empty() {
+        Vec::new()
+    } else {
+        let transfer = operit_runtime::services::AttachmentTransferManager::AttachmentTransferManager::getInstance(
+            &application.hostManager,
+        )?;
+        sendArgs.attachmentPaths.iter().map(|path| {
+            let source = std::fs::canonicalize(path)
+                .map_err(|error| format!("Attachment source is unavailable: {path}: {error}"))?;
+            transfer.importNativeAttachment(chatId.clone(), source.to_string_lossy().into_owned())
+        }).collect::<Result<Vec<_>, _>>()?
+    };
     let request = RuntimeChatSendRequest {
         slot: RuntimeChatSlot::MAIN,
         participantId: None,
-        chatId: sendArgs.chatId,
+        chatId: Some(chatId),
         message: sendArgs.message,
         proxySenderName: None,
         attachments,
@@ -628,56 +636,6 @@ fn print_chat_send_result(
     Ok(())
 }
 
-/// Builds attachment metadata for one path supplied to a chat send command.
-fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("attachment metadata failed: {path}: {error}"))?;
-    let fileName = Path::new(path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| format!("attachment file name invalid: {path}"))?
-        .to_string();
-    let mimeType = guess_mime_type(path).to_string();
-    let content = if mimeType == "text/plain" {
-        fs::read_to_string(path)
-            .map_err(|error| format!("attachment read failed: {path}: {error}"))?
-    } else {
-        String::new()
-    };
-    Ok(AttachmentInfo {
-        nodeId: operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::localNodeId(),
-        filePath: path.to_string(),
-        fileName,
-        mimeType,
-        fileSize: metadata.len() as i64,
-        content,
-    })
-}
-
-/// Detects a MIME type from a supported attachment extension.
-fn guess_mime_type(path: &str) -> &'static str {
-    match Path::new(path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("txt") | Some("md") | Some("rs") | Some("kt") | Some("json") | Some("toml") => {
-            "text/plain"
-        }
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("bmp") => "image/bmp",
-        Some("mp3") => "audio/mpeg",
-        Some("wav") => "audio/wav",
-        Some("mp4") => "video/mp4",
-        _ => "application/octet-stream",
-    }
-}
-
-/// Prints one chat header for a human reader.
 fn print_chat_history_header(chat: &ChatHistory, output: &mut CoreCommandOutput) {
     output.push_stdout_line(format!("Chat {}", chat.id));
     output.push_stdout_line(format!("Title: {}", chat.title));

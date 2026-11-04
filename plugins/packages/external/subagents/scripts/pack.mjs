@@ -37,7 +37,7 @@ for (const [path, contents] of Object.entries(files)) {
   if (!Buffer.from(decoded[path]).equals(Buffer.from(contents))) throw new Error("Package round-trip mismatch: " + path);
 }
 // Execute the emitted archive itself so missing relative modules or missing tool exports fail packaging.
-const registrations = { channels: [], slots: [] };
+const registrations = { channels: [], slots: [], routes: [], entries: [] };
 const sandbox = vm.createContext({
   console, setTimeout, clearTimeout, AbortController,
   ToolPkg: {
@@ -47,6 +47,8 @@ const sandbox = vm.createContext({
     },
     /** Records the actual emitted composer contribution. */
     registerChatComposerSlot(slot) { registrations.slots.push(slot); },
+    registerUiRoute(route) { registrations.routes.push(route); },
+    registerNavigationEntry(entry) { registrations.entries.push(entry); },
   },
   Tools: new Proxy({}, {
     /** Rejects host work during archive loading and registration. */
@@ -76,6 +78,7 @@ ${source}
 
 const main = loadModule(manifest.main);
 if (main.registerToolPkg() !== true || registrations.channels.length !== 1 || registrations.slots.length !== 1 || registrations.slots[0].slot !== "above_input") throw new Error("Archive main registration failed");
+if (registrations.routes.length !== 1 || registrations.entries.length !== 1 || registrations.entries[0].surface !== "workspace" || registrations.entries[0].route !== registrations.routes[0].route) throw new Error("Archive workspace registration failed");
 for (const subpackage of manifest.subpackages) {
   const source = Buffer.from(decoded[subpackage.entry]).toString("utf8");
   const block = source.match(/\/\*\s*METADATA\s+([\s\S]*?)\*\//);

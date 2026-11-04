@@ -269,14 +269,11 @@ class _AppContentState extends State<AppContent> {
               builder: (context, _) {
                 final titleContent = widget.topBarController.titleContent;
                 final actions = widget.topBarController.actions;
-                final showNavigationIcon = widget.canGoBack ||
-                    !widget.useTabletLayout ||
-                    !widget.isTabletSidebarExpanded;
                 final navigationIcon = widget.canGoBack
                     ? Icons.arrow_back
-                    : showNavigationIcon
-                    ? Icons.segment
-                    : null;
+                    : widget.useTabletLayout
+                    ? null
+                    : Icons.segment;
                 final shouldFlipNavigationIcon =
                     !widget.canGoBack && !widget.useTabletLayout;
                 return ThemeTopBarChrome(
@@ -287,9 +284,7 @@ class _AppContentState extends State<AppContent> {
                         contentColor: appBarContentColor,
                       ),
                   navigationIcon: navigationIcon,
-                  navigationTooltip: widget.canGoBack
-                      ? 'Back'
-                      : 'Navigation',
+                  navigationTooltip: widget.canGoBack ? 'Back' : 'Navigation',
                   onNavigationPressed: widget.canGoBack
                       ? widget.onGoBack
                       : widget.onNavigationButtonPressed,

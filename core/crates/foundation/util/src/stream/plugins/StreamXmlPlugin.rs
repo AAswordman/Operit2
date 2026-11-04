@@ -44,6 +44,11 @@ impl StreamXmlPlugin {
     }
 
     fn update_punctuation_allowance(&mut self, c: char) {
+        // A closing tag only permits an adjacent tag (with optional whitespace).
+        // Ordinary prose must not keep that permission for the rest of a message.
+        if !c.is_ascii_whitespace() && !is_emoji_continuation_char(c) {
+            self.allow_start_after_end_tag = false;
+        }
         if punctuation_triggers().contains(&c) || is_emoji_trigger(c) {
             self.allow_start_after_punctuation = true;
         } else if c == ' ' || c == '\t' || is_emoji_continuation_char(c) {
@@ -108,6 +113,19 @@ impl StreamPlugin for StreamXmlPlugin {
 
         let tag_name = ChatMarkupRegex::extract_opening_tag_name(&self.candidate);
         if let Some(tag_name) = tag_name {
+            let suffix = &self.candidate[1 + tag_name.len()..];
+            if !(suffix.starts_with('>')
+                || suffix.starts_with("/>")
+                || suffix
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_whitespace()))
+            {
+                // `<unistd.h>` and `<std::vector>` are literals, not truncated
+                // tag names whose missing close would consume the whole reply.
+                self.reset();
+                return self.finish(c, true);
+            }
             if self.last_char == '/' || self.candidate.trim_end().ends_with("/>") {
                 self.reset();
                 return self.finish(c, true);

@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'support/compose_session_fixture.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatMessageLookupRequests.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,6 +31,7 @@ import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit2/ui/window/DesktopWindowChrome.dart';
 import 'package:operit2/ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 
 const _tabPreference = 'chat_sidebar_tab_v1';
@@ -40,7 +41,7 @@ const _workspaceKey = ValueKey('native-workspace-content');
 /// Covers real sidebar registrations, embedded routes, and validated host activation.
 void main() {
   testWidgets(
-    'desktop drawer expands before revealing content and fades before shrinking',
+    'desktop conversation panel animates beside a fixed navigation rail',
     (tester) async {
       final bridge = _registry();
       bridge.entries.removeWhere(
@@ -87,20 +88,20 @@ void main() {
       expect(launcher, findsNothing);
       await tester.pump(const Duration(milliseconds: 1));
       expect(drawer, findsOneWidget);
-      expect(tester.getTopLeft(content).dx, 280);
+      expect(tester.getTopLeft(content).dx, 336);
       await tester.pumpAndSettle();
-      expect(collapsed, findsNothing);
+      expect(collapsed, findsOneWidget);
       final firstSession = tester.state(launcher);
 
       expanded.value = false;
       await tester.pump();
       expect(collapsed, findsOneWidget);
       await tester.pump(const Duration(milliseconds: 159));
-      expect(tester.getTopLeft(content).dx, 280);
+      expect(tester.getTopLeft(content).dx, 336);
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(const Duration(milliseconds: 140));
       expect(tester.getTopLeft(content).dx, greaterThan(56));
-      expect(tester.getTopLeft(content).dx, lessThan(280));
+      expect(tester.getTopLeft(content).dx, lessThan(336));
       await tester.pumpAndSettle();
       expect(tester.getTopLeft(content).dx, 56);
       expect(drawer, findsNothing);
@@ -131,79 +132,169 @@ void main() {
     },
   );
 
+  testWidgets(
+    'desktop navigation stays fixed across chat and settings',
+    (tester) async {
+      final bridge = _registry();
+      final expanded = ValueNotifier(true);
+      final selectedRoute = ValueNotifier(
+        ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat),
+      );
+      final conversations = ValueNotifier(
+        const DrawerConversationState(loading: false),
+      );
+      addTearDown(expanded.dispose);
+      addTearDown(selectedRoute.dispose);
+      addTearDown(conversations.dispose);
+      await tester.pumpWidget(
+        _tabletSidebar(
+          bridge,
+          expanded,
+          conversations,
+          selectedRoute: selectedRoute,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final rail = find.byKey(const ValueKey('desktop-primary-navigation'));
+      final originalRect = tester.getRect(rail);
+      final themeToggle = find.byKey(const ValueKey('desktop-theme-toggle'));
+      final themeToggleRect = tester.getRect(themeToggle);
+      expect(themeToggle.hitTestable(), findsOneWidget);
+      expect(themeToggleRect.size, const Size(40, 40));
+      expect(themeToggleRect.center.dx, originalRect.center.dx);
+      expect(
+        themeToggleRect.center.dy,
+        greaterThan(
+          tester.getCenter(find.byIcon(Icons.inventory_2_outlined)).dy,
+        ),
+      );
+      expect(
+        themeToggleRect.center.dy,
+        lessThan(tester.getCenter(find.byIcon(Icons.settings_outlined)).dy),
+      );
+      expect(find.byTooltip('切换黑夜模式'), findsOneWidget);
+      expect(originalRect.width, 56);
+      expect(find.byType(DrawerContent), findsOneWidget);
+      expect(find.byType(BottomSidebarAction), findsNothing);
+      expect(find.text('Operit'), findsOneWidget);
+      expect(find.byType(SidebarInfoCard), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+      expect(
+        selectedRoute.value,
+        ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.settings),
+      );
+      expect(find.byType(DrawerContent), findsNothing);
+      expect(tester.getRect(rail), originalRect);
+      expect(themeToggle.hitTestable(), findsOneWidget);
+      expect(tester.getRect(themeToggle), themeToggleRect);
+      expect(tester.getTopLeft(find.text('Desktop content')).dx, 57);
+
+      expanded.value = false;
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+      await tester.pumpAndSettle();
+      expect(expanded.value, isTrue);
+      expect(find.byType(DrawerContent), findsOneWidget);
+      expect(tester.getRect(rail), originalRect);
+      expect(themeToggle.hitTestable(), findsOneWidget);
+      expect(tester.getRect(themeToggle), themeToggleRect);
+      expect(tester.getTopLeft(find.text('Desktop content')).dx, 337);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
+    variant: TargetPlatformVariant({TargetPlatform.macOS}),
+  );
+
   for (final topInset in <double>[0, 24]) {
     for (final pluginTab in <bool>[false, true]) {
-      testWidgets('desktop sidebar header stays aligned with the top bar '
-          '(top inset: $topInset, plugin tab: $pluginTab)', (tester) async {
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.resetDevicePixelRatio);
-        tester.view.padding = FakeViewPadding(top: topInset);
-        tester.view.viewPadding = FakeViewPadding(top: topInset);
-        addTearDown(tester.view.resetPadding);
-        addTearDown(tester.view.resetViewPadding);
-        final bridge = _registry();
-        bridge.preferences[_tabPreference] = pluginTab
-            ? chatSidebarTabIdentity('owner.first', 'history')
-            : UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB;
-        final expanded = ValueNotifier(false);
-        final conversations = ValueNotifier(
-          const DrawerConversationState(loading: false),
-        );
-        addTearDown(expanded.dispose);
-        addTearDown(conversations.dispose);
-        await tester.pumpWidget(
-          _tabletSidebar(
-            bridge,
-            expanded,
-            conversations,
-            content: Column(
-              children: [
-                ThemeTopBarChrome(
-                  title: const Text('Chat title'),
-                  contentColor: Colors.white,
-                  contentForeground: Colors.black,
-                  topPadding: topInset,
-                ),
-                const Expanded(child: SizedBox.expand()),
-              ],
+      testWidgets(
+        'desktop sidebar header stays aligned with the top bar '
+        '(top inset: $topInset, plugin tab: $pluginTab)',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetDevicePixelRatio);
+          tester.view.padding = FakeViewPadding(top: topInset);
+          tester.view.viewPadding = FakeViewPadding(top: topInset);
+          addTearDown(tester.view.resetPadding);
+          addTearDown(tester.view.resetViewPadding);
+          final bridge = _registry();
+          bridge.preferences[_tabPreference] = pluginTab
+              ? chatSidebarTabIdentity('owner.first', 'history')
+              : UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB;
+          final expanded = ValueNotifier(false);
+          final conversations = ValueNotifier(
+            const DrawerConversationState(loading: false),
+          );
+          addTearDown(expanded.dispose);
+          addTearDown(conversations.dispose);
+          await tester.pumpWidget(
+            _tabletSidebar(
+              bridge,
+              expanded,
+              conversations,
+              content: Column(
+                children: [
+                  ThemeTopBarChrome(
+                    title: const Text('Chat title'),
+                    contentColor: Colors.white,
+                    contentForeground: Colors.black,
+                    topPadding: topInset,
+                  ),
+                  const Expanded(child: SizedBox.expand()),
+                ],
+              ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        final title = find.text('Chat title');
-        final centerY = tester.getCenter(title).dy;
-        expect(
-          centerY,
-          closeTo(topInset + ThemeTopBarChrome.toolbarHeight / 2, 0.01),
-        );
-        expect(
-          tester.getCenter(find.byType(OperitLogoMark)).dy,
-          closeTo(centerY, 0.01),
-        );
+          );
+          await tester.pumpAndSettle();
+          final title = find.text('Chat title');
+          final centerY = tester.getCenter(title).dy;
+          expect(
+            centerY,
+            closeTo(
+              DesktopContentPanel.contentInsets.top +
+                  topInset +
+                  ThemeTopBarChrome.toolbarHeight / 2,
+              0.01,
+            ),
+          );
+          expect(
+            tester.getCenter(find.byType(OperitLogoMark)).dy,
+            closeTo(centerY, 0.01),
+          );
 
-        expanded.value = true;
-        await tester.pumpAndSettle();
-        expect(
-          tester.getCenter(find.text('Operit')).dy,
-          closeTo(centerY, 0.01),
-        );
-        expect(
-          tester.getCenter(find.byTooltip('收起侧边栏')).dy,
-          closeTo(centerY, 0.01),
-        );
-        expect(tester.getCenter(title).dy, closeTo(centerY, 0.01));
-        expect(tester.takeException(), isNull);
+          expanded.value = true;
+          await tester.pumpAndSettle();
+          expect(
+            tester.getCenter(find.text('Operit')).dy,
+            closeTo(centerY, 0.01),
+          );
+          expect(
+            tester.getCenter(find.byTooltip('收起会话列表')).dy,
+            closeTo(centerY, 0.01),
+          );
+          expect(tester.getCenter(title).dy, closeTo(centerY, 0.01));
+          expect(tester.takeException(), isNull);
 
-        await tester.tap(find.byTooltip('收起侧边栏'));
-        await tester.pumpAndSettle();
-        expect(
-          tester.getCenter(find.byType(OperitLogoMark)).dy,
-          closeTo(centerY, 0.01),
-        );
-        expect(tester.getCenter(title).dy, closeTo(centerY, 0.01));
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pumpAndSettle();
-      });
+          await tester.tap(find.byTooltip('收起会话列表'));
+          await tester.pumpAndSettle();
+          expect(
+            tester.getCenter(find.byType(OperitLogoMark)).dy,
+            closeTo(centerY, 0.01),
+          );
+          expect(tester.getCenter(title).dy, closeTo(centerY, 0.01));
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pumpAndSettle();
+        },
+        variant: TargetPlatformVariant({
+          TargetPlatform.android,
+          TargetPlatform.macOS,
+          TargetPlatform.windows,
+          TargetPlatform.linux,
+        }),
+      );
     }
   }
 
@@ -247,8 +338,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 280));
     await tester.pumpAndSettle();
     expect(find.byType(DrawerContent), findsOneWidget);
-    expect(find.byType(CollapsedDrawerContent), findsNothing);
-    expect(tester.getTopLeft(find.text('Desktop content')).dx, 280);
+    expect(find.byType(CollapsedDrawerContent), findsOneWidget);
+    expect(tester.getTopLeft(find.text('Desktop content')).dx, 336);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
@@ -1731,7 +1822,10 @@ void main() {
             'workspace-group:workspace:workspace-a::group:legacy-native-folder',
           ),
         );
-        final folder = find.byIcon(Icons.folder_outlined);
+        final folder = find.descendant(
+          of: group,
+          matching: find.byIcon(Icons.folder_outlined),
+        );
         expect(tester.getSize(preview).width, tester.getSize(group).width);
         expect(find.text('展开更多 2'), findsOneWidget);
         expect(
@@ -1743,7 +1837,7 @@ void main() {
                 ),
               )
               .dx,
-          tester.getCenter(folder).dx,
+          closeTo(tester.getCenter(folder).dx, 0.01),
         );
 
         await tester.tap(find.text('展开更多 2'));
@@ -1758,7 +1852,7 @@ void main() {
                 ),
               )
               .dx,
-          tester.getCenter(folder).dx,
+          closeTo(tester.getCenter(folder).dx, 0.01),
         );
         await tester.tap(find.text('收起'));
         await tester.pumpAndSettle();
@@ -2560,6 +2654,7 @@ Widget _tabletSidebar(
   ValueNotifier<bool> expanded,
   ValueNotifier<DrawerConversationState> conversations, {
   Widget content = const Text('Desktop content'),
+  ValueNotifier<String>? selectedRoute,
 }) => OperitTheme(
   initialThemePreferenceSnapshot:
       UserPreferencesManager.defaultThemePreferenceSnapshot,
@@ -2570,9 +2665,9 @@ Widget _tabletSidebar(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
-      body: ValueListenableBuilder<bool>(
-        valueListenable: expanded,
-        builder: (_, open, _) => TabletLayout(
+      body: AnimatedBuilder(
+        animation: Listenable.merge([expanded, ?selectedRoute]),
+        builder: (_, _) => TabletLayout(
           bridge: bridge,
           content: content,
           navigationEntries: const [
@@ -2599,16 +2694,25 @@ Widget _tabletSidebar(
             ),
           ],
           pluginSidebarEntries: const [],
-          selectedRouteId: ScreenRouteRegistry.routeIdOf(
-            ScreenRouteRegistry.aiChat,
-          ),
+          selectedRouteId:
+              selectedRoute?.value ??
+              ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat),
           drawerConversationState: conversations,
-          isTabletSidebarExpanded: open,
+          isTabletSidebarExpanded: expanded.value,
           tabletSidebarWidth: 280,
           collapsedTabletSidebarWidth: 56,
           onCollapseSidebar: () => expanded.value = false,
-          onNavigationEntrySelected: (_) {},
-          onConversationActivated: () {},
+          onNavigationEntrySelected: (entry) {
+            selectedRoute?.value = entry.entryId == 'main.settings'
+                ? ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.settings)
+                : entry.routeId;
+          },
+          onConversationActivated: () {
+            selectedRoute?.value = ScreenRouteRegistry.routeIdOf(
+              ScreenRouteRegistry.aiChat,
+            );
+            expanded.value = true;
+          },
         ),
       ),
     ),

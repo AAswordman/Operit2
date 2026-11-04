@@ -1,10 +1,16 @@
 import Screen from "./ui/panel.ui.js";
+import Conversation from "./ui/conversation.ui.js";
+import { CONVERSATION_ROUTE } from "./ui/shared.js";
 import { registerService } from "./service.js";
 
 registerService();
 
 /** Registers the same platform-independent composer contribution for every supported chat input style. */
 export function registerToolPkg(): boolean {
+  ToolPkg.registerUiRoute({ id: "conversation", route: CONVERSATION_ROUTE, runtime: "compose_dsl", screen: Conversation,
+    keepAlive: true, title: { zh: "子代理会话", en: "Subagent conversation" } });
+  ToolPkg.registerNavigationEntry({ id: "conversation", route: CONVERSATION_ROUTE, surface: "workspace",
+    title: { zh: "子代理会话", en: "Subagent conversation" }, icon: "account_tree" });
   ToolPkg.registerChatComposerSlot({ id: "subagents", slot: "above_input", screen: Screen, order: 20, keepAlive: true });
   return true;
 }

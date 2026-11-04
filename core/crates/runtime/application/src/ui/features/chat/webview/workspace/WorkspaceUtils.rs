@@ -41,6 +41,7 @@ fn createDefaultWorkspace(chatId: String, projectType: Option<String>) -> Result
         copyTemplateFiles(&workspaceRelativePath, templateName)?;
     }
     createProjectConfigIfNeeded(&workspaceRelativePath, projectType)?;
+    operit_store::FileSyncPolicy::FileSyncPolicy::ensure(defaultRuntimeStorageHost().as_ref(), &workspaceRelativePath)?;
 
     PathMapper::workspacePath(&chatId)
 }

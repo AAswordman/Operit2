@@ -4,26 +4,74 @@ fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
 
+#[derive(Debug, Clone, Copy)]
+enum FenceLinePhase {
+    Indent,
+    Marker,
+    Info,
+    Padding,
+    Invalid,
+}
+
 #[derive(Debug, Clone)]
 pub struct StreamMarkdownFencedCodeBlockPlugin {
     include_fences: bool,
     state: PluginState,
-    fence_len: usize,
-    is_matching_end_fence: bool,
-    has_started_matching_fence: bool,
+    opening_fence_len: usize,
+    line_fence_len: usize,
+    line_indent: usize,
+    phase: FenceLinePhase,
 }
 
 impl StreamMarkdownFencedCodeBlockPlugin {
     pub fn new(include_fences: bool) -> Self {
-        let mut value = Self {
+        Self {
             include_fences,
             state: PluginState::Idle,
-            fence_len: 0,
-            is_matching_end_fence: false,
-            has_started_matching_fence: false,
-        };
-        value.reset();
-        value
+            opening_fence_len: 0,
+            line_fence_len: 0,
+            line_indent: 0,
+            phase: FenceLinePhase::Indent,
+        }
+    }
+
+    fn start_line(&mut self) {
+        self.line_fence_len = 0;
+        self.line_indent = 0;
+        self.phase = FenceLinePhase::Indent;
+    }
+
+    fn process_closing_char(&mut self, c: char, at_start_of_line: bool) -> bool {
+        if at_start_of_line {
+            self.start_line();
+        }
+        if c == '\n' {
+            let closes = matches!(self.phase, FenceLinePhase::Marker | FenceLinePhase::Padding)
+                && self.line_fence_len >= self.opening_fence_len;
+            if closes {
+                self.reset();
+                return self.include_fences;
+            }
+            self.phase = FenceLinePhase::Invalid;
+            return true;
+        }
+        match self.phase {
+            FenceLinePhase::Indent if c == ' ' && self.line_indent < 3 => {
+                self.line_indent += 1;
+                return self.include_fences;
+            }
+            FenceLinePhase::Indent | FenceLinePhase::Marker if c == '`' => {
+                self.phase = FenceLinePhase::Marker;
+                self.line_fence_len += 1;
+                return self.include_fences;
+            }
+            FenceLinePhase::Marker | FenceLinePhase::Padding if matches!(c, ' ' | '\t' | '\r') => {
+                self.phase = FenceLinePhase::Padding;
+                return self.include_fences;
+            }
+            _ => self.phase = FenceLinePhase::Invalid,
+        }
+        true
     }
 }
 
@@ -42,77 +90,46 @@ impl StreamPlugin for StreamMarkdownFencedCodeBlockPlugin {
         self.state
     }
 
-    fn process_char(&mut self, c: char, _at_start_of_line: bool) -> bool {
+    fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
         if self.state == PluginState::Processing {
-            if _at_start_of_line {
-                self.is_matching_end_fence = true;
-                self.has_started_matching_fence = false;
-            }
-
-            if self.is_matching_end_fence {
-                if !self.has_started_matching_fence {
-                    if c == ' ' {
-                        return self.include_fences;
-                    }
-                    self.has_started_matching_fence = true;
-                }
-
-                if c == '`' {
-                    self.fence_len += 1;
-                    return self.include_fences;
-                }
-
-                if c == '\n' {
-                    if self.fence_len >= 3 {
-                        self.reset();
-                        return self.include_fences;
-                    }
-                    self.is_matching_end_fence = false;
-                    self.fence_len = 0;
-                    return true;
-                }
-
-                self.is_matching_end_fence = false;
-                self.fence_len = 0;
-                return true;
-            }
-
+            return self.process_closing_char(c, at_start_of_line);
+        }
+        if at_start_of_line {
+            self.start_line();
+            self.state = PluginState::Trying;
+        }
+        if self.state != PluginState::Trying {
             return true;
         }
-
-        if self.state == PluginState::Idle {
-            if _at_start_of_line && c == '`' {
-                self.state = PluginState::Trying;
-                self.fence_len = 1;
+        if c == '\n' {
+            if self.line_fence_len >= 3 {
+                self.opening_fence_len = self.line_fence_len;
+                self.state = PluginState::Processing;
+                self.phase = FenceLinePhase::Invalid;
                 return self.include_fences;
             }
+            self.reset();
             return true;
         }
-
-        if self.state == PluginState::Trying {
-            if c == '`' {
-                self.fence_len += 1;
-                return self.include_fences;
+        match self.phase {
+            FenceLinePhase::Indent if c == ' ' && self.line_indent < 3 => {
+                self.line_indent += 1;
             }
-            if c == '\n' {
-                if self.fence_len >= 3 {
-                    self.state = PluginState::Processing;
-                    self.is_matching_end_fence = false;
-                    self.has_started_matching_fence = false;
-                    self.fence_len = 0;
-                    return self.include_fences;
-                }
+            FenceLinePhase::Indent | FenceLinePhase::Marker if c == '`' => {
+                self.phase = FenceLinePhase::Marker;
+                self.line_fence_len += 1;
+            }
+            FenceLinePhase::Marker | FenceLinePhase::Info
+                if self.line_fence_len >= 3 && c != '`' =>
+            {
+                self.phase = FenceLinePhase::Info;
+            }
+            _ => {
                 self.reset();
                 return true;
             }
-            if self.fence_len < 3 {
-                self.reset();
-                return true;
-            }
-            return self.include_fences;
         }
-
-        true
+        self.include_fences
     }
 
     fn init_plugin(&mut self) -> bool {
@@ -124,9 +141,8 @@ impl StreamPlugin for StreamMarkdownFencedCodeBlockPlugin {
 
     fn reset(&mut self) {
         self.state = PluginState::Idle;
-        self.fence_len = 0;
-        self.is_matching_end_fence = false;
-        self.has_started_matching_fence = false;
+        self.opening_fence_len = 0;
+        self.start_line();
     }
 }
 

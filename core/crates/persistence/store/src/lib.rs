@@ -80,3 +80,10 @@ pub mod DevicePreferencesStore;
 #[cfg(test)]
 #[path = "tests/TransactionJournalHost.rs"]
 pub(crate) mod transaction_test_host;
+
+#[cfg(feature = "full")]
+#[path = "FileSyncPolicy.rs"]
+pub mod FileSyncPolicy;
+#[cfg(feature = "full")]
+#[path = "ChatOutputStore.rs"]
+pub mod ChatOutputStore;

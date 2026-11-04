@@ -14,6 +14,15 @@ public final class OperitFolderAccessPlugin: NSObject, FlutterPlugin {
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "retainFile" {
+      guard let arguments = call.arguments as? [String: Any], let path = arguments["path"] as? String else {
+        result(FlutterError(code: "INVALID_ARGS", message: "Missing selected file path", details: nil))
+        return
+      }
+      do { _ = try FolderAccessStore.shared.rememberSelection(URL(fileURLWithPath: path)); result(nil) }
+      catch { result(FlutterError(code: "FILE_ACCESS_ERROR", message: error.localizedDescription, details: nil)) }
+      return
+    }
     guard call.method == "pickDirectory" || call.method == "pickDirectories" else {
       result(FlutterMethodNotImplemented)
       return

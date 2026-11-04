@@ -128,9 +128,9 @@ test("tool entry captures host origin before IPC and uses the current participan
 /** Exercises real main registration while denying accidental storage reads and model sends. */
 test("main evaluation registers IPC and the composer slot without opening a business store", () => {
   const handlers = [];
-  const slots = [];
+  const slots = [], routes = [], entries = [];
   const runtime = modules({
-    ToolPkg: { ipc: { on(channel, handler) { handlers.push({ channel, handler }); } }, registerChatComposerSlot(slot) { slots.push(slot); } },
+    ToolPkg: { ipc: { on(channel, handler) { handlers.push({ channel, handler }); } }, registerChatComposerSlot(slot) { slots.push(slot); }, registerUiRoute(route) { routes.push(route); }, registerNavigationEntry(entry) { entries.push(entry); } },
     Tools: new Proxy({}, { get() { throw new Error("registration must not call host tools"); } }),
   });
   const main = runtime.load("./main");
@@ -141,6 +141,12 @@ test("main evaluation registers IPC and the composer slot without opening a busi
   assert.equal(slots[0].slot, "above_input");
   assert.equal(slots[0].keepAlive, true);
   assert.equal(typeof slots[0].screen, "function");
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].keepAlive, true);
+  assert.equal(typeof routes[0].screen, "function");
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].surface, "workspace");
+  assert.equal(entries[0].route, routes[0].route);
   assert.equal(main.test_connection().passed, true);
 });
 
@@ -170,12 +176,13 @@ function composition(screen, initialState = {}) {
   const refs = new Map();
   const effects = new Map();
   const pending = [];
-  const errors = [];
+  const errors = [], navigations = [];
   const UI = new Proxy({}, {
     /** Retains concrete DSL props and child trees so tests invoke actual authored UI actions. */
     get(_target, type) { return (props = {}, children = []) => ({ type, props, children: Array.isArray(children) ? children : [children] }); },
   });
   const ctx = {
+    async navigate(route, args) { navigations.push(copy({ route, args })); },
     UI, MaterialTheme: { colorScheme: { surfaceVariant: "surface", error: "error" } },
     /** Retains the initial host-injected chat identity and the screen's own keyed state. */
     useState(key, initial) { if (!state.has(key)) state.set(key, initial); return [state.get(key), value => state.set(key, value)]; },
@@ -201,44 +208,90 @@ function composition(screen, initialState = {}) {
   }
   /** Disposes every mounted effect just as closing a composer contribution does. */
   function dispose() { for (const effect of effects.values()) effect.cleanup(); }
-  return { state, errors, render, find, dispose };
+  return { state, errors, navigations, render, find, dispose };
 }
 
-/** Exercises real tool, owner, Storage and UI source paths together with controlled native generation. */
-test("composer embeds the native child chat and disposes observers without cancelling agents", async () => {
-  const h = harness(); const child = await h.spawn();
+/** Exercises real task identities and workspace navigation without a manual creation or modal path. */
+test("composer opens stable per-agent workspace identities without dialogs or creation controls", async () => {
+  const h = harness(); const child = await h.spawn(); const other = await h.spawn({ name: "Other child" });
   const storage = objectDatabase();
   const runtime = modules({
     ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(_channel, request) { return h.manager.request(request); } } },
-    Tools: { Storage: { objects: { async open() { return storage.database; } } }, Chat: { async switchTo() { throw new Error("not requested"); } } },
+    Tools: { Storage: { objects: { async open() { return storage.database; } } } },
+  });
+  const { Repository } = runtime.load("./storage"); const repository = new Repository(); await repository.load();
+  for (const record of h.repository.records.values()) await repository.save(record);
+  const ui = composition(runtime.load("./ui/panel.ui").default, { chatId: "parent" });
+  ui.render(); await flush();
+  let tree = ui.render();
+  assert.equal(ui.find(tree, "agent-" + child.id), null, "the initial header stays compact");
+  assert.equal(ui.find(tree, "subagents.create"), null);
+  ui.find(tree, "subagents.expand").props.onClick(); tree = ui.render();
+  const open = ui.find(tree, "agent-" + child.id).props.onClick;
+  await Promise.all([open(), open(), open()]);
+  assert.equal(ui.navigations.length, 3);
+  assert.deepEqual(ui.navigations[0], {
+    route: "toolpkg:com.operit.subagents:ui:conversation",
+    args: { parentChatId: "parent", agentId: child.id, workspaceTabId: JSON.stringify(["parent", child.id]), workspaceTabTitle: child.name },
+  });
+  assert.deepEqual(ui.navigations[0], ui.navigations[1]);
+  await ui.find(tree, "agent-" + other.id).props.onClick();
+  assert.notEqual(ui.navigations[0].args.workspaceTabId, ui.navigations[3].args.workspaceTabId);
+  tree = ui.render();
+  assert.equal(ui.find(tree, "subagents.detail-dialog"), null);
+  assert.equal(ui.find(tree, "subagents.create-dialog"), null);
+  assert.equal(ui.find(tree, "subagents.execution"), null);
+  ui.dispose(); await flush();
+  assert.equal(h.chat.cancellations.length, 0);
+  assert.equal([...storage.observers.values()].reduce((count, values) => count + values.size, 0), 0);
+  assert.equal(ui.errors.length, 0);
+});
+
+/** Keeps the selected transcript and manager controls bound to navigation input after the main chat changes. */
+test("workspace embeds the native child chat and disposes observers without cancelling agents", async () => {
+  const h = harness(); const child = await h.spawn();
+  const storage = objectDatabase(), requests = [];
+  const runtime = modules({
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(_channel, request) {
+      requests.push(copy(request));
+      if (request.action === "send") return copy(h.repository.records.get(child.id));
+      return h.manager.request(request);
+    } } },
+    Tools: { Storage: { objects: { async open() { return storage.database; } } } },
   });
   const { Repository } = runtime.load("./storage"); const repository = new Repository(); await repository.load();
   await repository.save(h.repository.records.get(child.id));
-  const Screen = runtime.load("./ui/panel.ui").default;
-  const ui = composition(Screen, { chatId: "parent" });
+  const ui = composition(runtime.load("./ui/conversation.ui").default, {
+    chatId: "different-main-chat", input: { parentChatId: "parent", agentId: child.id },
+  });
   ui.render(); await flush();
   let tree = ui.render();
-  assert.equal(ui.find(tree, "agent-" + child.id), null, "the initial header must stay compact");
-  assert.equal(ui.find(tree, "subagents.history").type, "IconButton");
-  assert.equal(ui.find(tree, "subagents.create").type, "IconButton");
-  ui.find(tree, "subagents.expand").props.onClick();
-  tree = ui.render();
-  assert.ok(ui.find(tree, "agent-" + child.id));
-  ui.find(tree, "agent-" + child.id).props.onClick();
-  ui.render(); await flush();
-  const detailed = copy(h.repository.records.get(child.id));
-  detailed.status = "running";
-  detailed.messages = [{ messageTimestamp: 20, revision: 1, parts: [{ partId: "tool", sequence: 0, kind: "tool_call", content: "actual invocation", toolName: "read_file", toolCallId: "call-a", attributes: { path: "/source" } }] }];
-  await repository.save(detailed); await flush();
-  tree = ui.render();
-  assert.ok(ui.find(tree, "subagents.detail-dialog"));
+  assert.ok(ui.find(tree, "subagents.conversation"));
+  assert.equal(ui.find(tree, "subagents.detail-dialog"), null);
   const execution = ui.find(tree, "subagents.execution");
   assert.equal(execution.type, "AiChat");
   assert.equal(execution.props.chatId, child.chatId);
   assert.equal(execution.props.showInput, false);
-  assert.equal(execution.children.length, 0);
+  ui.state.set("subagents.message", "Follow up");
+  tree = ui.render();
   assert.equal(ui.find(tree, "subagents.send").props.enabled, false);
+  assert.equal(ui.find(tree, "subagents.interrupt").props.enabled, true);
   assert.equal(ui.find(tree, "subagents.wait").props.enabled, true);
+  await ui.find(tree, "subagents.interrupt").props.onClick();
+  assert.deepEqual(requests.at(-1), { action: "send", parentChatId: "parent", agentId: child.id, message: "Follow up", interrupt: true });
+  const completed = copy(h.repository.records.get(child.id)); completed.status = "completed";
+  await repository.save(completed); await flush();
+  ui.state.set("subagents.message", "Next turn"); tree = ui.render();
+  assert.equal(ui.find(tree, "subagents.execution").props.chatId, child.chatId);
+  assert.equal(ui.find(tree, "subagents.send").props.enabled, true);
+  assert.equal(ui.find(tree, "subagents.interrupt").props.enabled, false);
+  await ui.find(tree, "subagents.send").props.onClick();
+  assert.deepEqual(requests.at(-1), { action: "send", parentChatId: "parent", agentId: child.id, message: "Next turn", interrupt: false });
+  const closed = { ...completed, status: "closed" };
+  await repository.save(closed); await flush();
+  ui.state.set("subagents.message", "Cannot send"); tree = ui.render();
+  assert.equal(ui.find(tree, "subagents.send").props.enabled, false);
+  assert.equal(ui.find(tree, "subagents.interrupt").props.enabled, false);
   const writesBeforeDispose = storage.commits.length;
   ui.dispose(); await flush();
   assert.equal(h.chat.cancellations.length, 0);
@@ -332,23 +385,12 @@ test("real Compose hides idle history and updates across active and terminal sta
   assert.ok(row, "history reveals the task list inside the queue surface");
   await runtime.sandbox.__operit_dispatch_compose_dsl_action({ actionId: row.props.onClick.__actionId });
   await flush();
-  assert.ok([...fixture.nodes.values()].some(node => node.props.key === "subagents.detail-dialog"));
-  const chat = [...fixture.nodes.values()].find(node => node.nodeType === "AiChat");
-  assert.ok(chat);
-  assert.equal(chat.props.chatId, child.chatId);
-  assert.equal(chat.props.showInput, false);
+  assert.ok(![...fixture.nodes.values()].some(node => node.nodeType === "Dialog" || node.nodeType === "AiChat"));
   const completed = copy(h.repository.records.get(child.id));
   completed.status = "completed";
   await repository.save(completed); await flush();
-  assert.equal(fixture.root.children.length, 1, "only the open modal may remain after the last completion");
+  assert.equal(fixture.root.children.length, 0, "completion removes the composer while workspace owns the transcript");
   assert.equal(fixture.root.props.paddingHorizontal, 0);
-  assert.ok(![...fixture.nodes.values()].some(node => node.props.key === "subagents.history"));
-  assert.ok(![...fixture.nodes.values()].some(node => node.props.key === "agent-" + child.id));
-  assert.ok([...fixture.nodes.values()].some(node => node.nodeType === "AiChat" && node.props.chatId === child.chatId));
-  const detail = [...fixture.nodes.values()].find(node => node.props.key === "subagents.detail-dialog");
-  await runtime.sandbox.__operit_dispatch_compose_dsl_action({ actionId: detail.props.onDismissRequest.__actionId });
-  await flush();
-  assert.equal(fixture.root.children.length, 0, "expanded history must not keep an idle composer visible");
   for (const status of ["starting", "running", "closing", "completed", "cancelled", "failed", "closed", "interrupted"]) {
     const record = copy(completed);
     record.status = status;
@@ -366,7 +408,7 @@ test("real Compose hides idle history and updates across active and terminal sta
   await flush();
   assert.equal(fixture.root.children.length, 0);
   assert.equal(storage.observers.get("parents:parent").size, 0);
-  assert.equal(storage.observers.get("agents:" + child.id).size, 0);
+  assert.equal(storage.observers.get("agents:" + child.id)?.size ?? 0, 0);
   await repository.save(completed); await flush();
   assert.equal(fixture.root.children.length, 0, "the previous chat must not leak into the new composer");
   const other = await h.spawn({}, "other");
@@ -395,4 +437,36 @@ test("composer reports a failed initial read and disposes without opening a stor
   assert.equal(String(ui.errors[0]), "Error: initial read failed");
   assert.equal(storage.observers.size, 0);
   ui.dispose();
+});
+
+/** Compiles the workspace screen through the actual Compose pipeline and retains its selected native transcript. */
+test("real Compose workspace preserves the child transcript after parent switching and completion", async () => {
+  const h = harness(); const child = await h.spawn();
+  const storage = objectDatabase();
+  const runtime = modules({
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(_channel, request) { return h.manager.request(request); } } },
+    Tools: { Storage: { objects: { async open() { return storage.database; } } } },
+  }, (source, file) => file.endsWith("conversation.ui.ts") ? compileComposeModule(source, file) : source);
+  const repository = new (runtime.load("./storage").Repository)(); await repository.load();
+  await repository.save(h.repository.records.get(child.id));
+  runtime.sandbox.module = { exports: { default: runtime.load("./ui/conversation.ui").default } };
+  runtime.sandbox.exports = runtime.sandbox.module.exports;
+  vm.runInContext(composeContextScript(), runtime.sandbox);
+  vm.runInContext(wrapComposeScript(), runtime.sandbox);
+  const fixture = composeStreamFixture(runtime.sandbox); fixture.adapt();
+  const input = { parentChatId: "parent", agentId: child.id };
+  await runtime.sandbox.__operit_render_compose_dsl({ executionContextKey: "agent-workspace", state: { chatId: "parent", input } });
+  await flush();
+  assert.ok([...fixture.nodes.values()].some(node => node.nodeType === "AiChat" && node.props.chatId === child.chatId));
+  assert.ok(![...fixture.nodes.values()].some(node => node.nodeType === "Dialog"));
+  await runtime.sandbox.__operit_render_compose_dsl({ executionContextKey: "agent-workspace", state: { chatId: "another-parent", input } });
+  const completed = copy(h.repository.records.get(child.id)); completed.status = "completed";
+  await repository.save(completed); await flush();
+  assert.ok([...fixture.nodes.values()].some(node => node.nodeType === "AiChat" && node.props.chatId === child.chatId));
+  assert.ok([...fixture.nodes.values()].some(node => node.nodeType === "Text" && node.props.text === "已完成 · 第 1 轮"));
+  runtime.sandbox.OperitComposeReactive.dispose(runtime.sandbox.__operit_compose_bundle.ctx);
+  await flush();
+  assert.equal([...storage.observers.values()].reduce((count, values) => count + values.size, 0), 0);
+  assert.equal(h.chat.cancellations.length, 0);
+  assert.equal(fixture.errors.length, 0);
 });

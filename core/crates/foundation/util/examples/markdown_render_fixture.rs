@@ -18,8 +18,18 @@ fn main() {
         "空脚注[^empty]\n\n[^empty]:",
         "> 引用里的脚注[^quote]\n\n[^quote]: 引用注释",
         "独立文档[^1]，尚无定义",
+        include_str!("../tests/fixtures/hostfs_report.md"),
+        "   ```c\r\n   int main(void) { return 0; }\r\n   ``` \t\r\n\r\n## 后续标题\r\n- **仍有格式**\r\n",
+        "````markdown\n```\n## 代码中的标题\n```` \t\n\n## 后续标题\n",
+        " ```text\n     保留额外缩进  \n \n ``` \n",
+        "   ```\n   ```\n",
+        " ```text\n  未闭合内容  \n",
     ];
     let mut pending: VecDeque<String> = sources.into_iter().map(str::to_string).collect();
+    pending.push_back(format!(
+        "<tool_result name=\"read_file\"><content>ok</content></tool_result>\n{}",
+        include_str!("../tests/fixtures/hostfs_report.md"),
+    ));
     let mut seen = BTreeSet::new();
     let mut fixtures = Vec::new();
     while let Some(source) = pending.pop_front() {
@@ -28,6 +38,7 @@ fn main() {
         }
         let events = MarkdownRenderEventStream::fromContent(source.clone());
         let mut nested: BTreeMap<u64, String> = BTreeMap::new();
+        let mut tables: BTreeMap<u64, String> = BTreeMap::new();
         for event in &events {
             if event.eventType == "chunk" {
                 if let (Some(parent), Some(value)) = (event.parentBlockId, event.value.as_ref()) {
@@ -35,7 +46,25 @@ fn main() {
                 }
             }
         }
+        for event in &events {
+            if event.eventType == "markdownBlockChunk" && event.nodeType.as_deref() == Some("Table")
+            {
+                if let (Some(block), Some(value)) = (event.blockId, event.value.as_ref()) {
+                    tables.entry(block).or_default().push_str(value);
+                }
+            }
+        }
         pending.extend(nested.into_values());
+        for table in tables.into_values() {
+            for line in table.lines().filter(|line| line.contains('|')) {
+                pending.extend(
+                    line.trim()
+                        .trim_matches('|')
+                        .split('|')
+                        .map(|cell| cell.trim().to_string()),
+                );
+            }
+        }
         fixtures.push(serde_json::json!({"source":source,"events":events}));
     }
     println!("{}", serde_json::to_string_pretty(&fixtures).unwrap());

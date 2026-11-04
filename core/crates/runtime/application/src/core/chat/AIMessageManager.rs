@@ -818,8 +818,22 @@ impl AIMessageManager {
         enableDirectAudioProcessing: bool,
         enableDirectVideoProcessing: bool,
     ) -> Result<String, String> {
+        // A synchronized attachment has a device-independent VFS locator. Resolve
+        // that exact shared path locally before considering its original host path.
+        let replica = fileSystemHost.and_then(|host| {
+            let path = attachment.fileToolPath();
+            if !["/operitapp/outputs/", "/operitapp/workspaces/", "/operitapp/data/data/chat_attachments/", "/app/workspaces/", "/app/outputs/", "/app/data/data/chat_attachments/"].iter().any(|root| path.starts_with(root)) { return None; }
+            let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHostOption()?;
+            let mapper = operit_tools::files::PathMapper::PathMapper::new(storage.runtimeRootDir()?, storage.workspaceRootDir()?, storage);
+            let physical = mapper.resolve(&path).ok()?.nativePath().ok()?;
+            let found = host.fileExists(&physical).ok()?;
+            if !found.exists || found.isDirectory || found.size != attachment.fileSize { return None; }
+            let mut local = attachment.clone(); local.filePath = physical;
+            Some(local)
+        });
+        let attachment = replica.as_ref().unwrap_or(attachment);
         let currentNodeId = CoreNodeIdentityStore::localNodeId();
-        if !attachment.isLocalToNode(currentNodeId.as_deref()) {
+        if replica.is_none() && !attachment.isLocalToNode(currentNodeId.as_deref()) {
             // File hosts and media pools are node-local. Preserve the source locator instead
             // of attempting to open a remote path (especially fatal for audio/video).
             return Ok(format!(
@@ -990,8 +1004,7 @@ impl AIMessageManager {
         {
             attributes.push_str(&format!(" node_id=\"{}\"", escape(nodeId)));
         }
-        if toolPath.starts_with("/operitapp/data/data/chat_attachments/")
-            || toolPath.starts_with("/app/data/data/chat_attachments/") {
+        if ["/app/", "/operitapp/", "/mnt/", "/virtual/"].iter().any(|root| toolPath.starts_with(root)) {
             attributes.push_str(&format!(" path=\"{}\"", escape(&toolPath)));
         }
         if attachment.fileSize > 0 {
@@ -1539,12 +1552,13 @@ mod tests {
             3,
         );
         attachment.nodeId = Some("core-b".into());
+        attachment.vfsPath = Some("/operitapp/outputs/family/.operit/attachments/id/report.pdf".into());
         let tag =
             AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
         assert!(tag.contains("node_id=\"core-b\""));
-        assert!(tag.contains("path=\"/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
+        assert!(tag.contains("path=\"/operitapp/outputs/family/.operit/attachments/id/report.pdf\""));
         assert!(tag.contains("filename=\"报价单&quot;.pdf\""));
-        assert!(tag.contains("id=\"/operitapp/data/data/chat_attachments/chat-a/attachment-a/report.pdf\""));
+        assert!(tag.contains("id=\"/operitapp/outputs/family/.operit/attachments/id/report.pdf\""));
         assert!(!tag.contains("/device-b/"));
     }
 
@@ -1686,7 +1700,7 @@ mod tests {
 
 #[cfg(test)]
 mod cancellation_tests {
-    use super::{ChatOperationRegistry, MessageCancellationToken};
+    use super::{AIMessageManager, AttachmentInfo, ChatOperationRegistry, MessageCancellationToken};
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -1764,4 +1778,15 @@ mod cancellation_tests {
         assert_eq!(registry.take("second"), Some((secondId, "second-service")));
         assert!(registry.snapshot().is_empty());
     }
+    #[test]
+    fn output_attachment_uses_its_saved_vfs_locator_in_ai_metadata() {
+        let mut attachment = AttachmentInfo::new("/device-a/output/report.md".into(), "report.md".into(), "text/markdown".into(), 12);
+        attachment.vfsPath = Some("/operitapp/outputs/family/.operit/attachments/id/report.md".into());
+        attachment.nodeId = Some("source-node".into());
+        let tag = AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
+        assert!(tag.contains("path=\"/operitapp/outputs/family/.operit/attachments/id/report.md\""));
+        assert!(tag.contains("node_id=\"source-node\""));
+        assert!(!tag.contains("/device-a/"));
+    }
+
 }

@@ -15,10 +15,7 @@ export '../../attachments/ChatMessageImageAttachments.dart'
     show AttachmentData, ChatMessageAttachments, ChatMessageImageAttachments;
 
 class UserMessageComposable extends StatefulWidget {
-  const UserMessageComposable({
-    super.key,
-    required this.message,
-  });
+  const UserMessageComposable({super.key, required this.message});
 
   final ChatUiMessage message;
 
@@ -192,6 +189,8 @@ MessageParseResult _buildMessageParseResult({
           size: raw.size,
           content: raw.content,
           mediaPoolType: 'image',
+          path: raw.path,
+          nodeId: raw.nodeId,
         ),
       );
     } else if (link != null) {
@@ -251,7 +250,8 @@ MessageParseResult parseMessageContent(String content) {
           mediaLink.type == 'file')
         AttachmentData(
           id: mediaLink.id,
-          filename: mediaLink.fileName ??
+          filename:
+              mediaLink.fileName ??
               (mediaLink.type == 'audio' ? 'Audio' : 'Video'),
           type: switch (mediaLink.type) {
             'audio' => 'audio/*',
@@ -346,18 +346,9 @@ MessageParseResult parseMessageContent(String content) {
   for (var index = 0; index < matches.length; index++) {
     final match = matches[index].match;
     final startIndex = match.start;
-    final id = decodeChatXmlText(match.group(1)!);
-    final filename = decodeChatXmlText(match.group(2)!);
-    final type = decodeChatXmlText(match.group(3)!);
-    final size = _parseLong(match.group(4));
-    final attachmentContent = decodeChatXmlText(match.group(5) ?? '');
-    final attachment = AttachmentData(
-      id: id,
-      filename: filename,
-      type: type,
-      size: size,
-      content: attachmentContent,
-    );
+    final attachment = AttachmentData.fromMarkupMatch(match);
+    final filename = attachment.filename;
+    final type = attachment.type;
     final isTrailingAttachment = trailingAttachmentIndices.contains(index);
     final isScreenContent =
         type == 'text/json' && filename == 'screen_content.json';
@@ -395,17 +386,6 @@ MessageParseResult parseMessageContent(String content) {
     replyInfo: replyInfo,
     proxySenderName: proxySenderName,
   );
-}
-
-int _parseLong(String? value) {
-  if (value == null || value.isEmpty) {
-    return 0;
-  }
-  final parsed = int.tryParse(value);
-  if (parsed == null) {
-    return 0;
-  }
-  return parsed;
 }
 
 class _ReplyInfoView extends StatelessWidget {

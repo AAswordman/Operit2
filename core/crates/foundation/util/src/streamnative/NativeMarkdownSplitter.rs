@@ -154,6 +154,39 @@ impl RulePrefix {
     }
 }
 
+/// Tracks literal delimiters before block dispatch, without buffering code text.
+/// The inline renderer remains responsible for producing the semantic spans.
+#[derive(Default)]
+struct InlineLiteralGuard {
+    code_ticks: usize,
+    pending_ticks: usize,
+    escaped: bool,
+}
+
+impl InlineLiteralGuard {
+    fn push(&mut self, c: char) -> bool {
+        if c == '`' && (self.code_ticks != 0 || !self.escaped) {
+            self.pending_ticks += 1;
+            return true;
+        }
+        if self.pending_ticks != 0 {
+            if self.code_ticks == 0 {
+                self.code_ticks = self.pending_ticks;
+            } else if self.code_ticks == self.pending_ticks {
+                self.code_ticks = 0;
+            }
+            self.pending_ticks = 0;
+        }
+        if self.code_ticks != 0 {
+            self.escaped = false;
+            return true;
+        }
+        let escaped = self.escaped;
+        self.escaped = !escaped && c == '\\';
+        escaped
+    }
+}
+
 pub struct MarkdownSession {
     plugins: Vec<PluginEntry>,
     global_offset: usize,
@@ -163,6 +196,7 @@ pub struct MarkdownSession {
     eval_start_global: Option<usize>,
     evaluation_buffer: Vec<char>,
     rule_prefix: RulePrefix,
+    inline_literal: InlineLiteralGuard,
     evaluation_emit_mask: Vec<u32>,
     waitfor_active: bool,
     waitfor_at_start_of_line: bool,
@@ -184,6 +218,7 @@ impl MarkdownSession {
             eval_start_global: None,
             evaluation_buffer: Vec::new(),
             rule_prefix: RulePrefix::default(),
+            inline_literal: InlineLiteralGuard::default(),
             evaluation_emit_mask: Vec::new(),
             waitfor_active: false,
             waitfor_at_start_of_line: false,
@@ -384,13 +419,25 @@ impl MarkdownSession {
             self.rule_prefix.valid = at_start_of_line;
         }
 
+        // Backticks in XML attributes belong to that candidate, not to Markdown.
+        let xml_pending = self.plugins.iter().any(|entry| {
+            entry.tag == MarkdownProcessorType::XmlBlock
+                && entry.plugin.state() == PluginState::Trying
+        });
+        let literal = !xml_pending && self.inline_literal.push(c);
         self.evaluation_buffer.push(c);
         self.rule_prefix.push(c);
         let mut emit_mask = 0u32;
         let mut successful = None::<usize>;
 
         for (index, entry) in self.plugins.iter_mut().enumerate() {
-            let should_emit = entry.plugin.process_char(c, at_start_of_line);
+            let should_emit = if literal && c == '<' && entry.tag == MarkdownProcessorType::XmlBlock
+            {
+                entry.plugin.reset();
+                true
+            } else {
+                entry.plugin.process_char(c, at_start_of_line)
+            };
             if should_emit {
                 emit_mask |= 1u32 << index;
             }
@@ -404,12 +451,13 @@ impl MarkdownSession {
             }
         }
 
-        if Self::is_html_break_full_match(&self.evaluation_buffer) {
+        if !literal && Self::is_html_break_full_match(&self.evaluation_buffer) {
             let start = self.eval_start_global.unwrap_or(global_index);
             for index in 0..self.evaluation_buffer.len() {
                 Self::emit_index(out, MarkdownProcessorType::HtmlBreak, start + index, run);
             }
             self.clear_evaluation();
+            self.inline_literal = InlineLiteralGuard::default();
             for entry in &mut self.plugins {
                 entry.plugin.reset();
             }
@@ -429,6 +477,7 @@ impl MarkdownSession {
                 }
                 Self::emit_break(out, global_index + 1, run);
                 self.clear_evaluation();
+                self.inline_literal = InlineLiteralGuard::default();
                 for entry in &mut self.plugins {
                     entry.plugin.reset();
                 }
@@ -442,6 +491,7 @@ impl MarkdownSession {
         if let Some(index) = successful {
             self.active_index = Some(index);
             self.active_tag = self.plugins[index].tag;
+            self.inline_literal = InlineLiteralGuard::default();
             Self::flush_run(out, run);
 
             let start = self.eval_start_global.unwrap_or(global_index);
@@ -460,7 +510,7 @@ impl MarkdownSession {
             return;
         }
 
-        if Self::is_html_break_prefix(&self.evaluation_buffer) {
+        if !literal && Self::is_html_break_prefix(&self.evaluation_buffer) {
             return;
         }
 

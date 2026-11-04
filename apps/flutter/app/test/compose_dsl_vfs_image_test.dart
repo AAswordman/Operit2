@@ -42,8 +42,7 @@ void main() {
   testWidgets(
     'Markdown shared images read Core VFS and reuse the decoded image',
     (tester) async {
-      const path =
-          '/operitapp/data/plugin_data/space/com.operit.image_display/chart.png';
+      const path = '/operitapp/workspaces/project/images/chart.png';
       final bridge = _VfsFileBridge({
         '__type': 'BinaryFileContentData',
         'path': path,
@@ -105,7 +104,7 @@ void main() {
       MaterialApp(
         home: MarkdownRemoteImage(
           url:
-              '/operitapp/data/plugin_data/space/com.operit.image_display/missing.png',
+              '/operitapp/outputs/2026-11-04_00-00-00-000/images/missing.png',
           clients: GeneratedCoreProxyClients(bridge),
         ),
       ),

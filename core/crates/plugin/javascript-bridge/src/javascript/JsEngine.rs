@@ -1998,7 +1998,6 @@ impl JsEngineState {
                 "__operitNativeCallToolStructured",
                 Arc::new(move |requestId, arguments| {
                     dispatchStructuredToolCall(
-                        CURRENT_EXECUTION_HOST.with(|host| host.borrow().clone()),
                         toolSink.clone(),
                         requestId,
                         arguments,
@@ -2201,7 +2200,6 @@ type CoreRouteCompletion = Box<dyn FnOnce() -> JsExecutionFuture<Result<Value, S
 /// Only the JS continuation wake uses the cooperative reusable executor.
 #[allow(non_snake_case)]
 fn dispatchStructuredToolCall(
-    executionHost: Option<Arc<dyn JsExecutionHost>>,
     callbackSink: JsAsyncCallbackSink,
     requestId: u64,
     arguments: Vec<Value>,
@@ -2257,7 +2255,9 @@ fn dispatchStructuredToolCall(
             Err(error) => { fail(error); return; }
         }
     }
-    let Some(executionHost) = executionHost else {
+    // Promise continuations may run under the engine's default TLS context.
+    // The owning call retains the exact native turn, including its file directory.
+    let Some(executionHost) = context.executionHost.clone() else {
         fail("JavaScript execution host is unavailable".to_string());
         return;
     };

@@ -81,6 +81,10 @@ impl FileSystemHost for AndroidFileSystemHost {
     }
 
     fn readFileBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        if isResource(path)? {
+            let value = crate::document_filesystem::call(json!({"operation": "readFileBytesRange", "path": path, "offset": offset, "length": length}))?;
+            return decodeBytes(value);
+        }
         self.inner.readFileBytesRange(path, offset, length)
     }
 

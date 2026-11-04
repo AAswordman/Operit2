@@ -93,6 +93,7 @@ impl ToolGetter {
     pub fn getTerminalTools(context: &HostManager) -> StandardTerminalTools {
         let tools = StandardTerminalTools::new(context.terminalHost.clone());
         let Some(storage) = context.runtimeStorageHost.as_ref() else { return tools; };
+        let tools = tools.withStorage(storage.clone());
         let (Some(runtimeRoot), Some(workspaceRoot)) =
             (storage.runtimeRootDir(), storage.workspaceRootDir()) else { return tools; };
         tools.withPathMapper(operit_tools::files::PathMapper::PathMapper::new(

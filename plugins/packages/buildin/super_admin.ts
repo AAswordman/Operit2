@@ -47,7 +47,7 @@ type PersistedTerminalOutput = {
         "zh": "超级管理员",
         "en": "Super Admin"
     },
-    "description": { "zh": "提供终端命令和会话控制。绑定工作区时，每次获取会话都会尝试进入主工作区，失败会报错；未绑定时不要假定当前目录是下载目录。终端路径与文件工具的 VFS 路径可能不同，切勿直接互换。请按实际权限操作。", "en": "Runs terminal commands and manages sessions. With a workspace, each session acquisition attempts to enter the primary workspace and reports failures; without one, do not assume the current directory is Downloads. Terminal paths may differ from file-tool VFS paths; do not interchange them. Respect actual permissions." },
+    "description": { "zh": "提供终端命令和会话控制。每次获取会话必须进入当前文件目录 `.`：已绑定的主工作区，或未绑定时这组父子对话固定的产出目录；进入失败则终止，不在主目录继续执行。附件和产出直接使用提供的相对路径，无需翻根目录、主目录或全盘查找。跨挂载访问时，终端使用 Host 解析的路径，不直接套用 VFS 绝对路径。请按实际权限操作。", "en": "Runs terminal commands and manages sessions. Each session acquisition must enter the current file directory `.`: the bound primary workspace, or the conversation family's persistent output area when unbound. Failure stops execution instead of continuing in the home directory. Use supplied relative attachment and output paths directly without root/home scans or global searches. For other mounts, use the Host-resolved terminal path instead of a VFS absolute path. Respect actual permissions." },
     "enabledByDefault": true,
     "category": "System",
     "tools": [

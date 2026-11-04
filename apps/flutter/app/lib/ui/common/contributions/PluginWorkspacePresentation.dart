@@ -18,6 +18,8 @@ class PluginWorkspacePresentation {
     required this.input,
     required this.hostState,
     required this.icon,
+    required this.tabId,
+    required this.title,
   });
 
   final GeneratedCoreProxyClients clients;
@@ -27,9 +29,18 @@ class PluginWorkspacePresentation {
   final Map<String, Object?> hostState;
   final String? icon;
 
-  /// Reuses one tab per authenticated owner and route in either workspace pane.
-  String get identity =>
-      jsonEncode([route.containerPackageName, route.routeId]);
+  /// Optional instance identity scoped to the authenticated plugin and route.
+  final String? tabId;
+
+  /// Uses the requested tab title or the localized route title.
+  final String title;
+
+  /// Reuses the same route instance across both workspace panes.
+  String get identity => jsonEncode([
+    route.containerPackageName,
+    route.routeId,
+    if (tabId != null) tabId,
+  ]);
 
   /// Uses ordinary page navigation; the registered surface determines placement.
   /// Returns null for routes that should continue through the application router.
@@ -52,7 +63,21 @@ class PluginWorkspacePresentation {
         'Host state cannot replace plugin presentation input.',
       );
     }
-    final input = jsonDecode(jsonEncode(args));
+    final input = Map<String, Object?>.from(
+      jsonDecode(jsonEncode(args)) as Map,
+    );
+    // These navigation fields belong to the workspace; all remaining input is opaque.
+    String? takeTabText(String key) {
+      final value = input.remove(key);
+      if (value == null) return null;
+      if (value is! String || value.trim().isEmpty) {
+        throw ArgumentError.value(value, key, 'Expected nonblank text.');
+      }
+      return value;
+    }
+
+    final tabId = takeTabText('workspaceTabId');
+    final tabTitle = takeTabText('workspaceTabTitle');
     final state = Map<String, Object?>.unmodifiable(hostState);
     final manager = clients.application.packageManager();
     final declarations = await manager.getToolPkgNavigationEntries(
@@ -99,6 +124,8 @@ class PluginWorkspacePresentation {
       input: input,
       hostState: state,
       icon: entries.single.icon,
+      tabId: tabId,
+      title: tabTitle ?? matches.single.title,
     );
   }
 }

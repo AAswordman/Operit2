@@ -25,7 +25,7 @@ struct FailingSession(Arc<AtomicUsize>);
 
 impl RuntimeStorageWriteHost for FailingWriteHost {
     fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        assert!(path.starts_with("runtime/temp/clean_on_exit/chat_attachment_uploads/"));
+        assert!(path.contains("/.operit/attachments/"));
         Ok(Box::new(FailingSession(self.0.clone())))
     }
 }
@@ -98,14 +98,19 @@ async fn streamed_attachment_worker() {
     let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host));
     let target =
         LocalCoreProxy::generatedTargetForSchema("services.attachmentTransferManager").unwrap();
-    let size = 143_388_128i64;
+    let chat_id = {
+        let manager = operit_store::repository::ChatHistoryManager::ChatHistoryManager::default().unwrap();
+        let draft = manager.newChatDraft("Streamed attachments".into(), Default::default(), None, None).unwrap();
+        manager.commitChatDraft(draft, None).unwrap().id
+    };
+    let size = 3_388_128i64;
     let id = transfer
         .beginAttachmentUpload("大文件.apk".into(), Some(size))
         .unwrap();
-    let request = CorePushRequest::new("large-attachment", target, "writeAttachmentUpload")
+    let request = CorePushRequest::new("large-attachment", target, "writeSelectedAttachment")
         .withArgs(
             toCoreValue(
-                json!({"uploadId": id, "fileName": "大文件.apk", "expectedByteLength": size}),
+                json!({"chatId": chat_id, "uploadId": id, "fileName": "大文件.apk", "expectedByteLength": size}),
             )
             .unwrap(),
         );
@@ -124,31 +129,30 @@ async fn streamed_attachment_worker() {
             sent += count;
             index += 1;
         }
+        stream.send(toCoreValue(Vec::<u8>::new()).unwrap()).await.unwrap();
         stream.close().await.unwrap();
     })
     .await
     .expect("bounded upload must complete");
     let attachment = transfer
-        .completeAttachmentUpload(id.clone(), "大文件.apk".into(), Some(size))
+        .completeSelectedAttachment(chat_id.clone(), id.clone(), "大文件.apk".into(), Some(size))
         .unwrap();
     assert_eq!(attachment.fileSize, size);
     assert_eq!(attachment.fileName, "大文件.apk");
     assert!(
         std::path::Path::new(&attachment.filePath)
-            .starts_with(root.join("runtime/temp/clean_on_exit/chat_attachment_uploads"))
+            .starts_with(root.join("runtime/data/chat_outputs"))
     );
     let mut file = std::fs::File::open(&attachment.filePath).unwrap();
     let mut buffer = [0u8; 31];
-    for index in [0usize, 1, 70, size as usize / CHUNK] {
+    for index in [0usize, 1, size as usize / CHUNK] {
         file.seek(SeekFrom::Start((index * CHUNK) as u64)).unwrap();
         file.read_exact(&mut buffer).unwrap();
         assert_eq!(buffer, [(index % 251) as u8; 31]);
     }
     drop(file);
-    transfer
-        .discardAttachmentUpload(id, "大文件.apk".into())
-        .unwrap();
-    assert!(!std::path::Path::new(&attachment.filePath).exists());
+    assert!(std::path::Path::new(&attachment.filePath).exists());
+    assert!(attachment.vfsPath.as_deref().unwrap().starts_with("/operitapp/outputs/"));
 
     // Empty and unknown-size documents use the same writer, without Base64 or fallback routes.
     for expected in [Some(0), None] {
@@ -156,39 +160,90 @@ async fn streamed_attachment_worker() {
             .beginAttachmentUpload("empty".into(), expected)
             .unwrap();
         let (mut sender, input) = ReverseStream::<Vec<u8>>::channel();
+        sender.send(Vec::new()).await.unwrap();
         sender.close();
         transfer
-            .writeAttachmentUpload(id.clone(), "empty".into(), expected, input)
+            .writeSelectedAttachment(chat_id.clone(), id.clone(), "empty".into(), expected, input)
             .await
             .unwrap();
         assert_eq!(
             transfer
-                .completeAttachmentUpload(id.clone(), "empty".into(), Some(0))
+                .completeSelectedAttachment(chat_id.clone(), id.clone(), "empty".into(), Some(0))
                 .unwrap()
                 .fileSize,
             0
         );
-        transfer
-            .discardAttachmentUpload(id, "empty".into())
-            .unwrap();
     }
     let id = transfer
         .beginAttachmentUpload("unknown".into(), None)
         .unwrap();
     let (mut sender, input) = ReverseStream::<Vec<u8>>::channel();
-    sender.send(vec![0, 1, 255]).await.unwrap();
-    sender.close();
-    transfer
-        .writeAttachmentUpload(id.clone(), "unknown".into(), None, input)
-        .await
-        .unwrap();
+    let ((), written) = tokio::join!(async {
+        sender.send(vec![0, 1, 255]).await.unwrap();
+        sender.send(Vec::new()).await.unwrap();
+        sender.close();
+    }, transfer.writeSelectedAttachment(chat_id.clone(), id.clone(), "unknown".into(), None, input));
+    written.unwrap();
     let unknown = transfer
-        .completeAttachmentUpload(id.clone(), "unknown".into(), Some(3))
+        .completeSelectedAttachment(chat_id.clone(), id.clone(), "unknown".into(), Some(3))
         .unwrap();
     assert_eq!(std::fs::read(&unknown.filePath).unwrap(), [0, 1, 255]);
-    transfer
-        .discardAttachmentUpload(id, "unknown".into())
+
+    // A client cannot bypass the chat policy by sending a huge file to the small-file writer.
+    let (sender, input) = ReverseStream::<Vec<u8>>::channel();
+    let id = transfer
+        .beginAttachmentUpload("huge.bin".into(), Some(8 * 1024 * 1024 * 1024))
         .unwrap();
+    assert!(transfer
+        .writeSelectedAttachment(chat_id.clone(), id, "huge.bin".into(), Some(8 * 1024 * 1024 * 1024), input)
+        .await
+        .is_err());
+    drop(sender);
+
+    // Closing a new source input after cancellation must never publish a partial file.
+    let id = transfer
+        .beginAttachmentUpload("partial.bin".into(), None)
+        .unwrap();
+    let (mut sender, input) = ReverseStream::<Vec<u8>>::channel();
+    sender.send(vec![1, 2, 3]).await.unwrap();
+    sender.close();
+    assert!(transfer
+        .writeAttachmentSource(id.clone(), "partial.bin".into(), None, 1024, input)
+        .await
+        .is_err());
+    assert!(transfer
+        .completeAttachmentSource(id, "partial.bin".into(), None)
+        .is_err());
+
+    // An explicit completion marker makes a bounded source durable without Space-syncing it.
+    let id = transfer
+        .beginAttachmentUpload("source.bin".into(), Some(3))
+        .unwrap();
+    let (mut sender, input) = ReverseStream::<Vec<u8>>::channel();
+    let ((), stored) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            async {
+                sender.send(vec![1, 2, 3]).await.unwrap();
+                sender.send(Vec::new()).await.unwrap();
+                sender.close();
+            },
+            transfer.writeAttachmentSource(id.clone(), "source.bin".into(), Some(3), 1024, input),
+        )
+    })
+    .await
+    .expect("source producer and consumer must progress with bounded backpressure");
+    stored.unwrap();
+    let reference: serde_json::Value = serde_json::from_str(
+        &transfer
+            .completeAttachmentSource(id, "source.bin".into(), Some(3))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(reference["fileSize"], 3);
+    assert!(reference["path"]
+        .as_str()
+        .unwrap()
+        .starts_with("/operitapp/data/data/attachment_sources/"));
 
     // Incomplete, oversized and overlong writes must discard the private Host session.
     for (expected, content) in [
@@ -204,16 +259,15 @@ async fn streamed_attachment_worker() {
         sender.close();
         assert!(
             transfer
-                .writeAttachmentUpload(id.clone(), "bad".into(), expected, input)
+                .writeSelectedAttachment(chat_id.clone(), id.clone(), "bad".into(), expected, input)
                 .await
                 .is_err()
         );
         assert!(
             transfer
-                .completeAttachmentUpload(id.clone(), "bad".into(), None)
+                .completeSelectedAttachment(chat_id.clone(), id.clone(), "bad".into(), None)
                 .is_err()
         );
-        transfer.discardAttachmentUpload(id, "bad".into()).unwrap();
     }
     assert!(
         transfer
@@ -241,22 +295,23 @@ async fn streamed_attachment_worker() {
     sender.send(vec![0, 1, 255]).await.unwrap();
     sender.close();
     let error = failing
-        .writeAttachmentUpload(id, "disk-full".into(), Some(3), input)
+        .writeSelectedAttachment(chat_id.clone(), id, "disk-full".into(), Some(3), input)
         .await
         .unwrap_err();
     assert!(error.contains("simulated disk full"));
     assert_eq!(discarded.load(Ordering::SeqCst), 1);
 
-    // Native write-session staging files must also have been removed on every failure.
-    let stagingLeftovers = std::fs::read_dir(root.join("runtime/temp/clean_on_exit/chat_attachment_uploads"))
-        .unwrap()
-        .filter(|entry| {
-            entry
-                .as_ref()
-                .map(|entry| entry.file_name() != ".nomedia")
-                .unwrap_or(false)
-        })
-        .count();
-    assert_eq!(stagingLeftovers, 0);
+    // The final attachment directory must not contain uncommitted Host write-session files.
+    fn assert_no_partial_files(directory: &std::path::Path) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                assert_no_partial_files(&entry.path());
+            } else {
+                assert!(!entry.file_name().to_string_lossy().contains(".part"));
+            }
+        }
+    }
+    assert_no_partial_files(&root.join("runtime/data/chat_outputs"));
     // The parent removes the directory after this process releases all application singletons.
 }

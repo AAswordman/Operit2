@@ -85,7 +85,11 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
       if (matches.isEmpty) return const SizedBox.shrink();
       final entry = matches.single;
       return ToolPkgUiLauncherScreen(
-        key: ValueKey((requested.clients, entry.mountIdentity)),
+        key: ValueKey((
+          requested.clients,
+          entry.mountIdentity,
+          requested.identity,
+        )),
         clients: requested.clients,
         plugin: entry.plugin,
         initialRouteId: entry.route.routeId,

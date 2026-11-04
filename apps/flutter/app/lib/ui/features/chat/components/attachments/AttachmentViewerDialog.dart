@@ -8,6 +8,7 @@ import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 
+import '../../../packages/screens/ComposeDslImageSource.dart';
 import '../style/input/common/ChatAttachmentImagePreview.dart';
 import '../workspace/file_preview/WorkspaceMediaPreviewWidgets.dart';
 
@@ -24,6 +25,8 @@ class ChatAttachment {
     this.size = 0,
     this.content = '',
     this.mediaPoolType,
+    this.path,
+    this.nodeId,
   });
 
   final String id;
@@ -32,6 +35,25 @@ class ChatAttachment {
   final int size;
   final String content;
   final String? mediaPoolType;
+  final String? path;
+  final String? nodeId;
+
+  /// Media pool IDs are not file locations; retained source metadata is.
+  String? get fileLocation {
+    final source = path ?? (mediaPoolType == null ? id : null);
+    if (source == null || source.isEmpty) return null;
+    final vfs = composeDslVfsImagePath(source);
+    if (vfs != null) {
+      return nodeId != null && vfs.startsWith('/') ? '$nodeId:$vfs' : vfs;
+    }
+    if (path != null ||
+        source.startsWith('/') ||
+        source.startsWith('file:') ||
+        RegExp(r'^[A-Za-z]:[\/]').hasMatch(source)) {
+      return source;
+    }
+    return null;
+  }
 }
 
 /// Full-screen attachment overlay with zoomable images or a centered preview card.
@@ -55,15 +77,13 @@ class AttachmentViewerDialog extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final isImage = attachment.mimeType.startsWith('image/') ||
+    final isImage =
+        attachment.mimeType.startsWith('image/') ||
         attachment.mediaPoolType == 'image';
     final isTextLike = isTextLikeMimeType(attachment.mimeType);
 
     final Widget viewerContent = isImage
-        ? _ImageLightboxViewer(
-            attachment: attachment,
-            onDismiss: onDismiss,
-          )
+        ? _ImageLightboxViewer(attachment: attachment, onDismiss: onDismiss)
         : _GeneralAttachmentViewer(
             attachment: attachment,
             isTextLike: isTextLike,
@@ -85,10 +105,7 @@ class AttachmentViewerDialog extends StatelessWidget {
               onInvoke: (_) => onDismiss(),
             ),
           },
-          child: Focus(
-            autofocus: true,
-            child: viewerContent,
-          ),
+          child: Focus(autofocus: true, child: viewerContent),
         ),
       ),
     );
@@ -121,14 +138,15 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-    )..addListener(() {
-        if (_zoomAnimation != null) {
-          _transformController.value = _zoomAnimation!.value;
-        }
-      });
+    _animController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 240),
+        )..addListener(() {
+          if (_zoomAnimation != null) {
+            _transformController.value = _zoomAnimation!.value;
+          }
+        });
     _transformController.addListener(_onTransformChanged);
   }
 
@@ -164,25 +182,22 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
         ..scale(2.5);
     }
 
-    _zoomAnimation = Matrix4Tween(
-      begin: _transformController.value,
-      end: endMatrix,
-    ).animate(CurvedAnimation(
-      parent: _animController,
-      curve: Curves.easeOutCubic,
-    ));
+    _zoomAnimation =
+        Matrix4Tween(begin: _transformController.value, end: endMatrix).animate(
+          CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+        );
 
     _animController.forward(from: 0);
   }
 
   void _resetZoom() {
-    _zoomAnimation = Matrix4Tween(
-      begin: _transformController.value,
-      end: Matrix4.identity(),
-    ).animate(CurvedAnimation(
-      parent: _animController,
-      curve: Curves.easeOutCubic,
-    ));
+    _zoomAnimation =
+        Matrix4Tween(
+          begin: _transformController.value,
+          end: Matrix4.identity(),
+        ).animate(
+          CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+        );
     _animController.forward(from: 0);
   }
 
@@ -200,9 +215,7 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
           child: GestureDetector(
             onTap: widget.onDismiss,
             behavior: HitTestBehavior.opaque,
-            child: ColoredBox(
-              color: Colors.black.withValues(alpha: 0.84),
-            ),
+            child: ColoredBox(color: Colors.black.withValues(alpha: 0.84)),
           ),
         ),
 
@@ -210,12 +223,7 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
         Positioned.fill(
           child: Center(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                topPadding + 64,
-                20,
-                28,
-              ),
+              padding: EdgeInsets.fromLTRB(20, topPadding + 64, 20, 28),
               child: GestureDetector(
                 onTap: () {}, // Prevent tap on image from closing lightbox
                 onDoubleTapDown: _handleDoubleTapDown,
@@ -247,6 +255,7 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
                         attachmentPath: widget.attachment.id,
                         fileName: widget.attachment.filename,
                         mediaPoolType: widget.attachment.mediaPoolType,
+                        sourceNodeId: widget.attachment.nodeId,
                         fit: BoxFit.contain,
                       ),
                     ),
@@ -266,53 +275,58 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
               // Title badge
-              Tooltip(
-                message: widget.attachment.filename,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18),
-                      width: 0.8,
+              Flexible(
+                child: Tooltip(
+                  message:
+                      widget.attachment.fileLocation ??
+                      widget.attachment.filename,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 7,
                     ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      const Icon(
-                        Icons.image_outlined,
-                        size: 15,
-                        color: Colors.white70,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        width: 0.8,
                       ),
-                      const SizedBox(width: 8),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 240),
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: 0.2,
-                          ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        const Icon(
+                          Icons.image_outlined,
+                          size: 15,
+                          color: Colors.white70,
                         ),
-                      ),
-                      if (widget.attachment.size > 0) ...<Widget>[
                         const SizedBox(width: 8),
-                        Text(
-                          _formatFileSize(widget.attachment.size),
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.6),
-                            fontSize: 11,
+                        Flexible(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.2,
+                            ),
                           ),
                         ),
+                        if (widget.attachment.size > 0) ...<Widget>[
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatFileSize(widget.attachment.size),
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.6),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -321,6 +335,17 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
+                  if (widget.attachment.fileLocation != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: _FrostedCircleButton(
+                        icon: Icons.copy_rounded,
+                        tooltip: '复制文件位置\n${widget.attachment.fileLocation}',
+                        onTap: () => Clipboard.setData(
+                          ClipboardData(text: widget.attachment.fileLocation!),
+                        ),
+                      ),
+                    ),
                   if (_isZoomed)
                     Padding(
                       padding: const EdgeInsets.only(right: 10),
@@ -397,11 +422,7 @@ class _FrostedCircleButtonState extends State<_FrostedCircleButton> {
                 ),
               ],
             ),
-            child: Icon(
-              widget.icon,
-              color: Colors.white,
-              size: 19,
-            ),
+            child: Icon(widget.icon, color: Colors.white, size: 19),
           ),
         ),
       ),
@@ -436,19 +457,14 @@ class _GeneralAttachmentViewer extends StatelessWidget {
           child: GestureDetector(
             onTap: onDismiss,
             behavior: HitTestBehavior.opaque,
-            child: ColoredBox(
-              color: Colors.black.withValues(alpha: 0.38),
-            ),
+            child: ColoredBox(color: Colors.black.withValues(alpha: 0.38)),
           ),
         ),
 
         // Centered modal card
         Center(
           child: Container(
-            constraints: const BoxConstraints(
-              maxWidth: 680,
-              maxHeight: 540,
-            ),
+            constraints: const BoxConstraints(maxWidth: 680, maxHeight: 540),
             margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
             decoration: BoxDecoration(
               color: colorScheme.surface,
@@ -480,8 +496,9 @@ class _GeneralAttachmentViewer extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.all(7),
                           decoration: BoxDecoration(
-                            color: colorScheme.primaryContainer
-                                .withValues(alpha: 0.7),
+                            color: colorScheme.primaryContainer.withValues(
+                              alpha: 0.7,
+                            ),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(
@@ -548,6 +565,29 @@ class _GeneralAttachmentViewer extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (attachment.fileLocation != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 12, 8),
+                      child: Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: SelectableText(
+                              '保存位置：${attachment.fileLocation}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '复制文件位置',
+                            icon: const Icon(Icons.copy_rounded, size: 18),
+                            onPressed: () => Clipboard.setData(
+                              ClipboardData(text: attachment.fileLocation!),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   Divider(
                     height: 1,
                     thickness: 1,
@@ -676,7 +716,10 @@ Future<Uint8List> _readAttachmentMediaBytes(ChatAttachment attachment) async {
         );
     return base64Decode(data.base64);
   }
-  return readChatAttachmentFileBytes(attachment.id);
+  return readChatAttachmentFileBytes(
+    attachment.path ?? attachment.id,
+    sourceNodeId: attachment.nodeId,
+  );
 }
 
 bool isTextLikeMimeType(String mimeType) {

@@ -35,6 +35,21 @@ class AndroidDocumentFileSystem(
                 }
                 Base64.encodeToString(bytes, Base64.NO_WRAP)
             }
+            "readFileBytesRange" -> {
+                val offset = request.getLong("offset")
+                val length = request.getLong("length")
+                require(offset >= 0 && length in 0..(1024 * 1024).toLong()) { "Invalid document read range" }
+                val bytes = node(request.getString("path")).input().use { input ->
+                    var remaining = offset
+                    while (remaining > 0) {
+                        val skipped = input.skip(remaining)
+                        if (skipped > 0) remaining -= skipped
+                        else if (input.read() < 0) break else remaining--
+                    }
+                    if (remaining > 0) ByteArray(0) else readBounded(input, length)
+                }
+                Base64.encodeToString(bytes, Base64.NO_WRAP)
+            }
             "writeFileBytes", "writeFile" -> {
                 val content = Base64.decode(request.getString("content"), Base64.DEFAULT)
                 node(request.getString("path")).output(request.optBoolean("append")).use { it.write(content) }

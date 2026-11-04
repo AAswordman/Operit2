@@ -49,7 +49,7 @@ class WorkspaceSession extends ChangeNotifier {
   void openPluginPage(PluginWorkspacePresentation presentation) {
     final tab = WorkspaceTab(
       kind: WorkspaceTabKind.plugin,
-      title: presentation.route.title,
+      title: presentation.title,
       icon: presentation.icon == null
           ? Icons.extension_outlined
           : MaterialIconNameResolver.resolve(presentation.icon!),

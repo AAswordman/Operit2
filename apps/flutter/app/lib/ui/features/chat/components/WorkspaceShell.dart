@@ -26,6 +26,7 @@ class WorkspaceShell extends StatelessWidget {
     required this.currentChatId,
     required this.hasBoundWorkspace,
     required this.workspacePath,
+    this.fileDirectory,
     required this.chatCore,
     required this.onListWorkspaceFiles,
     required this.onListWorkspaceBindingDirectories,
@@ -44,6 +45,7 @@ class WorkspaceShell extends StatelessWidget {
   final String? currentChatId;
   final bool hasBoundWorkspace;
   final String? workspacePath;
+  final String? fileDirectory;
   final GeneratedChatRuntimeHolderMainCoreProxy chatCore;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
@@ -92,6 +94,7 @@ class WorkspaceShell extends StatelessWidget {
           currentChatId: currentChatId,
           hasBoundWorkspace: hasBoundWorkspace,
           workspacePath: workspacePath,
+          fileDirectory: fileDirectory,
           chatCore: chatCore,
           onListWorkspaceFiles: onListWorkspaceFiles,
           onListWorkspaceBindingDirectories: onListWorkspaceBindingDirectories,

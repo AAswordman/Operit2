@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../../packages/screens/ComposeDslImageSource.dart';
 
 /// Renders a chat attachment image from client-readable attachment bytes.
 class ChatAttachmentImagePreview extends StatefulWidget {
@@ -17,12 +18,14 @@ class ChatAttachmentImagePreview extends StatefulWidget {
     required this.attachmentPath,
     required this.fileName,
     this.mediaPoolType,
+    this.sourceNodeId,
     this.fit = BoxFit.cover,
   });
 
   final String attachmentPath;
   final String fileName;
   final String? mediaPoolType;
+  final String? sourceNodeId;
   final BoxFit fit;
 
   /// Creates mutable state for the attachment byte load.
@@ -42,6 +45,7 @@ class _ChatAttachmentImagePreviewState
     _imageBytesFuture = _readAttachmentImageBytes(
       widget.attachmentPath,
       widget.mediaPoolType,
+      widget.sourceNodeId,
     );
   }
 
@@ -50,10 +54,12 @@ class _ChatAttachmentImagePreviewState
   void didUpdateWidget(covariant ChatAttachmentImagePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.attachmentPath != widget.attachmentPath ||
-        oldWidget.mediaPoolType != widget.mediaPoolType) {
+        oldWidget.mediaPoolType != widget.mediaPoolType ||
+        oldWidget.sourceNodeId != widget.sourceNodeId) {
       _imageBytesFuture = _readAttachmentImageBytes(
         widget.attachmentPath,
         widget.mediaPoolType,
+        widget.sourceNodeId,
       );
     }
   }
@@ -107,6 +113,7 @@ const GeneratedCoreProxyClients _mediaPoolClients = GeneratedCoreProxyClients(
 Future<Uint8List> _readAttachmentImageBytes(
   String attachmentPath,
   String? mediaPoolType,
+  String? sourceNodeId,
 ) async {
   if (mediaPoolType != null) {
     final mediaData = await _mediaPoolClients
@@ -114,23 +121,29 @@ Future<Uint8List> _readAttachmentImageBytes(
         .getMediaPoolData(mediaType: mediaPoolType, id: attachmentPath);
     return base64Decode(mediaData.base64);
   }
-  return readChatAttachmentFileBytes(attachmentPath);
+  return readChatAttachmentFileBytes(
+    attachmentPath,
+    sourceNodeId: sourceNodeId,
+  );
 }
 
-/// Resolves a persisted VFS attachment through the runtime's actual storage root.
-Future<Uint8List> readChatAttachmentFileBytes(String attachmentPath) async {
-  attachmentPath = _localPathForAttachment(attachmentPath);
-  for (final prefix in const [
-    '/operitapp/data/data/chat_attachments/',
-    '/app/data/data/chat_attachments/',
-  ]) {
-    if (attachmentPath.startsWith(prefix)) {
-      final root = await _mediaPoolClients.application.chatAttachmentsPath();
-      attachmentPath = '$root/${attachmentPath.substring(prefix.length)}';
-      break;
+/// Uses the existing VFS binary reader for both current and historical locations.
+Future<Uint8List> readChatAttachmentFileBytes(
+  String attachmentPath, {
+  String? sourceNodeId,
+  GeneratedCoreProxyClients? clients,
+}) async {
+  final path = composeDslVfsImagePath(attachmentPath);
+  if (path != null) {
+    final owner = clients ?? _mediaPoolClients;
+    try {
+      return await readComposeDslVfsBytes(owner, path);
+    } catch (_) {
+      if (sourceNodeId == null || !path.startsWith('/')) rethrow;
+      return readComposeDslVfsBytes(owner, '$sourceNodeId:$path');
     }
   }
-  return XFile(attachmentPath).readAsBytes();
+  return XFile(_localPathForAttachment(attachmentPath)).readAsBytes();
 }
 
 /// Converts a file URI attachment id into the local path used by XFile.

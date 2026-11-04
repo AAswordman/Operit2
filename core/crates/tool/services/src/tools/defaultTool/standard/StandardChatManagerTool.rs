@@ -1285,6 +1285,7 @@ fn parseSendAttachments(tool: &AITool) -> Result<Vec<AttachmentInfo>, String> {
             let records: Vec<ChatSendAttachment> = serde_json::from_str(&value)
                 .map_err(|error| format!("attachments must be a complete attachment array: {error}"))?;
             Ok(records.into_iter().map(|record| AttachmentInfo {
+                vfsPath: record.vfsPath.as_value().cloned(),
                 filePath: record.filePath, nodeId: record.nodeId.as_value().cloned(), fileName: record.fileName,
                 mimeType: record.mimeType, fileSize: record.fileSize, content: record.content,
             }).collect())

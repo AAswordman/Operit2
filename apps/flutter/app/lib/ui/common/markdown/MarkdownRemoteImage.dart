@@ -11,6 +11,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import '../interactions/MessagePressShield.dart';
 import '../../features/packages/screens/ComposeDslImageSource.dart';
 import 'MarkdownImagePreview.dart';
+import 'MarkdownFileScope.dart';
 
 class MarkdownRemoteImage extends StatelessWidget {
   /// Creates a Markdown image backed by the runtime file or HTTP service.
@@ -31,10 +32,6 @@ class MarkdownRemoteImage extends StatelessWidget {
   final bool enablePreview;
   final bool decodeAtFullResolution;
 
-  /// Reads virtual image bytes through this renderer's owning Core connection.
-  Future<Uint8List> _readVfsBytes(String path) =>
-      readComposeDslVfsBytes(clients, path);
-
   /// Builds the image and its link interaction within the layout constraints.
   @override
   Widget build(BuildContext context) {
@@ -51,7 +48,19 @@ class MarkdownRemoteImage extends StatelessWidget {
         final cacheHeight = !decodeAtFullResolution && cacheWidth == null
             ? _markdownImageCacheExtent(context, constraints.maxHeight)
             : null;
-        final trimmed = url.trim();
+        final scope = MarkdownFileScope.maybeOf(context);
+        final owner = scope?.clients ?? clients;
+        final trimmed = scope?.resolve(url) ?? url.trim();
+        Future<Uint8List> readBytes(String path) async {
+          try {
+            return await readComposeDslVfsBytes(owner, path);
+          } catch (_) {
+            final source = scope?.sourcePath(path);
+            if (source == null) rethrow;
+            return readComposeDslVfsBytes(owner, source);
+          }
+        }
+
         final isDataImage = trimmed.toLowerCase().startsWith('data:image/');
         final dataBytes = markdownDataImageBytes(trimmed);
         final vfsPath = composeDslVfsImagePath(trimmed);
@@ -74,8 +83,8 @@ class MarkdownRemoteImage extends StatelessWidget {
               cacheHeight,
               ComposeDslVfsImage(
                 path: vfsPath,
-                owner: clients.bridge,
-                readBytes: _readVfsBytes,
+                owner: owner.bridge,
+                readBytes: readBytes,
               ),
             ),
             fit: fit,
@@ -84,7 +93,7 @@ class MarkdownRemoteImage extends StatelessWidget {
           );
         } else {
           image = _RuntimeImage(
-            clients: clients,
+            clients: owner,
             url: trimmed,
             alt: alt,
             fit: fit,
@@ -102,16 +111,32 @@ class MarkdownRemoteImage extends StatelessWidget {
             onTap: () => showDialog<void>(
               context: context,
               useSafeArea: false,
-              builder: (_) => MarkdownImagePreview(
-                alt: alt,
-                image: MarkdownRemoteImage(
-                  url: url,
-                  alt: alt,
-                  clients: clients,
-                  enablePreview: false,
-                  decodeAtFullResolution: true,
-                ),
-              ),
+              builder: (_) => scope == null
+                  ? MarkdownImagePreview(
+                      alt: alt,
+                      image: MarkdownRemoteImage(
+                        url: trimmed,
+                        alt: alt,
+                        clients: owner,
+                        enablePreview: false,
+                        decodeAtFullResolution: true,
+                      ),
+                    )
+                  : MarkdownFileScope(
+                      basePath: scope.basePath,
+                      nodeId: scope.nodeId,
+                      clients: owner,
+                      child: MarkdownImagePreview(
+                        alt: alt,
+                        image: MarkdownRemoteImage(
+                          url: trimmed,
+                          alt: alt,
+                          clients: owner,
+                          enablePreview: false,
+                          decodeAtFullResolution: true,
+                        ),
+                      ),
+                    ),
             ),
             child: image,
           ),

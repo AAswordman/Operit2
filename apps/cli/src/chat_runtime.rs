@@ -1,9 +1,6 @@
-use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
 
 use crate::core_proxy::{local_cli_core, CliCore};
-use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 
@@ -739,59 +736,6 @@ async fn send_chat_message_with_core_result(
         .map_err(|error| error.to_string())?;
     serde_json::from_str(&output.stdout)
         .map_err(|error| format!("invalid Core chat receipt: {error}"))
-}
-
-/// Builds one attachment descriptor from a local filesystem path.
-pub(crate) fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("attachment metadata failed: {path}: {error}"))?;
-    let fileName = Path::new(path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| format!("attachment file name invalid: {path}"))?
-        .to_string();
-    let mimeType = guess_mime_type(path).to_string();
-    let content = attachment_text_content(path, &mimeType)?;
-    Ok(AttachmentInfo {
-        nodeId: operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::localNodeId(),
-        filePath: path.to_string(),
-        fileName,
-        mimeType,
-        fileSize: metadata.len() as i64,
-        content,
-    })
-}
-
-/// Reads text attachment content for MIME types carried inline by the CLI.
-fn attachment_text_content(path: &str, mimeType: &str) -> Result<String, String> {
-    match mimeType {
-        "text/plain" => fs::read_to_string(path)
-            .map_err(|error| format!("attachment text read failed: {path}: {error}")),
-        _ => Ok(String::new()),
-    }
-}
-
-/// Returns the MIME type associated with a local attachment path.
-pub(crate) fn guess_mime_type(path: &str) -> &'static str {
-    match Path::new(path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("txt") | Some("md") | Some("rs") | Some("kt") | Some("json") | Some("toml") => {
-            "text/plain"
-        }
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("bmp") => "image/bmp",
-        Some("mp3") => "audio/mpeg",
-        Some("wav") => "audio/wav",
-        Some("mp4") => "video/mp4",
-        _ => "application/octet-stream",
-    }
 }
 
 fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {

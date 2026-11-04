@@ -5,6 +5,9 @@ import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/logging/ClientLogger.dart';
+import '../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core;
+import '../../features/packages/screens/ComposeDslImageSource.dart';
 
 /// Opens a Markdown link. A caller-supplied handler replaces the external opener.
 void activateMarkdownLink(String url, void Function(String url)? onLinkClick) {
@@ -25,10 +28,7 @@ void activateMarkdownLink(String url, void Function(String url)? onLinkClick) {
 
 Future<void> _launchMarkdownLink(Uri uri) async {
   try {
-    final launched = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched) {
       ClientLogger.w('Cannot open link: $uri', tag: 'MarkdownLink');
     }
@@ -40,4 +40,38 @@ Future<void> _launchMarkdownLink(Uri uri) async {
       stackTrace: stackTrace,
     );
   }
+}
+
+/// Uses the same file service for downloaded outputs as the chat's renderer.
+void openMarkdownFileLink(String url, GeneratedCoreProxyClients? clients) {
+  final path = composeDslVfsImagePath(url);
+  if (path == null || clients == null) {
+    activateMarkdownLink(url, null);
+    return;
+  }
+  unawaited(() async {
+    try {
+      final result = await clients.application.aiToolHandler().executeTool(
+        tool: core.CoreOperitToolsToolExecutionManagerAiTool(
+          name: 'open_file',
+          parameters: [
+            core.CoreOperitToolsToolExecutionManagerToolParameter(
+              name: 'path',
+              value: path,
+            ),
+          ],
+        ),
+      );
+      if (!result.success) {
+        throw StateError(result.error ?? 'File could not be opened');
+      }
+    } catch (error, stackTrace) {
+      ClientLogger.w(
+        'Cannot open output: $path',
+        tag: 'MarkdownLink',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }());
 }

@@ -137,6 +137,7 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
   private var preparingFileSave = false
 
   public static func register(with registrar: FlutterPluginRegistrar) {
+    _ = IOSFolderAccessStore.shared
     let instance = FileSelectorPlugin(
       viewPresenterProvider: DefaultViewPresenterProvider(registrar: registrar))
     FileSelectorApiSetup.setUp(binaryMessenger: registrar.messenger(), api: instance)
@@ -150,12 +151,12 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
 
   func openFile(config: FileSelectorConfig, completion: @escaping (Result<[String], Error>) -> Void)
   {
-    let completionBridge = PickerCompletionBridge(completion: completion, owner: self)
+    let completionBridge = PickerCompletionBridge(completion: completion, owner: self, scoped: true)
     let documentPicker =
       documentPickerViewControllerOverride
       ?? UIDocumentPickerViewController(
         documentTypes: config.utis,
-        in: .import)
+        in: .open)
     documentPicker.allowsMultipleSelection = config.allowMultiSelection
     documentPicker.delegate = completionBridge
 
@@ -395,6 +396,16 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
 final class IOSFolderAccessStore {
   static let shared = IOSFolderAccessStore()
   private var activeURLs: [String: URL] = [:]
+  private let bookmarkKey = "operit.selectedResourceBookmarks"
+
+  private init() {
+    let saved = UserDefaults.standard.dictionary(forKey: bookmarkKey) as? [String: Data] ?? [:]
+    for (_, data) in saved {
+      var stale = false
+      if let url = try? URL(resolvingBookmarkData: data, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale),
+         url.startAccessingSecurityScopedResource() { activeURLs[url.standardizedFileURL.path] = url }
+    }
+  }
 
   func rememberSelection(_ inputURL: URL) throws -> URL {
     let url = inputURL.standardizedFileURL
@@ -408,6 +419,10 @@ final class IOSFolderAccessStore {
       )
     }
     do {
+      let data = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+      var saved = UserDefaults.standard.dictionary(forKey: bookmarkKey) as? [String: Data] ?? [:]
+      saved[path] = data
+      UserDefaults.standard.set(saved, forKey: bookmarkKey)
       activeURLs[path] = url
       return url
     } catch {

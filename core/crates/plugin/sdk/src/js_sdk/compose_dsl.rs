@@ -3610,6 +3610,9 @@ pub trait ComposeDslContextMethods: Send + Sync {
     /// Writes one runtime environment value for subsequent screen operations.
     fn setEnv(&self, key: String, value: String) -> ComposeDslContextMethodsSetEnvReturn;
     /// Requests navigation using optional destination arguments; workspace routes open in the side workspace.
+    /// Workspace args may include workspaceTabId to open/focus a distinct instance within this plugin route,
+    /// and workspaceTabTitle to name its tab. Repeated navigation with the same ID reuses either workspace pane.
+    /// These reserved fields are removed from the screen's input; omitting the ID reuses one tab per route.
     /// May be called from callbacks and composition-owned effects without returning a navigation object.
     fn navigate(
         &self,

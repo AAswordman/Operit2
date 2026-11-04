@@ -80,8 +80,9 @@ class _BubbleUserMessageComposableState
       snapshot,
       isUser: true,
     );
-    final effectiveBubbleImageStyle =
-        isHiddenPlaceholder ? null : widget.bubbleImageStyle;
+    final effectiveBubbleImageStyle = isHiddenPlaceholder
+        ? null
+        : widget.bubbleImageStyle;
     final bubbleShape = widget.bubbleRoundedCornersEnabled
         ? const BorderRadius.all(Radius.circular(16))
         : BorderRadius.zero;
@@ -229,21 +230,23 @@ class _UserBubbleWithAttachmentsState
     if (widget.textContent.isEmpty) {
       return 44.0;
     }
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: widget.textContent,
-        style: Theme.of(context)
-            .textTheme
-            .bodyMedium
-            ?.copyWith(color: widget.textColor),
-      ),
-      textDirection: Directionality.of(context),
-    )..layout(
-        maxWidth: (widget.maxBubbleWidth - widget.contentPadding.horizontal)
-            .clamp(0.0, double.infinity),
-      );
-    return (textPainter.width + widget.contentPadding.horizontal)
-        .clamp(44.0, widget.maxBubbleWidth);
+    final textPainter =
+        TextPainter(
+          text: TextSpan(
+            text: widget.textContent,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: widget.textColor),
+          ),
+          textDirection: Directionality.of(context),
+        )..layout(
+          maxWidth: (widget.maxBubbleWidth - widget.contentPadding.horizontal)
+              .clamp(0.0, double.infinity),
+        );
+    return (textPainter.width + widget.contentPadding.horizontal).clamp(
+      44.0,
+      widget.maxBubbleWidth,
+    );
   }
 
   @override
@@ -747,6 +750,8 @@ MessageParseResult _buildMessageParseResult({
           size: raw.size,
           content: raw.content,
           mediaPoolType: 'image',
+          path: raw.path,
+          nodeId: raw.nodeId,
         ),
       );
     } else if (link != null) {
@@ -902,18 +907,9 @@ MessageParseResult parseMessageContent(String content) {
   for (var index = 0; index < matches.length; index++) {
     final match = matches[index].match;
     final startIndex = match.start;
-    final id = decodeChatXmlText(match.group(1)!);
-    final filename = decodeChatXmlText(match.group(2)!);
-    final type = decodeChatXmlText(match.group(3)!);
-    final size = _parseLong(match.group(4));
-    final attachmentContent = decodeChatXmlText(match.group(5) ?? '');
-    final attachment = AttachmentData(
-      id: id,
-      filename: filename,
-      type: type,
-      size: size,
-      content: attachmentContent,
-    );
+    final attachment = AttachmentData.fromMarkupMatch(match);
+    final filename = attachment.filename;
+    final type = attachment.type;
     final isTrailingAttachment = trailingAttachmentIndices.contains(index);
     final isScreenContent =
         type == 'text/json' && filename == 'screen_content.json';
@@ -952,17 +948,6 @@ MessageParseResult parseMessageContent(String content) {
     replyInfo: replyInfo,
     proxySenderName: proxySenderName,
   );
-}
-
-int _parseLong(String? value) {
-  if (value == null || value.isEmpty) {
-    return 0;
-  }
-  final parsed = int.tryParse(value);
-  if (parsed == null) {
-    return 0;
-  }
-  return parsed;
 }
 
 class _ReplyInfoView extends StatelessWidget {

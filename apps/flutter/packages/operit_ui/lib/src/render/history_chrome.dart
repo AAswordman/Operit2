@@ -443,65 +443,68 @@ class ThemeConversationRow extends StatelessWidget {
         ? appearance.itemColor.withValues(alpha: 0.07)
         : Colors.transparent;
     final rowHeight = workspaceStyle ? 30.0 : 34.0;
-    final surface = Material(
-      color: containerColor,
-      borderRadius: itemShape,
-      child: InkWell(
+    final surface = SizedBox.expand(
+      // Swipe wrappers may loosen constraints around their foreground.
+      child: Material(
+        color: containerColor,
         borderRadius: itemShape,
-        onTap: onTap,
-        onLongPress: onLongPress,
-        onSecondaryTap: onLongPress,
-        child: Padding(
-          padding: EdgeInsetsDirectional.fromSTEB(
-            workspaceStyle ? 4.0 : 6.0,
-            0,
-            workspaceStyle ? 4.0 : 5.0,
-            0,
-          ),
-          child: Row(
-            children: <Widget>[
-              leading,
-              SizedBox(width: workspaceStyle ? 4 : 5),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontSize: workspaceStyle ? 12.0 : 13.0,
-                    letterSpacing: -0.1,
-                    color: titleColor,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+        child: InkWell(
+          borderRadius: itemShape,
+          onTap: onTap,
+          onLongPress: onLongPress,
+          onSecondaryTap: onLongPress,
+          child: Padding(
+            padding: EdgeInsetsDirectional.fromSTEB(
+              workspaceStyle ? 4.0 : 6.0,
+              0,
+              workspaceStyle ? 4.0 : 5.0,
+              0,
+            ),
+            child: Row(
+              children: <Widget>[
+                leading,
+                SizedBox(width: workspaceStyle ? 4 : 5),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontSize: workspaceStyle ? 12.0 : 13.0,
+                      letterSpacing: -0.1,
+                      color: titleColor,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
                 ),
-              ),
-              if (metadata != null) ...<Widget>[
-                const SizedBox(width: 5),
-                metadata!,
-              ],
-              if (pinned) ...<Widget>[
-                const SizedBox(width: 5),
-                Icon(
-                  Icons.push_pin_rounded,
-                  size: 12,
-                  color: titleColor.withValues(alpha: 0.60),
+                if (metadata != null) ...<Widget>[
+                  const SizedBox(width: 5),
+                  metadata!,
+                ],
+                if (pinned) ...<Widget>[
+                  const SizedBox(width: 5),
+                  Icon(
+                    Icons.push_pin_rounded,
+                    size: 12,
+                    color: titleColor.withValues(alpha: 0.60),
+                  ),
+                ],
+                if (locked) ...<Widget>[
+                  const SizedBox(width: 5),
+                  Icon(
+                    Icons.lock_rounded,
+                    size: 12,
+                    color: titleColor.withValues(alpha: 0.60),
+                  ),
+                ],
+                const SizedBox(width: 2),
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 140),
+                  opacity: showActions ? 1.0 : 0.0,
+                  child: IgnorePointer(ignoring: !showActions, child: action),
                 ),
               ],
-              if (locked) ...<Widget>[
-                const SizedBox(width: 5),
-                Icon(
-                  Icons.lock_rounded,
-                  size: 12,
-                  color: titleColor.withValues(alpha: 0.60),
-                ),
-              ],
-              const SizedBox(width: 2),
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 140),
-                opacity: showActions ? 1.0 : 0.0,
-                child: IgnorePointer(ignoring: !showActions, child: action),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -514,6 +517,7 @@ class ThemeConversationRow extends StatelessWidget {
       child: SizedBox(
         height: rowHeight,
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             if (nested) ...<Widget>[
               ThemeHistoryRail(

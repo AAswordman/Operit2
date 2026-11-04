@@ -802,14 +802,6 @@ impl OperitApplication {
         Ok(path.to_string_lossy().into_owned())
     }
 
-    /// Returns the directory holding persisted chat attachment files.
-    #[allow(non_snake_case)]
-    pub fn chatAttachmentsPath(&self) -> Result<String, String> {
-        let path = OperitPaths::chatAttachmentsDir()?;
-        self.ensureHostDirectory(&path)?;
-        Ok(path.to_string_lossy().into_owned())
-    }
-
     /// Clears the current runtime log files.
     #[allow(non_snake_case)]
     pub fn resetLogs(&self) {
@@ -859,8 +851,11 @@ impl OperitApplication {
             }
         }
         let mut blobs = BTreeMap::new();
+        let managedFiles = self.runtimeWorkspaceFileSyncStore()?;
+        for reference in managedFiles.deferredBlobs()? { blobs.insert(reference.contentHash.clone(), reference); }
         for operation in states.into_values() {
             if !store.shouldApplyOperation(operation).map_err(|e|e.to_string())? { continue; }
+            if operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::owns(operation) && !managedFiles.wantsBlob(operation)? { continue; }
             match RuntimeFileSyncStore::requiredBlob(operation) {
                 Ok(Some(reference)) => { blobs.insert(reference.contentHash.clone(), reference); }
                 Ok(None) => {}

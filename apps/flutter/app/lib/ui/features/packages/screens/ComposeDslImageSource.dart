@@ -124,6 +124,10 @@ Future<Uint8List> readComposeDslVfsBytes(
 
 /// Gives known VFS roots precedence even when wrapped in a file URI.
 String? composeDslVfsImagePath(String source) {
+  final qualified = RegExp(
+    r'^[^/\\:]+:(/(?:app|operitapp|mnt|virtual)(?:/|$).*)$',
+  ).firstMatch(source);
+  if (qualified != null) return source;
   final uri = Uri.tryParse(source);
   final explicitVfs = uri?.scheme == 'vfs' || uri?.scheme == 'operit-vfs';
   final String path;
