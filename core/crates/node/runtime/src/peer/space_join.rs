@@ -214,7 +214,7 @@ fn committedAdmission(service: &dyn NodeSpaceContext, request: &SpaceJoinRequest
     let currentSpaceId = service.spaceStore().initialize()?.spaceId;
     Ok(service.networkControlStore().spaceControlOperation(&currentSpaceId, &id, reviewer)?
         .is_some_and(|operation| {
-            NetworkControlCommandRecord::fromPayload(&operation.payload).is_ok_and(|command| {
+            NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
                 command.spaceId == targetSpaceId && command.issuerNodeId == operation.originDeviceId
                     && matches!(command.command, NetworkControlCommand::AdmitSpace { sourceSpaceId: admittedSource, identities }
                         if admittedSource == sourceSpaceId && identities.keys().cloned().collect::<BTreeSet<_>>() == members)
@@ -325,7 +325,7 @@ pub(crate) fn reconcile(service: &dyn NodeSpaceContext, record: &mut Record) -> 
 pub(crate) fn memberRemovalCommitted(service: &dyn NodeSpaceContext, nodeId: &str) -> Result<bool, String> {
     let spaceId = service.spaceStore().space()?.spaceId;
     Ok(service.networkControlStore().currentSpaceOperations()?.into_iter().any(|operation| {
-        NetworkControlCommandRecord::fromPayload(&operation.payload).is_ok_and(|command| {
+        NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
             command.spaceId == spaceId
                 && matches!(&command.command, NetworkControlCommand::RemoveMember { nodeId: removed, .. } if removed == nodeId)
         })
@@ -360,7 +360,7 @@ pub(crate) fn applyRemovedMemberLocalEffects(service: &dyn NodeSpaceContext, ope
     // local projection or credential, so avoid a second authority replay while
     // their decoded log is still held by the caller.
     if !operations.iter().any(|operation| {
-        NetworkControlCommandRecord::fromPayload(&operation.payload).is_ok_and(|record| {
+        NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|record| {
             record.spaceId == spaceId && match record.command {
                 NetworkControlCommand::LeaveSpace => record.issuerNodeId != local,
                 NetworkControlCommand::RemoveMember { nodeId, .. } => nodeId != local,
@@ -378,7 +378,7 @@ pub(crate) fn applyRemovedMemberLocalEffects(service: &dyn NodeSpaceContext, ope
     let mut revocations: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
     let mut completed = Vec::new();
     for operation in operations {
-        let Ok(record) = NetworkControlCommandRecord::fromPayload(&operation.payload) else { continue };
+        let Ok(record) = NetworkControlCommandRecord::deserialize(&operation.payload) else { continue };
         if record.spaceId != spaceId { continue; }
         if matches!(record.command, NetworkControlCommand::LeaveSpace)
             && record.issuerNodeId != local && !state.memberNodeIds.contains(&record.issuerNodeId) {
@@ -1149,7 +1149,7 @@ fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Box<O
             if record.request.status != SpaceJoinStatus::Approving { return Err("Decision was not claimed".into()); }
             if outcome.decision.approve {
                 let operation = outcome.admission.as_ref().ok_or("Approval has no admission operation")?;
-                let command: NetworkControlCommandRecord = NetworkControlCommandRecord::fromPayload(&operation.payload).map_err(|e| e.to_string())?;
+                let command: NetworkControlCommandRecord = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|e| e.to_string())?;
                 if command.spaceId != record.targetSpaceId || command.issuerNodeId != origin
                     || !matches!(command.command, NetworkControlCommand::AdmitSpace { ref sourceSpaceId, ref identities }
                         if sourceSpaceId == &record.sourceSpaceId && identities.keys().cloned().collect::<BTreeSet<_>>() == record.source.space.members.iter().cloned().collect()) {

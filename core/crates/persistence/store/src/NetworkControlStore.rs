@@ -138,16 +138,6 @@ pub struct NetworkControlCommandRecord {
     pub command: NetworkControlCommand,
 }
 
-impl NetworkControlCommandRecord {
-    /// Reuse the encoded policy decoder for already materialized payloads.
-    /// Keeping one decoder avoids a second complete command enum on devices.
-    #[inline(never)]
-    pub fn fromPayload(payload: &serde_json::Value) -> Result<Self, serde_json::Error> {
-        let encoded = serde_json::to_string(payload)?;
-        serde_json::from_str(&encoded)
-    }
-}
-
 /// Normalize the published nodeIds format at the read boundary; stored operations stay immutable.
 #[allow(non_snake_case)]
 fn deserializeControlCommand<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<NetworkControlCommand, D::Error> {
@@ -577,7 +567,7 @@ impl NetworkControlStore {
         drop(state);
         let commandId = format!("control-review-{reviewKey}");
         if let Some(operation) = self.spaceControlOperation(&space.spaceId, &commandId, &self.localNodeId)? {
-            let record = NetworkControlCommandRecord::fromPayload(&operation.payload).map_err(|error| error.to_string())?;
+            let record = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|error| error.to_string())?;
             if record.spaceId != space.spaceId || record.issuerNodeId != self.localNodeId || record.command != command {
                 return Err("Stored admission differs from the claimed review".into());
             }
@@ -1324,7 +1314,7 @@ pub(crate) fn decodeControlOperation(
     operation: &SyncOperation,
 ) -> Result<NetworkControlCommandRecord, String> {
     validateControlEnvelope(operation)?;
-    let record = NetworkControlCommandRecord::fromPayload(&operation.payload).map_err(|error| error.to_string())?;
+    let record = NetworkControlCommandRecord::deserialize(&operation.payload).map_err(|error| error.to_string())?;
     validateCommandRecord(&record)?;
     if record.commandId != operation.entityId {
         return Err("network control command id does not match its operation entity".to_string());
@@ -1833,17 +1823,14 @@ mod borrowed_command_tests {
             let record = NetworkControlCommandRecord { commandId: "c".into(), spaceId: "s".into(), issuerNodeId: "a".into(), command };
             let encoded = serde_json::to_value(&record).unwrap();
             assert_eq!(NetworkControlCommandRecord::deserialize(&encoded).unwrap(), record);
-            assert_eq!(NetworkControlCommandRecord::fromPayload(&encoded).unwrap(), record);
             assert_eq!(serde_json::from_str::<NetworkControlCommandRecord>(&encoded.to_string()).unwrap(), record);
         }
         let mut encoded = serde_json::json!({"commandId":"c", "spaceId":"s", "issuerNodeId":"a", "command":{"admit_space":{"sourceSpaceId":"source", "nodeIds":["b"]}}});
-        let legacy = NetworkControlCommandRecord::fromPayload(&encoded).unwrap();
+        let legacy = NetworkControlCommandRecord::deserialize(&encoded).unwrap();
         assert_eq!(legacy.command, NetworkControlCommand::AdmitSpace { sourceSpaceId: "source".into(), identities: BTreeMap::from([("b".into(), "user".into())]) });
         encoded["command"]["admit_space"]["identities"] = serde_json::Value::Null;
         assert!(NetworkControlCommandRecord::deserialize(&encoded).is_err());
-        assert!(NetworkControlCommandRecord::fromPayload(&encoded).is_err());
         encoded["command"]["admit_space"]["identities"] = serde_json::json!({"b":"edge"});
         assert!(NetworkControlCommandRecord::deserialize(&encoded).is_err());
-        assert!(NetworkControlCommandRecord::fromPayload(&encoded).is_err());
     }
 }

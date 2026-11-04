@@ -430,7 +430,7 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
         if crossing {
             let localOperations = service.networkControlStore().currentSpaceOperations()?;
             let localAdmittedSource = localOperations.iter().map(|operation| {
-                operit_store::NetworkControlStore::NetworkControlCommandRecord::fromPayload(&operation.payload)
+                operit_store::NetworkControlStore::NetworkControlCommandRecord::deserialize(&operation.payload)
                     .map_err(|error| error.to_string())
             }).collect::<Result<Vec<_>, _>>()?.iter().any(|record| {
                 record.spaceId == local.spaceId && matches!(&record.command,
