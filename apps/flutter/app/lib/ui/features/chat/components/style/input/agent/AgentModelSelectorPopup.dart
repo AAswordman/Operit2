@@ -10,6 +10,8 @@ import 'package:operit2/ui/features/settings/models/SettingsModels.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../../common/ThinkingLevelText.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../../../settings/model/ProviderLogo.dart';
 
@@ -19,6 +21,7 @@ class AgentModelSelectorPopup extends StatefulWidget {
     required this.viewModel,
     required this.onDismiss,
     required this.onModelChanged,
+    this.onThinkingChanged,
   });
 
   final ChatViewModel viewModel;
@@ -30,6 +33,9 @@ class AgentModelSelectorPopup extends StatefulWidget {
   })
   onModelChanged;
 
+  /// Called with the chat model's thinking after the user sets its level.
+  final ValueChanged<core_proxy.ModelThinkingSettings>? onThinkingChanged;
+
   /// Creates the mutable state for the standalone model selector popup.
   @override
   State<AgentModelSelectorPopup> createState() =>
@@ -40,7 +46,9 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
   Future<_AgentModelSelectorData>? _settingsFuture;
   String? _expandedProviderId;
   String? _expandedFamilyKey;
-  int? _thinkingStop;
+
+  /// The chat model's thinking as last set here, shown over the loaded data.
+  core_proxy.ModelThinkingSettings? _thinking;
 
   GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
 
@@ -82,61 +90,28 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
     widget.onDismiss();
   }
 
-  /// Returns whether the provider exposes discrete thinking quality levels.
-  bool _hasThinkingLevels(_AgentModelSelectorData data) {
-    final settings = data.thinkingSettings;
-    return settings.control == core_proxy.ThinkingControl.levels &&
-        settings.options.length > 1;
-  }
-
-  /// Resolves the merged slider stop for the current thinking state.
-  int _resolveThinkingStop(_AgentModelSelectorData data, bool levels) {
-    final settings = data.thinkingSettings;
-    if (!data.enableThinkingMode && !settings.requiredValue) {
-      return 0;
-    }
-    if (!levels) {
-      return 1;
-    }
-    final index = settings.options.indexWhere(
-      (option) => option.id == data.currentConfig.thinkingOptionId,
-    );
-    return (index < 0 ? 0 : index) + 1;
-  }
-
-  /// Applies one merged slider stop and persists the thinking changes.
-  Future<void> _setThinkingStop(
+  /// Sets the chat model's thinking level and shows the level it now uses.
+  Future<void> _setThinkingLevel(
     _AgentModelSelectorData data,
-    bool levels,
-    int stop,
+    core_proxy.ThinkingLevel level,
   ) async {
-    final settings = data.thinkingSettings;
-    final maxStop = levels ? settings.options.length : 1;
-    final value = stop.clamp(settings.requiredValue ? 1 : 0, maxStop);
-    final current = _thinkingStop ?? _resolveThinkingStop(data, levels);
-    if (value == current) {
+    final settings = await _setChatThinkingLevel(
+      context,
+      _clients,
+      data,
+      level,
+    );
+    if (!mounted) {
       return;
     }
     setState(() {
-      _thinkingStop = value;
-    });
-    final enable = value > 0;
-    if (enable != data.enableThinkingMode) {
-      await _clients.preferencesApiPreferences.updateThinkingSettings(
-        enableThinkingMode: enable,
-        thinkingQualityLevel: null,
-      );
-    }
-    if (enable && levels) {
-      final optionId = settings.options[value - 1].id;
-      if (optionId != data.currentConfig.thinkingOptionId) {
-        await _clients.preferencesModelConfigManager
-            .updateThinkingOptionForProvider(
-              providerId: data.currentBinding.providerId,
-              modelId: data.currentBinding.modelId,
-              thinkingOptionId: optionId,
-            );
+      _thinking = settings;
+      if (settings == null) {
+        _settingsFuture = _loadSettings();
       }
+    });
+    if (settings != null) {
+      widget.onThinkingChanged?.call(settings);
     }
   }
 
@@ -185,28 +160,19 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                   child: Center(child: CircularProgressIndicator()),
                 );
               }
-              final levels = _hasThinkingLevels(data);
-              final stops = <String>[
-                '关',
-                if (levels)
-                  ...data.thinkingSettings.options.map((option) => option.label)
-                else
-                  '开',
-              ];
               return SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    AgentThinkingSliderRow(
-                      stops: stops,
-                      stop: _thinkingStop ?? _resolveThinkingStop(data, levels),
-                      minStop: data.thinkingSettings.requiredValue ? 1 : 0,
-                      onChanged: (stop) => _setThinkingStop(data, levels, stop),
+                    AgentThinkingLevelRow(
+                      settings: _thinking ?? data.thinkingSettings,
+                      onChanged: (level) => _setThinkingLevel(data, level),
                     ),
                     _ModelSelectorItem(
                       popupContainerColor: popupContainerColor,
                       providers: data.providers,
+                      summaries: data.summaries,
                       currentBinding: data.currentBinding,
                       expanded: true,
                       expandedProviderId: _expandedProviderId,
@@ -264,7 +230,9 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
   String? _expandedFamilyKey;
   bool _modelSectionExpanded = false;
   bool _modelDropdownExpanded = false;
-  bool? _enableThinkingMode;
+
+  /// The chat model's thinking as last set here, shown over the loaded data.
+  core_proxy.ModelThinkingSettings? _thinking;
 
   GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
 
@@ -301,33 +269,26 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
     widget.onDismiss();
   }
 
-  /// Toggles thinking mode from the embedded menu.
-  Future<void> _toggleThinking(_AgentModelSelectorData data) async {
-    if (data.thinkingSettings.requiredValue) {
+  /// Sets the chat model's thinking level from the embedded menu.
+  Future<void> _setThinkingLevel(
+    _AgentModelSelectorData data,
+    core_proxy.ThinkingLevel level,
+  ) async {
+    final settings = await _setChatThinkingLevel(
+      context,
+      _clients,
+      data,
+      level,
+    );
+    if (!mounted) {
       return;
     }
-    final enableThinkingMode =
-        !(_enableThinkingMode ?? data.enableThinkingMode);
     setState(() {
-      _enableThinkingMode = enableThinkingMode;
+      _thinking = settings;
+      if (settings == null) {
+        _settingsFuture = _loadSettings();
+      }
     });
-    await _clients.preferencesApiPreferences.updateThinkingSettings(
-      enableThinkingMode: enableThinkingMode,
-      thinkingQualityLevel: null,
-    );
-  }
-
-  /// Stores the selected provider/model thinking option from the embedded menu.
-  Future<void> _updateThinkingOption(
-    _AgentModelSelectorData data,
-    String optionId,
-  ) async {
-    await _clients.preferencesModelConfigManager
-        .updateThinkingOptionForProvider(
-          providerId: data.currentBinding.providerId,
-          modelId: data.currentBinding.modelId,
-          thinkingOptionId: optionId,
-        );
   }
 
   /// Navigates to the model settings screen from the embedded menu.
@@ -370,9 +331,6 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
           );
         }
         final embeddedPanelColor = colorScheme.surface.withValues(alpha: 0.42);
-        final displayData = data.copyWith(
-          enableThinkingMode: _enableThinkingMode ?? data.enableThinkingMode,
-        );
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -408,6 +366,7 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
                           headerIcon: Icons.tune_outlined,
                           headerTitle: '选择模型',
                           providers: data.providers,
+                          summaries: data.summaries,
                           currentBinding: data.currentBinding,
                           expanded: _modelDropdownExpanded,
                           expandedProviderId: _expandedProviderId,
@@ -436,17 +395,9 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
                           showInfoButton: false,
                         ),
                         const SizedBox(height: 2),
-                        _ThinkingSettingsItem(
-                          popupContainerColor: embeddedPanelColor,
-                          data: displayData,
-                          onToggleThinkingMode: () =>
-                              _toggleThinking(displayData),
-                          onThinkingOptionChanged: (optionId) =>
-                              _updateThinkingOption(displayData, optionId),
-                          onInfoClick: () {},
-                          onThinkingModeInfoClick: () {},
-                          onThinkingQualityInfoClick: () {},
-                          showInfoButton: false,
+                        AgentThinkingLevelRow(
+                          settings: _thinking ?? data.thinkingSettings,
+                          onChanged: (level) => _setThinkingLevel(data, level),
                         ),
                       ],
                     ),
@@ -460,7 +411,7 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
   }
 }
 
-/// Merged thinking toggle/quality slider row used by the model selector popup.
+/// The thinking levels of one model on a slider, weakest first.
 /// Exposed for widget tests; not meant to be reused elsewhere.
 @visibleForTesting
 class AgentThinkingSliderRow extends StatefulWidget {
@@ -468,13 +419,16 @@ class AgentThinkingSliderRow extends StatefulWidget {
     super.key,
     required this.stops,
     required this.stop,
-    required this.minStop,
+    required this.offStop,
     required this.onChanged,
   });
 
+  /// The level names, at least two; a single level is shown as a fixed note.
   final List<String> stops;
   final int stop;
-  final int minStop;
+
+  /// Whether the first stop turns thinking off.
+  final bool offStop;
   final ValueChanged<int> onChanged;
 
   /// Test hooks for locating the track and thumb in widget tests.
@@ -518,13 +472,7 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
     // center travels between 12.5px (border + inset + half thumb) and the
     // mirrored right edge of the outer track width.
     final fraction = ((dx - 12.5) / (trackWidth - 25)).clamp(0.0, 1.0);
-    var next = (fraction * last).round();
-    if (next < widget.minStop) {
-      next = widget.minStop;
-    }
-    if (next > last) {
-      next = last;
-    }
+    final next = (fraction * last).round().clamp(0, last);
     if (next == _stop) {
       return;
     }
@@ -539,7 +487,8 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final on = _stop > 0;
+    final l10n = AppLocalizations.of(context)!;
+    final on = !(widget.offStop && _stop == 0);
     final last = widget.stops.length - 1;
     final fraction = last > 0 ? _stop / last : 1.0;
     return Padding(
@@ -556,7 +505,7 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
                   : colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
             ),
             const SizedBox(width: 4),
-            Text('思考程度:', style: textTheme.bodySmall),
+            Text('${l10n.thinkingLevelLabel}:', style: textTheme.bodySmall),
             const SizedBox(width: 6),
             AnimatedDefaultTextStyle(
               duration: _morphDuration,
@@ -565,7 +514,7 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
                 fontWeight: on ? FontWeight.bold : FontWeight.normal,
               ),
               child: SizedBox(
-                width: 48,
+                width: 64,
                 child: Text(
                   widget.stops[_stop],
                   textAlign: TextAlign.end,
@@ -751,270 +700,125 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
 class _AgentModelSelectorData {
   const _AgentModelSelectorData({
     required this.providers,
+    required this.summaries,
     required this.currentBinding,
-    required this.currentConfig,
     required this.thinkingSettings,
-    required this.enableThinkingMode,
   });
 
   final List<core_proxy.ProviderProfile> providers;
-  final core_proxy.FunctionModelBinding currentBinding;
-  final core_proxy.ResolvedModelConfig currentConfig;
-  final core_proxy.ThinkingSettingsDescriptor thinkingSettings;
-  final bool enableThinkingMode;
 
-  /// Returns a copy with selected display fields replaced.
-  _AgentModelSelectorData copyWith({bool? enableThinkingMode}) {
-    return _AgentModelSelectorData(
-      providers: providers,
-      currentBinding: currentBinding,
-      currentConfig: currentConfig,
-      thinkingSettings: thinkingSettings,
-      enableThinkingMode: enableThinkingMode ?? this.enableThinkingMode,
-    );
-  }
+  /// Settings each configured model runs with, catalog values included.
+  final List<core_proxy.ProviderModelSummary> summaries;
+  final core_proxy.FunctionModelBinding currentBinding;
+
+  /// The chat model's thinking levels and the level it uses.
+  final core_proxy.ModelThinkingSettings thinkingSettings;
 }
 
-class _ThinkingSettingsItem extends StatefulWidget {
-  const _ThinkingSettingsItem({
-    required this.popupContainerColor,
-    required this.data,
-    required this.onToggleThinkingMode,
-    required this.onThinkingOptionChanged,
-    required this.onInfoClick,
-    required this.onThinkingModeInfoClick,
-    required this.onThinkingQualityInfoClick,
-    this.showInfoButton = true,
+/// The chat model's thinking control: its levels on a slider, a note when there is
+/// nothing to move between, or nothing when requests cannot change how it thinks.
+class AgentThinkingLevelRow extends StatelessWidget {
+  const AgentThinkingLevelRow({
+    super.key,
+    required this.settings,
+    required this.onChanged,
   });
 
-  final Color popupContainerColor;
-  final _AgentModelSelectorData data;
-  final VoidCallback onToggleThinkingMode;
-  final ValueChanged<String> onThinkingOptionChanged;
-  final VoidCallback onInfoClick;
-  final VoidCallback onThinkingModeInfoClick;
-  final VoidCallback onThinkingQualityInfoClick;
-  final bool showInfoButton;
+  final core_proxy.ModelThinkingSettings settings;
+  final ValueChanged<core_proxy.ThinkingLevel> onChanged;
 
-  /// Creates the mutable state for thinking controls.
-  @override
-  State<_ThinkingSettingsItem> createState() => _ThinkingSettingsItemState();
-}
-
-class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
-  bool _expanded = false;
-  int _sliderIndex = 0;
-
-  /// Initializes the selected position from the resolved thinking descriptor.
-  @override
-  void initState() {
-    super.initState();
-    final settings = widget.data.thinkingSettings;
-    if (settings.control == core_proxy.ThinkingControl.levels &&
-        settings.options.isNotEmpty) {
-      _sliderIndex = _selectedOptionIndex(widget.data);
-    }
-  }
-
-  /// Syncs the slider when the resolved thinking option changes.
-  @override
-  void didUpdateWidget(covariant _ThinkingSettingsItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.data.currentConfig.thinkingOptionId ==
-        widget.data.currentConfig.thinkingOptionId) {
-      return;
-    }
-    final settings = widget.data.thinkingSettings;
-    if (settings.control == core_proxy.ThinkingControl.levels &&
-        settings.options.isNotEmpty) {
-      _sliderIndex = _selectedOptionIndex(widget.data);
-    }
-  }
-
-  /// Builds the expandable thinking settings block.
+  /// Builds the control that fits the levels the model offers.
   @override
   Widget build(BuildContext context) {
-    final required = widget.data.thinkingSettings.requiredValue;
-    final enabled = required || widget.data.enableThinkingMode;
-    final thinkingTypeText = enabled ? 'mode' : 'off';
-    return Column(
-      children: <Widget>[
-        _SettingsHeaderRow(
-          icon: Icons.psychology,
-          title: '思考:',
-          value: thinkingTypeText,
-          expanded: _expanded,
-          onTap: () => setState(() => _expanded = !_expanded),
-          onInfoClick: widget.onInfoClick,
-          showInfoButton: widget.showInfoButton,
-        ),
-        if (_expanded)
-          ColoredBox(
-            color: widget.popupContainerColor,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Column(
-                children: <Widget>[
-                  _SwitchSettingRow(
-                    icon: widget.data.enableThinkingMode
-                        ? Icons.psychology
-                        : Icons.psychology_outlined,
-                    title: '思考模式',
-                    checked: enabled,
-                    highlightWhenChecked: true,
-                    onToggle: required ? null : widget.onToggleThinkingMode,
-                    onInfoClick: widget.onThinkingModeInfoClick,
-                    showInfoButton: widget.showInfoButton,
-                  ),
-                  if (enabled &&
-                      widget.data.thinkingSettings.control ==
-                          core_proxy.ThinkingControl.levels &&
-                      widget.data.thinkingSettings.options.length > 1)
-                    _ThinkingQualitySettingRow(
-                      options: widget.data.thinkingSettings.options,
-                      index: _sliderIndex,
-                      onChanged: (index) {
-                        setState(() {
-                          _sliderIndex = index;
-                        });
-                      },
-                      onChangeEnd: (index) {
-                        widget.onThinkingOptionChanged(
-                          widget.data.thinkingSettings.options[index].id,
-                        );
-                      },
-                      onInfoClick: widget.onThinkingQualityInfoClick,
-                      showInfoButton: widget.showInfoButton,
-                    ),
-                ],
-              ),
-            ),
-          ),
-      ],
+    final l10n = AppLocalizations.of(context)!;
+    final levels = settings.levels;
+    if (levels.isEmpty) {
+      return thinkingAlwaysOn(settings.spec)
+          ? _ThinkingNoteRow(text: l10n.thinkingAlwaysOn)
+          : const SizedBox.shrink();
+    }
+    if (levels.length == 1) {
+      return _ThinkingNoteRow(text: _levelStopLabel(levels.single));
+    }
+    final index = levels.indexWhere(
+      (option) => option.level == settings.current,
+    );
+    if (index < 0) {
+      throw StateError(
+        'The thinking level in use is absent from the offered levels',
+      );
+    }
+    return AgentThinkingSliderRow(
+      stops: <String>[for (final option in levels) _levelStopLabel(option)],
+      stop: index,
+      offStop: levels.first.level == core_proxy.ThinkingLevel.off,
+      onChanged: (stop) => onChanged(levels[stop].level),
     );
   }
 }
 
-class _ThinkingQualitySettingRow extends StatelessWidget {
-  const _ThinkingQualitySettingRow({
-    required this.options,
-    required this.index,
-    required this.onChanged,
-    required this.onChangeEnd,
-    required this.onInfoClick,
-    required this.showInfoButton,
-  });
+/// Names one level on the slider, with the tokens a budget level asks for.
+String _levelStopLabel(core_proxy.ThinkingLevelOption option) {
+  final name = thinkingLevelName(option.level);
+  final budget = option.budgetTokens;
+  return budget == null ? name : '$name ${thinkingBudgetText(budget)}';
+}
 
-  final List<core_proxy.ThinkingOptionDescriptor> options;
-  final int index;
-  final ValueChanged<int> onChanged;
-  final ValueChanged<int> onChangeEnd;
-  final VoidCallback onInfoClick;
-  final bool showInfoButton;
+/// A thinking row with a fixed value instead of a slider.
+class _ThinkingNoteRow extends StatelessWidget {
+  const _ThinkingNoteRow({required this.text});
 
-  /// Builds the thinking quality row and slider as one peer setting.
+  final String text;
+
+  /// Builds the row in the slider row's place and spacing.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final selectedOption = options[index];
-    return Column(
-      children: <Widget>[
-        ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 36),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: <Widget>[
-                Icon(
-                  Icons.speed_outlined,
-                  size: 16,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                ),
-                if (showInfoButton) _InfoIconButton(onPressed: onInfoClick),
-                const SizedBox(width: 12),
-                Text(
-                  '思考程度',
-                  style: textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const Spacer(),
-                Text(
-                  selectedOption.label,
-                  style: textTheme.bodySmall!.copyWith(
-                    color: colorScheme.primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+    final l10n = AppLocalizations.of(context)!;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: SizedBox(
+        height: 40,
+        child: Row(
+          children: <Widget>[
+            Icon(Icons.psychology, size: 16, color: colorScheme.primary),
+            const SizedBox(width: 4),
+            Text('${l10n.thinkingLevelLabel}:', style: textTheme.bodySmall),
+            const SizedBox(width: 6),
+            Text(
+              text,
+              style: textTheme.bodySmall!.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(40, 0, 12, 6),
-          child: Column(
-            children: <Widget>[
-              SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 16,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 6,
-                    elevation: 0,
-                    pressedElevation: 0,
-                  ),
-                  overlayShape: const RoundSliderOverlayShape(
-                    overlayRadius: 10,
-                  ),
-                  tickMarkShape: const RoundSliderTickMarkShape(
-                    tickMarkRadius: 2,
-                  ),
-                  thumbColor: colorScheme.onSurfaceVariant,
-                  activeTrackColor: colorScheme.primary.withValues(alpha: 0.72),
-                  inactiveTrackColor: colorScheme.surfaceContainerHighest,
-                  activeTickMarkColor: colorScheme.onSurfaceVariant,
-                  inactiveTickMarkColor: colorScheme.outlineVariant,
-                ),
-                child: SizedBox(
-                  height: 36,
-                  child: Slider(
-                    value: index.toDouble(),
-                    min: 0,
-                    max: (options.length - 1).toDouble(),
-                    divisions: options.length - 1,
-                    onChanged: (value) => onChanged(value.round()),
-                    onChangeEnd: (value) => onChangeEnd(value.round()),
-                  ),
-                ),
-              ),
-              Row(
-                children: <Widget>[
-                  for (
-                    var optionIndex = 0;
-                    optionIndex < options.length;
-                    optionIndex++
-                  )
-                    Expanded(
-                      child: Text(
-                        options[optionIndex].label,
-                        textAlign: TextAlign.center,
-                        style: textTheme.labelSmall?.copyWith(
-                          color: optionIndex == index
-                              ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant,
-                          fontWeight: optionIndex == index
-                              ? FontWeight.w700
-                              : FontWeight.normal,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
+  }
+}
+
+/// Sets the chat model's thinking level, `null` when it could not be set; the user
+/// is told why.
+Future<core_proxy.ModelThinkingSettings?> _setChatThinkingLevel(
+  BuildContext context,
+  GeneratedCoreProxyClients clients,
+  _AgentModelSelectorData data,
+  core_proxy.ThinkingLevel level,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final failed = AppLocalizations.of(context)!.failed;
+  try {
+    return await clients.preferencesModelConfigManager.setThinkingLevelForModel(
+      providerId: data.currentBinding.providerId,
+      modelId: data.currentBinding.modelId,
+      level: level,
+    );
+  } catch (error) {
+    messenger.showSnackBar(SnackBar(content: Text('$failed: $error')));
+    return null;
   }
 }
 
@@ -1024,6 +828,7 @@ class _ModelSelectorItem extends StatelessWidget {
     this.headerIcon = Icons.data_object_outlined,
     this.headerTitle = '模型:',
     required this.providers,
+    required this.summaries,
     required this.currentBinding,
     required this.expanded,
     required this.expandedProviderId,
@@ -1043,6 +848,7 @@ class _ModelSelectorItem extends StatelessWidget {
   final IconData headerIcon;
   final String headerTitle;
   final List<core_proxy.ProviderProfile> providers;
+  final List<core_proxy.ProviderModelSummary> summaries;
   final core_proxy.FunctionModelBinding currentBinding;
   final bool expanded;
   final String? expandedProviderId;
@@ -1112,6 +918,7 @@ class _ModelSelectorItem extends StatelessWidget {
                 for (final provider in providers)
                   AgentModelProviderRow(
                     provider: provider,
+                    summaries: summaries,
                     selected:
                         provider.id == currentBinding.providerId &&
                         provider.models.any(
@@ -1167,6 +974,7 @@ class AgentModelProviderRow extends StatelessWidget {
   const AgentModelProviderRow({
     super.key,
     required this.provider,
+    required this.summaries,
     required this.selected,
     required this.selectedProviderId,
     required this.selectedModelId,
@@ -1178,6 +986,9 @@ class AgentModelProviderRow extends StatelessWidget {
   });
 
   final core_proxy.ProviderProfile provider;
+
+  /// Settings each configured model runs with, catalog values included.
+  final List<core_proxy.ProviderModelSummary> summaries;
   final bool selected;
   final String selectedProviderId;
   final String selectedModelId;
@@ -1290,6 +1101,16 @@ class AgentModelProviderRow extends StatelessWidget {
     );
   }
 
+  /// Returns the settings one of this provider's models runs with.
+  core_proxy.ProviderModelSummary? _summaryFor(core_proxy.ModelProfile model) {
+    return summaries
+        .where(
+          (summary) =>
+              summary.providerId == provider.id && summary.modelId == model.id,
+        )
+        .firstOrNull;
+  }
+
   /// Builds the family (or direct model) sections for the expanded provider.
   List<Widget> _familySections(BuildContext context) {
     final families = _modelFamilies(provider.models);
@@ -1303,6 +1124,7 @@ class AgentModelProviderRow extends StatelessWidget {
               for (final model in provider.models)
                 _ModelNameRow(
                   model: model,
+                  summary: _summaryFor(model),
                   selected:
                       provider.id == selectedProviderId &&
                       model.id == selectedModelId,
@@ -1337,6 +1159,7 @@ class AgentModelProviderRow extends StatelessWidget {
                 for (final model in familyModels)
                   _ModelNameRow(
                     model: model,
+                    summary: _summaryFor(model),
                     selected:
                         provider.id == selectedProviderId &&
                         model.id == selectedModelId,
@@ -1546,11 +1369,13 @@ class _CurrentModelLine extends StatelessWidget {
 class _ModelNameRow extends StatelessWidget {
   const _ModelNameRow({
     required this.model,
+    required this.summary,
     required this.selected,
     required this.onTap,
   });
 
   final core_proxy.ModelProfile model;
+  final core_proxy.ProviderModelSummary? summary;
   final bool selected;
   final VoidCallback onTap;
 
@@ -1588,7 +1413,7 @@ class _ModelNameRow extends StatelessWidget {
                 ),
               ),
             ),
-            ..._modelMetaChips(context, model),
+            ..._modelMetaChips(context, summary),
             if (selected) ...<Widget>[
               const SizedBox(width: 4),
               Icon(Icons.check, size: 11, color: colorScheme.primary),
@@ -1637,14 +1462,17 @@ class _ModelMetaChip extends StatelessWidget {
 /// Builds the metadata chips (capability tag and context length) for one model.
 List<Widget> _modelMetaChips(
   BuildContext context,
-  core_proxy.ModelProfile model,
+  core_proxy.ProviderModelSummary? summary,
 ) {
-  final contextLabel = _formatContextChip(
-    model.contextOverride?.maxContextLength,
-  );
+  final contextLabel = _formatContextChip(summary?.context.maxContextLength);
   final chips = <Widget>[
-    if (model.capabilitiesOverride?.directImage == true)
+    if (summary?.capabilities.directImage == true)
       const _ModelMetaChip(label: '视觉', outlined: true),
+    if (summary?.thinking.supported == true)
+      _ModelMetaChip(
+        label: AppLocalizations.of(context)!.thinkingChip,
+        outlined: true,
+      ),
     if (contextLabel != null) _ModelMetaChip(label: contextLabel),
   ];
   if (chips.isEmpty) {
@@ -1746,77 +1574,6 @@ class _SettingsHeaderRow extends StatelessWidget {
   }
 }
 
-class _SwitchSettingRow extends StatelessWidget {
-  const _SwitchSettingRow({
-    required this.icon,
-    required this.title,
-    required this.checked,
-    required this.onToggle,
-    required this.onInfoClick,
-    this.highlightWhenChecked = false,
-    this.showInfoButton = true,
-  });
-
-  final IconData icon;
-  final String title;
-  final bool checked;
-  final VoidCallback? onToggle;
-  final VoidCallback onInfoClick;
-  final bool highlightWhenChecked;
-  final bool showInfoButton;
-
-  /// Builds a switch row inside a settings block.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return InkWell(
-      onTap: onToggle,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 36),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                icon,
-                size: 16,
-                color: checked
-                    ? colorScheme.primary
-                    : colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-              ),
-              if (showInfoButton) _InfoIconButton(onPressed: onInfoClick),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.bodySmall?.copyWith(
-                    color: checked && highlightWhenChecked
-                        ? colorScheme.primary
-                        : colorScheme.onSurface,
-                    fontWeight: checked && highlightWhenChecked
-                        ? FontWeight.w700
-                        : FontWeight.normal,
-                  ),
-                ),
-              ),
-              Transform.scale(
-                scale: 0.65,
-                child: Switch(
-                  value: checked,
-                  onChanged: onToggle == null ? null : (_) => onToggle!(),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ManageIconButton extends StatelessWidget {
   const _ManageIconButton({required this.onPressed});
 
@@ -1874,38 +1631,19 @@ Future<_AgentModelSelectorData> _loadAgentModelSelectorData(
 ) async {
   final binding = await clients.preferencesFunctionalConfigManager
       .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
-  final config = await clients.preferencesModelConfigManager
-      .getResolvedModelConfig(
-        providerId: binding.providerId,
-        modelId: binding.modelId,
-      );
   final thinkingSettings = await clients.preferencesModelConfigManager
-      .getThinkingSettingsForProvider(
+      .getThinkingSettingsForModel(
         providerId: binding.providerId,
         modelId: binding.modelId,
       );
   return _AgentModelSelectorData(
     providers: await clients.preferencesModelConfigManager
         .getProviderProfiles(),
+    summaries: await clients.preferencesModelConfigManager
+        .getAllModelSummaries(),
     currentBinding: binding,
-    currentConfig: config,
     thinkingSettings: thinkingSettings,
-    enableThinkingMode: await clients.preferencesApiPreferences
-        .enableThinkingModeFlow()
-        .first,
   );
-}
-
-/// Returns the selected option position for the current thinking descriptor.
-int _selectedOptionIndex(_AgentModelSelectorData data) {
-  final selectedOptionId = data.currentConfig.thinkingOptionId;
-  final index = data.thinkingSettings.options.indexWhere(
-    (option) => option.id == selectedOptionId,
-  );
-  if (index < 0) {
-    throw StateError('Resolved thinking option is absent from its descriptor');
-  }
-  return index;
 }
 
 /// Returns whether the model is reserved for UI control instead of chat.

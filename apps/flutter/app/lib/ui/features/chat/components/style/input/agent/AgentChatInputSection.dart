@@ -11,6 +11,7 @@ import '../../../../../../../core/logging/ClientLogger.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../../common/ThinkingLevelText.dart';
 import '../../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../../theme/OperitTheme.dart';
 import '../../../../../packages/utils/PackageDisplayUtils.dart';
@@ -144,6 +145,12 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   String _modelLabel = '';
   String _modelProviderTypeId = '';
   String _modelProviderName = '';
+
+  /// The chat model's thinking as shown on the model selector.
+  core_proxy.ModelThinkingSettings? _thinking;
+
+  /// Counts thinking reads so a slower, older read cannot replace a newer one.
+  int _thinkingGeneration = 0;
 
   /// Starts input listeners and observes viewport metric changes.
   @override
@@ -327,6 +334,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     viewModel: widget.viewModel,
                     onDismiss: _dismissModelSettingsPopup,
                     onModelChanged: _handleModelChanged,
+                    onThinkingChanged: _handleThinkingChanged,
                   ),
                 ),
               ),
@@ -512,6 +520,41 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
       _modelProviderTypeId = boundProvider?.providerTypeId ?? '';
       _modelProviderName = boundProvider?.name ?? '';
     });
+    _refreshThinking(boundProvider == null ? null : binding);
+  }
+
+  /// Reads the thinking level the chat model uses; a binding still waiting for its
+  /// provider shows none.
+  Future<void> _refreshThinking(
+    core_proxy.FunctionModelBinding? binding,
+  ) async {
+    final generation = ++_thinkingGeneration;
+    if (binding == null) {
+      setState(() => _thinking = null);
+      return;
+    }
+    try {
+      final settings = await widget
+          .viewModel
+          .clients
+          .preferencesModelConfigManager
+          .getThinkingSettingsForModel(
+            providerId: binding.providerId,
+            modelId: binding.modelId,
+          );
+      if (!mounted || generation != _thinkingGeneration) {
+        return;
+      }
+      setState(() => _thinking = settings);
+    } catch (error, stackTrace) {
+      _logModelLabelError(error, stackTrace);
+    }
+  }
+
+  /// Shows a thinking level the user just set in the model selector.
+  void _handleThinkingChanged(core_proxy.ModelThinkingSettings settings) {
+    _thinkingGeneration += 1;
+    setState(() => _thinking = settings);
   }
 
   void _handleModelChanged(
@@ -707,6 +750,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     modelLabel: _modelLabel,
                     modelProviderTypeId: _modelProviderTypeId,
                     modelProviderName: _modelProviderName,
+                    modelThinking: _thinking,
                     modelSelectorOpen: _modelPopupEntry != null,
                     modelSelectorLink: _modelPopupLink,
                     modelSelectorKey: _modelPopupTargetKey,
@@ -755,6 +799,7 @@ const double _modelSelectorLogoSize = 14;
 class _ModelSelectorIdentity extends StatelessWidget {
   const _ModelSelectorIdentity({
     required this.label,
+    required this.thinking,
     required this.style,
     required this.providerTypeId,
     required this.fallbackName,
@@ -762,6 +807,9 @@ class _ModelSelectorIdentity extends StatelessWidget {
     required this.expanded,
   });
   final String label;
+
+  /// The thinking level shown after the model name, `null` for none.
+  final String? thinking;
   final TextStyle style;
   final String providerTypeId;
   final String fallbackName;
@@ -770,6 +818,8 @@ class _ModelSelectorIdentity extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ThemeComposerModelIdentity(
     label: label,
+    badge: thinking,
+    badgeColor: Theme.of(context).colorScheme.primary,
     style: style,
     chevronColor: chevronColor,
     expanded: expanded,
@@ -793,6 +843,7 @@ class _InputBody extends StatelessWidget {
     required this.modelLabel,
     required this.modelProviderTypeId,
     required this.modelProviderName,
+    required this.modelThinking,
     required this.modelSelectorOpen,
     required this.modelSelectorLink,
     required this.modelSelectorKey,
@@ -834,6 +885,9 @@ class _InputBody extends StatelessWidget {
   final String modelLabel;
   final String modelProviderTypeId;
   final String modelProviderName;
+
+  /// The chat model's thinking, `null` until it is read.
+  final core_proxy.ModelThinkingSettings? modelThinking;
   final bool modelSelectorOpen;
   final LayerLink modelSelectorLink;
   final GlobalKey modelSelectorKey;
@@ -932,6 +986,9 @@ class _InputBody extends StatelessWidget {
           onTap: onModelSelector,
           identity: _ModelSelectorIdentity(
             label: modelLabel,
+            thinking: modelThinking == null
+                ? null
+                : thinkingBadgeText(l10n, modelThinking!),
             style: modelLabelStyle,
             providerTypeId: modelProviderTypeId,
             fallbackName: modelProviderName.isNotEmpty

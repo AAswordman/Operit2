@@ -305,7 +305,14 @@ void main() {
         endpoint: '',
         modelId: 'gpt-5',
         capabilities: capabilities,
+        context: core.ModelContextSpec(maxContextLength: 272),
         pricing: pricing,
+        thinking: core.ModelThinkingSpec(
+          supported: false,
+          toggle: false,
+          efforts: [],
+          budget: null,
+        ),
       );
       final index = UsagePricingIndex(configured: [model]);
       expect(index.forModel('OpenAI', 'gpt-5')!.cachedPerMillion, 0.2);

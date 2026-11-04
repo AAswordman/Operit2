@@ -1082,12 +1082,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelSetCurrentActive => '设为当前';
 
   @override
-  String get settingsChatThinkingMode => '思考模式';
-
-  @override
-  String get settingsChatThinkingModeDescription => '让支持的模型输出更稳的推理过程。';
-
-  @override
   String get settingsChatStreamOutput => '流式输出';
 
   @override
@@ -1734,6 +1728,30 @@ class AppLocalizationsZh extends AppLocalizations {
       '没有拉取到的模型。可选择「包含历史」查看目录中的模型 ID。';
 
   @override
+  String get settingsModelUnrecognized => '未识别';
+
+  @override
+  String settingsModelCatalogUpdatedAt(String time) {
+    return '能力和上下文信息来自 models.dev，$time 更新';
+  }
+
+  @override
+  String settingsModelCatalogUpdateFailed(String error) {
+    return '模型信息下载失败：$error';
+  }
+
+  @override
+  String settingsModelCatalogUpdateFailedUsing(String time, String error) {
+    return '模型信息更新失败，暂用 $time 的信息：$error';
+  }
+
+  @override
+  String get settingsModelCatalogNotDownloaded => '模型信息还没有下载';
+
+  @override
+  String get settingsModelCatalogRetry => '重试';
+
+  @override
   String get settingsModelCustomModel => '自定义模型';
 
   @override
@@ -1803,7 +1821,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelMaxContextLengthInvalid => '请输入大于 0 的最大上下文长度';
 
   @override
-  String get settingsModelSummaryThreshold => '总结 Token 阈值';
+  String get settingsModelSummaryThreshold => '总结阈值';
 
   @override
   String get settingsModelSummaryByMessageCount => '按消息数总结';
@@ -1848,7 +1866,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelGoogleSearchDescription => '启用供应商侧搜索能力。';
 
   @override
-  String get settingsModelContext => '上下文窗口';
+  String get settingsModelContext => '上下文';
 
   @override
   String get settingsModelSummary => '自动总结';
@@ -1857,10 +1875,68 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelThinking => '思考';
 
   @override
-  String get settingsModelThinkingOption => '思考档位';
+  String get thinkingLevelLabel => '思考程度';
 
   @override
-  String get settingsModelThinkingRules => '思考规则 JSON';
+  String get thinkingAlwaysOn => '始终思考';
+
+  @override
+  String get thinkingChip => '思考';
+
+  @override
+  String get settingsModelThinkingSourceDeclared => '档位按你的描述';
+
+  @override
+  String get settingsModelThinkingSourceLocalRuntime =>
+      '本地运行：可以开关思考，模型本身不会思考时开关不起作用';
+
+  @override
+  String get settingsModelThinkingUnknown => '目录里没有这个模型的思考信息';
+
+  @override
+  String get settingsModelThinkingNotAdjustable => '当前接口不能调节这个模型的思考';
+
+  @override
+  String get settingsModelThinkingNotSupported => '这个模型不会思考';
+
+  @override
+  String get settingsModelThinkingCarried => '沿用你最近一次设置的档位';
+
+  @override
+  String get settingsModelThinkingDescribe => '手动描述';
+
+  @override
+  String get settingsModelThinkingUseCatalog => '改回目录描述';
+
+  @override
+  String get settingsModelThinkingDescribeTitle => '这个模型怎么思考';
+
+  @override
+  String get settingsModelThinkingKindNone => '不会思考';
+
+  @override
+  String get settingsModelThinkingKindAlways => '总是思考，不能调节';
+
+  @override
+  String get settingsModelThinkingKindSwitch => '只能开关';
+
+  @override
+  String get settingsModelThinkingKindLevels => '分档位';
+
+  @override
+  String get settingsModelThinkingKindBudget => '按 token 预算';
+
+  @override
+  String get settingsModelThinkingCanTurnOff => '可以关闭思考';
+
+  @override
+  String get settingsModelThinkingBudgetMin => '最少 token';
+
+  @override
+  String get settingsModelThinkingBudgetMax => '最多 token';
+
+  @override
+  String get settingsModelThinkingLevelsRequired => '至少选一个档位';
 
   @override
   String get settingsModelMediaHistory => '媒体历史';
@@ -1875,13 +1951,108 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelBuiltinToolExclusive => '开启后会关闭外部工具调用';
 
   @override
-  String get settingsModelConnectionTestSection => '连接测试';
-
-  @override
   String get settingsModelRunConnectionTest => '测试当前模型';
 
   @override
-  String get settingsModelTestModel => '测试模型';
+  String get settingsModelTestModel => '测试';
+
+  @override
+  String get settingsModelCapabilityToolCall => '工具调用';
+
+  @override
+  String get settingsModelCapabilityImage => '图片';
+
+  @override
+  String get settingsModelCapabilityAudio => '音频';
+
+  @override
+  String get settingsModelCapabilityVideo => '视频';
+
+  @override
+  String get settingsModelClaudeCache => 'Claude 1 小时缓存';
+
+  @override
+  String get settingsModelClaudeCacheDescription =>
+      '为显式缓存断点设置 1 小时 TTL；关闭时使用默认 TTL。';
+
+  @override
+  String get settingsModelSummaryThresholdDescription =>
+      '上下文占用达到这个比例时自动总结，填 0 关闭。';
+
+  @override
+  String get settingsModelMoreActions => '更多操作';
+
+  @override
+  String get settingsModelRestoreDefaults => '恢复默认值';
+
+  @override
+  String get settingsModelDescribeThinking => '手动描述思考档位';
+
+  @override
+  String get settingsModelDeleteModel => '删除模型';
+
+  @override
+  String settingsModelSaveFailed(String error) {
+    return '保存失败：$error';
+  }
+
+  @override
+  String get settingsModelTestAll => '测试全部';
+
+  @override
+  String settingsModelTestProgress(int done, int total) {
+    return '测试中 $done/$total';
+  }
+
+  @override
+  String settingsModelTestSummary(int passed, int failed) {
+    return '$passed 个通过，$failed 个失败';
+  }
+
+  @override
+  String settingsModelTestAllPassed(int count) {
+    return '$count 个全部通过';
+  }
+
+  @override
+  String get settingsModelTestCouldNotRun => '测试没能运行';
+
+  @override
+  String get settingsModelCopyError => '复制错误信息';
+
+  @override
+  String get settingsModelSelect => '多选';
+
+  @override
+  String get settingsModelCheckAll => '全选';
+
+  @override
+  String settingsModelCheckedCount(int count) {
+    return '已选 $count 个';
+  }
+
+  @override
+  String settingsModelDeleteModelsTitle(int count) {
+    return '删除 $count 个模型？';
+  }
+
+  @override
+  String get settingsModelDeleteModelsMessage => '这些模型的设置会一起删除。';
+
+  @override
+  String settingsModelDeleteModelsKept(int count, String names) {
+    return '$count 个正在被功能使用，会保留：$names';
+  }
+
+  @override
+  String settingsModelDeleteModelsBlocked(String functions) {
+    return '所选模型正在被这些功能使用，请先更改功能模型分配：$functions';
+  }
+
+  @override
+  String settingsModelDeletedCount(int count) {
+    return '已删除 $count 个模型';
+  }
 
   @override
   String get settingsModelTestingConnection => '正在测试当前模型连接…';

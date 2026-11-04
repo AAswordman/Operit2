@@ -194,12 +194,19 @@ class ThemeComposerModelIdentity extends StatelessWidget {
     required this.chevronColor,
     required this.expanded,
     this.logoBuilder,
-  });
+    this.badge,
+    this.badgeColor,
+  }) : assert(badge == null || badgeColor != null, 'a badge needs a color');
   final String label;
   final TextStyle style;
   final Color chevronColor;
   final bool expanded;
   final Widget Function(double size)? logoBuilder;
+
+  /// A short note after the label, such as the model's thinking level; `null`
+  /// shows none.
+  final String? badge;
+  final Color? badgeColor;
 
   @override
   Widget build(BuildContext context) {
@@ -257,10 +264,28 @@ class ThemeComposerModelIdentity extends StatelessWidget {
         child: SizedBox(width: markSize, height: markSize, child: child),
       ),
     );
+    final badgeText = badge;
+    final badgeStyle = style.copyWith(
+      color: badgeColor,
+      fontWeight: FontWeight.w600,
+    );
+    var badgeWidth = 0.0;
+    if (badgeText != null) {
+      final badgeProbe = TextPainter(
+        text: TextSpan(text: badgeText, style: badgeStyle),
+        textDirection: Directionality.of(context),
+        maxLines: 1,
+      )..layout();
+      badgeWidth = badgeProbe.width + 5;
+      badgeProbe.dispose();
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
         final reserved =
-            (logoBuilder != null ? markSize + 4 : 0) + 4 + markSize;
+            (logoBuilder != null ? markSize + 4 : 0) +
+            4 +
+            markSize +
+            badgeWidth;
         if (!constraints.maxWidth.isFinite) {
           throw StateError('Composer model selector requires bounded width');
         }
@@ -289,6 +314,19 @@ class ThemeComposerModelIdentity extends StatelessWidget {
                 ),
               ),
             ),
+            if (badgeText != null) ...<Widget>[
+              const SizedBox(width: 5),
+              Text(
+                badgeText,
+                maxLines: 1,
+                style: badgeStyle,
+                strutStyle: StrutStyle.fromTextStyle(
+                  badgeStyle,
+                  forceStrutHeight: true,
+                  height: 1,
+                ),
+              ),
+            ],
             const SizedBox(width: 4),
             mark(
               AnimatedRotation(

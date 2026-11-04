@@ -1122,13 +1122,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelSetCurrentActive => 'Set active';
 
   @override
-  String get settingsChatThinkingMode => 'Thinking mode';
-
-  @override
-  String get settingsChatThinkingModeDescription =>
-      'Let supported models produce steadier reasoning.';
-
-  @override
   String get settingsChatStreamOutput => 'Stream output';
 
   @override
@@ -1794,6 +1787,31 @@ class AppLocalizationsEn extends AppLocalizations {
       'No fetched models. Choose Include history to see catalog IDs.';
 
   @override
+  String get settingsModelUnrecognized => 'Unrecognized';
+
+  @override
+  String settingsModelCatalogUpdatedAt(String time) {
+    return 'Capabilities and context from models.dev, updated $time';
+  }
+
+  @override
+  String settingsModelCatalogUpdateFailed(String error) {
+    return 'Could not download model details: $error';
+  }
+
+  @override
+  String settingsModelCatalogUpdateFailedUsing(String time, String error) {
+    return 'Could not update model details, using those from $time: $error';
+  }
+
+  @override
+  String get settingsModelCatalogNotDownloaded =>
+      'Model details have not been downloaded yet';
+
+  @override
+  String get settingsModelCatalogRetry => 'Retry';
+
+  @override
   String get settingsModelCustomModel => 'Custom model';
 
   @override
@@ -1873,7 +1891,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Enter a max context length greater than 0';
 
   @override
-  String get settingsModelSummaryThreshold => 'Summary token threshold';
+  String get settingsModelSummaryThreshold => 'Summarize at';
 
   @override
   String get settingsModelSummaryByMessageCount => 'Summarize by message count';
@@ -1923,7 +1941,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Enable provider-side search capability.';
 
   @override
-  String get settingsModelContext => 'Context window';
+  String get settingsModelContext => 'Context';
 
   @override
   String get settingsModelSummary => 'Auto summary';
@@ -1932,10 +1950,72 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelThinking => 'Thinking';
 
   @override
-  String get settingsModelThinkingOption => 'Thinking option';
+  String get thinkingLevelLabel => 'Thinking';
 
   @override
-  String get settingsModelThinkingRules => 'Thinking rules JSON';
+  String get thinkingAlwaysOn => 'Always thinking';
+
+  @override
+  String get thinkingChip => 'Thinking';
+
+  @override
+  String get settingsModelThinkingSourceDeclared =>
+      'Levels from your description';
+
+  @override
+  String get settingsModelThinkingSourceLocalRuntime =>
+      'Runs locally: thinking switches on or off, and the switch does nothing for a model that cannot think';
+
+  @override
+  String get settingsModelThinkingUnknown =>
+      'The catalog has no thinking details for this model';
+
+  @override
+  String get settingsModelThinkingNotAdjustable =>
+      'This API cannot change how this model thinks';
+
+  @override
+  String get settingsModelThinkingNotSupported => 'This model does not think';
+
+  @override
+  String get settingsModelThinkingCarried =>
+      'Carried over from the level you set last';
+
+  @override
+  String get settingsModelThinkingDescribe => 'Describe';
+
+  @override
+  String get settingsModelThinkingUseCatalog => 'Use catalog';
+
+  @override
+  String get settingsModelThinkingDescribeTitle => 'How this model thinks';
+
+  @override
+  String get settingsModelThinkingKindNone => 'Does not think';
+
+  @override
+  String get settingsModelThinkingKindAlways => 'Always thinks, no control';
+
+  @override
+  String get settingsModelThinkingKindSwitch => 'On or off';
+
+  @override
+  String get settingsModelThinkingKindLevels => 'Levels';
+
+  @override
+  String get settingsModelThinkingKindBudget => 'Token budget';
+
+  @override
+  String get settingsModelThinkingCanTurnOff => 'Can be turned off';
+
+  @override
+  String get settingsModelThinkingBudgetMin => 'Minimum tokens';
+
+  @override
+  String get settingsModelThinkingBudgetMax => 'Maximum tokens';
+
+  @override
+  String get settingsModelThinkingLevelsRequired => 'Pick at least one level';
 
   @override
   String get settingsModelMediaHistory => 'Media history';
@@ -1951,13 +2031,109 @@ class AppLocalizationsEn extends AppLocalizations {
       'Turns off external tool calling when enabled';
 
   @override
-  String get settingsModelConnectionTestSection => 'Connection test';
-
-  @override
   String get settingsModelRunConnectionTest => 'Test current model';
 
   @override
-  String get settingsModelTestModel => 'Test model';
+  String get settingsModelTestModel => 'Test';
+
+  @override
+  String get settingsModelCapabilityToolCall => 'Tools';
+
+  @override
+  String get settingsModelCapabilityImage => 'Image';
+
+  @override
+  String get settingsModelCapabilityAudio => 'Audio';
+
+  @override
+  String get settingsModelCapabilityVideo => 'Video';
+
+  @override
+  String get settingsModelClaudeCache => 'Claude 1h cache';
+
+  @override
+  String get settingsModelClaudeCacheDescription =>
+      'Sets a 1-hour TTL on explicit cache breakpoints; when off, the default TTL applies.';
+
+  @override
+  String get settingsModelSummaryThresholdDescription =>
+      'Summarize when the context fills to this share. 0 turns summaries off.';
+
+  @override
+  String get settingsModelMoreActions => 'More actions';
+
+  @override
+  String get settingsModelRestoreDefaults => 'Restore defaults';
+
+  @override
+  String get settingsModelDescribeThinking => 'Describe thinking levels';
+
+  @override
+  String get settingsModelDeleteModel => 'Delete model';
+
+  @override
+  String settingsModelSaveFailed(String error) {
+    return 'Could not save: $error';
+  }
+
+  @override
+  String get settingsModelTestAll => 'Test all';
+
+  @override
+  String settingsModelTestProgress(int done, int total) {
+    return 'Testing $done/$total';
+  }
+
+  @override
+  String settingsModelTestSummary(int passed, int failed) {
+    return '$passed passed, $failed failed';
+  }
+
+  @override
+  String settingsModelTestAllPassed(int count) {
+    return 'All $count passed';
+  }
+
+  @override
+  String get settingsModelTestCouldNotRun => 'The test could not run';
+
+  @override
+  String get settingsModelCopyError => 'Copy error';
+
+  @override
+  String get settingsModelSelect => 'Select';
+
+  @override
+  String get settingsModelCheckAll => 'Select all';
+
+  @override
+  String settingsModelCheckedCount(int count) {
+    return '$count selected';
+  }
+
+  @override
+  String settingsModelDeleteModelsTitle(int count) {
+    return 'Delete $count models?';
+  }
+
+  @override
+  String get settingsModelDeleteModelsMessage =>
+      'Their settings are deleted with them.';
+
+  @override
+  String settingsModelDeleteModelsKept(int count, String names) {
+    return '$count in use by functions will be kept: $names';
+  }
+
+  @override
+  String settingsModelDeleteModelsBlocked(String functions) {
+    return 'The selected models are used by these functions. Change the function model assignments first: $functions';
+  }
+
+  @override
+  String settingsModelDeletedCount(int count) {
+    return 'Deleted $count models';
+  }
 
   @override
   String get settingsModelTestingConnection =>
