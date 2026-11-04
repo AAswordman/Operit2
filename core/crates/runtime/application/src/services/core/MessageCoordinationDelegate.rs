@@ -6,7 +6,6 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 
 use crate::core::chat::AIMessageManager::{AIMessageManager, StableContextWindowRequest};
-use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageProcessingDelegate::ChatTurnSubmission;
 use crate::services::core::MessageProcessingDelegate::{
@@ -410,10 +409,8 @@ impl MessageCoordinationDelegate {
         let workspacePath = currentChat
             .as_ref()
             .and_then(|chat| self.chatHistoryDelegate.primaryWorkspacePathForChat(chat));
-        let enableThinking = ApiPreferences::getInstance()
-            .enableThinkingModeFlow()
-            .first()
-            .expect("enable_thinking_mode preference must be readable");
+        // Chats think at the level set on their model.
+        let enableThinking = true;
         let modelProviderId = configuration.profile.modelBinding.providerId.clone();
         let modelId = configuration.profile.modelBinding.modelId.clone();
         self.regenerateSingleAiMessageWithRequest(
@@ -749,10 +746,8 @@ impl MessageCoordinationDelegate {
                 .chatHistoryDelegate
                 .getRuntimeChatHistory(chatId.clone()),
         };
-        let enableThinking = ApiPreferences::getInstance()
-            .enableThinkingModeFlow()
-            .first()
-            .expect("enable_thinking_mode preference must be readable");
+        // Chats think at the level set on their model.
+        let enableThinking = true;
         let workspaceFolders = currentChat
             .as_ref()
             .map(|chat| self.chatHistoryDelegate.workspaceFolderPathsForChat(chat))

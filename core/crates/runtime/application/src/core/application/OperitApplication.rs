@@ -407,6 +407,7 @@ impl OperitApplication {
             self.toolHandler.clone(),
         );
         self.dispatchPluginLoading()?;
+        crate::services::ModelCatalogService::startKeepingFresh();
         self.initialized = true;
         AppLogger::i(
             "OperitApplication",

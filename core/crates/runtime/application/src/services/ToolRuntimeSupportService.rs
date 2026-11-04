@@ -13,6 +13,7 @@ use operit_providers::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
 use operit_providers::chat::llmprovider::AIService::SendMessageRequest;
+use operit_providers::chat::llmprovider::ThinkingDialect::RequestThinking;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
@@ -909,11 +910,6 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 .multi_service_manager
                 .getServiceBundleForFunction(request.functionType.clone())
                 .map_err(|error| error.to_string())?;
-            let thinkingQualityLevel = service
-                .provider_runtime_context
-                .support()
-                .thinkingQualityLevel()
-                .map_err(|error| error.to_string())?;
             let providerModel = {
                 let provider = aiService.lock().await;
                 provider.provider_model()
@@ -924,10 +920,11 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                     .send_message(SendMessageRequest {
                         chat_history: request.turns,
                         model_parameters: modelParameters,
-                        enable_thinking: request.enableThinking,
-                        thinking_quality_level: thinkingQualityLevel,
-                        thinking_configurations: modelConfig.thinkingConfigurations,
-                        thinking_option_id: modelConfig.thinkingOptionId,
+                        thinking: RequestThinking::for_model(
+                            &modelConfig.thinking,
+                            modelConfig.thinkingLevel,
+                            request.enableThinking,
+                        ),
                         stream: false,
                         available_tools: Vec::new(),
                         preserve_think_in_history: true,

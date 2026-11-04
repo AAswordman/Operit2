@@ -151,7 +151,7 @@ test("metadata adapters require the captured runtime store and return committed 
   assert.doesNotMatch(write, /readPluginExtension|serde_json::from_value|let stored/);
   assert.match(methods, /serde_json::Value::Object\(fields\) => Ok\(fields\.into_iter\(\)\.collect\(\)\)/);
   assert.match(write, /serde_json::Value::Object\(/);
-  const dataDir = provider.slice(provider.indexOf("fn dataDir("), provider.indexOf("fn thinkingQualityLevel("));
+  const dataDir = provider.slice(provider.indexOf("fn dataDir("), provider.indexOf("fn updateTokensForProviderModel("));
   assert.match(dataDir, /self\.tool_handler\.getContext\(\)/);
   assert.match(dataDir, /storage\s*\.runtimeRootDir\(\)/);
   assert.doesNotMatch(dataDir, /ApiPreferences|defaultRuntime/);
