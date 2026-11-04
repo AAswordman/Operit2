@@ -31,6 +31,7 @@ class CollapsedDrawerContent extends StatelessWidget {
     required this.selectedRouteId,
     required this.appearance,
     required this.onNavigationEntrySelected,
+    required this.onConversationNavigationPressed,
     required this.onConversationActivated,
     required this.currentChatId,
     required this.histories,
@@ -42,6 +43,7 @@ class CollapsedDrawerContent extends StatelessWidget {
   final String selectedRouteId;
   final NavigationDrawerAppearance appearance;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
+  final VoidCallback onConversationNavigationPressed;
   final VoidCallback onConversationActivated;
   final String? currentChatId;
   final List<core_proxy.ChatHistoryListItem> histories;
@@ -136,7 +138,7 @@ class CollapsedDrawerContent extends StatelessWidget {
                     appearance: appearance,
                     icon: Icons.chat_bubble_outline,
                     tooltip: l10n.aiChat,
-                    onClick: onConversationActivated,
+                    onClick: onConversationNavigationPressed,
                   ),
                 ),
               ),

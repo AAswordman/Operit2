@@ -804,9 +804,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                             collapsedTabletSidebarWidth: 56,
                             onNavigationEntrySelected:
                                 _navigateToNavigationEntry,
-                            onConversationActivated: () {
+                            onConversationActivated: _activateConversationRoute,
+                            onExpandSidebar: () {
                               setState(() => _isTabletSidebarExpanded = true);
-                              _activateConversationRoute();
                             },
                             onCollapseSidebar: () {
                               setState(() {

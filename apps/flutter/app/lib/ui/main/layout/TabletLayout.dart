@@ -30,6 +30,7 @@ class TabletLayout extends StatefulWidget {
     required this.collapsedTabletSidebarWidth,
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
+    this.onExpandSidebar,
     this.onCollapseSidebar,
   });
 
@@ -44,6 +45,7 @@ class TabletLayout extends StatefulWidget {
   final double collapsedTabletSidebarWidth;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
+  final VoidCallback? onExpandSidebar;
   final VoidCallback? onCollapseSidebar;
 
   @override
@@ -114,6 +116,19 @@ class _TabletLayoutState extends State<TabletLayout> {
     super.dispose();
   }
 
+  /// Toggles the conversation list independently from chat activation and creation.
+  void _handleConversationNavigationPressed() {
+    final isChatRoute =
+        widget.selectedRouteId ==
+        ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat);
+    if (isChatRoute && widget.isTabletSidebarExpanded) {
+      widget.onCollapseSidebar?.call();
+      return;
+    }
+    widget.onExpandSidebar?.call();
+    widget.onConversationActivated();
+  }
+
   @override
   Widget build(BuildContext context) {
     final appearance = navigationDrawerAppearanceOf(context);
@@ -148,6 +163,8 @@ class _TabletLayoutState extends State<TabletLayout> {
                     currentChatId: drawerState.currentChatId,
                     histories: drawerState.histories,
                     onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                    onConversationNavigationPressed:
+                        _handleConversationNavigationPressed,
                     onConversationActivated: widget.onConversationActivated,
                   ),
                 ),

@@ -201,12 +201,76 @@ void main() {
       expect(themeToggle.hitTestable(), findsOneWidget);
       expect(tester.getRect(themeToggle), themeToggleRect);
       expect(tester.getTopLeft(find.text('Desktop content')).dx, 337);
+
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+      await tester.pumpAndSettle();
+      expect(expanded.value, isFalse);
+      expect(find.byType(DrawerContent), findsNothing);
+      expect(tester.getRect(rail), originalRect);
+      expect(tester.getTopLeft(find.text('Desktop content')).dx, 57);
+
+      await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+      await tester.pumpAndSettle();
+      expect(expanded.value, isTrue);
+      expect(find.byType(DrawerContent), findsOneWidget);
+      expect(tester.getRect(rail), originalRect);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
     },
     variant: TargetPlatformVariant({TargetPlatform.macOS}),
   );
+
+  for (final initialRoute in [
+    ScreenRouteRegistry.aiChat,
+    ScreenRouteRegistry.settings,
+  ]) {
+    testWidgets(
+      'desktop new chat preserves collapsed sidebar from $initialRoute',
+      (tester) async {
+        final bridge = _registry();
+        final expanded = ValueNotifier(false);
+        final selectedRoute = ValueNotifier(
+          ScreenRouteRegistry.routeIdOf(initialRoute),
+        );
+        final conversations = ValueNotifier(
+          const DrawerConversationState(loading: false),
+        );
+        addTearDown(expanded.dispose);
+        addTearDown(selectedRoute.dispose);
+        addTearDown(conversations.dispose);
+        addTearDown(() => newChatIntroArmed.value = false);
+        await tester.pumpWidget(
+          _tabletSidebar(
+            bridge,
+            expanded,
+            conversations,
+            selectedRoute: selectedRoute,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byIcon(Icons.add_comment_outlined));
+        await tester.pumpAndSettle();
+
+        expect(
+          bridge.calls.where((call) => call.methodName == 'createNewChat'),
+          hasLength(1),
+        );
+        expect(
+          selectedRoute.value,
+          ScreenRouteRegistry.routeIdOf(ScreenRouteRegistry.aiChat),
+        );
+        expect(expanded.value, isFalse);
+        expect(find.byType(DrawerContent), findsNothing);
+        expect(newChatIntroArmed.value, isTrue);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      },
+      variant: TargetPlatformVariant({TargetPlatform.macOS}),
+    );
+  }
 
   for (final topInset in <double>[0, 24]) {
     for (final pluginTab in <bool>[false, true]) {
@@ -2083,6 +2147,7 @@ Widget _nativeDrawer(
               histories: histories,
               bridge: bridge,
               onNavigationEntrySelected: (_) {},
+              onConversationNavigationPressed: onActivated,
               onConversationActivated: onActivated,
             ),
     ),
@@ -2701,6 +2766,7 @@ Widget _tabletSidebar(
           isTabletSidebarExpanded: expanded.value,
           tabletSidebarWidth: 280,
           collapsedTabletSidebarWidth: 56,
+          onExpandSidebar: () => expanded.value = true,
           onCollapseSidebar: () => expanded.value = false,
           onNavigationEntrySelected: (entry) {
             selectedRoute?.value = entry.entryId == 'main.settings'
@@ -2711,7 +2777,6 @@ Widget _tabletSidebar(
             selectedRoute?.value = ScreenRouteRegistry.routeIdOf(
               ScreenRouteRegistry.aiChat,
             );
-            expanded.value = true;
           },
         ),
       ),
