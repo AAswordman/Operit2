@@ -177,7 +177,13 @@ fn deserializeControlCommand<'de, D: serde::Deserializer<'de>>(deserializer: D) 
         WireCommand::AdmitSpace { sourceSpaceId, identities, nodeIds } => {
             let identities = match (identities, nodeIds) {
                 (Some(identities), None) => identities,
-                (None, Some(nodes)) => nodes.into_iter().map(|node| (node, "user".into())).collect(),
+                (None, Some(nodes)) => {
+                    // Insert directly: bulk collection adds a temporary sorting
+                    // buffer and a separate sort implementation on small devices.
+                    let mut identities = BTreeMap::new();
+                    for node in nodes { identities.insert(node, "user".into()); }
+                    identities
+                },
                 (Some(_), Some(_)) => return Err(serde::de::Error::custom("Space admission cannot contain both nodeIds and identities")),
                 (None, None) => return Err(serde::de::Error::custom("Space admission requires identities")),
             };
@@ -549,6 +555,7 @@ impl NetworkControlStore {
     /// The key is bound to the claimed request/version, not just the member:
     /// removing and later readmitting a member must still create a new command.
     #[allow(non_snake_case)]
+    #[inline(never)]
     pub fn admitSpaceForReview(&self, sourceSpaceId: String, identities: BTreeMap<String, String>, reviewKey: &str) -> Result<SyncOperation, String> {
         let _lock = networkControlMutationLock()
             .lock()
@@ -583,6 +590,7 @@ impl NetworkControlStore {
     /// Looks up one review receipt without retaining the complete decoded log.
     /// Every immutable envelope and duplicate is still validated before returning.
     #[allow(non_snake_case)]
+    #[inline(never)]
     pub fn spaceControlOperation(&self, spaceId: &str, commandId: &str, issuer: &str) -> Result<Option<SyncOperation>, String> {
         if !self.boundedStorage {
             return Ok(self.orderedCommands(spaceId)?.into_iter()
@@ -618,6 +626,7 @@ impl NetworkControlStore {
 
     /// Canonicalizes immutable identities once and derives the manifest from every original byte.
     #[allow(non_snake_case)]
+    #[inline(never)]
     fn readSpaceControlProjection(&self, spaceId: &str, query: ControlExportQuery<'_>)
         -> Result<(SpaceControlManifest, Option<Box<serde_json::value::RawValue>>), String> {
         use sha2::{Digest, Sha256};
@@ -921,6 +930,7 @@ impl NetworkControlStore {
         self.projectControlOperationsForSpaceUnlocked(operations, &spaceId)
     }
 
+    #[inline(never)]
     fn projectControlOperationsForSpaceUnlocked(&self, operations: &[SyncOperation], spaceId: &str) -> Result<(), String> {
         // Validate the full batch before one atomic merge. Encoded history is
         // borrowed, and existing commands are decoded one at a time for equality.
@@ -996,6 +1006,7 @@ impl NetworkControlStore {
     }
 
     #[allow(non_snake_case)]
+    #[inline(never)]
     fn appendLocalCommandWithId(&self, spaceId: &str, command: NetworkControlCommand, commandId: String) -> Result<SyncOperation, String> {
         let record = NetworkControlCommandRecord {
             commandId,
@@ -1048,6 +1059,7 @@ impl NetworkControlStore {
     }
 
     /// Order borrowed encoded records once, decoding at most one payload at a time.
+    #[inline(never)]
     fn visitEncodedCommands(&self, spaceId: &str,
         mut visit: impl FnMut(&serde_json::value::RawValue) -> Result<(), String>) -> Result<(), String> {
         validateSpaceId(spaceId)?;
@@ -1179,7 +1191,9 @@ fn networkControlMutationLock() -> &'static Mutex<()> {
 /// Returns the immutable built-in roles exposed alongside user-defined roles.
 #[allow(non_snake_case)]
 fn builtinRoles() -> BTreeMap<String, NetworkControlRole> {
-    [
+    let mut roles = BTreeMap::new();
+    // Four fixed entries do not need the bulk collector's temporary sort.
+    for role in [
         builtinRole("admin", "Administrator", ["*"]),
         builtinRole(
             "user",
@@ -1193,10 +1207,10 @@ fn builtinRoles() -> BTreeMap<String, NetworkControlRole> {
         ),
         builtinRole("relay", "Relay", [NETWORK_DEVICES_VIEW_CAPABILITY, "network.relay", "storage.provide"]),
         builtinRole("edge", "Edge", [NETWORK_DEVICES_VIEW_CAPABILITY, "runtime.execute"]),
-    ]
-    .into_iter()
-    .map(|role| (role.roleId.clone(), role))
-    .collect()
+    ] {
+        roles.insert(role.roleId.clone(), role);
+    }
+    roles
 }
 
 /// Creates one fixed built-in role definition.

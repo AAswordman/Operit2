@@ -93,6 +93,7 @@ fn expire(request: &mut SpaceJoinRequest, targetSpaceId: &str, now: i64, spaceId
     }
 }
 /// Loads one owned application record without carrying its snapshots in caller stack frames.
+#[inline(never)]
 fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Box<Record>, String> {
     let encoded: Box<serde_json::value::RawValue> = store(service).record(path, id)?.ok_or("Join request not found")?;
     let record: Record<Box<serde_json::value::RawValue>> = serde_json::from_str(encoded.get()).map_err(|error| error.to_string())?;
@@ -181,7 +182,8 @@ fn paired(service: &dyn NodeSpaceContext, peer: &str, direction: crate::NodeServ
 /// Applicant-to-gateway adds one identical hop to every candidate. Never use RTT
 /// as an unannounced replacement for hop count; ties use stable device identity.
 fn hopDistances(source: &str, edges: &[CoreSpaceDeviceConnection], transit: &BTreeSet<String>) -> BTreeMap<String, u32> {
-    let mut distances = BTreeMap::from([(source.to_owned(), 0)]);
+    let mut distances = BTreeMap::new();
+    distances.insert(source.to_owned(), 0);
     let mut queue = VecDeque::from([source.to_owned()]);
     while let Some(node) = queue.pop_front() {
         if node != source && !transit.contains(&node) { continue; }
@@ -226,6 +228,7 @@ pub(crate) fn assign(service: &dyn NodeSpaceContext, record: &mut Record, now: i
 }
 
 /// Updates a reviewer lease without materializing applicant profiles or policy evidence.
+#[inline(never)]
 fn assignReviewer(service: &dyn NodeSpaceContext, request: &mut SpaceJoinRequest,
     unavailableSince: &mut Option<i64>, committed: bool, now: i64) -> Result<(), String> {
     if !matches!(request.status, SpaceJoinStatus::Pending | SpaceJoinStatus::Approving) || committed { return Ok(()); }
@@ -279,6 +282,7 @@ fn assignReviewer(service: &dyn NodeSpaceContext, request: &mut SpaceJoinRequest
 /// policy but the reviewer crashed between applying the operation and writing
 /// the result record. Membership already exists in the replayed policy; this
 /// only rebuilds the projection and the applicant-facing receipt.
+#[inline(never)]
 fn recoverCommittedApproval(service: &dyn NodeSpaceContext, record: &mut Record, current: &CoreSpace) -> Result<(), String> {
     if record.request.status != SpaceJoinStatus::Approving || record.approvedDecision != Some(true) { return Ok(()); }
     if !admissionCommitted(service, record)? { return Ok(()); }
@@ -305,6 +309,7 @@ fn recoverCommittedApproval(service: &dyn NodeSpaceContext, record: &mut Record,
     Ok(())
 }
 /// Reconciles expiry, committed admission and reviewer ownership.
+#[inline(never)]
 pub(crate) fn reconcile(service: &dyn NodeSpaceContext, record: &mut Record) -> Result<(), String> {
     let now = currentTimeMillis();
     let current = service.spaceStore().initialize()?;
@@ -797,6 +802,8 @@ fn receiveStatus(service: &dyn NodeSpaceContext, peer: &str, current: &CoreSpace
 }
 
 /// Applies a typed command and releases evidence before constructing its reply.
+// Keep validation, policy replay and evidence decoding out of the same device stack frame.
+#[inline(never)]
 fn receiveCommand(service: &dyn NodeSpaceContext, peer: &str, current: &CoreSpace, input: Box<Submission>,
     cancellation: bool) -> Result<ConsentProjection, String> {
     let mut record = receiveSubmission(service, peer, current, input, cancellation)?;
@@ -821,6 +828,7 @@ fn receiveCommand(service: &dyn NodeSpaceContext, peer: &str, current: &CoreSpac
 }
 
 /// Validates immutable applicant evidence while retaining only headers for unrelated requests.
+#[inline(never)]
 fn receiveSubmission(service: &dyn NodeSpaceContext, peer: &str, current: &CoreSpace,
     input: Box<Submission>, cancellation: bool) -> Result<Box<Record>, String> {
     if !cancellation {
@@ -884,6 +892,7 @@ fn receiveSubmission(service: &dyn NodeSpaceContext, peer: &str, current: &CoreS
 }
 
 /// Projects membership only after matching the decision to the current authoritative admission.
+#[inline(never)]
 fn membershipReply(service: &dyn NodeSpaceContext, summary: ConsentProjection, current: &CoreSpace) -> Result<JoinReply, String> {
     let accepted = if summary.request.status == SpaceJoinStatus::Approved {
         if summary.approvedDecision != Some(true) || summary.decisionRevision.is_none()
@@ -1009,6 +1018,7 @@ pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<Space
     Ok(result)
 }
 /// Rejects a stale or unauthorized review claim.
+#[inline(never)]
 fn validateAssignment(service: &dyn NodeSpaceContext, record: &Record, origin: &str, decision: &Decision) -> Result<(), String> {
     if record.request.reviewerDeviceId.as_deref() != Some(origin)
         || record.request.assignmentVersion != decision.assignmentVersion
@@ -1067,7 +1077,7 @@ pub(crate) fn receiveApproval(service: &dyn NodeSpaceContext, origin: &str, requ
             toCoreValue(claimDecision(service, origin, decision, current)?).map_err(|e| e.to_string())
         }
         "complete" => {
-            let outcome: Outcome = fromCoreValue(request.args).map_err(|e| e.to_string())?;
+            let outcome: Box<Outcome> = fromCoreValue(request.args).map_err(|e| e.to_string())?;
             let record = completeDecision(service, origin, outcome, current)?;
             toCoreValue(membershipReply(service, ConsentProjection::from(record.as_ref()), &service.spaceStore().space()?)?).map_err(|e| e.to_string())
         }
@@ -1078,6 +1088,7 @@ pub(crate) fn receiveApproval(service: &dyn NodeSpaceContext, origin: &str, requ
 /// Repair presentation bytes from this durable review only after its matching
 /// admission is authoritative. Missing profiles must not prevent resuming a
 /// membership prefix written before the final approval receipt.
+#[inline(never)]
 fn restoreClaimedMemberProfiles(service: &dyn NodeSpaceContext, record: &Record, current: &CoreSpace) -> Result<(), String> {
     if record.approvedDecision != Some(true)
         || !matches!(record.request.status, SpaceJoinStatus::Approving | SpaceJoinStatus::Approved) {
@@ -1093,7 +1104,8 @@ fn restoreClaimedMemberProfiles(service: &dyn NodeSpaceContext, record: &Record,
 }
 
 /// Applies the same claim transition to local and authenticated remote reviewers.
-fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decision, current: CoreSpace) -> Result<Claim, String> {
+#[inline(never)]
+fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decision, current: CoreSpace) -> Result<Box<Claim>, String> {
             let mut record = load(service, INBOUND, &decision.requestId)?;
             let before = (record.request.clone(), record.unavailableSince);
             reconcile(service, &mut record)?;
@@ -1117,16 +1129,17 @@ fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decisio
         saveRecord(service, INBOUND, &decision.requestId, &record)?;
     }
     restoreClaimedMemberProfiles(service, &record, &current)?;
-    Ok(Claim { record, current: PeerSpaceJoin { space: current,
+    Ok(Box::new(Claim { record, current: PeerSpaceJoin { space: current,
         deviceProfiles: service.spaceStore().deviceProfilesForCurrentSpace()?,
         topology: service.spaceStore().topologyRecords()?.into_values().collect(),
         // A local reviewer already owns this policy and never imports its own
         // claim history. Remote reviewers still need the complete authority.
         controlOperations: if origin == service.localNodeId() { Vec::new() }
-            else { service.networkControlStore().currentSpaceOperations()? }, departures: Vec::new() } })
+            else { service.networkControlStore().currentSpaceOperations()? }, departures: Vec::new() } }))
 }
 /// Completes one claimed decision and returns the owned durable application record.
-fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outcome, current: CoreSpace) -> Result<Box<Record>, String> {
+#[inline(never)]
+fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Box<Outcome>, current: CoreSpace) -> Result<Box<Record>, String> {
             let mut record = load(service, INBOUND, &outcome.decision.requestId)?;
             validateAssignment(service, &record, origin, &outcome.decision)?;
             if record.approvedDecision != Some(outcome.decision.approve) { return Err("Decision does not match its claim".into()); }
@@ -1168,6 +1181,7 @@ fn completeDecision(service: &dyn NodeSpaceContext, origin: &str, outcome: Outco
     Ok(record)
 }
 /// Requires current local membership before constructing a decision context.
+#[inline(never)]
 fn localDecisionContext(service: &dyn NodeSpaceContext) -> Result<CoreSpace, String> {
     let current = service.spaceStore().initialize()?;
     let local = service.localNodeId();
@@ -1177,24 +1191,32 @@ fn localDecisionContext(service: &dyn NodeSpaceContext) -> Result<CoreSpace, Str
     Ok(current)
 }
 
-/// Resolves one unambiguous review owner and commits its authorized decision.
-pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: u64, approve: bool) -> Result<SpaceJoinRequest, String> {
-    let local = service.localNodeId();
-    if !canReview(service, &local)? { return Err("This device cannot approve Space join requests".into()); }
+// Synchronous phases release their record/authority frames before the next
+// await. Only boxed workflow records remain in the approval future's poll frame.
+#[inline(never)]
+fn decisionReview(service: &dyn NodeSpaceContext, id: &str, local: &str) -> Result<Box<ConsentProjection>, String> {
     let records = store(service);
-    let gateway: Option<ConsentProjection> = records.record(INBOUND, &id)?;
-    let assigned: Option<ConsentProjection> = records.record(INBOX, &id)?;
+    let gateway: Option<ConsentProjection> = records.record(INBOUND, id)?;
+    let assigned: Option<ConsentProjection> = records.record(INBOX, id)?;
     let inbox = match (gateway, assigned) {
         (Some(record), None) if record.request.targetDeviceId == local => record,
         (None, Some(record)) if record.request.targetDeviceId != local => record,
         _ => return Err("Join review must have exactly one matching gateway or assignment record".into()),
     };
+    Ok(Box::new(inbox))
+}
+
+/// Resolves one unambiguous review owner and commits its authorized decision.
+pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: u64, approve: bool) -> Result<SpaceJoinRequest, String> {
+    let local = service.localNodeId();
+    if !canReview(service, &local)? { return Err("This device cannot approve Space join requests".into()); }
+    let inbox = decisionReview(service, &id, &local)?;
     if inbox.request.targetDeviceId == local {
         let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         return Ok(decideLocally(service, &id, version, approve)?.request);
     }
     let decision = Decision { requestId: id.clone(), assignmentVersion: version, approve };
-    let claim: Claim = approvalCall(service, &inbox.request.targetDeviceId, "claim", toCoreValue(decision).map_err(|e| e.to_string())?).await?;
+    let claim: Box<Claim> = approvalCall(service, &inbox.request.targetDeviceId, "claim", toCoreValue(decision).map_err(|e| e.to_string())?).await?;
     if inbox.identity() != responseIdentity(&claim.record) || inbox.sourceRevision != claim.record.sourceRevision {
         return Err("Join response identity mismatch".into());
     }
@@ -1203,7 +1225,7 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
     let expectedRevision = inbox.sourceRevision;
     drop(inbox);
     let outcome = prepareOutcome(service, &id, version, approve, false, claim)?;
-    let reply: JoinReply = approvalCall(service, &expected[2], "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?;
+    let reply: Box<JoinReply> = approvalCall(service, &expected[2], "complete", toCoreValue(outcome).map_err(|e| e.to_string())?).await?;
     if expected.each_ref().map(String::as_str) != projection::identity(&reply.request, &reply.sourceSpaceId, &reply.targetSpaceId)
         || expectedRevision != reply.sourceRevision {
         return Err("Join response identity mismatch".into());
@@ -1212,6 +1234,7 @@ pub(crate) async fn decide(service: &dyn NodeSpaceContext, id: String, version: 
 }
 
 /// Runs the same durable local decision for explicit review and QR admission under MUTATION.
+#[inline(never)]
 fn decideLocally(service: &dyn NodeSpaceContext, id: &str, version: u64, approve: bool) -> Result<Box<Record>, String> {
     let local = service.localNodeId();
     let claim = claimDecision(service, &local, Decision { requestId: id.into(), assignmentVersion: version, approve }, localDecisionContext(service)?)?;
@@ -1221,9 +1244,10 @@ fn decideLocally(service: &dyn NodeSpaceContext, id: &str, version: u64, approve
 }
 
 /// Consumes command evidence synchronously so completion retains only the decision outcome.
+#[inline(never)]
 fn prepareOutcome(service: &dyn NodeSpaceContext, id: &str, version: u64, approve: bool,
-    onGateway: bool, claim: Claim) -> Result<Outcome, String> {
-    let saved = store(service).record::<Outcome>(RESULTS, id)?;
+    onGateway: bool, claim: Box<Claim>) -> Result<Box<Outcome>, String> {
+    let saved = store(service).record::<Box<Outcome>>(RESULTS, id)?;
     if let Some(saved) = saved {
         if saved.decision.assignmentVersion != version || saved.decision.approve != approve { return Err("Stored decision differs from the claim".into()); }
         Ok(saved)
@@ -1259,7 +1283,7 @@ fn prepareOutcome(service: &dyn NodeSpaceContext, id: &str, version: u64, approv
             if !onGateway { service.spaceStore().adoptAt(joined, claim.record.request.createdAt)?; }
             Some(operation)
         } else { None };
-        let outcome = Outcome { decision: Decision { requestId: id.to_owned(), assignmentVersion: version, approve }, admission, revision };
+        let outcome = Box::new(Outcome { decision: Decision { requestId: id.to_owned(), assignmentVersion: version, approve }, admission, revision });
         // Local retries recover their stable admission from the shared log;
         // only remote reviewers need a durable outbound completion result.
         if !onGateway { store(service).putRecord(RESULTS, id, &outcome)?; }

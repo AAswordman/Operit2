@@ -93,7 +93,8 @@ npm run test:device-budget --prefix edge/boards/esp32/editor -- --firmware
 ```
 
 入口复用上游的 256 KiB Rust 堆、16/24/20 KiB 主/异步/阻塞任务栈及 7,000 字节
-持久化预算。它依次构建预览、检查 TypeScript、运行共享固件模块和编辑器测试，
+持久化预算。它先运行厂商 SDK workspace 的全功能测试及所有功能组合的依赖审计，
+再构建预览、检查 TypeScript、运行共享固件模块和编辑器测试，
 同步已有插件包并构建当前 Core CLI，然后验证配对入空间、独立聊天、额外十二轮对话及重启。
 `--firmware` 还先构建 ESP32 固件并检查 Xtensa ABI；两种入口均不会烧录设备。
 堆探针直接占用同一个固定分配区，制造隔开的 8 KiB 空洞，检查总空闲足够时
