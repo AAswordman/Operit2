@@ -9,17 +9,22 @@ pub struct MediaLinkBuilder;
 impl MediaLinkBuilder {
     /// Builds a canonical image media-link tag.
     pub fn image(id: &str) -> String {
-        format!("<link type=\"image\" id=\"{}\"></link>", id)
+        Self::media("image", id)
     }
 
     /// Builds a canonical audio media-link tag.
     pub fn audio(id: &str) -> String {
-        format!("<link type=\"audio\" id=\"{}\"></link>", id)
+        Self::media("audio", id)
     }
 
     /// Builds a canonical video media-link tag.
     pub fn video(id: &str) -> String {
-        format!("<link type=\"video\" id=\"{}\"></link>", id)
+        Self::media("video", id)
+    }
+
+    /// Builds a canonical tag for an already validated image, audio, or video kind.
+    pub fn media(kind: &str, id: &str) -> String {
+        format!("<link type=\"{kind}\" id=\"{id}\"></link>")
     }
 
     /// Builds a canonical file media-link tag with an escaped filename.
@@ -46,13 +51,25 @@ fn escape_xml_attribute(value: &str) -> String {
 mod tests {
     use super::MediaLinkBuilder;
 
-    /// Keeps image tags aligned with the provider-side media-link parser shape.
+    /// Keeps image, audio, and video tags aligned with the provider-side media-link parser shape.
     #[test]
-    fn image_tag_matches_parser_contract() {
-        assert_eq!(
-            MediaLinkBuilder::image("abc-123"),
-            "<link type=\"image\" id=\"abc-123\"></link>"
-        );
+    fn media_tags_match_parser_contract() {
+        for (tag, expected) in [
+            (
+                MediaLinkBuilder::image("abc-123"),
+                "<link type=\"image\" id=\"abc-123\"></link>",
+            ),
+            (
+                MediaLinkBuilder::audio("abc-123"),
+                "<link type=\"audio\" id=\"abc-123\"></link>",
+            ),
+            (
+                MediaLinkBuilder::video("abc-123"),
+                "<link type=\"video\" id=\"abc-123\"></link>",
+            ),
+        ] {
+            assert_eq!(tag, expected);
+        }
     }
 
     /// Escapes filename characters that would break attribute parsing.

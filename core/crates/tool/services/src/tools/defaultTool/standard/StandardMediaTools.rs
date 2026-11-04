@@ -6,6 +6,7 @@ use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::js_sdk::results::MediaRegistrationResultData;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 use operit_util::MediaRegistration::{register_media_base64, register_media_bytes, RegisteredMedia};
 use serde::Deserialize;
 
@@ -152,7 +153,7 @@ fn registration_result(
     registered: RegisteredMedia,
 ) -> Result<MediaRegistrationResultData, String> {
     Ok(MediaRegistrationResultData {
-        link: format!("<link type=\"{kind}\" id=\"{}\"></link>", registered.id),
+        link: MediaLinkBuilder::media(kind, &registered.id),
         id: registered.id,
         mimeType: registered.mime_type,
         width: registered.width,
@@ -194,7 +195,7 @@ mod tests {
     use operit_util::MediaPoolManager::MediaPoolManager;
 
     #[test]
-    fn native_base64_request_returns_an_image_link() {
+    fn native_base64_request_returns_media_links() {
         let json = serde_json::json!({
             "type": "image",
             "source": "base64",
@@ -210,15 +211,21 @@ mod tests {
         assert_eq!(result.height, Some(3));
         assert_eq!(result.link, format!("<link type=\"image\" id=\"{}\"></link>", result.id));
         ImagePoolManager::remove_image(&result.id);
-        let audio = register_native_media(
-            &HostManager::default(),
-            r#"{"type":"audio","source":"base64","base64":"YQ==","mimeType":"audio/mpeg"}"#,
-        )
-        .expect("audio");
-        let audio: MediaRegistrationResultData = serde_json::from_str(&audio).expect("audio json");
-        assert!(audio.width.is_none());
-        assert!(audio.link.starts_with("<link type=\"audio\" id=\""));
-        MediaPoolManager::remove_media(&audio.id);
+        for (kind, mime) in [("audio", "audio/mpeg"), ("video", "video/mp4")] {
+            let json = serde_json::json!({
+                "type": kind, "source": "base64", "base64": "YQ==", "mimeType": mime,
+            })
+            .to_string();
+            let result: MediaRegistrationResultData = serde_json::from_str(
+                &register_native_media(&HostManager::default(), &json).expect("register"),
+            )
+            .expect("result");
+            assert_eq!(result.mimeType, mime);
+            assert!(result.width.is_none() && result.height.is_none());
+            assert_eq!(result.link, format!("<link type=\"{kind}\" id=\"{}\"></link>", result.id));
+            assert!(MediaPoolManager::get_media(&result.id).is_some());
+            MediaPoolManager::remove_media(&result.id);
+        }
     }
 }
 

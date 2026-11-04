@@ -71,6 +71,7 @@ use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
+use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use operit_util::OperitPaths;
 use serde::{Deserialize, Serialize};
@@ -2733,7 +2734,7 @@ impl ChatServiceCore {
     ) -> Result<String, String> {
         let _ = chatId;
         let id = crate::services::media::images::register(&imageBytes, &mimeType)?;
-        Ok(format!("<link type=\"image\" id=\"{id}\"></link>"))
+        Ok(MediaLinkBuilder::image(&id))
     }
 
     /// Builds a routed diagnostic chat message flow with one embedded response stream.

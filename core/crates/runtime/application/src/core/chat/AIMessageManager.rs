@@ -17,7 +17,6 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
 use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
-use operit_providers::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
     ChatGuidanceInbox, EnhancedAIService, MessageCancellationToken, ResumeRequest,
@@ -31,6 +30,7 @@ use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_util::ImagePoolManager::ImagePoolManager;
+use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 use operit_util::MediaPoolManager::MediaPoolManager;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
