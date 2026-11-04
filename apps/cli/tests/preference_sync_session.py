@@ -474,8 +474,6 @@ async def exercise_focused(binary):
         await check('tts:staggered-default-initialization-strict-convergence', default_tts)
         for source, target in [(a, b), (b, a)]:
             for command, arguments, expected in [
-                ('thinking', ['off' if source is a else 'on'], {'enableThinkingMode': source is b}),
-                ('thinking-quality', ['2' if source is a else '3'], {'thinkingQualityLevel': 2 if source is a else 3}),
                 ('stream', ['off' if source is a else 'on'], {'streamOutputEnabled': source is b}),
                 ('media-history', ['37', '41'] if source is a else ['43', '47'], {'maxImageHistoryUserTurns': 37 if source is a else 43, 'maxMediaHistoryUserTurns': 41 if source is a else 47}),
                 ('mcp-timeout', ['7' if source is a else '9'], {'mcpStartupTimeoutSeconds': 7 if source is a else 9}),

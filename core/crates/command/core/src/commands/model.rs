@@ -9,6 +9,7 @@ use operit_model::ModelConfigData::{
     ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
+use operit_model::ModelThinking::{ModelThinkingSettings, ThinkingLevel};
 use operit_runtime::data::preferences::FunctionalConfigManager::{
     FunctionModelBinding, FunctionalConfigManager,
 };
@@ -48,7 +49,7 @@ pub fn run_model_command(
             output.push_stdout_line(format!("Provider types: {}", providers.len()));
             for provider in &providers {
                 output.push_stdout_line(format!(
-                    "- {} | {} | models: {} | {}",
+                    "- {} | {} | fixed models: {} | {}",
                     provider.providerTypeId,
                     provider.displayName,
                     provider.models.len(),
@@ -211,13 +212,13 @@ pub fn run_model_command(
             ));
             for model in &models {
                 output.push_stdout_line(format!(
-                    "- {} | source: {:?} | pricing: {} | context: {} | capabilities: {} | request: {}",
+                    "- {} | source: {:?} | recognized as: {} | pricing: {} | context: {} | capabilities: {}",
                     model.modelId,
                     model.source,
+                    model.catalogModelId.as_deref().unwrap_or("-"),
                     model.pricing.is_some(),
                     model.context.is_some(),
-                    model.capabilities.is_some(),
-                    model.request.is_some()
+                    model.capabilities.is_some()
                 ));
             }
             output.setJsonStdout(serde_json::to_value(&models).map_err(|error| error.to_string())?);
@@ -232,11 +233,20 @@ pub fn run_model_command(
                 args,
                 2,
                 "usage: operit2 model provider-model-add <provider-id> <model-id>",
-            )?
-            .to_string();
-            let modelId = command
-                .modelManager()
-                .addProviderModelFromAvailable(providerId, modelId)
+            )?;
+            let manager = command.modelManager();
+            let available = manager
+                .getAvailableProviderModels(providerId)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|model| model.modelId == modelId)
+                .ok_or_else(|| {
+                    format!(
+                        "{providerId} does not list {modelId}; use provider-model-create to add it by id"
+                    )
+                })?;
+            let modelId = manager
+                .addProviderModelFromAvailable(providerId, available)
                 .map_err(|error| error.to_string())?;
             output.push_stdout_line(format!("Added provider model {modelId}"));
             output.setJsonStdout(json!({
@@ -267,6 +277,23 @@ pub fn run_model_command(
                 "modelId": modelId,
                 "created": true
             }));
+        }
+        "catalog-status" | "catalog-refresh" => {
+            let manager = command.modelManager();
+            let status = if args[0] == "catalog-refresh" {
+                manager.refreshModelCatalog()
+            } else {
+                manager.getModelCatalogStatus()
+            }
+            .map_err(|error| error.to_string())?;
+            output.push_stdout_line(match status.updatedAt {
+                Some(updatedAt) => format!("models.dev catalog downloaded at {updatedAt} (Unix ms)"),
+                None => "models.dev catalog not downloaded yet".to_string(),
+            });
+            if let Some(error) = &status.lastError {
+                output.push_stdout_line(format!("Last download failed: {error}"));
+            }
+            output.setJsonStdout(serde_json::to_value(&status).map_err(|error| error.to_string())?);
         }
         "list" => {
             let mut summaries = command
@@ -507,72 +534,29 @@ pub fn run_model_command(
                 "updated": true
             }));
         }
-        "thinking-show" => {
-            let providerId = requiredArg(
-                args,
-                1,
-                "usage: operit2 model thinking-show <provider-id> <model-id>",
-            )?;
-            let modelId = requiredArg(
-                args,
-                2,
-                "usage: operit2 model thinking-show <provider-id> <model-id>",
-            )?;
+        "thinking" => {
+            let usage = "usage: operit2 model thinking <provider-id> <model-id> [off|enabled|minimal|low|medium|high|xhigh|max]";
+            let providerId = requiredArg(args, 1, usage)?;
+            let modelId = requiredArg(args, 2, usage)?;
             let manager = command.modelManager();
-            let config = manager
-                .getResolvedModelConfig(providerId, modelId)
-                .map_err(|error| error.to_string())?;
-            let descriptor = manager
-                .getThinkingSettingsForProvider(providerId, modelId)
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("Thinking for {providerId}:{modelId}"));
-            output.push_stdout_line(format!("Control: {:?}", descriptor.control));
-            output.push_stdout_line(format!("Required: {}", descriptor.required));
-            output.push_stdout_line(format!("Selected option: {}", config.thinkingOptionId));
-            output.push_stdout_line(format!("Options: {}", descriptor.options.len()));
-            for option in &descriptor.options {
-                output.push_stdout_line(format!("- {}", option.id));
-            }
-            output.push_stdout_line("Rules:");
-            output.push_stdout_line(config.thinkingConfigurations.clone());
+            let settings = match args.get(3) {
+                Some(name) => {
+                    let level = ThinkingLevel::fromName(name)
+                        .ok_or_else(|| format!("unknown thinking level `{name}`; {usage}"))?;
+                    manager
+                        .setThinkingLevelForModel(providerId, modelId, level)
+                        .map_err(|error| error.to_string())?
+                }
+                None => manager
+                    .getThinkingSettingsForModel(providerId, modelId)
+                    .map_err(|error| error.to_string())?,
+            };
+            print_thinking_settings(providerId, modelId, &settings, output);
             output.setJsonStdout(json!({
                 "providerId": providerId,
                 "modelId": modelId,
-                "thinkingConfigurations": config.thinkingConfigurations,
-                "thinkingOptionId": config.thinkingOptionId,
-                "settings": descriptor,
-            }));
-        }
-        "thinking-set-option" => {
-            let providerId = requiredArg(
-                args,
-                1,
-                "usage: operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
-            )?;
-            let modelId = requiredArg(
-                args,
-                2,
-                "usage: operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
-            )?;
-            let thinkingOptionId = requiredArg(
-                args,
-                3,
-                "usage: operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
-            )?
-            .to_string();
-            let manager = command.modelManager();
-            let provider = manager
-                .updateThinkingOptionForProvider(providerId, modelId, thinkingOptionId)
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!(
-                "Updated thinking option for {providerId}:{modelId}"
-            ));
-            output.setJsonStdout(json!({
-                "providerId": providerId,
-                "modelId": modelId,
-                "thinkingConfigurations": provider.thinkingConfigurations,
-                "thinkingOptionId": provider.thinkingOptionId,
-                "updated": true,
+                "thinking": settings,
+                "updated": args.get(3).is_some(),
             }));
         }
         "function-list" => {
@@ -798,7 +782,13 @@ fn print_resolved_model_config(config: &ResolvedModelConfig, output: &mut CoreCo
     output.push_stdout_line(format!("Tool calls: {}", config.capabilities.toolCall));
     output.push_stdout_line(format!("Builtin tools: {}", config.builtinTools.len()));
     output.push_stdout_line(format!("Parameters: {}", config.parameters.len()));
-    output.push_stdout_line(format!("Thinking option: {}", config.thinkingOptionId));
+    output.push_stdout_line(format!(
+        "Thinking level: {}",
+        match config.thinkingLevel {
+            Some(level) => level.name(),
+            None => "not adjustable",
+        }
+    ));
     print_summary_settings(&config.providerId, &config.modelId, &config.summary, output);
     print_pricing(config.pricing.as_ref(), output);
 }
@@ -815,6 +805,41 @@ fn print_context_spec(
 }
 
 /// Prints summary settings for one provider model.
+/// Prints the thinking levels one model offers and the level its requests use.
+fn print_thinking_settings(
+    providerId: &str,
+    modelId: &str,
+    settings: &ModelThinkingSettings,
+    output: &mut CoreCommandOutput,
+) {
+    output.push_stdout_line(format!("Thinking for {providerId}:{modelId}"));
+    output.push_stdout_line(format!("Described by: {:?}", settings.source));
+    if settings.levels.is_empty() {
+        output.push_stdout_line(if settings.spec.alwaysOn() {
+            "Always thinks; there is no level to set"
+        } else {
+            "There is no level to set for this model"
+        });
+        return;
+    }
+    let levels = settings
+        .levels
+        .iter()
+        .map(|option| match option.budgetTokens {
+            Some(tokens) => format!("{} ({tokens} tokens)", option.level.name()),
+            None => option.level.name().to_string(),
+        })
+        .collect::<Vec<_>>();
+    output.push_stdout_line(format!("Levels: {}", levels.join(", ")));
+    if let Some(current) = settings.current {
+        output.push_stdout_line(if settings.chosen {
+            format!("Current: {}", current.name())
+        } else {
+            format!("Current: {} (carried over from the level set last)", current.name())
+        });
+    }
+}
+
 fn print_summary_settings(
     providerId: &str,
     modelId: &str,
@@ -917,8 +942,8 @@ fn resolved_model_config_json(config: &ResolvedModelConfig) -> Value {
         "builtinTools": &config.builtinTools,
         "request": &config.request,
         "parameters": &config.parameters,
-        "thinkingConfigurations": &config.thinkingConfigurations,
-        "thinkingOptionId": &config.thinkingOptionId,
+        "thinking": &config.thinking,
+        "thinkingLevel": &config.thinkingLevel,
         "summary": &config.summary,
         "localRuntime": &config.localRuntime
     })
@@ -965,6 +990,8 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model provider-model-available-list <provider-id> [fetched|all]",
         "operit2 model provider-model-add <provider-id> <provider-model-id>",
         "operit2 model provider-model-create <provider-id> <provider-model-id>",
+        "operit2 model catalog-status",
+        "operit2 model catalog-refresh",
         "operit2 model list",
         "operit2 model show [provider-id] [model-id]",
         "operit2 model use <provider-id> <model-id>",
@@ -975,8 +1002,7 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model context-set <provider-id> <model-id> <max-context-length>",
         "operit2 model summary-show [provider-id] [model-id]",
         "operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>",
-        "operit2 model thinking-show <provider-id> <model-id>",
-        "operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
+        "operit2 model thinking <provider-id> <model-id> [off|enabled|minimal|low|medium|high|xhigh|max]",
         "operit2 model function-list",
         "operit2 model function-show <function-type>",
         "operit2 model function-set <function-type> <provider-id> <model-id>",
