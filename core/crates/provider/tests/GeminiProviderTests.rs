@@ -44,6 +44,7 @@ fn imageLinksBecomeGeminiInlineDataParts() {
 #[test]
 fn packageProxyResultMatchesGeminiFunctionCall() {
     let provider = test_provider();
+    let image_id = ImagePoolManager::add_image_bytes(b"\x89PNG\r\n\x1a\n", Some("image/png"), None);
     let history = vec![
         PromptTurn::new(
             PromptTurnKind::ASSISTANT,
@@ -57,18 +58,17 @@ fn packageProxyResultMatchesGeminiFunctionCall() {
         ),
         PromptTurn::new(
             PromptTurnKind::TOOL_RESULT,
-            [
-                r#"<tool_result name="daily_life:get_current_date">"#,
-                r#"<content>2026-09-12</content>"#,
-                r#"</tool_result>"#,
-            ]
-            .join("\n"),
+            format!(
+                "<tool_result name=\"daily_life:get_current_date\"><content>2026-09-12{}</content></tool_result>",
+                MediaLinkBuilder::image(&image_id),
+            ),
         ),
     ];
 
     let (contents, _, _) = provider
         .build_contents_and_count_tokens(&history, None, true)
         .expect("Gemini contents must be buildable");
+    ImagePoolManager::remove_image(&image_id);
     assert_eq!(contents.len(), 2);
     assert_eq!(
         contents[0].pointer("/parts/0/functionCall/name"),
@@ -82,6 +82,8 @@ fn packageProxyResultMatchesGeminiFunctionCall() {
         contents[1].pointer("/parts/0/functionResponse/response/result"),
         Some(&serde_json::json!("2026-09-12"))
     );
+    assert_eq!(contents[1]["parts"][1]["inline_data"]["mime_type"], "image/png");
+    assert_eq!(contents[1]["parts"][1]["inline_data"]["data"], "iVBORw0KGgo=");
 }
 
 /// Verifies audio and video media links become Gemini inline_data parts.

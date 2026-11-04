@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{Map, Value};
 
 use operit_tools::tools::mcp::MCPManager::MCPManager;
@@ -54,6 +55,7 @@ impl MCPToolExecutor {
         let Some(resultData) = resultData else {
             return "{}".to_string();
         };
+        let mut imageBudget = ImagePoolManager::max_pool_size();
         let contentText = resultData
             .get("content")
             .and_then(Value::as_array)
@@ -61,7 +63,7 @@ impl MCPToolExecutor {
             .map(|items| {
                 items
                     .iter()
-                    .map(|contentItem| self.extractContentItem(contentItem))
+                    .map(|contentItem| self.extractContentItem(contentItem, &mut imageBudget))
                     .collect::<Vec<_>>()
                     .join("\n")
             })
@@ -92,7 +94,7 @@ impl MCPToolExecutor {
     }
 
     #[allow(non_snake_case)]
-    fn extractContentItem(&self, contentItem: &Value) -> String {
+    fn extractContentItem(&self, contentItem: &Value, imageBudget: &mut usize) -> String {
         let contentType = contentItem
             .get("type")
             .and_then(Value::as_str)
@@ -103,12 +105,12 @@ impl MCPToolExecutor {
                     .get("text")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                if self.isJsonString(text) {
-                    self.formatJson(text)
-                } else {
-                    text.to_string()
+                match serde_json::from_str::<Value>(text) {
+                    Ok(value @ (Value::Object(_) | Value::Array(_))) => value.to_string(),
+                    _ => text.to_string(),
                 }
             }
+            "image" if *imageBudget == 0 => "[Image omitted: attachment limit reached]".to_string(),
             "image" => {
                 let mimeType = contentItem
                     .get("mimeType")
@@ -118,7 +120,7 @@ impl MCPToolExecutor {
                     .get("data")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                self.registerImageContent(mimeType, data).unwrap_or_else(|| {
+                Self::registerImageContent(data).inspect(|_| *imageBudget -= 1).unwrap_or_else(|| {
                     format!(
                         "[Image: {mimeType}, Size: {} bytes; the image data could not be attached]",
                         data.len()
@@ -145,46 +147,19 @@ impl MCPToolExecutor {
     }
 
     #[allow(non_snake_case)]
-    /// Registers one MCP image payload for multimodal model input and returns
-    /// its canonical media-link tag. Providers resolve the tag into an image
-    /// part; unresolvable payloads degrade to the caller-side placeholder.
-    fn registerImageContent(&self, mimeType: &str, data: &str) -> Option<String> {
-        if data.trim().is_empty() {
-            return None;
+    fn registerImageContent(data: &str) -> Option<String> {
+        let bytes = STANDARD.decode(data.trim()).ok()?;
+        let format = image::guess_format(&bytes).ok()?;
+        match format {
+            image::ImageFormat::Png | image::ImageFormat::Jpeg => {
+                image::ImageReader::with_format(std::io::Cursor::new(&bytes), format)
+                    .into_dimensions().ok()?;
+            }
+            image::ImageFormat::Gif | image::ImageFormat::WebP => {}
+            _ => return None,
         }
-        let imageId = ImagePoolManager::add_image_from_base64(data, mimeType, None);
-        if imageId.is_empty() || imageId == "error" {
-            return None;
-        }
-        let Some(image) = ImagePoolManager::get_image(&imageId) else {
-            return None;
-        };
-        if image.base64.is_empty() {
-            ImagePoolManager::remove_image(&imageId);
-            return None;
-        }
-        Some(MediaLinkBuilder::image(&imageId))
-    }
-
-    #[allow(non_snake_case)]
-    fn isJsonString(&self, text: &str) -> bool {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return false;
-        }
-        let isJsonObject = trimmed.starts_with('{') && trimmed.ends_with('}');
-        let isJsonArray = trimmed.starts_with('[') && trimmed.ends_with(']');
-        if !isJsonObject && !isJsonArray {
-            return false;
-        }
-        serde_json::from_str::<Value>(trimmed).is_ok()
-    }
-
-    #[allow(non_snake_case)]
-    fn formatJson(&self, jsonString: &str) -> String {
-        serde_json::from_str::<Value>(jsonString.trim())
-            .map(|value| value.to_string())
-            .unwrap_or_else(|_| jsonString.to_string())
+        let id = ImagePoolManager::add_image_bytes(&bytes, Some(format.to_mime_type()), None);
+        (id != "error").then(|| MediaLinkBuilder::image(&id))
     }
 
     #[allow(non_snake_case)]
@@ -503,10 +478,12 @@ mod tests {
     /// Image payloads register into the image pool and surface as canonical
     /// media-link tags that providers resolve into multimodal image parts.
     #[test]
-    fn image_content_registers_payload_and_emits_media_link() {
+    fn image_content_registers_payload_and_omits_excess() {
         let executor = executor();
-        let item = json!({"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64});
-        let result = executor.extractContentItem(&item);
+        let item = json!({"type": "image", "mimeType": "image/jpeg", "data": ONE_PIXEL_PNG_BASE64});
+        let mut budget = 1;
+        let result = executor.extractContentItem(&item, &mut budget);
+        assert_eq!(executor.extractContentItem(&item, &mut budget), "[Image omitted: attachment limit reached]");
         let id = result
             .split("id=\"")
             .nth(1)
@@ -527,11 +504,17 @@ mod tests {
     #[test]
     fn invalid_image_data_falls_back_to_placeholder() {
         let executor = executor();
-        let item = json!({"type": "image", "mimeType": "image/png", "data": "!!!!!!"});
-        let result = executor.extractContentItem(&item);
-        assert!(result.contains("[Image: image/png"), "tag: {result}");
-        assert!(result.contains("could not be attached"), "tag: {result}");
-        assert!(!result.contains("<link"), "tag: {result}");
+        for data in [
+            "!!!!!!".to_string(),
+            format!("!{ONE_PIXEL_PNG_BASE64}"),
+            "aGVsbG8=".to_string(),
+            "iVBORw0KGgo=".to_string(),
+        ] {
+            let item = json!({"type": "image", "mimeType": "image/png", "data": data});
+            let result = executor.extractContentItem(&item, &mut 1);
+            assert!(result.contains("could not be attached"), "tag: {result}");
+            assert!(!result.contains("<link"), "tag: {result}");
+        }
     }
 
     /// Empty image data never reaches the image pool.
@@ -539,7 +522,7 @@ mod tests {
     fn empty_image_data_falls_back_to_placeholder() {
         let executor = executor();
         let item = json!({"type": "image", "mimeType": "image/png", "data": "   "});
-        let result = executor.extractContentItem(&item);
+        let result = executor.extractContentItem(&item, &mut 1);
         assert!(result.contains("[Image: image/png, Size: 3 bytes"), "tag: {result}");
     }
 
@@ -550,11 +533,13 @@ mod tests {
         let resultData = json!({
             "content": [
                 {"type": "text", "text": "screenshot ready"},
+                {"type": "text", "text": " { \"ok\": true } "},
+                {"type": "text", "text": " 1 "},
                 {"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64},
             ]
         });
         let result = executor.extractContentFromResult(Some(&resultData));
-        assert!(result.starts_with("screenshot ready"), "tag: {result}");
+        assert!(result.starts_with("screenshot ready\n{\"ok\":true}\n 1 \n"), "tag: {result}");
         assert!(result.contains("<link type=\"image\""), "tag: {result}");
         let id = result
             .split("id=\"")
