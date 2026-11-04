@@ -95,6 +95,11 @@ impl ImagePoolManager {
         }
     }
 
+    /// Returns the maximum number of images retained in the pool.
+    pub fn max_pool_size() -> usize {
+        state().lock().expect("ImagePool mutex poisoned").max_pool_size
+    }
+
     /// Registers image bytes for model input.
     pub fn add_image_bytes(
         bytes: &[u8],

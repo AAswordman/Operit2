@@ -25,6 +25,7 @@ pub mod LocaleUtils;
 pub mod LocationUtils;
 pub mod MarkdownRenderStream;
 pub mod MediaBase64Limiter;
+pub mod MediaLinkBuilder;
 pub mod MediaPoolManager;
 pub mod MediaRegistration;
 pub mod NetworkUtils;

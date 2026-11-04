@@ -43,6 +43,7 @@ use operit_util::ChatUtils::ChatUtils;
 use operit_util::DocumentConversionUtil::DocumentConversionUtil;
 use operit_util::FileUtils::FileUtils;
 use operit_util::ImagePoolManager::ImagePoolManager;
+use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 use operit_util::MediaPoolManager::MediaPoolManager;
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use operit_util::RuntimeStorageLayout::RUNTIME_ROOT_PATH_PREFIX;
@@ -615,7 +616,7 @@ impl StandardFileSystemTools {
                 format!("Error registering {mediaType} file: {path}"),
             );
         }
-        let content = buildMediaLink(mediaType, &mediaId);
+        let content = MediaLinkBuilder::media(mediaType, &mediaId);
         successData(
             tool,
             ToolResultData::FileContentData(FileContentData {
@@ -752,7 +753,7 @@ impl StandardFileSystemTools {
             return None;
         }
 
-        let prompt = format!("{}\n{}", buildImageMediaLink(&imageId), intent);
+        let prompt = format!("{}\n{}", MediaLinkBuilder::image(&imageId), intent);
         let request = RuntimeChatCallRequest {
             functionType: FunctionType::IMAGE_RECOGNITION,
             turns: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
@@ -812,7 +813,7 @@ impl StandardFileSystemTools {
                 format!("Error registering image file: {path}"),
             );
         }
-        let content = buildImageMediaLink(&imageId);
+        let content = MediaLinkBuilder::image(&imageId);
         successData(
             tool,
             ToolResultData::FileContentData(FileContentData {
@@ -2506,18 +2507,6 @@ fn fileExtension(path: &str) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase()
-}
-
-#[allow(non_snake_case)]
-/// Builds the canonical image media-link tag used by chat providers.
-fn buildImageMediaLink(imageId: &str) -> String {
-    format!("<link type=\"image\" id=\"{imageId}\"></link>")
-}
-
-#[allow(non_snake_case)]
-/// Builds the canonical audio or video media-link tag.
-fn buildMediaLink(mediaType: &str, mediaId: &str) -> String {
-    format!("<link type=\"{mediaType}\" id=\"{mediaId}\"></link>")
 }
 
 #[allow(non_snake_case)]

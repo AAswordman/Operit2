@@ -450,7 +450,13 @@ impl GeminiProvider {
                                         object.insert("name".to_string(), json!(pending_name));
                                     }
                                 }
+                                let result = response["response"]["result"].as_str().unwrap_or_default();
+                                let media_parts = self.build_parts_array(result);
+                                response["response"]["result"] = json!(MediaLinkParser::remove_media_links(
+                                    &MediaLinkParser::remove_image_links(result),
+                                ));
                                 parts.push(json!({"functionResponse": response}));
+                                parts.extend(media_parts.into_iter().filter(|part| part.get("text").is_none()));
                             }
                             append_unmatched_open_function_responses(
                                 &mut contents_array,
