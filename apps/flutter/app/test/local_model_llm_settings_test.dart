@@ -163,6 +163,66 @@ void main() {
       });
     }
   }
+  for (final size in [const Size(520, 360), const Size(320, 280)]) {
+    testWidgets('catalog header scrolls out of a short viewport at $size', (
+      tester,
+    ) async {
+      final template = _catalog().first;
+      final bridge = _Bridge()
+        ..catalog = [
+          for (var index = 0; index < 50; index++)
+            core.LocalModelCatalogStatus.fromJson({
+              ...template.toJson(),
+              'manifest': {
+                ...template.manifest.toJson(),
+                'id': 'catalog-$index',
+                'displayName': 'Catalog Model $index',
+              },
+              'installedModel': null,
+            }),
+        ];
+      final l10n = await _pumpCatalog(
+        tester,
+        bridge,
+        size.width,
+        const Locale('zh'),
+        height: size.height,
+      );
+      expect(tester.takeException(), isNull, reason: 'short catalog layout');
+      expect(find.text('Catalog Model 49'), findsNothing);
+      final initialModelTop = tester
+          .getTopLeft(find.text('Catalog Model 0'))
+          .dy;
+      final catalogScroll = find.descendant(
+        of: find.byType(LocalModelSettingsPanel),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.down,
+        ),
+      );
+      expect(tester.getSize(catalogScroll).height, size.height);
+      await tester.drag(catalogScroll, const Offset(0, -350));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField).hitTestable(), findsNothing);
+      final visibleModels = find.textContaining('Catalog Model').hitTestable();
+      expect(visibleModels, findsWidgets);
+      expect(
+        tester.getTopLeft(visibleModels.first).dy,
+        lessThan(initialModelTop),
+      );
+      expect(tester.takeException(), isNull, reason: 'scrolled catalog layout');
+      tester.state<ScrollableState>(catalogScroll).position.jumpTo(0);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'catalog-49');
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.localModelsResultCount(1, 50)), findsOneWidget);
+      expect(find.text('Catalog Model 49'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('large catalog builds visible rows and finds the last model', (
     tester,
   ) async {
@@ -261,9 +321,10 @@ Future<AppLocalizations> _pumpCatalog(
   WidgetTester tester,
   _Bridge bridge,
   double width,
-  Locale locale,
-) async {
-  tester.view.physicalSize = Size(width, 900);
+  Locale locale, {
+  double height = 900,
+}) async {
+  tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);

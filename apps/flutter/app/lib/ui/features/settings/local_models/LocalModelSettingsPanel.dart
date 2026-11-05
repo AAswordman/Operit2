@@ -367,7 +367,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
     );
   }
 
-  /// Keeps catalog controls visible while model rows are built on demand.
+  /// Scrolls catalog controls with lazily built model rows to maximize space.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -434,166 +434,169 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
               searchable.contains(query);
         }).toList();
         final colors = Theme.of(context).colorScheme;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) => Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            l10n.localModelsCatalog,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
+        return CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) => Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              l10n.localModelsCatalog,
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
                           ),
-                        ),
-                        PopupMenuButton<core_proxy.LocalModelSourceKind>(
-                          tooltip:
-                              '${l10n.localModelsDownloadSource}: ${_sourceKindTitle(l10n, source)}',
-                          icon: const Icon(
-                            Icons.cloud_download_outlined,
-                            size: 20,
+                          PopupMenuButton<core_proxy.LocalModelSourceKind>(
+                            tooltip:
+                                '${l10n.localModelsDownloadSource}: ${_sourceKindTitle(l10n, source)}',
+                            icon: const Icon(
+                              Icons.cloud_download_outlined,
+                              size: 20,
+                            ),
+                            initialValue: source,
+                            onSelected: _setPreferredSource,
+                            itemBuilder: (_) => [
+                              for (final kind in [
+                                core_proxy.LocalModelSourceKind.huggingFace,
+                                core_proxy.LocalModelSourceKind.modelScope,
+                                core_proxy.LocalModelSourceKind.hfMirror,
+                              ])
+                                CheckedPopupMenuItem(
+                                  value: kind,
+                                  checked: source == kind,
+                                  child: Text(_sourceKindTitle(l10n, kind)),
+                                ),
+                            ],
                           ),
-                          initialValue: source,
-                          onSelected: _setPreferredSource,
-                          itemBuilder: (_) => [
-                            for (final kind in [
-                              core_proxy.LocalModelSourceKind.huggingFace,
-                              core_proxy.LocalModelSourceKind.modelScope,
-                              core_proxy.LocalModelSourceKind.hfMirror,
-                            ])
-                              CheckedPopupMenuItem(
-                                value: kind,
-                                checked: source == kind,
-                                child: Text(_sourceKindTitle(l10n, kind)),
+                          IconButton(
+                            onPressed: _reload,
+                            icon: const Icon(Icons.refresh, size: 20),
+                            tooltip: l10n.refresh,
+                          ),
+                          const SizedBox(width: 4),
+                          if (constraints.maxWidth < 320)
+                            IconButton.filled(
+                              tooltip: l10n.localModelsAddModel,
+                              onPressed: () =>
+                                  _openHubExploreDialog(context, source),
+                              icon: const Icon(Icons.add),
+                            )
+                          else
+                            FilledButton.icon(
+                              onPressed: () =>
+                                  _openHubExploreDialog(context, source),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text(l10n.localModelsAddModel),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _searchController,
+                      onChanged: (value) =>
+                          setState(() => _catalogQuery = value),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        hintText: l10n.localModelsSearchCatalog,
+                        suffixIcon: _catalogQuery.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: l10n.clear,
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _catalogQuery = '');
+                                },
                               ),
-                          ],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        IconButton(
-                          onPressed: _reload,
-                          icon: const Icon(Icons.refresh, size: 20),
-                          tooltip: l10n.refresh,
-                        ),
-                        const SizedBox(width: 4),
-                        if (constraints.maxWidth < 320)
-                          IconButton.filled(
-                            tooltip: l10n.localModelsAddModel,
-                            onPressed: () =>
-                                _openHubExploreDialog(context, source),
-                            icon: const Icon(Icons.add),
-                          )
-                        else
-                          FilledButton.icon(
-                            onPressed: () =>
-                                _openHubExploreDialog(context, source),
-                            icon: const Icon(Icons.add, size: 18),
-                            label: Text(l10n.localModelsAddModel),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _searchController,
-                    onChanged: (value) => setState(() => _catalogQuery = value),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      hintText: l10n.localModelsSearchCatalog,
-                      suffixIcon: _catalogQuery.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: l10n.clear,
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _catalogQuery = '');
-                              },
-                            ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final scope in _CatalogScope.values)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(switch (scope) {
-                                _CatalogScope.all => l10n.localModelsFilterAll,
-                                _CatalogScope.installed =>
-                                  l10n.localModelsFilterInstalled,
-                                _CatalogScope.downloads =>
-                                  l10n.localModelsFilterDownloads,
-                              }),
-                              selected: _scope == scope,
-                              showCheckmark: false,
-                              onSelected: (_) => setState(() => _scope = scope),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final kind in <core_proxy.LocalModelKind?>[
-                          null,
-                          core_proxy.LocalModelKind.chat,
-                          ...core_proxy.LocalModelKind.values.where(
-                            (kind) => kind != core_proxy.LocalModelKind.chat,
-                          ),
-                        ])
-                          Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: FilterChip(
-                              label: Text(
-                                kind == null
-                                    ? l10n.localModelsAllTypes
-                                    : _localModelKindTitle(l10n, kind),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final scope in _CatalogScope.values)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(switch (scope) {
+                                  _CatalogScope.all =>
+                                    l10n.localModelsFilterAll,
+                                  _CatalogScope.installed =>
+                                    l10n.localModelsFilterInstalled,
+                                  _CatalogScope.downloads =>
+                                    l10n.localModelsFilterDownloads,
+                                }),
+                                selected: _scope == scope,
+                                showCheckmark: false,
+                                onSelected: (_) =>
+                                    setState(() => _scope = scope),
                               ),
-                              selected: _kind == kind,
-                              showCheckmark: false,
-                              onSelected: (_) => setState(() => _kind = kind),
                             ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      l10n.localModelsResultCount(
-                        visible.length,
-                        data.catalog.length,
-                      ),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final kind in <core_proxy.LocalModelKind?>[
+                            null,
+                            core_proxy.LocalModelKind.chat,
+                            ...core_proxy.LocalModelKind.values.where(
+                              (kind) => kind != core_proxy.LocalModelKind.chat,
+                            ),
+                          ])
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: FilterChip(
+                                label: Text(
+                                  kind == null
+                                      ? l10n.localModelsAllTypes
+                                      : _localModelKindTitle(l10n, kind),
+                                ),
+                                selected: _kind == kind,
+                                showCheckmark: false,
+                                onSelected: (_) => setState(() => _kind = kind),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Text(
+                        l10n.localModelsResultCount(
+                          visible.length,
+                          data.catalog.length,
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const Divider(height: 1),
-            Expanded(
-              child: ListView.builder(
+            const SliverToBoxAdapter(child: Divider(height: 1)),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              sliver: SliverList(
                 key: ValueKey('$_scope:$_kind:$_catalogQuery'),
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                itemCount: (visible.isEmpty ? 1 : visible.length) + 1,
-                itemBuilder: (context, index) {
+                delegate: SliverChildBuilderDelegate((context, index) {
                   if (index == (visible.isEmpty ? 1 : visible.length)) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 16),
@@ -668,7 +671,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                       data.registry,
                     ),
                   );
-                },
+                }, childCount: (visible.isEmpty ? 1 : visible.length) + 1),
               ),
             ),
           ],
