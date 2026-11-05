@@ -136,6 +136,7 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
 fn summary_context_to_value(context: &SummaryHookContext) -> Value {
     serde_json::json!({
         "stage": context.stage,
+        "chatId": context.chat_id,
         "useEnglish": context.use_english,
         "previousSummary": context.previous_summary,
         "systemPrompt": context.system_prompt,

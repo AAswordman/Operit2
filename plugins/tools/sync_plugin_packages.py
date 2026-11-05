@@ -648,7 +648,14 @@ def _pack_toolpkg_folder(repo_root: Path, source_folder: Path, destination_file:
     destination_file.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         for file_path in _iter_files_for_pack(repo_root, source_folder):
-            archive.write(file_path, file_path.relative_to(source_folder).as_posix())
+            # Source timestamps and permissions must not change the bundled package identity.
+            entry = zipfile.ZipInfo(file_path.relative_to(source_folder).as_posix())
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            entry.file_size = file_path.stat().st_size
+            with file_path.open("rb") as source, archive.open(entry, "w") as output:
+                shutil.copyfileobj(source, output)
 
 
 def _delete_unplanned_outputs(output_dir: Path, planned_names: set[str], *, dry_run: bool) -> int:

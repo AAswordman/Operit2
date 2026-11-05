@@ -8,6 +8,8 @@ export class OperitApplicationClient {
   public constructor(private readonly client: OperitPluginSdkClient) {}
   /** Watches `pluginLoadingProgressFlow` through the Core Link route. */
   public pluginLoadingProgressFlow(): AsyncIterable<models.PluginLoadingProgress> { return this.client.watchTyped<models.PluginLoadingProgress>("core/application", 'pluginLoadingProgressFlow', {}, (value) => models.decodePluginLoadingProgress(value)); }
+  /** Calls `getExtensionCatalogSnapshot` through the Core Link route. */
+  public getExtensionCatalogSnapshot(): Promise<models.ExtensionCatalogSnapshot> { return this.client.callTyped<models.ExtensionCatalogSnapshot>("core/application", 'getExtensionCatalogSnapshot', {}, (value) => models.decodeExtensionCatalogSnapshot(value)); }
 }
 
 /** Generated client for Core object `application.packageManager`. */

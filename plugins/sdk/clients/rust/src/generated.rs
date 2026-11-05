@@ -744,6 +744,114 @@ pub struct SdkManifestFile {
     pub media_type: String,
 }
 
+/// Generated SDK model for `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogCandidate`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkExtensionCatalogCandidate {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "description")]
+    pub description: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "authors")]
+    pub authors: Vec<String>,
+    #[serde(rename = "category")]
+    pub category: String,
+    #[serde(rename = "requiredScope")]
+    pub required_scope: Option<String>,
+    #[serde(rename = "toolCount")]
+    pub tool_count: usize,
+    #[serde(rename = "subpackageCount")]
+    pub subpackage_count: usize,
+}
+
+/// Generated SDK model for `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogDiagnostic`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkExtensionCatalogDiagnostic {
+    #[serde(rename = "sourcePath")]
+    pub source_path: String,
+    #[serde(rename = "packageId")]
+    pub package_id: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "packageKind")]
+    pub package_kind: String,
+    #[serde(rename = "canDelete")]
+    pub can_delete: bool,
+}
+
+/// Generated SDK model for `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogEntry`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkExtensionCatalogEntry {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "description")]
+    pub description: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "authors")]
+    pub authors: Vec<String>,
+    #[serde(rename = "category")]
+    pub category: String,
+    #[serde(rename = "scope")]
+    pub scope: String,
+    #[serde(rename = "activationState")]
+    pub activation_state: String,
+    #[serde(rename = "runtimeState")]
+    pub runtime_state: String,
+    #[serde(rename = "updateState")]
+    pub update_state: String,
+    #[serde(rename = "isCustomized")]
+    pub is_customized: bool,
+    #[serde(rename = "marketEntryId")]
+    pub market_entry_id: Option<String>,
+    #[serde(rename = "installedMarketVersionId")]
+    pub installed_market_version_id: Option<String>,
+    #[serde(rename = "logoResourceKey")]
+    pub logo_resource_key: Option<String>,
+    #[serde(rename = "logoMimeType")]
+    pub logo_mime_type: Option<String>,
+    #[serde(rename = "toolCount")]
+    pub tool_count: usize,
+    #[serde(rename = "subpackageCount")]
+    pub subpackage_count: usize,
+    #[serde(rename = "uiModuleCount")]
+    pub ui_module_count: usize,
+    #[serde(rename = "hasUi")]
+    pub has_ui: bool,
+    #[serde(rename = "chatSidebarEntryIds")]
+    pub chat_sidebar_entry_ids: Vec<String>,
+    #[serde(rename = "dependencyIssueCount")]
+    pub dependency_issue_count: usize,
+}
+
+/// Generated SDK model for `operit_runtime::core::application::ExtensionCatalogSupport::ExtensionCatalogSnapshot`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkExtensionCatalogSnapshot {
+    #[serde(rename = "revision")]
+    pub revision: i64,
+    #[serde(rename = "installed")]
+    pub installed: Vec<SdkExtensionCatalogEntry>,
+    #[serde(rename = "bundledAvailable")]
+    pub bundled_available: Vec<SdkExtensionCatalogCandidate>,
+    #[serde(rename = "diagnostics")]
+    pub diagnostics: Vec<SdkExtensionCatalogDiagnostic>,
+}
+
 /// Generated SDK model for `operit_tools::ConversationMarkupManager::ToolResult`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SdkToolResult {
@@ -824,6 +932,13 @@ impl OperitApplicationClient {
         let args = CoreValue::Map(std::collections::BTreeMap::from([]));
         let stream = self.client.watch(operit_link::CoreWatchRequest::new(self.client.nextRequestId()?, "core/application", "pluginLoadingProgressFlow", args)).await?;
         Ok(OperitPluginSdkTypedEventStream::new(stream))
+    }
+    /// Calls `getExtensionCatalogSnapshot` through the Core Link route.
+    pub async fn getExtensionCatalogSnapshot(&self) -> Result<SdkExtensionCatalogSnapshot, CoreLinkError> {
+        let args = CoreValue::Map(std::collections::BTreeMap::from([]));
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, "core/application", "getExtensionCatalogSnapshot", args)).await;
+        let value = response.result?;
+        decode_messagepack_value(&value)
     }
 }
 

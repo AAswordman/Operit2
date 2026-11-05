@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../l10n/generated/app_localizations.dart';
 import '../../features/packages/components/PackageTab.dart';
-import '../../features/packages/screens/UnifiedMarketScreen.dart';
+import '../../features/packages/market/MarketStatsSupport.dart';
 import '../../features/settings/models/SettingsModels.dart';
 import '../navigation/AppNavigationModels.dart';
 import 'OperitScreens.dart';
@@ -14,10 +14,20 @@ const String _internalNativeScreenKey = '__native_screen';
 typedef _ScreenFactory = OperitScreen Function(Map<String, Object?> args);
 
 class _HostScreenDefinition {
-  const _HostScreenDefinition({required this.screen, this.factory});
+  const _HostScreenDefinition({required this.screen, this.factory})
+    : requiresArgs = false;
+
+  /// A route that only exists for concrete arguments; [prototype] supplies
+  /// its route id and title but is never shown.
+  const _HostScreenDefinition.parameterized({
+    required OperitScreen prototype,
+    required _ScreenFactory this.factory,
+  }) : screen = prototype,
+       requiresArgs = true;
 
   final OperitScreen screen;
   final _ScreenFactory? factory;
+  final bool requiresArgs;
 }
 
 class ScreenRouteRegistry {
@@ -27,6 +37,7 @@ class ScreenRouteRegistry {
   static const OperitScreen packageManager = PackageManagerScreenRoute();
   static const OperitScreen market = MarketScreenRoute();
   static const OperitScreen settings = SettingsScreenRoute();
+  static const OperitScreen marketCreator = MarketCreatorScreenRoute();
   static final List<_HostScreenDefinition> _hostEntryDefinitions =
       <_HostScreenDefinition>[
         const _HostScreenDefinition(screen: aiChat),
@@ -36,6 +47,19 @@ class ScreenRouteRegistry {
         ),
         _HostScreenDefinition(screen: market, factory: _buildMarketScreen),
         _HostScreenDefinition(screen: settings, factory: _buildSettingsScreen),
+        const _HostScreenDefinition(screen: marketCreator),
+        _HostScreenDefinition.parameterized(
+          prototype: const ExtensionDetailScreenRoute(kind: '', id: ''),
+          factory: _buildExtensionDetailScreen,
+        ),
+        _HostScreenDefinition.parameterized(
+          prototype: const MarketEntryDetailScreenRoute(entryId: ''),
+          factory: _buildMarketEntryDetailScreen,
+        ),
+        _HostScreenDefinition.parameterized(
+          prototype: const MarketBrowseScreenRoute(heading: ''),
+          factory: _buildMarketBrowseScreen,
+        ),
       ];
 
   static final Map<String, _HostScreenDefinition> _definitionsByRouteId =
@@ -119,6 +143,9 @@ class ScreenRouteRegistry {
       throw StateError('Unknown native screen routeId: ${entry.routeId}');
     }
     if (entry.args.isEmpty) {
+      if (definition.requiresArgs) {
+        throw StateError('Native route ${entry.routeId} needs arguments');
+      }
       return definition.screen;
     }
     final factory = definition.factory;
@@ -126,6 +153,11 @@ class ScreenRouteRegistry {
       return definition.screen;
     }
     return factory(entry.args);
+  }
+
+  /// Whether [routeId] can only be opened with arguments, like a detail page.
+  static bool requiresArguments(String routeId) {
+    return _definitionsByRouteId[routeId]?.requiresArgs ?? false;
   }
 
   static RouteSpec _hostSpec(OperitScreen screen, AppLocalizations l10n) {
@@ -149,26 +181,78 @@ class ScreenRouteRegistry {
     if (initialTab is! String) {
       throw StateError('Invalid PackageManager.initialTab: $initialTab');
     }
+    // Older links selected a kind or the removed device tab.
+    final compatibleTab = switch (initialTab) {
+      'plugins' || 'packages' || 'skills' || 'mcp' || 'devices' => 'extensions',
+      _ => initialTab,
+    };
     return PackageManagerScreenRoute(
-      initialTab: _enumByName(PackageTab.values, initialTab),
+      initialTab: _enumByName(PackageTab.values, compatibleTab),
     );
   }
 
+  /// Maps the released standalone market's arguments onto the extension center.
   static OperitScreen _buildMarketScreen(Map<String, Object?> args) {
-    final initialTab = args['initialTab'];
-    if (initialTab == null) {
-      return const MarketScreenRoute();
+    final categoryId = _optionalString(args, 'categoryId');
+    if (categoryId != null) {
+      final categoryName = _optionalString(args, 'categoryName');
+      return MarketBrowseScreenRoute(
+        heading: categoryName ?? categoryId,
+        categoryId: categoryId,
+      );
     }
-    if (initialTab is! String) {
-      throw StateError('Invalid Market.initialTab: $initialTab');
-    }
-    final categoryId = args['categoryId'];
-    final categoryName = args['categoryName'];
-    return MarketScreenRoute(
-      initialTab: _enumByName(MarketHomeTab.values, initialTab),
-      categoryId: categoryId is String ? categoryId : null,
-      categoryName: categoryName is String ? categoryName : null,
+    final initialTab = _optionalString(args, 'initialTab');
+    return switch (initialTab) {
+      null || 'all' || 'categories' => const MarketScreenRoute(),
+      'mine' => const MarketCreatorScreenRoute(),
+      _ => throw StateError('Unknown Market.initialTab: $initialTab'),
+    };
+  }
+
+  static OperitScreen _buildExtensionDetailScreen(Map<String, Object?> args) {
+    return ExtensionDetailScreenRoute(
+      kind: _requiredString(args, 'kind'),
+      id: _requiredString(args, 'id'),
     );
+  }
+
+  static OperitScreen _buildMarketEntryDetailScreen(
+    Map<String, Object?> args,
+  ) {
+    return MarketEntryDetailScreenRoute(
+      entryId: _requiredString(args, 'entryId'),
+    );
+  }
+
+  static OperitScreen _buildMarketBrowseScreen(Map<String, Object?> args) {
+    final sort = _optionalString(args, 'sort');
+    return MarketBrowseScreenRoute(
+      heading: _requiredString(args, 'heading'),
+      type: _optionalString(args, 'type'),
+      categoryId: _optionalString(args, 'categoryId'),
+      sort: sort == null
+          ? MarketSortOption.updated
+          : _enumByName(MarketSortOption.values, sort),
+    );
+  }
+
+  static String _requiredString(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value is! String || value.trim().isEmpty) {
+      throw StateError('Route argument $key must be a non-empty string');
+    }
+    return value;
+  }
+
+  static String? _optionalString(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value == null) {
+      return null;
+    }
+    if (value is! String || value.trim().isEmpty) {
+      throw StateError('Route argument $key must be a non-empty string');
+    }
+    return value;
   }
 
   static OperitScreen _buildSettingsScreen(Map<String, Object?> args) {

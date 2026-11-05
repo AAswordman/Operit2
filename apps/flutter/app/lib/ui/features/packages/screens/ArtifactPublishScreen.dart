@@ -700,7 +700,14 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                     .map(
                       (category) => DropdownMenuItem<String>(
                         value: category.id,
-                        child: Text(category.name),
+                        child: Text(
+                          marketCategoryText(
+                            category,
+                            languageCode: Localizations.localeOf(
+                              context,
+                            ).languageCode,
+                          ).name,
+                        ),
                       ),
                     )
                     .toList(growable: false),

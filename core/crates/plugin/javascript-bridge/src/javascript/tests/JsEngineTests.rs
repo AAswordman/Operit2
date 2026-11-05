@@ -180,6 +180,63 @@ fn newTestIpcEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine 
     ).expect("test engine must initialize")
 }
 
+/// Exercises the public getters through real scheduled engines for both legacy and current APIs.
+#[tokio::test]
+async fn hook_caller_getters_use_native_snapshot_in_v1_and_v2() {
+    const SCRIPT: &str = r#"
+        exports.inspect = async function(params) {
+            await Promise.resolve();
+            var card;
+            try { card = typeof getCallerCardId === 'function' ? getCallerCardId() : null; }
+            catch (error) { card = error.message; }
+            return { chatId: getChatId(), participantId: getCallerParticipantId(), cardId: card };
+        };
+    "#;
+    for version in ["1.0.0", "1.0.1", "2.0.0"] {
+        testJavaScriptRuntimeHost();
+        register_test_runtime_storage("js-engine-tests");
+        let host = Arc::new(TestPluginConfigExecutionHost::default());
+        let engine = super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+            context_key: format!("caller-test:{version}"),
+            container_package_name: "test.package".into(), api_version: version.into(),
+            text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+        }).unwrap();
+        *host.callerContext.lock().unwrap() = Some(serde_json::json!({
+            "chatId":"chat-a", "participantId":"participant-a", "extensionOwner":"com.operit.character_cards",
+        }));
+        let params = BTreeMap::from([
+            ("__operit_package_chat_id".into(), serde_json::json!("stale-chat")),
+            ("__operit_package_caller_participant_id".into(), serde_json::json!("stale-participant")),
+            ("__operit_package_caller_owner".into(), serde_json::json!("foreign.provider")),
+            ("eventPayload".into(), serde_json::json!({"metadata":{"executionContext":{"chatId":"forged-chat", "participantId":"forged-participant"}}})),
+        ]);
+        let pending = engine.execute_script_function(SCRIPT, "inspect", &params, &BTreeMap::new(), None, true, None);
+        // Changing the selected chat before polling must not change the submitted request.
+        *host.callerContext.lock().unwrap() = Some(serde_json::json!({
+            "chatId":"chat-b", "participantId":"participant-b", "extensionOwner":"foreign.provider",
+        }));
+        let output: Value = serde_json::from_str(&pending.await.unwrap().unwrap()).unwrap();
+        assert_eq!(output, serde_json::json!({
+            "chatId":"chat-a", "participantId":"participant-a",
+            "cardId": if version == "2.0.0" { Value::Null } else { serde_json::json!("participant-a") },
+        }), "API {version}");
+        let output = engine.execute_script_function(SCRIPT, "inspect", &params, &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["chatId"], "chat-b");
+        assert_eq!(output["participantId"], "participant-b");
+        if version == "2.0.0" { assert!(output["cardId"].is_null()); }
+        else { assert!(output["cardId"].as_str().unwrap().contains("another provider participant")); }
+
+        *host.callerContext.lock().unwrap() = None;
+        let output = engine.execute_script_function(SCRIPT, "inspect", &params, &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["chatId"], "stale-chat", "UI target chat remains available outside a turn");
+        assert!(output.get("participantId").is_none(), "No participant from a preceding turn or supplied parameters");
+        assert!(output.get("cardId").is_none_or(Value::is_null));
+        engine.destroy();
+    }
+}
+
 /// Returns the repository root above core/crates/plugin/javascript-bridge.
 #[allow(non_snake_case)]
 fn testRepositoryRoot() -> &'static Path {
@@ -232,6 +289,8 @@ struct TestPluginConfigExecutionHost {
     environment: Arc<Mutex<BTreeMap<String, String>>>,
     environmentOwners: Arc<Mutex<Vec<operit_plugin_sdk::javascript::JsEnvironmentOwner>>>,
     toolCatalogError: Arc<Mutex<Option<String>>>,
+    callerContext: Arc<Mutex<Option<Value>>>,
+    capturedCallerContext: Option<Value>,
     #[cfg(not(target_arch = "wasm32"))]
     toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -300,8 +359,14 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         Ok(())
     }
 
-        /// Captures this fixture's shared state through the same native invocation boundary.
-        fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost> { Arc::new(self.clone()) }
+    /// Freezes caller identity before work is submitted to the JavaScript scheduler.
+    fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost> {
+        let mut host = self.clone();
+        host.capturedCallerContext = Some(self.callerContext.lock().unwrap().clone().unwrap_or(serde_json::json!({})));
+        Arc::new(host)
+    }
+
+    fn toolpkg_caller_context(&self) -> Option<Value> { self.capturedCallerContext.clone() }
 
 
 
@@ -1367,6 +1432,27 @@ fn execute_function_with_active_module_context() {
         expect_js_output(output, "active module context execution"),
         "\"true:true:root-marker\""
     );
+}
+
+/// Initializes the complete generated Tools runtime and the v1 installer in one native context.
+#[test]
+fn bootstrap_initializes_internal_v1_runtime_with_generated_tools() {
+    let mut state = newTestJsEngineState(None);
+    let output = state.evalJavaScriptString(r#"
+        JSON.stringify({
+            internal: typeof globalThis.__operitV1InternalRuntime.create_session,
+            canonical: typeof __operitCanonicalTools.System.terminal.create,
+            public: typeof Tools.System.terminal.create,
+            installed: Tools.System.terminal.create !== __operitCanonicalTools.System.terminal.create
+        })
+    "#).expect("complete bootstrap must initialize without duplicate declarations");
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output, serde_json::json!({
+        "internal": "function",
+        "canonical": "function",
+        "public": "function",
+        "installed": true
+    }));
 }
 
 #[test]

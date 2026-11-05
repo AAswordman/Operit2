@@ -1017,6 +1017,22 @@ impl EnhancedAIService {
             .await
     }
 
+    /// Runs chat summaries under the already-selected native participant, including all plugin hooks.
+    pub async fn generateSummaryForConfiguration(
+        &mut self,
+        messages: Vec<(String, String)>,
+        previousSummary: Option<String>,
+        chatId: String,
+        configuration: &ChatConfigurationResult,
+    ) -> Result<String, AiServiceError> {
+        let context = toolRuntimeContextForConfiguration(
+            configuration, Some(chatId), None, Vec::new(), &ToolExposureMode::Full,
+        )?;
+        ToolExecutionManager::scopeToolRuntimeContext(
+            context, self.generateSummary(messages, previousSummary),
+        ).await
+    }
+
     pub async fn generateSummaryFromPromptTurns(
         &mut self,
         messages: Vec<PromptTurn>,

@@ -1226,6 +1226,17 @@ impl JsExecutionHost for AIToolHandler {
         Arc::new(host)
     }
 
+    /// Exposes only this invocation's captured identity; role interpretation belongs to the v1 adapter.
+    fn toolpkg_caller_context(&self) -> Option<Value> {
+        Some(
+            self.invocationSnapshot.turnSnapshot.as_ref().map(|context| json!({
+                "chatId": context.callerChatId,
+                "participantId": context.callerParticipantId,
+                "extensionOwner": context.extensionOwner,
+            })).unwrap_or_else(|| json!({})),
+        )
+    }
+
     /// Authenticates the actual registered container before binding an immutable per-engine owner.
     fn for_toolpkg_execution_context(
         &self,
@@ -2562,6 +2573,26 @@ mod tests {
         assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
         assert_eq!(probe.accessCalls.load(Ordering::SeqCst), 2);
         assert_eq!(approvals.load(Ordering::SeqCst), 1);
+    }
+
+    /// Neutral SDK identity survives native scheduling without exposing provider execution data.
+    #[tokio::test]
+    async fn sdk_caller_identity_uses_captured_native_turn() {
+        let fixture = PipelineFixture::new();
+        let turn = ToolRuntimeContext {
+            callerChatId: Some("summary-chat".into()), callerParticipantId: Some("opaque-participant".into()),
+            workspacePath: None, workspaceFolders: Vec::new(), toolExposureMode: ToolExposureMode::CLI,
+            extensionOwner: "independent.configuration.provider".into(),
+            executionData: serde_json::from_value(json!({"private":"provider-only"})).unwrap(),
+        };
+        let host = ToolExecutionManager::scopeToolRuntimeContext(turn, async {
+            fixture.handler.capture_tool_invocation_host()
+        }).await;
+        assert_eq!(host.toolpkg_caller_context(), Some(json!({
+            "chatId":"summary-chat", "participantId":"opaque-participant",
+            "extensionOwner":"independent.configuration.provider",
+        })));
+        assert_eq!(fixture.handler.capture_tool_invocation_host().toolpkg_caller_context(), Some(json!({})));
     }
 
     /// A captured AI turn must not promote direct JS requests into AI admission.

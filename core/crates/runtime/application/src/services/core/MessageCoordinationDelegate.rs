@@ -49,6 +49,7 @@ pub(crate) struct SummaryContinuationRequest {
 /// Captures the exact history and execution context of one summary operation.
 struct ConversationSummaryRequest {
     chatId: String,
+    configuration: ChatConfigurationResult,
     participantId: Option<String>,
     promptFunctionType: PromptFunctionType,
     chatProviderIdOverride: Option<String>,
@@ -895,6 +896,7 @@ impl MessageCoordinationDelegate {
                     messages,
                     ConversationSummaryRequest {
                         chatId: chatId.to_string(),
+                        configuration: configuration.clone(),
                         participantId,
                         promptFunctionType,
                         chatProviderIdOverride: Some(providerId),
@@ -933,7 +935,8 @@ impl MessageCoordinationDelegate {
                 settings.summary.enableSummaryByMessageCount, settings.summary.summaryMessageCountThreshold,
             ) {
                 return self.launchSummary(service, messages, ConversationSummaryRequest {
-                    chatId, participantId: None, promptFunctionType: PromptFunctionType::CHAT,
+                    chatId, participantId: Some(configuration.profile.id.clone()),
+                    configuration: configuration.clone(), promptFunctionType: PromptFunctionType::CHAT,
                     chatProviderIdOverride: None, chatModelIdOverride: None,
                     autoContinue: false, requireCurrentChat: false,
                 })?.await;
@@ -1063,7 +1066,9 @@ impl MessageCoordinationDelegate {
             .get(insertPosition)
             .map(|message| message.timestamp);
         let summary =
-            AIMessageManager::summarizeMemory(enhancedAiService, messages, request.autoContinue)
+            AIMessageManager::summarizeMemory(
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration,
+            )
                 .await
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "No valid conversation summary was generated".to_string())?;
@@ -1105,6 +1110,19 @@ impl MessageCoordinationDelegate {
         {
             return false;
         }
+        let configuration = match enhancedAiService.resolveChatConfigurationForOptions(&SendMessageOptions {
+            chatId: Some(chatId.clone()),
+            promptFunctionType: self.currentPromptFunctionType.clone(),
+            chatProviderIdOverride: self.currentChatProviderIdOverride.clone(),
+            chatModelIdOverride: self.currentChatModelIdOverride.clone(),
+            ..SendMessageOptions::new()
+        }).await {
+            Ok(configuration) => configuration,
+            Err(error) => {
+                self.messageProcessingDelegate.nonFatalErrorEventFlow.set_value(Some(error.to_string()));
+                return false;
+            }
+        };
         let messages = self
             .chatHistoryDelegate
             .getRuntimeChatHistory(chatId.clone());
@@ -1113,7 +1131,8 @@ impl MessageCoordinationDelegate {
             messages,
             ConversationSummaryRequest {
                 chatId,
-                participantId: None,
+                participantId: Some(configuration.profile.id.clone()),
+                configuration,
                 promptFunctionType: self.currentPromptFunctionType.clone(),
                 chatProviderIdOverride: self.currentChatProviderIdOverride.clone(),
                 chatModelIdOverride: self.currentChatModelIdOverride.clone(),
@@ -1165,6 +1184,14 @@ impl MessageCoordinationDelegate {
         {
             return Err("Summary continuation no longer owns the chat turn".to_string());
         }
+        let configuration = enhancedAiService.resolveChatConfigurationForOptions(&SendMessageOptions {
+            chatId: Some(request.chatId.clone()),
+            executionParticipantId: request.participantId.clone(),
+            promptFunctionType: request.promptFunctionType.clone(),
+            chatProviderIdOverride: request.chatProviderIdOverride.clone(),
+            chatModelIdOverride: request.chatModelIdOverride.clone(),
+            ..SendMessageOptions::new()
+        }).await.map_err(|error| error.to_string())?;
         let messages = self
             .chatHistoryDelegate
             .getRuntimeChatHistory(request.chatId.clone());
@@ -1173,6 +1200,7 @@ impl MessageCoordinationDelegate {
             messages,
             ConversationSummaryRequest {
                 chatId: request.chatId.clone(),
+                configuration,
                 participantId: request.participantId.clone(),
                 promptFunctionType: request.promptFunctionType.clone(),
                 chatProviderIdOverride: request.chatProviderIdOverride.clone(),

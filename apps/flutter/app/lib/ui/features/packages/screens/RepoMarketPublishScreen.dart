@@ -350,7 +350,14 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
                     .map(
                       (category) => DropdownMenuItem<String>(
                         value: category.id,
-                        child: Text(category.name),
+                        child: Text(
+                          marketCategoryText(
+                            category,
+                            languageCode: Localizations.localeOf(
+                              context,
+                            ).languageCode,
+                          ).name,
+                        ),
                       ),
                     )
                     .toList(growable: false),

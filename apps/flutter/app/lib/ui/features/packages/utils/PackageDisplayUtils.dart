@@ -1,7 +1,5 @@
 // ignore_for_file: file_names
 
-import 'package:flutter/material.dart';
-
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 
 String toolPackageDisplayName(core_proxy.ToolPackage package) {
@@ -62,25 +60,6 @@ String localizedText(Object? value) {
     return _localizedTextFromMap(value);
   }
   throw StateError('Unsupported localized text value: ${value.runtimeType}');
-}
-
-int packageCategoryOrder(String category) {
-  return switch (category) {
-    'Automatic' => 0,
-    'Experimental' => 1,
-    'Draw' => 2,
-    'Other' => 3,
-    _ => 100,
-  };
-}
-
-IconData packageCategoryIcon(String category) {
-  return switch (category) {
-    'Automatic' => Icons.auto_mode,
-    'Experimental' => Icons.science_outlined,
-    'Draw' => Icons.palette_outlined,
-    _ => Icons.inventory_2_outlined,
-  };
 }
 
 String _localizedTextFromMap(Map<Object?, Object?> values) {

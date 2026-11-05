@@ -72,6 +72,9 @@ The existing generator appends the handwritten adapters to `js_tools.js` after
 emitting the canonical v2 bindings. Both inline and modular engine bootstrap paths
 therefore install the same code. Adapters capture the canonical functions before
 installing versioned entry points, so v1 cannot recursively invoke itself.
+The generated `Tools` script also owns the internal v1 runtime implementation.
+The engine bootstrap installs that implementation after creating `toolCall`;
+it must not append the runtime source a second time.
 
 ### Global object alias
 
@@ -150,6 +153,14 @@ client and provider capability limits. No historical database migration is impli
 API 2.0.0 exposes `getCallerParticipantId()` consistently in the runtime and
 current declarations. Its value belongs to the authenticated configuration
 provider and is not a runtime-wide character-card identity.
+
+`getChatId()` and `getCallerParticipantId()` use the native caller snapshot for
+both API generations, including prompt and summary hooks. Capturing identity
+before scheduling prevents a later chat selection from changing an invocation.
+Summary hooks also receive `chatId` and `metadata.executionContext` for the
+explicit chat being summarized. Outside an AI turn, an event can still carry a
+target chat, but it does not acquire an execution participant. The platform only
+transports neutral identity; character-provider interpretation stays in v1.
 
 For API 1.0.0 and 1.0.1, `getCallerCardId()` projects the execution participant
 only when the authenticated owner is `com.operit.character_cards`. A call without

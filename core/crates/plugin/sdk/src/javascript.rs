@@ -214,6 +214,12 @@ pub trait JsExecutionHost: Send + Sync {
     /// Captures immutable native caller state before crossing the JavaScript runtime scheduler.
     fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost>;
 
+    /// Projects this invocation's neutral caller identity for SDK getters in every API version.
+    /// An empty object clears participant identity outside a turn; None retains embedding-host transport.
+    fn toolpkg_caller_context(&self) -> Option<Value> {
+        None
+    }
+
     /// Binds a host instance to an engine-owned authenticated ToolPkg execution context.
     fn for_toolpkg_execution_context(
         &self,

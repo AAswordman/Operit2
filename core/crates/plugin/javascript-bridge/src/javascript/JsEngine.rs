@@ -1228,6 +1228,7 @@ impl JsEngineState {
                 None => operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
                     .to_string(),
             };
+            bindCallerContext(&mut effectiveParams, context.executionHost.as_deref());
             effectiveParams.insert(
                 "__operit_toolpkg_api_version".to_string(),
                 Value::String(apiVersion),
@@ -1323,6 +1324,7 @@ impl JsEngineState {
             None => operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
                 .to_string(),
         };
+        bindCallerContext(&mut effectiveParams, context.executionHost.as_deref());
         effectiveParams.insert(
             "__operit_toolpkg_api_version".to_string(),
             Value::String(apiVersion),
@@ -3350,6 +3352,32 @@ fn bindEnvironmentOwner(params: &mut BTreeMap<String, Value>, owner: Option<&JsE
             "__operit_environment_owner".into(),
             Value::String(owner.package_name().into()),
         );
+    }
+}
+
+/// Binds neutral native identity for all SDK versions; only the v1 adapter interprets card IDs.
+#[allow(non_snake_case)]
+fn bindCallerContext(params: &mut BTreeMap<String, Value>, host: Option<&dyn JsExecutionHost>) {
+    let Some(context) = host.and_then(JsExecutionHost::toolpkg_caller_context) else {
+        return;
+    };
+    for (field, key) in [
+        ("participantId", "__operit_package_caller_participant_id"),
+        ("extensionOwner", "__operit_package_caller_owner"),
+        ("chatId", "__operit_package_chat_id"),
+    ] {
+        // UI events can identify a target chat without being an AI turn. Keep that existing transport.
+        if field == "chatId" && context.get(field).is_none() {
+            continue;
+        }
+        params.remove(key);
+        if let Some(value) = context
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            params.insert(key.into(), Value::String(value.into()));
+        }
     }
 }
 

@@ -3,7 +3,6 @@
 import 'package:operit_ui/operit_ui.dart';
 
 import '../../features/packages/components/PackageTab.dart';
-import '../../features/packages/screens/UnifiedMarketScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../screens/OperitScreens.dart';
@@ -92,6 +91,10 @@ class SoftwareDesignCatalog {
     }
 
     for (final route in routes()) {
+      // Detail routes exist only for concrete extensions and entries.
+      if (ScreenRouteRegistry.requiresArguments(route.routeId)) {
+        continue;
+      }
       if (route.routeId ==
           ScreenRouteRegistry.routeIdOf(const SettingsScreenRoute())) {
         add(
@@ -126,16 +129,24 @@ class SoftwareDesignCatalog {
         }
       } else if (route.routeId ==
           ScreenRouteRegistry.routeIdOf(const MarketScreenRoute())) {
-        for (final tab in MarketHomeTab.values) {
-          add(
-            route,
-            '/${tab.name}',
-            '市场 / ${tab.name}',
-            {'initialTab': tab.name},
-            'ui/features/packages/screens/UnifiedMarketScreen.dart',
-            widget: 'UnifiedMarketScreen',
-          );
-        }
+        add(
+          route,
+          '',
+          '市场',
+          {},
+          'ui/features/packages/screens/MarketPane.dart',
+          widget: 'MarketPane',
+        );
+      } else if (route.routeId ==
+          ScreenRouteRegistry.routeIdOf(const MarketCreatorScreenRoute())) {
+        add(
+          route,
+          '',
+          '市场 / 创作者中心',
+          {},
+          'ui/features/packages/screens/MarketCreatorScreen.dart',
+          widget: 'MarketCreatorScreen',
+        );
       } else {
         add(
           route,

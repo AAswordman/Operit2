@@ -5,6 +5,7 @@ use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::PreferenceSpaceMerge;
 use crate::data::preferences::ThemeConfigManager::ThemeConfigManager;
@@ -15,6 +16,9 @@ use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggl
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
+use crate::core::application::ExtensionCatalogSupport::{
+    ExtensionCatalogDiagnostic, ExtensionCatalogSnapshot, ExtensionCatalogUpdateCheck,
+};
 #[cfg(feature = "javascript")]
 use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
@@ -26,6 +30,9 @@ use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost
 #[cfg(feature = "javascript")]
 use operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
+use operit_providers::market::MarketStatsApiService::{
+    setDefaultGitHubTokenSource, GitHubTokenSource,
+};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMAIN};
@@ -95,6 +102,18 @@ use operit_util::AppLogger::AppLogger;
 use operit_util::OperitPaths;
 
 static HOST_MANAGER: OnceLock<Mutex<Option<HostManager>>> = OnceLock::new();
+
+/// Gives marketplace clients the access token of the saved GitHub login.
+struct GitHubLoginTokenSource;
+
+impl GitHubTokenSource for GitHubLoginTokenSource {
+    /// Reads the token on every request so signing in or out applies immediately.
+    fn current_access_token(&self) -> Result<Option<String>, String> {
+        GitHubAuthPreferences::getInstance()
+            .getCurrentAccessToken()
+            .map_err(|error| error.to_string())
+    }
+}
 
 /// Owns process-wide runtime initialization and exposes host-facing application operations.
 pub struct OperitApplication {
@@ -168,6 +187,7 @@ impl OperitApplication {
         if let Some(httpHost) = hostManager.httpHost.clone() {
             setDefaultHttpHost(httpHost);
         }
+        setDefaultGitHubTokenSource(Arc::new(GitHubLoginTokenSource));
         if let Some(webSocketHost) = hostManager.webSocketHost.clone() {
             setDefaultWebSocketHost(webSocketHost);
         }
@@ -550,6 +570,32 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn extensionCatalogRevisionFlow(&self) -> StateFlow<i64> {
         operit_store::ExtensionStore::catalogRevisionFlow()
+    }
+
+    /// Returns one normalized local catalog for the redesigned package manager.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_plugin_sdk_expose]
+    pub fn getExtensionCatalogSnapshot(
+        &self,
+    ) -> Result<ExtensionCatalogSnapshot, String> {
+        super::ExtensionCatalogSupport::snapshot(self)
+    }
+
+    /// Checks installed marketplace entries against their latest published versions.
+    #[allow(non_snake_case)]
+    pub fn checkExtensionCatalogUpdates(
+        &self,
+    ) -> Result<Vec<ExtensionCatalogUpdateCheck>, String> {
+        super::ExtensionCatalogSupport::check_updates(self)
+    }
+
+    /// Deletes one package-manager diagnostic after the redesigned card confirms it.
+    #[allow(non_snake_case)]
+    pub fn deleteExtensionCatalogDiagnostic(
+        &self,
+        diagnostic: ExtensionCatalogDiagnostic,
+    ) -> Result<bool, String> {
+        super::ExtensionCatalogSupport::delete_diagnostic(self, diagnostic)
     }
 
     /// Lists explicit installation scopes, including subpackages that inherit their container scope.

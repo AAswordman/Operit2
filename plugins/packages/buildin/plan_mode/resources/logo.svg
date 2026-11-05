@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" fill="#8EC5EC"/>
+  <g transform="translate(-12 4)" stroke="#18181B" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="rotate(-3 228 268)">
+      <rect x="112" y="118" width="248" height="330" rx="30" fill="#18181B" fill-opacity=".18" stroke="none"/>
+      <rect x="96" y="102" width="248" height="330" rx="30" fill="#F3EDE0"/>
+      <path d="M124 142H316V362L272 406H124Z" fill="#FFFFFF" stroke-width="12"/>
+      <path d="M272 406V362H316Z" fill="#F3EDE0" stroke-width="12"/>
+      <rect x="178" y="82" width="84" height="50" rx="14" fill="#E4E4E7"/>
+      <path d="M202 84C202 52 238 52 238 84"/>
+      <rect x="138" y="168" width="164" height="44" rx="8" fill="#FEF08A" stroke="none"/>
+      <rect x="146" y="170" width="40" height="40" rx="8" fill="#FFFFFF" stroke-width="12"/>
+      <path d="M154 188L166 200L192 166" stroke-width="26"/>
+      <path d="M154 188L166 200L192 166" stroke="#E11D48" stroke-width="12"/>
+      <path d="M212 190H288" stroke-width="14"/>
+      <rect x="146" y="236" width="40" height="40" rx="8" fill="#FFFFFF" stroke-width="12"/>
+      <path d="M154 254L166 266L192 232" stroke-width="14"/>
+      <path d="M212 256H270" stroke-width="14"/>
+      <circle cx="154" cy="344" r="16" fill="#FACC15" stroke-width="12"/>
+      <path d="M180 344C204 338 210 366 228 358" stroke-width="12" stroke-dasharray="1 22"/>
+      <path d="M240 374V300" stroke-width="14"/>
+      <path d="M240 302L282 318L240 334Z" fill="#E11D48" stroke-width="12"/>
+    </g>
+    <path transform="translate(368 304) rotate(32)" d="M-28 -132Q-28 -148 -12 -148H12Q28 -148 28 -132V40L0 104L-28 40Z" fill="#18181B" fill-opacity=".18" stroke="none"/>
+    <g transform="translate(356 292) rotate(32)">
+      <path d="M-28 -114V-132Q-28 -148 -12 -148H12Q28 -148 28 -132V-114Z" fill="#FB7185" stroke="none"/>
+      <rect x="-28" y="-114" width="56" height="22" fill="#E4E4E7" stroke="none"/>
+      <rect x="-28" y="-92" width="56" height="132" fill="#FACC15" stroke="none"/>
+      <rect x="10" y="-92" width="18" height="132" fill="#EAB308" stroke="none"/>
+      <path d="M-28 40L0 104L28 40Z" fill="#FDE68A" stroke="none"/>
+      <path d="M-11 79L0 104L11 79Z" fill="#18181B" stroke="none"/>
+      <path d="M-28 -114H28M-28 -92H28M-28 40H28" stroke-width="12"/>
+      <path d="M-28 -132Q-28 -148 -12 -148H12Q28 -148 28 -132V40L0 104L-28 40Z"/>
+    </g>
+  </g>
+</svg>

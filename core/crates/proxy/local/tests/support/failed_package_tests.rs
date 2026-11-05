@@ -55,6 +55,7 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
         .find(|issue| issue.packageName.as_deref() == Some(name))
         .unwrap();
     assert!(issue.message.contains("ownership conflict"), "{issue:?}");
+    assert!(manager.canDeleteToolPkgLoadIssue(&issue).unwrap());
     manager.deleteToolPkgLoadIssue(issue).unwrap();
     assert!(!storage.exists(&record_path).unwrap());
     assert!(!storage.exists(&record_path.replace("/space/", "/device/")).unwrap());
@@ -78,6 +79,7 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
         .find(|issue| std::path::Path::new(&issue.sourcePath) == broken)
         .unwrap();
     assert!(issue.packageName.is_none());
+    assert!(manager.canDeleteToolPkgLoadIssue(&issue).unwrap());
     manager.deleteToolPkgLoadIssue(issue).unwrap();
     assert!(!broken.exists());
     assert!(store.record("package", name).is_ok());
@@ -98,6 +100,7 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
         .find(|issue| std::path::Path::new(&issue.sourcePath) == original)
         .unwrap();
     assert!(issue.packageName.is_none());
+    assert!(manager.canDeleteToolPkgLoadIssue(&issue).unwrap());
     manager.deleteToolPkgLoadIssue(issue).unwrap();
     assert!(store.record("package", extra).is_err());
     let imported = manager.importBundledExternalToolPkgContainer(extra);
@@ -112,10 +115,35 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
         .find(|issue| std::path::Path::new(&issue.sourcePath) == duplicate)
         .unwrap();
     assert_eq!(issue.code, "duplicate_package");
+    assert!(manager.canDeleteToolPkgLoadIssue(&issue).unwrap());
     manager.deleteToolPkgLoadIssue(issue).unwrap();
     assert!(!duplicate.exists());
     assert_eq!(store.record("package", extra).unwrap().scope, "device");
     assert!(manager.getToolPkgContainerRuntime(extra).is_some());
+
+    // A rejected import is outside installation storage and must keep its original file.
+    let rejected = paths.runtime_storage_path("runtime/imports/rejected.toolpkg");
+    std::fs::create_dir_all(rejected.parent().unwrap()).unwrap();
+    std::fs::write(&rejected, b"invalid import archive").unwrap();
+    let rejected_path = rejected.to_str().unwrap();
+    assert!(manager.addPackageFileFromExternalStorageResult(rejected_path).is_err());
+    let issue = manager
+        .getToolPkgLoadIssues()
+        .into_iter()
+        .find(|issue| issue.sourcePath == rejected_path)
+        .unwrap();
+    assert!(!manager.canDeleteToolPkgLoadIssue(&issue).unwrap());
+    assert!(manager.deleteToolPkgLoadIssue(issue).is_err());
+    assert!(rejected.exists());
+    drop(manager);
+    let diagnostic = app
+        .getExtensionCatalogSnapshot()
+        .unwrap()
+        .diagnostics
+        .into_iter()
+        .find(|diagnostic| diagnostic.source_path == rejected_path)
+        .unwrap();
+    assert!(!diagnostic.can_delete);
 }
 
 /// Preserves the existing character owner and data across scope repair, uninstallation and reinstallation.
@@ -403,10 +431,13 @@ async fn bundled_source_updates_preserve_device_and_space_installations() {
                 .runtime_storage_path(&ExtensionStore::root("package", scope).unwrap())
                 .join(&before.sourceName);
             let current = std::fs::read(&source).unwrap();
-            // A ZIP comment changes source bytes without changing the manifest version or runtime code.
+            // A resource change must offer an update even at the same manifest version.
             let mut archive =
                 zip::ZipWriter::new_append(std::io::Cursor::new(current.clone())).unwrap();
-            archive.set_comment("previous application bundle");
+            archive
+                .start_file("bundle-update-regression.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut archive, b"previous application bundle").unwrap();
             std::fs::write(&source, archive.finish().unwrap().into_inner()).unwrap();
             manager.loadAvailablePackages();
             let updates = manager.getBundledExternalPackageCandidates();

@@ -2128,6 +2128,7 @@ dependencies = [
  "operit-host-api",
  "operit-util",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "tar",

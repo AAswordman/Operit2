@@ -26,6 +26,8 @@ struct ToolResultRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OpenToolCall {
     pub(crate) id: String,
+    /// Provider-visible function name, kept separate from the executable target.
+    pub(crate) function_name: String,
     pub(crate) matching_name: String,
 }
 
@@ -448,6 +450,11 @@ impl StructuredToolCallBridge {
                 queuedToolCalls.push(clonedToolCall);
                 queuedOpenToolCalls.push(OpenToolCall {
                     id: callId,
+                    function_name: toolCall
+                        .pointer("/function/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
                     matching_name: matchingName,
                 });
             }
@@ -504,6 +511,7 @@ impl StructuredToolCallBridge {
                 messagesArray.push(json!({
                     "role": "tool",
                     "tool_call_id": openToolCall.id,
+                    "name": openToolCall.function_name,
                     "content": StructuredToolCallBridge::unmatchedToolResultContent(
                         reason,
                         &openToolCall.matching_name,
@@ -659,11 +667,10 @@ impl StructuredToolCallBridge {
                             toolMessage.insert("role".to_string(), json!("tool"));
                             toolMessage
                                 .insert("tool_call_id".to_string(), json!(matchedCall.call.id));
-                            if let Some(name) = &result.name {
-                                if !name.trim().is_empty() {
-                                    toolMessage.insert("name".to_string(), json!(name));
-                                }
-                            }
+                            toolMessage.insert(
+                                "name".to_string(),
+                                json!(matchedCall.call.function_name),
+                            );
                             toolMessage.insert(
                                 "content".to_string(),
                                 json!(Self::nonEmptyContent(&result.content)),
@@ -968,7 +975,7 @@ impl StructuredToolCallBridge {
         }))
     }
 
-    fn parseXmlToolCalls(content: &str) -> (String, Option<Vec<Value>>) {
+    pub(crate) fn parseXmlToolCalls(content: &str) -> (String, Option<Vec<Value>>) {
         let matches = ChatMarkupRegex::tool_call_matches(content);
         if matches.is_empty() {
             return (content.to_string(), None);
@@ -1356,7 +1363,7 @@ mod tests {
         assert_eq!(arguments["params"], parameters);
     }
 
-    /// Verifies package proxy results match the proxied executable tool name.
+    /// Matches results by executable name while replying with the provider-visible name.
     #[test]
     fn packageProxyResultMatchesTargetToolName() {
         let history = vec![
@@ -1408,13 +1415,114 @@ mod tests {
         );
         assert_eq!(
             messages[1].get("name").and_then(Value::as_str),
-            Some("daily_life:get_current_date")
+            Some("package_proxy")
         );
         assert!(!messages[1]
             .get("content")
             .and_then(Value::as_str)
             .unwrap_or("")
             .contains("工具结果缺失"));
+    }
+
+    /// Explicit proxies, legacy package calls, and ordinary tools preserve their wire names.
+    #[test]
+    fn tool_result_names_match_provider_calls() {
+        for (stored_name, params, result_name, wire_name) in [
+            (
+                "package_proxy",
+                r#"<param name="tool_name">character_memory:create_memory</param><param name="params">{}</param>"#,
+                "character_memory:create_memory",
+                "package_proxy",
+            ),
+            (
+                "proxy",
+                r#"<param name="tool_name">character_memory:create_memory</param><param name="params">{}</param>"#,
+                "character_memory:create_memory",
+                "proxy",
+            ),
+            (
+                "character_memory:create_memory",
+                "",
+                "character_memory:create_memory",
+                "package_proxy",
+            ),
+            (
+                "read_file",
+                r#"<param name="path">notes.txt</param>"#,
+                "read_file",
+                "read_file",
+            ),
+        ] {
+            let history = vec![
+                PromptTurn::new(
+                    PromptTurnKind::ASSISTANT,
+                    format!(r#"<tool name="{stored_name}">{params}</tool>"#),
+                ),
+                PromptTurn::new(
+                    PromptTurnKind::TOOL_RESULT,
+                    format!(
+                        r#"<tool_result name="{result_name}"><content>done</content></tool_result>"#
+                    ),
+                ),
+            ];
+            let messages =
+                StructuredToolCallBridge::buildMessagesValueForProvider(&history, true, true);
+            assert_eq!(messages.as_array().unwrap().len(), 2, "{stored_name}");
+            assert_eq!(messages[0]["tool_calls"][0]["function"]["name"], wire_name);
+            assert_eq!(messages[1]["name"], wire_name, "{stored_name}");
+            assert_eq!(
+                messages[1]["tool_call_id"],
+                messages[0]["tool_calls"][0]["id"]
+            );
+            assert_eq!(messages[1]["content"], "done");
+
+            // A missing execution result must also reply under the original function name.
+            let missing =
+                StructuredToolCallBridge::buildMessagesValueForProvider(&history[..1], true, true);
+            assert_eq!(missing[1]["name"], wire_name, "{stored_name}");
+            assert_eq!(
+                missing[1]["tool_call_id"],
+                missing[0]["tool_calls"][0]["id"]
+            );
+        }
+    }
+
+    /// Multiple proxy calls still match by target and keep the correct call IDs.
+    #[test]
+    fn proxy_result_names_preserve_target_matching() {
+        let history = vec![
+            PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                concat!(
+                    r#"<tool name="package_proxy"><param name="tool_name">character_memory:create_memory</param><param name="params">{}</param></tool>"#,
+                    r#"<tool name="package_proxy"><param name="tool_name">character_memory:query_memory</param><param name="params">{}</param></tool>"#,
+                    r#"<tool name="package_proxy"><param name="tool_name">character_memory:create_memory</param><param name="params">{}</param></tool>"#,
+                ),
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                concat!(
+                    r#"<tool_result name="character_memory:query_memory"><content>found</content></tool_result>"#,
+                    r#"<tool_result name="character_memory:create_memory"><content>created first</content></tool_result>"#,
+                    r#"<tool_result name="character_memory:create_memory"><content>created second</content></tool_result>"#,
+                ),
+            ),
+        ];
+        let messages =
+            StructuredToolCallBridge::buildMessagesValueForProvider(&history, true, true);
+        assert_eq!(messages.as_array().unwrap().len(), 4);
+        for (result_index, call_index, content) in [
+            (1, 1, "found"),
+            (2, 0, "created first"),
+            (3, 2, "created second"),
+        ] {
+            assert_eq!(messages[result_index]["name"], "package_proxy");
+            assert_eq!(
+                messages[result_index]["tool_call_id"],
+                messages[0]["tool_calls"][call_index]["id"]
+            );
+            assert_eq!(messages[result_index]["content"], content);
+        }
     }
 
     /// Retains one native result per call after large same-name results pass through finalized markup.

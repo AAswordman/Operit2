@@ -31,7 +31,7 @@ const manifest = JSON.parse(Buffer.from(files["manifest.json"]).toString("utf8")
 for (const entry of [manifest.main, ...manifest.subpackages.map(subpackage => subpackage.entry)]) {
   if (!Object.hasOwn(files, entry)) throw new Error("Missing executable package entry: " + entry);
 }
-const archive = zipSync(files, { level: 6 });
+const archive = zipSync(files, { level: 6, mtime: new Date(1980, 0, 1) });
 const decoded = unzipSync(archive);
 for (const [path, contents] of Object.entries(files)) {
   if (!Buffer.from(decoded[path]).equals(Buffer.from(contents))) throw new Error("Package round-trip mismatch: " + path);

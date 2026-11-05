@@ -34,7 +34,7 @@ export async function bundles() {
 /** Packages the exact current sources and their executable Compose modules. */
 export async function buildPackage() {
   const files = await bundles();
-  for (const name of ['manifest.json', 'package.json', 'tsconfig.json', ...await sources('src'), ...await sources('scripts')]) {
+  for (const name of ['manifest.json', 'package.json', 'tsconfig.json', ...await sources('src'), ...await sources('scripts'), ...await sources('resources')]) {
     files[name] = new Uint8Array(await readFile(path.join(root, name)));
   }
   for (const [name, bytes] of Object.entries(files)) {
@@ -42,7 +42,7 @@ export async function buildPackage() {
     await mkdir(path.dirname(path.join(root, name)), { recursive: true });
     await writeFile(path.join(root, name), bytes);
   }
-  const archive = zipSync(files);
+  const archive = zipSync(files, { mtime: new Date(1980, 0, 1) });
   await writeFile(path.join(root, 'dist/change_review.toolpkg'), archive);
   const assets = path.resolve(root, '../../../../core/crates/runtime/application/assets/plugins/buildin');
   await mkdir(assets, { recursive: true });

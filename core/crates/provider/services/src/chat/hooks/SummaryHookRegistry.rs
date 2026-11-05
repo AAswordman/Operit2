@@ -8,6 +8,8 @@ use operit_model::PromptTurn::PromptTurn;
 #[derive(Clone, Debug)]
 pub struct SummaryHookContext {
     pub stage: String,
+    /// Conversation captured for this summary, independent of the currently open chat.
+    pub chat_id: Option<String>,
     pub use_english: Option<bool>,
     pub previous_summary: Option<String>,
     pub chat_history: Vec<PromptTurn>,
