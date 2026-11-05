@@ -17,9 +17,9 @@ use super::OperitApplication::OperitApplication;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MarketInstallMarker {
-    entry_id: String,
-    version_id: String,
+pub(super) struct MarketInstallMarker {
+    pub(super) entry_id: String,
+    pub(super) version_id: String,
 }
 
 fn marker_path(root: &Path) -> PathBuf {
@@ -77,39 +77,49 @@ fn mcp_config_marker_root(server_id: &str) -> PathBuf {
         ))
 }
 
-fn installed_marker_roots(app: &OperitApplication) -> Result<Vec<PathBuf>, String> {
+fn installed_marker_installations(
+    app: &OperitApplication,
+) -> Result<Vec<(&'static str, String, PathBuf)>, String> {
     let fs = app
         .hostManager
         .fileSystemHost
         .as_ref()
         .ok_or("FileSystemHost is missing")?;
-    let mut roots = Vec::new();
+    let mut installations = Vec::new();
     let packages = app.packageManager();
     for source in packages
         .lock()
         .map_err(|error| error.to_string())?
         .getPublishablePackageSources()
     {
-        roots.push(artifact_marker_root(&source.packageName)?);
+        installations.push((
+            "package",
+            source.packageName.clone(),
+            artifact_marker_root(&source.packageName)?,
+        ));
     }
     for skill in app
         .skillRepository()
         .getAvailableSkillPackages()
         .into_values()
     {
-        roots.push(skill.directory);
+        installations.push(("skill", skill.name.clone(), skill.directory));
     }
     let mcp = MCPLocalServer::getInstance(&app.hostManager);
     for id in mcp.getAllMCPServersChecked()?.keys() {
-        roots.push(mcp_config_marker_root(id));
+        installations.push(("mcp", id.clone(), mcp_config_marker_root(id)));
     }
     let plugins = RuntimeStorePaths::default().mcp_plugins_dir();
     if let Ok(entries) = fs.listFiles(&plugins.to_string_lossy()) {
         for entry in entries.into_iter().filter(|entry| entry.isDirectory) {
-            roots.push(plugins.join(entry.name));
+            installations.push((
+                "mcp_plugin",
+                entry.name.clone(),
+                plugins.join(entry.name),
+            ));
         }
     }
-    Ok(roots)
+    Ok(installations)
 }
 
 pub(super) fn installed_versions(
@@ -120,10 +130,27 @@ pub(super) fn installed_versions(
         .fileSystemHost
         .as_ref()
         .ok_or("FileSystemHost is missing")?;
-    Ok(installed_marker_roots(app)?
+    Ok(installed_marker_installations(app)?
         .into_iter()
-        .filter_map(|root| read_marker(fs.as_ref(), &root))
+        .filter_map(|(_, _, root)| read_marker(fs.as_ref(), &root))
         .map(|marker| (marker.entry_id, marker.version_id))
+        .collect())
+}
+
+/// Returns market ownership markers keyed by the extension kind and local id.
+pub(super) fn installed_marker_origins(
+    app: &OperitApplication,
+) -> Result<BTreeMap<(String, String), MarketInstallMarker>, String> {
+    let fs = app
+        .hostManager
+        .fileSystemHost
+        .as_ref()
+        .ok_or("FileSystemHost is missing")?;
+    Ok(installed_marker_installations(app)?
+        .into_iter()
+        .filter_map(|(kind, id, root)| {
+            read_marker(fs.as_ref(), &root).map(|marker| ((kind.to_string(), id), marker))
+        })
         .collect())
 }
 

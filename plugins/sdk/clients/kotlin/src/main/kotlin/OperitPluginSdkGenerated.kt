@@ -6,6 +6,8 @@ package operit.plugin.sdk
 class OperitApplicationClient(private val client: OperitPluginSdkClient) {
     /** Watches `pluginLoadingProgressFlow` through the Core Link route. */
     fun pluginLoadingProgressFlow(): kotlinx.coroutines.flow.Flow<PluginLoadingProgress> = client.watchTyped("core/application", "pluginLoadingProgressFlow", mapOf<String, Any?>(), ::decodePluginLoadingProgress)
+    /** Calls `getExtensionCatalogSnapshot` through the Core Link route. */
+    suspend fun getExtensionCatalogSnapshot(): ExtensionCatalogSnapshot = client.callTyped("core/application", "getExtensionCatalogSnapshot", mapOf<String, Any?>(), ::decodeExtensionCatalogSnapshot)
 }
 
 /** Generated client for Core object `application.packageManager`. */

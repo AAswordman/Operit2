@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
-use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
 use super::StreamingResponseLines::{decodeStreamingTail, takeNextStreamingLine};
 use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
@@ -234,8 +234,13 @@ impl ClaudeProvider {
             self.enable_tool_call,
         );
         let mut next_tool_use_ordinal = 0usize;
-        let mut open_tool_use_ids: Vec<String> = Vec::new();
+        let mut open_tool_calls: Vec<OpenToolCall> = Vec::new();
         for turn in provider_ready_history {
+            if turn.kind != PromptTurnKind::TOOL_RESULT && !open_tool_calls.is_empty() {
+                let content =
+                    Self::missing_tool_result_blocks(&mut open_tool_calls, "assistant_boundary");
+                messages.push(json!({"role": "user", "content": content}));
+            }
             match turn.kind {
                 PromptTurnKind::SYSTEM => {
                     system_parts.push(strip_responses_protocol_markup(&turn.content))
@@ -252,7 +257,7 @@ impl ClaudeProvider {
                         self.build_assistant_content_blocks(
                             &turn.content,
                             &mut next_tool_use_ordinal,
-                            &mut open_tool_use_ids,
+                            &mut open_tool_calls,
                         )?
                     } else {
                         self.build_content_array(&turn.content)
@@ -261,13 +266,17 @@ impl ClaudeProvider {
                 }
                 PromptTurnKind::TOOL_RESULT => {
                     let content = if self.enable_tool_call {
-                        self.build_tool_result_blocks(&turn.content, &mut open_tool_use_ids)
+                        self.build_tool_result_blocks(&turn.content, &mut open_tool_calls)
                     } else {
                         self.build_content_array(&turn.content)
                     };
                     messages.push(json!({"role": "user", "content": content}))
                 }
             }
+        }
+        if !open_tool_calls.is_empty() {
+            let content = Self::missing_tool_result_blocks(&mut open_tool_calls, "history_end");
+            messages.push(json!({"role": "user", "content": content}));
         }
         let system_prompt = system_parts.join("\n\n");
         let system = if system_prompt.trim().is_empty() {
@@ -446,73 +455,71 @@ impl ClaudeProvider {
         &self,
         content: &str,
         next_tool_use_ordinal: &mut usize,
-        open_tool_use_ids: &mut Vec<String>,
+        open_tool_calls: &mut Vec<OpenToolCall>,
     ) -> Result<Value, AiServiceError> {
-        let matches = ChatMarkupRegex::tool_call_matches(content);
-        if matches.is_empty() {
+        let (text_content, calls) = StructuredToolCallBridge::parseXmlToolCalls(content);
+        let Some(calls) = calls.filter(|calls| !calls.is_empty()) else {
             return Ok(self.build_content_array(content));
-        }
-        let mut text_content = content.to_string();
+        };
         let mut blocks = Vec::new();
-        for tool_match in matches.iter() {
-            text_content = text_content.replace(
-                &format!(
-                    "<{} name=\"{}\">{}</{}>",
-                    tool_match.tag_name, tool_match.name, tool_match.body, tool_match.tag_name
-                ),
-                "",
+        if !text_content.trim().is_empty() {
+            blocks.extend(
+                self.build_content_array(&text_content)
+                    .as_array()
+                    .unwrap()
+                    .clone(),
             );
-            let mut input = Map::new();
-            for (start, end) in operit_util::ChatMarkupRegex::tag_ranges(&tool_match.body, "param")
-            {
-                let raw = &tool_match.body[start..end];
-                let name =
-                    operit_util::ChatMarkupRegex::attr_value(raw, "name").unwrap_or_default();
-                let value = raw
-                    .split_once('>')
-                    .and_then(|(_, tail)| {
-                        tail.rsplit_once("</").map(|(body, _)| xml_unescape(body))
-                    })
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                input.insert(name, json!(value));
-            }
+        }
+        for call in calls {
+            let function = &call["function"];
+            let input: Value = serde_json::from_str(function["arguments"].as_str().unwrap_or("{}"))
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             let call_id = generated_tool_use_id(*next_tool_use_ordinal);
             *next_tool_use_ordinal += 1;
-            open_tool_use_ids.push(call_id.clone());
+            open_tool_calls.push(OpenToolCall {
+                id: call_id.clone(),
+                function_name: function["name"].as_str().unwrap_or_default().to_string(),
+                matching_name: StructuredToolCallBridge::toolCallName(&call),
+            });
             blocks.push(json!({
                 "type": "tool_use",
                 "id": call_id,
-                "name": tool_match.name,
-                "input": Value::Object(input),
+                "name": function["name"],
+                "input": input,
             }));
         }
-        let trimmed = text_content.trim();
-        let mut content_blocks = Vec::new();
-        if !trimmed.is_empty() {
-            content_blocks.push(json!({"type": "text", "text": trimmed}));
-        }
-        content_blocks.extend(blocks);
-        Ok(Value::Array(content_blocks))
+        Ok(Value::Array(blocks))
+    }
+
+    /// Keeps every missing tool response attached to its original invocation ID.
+    fn missing_tool_result_blocks(
+        open_tool_calls: &mut Vec<OpenToolCall>,
+        reason: &str,
+    ) -> Vec<Value> {
+        open_tool_calls.drain(..).map(|call| json!({
+            "type": "tool_result",
+            "tool_use_id": call.id,
+            "is_error": true,
+            "content": StructuredToolCallBridge::unmatchedToolResultContent(reason, &call.matching_name),
+        })).collect()
     }
 
     fn build_tool_result_blocks(
         &self,
         content: &str,
-        open_tool_use_ids: &mut Vec<String>,
+        open_tool_calls: &mut Vec<OpenToolCall>,
     ) -> Value {
         let blocks = ChatMarkupRegex::tool_result_blocks(content);
-        if blocks.is_empty() {
-            return self.build_content_array(content);
-        }
+        let result_names = blocks
+            .iter()
+            .map(|block| operit_util::ChatMarkupRegex::attr_value(&block.raw, "name"))
+            .collect::<Vec<_>>();
+        let matched =
+            StructuredToolCallBridge::consumeMatchingToolCalls(open_tool_calls, &result_names);
+        let mut text_content = content.to_string();
         let mut result_blocks = Vec::new();
-        for (index, block) in blocks.iter().enumerate() {
-            let tool_use_id = if !open_tool_use_ids.is_empty() {
-                open_tool_use_ids.remove(0)
-            } else {
-                generated_tool_use_id(index)
-            };
+        for matched_call in matched {
+            let block = &blocks[matched_call.result_index];
             let result_content = operit_util::ChatMarkupRegex::tag_ranges(&block.body, "content")
                 .into_iter()
                 .next()
@@ -526,9 +533,26 @@ impl ClaudeProvider {
                 .unwrap_or_else(|| block.body.trim().to_string());
             result_blocks.push(json!({
                 "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": result_content,
+                "tool_use_id": matched_call.call.id,
+                "content": self.build_content_array(&result_content),
             }));
+            // Unmatched markup remains text rather than becoming an orphan tool_result.
+            text_content = text_content.replacen(&block.raw, "", 1);
+        }
+        result_blocks.extend(Self::missing_tool_result_blocks(
+            open_tool_calls,
+            "tool_result_partial_batch",
+        ));
+        if !text_content.trim().is_empty() {
+            result_blocks.extend(
+                self.build_content_array(text_content.trim())
+                    .as_array()
+                    .unwrap()
+                    .clone(),
+            );
+        }
+        if result_blocks.is_empty() {
+            return self.build_content_array(content);
         }
         Value::Array(result_blocks)
     }
@@ -1553,14 +1577,6 @@ fn stable_id_hash_part(raw: &str) -> String {
         value /= 36;
     }
     chars.iter().rev().collect()
-}
-
-fn xml_unescape(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
 }
 
 #[cfg(test)]

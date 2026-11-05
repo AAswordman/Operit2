@@ -10,9 +10,10 @@
     "en": "Workflow"
   },
   "description": {
-    "zh": "可视化工作流：节点编排、条件分支、数据提取、工具调用、定时运行与执行日志。",
-    "en": "Visual workflows with branching, extraction, tools, schedules and execution history."
+    "zh": "用可视化节点搭建自动化流程：条件分支、调用工具、定时运行，每次执行都有记录。",
+    "en": "Build automations from visual nodes: branches, tool calls, schedules and a log of every run."
   },
+  "logo": "package_logo",
   "enabled_by_default": false,
   "subpackages": [
     {
@@ -21,6 +22,11 @@
     }
   ],
   "resources": [
+    {
+      "key": "package_logo",
+      "path": "resources/logo.svg",
+      "mime": "image/svg+xml"
+    },
     {
       "key": "workflow_web",
       "path": "resources/workflow.html",

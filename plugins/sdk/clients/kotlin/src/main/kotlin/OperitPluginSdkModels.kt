@@ -1341,6 +1341,190 @@ fun ManifestFile.toMessagePackValue(): Map<String, Any?> = mapOf(
     "mediaType" to this.media_type,
 )
 
+data class ExtensionCatalogCandidate(
+    val id: String,
+    val kind: String,
+    val display_name: String,
+    val description: String,
+    val version: String,
+    val authors: List<String>,
+    val category: String,
+    val required_scope: String?,
+    val tool_count: Int,
+    val subpackage_count: Int
+)
+
+fun decodeExtensionCatalogCandidate(value: Any?): ExtensionCatalogCandidate {
+    val input = value as Map<*, *>
+    return ExtensionCatalogCandidate(
+        id = input["id"] as String as String,
+        kind = input["kind"] as String as String,
+        display_name = input["displayName"] as String as String,
+        description = input["description"] as String as String,
+        version = input["version"] as String as String,
+        authors = (input["authors"] as List<*>).map { item -> item as String } as List<String>,
+        category = input["category"] as String as String,
+        required_scope = input["requiredScope"]?.let { it as String } as String?,
+        tool_count = (input["toolCount"] as Number).toInt() as Int,
+        subpackage_count = (input["subpackageCount"] as Number).toInt() as Int,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ExtensionCatalogCandidate.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "id" to this.id,
+    "kind" to this.kind,
+    "displayName" to this.display_name,
+    "description" to this.description,
+    "version" to this.version,
+    "authors" to this.authors.map { item -> item },
+    "category" to this.category,
+    "requiredScope" to this.required_scope?.let { it },
+    "toolCount" to this.tool_count,
+    "subpackageCount" to this.subpackage_count,
+)
+
+data class ExtensionCatalogDiagnostic(
+    val source_path: String,
+    val package_id: String?,
+    val display_name: String,
+    val code: String,
+    val message: String,
+    val package_kind: String,
+    val can_delete: Boolean
+)
+
+fun decodeExtensionCatalogDiagnostic(value: Any?): ExtensionCatalogDiagnostic {
+    val input = value as Map<*, *>
+    return ExtensionCatalogDiagnostic(
+        source_path = input["sourcePath"] as String as String,
+        package_id = input["packageId"]?.let { it as String } as String?,
+        display_name = input["displayName"] as String as String,
+        code = input["code"] as String as String,
+        message = input["message"] as String as String,
+        package_kind = input["packageKind"] as String as String,
+        can_delete = input["canDelete"] as Boolean as Boolean,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ExtensionCatalogDiagnostic.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "sourcePath" to this.source_path,
+    "packageId" to this.package_id?.let { it },
+    "displayName" to this.display_name,
+    "code" to this.code,
+    "message" to this.message,
+    "packageKind" to this.package_kind,
+    "canDelete" to this.can_delete,
+)
+
+data class ExtensionCatalogEntry(
+    val id: String,
+    val kind: String,
+    val source: String,
+    val display_name: String,
+    val description: String,
+    val version: String,
+    val authors: List<String>,
+    val category: String,
+    val scope: String,
+    val activation_state: String,
+    val runtime_state: String,
+    val update_state: String,
+    val is_customized: Boolean,
+    val market_entry_id: String?,
+    val installed_market_version_id: String?,
+    val logo_resource_key: String?,
+    val logo_mime_type: String?,
+    val tool_count: Int,
+    val subpackage_count: Int,
+    val ui_module_count: Int,
+    val has_ui: Boolean,
+    val chat_sidebar_entry_ids: List<String>,
+    val dependency_issue_count: Int
+)
+
+fun decodeExtensionCatalogEntry(value: Any?): ExtensionCatalogEntry {
+    val input = value as Map<*, *>
+    return ExtensionCatalogEntry(
+        id = input["id"] as String as String,
+        kind = input["kind"] as String as String,
+        source = input["source"] as String as String,
+        display_name = input["displayName"] as String as String,
+        description = input["description"] as String as String,
+        version = input["version"] as String as String,
+        authors = (input["authors"] as List<*>).map { item -> item as String } as List<String>,
+        category = input["category"] as String as String,
+        scope = input["scope"] as String as String,
+        activation_state = input["activationState"] as String as String,
+        runtime_state = input["runtimeState"] as String as String,
+        update_state = input["updateState"] as String as String,
+        is_customized = input["isCustomized"] as Boolean as Boolean,
+        market_entry_id = input["marketEntryId"]?.let { it as String } as String?,
+        installed_market_version_id = input["installedMarketVersionId"]?.let { it as String } as String?,
+        logo_resource_key = input["logoResourceKey"]?.let { it as String } as String?,
+        logo_mime_type = input["logoMimeType"]?.let { it as String } as String?,
+        tool_count = (input["toolCount"] as Number).toInt() as Int,
+        subpackage_count = (input["subpackageCount"] as Number).toInt() as Int,
+        ui_module_count = (input["uiModuleCount"] as Number).toInt() as Int,
+        has_ui = input["hasUi"] as Boolean as Boolean,
+        chat_sidebar_entry_ids = (input["chatSidebarEntryIds"] as List<*>).map { item -> item as String } as List<String>,
+        dependency_issue_count = (input["dependencyIssueCount"] as Number).toInt() as Int,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ExtensionCatalogEntry.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "id" to this.id,
+    "kind" to this.kind,
+    "source" to this.source,
+    "displayName" to this.display_name,
+    "description" to this.description,
+    "version" to this.version,
+    "authors" to this.authors.map { item -> item },
+    "category" to this.category,
+    "scope" to this.scope,
+    "activationState" to this.activation_state,
+    "runtimeState" to this.runtime_state,
+    "updateState" to this.update_state,
+    "isCustomized" to this.is_customized,
+    "marketEntryId" to this.market_entry_id?.let { it },
+    "installedMarketVersionId" to this.installed_market_version_id?.let { it },
+    "logoResourceKey" to this.logo_resource_key?.let { it },
+    "logoMimeType" to this.logo_mime_type?.let { it },
+    "toolCount" to this.tool_count,
+    "subpackageCount" to this.subpackage_count,
+    "uiModuleCount" to this.ui_module_count,
+    "hasUi" to this.has_ui,
+    "chatSidebarEntryIds" to this.chat_sidebar_entry_ids.map { item -> item },
+    "dependencyIssueCount" to this.dependency_issue_count,
+)
+
+data class ExtensionCatalogSnapshot(
+    val revision: Int,
+    val installed: List<ExtensionCatalogEntry>,
+    val bundled_available: List<ExtensionCatalogCandidate>,
+    val diagnostics: List<ExtensionCatalogDiagnostic>
+)
+
+fun decodeExtensionCatalogSnapshot(value: Any?): ExtensionCatalogSnapshot {
+    val input = value as Map<*, *>
+    return ExtensionCatalogSnapshot(
+        revision = (input["revision"] as Number).toInt() as Int,
+        installed = (input["installed"] as List<*>).map { item -> decodeExtensionCatalogEntry(item) } as List<ExtensionCatalogEntry>,
+        bundled_available = (input["bundledAvailable"] as List<*>).map { item -> decodeExtensionCatalogCandidate(item) } as List<ExtensionCatalogCandidate>,
+        diagnostics = (input["diagnostics"] as List<*>).map { item -> decodeExtensionCatalogDiagnostic(item) } as List<ExtensionCatalogDiagnostic>,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ExtensionCatalogSnapshot.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "revision" to this.revision,
+    "installed" to this.installed.map { item -> item.toMessagePackValue() },
+    "bundledAvailable" to this.bundled_available.map { item -> item.toMessagePackValue() },
+    "diagnostics" to this.diagnostics.map { item -> item.toMessagePackValue() },
+)
+
 data class ToolResult(
     val toolName: String,
     val success: Boolean,

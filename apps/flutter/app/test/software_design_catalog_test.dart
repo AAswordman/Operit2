@@ -11,6 +11,9 @@ void main() {
     () async {
       final initial = RouteEntry(routeId: 'native.ai_chat');
       final router = AppRouterState(initial);
+      final detailRouteId = ScreenRouteRegistry.routeIdOf(
+        const ExtensionDetailScreenRoute(kind: '', id: ''),
+      );
       final routes = [
         const RouteSpec(
           routeId: 'native.ai_chat',
@@ -30,6 +33,7 @@ void main() {
           routeId: ScreenRouteRegistry.routeIdOf(const MarketScreenRoute()),
           runtime: RouteRuntime.native,
         ),
+        RouteSpec(routeId: detailRouteId, runtime: RouteRuntime.native),
         const RouteSpec(
           routeId: 'plugin.settings',
           runtime: RouteRuntime.toolPkgComposeDsl,
@@ -49,8 +53,13 @@ void main() {
       final scenarios = catalog.scenarios();
       expect(scenarios.map((s) => s.id).toSet().length, scenarios.length);
       expect(scenarios.where((s) => s.group == 'settings').length, 12);
-      expect(scenarios.where((s) => s.group == 'packages').length, 4);
-      expect(scenarios.where((s) => s.group == 'market').length, 3);
+      expect(scenarios.where((s) => s.group == 'packages').length, 2);
+      expect(scenarios.where((s) => s.group == 'market').length, 1);
+      // A detail route needs a concrete extension, so it has no scenario.
+      expect(
+        scenarios.where((s) => s.source['routeId'] == detailRouteId),
+        isEmpty,
+      );
       expect(
         scenarios.singleWhere((s) => s.group == 'plugins').source['package'],
         'demo',

@@ -45,6 +45,20 @@ test("all esbuild outputs are byte-identical from repository and plugin working 
   assert.equal(process.cwd(), originalDirectory, "Cross-directory builds must not mutate the parent process working directory");
 });
 
+/** Rebuilding on a different day must keep the exact archive identity used by bundled update checks. */
+test("package bytes do not depend on the build clock", async (t) => {
+  const main = await buildMainScript(), tools = await buildRuntimeToolsScript(), html = await createHtmlDocument(), screens = await buildUiScreenScripts();
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2025, 0, 1).getTime() });
+  const before = await createPackageArchive(main, tools, html, screens);
+  t.mock.timers.setTime(new Date(2026, 10, 5).getTime());
+  const after = await createPackageArchive(main, tools, html, screens);
+  assert.equal(digest(before), digest(after));
+  const changedMain = Buffer.concat([main, Buffer.from("\n// Updated runtime code\n")]);
+  const changed = await createPackageArchive(changedMain, tools, html, screens);
+  assert.notEqual(digest(before), digest(changed));
+  assert.deepEqual(Buffer.from(unzipSync(changed)["dist/main.js"]), changedMain);
+});
+
 /** Computes the exact artifact identity without printing complete generated source on failure. */
 function digest(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 

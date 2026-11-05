@@ -6,10 +6,11 @@
   "main": "dist/main.js",
   "display_name": { "zh": "日常生活工具包", "en": "Daily Life Toolkit" },
   "description": {
-    "zh": "插件内日常生活工具：天气、持久化通知提醒、日期时间、设备状态和截图。不依赖 UI 子代理。",
-    "en": "Plugin-owned web-based weather lookup, persistent notification reminders, date/time, device status and screenshots. No UI subagent dependency."
+    "zh": "让 AI 帮你查天气、设提醒、看日期和设备状态，还能截屏。",
+    "en": "Lets the AI check weather, set reminders, read the date and device status, and take screenshots."
   },
+  "logo": "package_logo",
   "enabled_by_default": true,
   "subpackages": [{ "id": "daily_life", "entry": "dist/tools.js" }],
-  "resources": []
+  "resources": [{ "key": "package_logo", "path": "resources/logo.svg", "mime": "image/svg+xml" }]
 }

@@ -445,7 +445,7 @@ impl GeminiProvider {
                                 let mut response =
                                     responses_list[matched_call.result_index].clone();
                                 if let Some(object) = response.as_object_mut() {
-                                    let pending_name = &matched_call.call.id;
+                                    let pending_name = &matched_call.call.function_name;
                                     if !pending_name.trim().is_empty() {
                                         object.insert("name".to_string(), json!(pending_name));
                                     }
@@ -1312,7 +1312,8 @@ fn emit_queued_function_calls_if_needed(
             .trim()
             .to_string();
         open_function_calls.push(OpenToolCall {
-            id: function_name,
+            id: function_name.clone(),
+            function_name,
             matching_name: StructuredToolCallBridge::toolCallName(function_call),
         });
     }
@@ -1341,10 +1342,10 @@ fn append_unmatched_open_function_responses(
         return false;
     }
     for open_function_call in open_function_calls.iter() {
-        let response_name = if open_function_call.id.trim().is_empty() {
+        let response_name = if open_function_call.function_name.trim().is_empty() {
             "unmatched_function"
         } else {
-            open_function_call.id.as_str()
+            open_function_call.function_name.as_str()
         };
         target.push(json!({
             "functionResponse": {

@@ -1395,6 +1395,198 @@ export function encodeManifestFile(value: ManifestFile): Record<string, unknown>
   };
 }
 
+export interface ExtensionCatalogCandidate {
+  readonly id: string;
+  readonly kind: string;
+  readonly display_name: string;
+  readonly description: string;
+  readonly version: string;
+  readonly authors: Array<string>;
+  readonly category: string;
+  readonly required_scope: string | null;
+  readonly tool_count: number;
+  readonly subpackage_count: number;
+}
+
+export function decodeExtensionCatalogCandidate(value: unknown): ExtensionCatalogCandidate {
+  const input = value as Record<string, unknown>;
+  return {
+    id: input['id'] as string,
+    kind: input['kind'] as string,
+    display_name: input['displayName'] as string,
+    description: input['description'] as string,
+    version: input['version'] as string,
+    authors: (input['authors'] as unknown[]).map((item) => item) as Array<string>,
+    category: input['category'] as string,
+    required_scope: input['requiredScope'] == null ? null : input['requiredScope'] as string | null,
+    tool_count: input['toolCount'] as number,
+    subpackage_count: input['subpackageCount'] as number,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeExtensionCatalogCandidate(value: ExtensionCatalogCandidate): Record<string, unknown> {
+  return {
+    'id': value.id,
+    'kind': value.kind,
+    'displayName': value.display_name,
+    'description': value.description,
+    'version': value.version,
+    'authors': value.authors.map(item => item),
+    'category': value.category,
+    'requiredScope': value.required_scope === null ? null : value.required_scope,
+    'toolCount': value.tool_count,
+    'subpackageCount': value.subpackage_count,
+  };
+}
+
+export interface ExtensionCatalogDiagnostic {
+  readonly source_path: string;
+  readonly package_id: string | null;
+  readonly display_name: string;
+  readonly code: string;
+  readonly message: string;
+  readonly package_kind: string;
+  readonly can_delete: boolean;
+}
+
+export function decodeExtensionCatalogDiagnostic(value: unknown): ExtensionCatalogDiagnostic {
+  const input = value as Record<string, unknown>;
+  return {
+    source_path: input['sourcePath'] as string,
+    package_id: input['packageId'] == null ? null : input['packageId'] as string | null,
+    display_name: input['displayName'] as string,
+    code: input['code'] as string,
+    message: input['message'] as string,
+    package_kind: input['packageKind'] as string,
+    can_delete: input['canDelete'] as boolean,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeExtensionCatalogDiagnostic(value: ExtensionCatalogDiagnostic): Record<string, unknown> {
+  return {
+    'sourcePath': value.source_path,
+    'packageId': value.package_id === null ? null : value.package_id,
+    'displayName': value.display_name,
+    'code': value.code,
+    'message': value.message,
+    'packageKind': value.package_kind,
+    'canDelete': value.can_delete,
+  };
+}
+
+export interface ExtensionCatalogEntry {
+  readonly id: string;
+  readonly kind: string;
+  readonly source: string;
+  readonly display_name: string;
+  readonly description: string;
+  readonly version: string;
+  readonly authors: Array<string>;
+  readonly category: string;
+  readonly scope: string;
+  readonly activation_state: string;
+  readonly runtime_state: string;
+  readonly update_state: string;
+  readonly is_customized: boolean;
+  readonly market_entry_id: string | null;
+  readonly installed_market_version_id: string | null;
+  readonly logo_resource_key: string | null;
+  readonly logo_mime_type: string | null;
+  readonly tool_count: number;
+  readonly subpackage_count: number;
+  readonly ui_module_count: number;
+  readonly has_ui: boolean;
+  readonly chat_sidebar_entry_ids: Array<string>;
+  readonly dependency_issue_count: number;
+}
+
+export function decodeExtensionCatalogEntry(value: unknown): ExtensionCatalogEntry {
+  const input = value as Record<string, unknown>;
+  return {
+    id: input['id'] as string,
+    kind: input['kind'] as string,
+    source: input['source'] as string,
+    display_name: input['displayName'] as string,
+    description: input['description'] as string,
+    version: input['version'] as string,
+    authors: (input['authors'] as unknown[]).map((item) => item) as Array<string>,
+    category: input['category'] as string,
+    scope: input['scope'] as string,
+    activation_state: input['activationState'] as string,
+    runtime_state: input['runtimeState'] as string,
+    update_state: input['updateState'] as string,
+    is_customized: input['isCustomized'] as boolean,
+    market_entry_id: input['marketEntryId'] == null ? null : input['marketEntryId'] as string | null,
+    installed_market_version_id: input['installedMarketVersionId'] == null ? null : input['installedMarketVersionId'] as string | null,
+    logo_resource_key: input['logoResourceKey'] == null ? null : input['logoResourceKey'] as string | null,
+    logo_mime_type: input['logoMimeType'] == null ? null : input['logoMimeType'] as string | null,
+    tool_count: input['toolCount'] as number,
+    subpackage_count: input['subpackageCount'] as number,
+    ui_module_count: input['uiModuleCount'] as number,
+    has_ui: input['hasUi'] as boolean,
+    chat_sidebar_entry_ids: (input['chatSidebarEntryIds'] as unknown[]).map((item) => item) as Array<string>,
+    dependency_issue_count: input['dependencyIssueCount'] as number,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeExtensionCatalogEntry(value: ExtensionCatalogEntry): Record<string, unknown> {
+  return {
+    'id': value.id,
+    'kind': value.kind,
+    'source': value.source,
+    'displayName': value.display_name,
+    'description': value.description,
+    'version': value.version,
+    'authors': value.authors.map(item => item),
+    'category': value.category,
+    'scope': value.scope,
+    'activationState': value.activation_state,
+    'runtimeState': value.runtime_state,
+    'updateState': value.update_state,
+    'isCustomized': value.is_customized,
+    'marketEntryId': value.market_entry_id === null ? null : value.market_entry_id,
+    'installedMarketVersionId': value.installed_market_version_id === null ? null : value.installed_market_version_id,
+    'logoResourceKey': value.logo_resource_key === null ? null : value.logo_resource_key,
+    'logoMimeType': value.logo_mime_type === null ? null : value.logo_mime_type,
+    'toolCount': value.tool_count,
+    'subpackageCount': value.subpackage_count,
+    'uiModuleCount': value.ui_module_count,
+    'hasUi': value.has_ui,
+    'chatSidebarEntryIds': value.chat_sidebar_entry_ids.map(item => item),
+    'dependencyIssueCount': value.dependency_issue_count,
+  };
+}
+
+export interface ExtensionCatalogSnapshot {
+  readonly revision: number;
+  readonly installed: Array<ExtensionCatalogEntry>;
+  readonly bundled_available: Array<ExtensionCatalogCandidate>;
+  readonly diagnostics: Array<ExtensionCatalogDiagnostic>;
+}
+
+export function decodeExtensionCatalogSnapshot(value: unknown): ExtensionCatalogSnapshot {
+  const input = value as Record<string, unknown>;
+  return {
+    revision: input['revision'] as number,
+    installed: (input['installed'] as unknown[]).map((item) => decodeExtensionCatalogEntry(item)) as Array<ExtensionCatalogEntry>,
+    bundled_available: (input['bundledAvailable'] as unknown[]).map((item) => decodeExtensionCatalogCandidate(item)) as Array<ExtensionCatalogCandidate>,
+    diagnostics: (input['diagnostics'] as unknown[]).map((item) => decodeExtensionCatalogDiagnostic(item)) as Array<ExtensionCatalogDiagnostic>,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeExtensionCatalogSnapshot(value: ExtensionCatalogSnapshot): Record<string, unknown> {
+  return {
+    'revision': value.revision,
+    'installed': value.installed.map(item => encodeExtensionCatalogEntry(item)),
+    'bundledAvailable': value.bundled_available.map(item => encodeExtensionCatalogCandidate(item)),
+    'diagnostics': value.diagnostics.map(item => encodeExtensionCatalogDiagnostic(item)),
+  };
+}
+
 export interface ToolResult {
   readonly toolName: string;
   readonly success: boolean;

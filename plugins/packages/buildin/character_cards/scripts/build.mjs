@@ -143,7 +143,7 @@ export async function createPackageArchive(mainScript, toolsScript, htmlDocument
   for (const resource of [...manifest.resources, ...(manifest.wasm_modules ?? [])]) {
     if (!(entries[resource.path] instanceof Uint8Array) || entries[resource.path].length === 0) throw new Error("Declared resource is missing from package: " + resource.path);
   }
-  return zipSync(entries);
+  return zipSync(entries, { mtime: new Date(1980, 0, 1) });
 }
 
 /** Packages one typed character-and-memory provider with the same document exercised by UI tests. */

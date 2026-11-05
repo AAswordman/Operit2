@@ -72,6 +72,9 @@ The existing generator appends the handwritten adapters to `js_tools.js` after
 emitting the canonical v2 bindings. Both inline and modular engine bootstrap paths
 therefore install the same code. Adapters capture the canonical functions before
 installing versioned entry points, so v1 cannot recursively invoke itself.
+The generated `Tools` script also owns the internal v1 runtime implementation.
+The engine bootstrap installs that implementation after creating `toolCall`;
+it must not append the runtime source a second time.
 
 ### Global object alias
 

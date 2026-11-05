@@ -36,7 +36,7 @@ class _GraphNodeMetrics {
   double stroke(double width) => width * scale;
 }
 
-class _GraphNodeFrame {
+class _GraphNodeFrame implements DeviceSpherePose {
   const _GraphNodeFrame({
     required this.center,
     required this.depth,
@@ -46,7 +46,9 @@ class _GraphNodeFrame {
   });
 
   final Offset center;
+  @override
   final double depth;
+  @override
   final double lateral;
   final double scale;
   final double opacity;
@@ -237,14 +239,8 @@ class _GraphLayout {
 }
 
 /// Light and dark keep the same scene, with separate contrast for paper vs night.
-class _GraphPalette {
-  const _GraphPalette(this.scheme);
-
-  final ColorScheme scheme;
-
-  bool get dark => scheme.brightness == Brightness.dark;
-  Color get accent => scheme.primary;
-  Color get ink => scheme.onSurface;
+class _GraphPalette extends DeviceSpherePalette {
+  const _GraphPalette(super.scheme);
 
   Color get cardBorder => accent.withValues(alpha: dark ? 0.16 : 0.22);
   Color get cardStart => Color.alphaBlend(
@@ -296,48 +292,4 @@ class _GraphPalette {
 
   Color connection(Color color, double opacity) =>
       _paint(color, opacity * (dark ? 1 : 1.15));
-
-  Color sphereBase({required bool current, required bool online}) {
-    final wash = current
-        ? (dark ? 0.38 : 0.22)
-        : online
-        ? (dark ? 0.20 : 0.13)
-        : (dark ? 0.12 : 0.14);
-    final ground = current
-        ? scheme.primaryContainer
-        : dark
-        ? scheme.surfaceContainerHigh
-        : scheme.surfaceContainerHighest;
-    return Color.alphaBlend(accent.withValues(alpha: wash), ground);
-  }
-
-  Color sphereLit(Color base, {required bool current}) => Color.lerp(
-    base,
-    Colors.white,
-    current ? (dark ? 0.56 : 0.20) : (dark ? 0.40 : 0.10),
-  )!;
-
-  Color sphereShade(Color base) =>
-      Color.lerp(base, Colors.black, dark ? 0.72 : 0.52)!;
-
-  double get contactShadow => dark ? 0.45 : 0.22;
-  double get aura => dark ? 1 : 1.45;
-  double get glint => dark ? 0.62 : 0.22;
-  double get rimWhite => dark ? 0.68 : 0.12;
-  double get rimArc => dark ? 0.32 : 0.20;
-  double get glyphHighlight => dark ? 0.70 : 0.18;
-  double get glyphShadow => dark ? 0.18 : 0.10;
-
-  Color glyphCurrent() => dark
-      ? Color.lerp(accent, Colors.white, 0.86)!
-      : scheme.onPrimaryContainer;
-
-  Color glyphRemote({required bool online}) => Color.lerp(
-    ink,
-    accent,
-    online ? (dark ? 0.20 : 0.34) : (dark ? 0.08 : 0.18),
-  )!;
-
-  Color glyphEdge(Color accentColor) =>
-      Color.lerp(accentColor, Colors.black, dark ? 0.62 : 0.48)!;
 }

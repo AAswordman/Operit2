@@ -46,6 +46,10 @@ pub struct ToolPkgLogoBytes {
     pub resourceKey: String,
     pub mimeType: String,
     pub fileName: String,
+    /// Logo media crosses the CoreLink boundary as MessagePack bin data. Without
+    /// this annotation serde encodes `Vec<u8>` as an integer array, which the
+    /// generated Dart proxy rejects.
+    #[serde(with = "serde_bytes")]
     pub bytes: Vec<u8>,
 }
 
