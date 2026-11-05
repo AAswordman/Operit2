@@ -6,6 +6,8 @@
 #include <cstring>
 #include <cstdio>
 #include <stdexcept>
+#include <unistd.h>
+#include <sys/mman.h>
 using namespace operit::arm64;
 namespace {
 void require(bool condition, const char *message) {
@@ -74,6 +76,45 @@ void floating_environment() {
     check(0, 1, 0, true);
     check(rounding_mode, 0, 0, true);
     check(0, 1, rounding_mode, true);
+    for (unsigned host_rounding = 0; host_rounding < 4; ++host_rounding) {
+        for (unsigned guest_rounding = 0; guest_rounding < 4; ++guest_rounding) {
+            for (const uint64_t host_status : {uint64_t{0}, uint64_t{2}, uint64_t{0x9f},
+                                               uint64_t{1} << 27}) {
+                check(uint64_t{host_rounding} << 22, host_status,
+                      uint64_t{guest_rounding} << 22, false);
+                check(uint64_t{host_rounding} << 22, host_status,
+                      uint64_t{guest_rounding} << 22, true);
+            }
+        }
+    }
+}
+void floating_scalar_bits() {
+    Memory memory(page_size);
+    constexpr uint64_t inputs[] = {0, 0x8000000000000000ull, 0x7ff0000000000001ull,
+                                   0x7ff80000ffc17c01ull, 0xfff000007f800001ull,
+                                   0x0000000000000001ull, 0x0123456789abcdefull};
+    for (unsigned type : {0u, 1u, 3u}) {
+        if (type == 3 && !host_supports_half_floating_point())
+            continue;
+        const unsigned bytes = type == 3 ? 2 : type == 1 ? 8 : 4;
+        for (unsigned rd : {0u, 1u, 31u}) {
+            for (const auto bits : inputs) {
+                CpuState cpu{};
+                for (auto &v : cpu.v)
+                    v.fill(0xa5);
+                std::memcpy(cpu.v[1].data(), &bits, sizeof(bits));
+                cpu.fpsr = 0x10;
+                cpu.fpcr = (uint64_t{1} << 25) | (uint64_t{1} << 24);
+                const auto before = cpu.v;
+                auto expected = before;
+                expected[rd].fill(0);
+                std::memcpy(expected[rd].data(), &bits, bytes);
+                execute(cpu, memory, decode(0x1e204020 | (type << 22) | rd)); // FMOV Rd, R1.
+                require(cpu.v == expected, "scalar FMOV changed raw bits or upper lanes");
+                require(cpu.fpsr == 0x10, "scalar FMOV raised a floating exception");
+            }
+        }
+    }
 }
 void floating_dependency_chain() {
     CpuState cpu{};
@@ -213,6 +254,144 @@ void compare_register_dispatch() {
     }
 }
 #endif
+void code_cache_revalidation() {
+    constexpr uint64_t first = 0x10000, second = first + 16, other = 0x1011000;
+    Memory memory(3 * page_size);
+    memory.set_parallel_access(false);
+    memory.map(first, page_size, read_perm | write_perm | exec_perm);
+    memory.map(other, page_size, read_perm | write_perm | exec_perm);
+    const auto put = [&](uint64_t at, unsigned value) {
+        memory.store<4>(at, 0xd2800000 | (value << 5)); // MOV X0, #value.
+        memory.store<4>(at + 4, 0xd65f03c0); // RET.
+    };
+    put(first, 7);
+    put(second, 9);
+    put(other, 13);
+    Interpreter interpreter;
+    const auto run = [&](uint64_t at, unsigned value) {
+        CpuState cpu{};
+        cpu.pc = at;
+        require(interpreter.run(cpu, memory, 1).instructions == 1 && cpu.x[0] == value,
+                "code page cache executed stale bytes");
+    };
+    run(first, 7);
+    run(second, 9);
+    const auto decoded = interpreter.decoded_blocks;
+    memory.store<4>(first + 128, 0xd503201f);
+    run(first, 7);
+    run(second, 9);
+    require(interpreter.decoded_blocks == decoded, "unmodified blocks were decoded again");
+    put(first, 11);
+    run(second, 9); // Refreshing another block must not certify the old first block.
+    run(first, 11);
+    put(second, 17);
+    run(first, 11);
+    run(second, 17);
+    run(other, 13);
+    put(first, 19);
+    run(first, 19);
+    run(other, 13);
+    auto child = memory.fork_clone();
+    child->store<4>(first, 0xd28002e0); // MOV X0, #23.
+    run(first, 19);
+    CpuState cpu{};
+    cpu.pc = first;
+    interpreter.run(cpu, *child, 1);
+    require(cpu.x[0] == 23, "code cache leaked across address spaces");
+    run(first, 19);
+}
+
+
+void code_cache_full_block() {
+    constexpr uint64_t address = 0x1003c; // Exercise all 64 instructions, including the block tail.
+    Memory memory(page_size);
+    memory.set_parallel_access(false);
+    memory.map(align_down(address), page_size, read_perm | write_perm | exec_perm);
+    for (size_t index = 0; index < 64; ++index)
+        memory.store<4>(address + index * 4, 0x91000400); // ADD X0, X0, #1.
+    Interpreter interpreter;
+    const auto run = [&](uint64_t expected) {
+        CpuState cpu{};
+        cpu.pc = address;
+        const auto result = interpreter.run(cpu, memory, 64);
+        require(result.instructions == 64 && cpu.x[0] == expected && cpu.pc == address + 256,
+                "full-size block validation or retirement incorrect");
+    };
+    run(64);
+    memory.store<4>(address + 512, 0xd503201f);
+    run(64); // Validate after an unrelated write without changing this block.
+    const auto decoded = interpreter.decoded_blocks;
+    memory.store<4>(address + 512, 0xd503201f);
+    run(64);
+    require(interpreter.decoded_blocks == decoded, "unchanged full-size block decoded again");
+    memory.store<4>(address + 63 * 4, 0x91000800); // ADD X0, X0, #2 in the final instruction.
+    run(65);
+    memory.set_parallel_access(true);
+    memory.store<4>(address, 0x91000c00); // Parallel validation keeps its locked path.
+    run(67);
+    memory.set_parallel_access(false);
+    memory.store<4>(address + 63 * 4, 0x91001000);
+    run(69);
+}
+
+void file_code_revalidation() {
+    char name[] = "/tmp/operit-code-page-XXXXXX";
+    const int fd = mkstemp(name);
+    require(fd >= 0, "create code page file fixture");
+    unlink(name);
+    struct Close { int fd; ~Close() { close(fd); } } close_file{fd};
+    require(ftruncate(fd, page_size) == 0, "size code page file fixture");
+    constexpr uint64_t address = 0x20040;
+    uint32_t words[] = {0xd28000e0, 0xd65f03c0}; // MOV X0, #7; RET.
+    require(pwrite(fd, words, sizeof(words), address % page_size) == sizeof(words), "write code page fixture");
+    Memory memory(page_size);
+    memory.set_parallel_access(false);
+    Memory::Backing backing;
+    backing.shared = true;
+    memory.map_file(align_down(address), page_size, read_perm | exec_perm, fd, backing);
+    Interpreter interpreter;
+    const auto run = [&] {
+        CpuState cpu{};
+        cpu.pc = address;
+        interpreter.run(cpu, memory, 1);
+        return cpu.x[0];
+    };
+    require(run() == 7, "initial file code page incorrect");
+    words[0] = 0xd2800160; // MOV X0, #11.
+    require(pwrite(fd, words, sizeof(words), address % page_size) == sizeof(words), "replace file code");
+    memory.synchronize_shared();
+    require(run() == 11, "external file code modification was missed");
+    {
+        // No msync: vnode write notifications alone cannot replace byte validation.
+        void *mapping = mmap(nullptr, page_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        require(mapping != MAP_FAILED, "map external code writer");
+        struct Unmap { void *data; ~Unmap() { munmap(data, page_size); } } unmap{mapping};
+        const uint32_t instruction = 0xd28001a0; // MOV X0, #13.
+        std::memcpy(static_cast<uint8_t *>(mapping) + address % page_size,
+                    &instruction, sizeof(instruction));
+        memory.synchronize_shared();
+        require(run() == 13, "unflushed shared-mapping code modification was missed");
+    }
+    memory.protect(align_down(address), page_size, read_perm);
+    try {
+        run();
+        throw std::runtime_error("code page cache bypassed execute protection");
+    } catch (const MemoryFault &fault) {
+        require(fault.kind == MemoryFault::Kind::Protection && fault.address == address,
+                "cached code reported wrong protection fault");
+    }
+    memory.protect(align_down(address), page_size, read_perm | exec_perm);
+    require(run() == 13, "restored code mapping incorrect");
+    require(ftruncate(fd, 0) == 0, "truncate code page fixture");
+    memory.synchronize_shared();
+    try {
+        run();
+        throw std::runtime_error("code page cache bypassed file truncation");
+    } catch (const MemoryFault &fault) {
+        require(fault.kind == MemoryFault::Kind::Bus && fault.address == address,
+                "cached code reported wrong truncation fault");
+    }
+}
 void cache_operations() {
     CpuState cpu;
     Memory memory(4096);
@@ -276,11 +455,15 @@ int main() {
         faults(0xd51b00e3, InstructionFault::Kind::Privileged); // MSR DCZID_EL0, X3.
 #if defined(__aarch64__)
         floating_environment();
+        floating_scalar_bits();
         floating_dependency_chain();
         floating_interpreter_dispatch();
         unsigned_to_double_dispatch();
         compare_register_dispatch();
 #endif
+        code_cache_revalidation();
+        code_cache_full_block();
+        file_code_revalidation();
         cache_operations();
         rejects(0x0f400420); // reserved non-scalar 1D immediate shift
         rejects(0x0ee28420); // reserved non-scalar 1D ADD

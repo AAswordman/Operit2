@@ -77,6 +77,7 @@ class ExtensionCatalogController extends ChangeNotifier {
     'toolpkg' || 'script' => 'package',
     'skill' => 'skill',
     'mcp' => 'mcp',
+    'a2a' => 'a2a',
     _ => throw StateError('Unsupported extension kind: $kind'),
   };
 
@@ -240,15 +241,12 @@ class ExtensionCatalogController extends ChangeNotifier {
       (a, b) => a.isBefore(b) ? a : b,
     );
     final remaining = recentWindow - DateTime.now().difference(oldest);
-    _recentExpiry = Timer(
-      remaining.isNegative ? Duration.zero : remaining,
-      () {
-        final cutoff = DateTime.now().subtract(recentWindow);
-        _recentChanges.removeWhere((_, at) => !at.isAfter(cutoff));
-        notifyListeners();
-        _scheduleRecentExpiry();
-      },
-    );
+    _recentExpiry = Timer(remaining.isNegative ? Duration.zero : remaining, () {
+      final cutoff = DateTime.now().subtract(recentWindow);
+      _recentChanges.removeWhere((_, at) => !at.isAfter(cutoff));
+      notifyListeners();
+      _scheduleRecentExpiry();
+    });
   }
 
   Future<void> setEnabled(
@@ -275,49 +273,50 @@ class ExtensionCatalogController extends ChangeNotifier {
     String key,
     bool enabled,
   ) {
-    return _mutate(
-      key,
-      () async {
-        final packageManager = clients.application.packageManager();
-        switch (entry.kind) {
-          case 'toolpkg':
-            if (enabled) {
-              await packageManager.enableToolPkgContainer(
-                containerPackageName: entry.id,
-              );
-            } else {
-              await packageManager.disableToolPkgContainer(
-                containerPackageName: entry.id,
-              );
-              await _resetOwnedSidebarTab(entry);
-            }
-          case 'script':
-            if (enabled) {
-              await packageManager.enablePackage(packageName: entry.id);
-            } else {
-              await packageManager.disablePackage(packageName: entry.id);
-            }
-          case 'skill':
-            await clients.application.skillRepository().setSkillVisibleToAi(
-              skillName: entry.id,
-              visible: enabled,
+    return _mutate(key, () async {
+      final packageManager = clients.application.packageManager();
+      switch (entry.kind) {
+        case 'toolpkg':
+          if (enabled) {
+            await packageManager.enableToolPkgContainer(
+              containerPackageName: entry.id,
             );
-          case 'mcp':
-            await clients.permissionsMcpRuntimeMcpLocalServer.setServerEnabled(
-              serverId: entry.id,
-              enabled: enabled,
+          } else {
+            await packageManager.disableToolPkgContainer(
+              containerPackageName: entry.id,
             );
-            await applyMcpServerLifecycle(
-              clients: clients,
-              serverId: entry.id,
-              enabled: enabled,
-            );
-          default:
-            throw StateError('Unsupported extension kind: ${entry.kind}');
-        }
-      },
-      reloadPluginCode: entry.kind == 'toolpkg' || entry.kind == 'script',
-    );
+            await _resetOwnedSidebarTab(entry);
+          }
+        case 'script':
+          if (enabled) {
+            await packageManager.enablePackage(packageName: entry.id);
+          } else {
+            await packageManager.disablePackage(packageName: entry.id);
+          }
+        case 'skill':
+          await clients.application.skillRepository().setSkillVisibleToAi(
+            skillName: entry.id,
+            visible: enabled,
+          );
+        case 'a2a':
+          await clients.application.setA2AEnabled(
+            id: entry.id,
+            enabled: enabled,
+          );
+        case 'mcp':
+          await clients.permissionsMcpRuntimeMcpLocalServer.setServerEnabled(
+            serverId: entry.id,
+            enabled: enabled,
+          );
+          await applyMcpServerLifecycle(
+            clients: clients,
+            serverId: entry.id,
+            enabled: enabled,
+          );
+        default:
+          throw StateError('Unsupported extension kind: ${entry.kind}');
+      }
+    }, reloadPluginCode: entry.kind == 'toolpkg' || entry.kind == 'script');
   }
 
   /// Deletes an extension; for customized built-ins this restores the bundled copy.
@@ -335,6 +334,8 @@ class ExtensionCatalogController extends ChangeNotifier {
           if (!deleted) {
             throw StateError('删除技能失败：${entry.id}');
           }
+        case 'a2a':
+          await clients.application.deleteA2A(id: entry.id);
         case 'mcp':
           await killMcpServer(clients: clients, serverId: entry.id);
           await clients.permissionsMcpRuntimeMcpLocalServer.removeMcpServer(

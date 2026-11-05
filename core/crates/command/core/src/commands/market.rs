@@ -832,6 +832,18 @@ fn install_entry(
 ) -> Result<(), String> {
     let entry = core.api().get_entry_by_id(entry_id)?;
     match entry.r#type.as_str() {
+        "a2a" => {
+            let version = version_id.and_then(|id| entry.latest_version.as_ref().filter(|v| v.id == id))
+                .or_else(|| if version_id.is_none() { entry.latest_version.as_ref() } else { None })
+                .ok_or("A2A market version is not available")?;
+            let config = version.install_config.as_deref().or_else(|| entry.repo_version.as_ref().and_then(|repo| repo.install_config.as_deref())).ok_or("A2A market entry has no installation configuration")?;
+            let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(core.context.clone())?;
+            let ids = repository.import_market(config, &entry.id, &version.id)?;
+            core.tool_handler.getOrCreatePackageManager().lock().map_err(|e| e.to_string())?.reloadA2APackages();
+            output.push_stdout_line(format!("Installed A2A: {}", ids.join(", ")));
+            output.setJsonStdout(json!({"type":"a2a", "ids":ids, "entryId":entry.id, "versionId":version.id}));
+            Ok(())
+        }
         "skill" => install_skill_from_entry(core, entry, output),
         "mcp" => install_mcp_from_entry(core, entry, output),
         "package" | "script" => install_artifact_from_entry(core, entry, version_id, output),

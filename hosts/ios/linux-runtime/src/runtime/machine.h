@@ -39,7 +39,9 @@ class Machine final : public ProcessController {
     ort_arm64_status failure_status_ = ORT_ARM64_FAULT;
     ort_arm64_result retired_{};
     uint32_t accounting_pid_ = 0, accounting_tid_ = 0;
+    bool accounting_syscall_ = false;
     uint64_t accounting_user_ = 0, accounting_system_ = 0;
+    bool can_defer_accounting() const;
     void begin_accounting(uint32_t pid);
     void stop_accounting();
     CpuUsage uncommitted_cpu_usage(uint32_t pid, uint32_t tid = 0) const;

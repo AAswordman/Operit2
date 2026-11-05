@@ -2,6 +2,8 @@
 #include "base/support.h"
 #include "memory/access_sync.h"
 #include "memory/backing_store.h"
+#include "memory/translation_layout.h"
+#include <cstddef>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -184,6 +186,25 @@ class Memory {
     // pages and raw spans; anonymous and privately copied pages bypass locks.
     void set_parallel_access(bool enabled) noexcept {
         parallel_access_.store(enabled, std::memory_order_relaxed);
+    }
+    // Valid only until control returns to a mapping-changing or parallel path.
+    // Static handlers decline shared/file storage, misses and executable stores.
+    // Owned private file pages also need a current execution-scope size check.
+    bool gadget_memory(GadgetMemory &view) const noexcept {
+        static_assert(sizeof(Translation) == G_TLB_SIZE);
+        static_assert(offsetof(Translation, tag) == G_TLB_TAG);
+        static_assert(offsetof(Translation, epoch) == G_TLB_EPOCH);
+        static_assert(offsetof(Translation, data) == G_TLB_DATA);
+        static_assert(offsetof(Translation, reservation) == G_TLB_RESERVATION);
+        static_assert(offsetof(Translation, file) == G_TLB_FILE);
+        static_assert(offsetof(Translation, file_generation) == G_TLB_FILE_GENERATION);
+        static_assert(offsetof(Translation, permissions) == G_TLB_PERMISSIONS);
+        static_assert(offsetof(Translation, shared) == G_TLB_SHARED);
+        static_assert(offsetof(Translation, file_storage) == G_TLB_FILE_STORAGE);
+        static_assert(offsetof(memory_detail::ReservationState, token) == G_RESERVATION_TOKEN);
+        if (parallel_access_.load(std::memory_order_relaxed)) return false;
+        view = {tlb_.data(), epoch_, file_mapping_ ? file_metadata_.generation() : 0};
+        return true;
     }
     uint64_t exclusive_epoch(uint64_t address) {
         PageAccess access(*this, address, read_perm, true);
@@ -419,9 +440,11 @@ class Memory {
         if (cached.tag != align_down(address) || cached.epoch != epoch_ ||
             (cached.permissions & permissions) != permissions)
             refill(cached, address, permissions);
-        else if (cached.file &&
-                 (!file_metadata_.generation() || cached.file_generation != file_metadata_.generation()))
-            validate_file(cached, address, permissions);
+        else if (cached.file) {
+            const auto generation = file_metadata_.generation();
+            if (!generation || cached.file_generation != generation)
+                validate_file(cached, address, permissions);
+        }
         return cached.data + address % page_size;
     }
     class PageAccess {
@@ -460,15 +483,18 @@ class Memory {
                 prepare(memory, entry, address, permissions, parallel);
             if (!parallel)
                 read_.lock(entry.file_storage);
-            if (entry.file && (!file_metadata_.generation() ||
-                               entry.file_generation != file_metadata_.generation()))
-                memory.validate_file(entry, address, permissions);
+            if (entry.file) {
+                const auto generation = file_metadata_.generation();
+                if (!generation || entry.file_generation != generation)
+                    memory.validate_file(entry, address, permissions);
+            }
             entry_ = &entry;
             // Immutable private pages need only the mapping reader gate.
             const bool immutable = !(entry.permissions & write_perm) && !entry.shared &&
                                    !entry.file_storage && !exclusive;
-            if ((parallel || entry.file_storage) && !immutable &&
-                !memory_detail::AccessSynchronization::exclusive())
+            // A required reader is inactive only when this thread already owns
+            // the writer gate. Its state records the result of the earlier TLS check.
+            if ((parallel || entry.file_storage) && !immutable && read_.active())
                 lock_.lock(entry.reservation->mutex, exclusive || (permissions & write_perm));
         }
         uint8_t *data() const {

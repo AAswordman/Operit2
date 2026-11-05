@@ -788,6 +788,7 @@ impl NativeMarkdownSplitter {
 
     fn is_inline_container(block_type: MarkdownProcessorType) -> bool {
         block_type != MarkdownProcessorType::CodeBlock
+            && block_type != MarkdownProcessorType::Image
             && block_type != MarkdownProcessorType::BlockLatex
             && block_type != MarkdownProcessorType::Table
             && block_type != MarkdownProcessorType::XmlBlock
@@ -797,6 +798,16 @@ impl NativeMarkdownSplitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_blocks_remain_literal_without_link_children() {
+        let image = "![](operit_art.jpg)";
+        let nodes = NativeMarkdownSplitter::native_markdown_split_by_block(image);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].r#type, MarkdownProcessorType::Image);
+        assert_eq!(nodes[0].content, image);
+        assert!(nodes[0].children.is_empty());
+    }
 
     /// Extracts multibyte segments through character-aligned UTF-8 boundaries.
     #[test]

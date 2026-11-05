@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 struct Changes {
     packages: bool,
     mcp: bool,
+    a2a: bool,
     catalog: bool,
 }
 impl Changes {
@@ -20,6 +21,7 @@ impl Changes {
     fn merge(&mut self, other: Self) {
         self.packages |= other.packages;
         self.mcp |= other.mcp;
+        self.a2a |= other.a2a;
         self.catalog |= other.catalog;
     }
 }
@@ -94,6 +96,7 @@ fn classify(operations: &[SyncOperation]) -> Changes {
         changes.packages |=
             relative.starts_with("packages/") || relative.starts_with("records/package-");
         changes.mcp |= relative.starts_with("records/mcp-");
+        changes.a2a |= relative.starts_with("records/a2a-");
     }
     changes
 }
@@ -145,6 +148,9 @@ impl Worker {
             let manager = self.tools.getOrCreatePackageManager();
             let mut manager = manager.lock().map_err(|e| e.to_string())?;
             manager.loadAvailablePackages();
+        }
+        if changes.a2a && !changes.packages {
+            self.tools.getOrCreatePackageManager().lock().map_err(|e| e.to_string())?.reloadA2APackages();
         }
         if changes.mcp {
             // Propagate malformed/conflicting definitions BEFORE making destructive changes.
@@ -241,6 +247,13 @@ mod tests {
         assert!(!changes.catalog);
         let changes = classify(&[operation("runtime_file", "runtime/extensions/space/records/package-demo.json")]);
         assert!(changes.catalog && changes.packages);
+    }
+
+    #[test]
+    fn a2a_changes_refresh_package_projection_without_reloading_plugins_or_mcp() {
+        let changes = classify(&[operation("runtime_file", "runtime/extensions/space/records/a2a-demo.json")]);
+        assert!(changes.catalog && changes.a2a);
+        assert!(!changes.packages && !changes.mcp);
     }
 
     #[test]

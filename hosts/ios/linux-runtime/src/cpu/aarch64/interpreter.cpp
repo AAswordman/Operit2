@@ -73,12 +73,18 @@ Interpreter::Block Interpreter::decode_block(uint64_t address, Memory &memory,
     block.instruction_count = static_cast<uint8_t>(count);
     block.words.assign(words.begin(), words.begin() + count);
     block.instructions.reserve(count);
+    block.gadgets.reserve(count);
+    for (size_t index = 0; index < count; ++index)
+        block.gadgets.push_back(decode_gadget(instructions[index], address + index * 4));
     for (size_t index = 0; index < count; ++index) {
         const auto &instruction = instructions[index];
         const unsigned entry = instruction.dispatch == Dispatch::General && instruction.op == Op::Simd
                                    ? static_cast<unsigned>(Dispatch::Count)
                                    : static_cast<unsigned>(instruction.dispatch);
-        block.instructions.emplace_back(instruction, dispatch[entry]);
+        // Amortize assembly entry/exit over at least two eligible operations.
+        const auto *native = index + 1 < count && block.gadgets[index].entry &&
+                                     block.gadgets[index + 1].entry ? &block.gadgets[index] : nullptr;
+        block.instructions.emplace_back(instruction, dispatch[entry], native);
     }
     ++decoded_blocks;
     return block;
@@ -293,6 +299,19 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
         begin = cursor = block->instructions.data();
         block_instructions = std::min<uint64_t>(block->instruction_count, budget - count);
         end = begin + block_instructions;
+        goto gadget_dispatch;
+
+    gadget_dispatch:
+        if (use_native_gadgets && cursor->gadget && end - cursor >= 2) {
+            GadgetMemory view;
+            if (memory.gadget_memory(view)) {
+                const auto completed = operit_arm64_gadgets_run(&cpu, &view, cursor->gadget, end - cursor);
+                native_gadget_instructions += completed;
+                pc += completed * 4;
+                cursor += completed;
+                if (cursor == end) goto block_finished;
+            }
+        }
         goto *cursor->entry;
 
     General:
@@ -307,7 +326,7 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
                 goto block_finished;
             if (memory.code_epoch != epoch)
                 goto block_interrupted;
-            goto *cursor->entry;
+            goto gadget_dispatch;
         }
     ResolveSimd:
         // Resolve by executing once in execute_simd's existing priority order.
@@ -595,12 +614,12 @@ Execution Interpreter::run(CpuState &cpu, Memory &memory, uint64_t budget, Fixed
             goto block_finished;
         if (memory.code_epoch != epoch)
             goto block_interrupted;
-        goto *cursor->entry;
+        goto gadget_dispatch;
     advance:
         pc += 4;
         ++cursor;
         if (cursor != end)
-            goto *cursor->entry;
+            goto gadget_dispatch;
         goto block_finished;
     terminal:
         ++cursor;

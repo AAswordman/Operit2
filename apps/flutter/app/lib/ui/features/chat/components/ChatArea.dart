@@ -38,6 +38,7 @@ class ChatArea extends StatefulWidget {
     required this.errorMessage,
     required this.scrollController,
     required this.currentChatId,
+    this.fileDirectory,
     required this.identityAvatarUri,
     this.onIdentityTap,
     required this.clients,
@@ -79,6 +80,7 @@ class ChatArea extends StatefulWidget {
   final String? errorMessage;
   final ScrollController scrollController;
   final String? currentChatId;
+  final String? fileDirectory;
   final String? identityAvatarUri;
   final VoidCallback? onIdentityTap;
   final GeneratedCoreProxyClients clients;
@@ -910,6 +912,9 @@ class _ChatAreaState extends State<ChatArea>
     _chatBusyNotifier.value = widget.isLoading;
     _layoutScrollController.delegate = widget.scrollController;
     final chatChanged = oldWidget.currentChatId != widget.currentChatId;
+    if (oldWidget.fileDirectory != widget.fileDirectory) {
+      _messageRowCache.clear();
+    }
     if (chatChanged) {
       _stopBottomFollow();
       _lastScrollMaxExtent = null;
@@ -1051,6 +1056,7 @@ class _ChatAreaState extends State<ChatArea>
         children: <Widget>[
           MarkdownFileScope.forParts(
             parts: message.parts,
+            fallbackBasePath: widget.fileDirectory,
             clients: widget.clients,
             child: chatMessage,
           ),
@@ -1501,6 +1507,8 @@ bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {
         right.pluginExtensions,
       ) &&
       left.sender == right.sender &&
+      markdownFileContextForParts(left.parts) ==
+          markdownFileContextForParts(right.parts) &&
       (_sameMessagePartsForRender(left, right) ||
           _sameLiveAiStreamForRender(left, right, contentStreamSame)) &&
       left.timestamp == right.timestamp &&

@@ -869,6 +869,7 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
     !matches!(
         nodeType,
         Some(MarkdownProcessorType::CodeBlock)
+            | Some(MarkdownProcessorType::Image)
             | Some(MarkdownProcessorType::BlockQuote)
             | Some(MarkdownProcessorType::BlockLatex)
             | Some(MarkdownProcessorType::Table)
@@ -897,6 +898,46 @@ mod tests {
             }
         }
         blocks
+    }
+
+    #[test]
+    fn image_blocks_preserve_markdown_at_every_stream_split() {
+        for image in [
+            "![](operit_art.jpg)",
+            "![](./operit_art.jpg)",
+            "![](/operitapp/outputs/2026-11-05_12-34-10-303/operit_art.jpg)",
+            "![图片说明](operit_art.png)",
+        ] {
+            let source = format!("图在这里：\n\n{image}\n\n后续正文");
+            for split in source
+                .char_indices()
+                .map(|(index, _)| index)
+                .chain([source.len()])
+            {
+                let mut stream = MarkdownRenderEventStream::new("images".to_string());
+                let mut events = stream.pushChunk(&source[..split]);
+                events.extend(stream.pushChunk(&source[split..]));
+                events.extend(stream.finish());
+                let blocks = block_bodies(&events);
+                let images = blocks
+                    .iter()
+                    .filter(|(kind, _)| kind.as_deref() == Some("Image"))
+                    .map(|(_, body)| body.as_str())
+                    .collect::<Vec<_>>();
+                assert_eq!(images, vec![image], "split={split}, source={source:?}");
+                assert!(blocks.iter().any(|(_, body)| body.contains("后续正文")));
+                let image_id = events
+                    .iter()
+                    .find(|event| {
+                        event.eventType == "markdownBlockStart"
+                            && event.nodeType.as_deref() == Some("Image")
+                    })
+                    .unwrap()
+                    .blockId;
+                assert!(!events.iter().any(|event| event.blockId == image_id
+                    && event.eventType.starts_with("markdownInline")));
+            }
+        }
     }
 
     #[test]

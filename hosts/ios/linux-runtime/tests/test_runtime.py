@@ -277,7 +277,8 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(stats['unsupported_syscalls'], 0)
 
     def test_cpu_limit_terminates_actual_guest_computation(self):
-        result, stats = self.run_guest('cpu', executable='/resources', steps=500000000)
+        # Leave enough work to cross the one-second CPU limit on fast hosts.
+        result, stats = self.run_guest('cpu', executable='/resources', steps=2000000000)
         self.assertEqual(result.returncode, 137, result.stderr.decode())
         self.assertEqual(stats['unsupported_syscalls'], 0)
         self.assertGreater(stats['instructions'], 0)

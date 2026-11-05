@@ -247,6 +247,7 @@ impl ExtensionStore {
             "package" => "packages",
             "skill" => "skills",
             "mcp" => "mcp",
+            "a2a" => "a2a",
             _ => return Err(format!("Unknown extension kind: {kind}")),
         };
         validateScope(scope)?;
@@ -905,6 +906,16 @@ impl ExtensionStore {
             "skill" => {
                 if record.settings["visible"].as_bool().is_none() {
                     return Err("Skill visibility must be a boolean".to_string());
+                }
+            }
+            "a2a" => {
+                let agent = &record.settings["agent"];
+                if !record.sourceName.is_empty() || !agent.is_object()
+                    || agent["url"].as_str().is_none_or(|url| url.trim().is_empty())
+                    || agent["disabled"].as_bool().is_none()
+                    || !agent["headers"].is_object()
+                {
+                    return Err("Invalid A2A connection manifest".into());
                 }
             }
             "mcp" => {

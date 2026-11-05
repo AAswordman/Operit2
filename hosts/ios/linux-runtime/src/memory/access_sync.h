@@ -66,7 +66,7 @@ class AccessSynchronization {
         return thread().reads;
     }
     class ReadGuard {
-        bool active_ = false;
+        ThreadState *state_ = nullptr;
 
       public:
         ReadGuard() = default;
@@ -74,7 +74,7 @@ class AccessSynchronization {
             lock(enabled);
         }
         void lock(bool enabled) {
-            assert(!active_);
+            assert(!state_);
             if (!enabled)
                 return;
             auto &state = thread();
@@ -93,15 +93,19 @@ class AccessSynchronization {
                 }
             }
             ++state.reads;
-            active_ = true;
+            state_ = &state;
+        }
+        // Retain the same thread state until unlock; no second TLS lookup is needed.
+        bool active() const noexcept {
+            return state_ != nullptr;
         }
         void unlock() noexcept {
-            if (!active_)
+            if (!state_)
                 return;
-            auto &state = thread();
+            auto &state = *state_;
             if (!--state.reads)
                 state.slot->active.store(false, std::memory_order_seq_cst);
-            active_ = false;
+            state_ = nullptr;
         }
         ~ReadGuard() {
             unlock();

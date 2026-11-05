@@ -59,3 +59,11 @@ other libraries use the interpreter. Native and guest use different ABIs and
 may use different instructions, even with the same source. The fork comparison
 also runs different platform executables. These results do not cover an app
 build or an iOS device.
+
+## Static gadget interpreter comparison
+
+`compare_gadgets.py` alternates two runtime binaries on the unchanged
+`python_loop.py` math workload and verifies checksum 1267865. Both runtimes use
+the same rootfs and fixed-helper setting. It records binary hashes, raw samples,
+runtime statistics and the median speedup after warmup. See
+[static gadget execution](../docs/static-gadgets.md) for the command and boundaries.

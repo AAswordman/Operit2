@@ -132,8 +132,9 @@ ort_arm64_result Machine::run(uint64_t budget) {
             while (budget && !main_exited_) {
                 poll_runtime_events();
                 if (schedule_pending_) {
-                    // RR expiry must be settled before choosing the next task.
-                    stop_accounting();
+                    // RR/multi-task execution must settle before selection.
+                    if (!can_defer_accounting())
+                        stop_accounting();
                     if (!scheduler_.select(false)) {
                         if (!scheduler_.exited())
                             status = ORT_ARM64_WAITING;
@@ -246,6 +247,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     // a syscall can change it; syscall CPU time starts anew.
                     stop_accounting();
                     begin_accounting(process.pid);
+                    accounting_syscall_ = true;
                     if (!dispatch_guest_syscall(task, process, resumed_syscall)) {
                         schedule_pending_ = true;
                         quantum_remaining_ = 4096;

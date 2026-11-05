@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,8 @@ import '../components/ExtensionTopBar.dart';
 import '../components/StoreDetailKit.dart';
 import '../components/StoreVisuals.dart';
 import '../dialogs/MCPConfigDialogs.dart';
+import '../dialogs/A2AImportDialog.dart';
+import '../dialogs/A2ATaskDialog.dart';
 import '../dialogs/MCPToolRunDialog.dart';
 import '../dialogs/PackageToolRunDialog.dart';
 import '../model/DeviceSpaceState.dart';
@@ -65,6 +68,11 @@ class _SkillDetails extends _KindDetails {
   const _SkillDetails({required this.content});
 
   final String? content;
+}
+
+class _A2ADetails extends _KindDetails {
+  const _A2ADetails(this.config);
+  final Map<String, dynamic> config;
 }
 
 class _McpDetails extends _KindDetails {
@@ -214,6 +222,9 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
             .skillRepository()
             .readSkillContent(skillName: widget.id);
         return _SkillDetails(content: content);
+      case 'a2a':
+        final text = await _clients.application.getA2AConfig(id: widget.id);
+        return _A2ADetails(jsonDecode(text) as Map<String, dynamic>);
       case 'mcp':
         final server = _clients.permissionsMcpRuntimeMcpLocalServer;
         final servers = await server.getAllMcpServers();
@@ -264,9 +275,9 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
             ),
       actions: entry == null
           ? null
@@ -400,7 +411,8 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     final kind = StoreKind.of(entry.kind);
     return <Widget>[
       StoreBadge(label: kind.label, icon: kind.icon),
-      if (entry.version.trim().isNotEmpty) StoreBadge(label: 'v${entry.version}'),
+      if (entry.version.trim().isNotEmpty)
+        StoreBadge(label: 'v${entry.version}'),
       StoreBadge(
         label: storeScopeLabel(entry.scope),
         icon: storeScopeIcon(entry.scope),
@@ -456,7 +468,7 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
       };
     }
     if (entry.runtimeState == 'error') {
-      return '依赖异常';
+      return entry.kind == 'a2a' ? '配置异常' : '依赖异常';
     }
     return enabled ? '已启用' : '已停用';
   }
@@ -592,8 +604,112 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
       _ScriptDetails script => _scriptSections(script),
       _SkillDetails skill => _skillSections(skill),
       _McpDetails mcp => _mcpSections(entry, enabled, mcp),
+      _A2ADetails a2a => _a2aSections(enabled, a2a),
     };
   }
+
+  List<Widget> _a2aSections(bool enabled, _A2ADetails data) {
+    final card = data.config['card'] as Map<String, dynamic>?;
+    final skills = card?['skills'] as List<dynamic>? ?? const [];
+    return <Widget>[
+      StoreDetailSection(
+        title: '连接',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            StoreInfoTable(
+              items: <StoreInfoItem>[
+                StoreInfoItem('服务地址', '${data.config['url'] ?? ''}'),
+                StoreInfoItem('包名', 'a2a.${widget.id}'),
+                StoreInfoItem(
+                  'Agent Card',
+                  card == null ? '尚未读取，首次调用时获取' : '已读取',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  onPressed: () => _editA2A(data),
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('编辑配置'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _refreshA2A(data),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('刷新 Agent Card'),
+                ),
+                FilledButton.icon(
+                  onPressed: enabled
+                      ? () => showDialog<void>(
+                          context: context,
+                          builder: (context) =>
+                              A2ATaskDialog(clients: _clients, id: widget.id),
+                        )
+                      : null,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('测试任务'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      StoreDetailSection(
+        title: '能力',
+        count: skills.length,
+        child: skills.isEmpty
+            ? const _EmptyLine(text: 'Agent Card 尚未提供能力说明。')
+            : StoreGroupedList(
+                children: <Widget>[
+                  for (final skill in skills)
+                    StoreListRow(
+                      leading: const StoreRowGlyph(icon: Icons.hub_outlined),
+                      title: '${skill['name'] ?? skill['id'] ?? ''}',
+                      subtitle: '${skill['description'] ?? ''}',
+                    ),
+                ],
+              ),
+      ),
+      const StoreDetailSection(
+        title: '包工具',
+        child: Text(
+          'send_message · 发送任务与补充消息\nget_task · 查询任务状态和结果\ncancel_task · 请求取消任务',
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _editA2A(_A2ADetails data) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => A2AImportDialog(
+        clients: _clients,
+        id: widget.id,
+        configJson: jsonEncode(data.config),
+      ),
+    );
+    if (saved == true) {
+      await _controller.refresh();
+      await _loadDetails();
+    }
+  }
+
+  Future<void> _refreshA2A(_A2ADetails data) => _run(() async {
+    final text = await _clients.application.discoverA2AAgent(
+      configJson: jsonEncode(data.config),
+    );
+    await _clients.application.importA2AConfig(
+      configJson: jsonEncode({
+        'a2aAgents': {widget.id: jsonDecode(text)},
+      }),
+    );
+    await _controller.refresh();
+    await _loadDetails();
+  });
 
   // ------------------------------------------------------------------ toolpkg
 
@@ -728,9 +844,15 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
           children: <Widget>[
             _ContentCount(label: '资源', count: runtime.resources.length),
             _ContentCount(label: '界面模块', count: runtime.uiModules.length),
-            _ContentCount(label: '导航入口', count: runtime.navigationEntries.length),
+            _ContentCount(
+              label: '导航入口',
+              count: runtime.navigationEntries.length,
+            ),
             _ContentCount(label: '桌面小组件', count: runtime.desktopWidgets.length),
-            _ContentCount(label: '工作区模板', count: runtime.workspaceTemplates.length),
+            _ContentCount(
+              label: '工作区模板',
+              count: runtime.workspaceTemplates.length,
+            ),
             _ContentCount(label: 'AI 供应商', count: runtime.aiProviders.length),
           ],
         ),
@@ -916,7 +1038,10 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     return tool.name;
   }
 
-  void _runPackageTool(core_proxy.ToolPackage package, core_proxy.PackageTool tool) {
+  void _runPackageTool(
+    core_proxy.ToolPackage package,
+    core_proxy.PackageTool tool,
+  ) {
     showDialog<void>(
       context: context,
       builder: (context) => PackageToolRunDialog(
@@ -950,7 +1075,8 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
   ) {
     final theme = Theme.of(context);
     final server = data.server;
-    final tools = data.status?.cachedTools ?? const <core_proxy.CachedToolInfo>[];
+    final tools =
+        data.status?.cachedTools ?? const <core_proxy.CachedToolInfo>[];
     final running = entry.runtimeState == 'running';
     final success = theme.brightness == Brightness.dark
         ? const Color(0xFF7BD88F)

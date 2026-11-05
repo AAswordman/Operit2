@@ -4,6 +4,7 @@ use operit_util::MarkdownRenderStream::MarkdownRenderEventStream;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 fn main() {
     let sources = [
+        "图在这里：\n\n![](operit_art.jpg)\n\n绝对路径：\n\n![](/operitapp/outputs/2026-11-05_12-34-10-303/operit_art.jpg)\n\n![图片说明](./operit_art.png)\n\n后续正文",
         "**粗体 *斜体* `代码` [链接](https://example.com/a_(b)) https://example.org**",
         "# **标题**\n- **粗体**\n+ - 保留正文符号\n  * __缩进项__\n3) 第三项\n---\n***粗斜***",
         "> **引用**\n> - **列表**\n> > 嵌套引用\n\n结束",

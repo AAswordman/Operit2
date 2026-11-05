@@ -26,7 +26,13 @@ import 'StoreVisuals.dart';
     return (label: '启动失败', restatesSwitch: false);
   }
   if (entry.runtimeState == 'error') {
-    return (label: '依赖异常', restatesSwitch: false);
+    return (
+      label: entry.kind == 'a2a' ? '配置异常' : '依赖异常',
+      restatesSwitch: false,
+    );
+  }
+  if (entry.kind == 'a2a' && entry.runtimeState == 'unconfigured') {
+    return (label: '未读取 Agent Card', restatesSwitch: false);
   }
   if (entry.kind == 'mcp') {
     return switch (entry.runtimeState) {
@@ -163,11 +169,14 @@ class ExtensionEntrySummary extends StatelessWidget {
                 Text.rich(
                   TextSpan(
                     children: <InlineSpan>[
-                      for (var index = 0; index < parts.length; index++)
-                        ...<InlineSpan>[
-                          if (index > 0) const TextSpan(text: ' · '),
-                          parts[index],
-                        ],
+                      for (
+                        var index = 0;
+                        index < parts.length;
+                        index++
+                      ) ...<InlineSpan>[
+                        if (index > 0) const TextSpan(text: ' · '),
+                        parts[index],
+                      ],
                     ],
                   ),
                   maxLines: 1,
@@ -427,7 +436,10 @@ class ExtensionCard extends StatelessWidget {
               ),
             ),
           ),
-          _DisabledFade(enabled: enabled, child: _CapabilityTags(entry: entry)),
+          _DisabledFade(
+            enabled: enabled,
+            child: _CapabilityTags(entry: entry),
+          ),
         ],
       ),
     );

@@ -80,7 +80,11 @@ void Machine::poll_runtime_events() {
     // Settle the preceding syscall before a timer/signal can wake its task
     // and reset the continuous realtime timeout. Enforce the charged limits
     // before servicing those wakeups as well.
-    stop_accounting();
+    // A sole ordinary CPU-bound task can keep one live accounting interval.
+    // Syscalls, RT scheduling, timers and multi-task execution still settle at
+    // each boundary; finite CPU/RT limits force settlement below as well.
+    if (!can_defer_accounting())
+        stop_accounting();
     io_uring::service_completions(io_uring_context_, scheduler_);
     flush_ptrace_events();
     service_ptrace_exits();

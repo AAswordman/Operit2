@@ -1,6 +1,7 @@
 import 'support/markdown_event_fixture.dart';
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
@@ -13,7 +14,9 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
+import 'support/semantic_markdown_fixture.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/ChatArea.dart';
@@ -44,6 +47,170 @@ class _PositionPeakController extends ScrollController {
 
 /// Verifies transcript rendering and scroll ownership across asynchronous updates.
 void main() {
+  const imageSource =
+      '图在这里：\n\n![](operit_art.jpg)\n\n绝对路径：\n\n'
+      '![](/operitapp/outputs/2026-11-05_12-34-10-303/operit_art.jpg)\n\n'
+      '![图片说明](./operit_art.png)\n\n后续正文';
+  MessagePart imagePart([String? base]) => MessagePart(
+    partId: 'images',
+    sequence: 0,
+    kind: MessagePartKind.markdown,
+    content: imageSource,
+    toolCallId: null,
+    toolName: null,
+    attributes: {'file_base_path': ?base},
+  );
+  Future<void> settleImages(WidgetTester tester) async {
+    await tester.pumpAndSettle();
+    for (final element
+        in find
+            .descendant(
+              of: find.byType(MarkdownRemoteImage),
+              matching: find.byType(Image),
+            )
+            .evaluate()) {
+      await tester.runAsync(
+        () => precacheImage((element.widget as Image).image, element),
+      );
+    }
+    await tester.pumpAndSettle();
+  }
+
+  for (final live in [false, true]) {
+    testWidgets('chat image context resolves unannotated parts, live=$live', (
+      tester,
+    ) async {
+      final scroll = ScrollController();
+      final autoScroll = ValueNotifier(false);
+      final bridge = _ScriptedGeneratedChatBridge();
+      final stream = StreamController<MarkdownStreamEvent>.broadcast();
+      addTearDown(scroll.dispose);
+      addTearDown(autoScroll.dispose);
+      addTearDown(bridge.dispose);
+      const base = '/operitapp/outputs/2026-11-05_12-34-10-303';
+      await tester.pumpWidget(
+        _chatArea(
+          bridge: bridge,
+          fileDirectory: base,
+          message: _aiMessage(
+            parts: [imagePart()],
+            stream: live ? stream.stream : null,
+          ),
+          isLoading: false,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          splitMarkdownContent: splitSemanticMarkdownFixture,
+        ),
+      );
+      if (live) {
+        for (final event in semanticMarkdownEvents(imageSource)) {
+          stream.add(event);
+        }
+        await tester.pump();
+      }
+      await stream.close();
+      await settleImages(tester);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+      expect(find.byType(MarkdownRemoteImage), findsNWidgets(3));
+      expect(bridge.binaryImagePaths.toSet(), {
+        '$base/operit_art.jpg',
+        '$base/operit_art.png',
+      });
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  testWidgets('chat image context updates for a retained live stream', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    final autoScroll = ValueNotifier(false);
+    final bridge = _ScriptedGeneratedChatBridge();
+    final stream = StreamController<MarkdownStreamEvent>.broadcast();
+    final contentStream = stream.stream;
+    addTearDown(scroll.dispose);
+    addTearDown(autoScroll.dispose);
+    addTearDown(bridge.dispose);
+    Future<void> render(String directory, [String? savedBase]) =>
+        tester.pumpWidget(
+          _chatArea(
+            bridge: bridge,
+            fileDirectory: directory,
+            message: _aiMessage(
+              parts: [imagePart(savedBase)],
+              stream: contentStream,
+            ),
+            isLoading: false,
+            scrollController: scroll,
+            autoScrollToBottom: autoScroll,
+            splitMarkdownContent: splitSemanticMarkdownFixture,
+          ),
+        );
+    await render('/operitapp/outputs/current');
+    for (final event in semanticMarkdownEvents(imageSource)) {
+      stream.add(event);
+    }
+    await tester.pump();
+    await settleImages(tester);
+    expect(
+      bridge.binaryImagePaths,
+      contains('/operitapp/outputs/current/operit_art.jpg'),
+    );
+    final state = tester.state(find.byType(StreamMarkdownRenderer).first);
+    await render('/operitapp/outputs/current', '/operitapp/outputs/saved');
+    await settleImages(tester);
+    expect(
+      bridge.binaryImagePaths,
+      contains('/operitapp/outputs/saved/operit_art.jpg'),
+    );
+    expect(
+      tester.state(find.byType(StreamMarkdownRenderer).first),
+      same(state),
+    );
+    final count = bridge.binaryImagePaths.length;
+    await render('/operitapp/workspaces/another', '/operitapp/outputs/saved');
+    await settleImages(tester);
+    expect(bridge.binaryImagePaths, hasLength(count));
+    expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+    expect(tester.takeException(), isNull);
+    await stream.close();
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+    'chat image context refreshes when its fallback directory arrives',
+    (tester) async {
+      final scroll = ScrollController();
+      final autoScroll = ValueNotifier(false);
+      final bridge = _ScriptedGeneratedChatBridge();
+      addTearDown(scroll.dispose);
+      addTearDown(autoScroll.dispose);
+      addTearDown(bridge.dispose);
+      Future<void> render(String? directory) => tester.pumpWidget(
+        _chatArea(
+          bridge: bridge,
+          fileDirectory: directory,
+          message: _aiMessage(parts: [imagePart()]),
+          isLoading: false,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          splitMarkdownContent: splitSemanticMarkdownFixture,
+        ),
+      );
+      await render(null);
+      await settleImages(tester);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNWidgets(2));
+      await render('/operitapp/outputs/resolved');
+      await settleImages(tester);
+      expect(
+        bridge.binaryImagePaths,
+        contains('/operitapp/outputs/resolved/operit_art.jpg'),
+      );
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('refreshes cached message actions when chat busy state changes', (
     tester,
   ) async {
@@ -678,7 +845,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 140));
       await tester.pump();
       expect(scrollController.position.extentAfter, lessThanOrEqualTo(1));
-      tester.binding.debugAssertNoTransientCallbacks("Follower should have settled");
+      tester.binding.debugAssertNoTransientCallbacks(
+        "Follower should have settled",
+      );
       expect(tester.binding.transientCallbackCount, 0);
       expect(tester.binding.hasScheduledFrame, isFalse);
       expect(tester.takeException(), isNull);
@@ -2020,6 +2189,7 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
   final Map<String, CoreWatchRequest> _streamRequestsById =
       <String, CoreWatchRequest>{};
   final List<String> openedStreamIds = <String>[];
+  final List<String> binaryImagePaths = <String>[];
   CoreWatchRequest? _chatWatchRequest;
 
   /// Releases all test-owned stream controllers.
@@ -2034,6 +2204,28 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     switch (request.methodName) {
+      case 'executeTool':
+        final tool = (request.args as Map)['tool'] as Map;
+        expect(tool['name'], 'read_file_binary');
+        final path =
+            ((tool['parameters'] as List).single as Map)['value'] as String;
+        binaryImagePaths.add(path);
+        const png =
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY2Bg+P8fAAMCAf/Jsq3uAAAAAElFTkSuQmCC';
+        return encodeCoreLink([
+          0,
+          {
+            'toolName': 'read_file_binary',
+            'success': true,
+            'error': null,
+            'result': {
+              '__type': 'BinaryFileContentData',
+              'path': path,
+              'contentBase64': png,
+              'size': base64Decode(png).length,
+            },
+          },
+        ]);
       case 'getToolPkgNavigationEntries':
       case 'getToolPkgUiRoutes':
         return encodeCoreLink([0, const <Object?>[]]);
@@ -2058,6 +2250,15 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
     switch (request.propertyName) {
+      case 'imageBytes':
+        // An unresolved relative source fails until the chat directory arrives.
+        return Stream.value(
+          _rawGeneratedEvent(request, 'Changed', {
+            'bytes': Uint8List(0),
+            'displayUrl': null,
+            'error': 'Relative image has no directory context',
+          }),
+        );
       case 'chatMessagesFlow':
         _chatWatchRequest = request;
         return _chatEvents.stream;
@@ -2150,6 +2351,8 @@ Widget _streamingStructuredRendererHarness({
 /// Builds a minimal themed transcript around one active AI message.
 Widget _chatArea({
   String currentChatId = 'chat',
+  String? fileDirectory,
+  _ScriptedGeneratedChatBridge? bridge,
   ChatUiMessage? message,
   List<ChatUiMessage>? messages,
   required ScrollController scrollController,
@@ -2163,9 +2366,9 @@ Widget _chatArea({
   MarkdownContentSplitter splitMarkdownContent = _splitMarkdownContent,
   RevealMessageForLocator? onRevealMessageForLocator,
 }) {
-  final bridge = _ScriptedGeneratedChatBridge();
-  final clients = GeneratedCoreProxyClients(bridge);
-  addTearDown(bridge.dispose);
+  final owner = bridge ?? _ScriptedGeneratedChatBridge();
+  final clients = GeneratedCoreProxyClients(owner);
+  if (bridge == null) addTearDown(owner.dispose);
   final chatArea = ChatArea(
     messages:
         messages ??
@@ -2174,6 +2377,7 @@ Widget _chatArea({
     errorMessage: null,
     scrollController: scrollController,
     currentChatId: currentChatId,
+    fileDirectory: fileDirectory,
     identityAvatarUri: null,
     clients: clients,
     packageManager: clients.application.packageManager(),

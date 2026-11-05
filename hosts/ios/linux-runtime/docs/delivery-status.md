@@ -1,5 +1,33 @@
 # ARM64 开发终端交付状态
 
+## 2026-11-05：静态 ARM64 gadget 解释器
+
+本次修改接入构建时编译的汇编 threaded interpreter，覆盖常用整数、单值/成对内存访问及
+条件分支未跳转路径；未覆盖指令、分支跳转和内存检查失败回到原 C++ 路径。公开 C API
+不变，运行时不生成可执行代码。设计、额外缓存内存和回退边界见 [静态 gadget 说明](static-gadgets.md)。
+
+**本轮仅做 macOS arm64 命令行构建和运行；按用户要求没有编译 iOS、启动模拟器或连接真机，
+也没有构建或启动 Flutter App。** runtime 为 Release（`-O3 -DNDEBUG`），LTO 关闭。
+
+- 最终同版本相关 CTest **7/7 通过**：`arm64-cpu-validation`、`arm64-cache`、
+  `arm64-memory-concurrency`、`arm64-gadgets`、`arm64-filesystem`、`arm64-memory-async-lease`、
+  `arm64-runtime`。gadget 测试包含 81,648 组寄存器/条件码差分，以及 SP/XZR、成对访问、
+  预算/故障退休和内存回退检查。这是相关子集，不是全量测试或完整 ISA 覆盖。
+- 原样数学循环缩小到 100×100，使用相同 Alpine rootfs 和固定函数替换设置，交替运行旧、新
+  CLI；每边预热 1 次后取 5 次中位数。旧版 **2.929275 秒**，本版 **2.612029 秒**，
+  比值 **1.1215×**，耗时减少约 **10.8%**；每次校验和均为 1267865，未支持 syscall 为零。
+  这是数学子负载，不包括原 1000×1000 Pillow 图片生成，不能代表其完整耗时或 iOS 性能。
+- 早期只有标量处理器的版本在 Python 启动时崩溃，原因是汇编宏局部标签冲突，已改为唯一标签。
+  修复后第一轮对比基本持平；补充成对访存、搬运和分支连续路径后才得到上述最终结果。
+
+证据目录：`tools/ios-runtime/arm64/build/static-gadgets-2026-11-05/`。`build.log`、`ctest.log`、
+`ctest-detail.log`、`python-comparison.json` 和 `verification.json` 保留构建输出、逐项测试、
+交替样本、二进制与源码 SHA-256；目录还保存当时的 baseline/candidate CLI。
+构建目录为 `apps/flutter/app/build/macos/Build/Intermediates.noindex/Runner.build/Debug/Runner.build/DerivedSources/Arm64Runtime/build-arm64`，
+其中 `Debug` 属于宿主项目目录名，本次 CMake runtime 配置实际为 Release。
+
+## 2026-11-03 整合记录
+
 **更新日期：2026-11-03（Asia/Shanghai）。本轮关键 syscall 已按下述子集接入独立 runtime；未构建 App、未做 iOS 真机验收。** 下文较早的“未编译 / 用户自行构建”描述保留为历史阶段记录，不覆盖本节结果。Worker 性能优化由用户另行安排，本轮未宣称达到 5 秒目标。
 
 ## 关键 syscall 整合
@@ -193,3 +221,30 @@ VFS 的修正保留断言：按 Linux v6.12 的 ARM64 定义检查 `O_LARGEFILE 
 | [2026-11-02 审计](audit/2026-11-02.md) | 当时审计与原始证据 | 保留历史，不作为当前覆盖率 |
 
 仍待主线补齐的关键事实是：冻结范围、最终 host 与完整 CTest 结果、proc direct controller / 旧 registry 收敛与退出 Pending 额度释放的统一回归、Memory / seal 优化后的回归，以及 guest watcher / 资源限制与新版模拟器完整运行。未知项保留“待确认”，不折算新的完成百分比。
+
+
+## 2026-11-05 内存与计算开销复核（macOS CLI）
+
+详见 [memory-compute-audit.md](memory-compute-audit.md)。导入后主线程采样主要在静态/C++ 指令解释执行（约 58%），其次内存执行（17%）、代码校验（12%）、调度记账等（9%）和专门浮点路径（3%）。仅最后一项不代表算法的全部数学成本。已消除浮点 scalar 写回约 154 万次动态长度通用拷贝；交替测量观察到约 2.6% 时间减少，有样本波动。整页快照和 FP 控制寄存器条件写原型未获益，已移除。
+
+最终七项 macOS 回归通过，ISA 硬件差分 5253 个形式通过。CPU 限额测试原版在一秒前先耗尽指令预算，已将测试预算从 5 亿提高到 20 亿，不修改运行时 CPU 限额。冻结日志、采样、计数、计时与 CLI 位于 `tools/ios-runtime/arm64/build/memory-compute-audit-2026-11-05/`。本次没有 iOS 构建、模拟器或设备验证。
+
+
+## 2026-11-05 已落地的解释器热路径修复（macOS CLI）
+
+在上一轮审计版本上，将串行代码校验改为有界 64 字节快照与 revision 复用；允许当前 scope 已验证、且完成 COW 的私有文件页走静态 gadget 直接访存；单个普通计算任务保持连续 CPU 记账并跳过无用的并行 batch 选择。syscall、定时器、多任务、RT 策略和有限 CPU/RT 限额仍结算，文件截断、权限、自修改代码与并行校验仍检查。连续区间会包含此前部分未计的轮询/调度开销。
+
+最终各预热一次、五轮交替计时，Python 循环中位数 1.298184 → 1.145850 秒，耗时减少 11.73%，吞吐约 1.133×；每次 checksum=1267865、退出 0、unsupported_syscalls=0。独立探针显示 thread_info 从 146,903 → 353，libc 可见代码比对从 11,712,538 → 873,265 次；固定宽度内联比对仍存在。最终九项回归与 5253 个 ISA 硬件差分形式通过。新增覆盖重叠块、槽冲突、五片段最大块、并行切换、私有文件 scope 验证/COW/截断。
+
+详见 [内存与计算审计](memory-compute-audit.md#热路径修复后的复测)。冻结证据：`tools/ios-runtime/arm64/build/hotpath-fixes-2026-11-05/`。本轮仅 macOS Release CLI；未构建 iOS、未启动模拟器或设备。
+
+
+## 2026-11-05 删除代码校验分片缓存（最新 macOS CLI）
+
+删除此前引入的 64 字节快照、4096 槽缓存、每块五个 revision 和二次比对，恢复在页访问保护内单次比对原始代码块；每个解释器移除 352 KiB 快照，每块移除 40 字节元数据。ReadGuard 保存已取得的线程状态，解锁及 PageAccess 的 writer 判断复用它，并消除同次文件 generation 判断中的重复读取。此前私有文件页直访和单任务记账优化保留。
+
+最终五轮交替计时 1.161388 → 1.063516 秒，耗时减少 8.43%，吞吐 1.092×；全部 checksum=1267865、退出 0、无 unsupported syscall。四秒主线程采样中，代码校验由旧快照版的 17.54% 降至 14.02%，不当作精确周期或绝对耗时降幅。
+
+文件通知最小探针漏掉未 msync 的共享映射直接写入，因此未用于替代内容校验；新增测试覆盖该情形。共用构建目录 BUILD_TESTING=OFF 时的旧测试不作本轮证据，已在独立 macOS Release、arm64、deployment target 13.0、LTO OFF 目录重新构建全部请求目标，最终九项回归和 5253 个 ISA 差分形式通过。未构建 iOS 或启动模拟器/设备。
+
+详见 [审计记录](memory-compute-audit.md#删除代码校验分片缓存)。本轮冻结目录：`tools/ios-runtime/arm64/build/code-validation-cleanup-2026-11-05/`。旧 64 字节快照方案和 17.54% 数据属于被替代的历史版本。

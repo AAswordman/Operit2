@@ -7,6 +7,8 @@
 | [delivery-status.md](delivery-status.md) | **唯一最新事实记录**：构建、测试、Worker、iOS 证据及尚待确认项 | 新结果写明命令或来源、适用代码范围和证据路径；保留被替代的失败记录 |
 | [completeness.md](completeness.md) | 可核对的 24 组功能矩阵，以及实现、接线、验证的独立统计口径 | 以实际实现体、构建登记、生产调用链和行为证据分列；不复制最新测试汇总 |
 | [architecture.md](architecture.md) | 执行层、内存、任务、Linux ABI 和公开 API 的结构与边界 | 描述代码设计；当前集成缺口与验收结果链接到交付状态 |
+| [static-gadgets.md](static-gadgets.md) | 静态 ARM64 汇编分派、内存回退、预算语义与性能测量入口 | 设计与当前测试结果分列；macOS 结果不代表 iOS 设备 |
+| [memory-compute-audit.md](memory-compute-audit.md) | Python 计算阶段调用栈、拷贝计数及优化实测 | 区分运行时路径占比、客体指令量与用户数学成本 |
 | [node-probe.md](node-probe.md) | Node 探针方法、原始 Worker 截止条件和报告解释 | 区分 host 对照、guest 行为、计时条件和历史结果 |
 | [network.md](network.md) | socket、DNS、poll/epoll 与宿主网络边界 | 记录支持范围、调用路径与未支持语义 |
 | [virtual-filesystems.md](virtual-filesystems.md) | root、绑定挂载、proc/dev/devpts、虚拟 FD 与 PTY | 记录文件系统模型与限制 |

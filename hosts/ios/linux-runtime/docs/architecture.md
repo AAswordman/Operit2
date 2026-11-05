@@ -34,9 +34,13 @@ CPU 层不打开文件、不转换 Linux errno、不持有产品 session。SVC �
 
 Guest 使用 AArch64 寄存器和独立虚拟地址空间；初始栈按 ABI 对齐。Interpreter 将指令解码为块并缓存，按预算暂停 / 恢复；未知指令报告 opcode 与 PC。内部缓存规模与调度量是实现参数，不作为完整 ISA 能力的证明。
 
+ARM64 宿主的串行执行还可进入构建时编译的 [静态 gadget 解释器](static-gadgets.md)。
+支持的连续指令由独立汇编分派尾部连接；不支持的指令、跳转、内存检查失败与并行执行回到
+现有 C++ 路径。gadget 记录属于解码数据，不是运行时生成的可执行代码。
+
 Guest 采用 4 KiB 页、稀疏映射、访问权限、TLB、COW 与文件 / 共享映射。映射和驻留量分开计量，驻留限制不等于宿主进程全部内存。宿主不为 guest 指令生成可执行映射。
 
-可执行页写入、映射和权限变化需要使旧解码失效。磁盘上的 `Interpreter::revalidate` 已调用 `Memory::validate_code`，后者检查页同步、epoch 与内容；此次调用改动的构建 / 回归状态只在交付状态记录。独占访问、原子操作与共享内存保护由 Memory 及 executor 协同，不能沿用旧“单线程因此无需并发一致性”的描述。seals / 共享写映射与代码缓存的一致性仍需对应生命周期测试。
+可执行页写入、映射和权限变化需要使旧解码失效。`Interpreter::revalidate` 直接调用 `Memory::validate_code`，在页访问保护内比对已缓存的原始指令块；曾引入的 64 字节快照与 revision 层因维护开销较大已删除。读锁保存获取时的线程状态，解锁和页锁选择复用它，避免重复查询 TLS。映射、权限、文件大小和外部代码修改检查继续生效，构建 / 回归证据见交付状态。独占访问、原子操作与共享内存保护由 Memory 及 executor 协同，不能沿用旧“单线程因此无需并发一致性”的描述。seals / 共享写映射与代码缓存的一致性仍需对应生命周期测试。
 
 `cpu/aarch64/` 按职责拆分 decoder、execute、exclusive、floating_point、vector arithmetic / unary / widen / indexed / shift / narrow / memory / floating。`vector_lanes.h` 与 `vector_multiply.h` 统一部分 lane、饱和 / QC、doubling / polynomial 运算，`floating_point.h` 中的 `FloatingPointEnvironment` 管理宿主浮点环境。合法形式、尺寸 / lane 与保留编码须按族检查，不能靠解码后空操作代表支持。
 

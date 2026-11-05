@@ -214,7 +214,9 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
     core_proxy.MarketEntrySummary detail, {
     required bool canEditEntry,
   }) {
-    if (detail.type == 'skill' || detail.type == 'mcp') {
+    if (detail.type == 'skill' ||
+        detail.type == 'mcp' ||
+        detail.type == 'a2a') {
       return RepoMarketPublishScreen(
         clients: widget.clients,
         type: detail.type,
@@ -279,9 +281,7 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
 
   /// A listed entry publishes from its public data; a withdrawn one has no
   /// public page, so the owner's private copy is the source.
-  Future<void> _publishVersion(
-    core_proxy.MarketPublisherEntrySummary entry,
-  ) {
+  Future<void> _publishVersion(core_proxy.MarketPublisherEntrySummary entry) {
     final listed = CreatorEntryAccess(entry).publiclyListed;
     return _openVersionEditor(
       entry,
@@ -304,9 +304,7 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
       verboseLevel: VerboseLevel.level2,
     );
     if (cooldown != null) {
-      _showMessage(
-        '被打回后的修改版提交仍在冷却中，还需等待 ${formatCreatorCooldown(cooldown)}。',
-      );
+      _showMessage('被打回后的修改版提交仍在冷却中，还需等待 ${formatCreatorCooldown(cooldown)}。');
       return;
     }
     await _openVersionEditor(
@@ -351,9 +349,8 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
       error != null && '$error'.contains('HTTP 401');
 
   List<CreatorStat> _stats() {
-    int? entryCount(
-      bool Function(CreatorEntryAccess access) test,
-    ) => _entriesLoaded
+    int? entryCount(bool Function(CreatorEntryAccess access) test) =>
+        _entriesLoaded
         ? _entries.where((entry) => test(CreatorEntryAccess(entry))).length
         : null;
     return <CreatorStat>[
@@ -423,8 +420,11 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
         loggedIn &&
         (_isUnauthorized(_entriesError) || _isUnauthorized(_noticesError));
     var order = 0;
-    Widget block(String name, Widget child) =>
-        StoreEntrance(key: ValueKey<String>(name), index: order++, child: child);
+    Widget block(String name, Widget child) => StoreEntrance(
+      key: ValueKey<String>(name),
+      index: order++,
+      child: child,
+    );
     return <Widget>[
       block('account', _buildAccount()),
       if (unauthorized) ...<Widget>[
@@ -449,10 +449,7 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            const StoreSectionHeader(
-              title: '发布到市场',
-              subtitle: '提交后经过审核才会公开。',
-            ),
+            const StoreSectionHeader(title: '发布到市场', subtitle: '提交后经过审核才会公开。'),
             _PublishOptions(
               locked: !loggedIn,
               onArtifact: () => _openPublisher(
@@ -462,6 +459,12 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
                 (context) => RepoMarketPublishScreen(
                   clients: widget.clients,
                   type: 'skill',
+                ),
+              ),
+              onA2a: () => _openPublisher(
+                (context) => RepoMarketPublishScreen(
+                  clients: widget.clients,
+                  type: 'a2a',
                 ),
               ),
               onMcp: () => _openPublisher(
@@ -686,9 +689,7 @@ class _MarketCreatorScreenState extends State<MarketCreatorScreen> {
                     size: 18,
                   ),
                   label: Text(
-                    _showAllNotices
-                        ? '收起'
-                        : '查看全部 ${_notifications.length} 条',
+                    _showAllNotices ? '收起' : '查看全部 ${_notifications.length} 条',
                   ),
                 ),
               ),
@@ -706,6 +707,7 @@ class _PublishOptions extends StatelessWidget {
     required this.onArtifact,
     required this.onSkill,
     required this.onMcp,
+    required this.onA2a,
   });
 
   /// Nobody is signed in, so every door asks for a login first.
@@ -713,6 +715,7 @@ class _PublishOptions extends StatelessWidget {
   final VoidCallback onArtifact;
   final VoidCallback onSkill;
   final VoidCallback onMcp;
+  final VoidCallback onA2a;
 
   /// Explains the lock on hover and long press while nobody is signed in.
   Widget _lockedHint({required Widget child}) =>
@@ -726,6 +729,7 @@ class _PublishOptions extends StatelessWidget {
       (StoreKind.toolpkg, '发布插件或脚本包', '上传打包好的 ToolPkg、脚本或运行时资源', onArtifact),
       (StoreKind.skill, '发布技能', '提交 GitHub 仓库形式的技能', onSkill),
       (StoreKind.mcp, '发布 MCP', '提交 GitHub 仓库形式的 MCP 服务', onMcp),
+      (StoreKind.a2a, '发布 A2A', '提交 Agent 接入配置和能力说明', onA2a),
     ];
     // The glyph, the title line and the arrow share one center line, so the
     // doors line up whatever the length of their descriptions.
@@ -790,11 +794,14 @@ class _PublishOptions extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                for (var index = 0; index < tiles.length; index += 1)
-                  ...<Widget>[
-                    if (index > 0) const SizedBox(width: 10),
-                    Expanded(child: tiles[index]),
-                  ],
+                for (
+                  var index = 0;
+                  index < tiles.length;
+                  index += 1
+                ) ...<Widget>[
+                  if (index > 0) const SizedBox(width: 10),
+                  Expanded(child: tiles[index]),
+                ],
               ],
             ),
           );
@@ -802,11 +809,10 @@ class _PublishOptions extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            for (var index = 0; index < tiles.length; index += 1)
-              ...<Widget>[
-                if (index > 0) const SizedBox(height: 10),
-                tiles[index],
-              ],
+            for (var index = 0; index < tiles.length; index += 1) ...<Widget>[
+              if (index > 0) const SizedBox(height: 10),
+              tiles[index],
+            ],
           ],
         );
       },
@@ -908,7 +914,9 @@ class _NoticeRow extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final tone = _noticeTone(notice.kind, colorScheme);
-    final title = notice.title.trim().isEmpty ? tone.label : notice.title.trim();
+    final title = notice.title.trim().isEmpty
+        ? tone.label
+        : notice.title.trim();
     final body = notice.body.trim();
     final entryId = notice.entryId;
     return InkWell(

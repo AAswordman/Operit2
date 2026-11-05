@@ -27,6 +27,19 @@ String resolveMarkdownFilePath(String source, String? base) {
   return '/${parts.join('/')}';
 }
 
+/// Returns the directory context owned by this message, independent of live text.
+({String? basePath, String? nodeId}) markdownFileContextForParts(
+  List<core.MessagePart> parts,
+) {
+  for (final part in parts) {
+    final base = part.attributes['file_base_path']?.trim();
+    if (base != null && base.isNotEmpty) {
+      return (basePath: base, nodeId: part.attributes['file_node_id']);
+    }
+  }
+  return (basePath: null, nodeId: null);
+}
+
 class MarkdownFileScope extends InheritedWidget {
   const MarkdownFileScope({
     super.key,
@@ -40,17 +53,13 @@ class MarkdownFileScope extends InheritedWidget {
     required List<core.MessagePart> parts,
     required GeneratedCoreProxyClients clients,
     required Widget child,
+    String? fallbackBasePath,
   }) {
-    final contexts = parts.where(
-      (p) => p.attributes.containsKey('file_base_path'),
-    );
-    final attrs = contexts.isEmpty
-        ? const <String, String>{}
-        : contexts.first.attributes;
+    final context = markdownFileContextForParts(parts);
     return MarkdownFileScope(
       key: key,
-      basePath: attrs['file_base_path'],
-      nodeId: attrs['file_node_id'],
+      basePath: context.basePath ?? fallbackBasePath,
+      nodeId: context.nodeId,
       clients: clients,
       child: child,
     );

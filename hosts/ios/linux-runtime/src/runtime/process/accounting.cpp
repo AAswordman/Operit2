@@ -78,6 +78,13 @@ CpuUsage Machine::uncommitted_cpu_usage(uint32_t pid, uint32_t tid) const {
     const auto system = now.system_nanoseconds - accounting_system_;
     return {user, system, add_counter(user, system)};
 }
+bool Machine::can_defer_accounting() const {
+    if (!accounting_pid_ || accounting_syscall_ || !scheduler_.sole_ordinary_task())
+        return false;
+    const auto found = processes_.find(accounting_pid_);
+    return found != processes_.end() && found->second->state == Process::State::Running &&
+           !found->second->timers;
+}
 void Machine::stop_accounting() {
     if (!accounting_pid_)
         return;
@@ -93,6 +100,7 @@ void Machine::stop_accounting() {
         }
     }
     accounting_pid_ = accounting_tid_ = 0;
+    accounting_syscall_ = false;
 }
 void Machine::begin_accounting(uint32_t pid) {
     const auto tid = scheduler_.current().tid;
@@ -102,6 +110,7 @@ void Machine::begin_accounting(uint32_t pid) {
     const auto now = host_cpu_usage();
     accounting_user_ = now.user_nanoseconds;
     accounting_system_ = now.system_nanoseconds;
+    accounting_syscall_ = false;
     accounting_pid_ = pid;
     accounting_tid_ = tid;
 }

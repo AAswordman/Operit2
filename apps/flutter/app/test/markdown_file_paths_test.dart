@@ -52,7 +52,14 @@ void main() {
     },
   );
 
-  for (final source in ['images/chart.png', 'https://example.com/chart.png']) {
+  for (final (source, expected) in [
+    ('chart.png', '/operitapp/outputs/family/chart.png'),
+    ('./chart.png', '/operitapp/outputs/family/chart.png'),
+    ('images/chart.png', '/operitapp/outputs/family/images/chart.png'),
+    ('../shared/chart.png', '/operitapp/outputs/shared/chart.png'),
+    ('./中文%20图.png', '/operitapp/outputs/family/中文 图.png'),
+    ('https://example.com/chart.png', 'https://example.com/chart.png'),
+  ]) {
     testWidgets(
       'relative file scope retains its owner and preview for $source',
       (tester) async {
@@ -72,7 +79,6 @@ void main() {
           ),
         );
         await _settleImages(tester);
-        final expected = source.startsWith('https:') ? source : '$base/$source';
         expect(bridge.sources, [expected]);
         expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
         await tester.tap(find.byType(Image));

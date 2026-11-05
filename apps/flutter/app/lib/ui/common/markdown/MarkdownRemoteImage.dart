@@ -42,9 +42,15 @@ class MarkdownRemoteImage extends StatelessWidget {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Sidebar animations change local constraints every frame. Decode for
+        // the window so they only relayout the existing image/cache entry.
+        final windowWidth = MediaQuery.sizeOf(context).width;
         final cacheWidth = decodeAtFullResolution
             ? null
-            : _markdownImageCacheExtent(context, constraints.maxWidth);
+            : _markdownImageCacheExtent(
+                context,
+                windowWidth > 0 ? windowWidth : constraints.maxWidth,
+              );
         final cacheHeight = !decodeAtFullResolution && cacheWidth == null
             ? _markdownImageCacheExtent(context, constraints.maxHeight)
             : null;
@@ -70,6 +76,8 @@ class MarkdownRemoteImage extends StatelessWidget {
               ? error
               : Image.memory(
                   dataBytes,
+                  key: ValueKey((trimmed, owner.bridge)),
+                  gaplessPlayback: true,
                   fit: fit,
                   cacheWidth: cacheWidth,
                   cacheHeight: cacheHeight,
@@ -78,6 +86,8 @@ class MarkdownRemoteImage extends StatelessWidget {
                 );
         } else if (vfsPath != null) {
           image = Image(
+            key: ValueKey((trimmed, owner.bridge)),
+            gaplessPlayback: true,
             image: ResizeImage.resizeIfNeeded(
               cacheWidth,
               cacheHeight,
@@ -225,6 +235,8 @@ class _RuntimeImageState extends State<_RuntimeImage> {
           // The host selected direct display; no byte request is started here.
           return Image.network(
             displayUrl,
+            key: ValueKey((widget.url, widget.clients.bridge)),
+            gaplessPlayback: true,
             fit: widget.fit,
             webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
             semanticLabel: widget.alt.trim().isEmpty ? null : widget.alt.trim(),
@@ -236,6 +248,8 @@ class _RuntimeImageState extends State<_RuntimeImage> {
         }
         return Image.memory(
           data.bytes,
+          key: ValueKey((widget.url, widget.clients.bridge)),
+          gaplessPlayback: true,
           fit: widget.fit,
           cacheWidth: widget.cacheWidth,
           cacheHeight: widget.cacheHeight,
@@ -305,14 +319,17 @@ class _MarkdownImageStatus extends StatelessWidget {
   }
 }
 
-/// Decodes an image data URI and reports malformed input as invalid data.
+final _markdownDataImages = ComposeDslDataImageCache();
+
+/// Reuses immutable data-URI bytes across rebuilds within a bounded cache.
+/// Malformed input is reported as invalid data.
 Uint8List? markdownDataImageBytes(String imageUrl) {
   final trimmed = imageUrl.trim();
   if (!trimmed.toLowerCase().startsWith('data:image/')) {
     return null;
   }
   try {
-    return UriData.parse(trimmed).contentAsBytes();
+    return _markdownDataImages.resolve(trimmed).bytes;
   } on FormatException {
     return null;
   }

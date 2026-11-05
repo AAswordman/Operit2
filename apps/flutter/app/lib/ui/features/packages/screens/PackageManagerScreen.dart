@@ -23,6 +23,7 @@ import '../components/PackageTab.dart';
 import '../components/StoreDetailKit.dart';
 import '../components/StoreVisuals.dart';
 import '../dialogs/MCPImportDialog.dart';
+import '../dialogs/A2AImportDialog.dart';
 import '../dialogs/PackageEnvironmentVariablesDialog.dart';
 import '../dialogs/QuickPluginCreatorDialog.dart';
 import '../dialogs/SkillImportDialog.dart';
@@ -55,7 +56,7 @@ class PackageManagerScreen extends StatefulWidget {
   State<PackageManagerScreen> createState() => _PackageManagerScreenState();
 }
 
-enum _AddAction { toolpkg, script, skill, mcp, create }
+enum _AddAction { toolpkg, script, skill, mcp, a2a, create }
 
 enum _MoreAction { add, checkUpdates, environment, refresh }
 
@@ -236,57 +237,57 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         // Phones keep the title wide enough for the section switcher.
         final narrow = MediaQuery.sizeOf(context).width < 600;
         return <Widget>[
-        ValueListenableBuilder<bool>(
-          valueListenable: _searchOpen,
-          builder: (context, open, child) => IconButton(
-            tooltip: open ? '关闭搜索' : '搜索（Ctrl+F）',
-            onPressed: open ? _closeSearch : _openSearch,
-            icon: Icon(open ? Icons.close_rounded : Icons.search_rounded),
+          ValueListenableBuilder<bool>(
+            valueListenable: _searchOpen,
+            builder: (context, open, child) => IconButton(
+              tooltip: open ? '关闭搜索' : '搜索（Ctrl+F）',
+              onPressed: open ? _closeSearch : _openSearch,
+              icon: Icon(open ? Icons.close_rounded : Icons.search_rounded),
+            ),
           ),
-        ),
-        if (!narrow)
-          IconButton(
-            tooltip: '添加扩展',
-            onPressed: _showAddSheet,
-            icon: const Icon(Icons.add_rounded),
-          ),
-        PopupMenuButton<_MoreAction>(
-          tooltip: '更多',
-          icon: const Icon(Icons.more_vert_rounded),
-          onSelected: _onMoreSelected,
-          itemBuilder: (context) => <PopupMenuEntry<_MoreAction>>[
-            if (narrow)
+          if (!narrow)
+            IconButton(
+              tooltip: '添加扩展',
+              onPressed: _showAddSheet,
+              icon: const Icon(Icons.add_rounded),
+            ),
+          PopupMenuButton<_MoreAction>(
+            tooltip: '更多',
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: _onMoreSelected,
+            itemBuilder: (context) => <PopupMenuEntry<_MoreAction>>[
+              if (narrow)
+                const PopupMenuItem<_MoreAction>(
+                  value: _MoreAction.add,
+                  child: ListTile(
+                    leading: Icon(Icons.add_rounded),
+                    title: Text('添加扩展'),
+                  ),
+                ),
               const PopupMenuItem<_MoreAction>(
-                value: _MoreAction.add,
+                value: _MoreAction.checkUpdates,
                 child: ListTile(
-                  leading: Icon(Icons.add_rounded),
-                  title: Text('添加扩展'),
+                  leading: Icon(Icons.system_update_alt_rounded),
+                  title: Text('检查更新'),
                 ),
               ),
-            const PopupMenuItem<_MoreAction>(
-              value: _MoreAction.checkUpdates,
-              child: ListTile(
-                leading: Icon(Icons.system_update_alt_rounded),
-                title: Text('检查更新'),
+              const PopupMenuItem<_MoreAction>(
+                value: _MoreAction.environment,
+                child: ListTile(
+                  leading: Icon(Icons.key_outlined),
+                  title: Text('环境变量'),
+                ),
               ),
-            ),
-            const PopupMenuItem<_MoreAction>(
-              value: _MoreAction.environment,
-              child: ListTile(
-                leading: Icon(Icons.key_outlined),
-                title: Text('环境变量'),
+              const PopupMenuItem<_MoreAction>(
+                value: _MoreAction.refresh,
+                child: ListTile(
+                  leading: Icon(Icons.refresh_rounded),
+                  title: Text('重新加载目录'),
+                ),
               ),
-            ),
-            const PopupMenuItem<_MoreAction>(
-              value: _MoreAction.refresh,
-              child: ListTile(
-                leading: Icon(Icons.refresh_rounded),
-                title: Text('重新加载目录'),
-              ),
-            ),
-          ],
-        ),
-      ];
+            ],
+          ),
+        ];
       },
       child: Material(
         type: MaterialType.transparency,
@@ -398,9 +399,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     if (rejected.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '不能直接导入：${rejected.join('、')}。技能和 MCP 请通过「添加扩展」导入。',
-          ),
+          content: Text('不能直接导入：${rejected.join('、')}。技能和 MCP 请通过「添加扩展」导入。'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -434,6 +433,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         await _showSkillImportDialog();
       case _AddAction.mcp:
         await _showMcpImportDialog();
+      case _AddAction.a2a:
+        final added = await showDialog<bool>(
+          context: context,
+          builder: (context) => A2AImportDialog(clients: widget.clients),
+        );
+        if (added == true) await _controller.refresh();
       case _AddAction.create:
         await _openQuickPluginCreator();
     }
@@ -524,11 +529,7 @@ class _TopBarTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final motion = ExtensionMotion.of(context);
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable>[
-        tab,
-        searchOpen,
-        controller,
-      ]),
+      listenable: Listenable.merge(<Listenable>[tab, searchOpen, controller]),
       builder: (context, child) {
         final Widget content;
         if (searchOpen.value) {
@@ -791,6 +792,12 @@ class _AddExtensionSheet extends StatelessWidget {
         title: '添加 MCP 服务',
         subtitle: 'GitHub、ZIP、配置或表单',
         action: _AddAction.mcp,
+      ),
+      const _AddOption(
+        kind: StoreKind.a2a,
+        title: '添加 A2A',
+        subtitle: '服务地址、Agent Card 或配置文件',
+        action: _AddAction.a2a,
       ),
     ];
     return SafeArea(

@@ -227,7 +227,7 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
     }
 
     for package in packages.values() {
-        if plugin_owned_names.contains(&package.name) {
+        if plugin_owned_names.contains(&package.name) || operit_tools::tools::a2a::A2ARepository::is_a2a_package(package) {
             continue;
         }
         let market_marker = market_origins.get(&("package".into(), package.name.clone()));
@@ -280,6 +280,26 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
                 "aiHidden".into()
             },
             ..catalog_entry(&skill.name, "skill", &skill_scopes, market_marker, false)
+        });
+    }
+
+    let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(app.hostManager.clone())?;
+    let a2a_scopes = app.getExtensionScopes("a2a".into())?;
+    for record in repository.records()? {
+        let loaded = repository.config(&record.id);
+        let valid = loaded.is_ok();
+        let config = loaded.unwrap_or_else(|_| serde_json::from_value(record.settings["agent"].clone()).unwrap_or_default());
+        let marker = market_origins.get(&("a2a".into(), record.id.clone()));
+        installed.push(ExtensionCatalogEntry {
+            display_name: config.card["name"].as_str().unwrap_or(&record.id).into(),
+            description: config.card["description"].as_str().unwrap_or(&config.url).into(),
+            version: config.card["version"].as_str().unwrap_or("").into(),
+            authors: config.card["provider"]["organization"].as_str().map(|v| vec![v.into()]).unwrap_or_default(),
+            category: "A2A".into(),
+            activation_state: if config.disabled {"disabled"} else {"enabled"}.into(),
+            runtime_state: if !valid || !packages.get(&operit_tools::tools::a2a::A2ARepository::package_name(&record.id)).is_some_and(operit_tools::tools::a2a::A2ARepository::is_a2a_package) {"error"} else if config.card.is_null() {"unconfigured"} else {"ready"}.into(),
+            tool_count: 3,
+            ..catalog_entry(&record.id, "a2a", &a2a_scopes, marker, false)
         });
     }
 

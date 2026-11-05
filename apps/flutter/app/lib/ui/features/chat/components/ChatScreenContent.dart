@@ -45,6 +45,7 @@ class ChatScreenContent extends StatelessWidget {
     this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
+    this.fileDirectory,
     required this.chatIdentity,
     required this.backgroundUri,
     required this.onIdentityTap,
@@ -127,6 +128,7 @@ class ChatScreenContent extends StatelessWidget {
   final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
+  final String? fileDirectory;
   final ChatUiIdentity? chatIdentity;
   final String? backgroundUri;
   final VoidCallback? onIdentityTap;
@@ -492,6 +494,7 @@ class ChatScreenContent extends StatelessWidget {
       errorMessage: errorMessage,
       scrollController: scrollController,
       currentChatId: currentChatId,
+      fileDirectory: fileDirectory,
       identityAvatarUri: chatIdentity?.avatarUri,
       onIdentityTap: onIdentityTap,
       clients: viewModel.clients,

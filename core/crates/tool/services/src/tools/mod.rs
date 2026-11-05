@@ -25,6 +25,8 @@ pub mod ToolRegistration;
 #[path = "ToolResultDataClasses.rs"]
 pub mod ToolResultDataClasses;
 
+pub mod a2a;
+
 pub mod climode;
 
 #[path = "condition/mod.rs"]

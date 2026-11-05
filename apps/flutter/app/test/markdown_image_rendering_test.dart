@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -10,15 +11,18 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/common/markdown/MarkdownFileScope.dart';
 import 'package:operit2/ui/common/markdown/MarkdownImagePreview.dart';
 import 'package:operit2/ui/common/markdown/MarkdownImageRenderer.dart';
 import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
+import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleAiMessageComposable.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleSurface.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleUserMessageComposable.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 import 'support/markdown_event_fixture.dart';
+import 'support/semantic_markdown_fixture.dart';
 
 const _url =
     'data:image/png;base64,'
@@ -26,6 +30,137 @@ const _url =
 const _markdown = '![图片说明]($_url)';
 
 void main() {
+  for (final live in [false, true]) {
+    testWidgets('Core image blocks render with surrounding text, live=$live', (
+      tester,
+    ) async {
+      const source =
+          '图在这里：\n\n![](operit_art.jpg)\n\n绝对路径：\n\n'
+          '![](/operitapp/outputs/2026-11-05_12-34-10-303/operit_art.jpg)\n\n'
+          '![图片说明](./operit_art.png)\n\n后续正文';
+      const base = '/operitapp/outputs/2026-11-05_12-34-10-303';
+      final bridge = _ImageBridge();
+      final controller = StreamController<Object>.broadcast();
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: MarkdownFileScope.forParts(
+                  parts: const [
+                    MessagePart(
+                      partId: 'image',
+                      sequence: 0,
+                      kind: MessagePartKind.markdown,
+                      content: source,
+                      toolCallId: null,
+                      toolName: null,
+                      attributes: {'file_base_path': base},
+                    ),
+                  ],
+                  clients: GeneratedCoreProxyClients(bridge),
+                  child: StreamMarkdownRenderer(
+                    content: source,
+                    isStreaming: live,
+                    contentStream: live ? controller.stream : null,
+                    textColor: Colors.black,
+                    backgroundColor: Colors.white,
+                    splitMarkdownContent: splitSemanticMarkdownFixture,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      if (live) {
+        for (final event in semanticMarkdownEvents(source)) {
+          controller.add(event);
+          await tester.pump(const Duration(milliseconds: 200));
+        }
+      }
+      await controller.close();
+      await _settleImages(tester);
+      expect(find.byType(MarkdownImageRenderer), findsNWidgets(3));
+      expect(find.byType(Image), findsNWidgets(3));
+      expect(find.text('图片说明'), findsOneWidget);
+      expect(find.textContaining('后续正文', findRichText: true), findsOneWidget);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+      expect(
+        bridge.sources,
+        containsAll(['$base/operit_art.jpg', '$base/operit_art.png']),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  for (final source in [
+    'images/layout.png',
+    _url,
+    'https://example.com/layout.png',
+  ]) {
+    testWidgets('sidebar layout changes retain the loaded image: $source', (
+      tester,
+    ) async {
+      final bridge = _ImageBridge();
+      final clients = GeneratedCoreProxyClients(bridge);
+      var currentSource = source;
+      Future<void> render(double width) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: width,
+                child: MarkdownFileScope(
+                  basePath: '/operitapp/outputs/layout',
+                  nodeId: null,
+                  clients: clients,
+                  child: MarkdownImageRenderer(
+                    imageMarkdown: '![]($currentSource)',
+                    textColor: Colors.black,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await render(640);
+      await _settleImages(tester);
+      final provider = tester.widget<Image>(find.byType(Image)).image;
+      final frame = tester.widget<RawImage>(find.byType(RawImage)).image;
+      expect(frame, isNotNull);
+      for (final width in [520.0, 400.0, 280.0, 400.0, 520.0, 640.0]) {
+        await render(width);
+        expect(tester.widget<Image>(find.byType(Image)).image, provider);
+        expect(
+          tester.widget<RawImage>(find.byType(RawImage)).image,
+          same(frame),
+        );
+        await _settleImages(tester);
+      }
+      final embedded = source.startsWith('data:');
+      expect(bridge.sources, hasLength(embedded ? 0 : 1));
+      if (!embedded) {
+        currentSource = source.replaceFirst('layout.png', 'changed.png');
+        await render(640);
+        await _settleImages(tester);
+        expect(bridge.sources, hasLength(2));
+        expect(bridge.sources.last, endsWith('/changed.png'));
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('standalone image and its alt are centered within the block', (
     tester,
   ) async {

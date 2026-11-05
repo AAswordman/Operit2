@@ -14,7 +14,11 @@ import 'ExtensionMotion.dart';
 
 /// Label and icon shared by catalog kinds and marketplace entry types.
 class StoreKind {
-  const StoreKind._({required this.id, required this.label, required this.icon});
+  const StoreKind._({
+    required this.id,
+    required this.label,
+    required this.icon,
+  });
 
   final String id;
   final String label;
@@ -41,7 +45,19 @@ class StoreKind {
     icon: Icons.cable_rounded,
   );
 
-  static const List<StoreKind> values = <StoreKind>[toolpkg, script, skill, mcp];
+  static const StoreKind a2a = StoreKind._(
+    id: 'a2a',
+    label: 'A2A',
+    icon: Icons.hub_outlined,
+  );
+
+  static const List<StoreKind> values = <StoreKind>[
+    toolpkg,
+    script,
+    skill,
+    mcp,
+    a2a,
+  ];
 
   /// Resolves catalog kinds and marketplace types to one identity.
   static StoreKind of(String kind) => switch (kind) {
@@ -49,6 +65,7 @@ class StoreKind {
     'script' => script,
     'skill' => skill,
     'mcp' => mcp,
+    'a2a' => a2a,
     _ => throw StateError('Unsupported extension kind: $kind'),
   };
 
@@ -642,14 +659,15 @@ class StoreSegmentedTabs extends StatelessWidget {
                           child: Center(
                             child: AnimatedDefaultTextStyle(
                               duration: motion.standard,
-                              style: (theme.textTheme.labelLarge ??
-                                      const TextStyle())
-                                  .copyWith(
-                                    color: index == selectedIndex
-                                        ? selectedForeground
-                                        : colorScheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                              style:
+                                  (theme.textTheme.labelLarge ??
+                                          const TextStyle())
+                                      .copyWith(
+                                        color: index == selectedIndex
+                                            ? selectedForeground
+                                            : colorScheme.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                               child: IconTheme.merge(
                                 data: IconThemeData(
                                   size: 16,
@@ -744,10 +762,7 @@ class _StoreEntranceState extends State<StoreEntrance>
         }
         return Transform.translate(
           offset: Offset(0, (1 - value) * 10),
-          child: Transform.scale(
-            scale: 0.98 + 0.02 * value,
-            child: child,
-          ),
+          child: Transform.scale(scale: 0.98 + 0.02 * value, child: child),
         );
       },
     );
@@ -885,8 +900,10 @@ class _StoreShelfState extends State<StoreShelf> {
   void _page(int direction) {
     final position = _controller.position;
     final target =
-        (position.pixels + direction * position.viewportDimension * 0.85)
-            .clamp(position.minScrollExtent, position.maxScrollExtent);
+        (position.pixels + direction * position.viewportDimension * 0.85).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
     _controller.animateTo(
       target,
       duration: ExtensionMotion.of(context).emphasized,

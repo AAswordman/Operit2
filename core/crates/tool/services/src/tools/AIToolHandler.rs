@@ -832,7 +832,9 @@ impl AIToolHandler {
         let context = self.getContext();
         for packageTool in executableTools {
             let toolName = format!("{}:{}", toolPackage.name, packageTool.name);
-            if isMcpPackage {
+            if crate::tools::a2a::A2ARepository::is_a2a_package(&toolPackage) {
+                self.registerAsyncTool(toolName, Box::new(crate::tools::a2a::A2AToolExecutor::A2AToolExecutor::new(context.clone())));
+            } else if isMcpPackage {
                 self.registerAsyncTool(
                     toolName,
                     Box::new(MCPToolExecutor::new(MCPManager::getInstance(

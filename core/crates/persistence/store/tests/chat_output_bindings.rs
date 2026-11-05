@@ -102,6 +102,16 @@ fn output_bindings_survive_branches_promotion_deletion_and_workspace_changes() {
         .unwrap();
     assert_eq!(first.parts[0].attributes["file_base_path"], base);
     assert_eq!(first.parts[0].attributes["file_node_id"], "output-source");
+
+    // Terminal assistant commits receive fresh stream parts, without the saved attributes.
+    let terminal = ChatMessage::new_with_markdown_timestamp(
+        "ai".into(), "![](operit_art.jpg)".into(), first.timestamp,
+    );
+    manager.commitAssistantMessageSegment(parent.id.clone(), terminal, None).unwrap();
+    let committed = manager.loadChatMessageVariant(&parent.id, first.timestamp, 0).unwrap();
+    assert_eq!(committed.parts[0].attributes["file_base_path"], base);
+    assert_eq!(committed.parts[0].attributes["file_node_id"], "output-source");
+
     let branch = manager
         .commitChatDraft(
             draft(&manager, "branch", time + 259_200_000, None),

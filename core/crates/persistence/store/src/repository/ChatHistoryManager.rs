@@ -818,17 +818,8 @@ impl ChatHistoryManager {
         Ok(())
     }
 
-    /// Persists message metadata, revision parts, chat ordering, and sync state atomically.
-    fn persistMessageLocked(
-        &self,
-        chatId: &str,
-        mut messageToPersist: ChatMessage,
-    ) -> ChatHistoryManagerResult<ChatMessage> {
-        if messageToPersist.selectedVariantIndex < 0 {
-            return Err(ChatHistoryManagerError::IllegalArgument(
-                "Variant index must be nonnegative".to_string(),
-            ));
-        }
+    /// Keeps relative references bound to their saved message revision in every write path.
+    fn bindMessageFileContext(&self, chatId: &str, messageToPersist: &mut ChatMessage) -> ChatHistoryManagerResult<()> {
         let timestamp = messageToPersist.timestamp;
         let variantIndex = messageToPersist.selectedVariantIndex;
         let oldParts = self.database.messagePartDao().getPartsForMessage(chatId, timestamp, variantIndex)?;
@@ -843,6 +834,23 @@ impl ChatHistoryManager {
                 if let Some(node) = &node { part.attributes.entry("file_node_id".into()).or_insert_with(|| node.clone()); }
             }
         }
+        Ok(())
+    }
+
+    /// Persists message metadata, revision parts, chat ordering, and sync state atomically.
+    fn persistMessageLocked(
+        &self,
+        chatId: &str,
+        mut messageToPersist: ChatMessage,
+    ) -> ChatHistoryManagerResult<ChatMessage> {
+        if messageToPersist.selectedVariantIndex < 0 {
+            return Err(ChatHistoryManagerError::IllegalArgument(
+                "Variant index must be nonnegative".to_string(),
+            ));
+        }
+        let timestamp = messageToPersist.timestamp;
+        let variantIndex = messageToPersist.selectedVariantIndex;
+        self.bindMessageFileContext(chatId, &mut messageToPersist)?;
         let updatedAt = currentTimeMillis();
         self.syncStore.mutateMessage(chatId, timestamp, |transaction| {
             let existing = transaction.queryOne(
@@ -1123,7 +1131,7 @@ impl ChatHistoryManager {
     pub fn commitAssistantMessageSegment(
         &self,
         chatId: String,
-        message: ChatMessage,
+        mut message: ChatMessage,
         chatMetrics: Option<(i64, i64, i64)>,
     ) -> ChatHistoryManagerResult<crate::SyncOperationStore::SyncClock> {
         if message.sender != "ai" {
@@ -1154,6 +1162,7 @@ impl ChatHistoryManager {
             chat.outputTokens = outputTokens;
             chat.currentWindowSize = currentWindowSize;
         }
+        self.bindMessageFileContext(&chatId, &mut message)?;
         let timestamp = message.timestamp;
         let parts = message.parts.clone();
         let messageEntity = MessageEntity::fromChatMessage(

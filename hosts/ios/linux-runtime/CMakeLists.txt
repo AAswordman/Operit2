@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OperitArm64Runtime VERSION 0.1.0 LANGUAGES C CXX)
+project(OperitArm64Runtime VERSION 0.1.0 LANGUAGES C CXX ASM)
 
 option(OPERIT_ARM64_LTO "Optimize Release builds across interpreter module boundaries" ON)
 # XCFramework packaging requires native Mach-O objects, not LLVM bitcode archives.
@@ -26,6 +26,8 @@ add_library(operit_arm64 STATIC
     src/cpu/aarch64/fixed_conversion.cpp
     src/cpu/aarch64/floating_point.cpp
     src/cpu/aarch64/interpreter.cpp
+    src/cpu/aarch64/gadgets.cpp
+    src/cpu/aarch64/gadgets.S
     src/cpu/aarch64/simd.cpp
     src/cpu/aarch64/vector_arithmetic.cpp
     src/cpu/aarch64/vector_floating.cpp
@@ -188,6 +190,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         add_test(NAME arm64-worker-profile-validation
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_worker_profile.py")
         set_tests_properties(arm64-worker-profile-validation PROPERTIES TIMEOUT 10)
+        add_runtime_test(operit-arm64-gadget-tests tests/gadgets.cpp arm64-gadgets)
         add_runtime_test(operit-arm64-filesystem-tests tests/filesystem.cpp arm64-filesystem)
         add_runtime_test(operit-arm64-vfs-tests tests/virtual_filesystem.cpp arm64-virtual-filesystem)
         add_runtime_test(operit-arm64-inotify-tests tests/inotify.cpp arm64-inotify)

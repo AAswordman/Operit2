@@ -50,10 +50,12 @@ bool Machine::run_parallel(uint64_t &budget) {
     // serial until the parallel executor can stop individual jobs at a trap.
     if (execution_threads_ < 2 || budget < 8192 || !ptrace_->empty())
         return false;
-    stop_accounting();
+    if (scheduler_.sole_ordinary_task())
+        return false;
     const auto selected = scheduler_.runnable_batch(execution_threads_, 2);
     if (selected.size() < 2)
         return false;
+    stop_accounting();
     for (const auto [tid, cpu] : selected) {
         (void)cpu;
         const auto &task = scheduler_.find(tid);
@@ -208,6 +210,7 @@ bool Machine::run_parallel(uint64_t &budget) {
         }
         if (work.execution.trap == Trap::Syscall) {
             begin_accounting(process.pid);
+            accounting_syscall_ = true;
             if (!dispatch_guest_syscall(task, process, false)) {
                 stop_accounting();
                 continue;

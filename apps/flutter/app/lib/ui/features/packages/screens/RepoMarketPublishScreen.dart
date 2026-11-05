@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -76,6 +78,17 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
     final context = widget.publishContext;
     if (context == null) {
       _formatVerController.text = '${widget.type}_v2';
+      if (widget.type == 'a2a') {
+        _installConfigController.text = const JsonEncoder.withIndent('  ')
+            .convert({
+              'a2aAgents': {
+                'my_agent': {
+                  'url': 'https://example.com',
+                  'headers': <String, String>{},
+                },
+              },
+            });
+      }
     } else {
       _seedFromEntry(context.entry);
     }
@@ -521,6 +534,7 @@ String _typeLabel(String type) {
   return switch (type) {
     'skill' => 'Skill',
     'mcp' => 'MCP',
+    'a2a' => 'A2A',
     final value => value,
   };
 }

@@ -134,6 +134,14 @@ class Scheduler {
 
   public:
     FutexAddress futex_address(const Memory &memory, uint64_t address, bool private_futex = false);
+    bool sole_ordinary_task() const noexcept {
+        if (tasks_.size() != 1)
+            return false;
+        const auto &task = tasks_.begin()->second;
+        return task.tid == current_ && task.state == Task::State::Runnable && !task.stopped &&
+               !task.ptrace_stopped && !task.ptrace_exit_pending && !task.ptrace_syscall &&
+               task.sched_policy == Task::SchedulingPolicy::Other;
+    }
     bool exited() const {
         return exited_;
     }
