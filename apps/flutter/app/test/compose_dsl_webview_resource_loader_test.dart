@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:html/parser.dart' as html_parser;
 import 'package:webview_all/webview_all.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebViewResourceLoader.dart';
 
@@ -24,6 +25,106 @@ void main() {
 
   Future<Uri> map(ComposeDslWebViewResourceLoader loader, String url) =>
       loader.localUriFor(url, isMainFrame: true);
+
+  for (final scheme in ['https', 'operit-vfs']) {
+    test('$scheme inline voice bubble loads WAV through native VFS', () async {
+      const audioPath =
+          '/storage/emulated/0/Download/voice_bar_voices/测试 & 1.wav';
+      final wav = List<int>.generate(48, (i) => i);
+      final loader = create(
+        scheme: scheme,
+        dispatch: (request) async {
+          final uri = Uri.parse(request['url'] as String);
+          expect(uri.toFilePath(), audioPath);
+          return {
+            'action': 'respond',
+            'response': {'filePath': audioPath, 'mimeType': 'audio/wav'},
+          };
+        },
+        read: (path) async {
+          expect(path, audioPath);
+          return wav;
+        },
+      );
+      final document = await loader.prepareHtml(
+        '<!doctype html><html><head></head><body>'
+        '<audio id="a" preload="metadata" src="file://$audioPath"></audio>'
+        '<script>document.getElementById("a").play();</script>'
+        '<img src="https://example.com/image.png"></body></html>',
+        baseUrl: 'file:///android_asset/',
+      );
+      final encodedAudio = html_parser
+          .parse(document.html)
+          .querySelector('audio')!
+          .attributes['src']!;
+      expect(encodedAudio, startsWith('$scheme://'));
+      expect(
+        loader.originalUrlFor(encodedAudio),
+        Uri.file(audioPath).toString(),
+      );
+      expect(document.html, contains('document.getElementById("a").play();'));
+      expect(document.html, contains('src="https://example.com/image.png"'));
+      expect(
+        loader.originalUrlFor(document.baseUrl!),
+        'file:///android_asset/',
+      );
+      final response = await loader.handleRequest(
+        WebViewLocalResourceRequest(url: encodedAudio),
+      );
+      expect(response.statusCode, 200);
+      expect(response.mimeType, 'audio/wav');
+      expect(response.body, wav);
+      expect(response.headers['Content-Length'], '48');
+      for (final range in {
+        'bytes=0-1': [0, 1],
+        'bytes=20-': wav.sublist(20),
+        'bytes=-3': wav.sublist(45),
+      }.entries) {
+        final part = await loader.handleRequest(
+          WebViewLocalResourceRequest(
+            url: encodedAudio,
+            headers: {'Range': range.key},
+          ),
+        );
+        expect(part.statusCode, 206);
+        expect(part.headers['Accept-Ranges'], 'bytes');
+        expect(part.body, range.value);
+      }
+      final head = await loader.handleRequest(
+        WebViewLocalResourceRequest(url: encodedAudio, method: 'HEAD'),
+      );
+      expect(head.body, isEmpty);
+      expect(head.headers['Content-Length'], '48');
+      final invalid = await loader.handleRequest(
+        WebViewLocalResourceRequest(
+          url: encodedAudio,
+          headers: {'Range': 'bytes=48-'},
+        ),
+      );
+      expect(invalid.statusCode, 416);
+      expect(invalid.headers['Content-Range'], 'bytes */48');
+    });
+  }
+
+  test(
+    'inline source attributes resolve local bases without changing script strings',
+    () async {
+      final loader = create();
+      final result = await loader.prepareHtml(
+        '<base href="../media/"><audio><source src="voice.wav"></audio>'
+        '<img src="/operitapp/image.png"><script>var path="file:///unchanged";</script>',
+        baseUrl: 'file:///operitapp/ui/index.html',
+      );
+      expect(result.html, contains('var path="file:///unchanged";'));
+      final source = RegExp(
+        r'<source src="([^"]+)"',
+      ).firstMatch(result.html)!.group(1)!;
+      expect(
+        loader.originalUrlFor(source),
+        'file:///operitapp/media/voice.wav',
+      );
+    },
+  );
 
   test(
     'image file responses sniff magic bytes for imported .image paths',

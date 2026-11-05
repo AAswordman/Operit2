@@ -44,6 +44,7 @@ dependencies:
   flutter_math_fork:
     path: ../thirdparty/flutter_math_fork
   flutter_svg: ^2.3.0
+  html: ^0.15.6
   http: ^1.2.2
   web_socket_channel: ^3.0.3
   web: ^1.1.1

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:html/parser.dart' as html_parser;
 import 'package:mime/mime.dart';
 import 'package:webview_all/webview_all.dart';
 
@@ -66,6 +67,59 @@ class ComposeDslWebViewResourceLoader {
       host: host,
       port: scheme == 'https' ? 443 : 0,
     );
+  }
+
+  /// Inline documents need the same native resource origin as file navigations.
+  static bool hasLocalHtmlResources(String html, String? baseUrl) =>
+      Uri.tryParse(baseUrl ?? '')?.scheme == 'file' ||
+      RegExp(r'file://', caseSensitive: false).hasMatch(html);
+
+  /// Maps resource attributes before the browser starts preloading audio/images.
+  /// Scripts and ordinary network URLs retain their original contents.
+  Future<({String html, String? baseUrl})> prepareHtml(
+    String html, {
+    String? baseUrl,
+  }) async {
+    final document = html_parser.parse(html);
+    var originalBase = Uri.tryParse(baseUrl ?? '');
+    final baseElement = document.querySelector('base[href]');
+    if (baseElement != null) {
+      originalBase = (originalBase ?? Uri()).resolve(
+        baseElement.attributes['href']!,
+      );
+    }
+    for (final element in document.querySelectorAll(
+      '[src], [href], [poster], [data]',
+    )) {
+      for (final attribute in const ['src', 'href', 'poster', 'data']) {
+        final value = element.attributes[attribute];
+        if (value == null || value.isEmpty || value.startsWith('#')) continue;
+        if (element == baseElement && attribute == 'href') {
+          if (originalBase?.scheme == 'file') {
+            element.attributes[attribute] = (await localUriFor(
+              originalBase.toString(),
+              isMainFrame: false,
+            )).toString();
+          }
+          continue;
+        }
+        final uri = (originalBase ?? Uri()).resolve(value);
+        if (uri.scheme != 'file') continue;
+        element.attributes[attribute] = (await localUriFor(
+          uri.toString(),
+          isMainFrame: false,
+        )).toString();
+      }
+    }
+    final base = Uri.tryParse(baseUrl ?? '');
+    // A local origin avoids the opaque data: origin used by inline HTML.
+    final mappedBase = base == null || !base.hasScheme || base.scheme == 'file'
+        ? (await localUriFor(
+            base?.scheme == 'file' ? base.toString() : 'file:///',
+            isMainFrame: true,
+          )).toString()
+        : baseUrl;
+    return (html: document.outerHtml, baseUrl: mappedBase);
   }
 
   bool ownsUrl(String url) {
@@ -165,7 +219,7 @@ class ComposeDslWebViewResourceLoader {
           depth + 1,
         );
       case 'respond':
-        return _response(decision['response']);
+        return _response(decision['response'], request);
       default:
         return _proxy(request, uri);
     }
@@ -184,7 +238,10 @@ class ComposeDslWebViewResourceLoader {
     }
   }
 
-  Future<WebViewLocalResourceResponse> _response(Object? raw) async {
+  Future<WebViewLocalResourceResponse> _response(
+    Object? raw,
+    WebViewLocalResourceRequest request,
+  ) async {
     final value = _map(raw);
     final status = int.tryParse('${value['statusCode']}') ?? 200;
     if (status < 100 || status > 599 || (status >= 300 && status < 400)) {
@@ -213,10 +270,56 @@ class ComposeDslWebViewResourceLoader {
     } else {
       bytes = encoding.encode(value['text']?.toString() ?? '');
     }
+    var responseBytes = bytes;
+    var responseStatus = status;
+    var reasonPhrase = _reason(value['reasonPhrase'], status);
+    if (filePath.isNotEmpty && status == 200) {
+      headers['Accept-Ranges'] = 'bytes';
+      final range = request.headers.entries
+          .where((entry) => entry.key.toLowerCase() == 'range')
+          .firstOrNull
+          ?.value;
+      final match = range == null
+          ? null
+          : RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range);
+      if (request.method == 'GET' &&
+          match != null &&
+          (match[1]!.isNotEmpty || match[2]!.isNotEmpty)) {
+        final suffix = match[1]!.isEmpty;
+        final start = suffix
+            ? (bytes.length - (int.tryParse(match[2]!) ?? bytes.length)).clamp(
+                0,
+                bytes.length,
+              )
+            : (int.tryParse(match[1]!) ?? bytes.length);
+        final end = bytes.isEmpty
+            ? -1
+            : suffix || match[2]!.isEmpty
+            ? bytes.length - 1
+            : (int.tryParse(match[2]!) ?? bytes.length).clamp(
+                0,
+                bytes.length - 1,
+              );
+        if (start >= bytes.length || end < start) {
+          responseStatus = 416;
+          reasonPhrase = 'Range Not Satisfiable';
+          headers['Content-Range'] = 'bytes */${bytes.length}';
+          responseBytes = const [];
+        } else {
+          responseStatus = 206;
+          reasonPhrase = 'Partial Content';
+          headers['Content-Range'] = 'bytes $start-$end/${bytes.length}';
+          responseBytes = bytes.sublist(start, end + 1);
+        }
+      }
+      headers['Content-Length'] = '${responseBytes.length}';
+    }
     return WebViewLocalResourceResponse(
-      body: Uint8List.fromList(bytes),
-      statusCode: status,
-      reasonPhrase: _reason(value['reasonPhrase'], status),
+      body: Uint8List.fromList(
+        request.method == 'HEAD' ? const [] : responseBytes,
+      ),
+      statusCode: responseStatus,
+      reasonPhrase: reasonPhrase,
       mimeType:
           declaredMime ??
           (filePath.isEmpty

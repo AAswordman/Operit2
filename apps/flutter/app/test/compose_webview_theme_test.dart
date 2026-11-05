@@ -1,8 +1,11 @@
-import 'package:operit2/core/compose/compose_program_buffer.dart' as compose_buffer;
+import 'package:operit2/core/compose/compose_program_buffer.dart'
+    as compose_buffer;
 import 'dart:async';
 import 'dart:convert';
+import 'package:html/parser.dart' as html_parser;
 
 import 'package:flutter/material.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webview_all/webview_all.dart';
@@ -17,11 +20,102 @@ import 'support/compose_program_fixture.dart';
 /// Verifies native preference, theme, and platform-view visibility behavior.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(ClientLogger.initialize);
 
   test('Linux registers into the shared browser interface', () {
     LinuxWebViewPlatform.registerWith();
     expect(WebViewPlatform.instance, isA<LinuxWebViewPlatform>());
   });
+
+  testWidgets(
+    'voice bubble inline and controller HTML use owner VFS audio resources',
+    (tester) async {
+      final platform = _ThemeTestPlatform();
+      WebViewPlatform.instance = platform;
+      const themeChannel = MethodChannel('operit/webview_theme');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        themeChannel,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          themeChannel,
+          null,
+        ),
+      );
+      final reads = <String>[];
+      final host = ComposeDslWebViewHostContext(
+        packageName: 'com.operit.voice_bar',
+        routeInstanceId: 'voice',
+        executionContextKey: 'voice-session',
+        dispatchAction: (id, [payload]) async => null,
+        runtimeOptionsProvider: () => {},
+        readFileBytes: (path) async {
+          reads.add(path);
+          return Uint8List.fromList([82, 73, 70, 70]);
+        },
+      );
+      const audioPath =
+          '/storage/emulated/0/Download/voice_bar_voices/测试%20.wav';
+      final html = '<audio id="a" src="${Uri.file(audioPath)}"></audio>';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ComposeDslWebView(
+            props: {
+              'html': html,
+              'baseUrl': 'file:///android_asset/',
+              'controller': {
+                '__composeWebViewController': true,
+                'key': 'voice-player',
+              },
+            },
+            onAction: (id, [payload]) async => null,
+            hostContext: host,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(platform.controller.resourceHandler, isNotNull);
+      Future<void> checkAudio() async {
+        final source = html_parser
+            .parse(platform.controller.html!)
+            .querySelector('audio')!
+            .attributes['src']!;
+        expect(source, startsWith('https://'));
+        expect(platform.controller.htmlBaseUrl, endsWith('/android_asset/'));
+        final response = await platform.controller.resourceHandler!(
+          WebViewLocalResourceRequest(
+            url: source,
+            headers: {'Range': 'bytes=0-1'},
+          ),
+        );
+        expect(response.statusCode, 206);
+        expect(response.mimeType, 'audio/x-wav');
+        expect(response.body, [82, 73]);
+        expect(reads.last, audioPath);
+      }
+
+      await checkAudio();
+      final result = jsonDecode(
+        await ComposeDslWebViewHostRegistry.handleControllerCommand(
+          jsonEncode({
+            'executionContextKey': 'voice-session',
+            'key': 'voice-player',
+            'command': 'loadHtml',
+            'payload': {
+              'html': html,
+              'options': {'baseUrl': 'file:///android_asset/'},
+            },
+          }),
+        ),
+      );
+      expect(result['success'], true);
+      await checkAudio();
+      expect(reads.length, 2);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets(
     'applies theme before navigation and changes it without reloading',
@@ -474,6 +568,8 @@ class _ThemeTestController extends PlatformWebViewController {
   Future<void> channelRegistration = Future<void>.value();
   Future<void> scriptRegistration = Future<void>.value();
   WebViewLocalResourceHandler? resourceHandler;
+  String? html;
+  String? htmlBaseUrl;
 
   /// Exposes the shared resource-handler contract without creating a native browser.
   @override
@@ -495,7 +591,10 @@ class _ThemeTestController extends PlatformWebViewController {
 
   /// Accepts the blank page used during disposal.
   @override
-  Future<void> loadHtmlString(String html, {String? baseUrl}) async {}
+  Future<void> loadHtmlString(String html, {String? baseUrl}) async {
+    this.html = html;
+    htmlBaseUrl = baseUrl;
+  }
 
   /// Emulates native registration before the first page is permitted to load.
   @override
