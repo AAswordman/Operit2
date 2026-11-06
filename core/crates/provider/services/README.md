@@ -30,6 +30,8 @@ conversation orchestration, store access, and tool integration.
 
 - `src/chat/llmprovider/AIService.rs`: provider request, result, stream, and
   service contracts.
+- `src/chat/llmprovider/ThinkingDialect.rs`: writes a model's thinking level into
+  the request fields each provider API reads.
 - `src/runtime_support.rs`: provider-side contract implemented by
   `operit-runtime`.
 - `src/chat`: built-in chat providers and conversation orchestration.
@@ -58,6 +60,12 @@ HTTP clients or introduce platform-specific branches.
 
 Private functions use Rust `snake_case`; the existing public `ModelListFetcher`
 entry point remains unchanged.
+
+Discovery returns only what the provider's own list says. A field the catalog row
+declares no JSON path for stays `None`. The runtime then recognizes each model
+against the models.dev catalog for its pricing, context and capabilities, and
+keeps the listed metadata for models the catalog does not know; see
+`docs/model-catalog.md`.
 
 ## OpenAI-Compatible Model Discovery Paths
 

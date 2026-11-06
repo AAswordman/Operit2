@@ -20,6 +20,7 @@ use crate::chat::enhance::ConversationService::{
 };
 use crate::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
     ensure_response_completed, response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
     TokenCounts,
@@ -315,6 +316,7 @@ pub struct SendMessageOptions {
     pub workspaceFolders: Vec<String>,
     pub functionType: FunctionType,
     pub promptFunctionType: PromptFunctionType,
+    /// Lets the model think at the level set on it; `false` asks it not to think.
     pub enableThinking: bool,
     pub onNonFatalError: Option<fn(String)>,
     pub onTokenLimitExceeded: Option<fn()>,
@@ -1884,14 +1886,11 @@ impl EnhancedAIService {
                 .send_message(SendMessageRequest {
                     chat_history: requestHistory.clone(),
                     model_parameters: modelParameters.clone(),
-                    enable_thinking: enableThinking,
-                    thinking_quality_level: self
-                        .provider_runtime_context
-                        .support()
-                        .thinkingQualityLevel()
-                        .map_err(AiServiceError::RequestFailed)?,
-                    thinking_configurations: runtime.modelConfig.thinkingConfigurations.clone(),
-                    thinking_option_id: runtime.modelConfig.thinkingOptionId.clone(),
+                    thinking: RequestThinking::for_model(
+                        &runtime.modelConfig.thinking,
+                        runtime.modelConfig.thinkingLevel,
+                        enableThinking,
+                    ),
                     stream,
                     available_tools: availableTools.clone(),
                     preserve_think_in_history: false,
@@ -2479,14 +2478,11 @@ impl EnhancedAIService {
                 .send_message(SendMessageRequest {
                     chat_history: currentChatHistory,
                     model_parameters: modelParameters,
-                    enable_thinking: enableThinking,
-                    thinking_quality_level: self
-                        .provider_runtime_context
-                        .support()
-                        .thinkingQualityLevel()
-                        .map_err(AiServiceError::RequestFailed)?,
-                    thinking_configurations: runtime.modelConfig.thinkingConfigurations.clone(),
-                    thinking_option_id: runtime.modelConfig.thinkingOptionId.clone(),
+                    thinking: RequestThinking::for_model(
+                        &runtime.modelConfig.thinking,
+                        runtime.modelConfig.thinkingLevel,
+                        enableThinking,
+                    ),
                     stream,
                     available_tools: availableTools.clone(),
                     preserve_think_in_history: false,
@@ -3875,8 +3871,8 @@ mod model_identity_tests {
             builtinTools: Vec::new(),
             request: Default::default(),
             parameters: Vec::new(),
-            thinkingConfigurations: "[]".into(),
-            thinkingOptionId: String::new(),
+            thinking: Default::default(),
+            thinkingLevel: None,
             summary: Default::default(),
             localRuntime: Default::default(),
         }

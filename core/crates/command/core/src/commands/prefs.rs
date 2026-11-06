@@ -17,31 +17,6 @@ pub fn run_prefs_command(
     let preferences = ApiPreferences::getInstance();
     match args[0].as_str() {
         "show" => print_api_preferences(&preferences, output),
-        "thinking" => {
-            let enabled = parse_on_off_arg(args.get(1), "usage: operit2 prefs thinking <on|off>")?;
-            preferences
-                .saveEnableThinkingMode(enabled)
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("Thinking mode: {}", on_off(enabled)));
-            output.setJsonStdout(serde_json::json!({
-                "enableThinkingMode": enabled,
-                "updated": true,
-            }));
-            Ok(())
-        }
-        "thinking-quality" => {
-            let level = parse_i32_arg(args.get(1), "usage: operit2 prefs thinking-quality <1-4>")?;
-            preferences
-                .saveThinkingQualityLevel(level)
-                .map_err(|error| error.to_string())?;
-            let clampedLevel = level.clamp(1, 4);
-            output.push_stdout_line(format!("Thinking quality: {clampedLevel}"));
-            output.setJsonStdout(serde_json::json!({
-                "thinkingQualityLevel": clampedLevel,
-                "updated": true,
-            }));
-            Ok(())
-        }
         "stream" => {
             let enabled = parse_on_off_arg(args.get(1), "usage: operit2 prefs stream <on|off>")?;
             preferences
@@ -103,14 +78,6 @@ fn print_api_preferences(
     preferences: &ApiPreferences,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let enableThinkingMode = preferences
-        .enableThinkingModeFlow()
-        .first()
-        .map_err(|error| error.to_string())?;
-    let thinkingQualityLevel = preferences
-        .thinkingQualityLevelFlow()
-        .first()
-        .map_err(|error| error.to_string())?;
     let disableStreamOutput = preferences
         .disableStreamOutputFlow()
         .first()
@@ -128,15 +95,11 @@ fn print_api_preferences(
         .first()
         .map_err(|error| error.to_string())?;
     let streamOutputEnabled = !disableStreamOutput;
-    output.push_stdout_line(format!("Thinking mode: {}", on_off(enableThinkingMode)));
-    output.push_stdout_line(format!("Thinking quality: {thinkingQualityLevel}"));
     output.push_stdout_line(format!("Stream output: {}", on_off(streamOutputEnabled)));
     output.push_stdout_line(format!("Image history turns: {maxImageHistoryUserTurns}"));
     output.push_stdout_line(format!("Media history turns: {maxMediaHistoryUserTurns}"));
     output.push_stdout_line(format!("MCP startup timeout: {mcpStartupTimeoutSeconds}s"));
     output.setJsonStdout(serde_json::json!({
-        "enableThinkingMode": enableThinkingMode,
-        "thinkingQualityLevel": thinkingQualityLevel,
         "streamOutput": on_off(streamOutputEnabled),
         "streamOutputEnabled": streamOutputEnabled,
         "maxImageHistoryUserTurns": maxImageHistoryUserTurns,
@@ -159,8 +122,6 @@ fn on_off(enabled: bool) -> &'static str {
 fn print_prefs_usage(output: &mut CoreCommandOutput) {
     let lines = vec![
         "operit2 prefs show",
-        "operit2 prefs thinking <on|off>",
-        "operit2 prefs thinking-quality <1-4>",
         "operit2 prefs stream <on|off>",
         "operit2 prefs media-history <image-user-turns> <media-user-turns>",
         "operit2 prefs mcp-timeout <seconds>",

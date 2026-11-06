@@ -10,7 +10,6 @@ use crate::chat::llmprovider::ClaudeProvider::ClaudeProvider;
 use crate::chat::llmprovider::GeminiProvider::GeminiProvider;
 use crate::chat::llmprovider::OpenAIProvider::OpenAIProvider;
 use crate::chat::llmprovider::OpenAIResponsesProvider::OpenAIResponsesProvider;
-use crate::chat::llmprovider::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::{ApiProviderType, ModelBuiltinTool};
 use operit_model::OpenAIModels::ModelOption;
@@ -408,16 +407,8 @@ impl AIService for OpenCodeProvider {
     /// Sends a request through the selected OpenCode protocol.
     async fn send_message(
         &mut self,
-        mut request: SendMessageRequest,
+        request: SendMessageRequest,
     ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        let settings = ThinkingConfigurationApplier::describe(
-            "OPENCODE",
-            &self.model_name,
-            &self.base_endpoint,
-            &request.thinking_configurations,
-        )
-        .map_err(AiServiceError::RequestFailed)?;
-        request.enable_thinking = request.enable_thinking || settings.required;
         delegate_provider_method!(self, send_message, request).await
     }
 

@@ -243,10 +243,6 @@ struct Operit1ModelConfig {
     repetitionPenalty: f32,
     #[serde(default = "defaultCustomParameters")]
     customParameters: String,
-    #[serde(default)]
-    thinkingConfigurations: String,
-    #[serde(default)]
-    thinkingOptionId: String,
     #[serde(default = "defaultCustomHeaders")]
     customHeaders: String,
     #[serde(default = "defaultMaxContextLength")]
@@ -445,16 +441,17 @@ fn buildModelProfile(modelId: &str, config: &Operit1ModelConfig) -> Result<Model
     model.contextOverride = Some(ModelContextSpec {
         maxContextLength: config.maxContextLength,
     });
-    model.capabilitiesOverride = Some(ModelCapabilities {
-        directImage: config.enableDirectImageProcessing,
-        directAudio: config.enableDirectAudioProcessing,
-        directVideo: config.enableDirectVideoProcessing,
-        toolCall: config.enableToolCall,
-    });
-    model.requestOverride = Some(ModelRequestSpec {
-        supportsStructuredTools: config.enableToolCall,
-        enableClaude1hPromptCache: config.enableClaude1hPromptCache,
-    });
+    // Operit1 stored these as the user's settings, so they stay the user's here.
+    model.capabilitiesOverride = ModelCapabilityOverrides {
+        directImage: Some(config.enableDirectImageProcessing),
+        directAudio: Some(config.enableDirectAudioProcessing),
+        directVideo: Some(config.enableDirectVideoProcessing),
+        toolCall: Some(config.enableToolCall),
+    };
+    model.requestOverride = ModelRequestOverrides {
+        supportsStructuredTools: Some(config.enableToolCall),
+        enableClaude1hPromptCache: Some(config.enableClaude1hPromptCache),
+    };
     model.summary = ModelSummarySettings {
         enableSummary: config.enableSummary,
         summaryTokenThreshold: config.summaryTokenThreshold,

@@ -1803,8 +1803,12 @@ class _LocalChatInferenceDialogState extends State<_LocalChatInferenceDialog> {
 
   Future<void> _load() async {
     try {
+      // Without a local-models provider nothing is saved yet: the fields keep
+      // their initial values until the user first uses the model for chat.
+      final providerId = await _localProviderId();
+      if (providerId == null) return;
       final model = await widget.clients.preferencesModelConfigManager
-          .getModelProfile(providerId: 'LOCAL_MODEL', modelId: _binding);
+          .getModelProfile(providerId: providerId, modelId: _binding);
       if (!mounted) return;
       _saved = model.localRuntime;
       _threads.text =
@@ -1820,6 +1824,20 @@ class _LocalChatInferenceDialogState extends State<_LocalChatInferenceDialog> {
 
   String get _binding =>
       '${widget.status.manifest.id}@${widget.status.manifest.version}';
+
+  /// Returns the provider that lists installed local models, `null` when the
+  /// user has not added one.
+  Future<String?> _localProviderId() async {
+    final providers = await widget.clients.preferencesModelConfigManager
+        .getProviderProfiles();
+    for (final provider in providers) {
+      if (provider.providerTypeId == 'LOCAL_MODEL') {
+        return provider.id;
+      }
+    }
+    return null;
+  }
+
   bool get _isMnn =>
       widget.status.manifest.engine == core_proxy.LocalEngineKind.mnn;
 
@@ -1887,10 +1905,25 @@ class _LocalChatInferenceDialogState extends State<_LocalChatInferenceDialog> {
     });
     try {
       final settings = _settings();
-      final profile = await widget.clients.preferencesModelConfigManager
-          .getModelProfile(providerId: 'LOCAL_MODEL', modelId: _binding);
-      await widget.clients.preferencesModelConfigManager.updateModelProfile(
-        providerId: 'LOCAL_MODEL',
+      final manager = widget.clients.preferencesModelConfigManager;
+      final providerName = AppLocalizations.of(
+        context,
+      )!.settingsModelProviderTypeLocalModel;
+      // Using a local model for chat is the user asking for the provider that
+      // lists them, so one is added when there is none yet.
+      final providerId =
+          await _localProviderId() ??
+          await manager.createProvider(
+            name: providerName,
+            providerTypeId: 'LOCAL_MODEL',
+            endpoint: '',
+          );
+      final profile = await manager.getModelProfile(
+        providerId: providerId,
+        modelId: _binding,
+      );
+      await manager.updateModelProfile(
+        providerId: providerId,
         model: core_proxy.ModelProfile.fromJson(<String, Object?>{
           ...profile.toJson(),
           'localRuntime': settings.toJson(),
@@ -1902,7 +1935,7 @@ class _LocalChatInferenceDialogState extends State<_LocalChatInferenceDialog> {
       await widget.clients.preferencesFunctionalConfigManager
           .setModelForFunction(
             functionType: core_proxy.FunctionType.chat,
-            providerId: 'LOCAL_MODEL',
+            providerId: providerId,
             modelId: _binding,
           );
       if (!mounted) return;

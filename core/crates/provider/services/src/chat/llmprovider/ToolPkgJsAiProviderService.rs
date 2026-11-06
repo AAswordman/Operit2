@@ -254,7 +254,7 @@ impl AIService for ToolPkgJsAiProviderService {
             );
             object.insert(
                 "enableThinking".to_string(),
-                Value::Bool(request.enable_thinking),
+                Value::Bool(request.thinking.is_on()),
             );
             object.insert("stream".to_string(), Value::Bool(request.stream));
             object.insert(

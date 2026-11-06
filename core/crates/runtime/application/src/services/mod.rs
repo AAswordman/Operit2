@@ -83,4 +83,7 @@ pub mod WorkActivityService;
 #[path = "LocalLlmService.rs"]
 pub(crate) mod LocalLlmService;
 
+#[path = "ModelCatalogService.rs"]
+pub(crate) mod ModelCatalogService;
+
 mod chat_input_stream;

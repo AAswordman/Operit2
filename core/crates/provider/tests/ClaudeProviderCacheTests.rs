@@ -250,8 +250,8 @@ fn factory_forwards_one_hour_setting_for_official_and_generic_claude() {
                 enableClaude1hPromptCache: true,
             },
             parameters: Vec::new(),
-            thinkingConfigurations: "[]".into(),
-            thinkingOptionId: String::new(),
+            thinking: Default::default(),
+            thinkingLevel: None,
             summary: Default::default(),
             localRuntime: Default::default(),
         };

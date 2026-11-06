@@ -1,6 +1,8 @@
 //! Ports the shared Responses image-output case from DeepseekProviderMediaRoleTest.kt.
 
 use super::OpenAIResponsesProvider;
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
+use operit_model::ModelThinking::ModelThinkingSpec;
 use crate::chat::llmprovider::ProviderMediaTestSupport::{
     test_runtime_context, tool_image_request, TestImage, IMAGE_DATA_URL,
 };
@@ -73,7 +75,13 @@ fn shared_responses_history_images_and_encrypted_reasoning_are_preserved() {
             format!("assistant text{}\n{metadata}", image.link()),
         ),
     ]);
-    request.enable_thinking = true;
+    request.thinking = RequestThinking {
+        spec: ModelThinkingSpec {
+            supported: true,
+            ..ModelThinkingSpec::default()
+        },
+        level: None,
+    };
     let provider = OpenAIResponsesProvider::new(
         "https://example.test/v1/responses".to_string(),
         "test-key".to_string(),

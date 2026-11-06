@@ -413,9 +413,10 @@ class _Bridge extends OperitRuntimeBridge {
     'id': 'tiny@v1',
     'pricingOverride': null,
     'contextOverride': null,
-    'capabilitiesOverride': null,
+    'capabilitiesOverride': <String, Object?>{},
     'builtinToolsOverride': null,
-    'requestOverride': null,
+    'requestOverride': <String, Object?>{},
+    'listed': null,
     'parameters': <Object?>[],
     'summary': const core.ModelSummarySettings(
       enableSummary: true,
@@ -462,6 +463,25 @@ class _Bridge extends OperitRuntimeBridge {
         ).toJson();
       case 'getInstallStatuses':
         result = installStatuses.map((status) => status.toJson()).toList();
+      case 'getProviderProfiles':
+        result = [
+          <String, Object?>{
+            'id': 'LOCAL_MODEL',
+            'name': 'Local Models',
+            'providerTypeId': 'LOCAL_MODEL',
+            'providerType': 'LOCAL_MODEL',
+            'endpoint': '',
+            'apiKey': '',
+            'useMultipleApiKeys': false,
+            'apiKeyPool': <Object?>[],
+            'currentKeyIndex': 0,
+            'keyRotationMode': 'ROUND_ROBIN',
+            'customHeaders': '{}',
+            'requestLimitPerMinute': 0,
+            'maxConcurrentRequests': 0,
+            'models': [profile],
+          },
+        ];
       case 'getModelProfile':
         result = profile;
       case 'runChatInference':

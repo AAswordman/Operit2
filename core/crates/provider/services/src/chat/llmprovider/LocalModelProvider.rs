@@ -2,6 +2,7 @@ use super::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
 };
 use super::OpenAIProvider::OpenAIProvider;
+use super::ThinkingDialect::ThinkingDialect;
 use crate::runtime_support::ProviderRuntimeContext;
 use async_trait::async_trait;
 use operit_model::ModelConfigData::LocalModelRuntimeSettings;
@@ -67,7 +68,7 @@ impl AIService for LocalChatAIProvider {
             .serializer
             .create_request_body_without_thinking(&request)?;
         body["stream"] = false.into();
-        body["enable_thinking"] = request.enable_thinking.into();
+        ThinkingDialect::LocalRuntime.apply(&mut body, &request.thinking)?;
         if let Some(maximum) = body.get("max_completion_tokens").cloned() {
             body["max_tokens"] = maximum;
         }

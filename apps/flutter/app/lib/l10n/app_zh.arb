@@ -511,8 +511,6 @@
   "settingsModelNoModels": "暂无模型",
   "settingsModelProviderModelCount": "{count} 个模型",
   "settingsModelSetCurrentActive": "设为当前",
-  "settingsChatThinkingMode": "思考模式",
-  "settingsChatThinkingModeDescription": "让支持的模型输出更稳的推理过程。",
   "settingsChatStreamOutput": "流式输出",
   "settingsChatStreamOutputDescription": "回复生成时逐步显示内容。",
   "settingsModelProfilesSection": "模型档案",
@@ -850,6 +848,36 @@
   "settingsModelAvailableSourceFetched": "已拉取",
   "settingsModelAvailableSourceHistory": "历史",
   "settingsModelAvailableEmptyFetched": "没有拉取到的模型。可选择「包含历史」查看目录中的模型 ID。",
+  "settingsModelUnrecognized": "未识别",
+  "settingsModelCatalogUpdatedAt": "能力和上下文信息来自 models.dev，{time} 更新",
+  "@settingsModelCatalogUpdatedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogUpdateFailed": "模型信息下载失败：{error}",
+  "@settingsModelCatalogUpdateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogUpdateFailedUsing": "模型信息更新失败，暂用 {time} 的信息：{error}",
+  "@settingsModelCatalogUpdateFailedUsing": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogNotDownloaded": "模型信息还没有下载",
+  "settingsModelCatalogRetry": "重试",
   "settingsModelCustomModel": "自定义模型",
   "settingsModelModelId": "模型 ID",
   "settingsModelDuplicateModelId": "该模型已添加到当前供应商。",
@@ -873,7 +901,7 @@
   "settingsModelContextLength": "上下文长度",
   "settingsModelMaxContextLength": "最大上下文长度",
   "settingsModelMaxContextLengthInvalid": "请输入大于 0 的最大上下文长度",
-  "settingsModelSummaryThreshold": "总结 Token 阈值",
+  "settingsModelSummaryThreshold": "总结阈值",
   "settingsModelSummaryByMessageCount": "按消息数总结",
   "settingsModelSummaryMessageCount": "总结消息数阈值",
   "settingsModelCustomHeaders": "自定义 Headers",
@@ -888,18 +916,62 @@
   "settingsModelDirectVideoDescription": "支持视频能力的模型可直接接收视频。",
   "settingsModelGoogleSearch": "Google 搜索",
   "settingsModelGoogleSearchDescription": "启用供应商侧搜索能力。",
-  "settingsModelContext": "上下文窗口",
+  "settingsModelContext": "上下文",
   "settingsModelSummary": "自动总结",
   "settingsModelThinking": "思考",
-  "settingsModelThinkingOption": "思考档位",
-  "settingsModelThinkingRules": "思考规则 JSON",
+  "thinkingLevelLabel": "思考程度",
+  "thinkingAlwaysOn": "始终思考",
+  "thinkingChip": "思考",
+  "settingsModelThinkingSourceDeclared": "档位按你的描述",
+  "settingsModelThinkingSourceLocalRuntime": "本地运行：可以开关思考，模型本身不会思考时开关不起作用",
+  "settingsModelThinkingUnknown": "目录里没有这个模型的思考信息",
+  "settingsModelThinkingNotAdjustable": "当前接口不能调节这个模型的思考",
+  "settingsModelThinkingNotSupported": "这个模型不会思考",
+  "settingsModelThinkingCarried": "沿用你最近一次设置的档位",
+  "settingsModelThinkingDescribe": "手动描述",
+  "settingsModelThinkingUseCatalog": "改回目录描述",
+  "settingsModelThinkingDescribeTitle": "这个模型怎么思考",
+  "settingsModelThinkingKindNone": "不会思考",
+  "settingsModelThinkingKindAlways": "总是思考，不能调节",
+  "settingsModelThinkingKindSwitch": "只能开关",
+  "settingsModelThinkingKindLevels": "分档位",
+  "settingsModelThinkingKindBudget": "按 token 预算",
+  "settingsModelThinkingCanTurnOff": "可以关闭思考",
+  "settingsModelThinkingBudgetMin": "最少 token",
+  "settingsModelThinkingBudgetMax": "最多 token",
+  "settingsModelThinkingLevelsRequired": "至少选一个档位",
   "settingsModelMediaHistory": "媒体历史",
   "settingsModelCapabilities": "能力",
   "settingsModelBuiltinTools": "内置工具",
   "settingsModelBuiltinToolExclusive": "开启后会关闭外部工具调用",
-  "settingsModelConnectionTestSection": "连接测试",
   "settingsModelRunConnectionTest": "测试当前模型",
-  "settingsModelTestModel": "测试模型",
+  "settingsModelTestModel": "测试",
+  "settingsModelCapabilityToolCall": "工具调用",
+  "settingsModelCapabilityImage": "图片",
+  "settingsModelCapabilityAudio": "音频",
+  "settingsModelCapabilityVideo": "视频",
+  "settingsModelClaudeCache": "Claude 1 小时缓存",
+  "settingsModelClaudeCacheDescription": "为显式缓存断点设置 1 小时 TTL；关闭时使用默认 TTL。",
+  "settingsModelSummaryThresholdDescription": "上下文占用达到这个比例时自动总结，填 0 关闭。",
+  "settingsModelMoreActions": "更多操作",
+  "settingsModelRestoreDefaults": "恢复默认值",
+  "settingsModelDescribeThinking": "手动描述思考档位",
+  "settingsModelDeleteModel": "删除模型",
+  "settingsModelSaveFailed": "保存失败：{error}",
+  "settingsModelTestAll": "测试全部",
+  "settingsModelTestProgress": "测试中 {done}/{total}",
+  "settingsModelTestSummary": "{passed} 个通过，{failed} 个失败",
+  "settingsModelTestAllPassed": "{count} 个全部通过",
+  "settingsModelTestCouldNotRun": "测试没能运行",
+  "settingsModelCopyError": "复制错误信息",
+  "settingsModelSelect": "多选",
+  "settingsModelCheckAll": "全选",
+  "settingsModelCheckedCount": "已选 {count} 个",
+  "settingsModelDeleteModelsTitle": "删除 {count} 个模型？",
+  "settingsModelDeleteModelsMessage": "这些模型的设置会一起删除。",
+  "settingsModelDeleteModelsKept": "{count} 个正在被功能使用，会保留：{names}",
+  "settingsModelDeleteModelsBlocked": "所选模型正在被这些功能使用，请先更改功能模型分配：{functions}",
+  "settingsModelDeletedCount": "已删除 {count} 个模型",
   "settingsModelTestingConnection": "正在测试当前模型连接…",
   "settingsModelTestedModel": "测试模型",
   "settingsModelConnectionTestPassed": "全部通过",

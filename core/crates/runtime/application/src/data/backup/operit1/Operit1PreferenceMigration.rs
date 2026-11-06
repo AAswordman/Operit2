@@ -231,6 +231,9 @@ fn isOperit1UnadoptedPreferenceKey(key: &str) -> bool {
             | "enable_memory_auto_update"
             | "memory_settings"
             | "shared_memory_store_list"
+            // Thinking is set per model now; the global switch and quality level have no target.
+            | "enable_thinking_mode"
+            | "thinking_quality_level"
     ) || ["character_card_", "character_group_", "prompt_tag_", "memory_space_", "shared_memory_store_"]
         .iter()
         .any(|prefix| key.starts_with(prefix))
