@@ -2096,6 +2096,9 @@ mod tests {
     }
         /// Rejects unexpected application service access in execution pipeline tests.
     fn bundledExternalSkillAssets(&self) -> &'static [RuntimeBundledExternalSkillAsset] { panic!("Unexpected runtime service: bundledExternalSkillAssets") }
+
+    /// Rejects runtime package asset access in the tool handler's isolated service stub.
+    fn bundledExternalSkillPackageAssets(&self) -> &'static [crate::runtime_support::RuntimeBundledExternalSkillPackageAsset] { panic!("Unexpected runtime service: bundledExternalSkillPackageAssets") }
         /// Rejects unexpected application service access in execution pipeline tests.
     fn isSkillVisibleToAi(&self, skillName: &str) -> bool { panic!("Unexpected runtime service: isSkillVisibleToAi") }
         /// Rejects unexpected application service access in execution pipeline tests.

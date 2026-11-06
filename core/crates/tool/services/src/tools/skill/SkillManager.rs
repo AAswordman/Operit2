@@ -344,6 +344,18 @@ impl SkillManager {
                 .writeFileBytes(&hostPath(&outputFile), asset.bytes)
                 .map_err(|error| format!("Failed to write bundled skill asset: {}", error))?;
         }
+        for asset in runtimeSupport
+            .bundledExternalSkillPackageAssets()
+            .iter()
+            .filter(|asset| asset.skillName == skillName)
+        {
+            let normalizedPath = normalizeAssetRelativePath(asset.path)?;
+            let outputFile = skillRoot.join(normalizedPath);
+            let bytes = asset.readBytes()?;
+            self.fileSystemHost
+                .writeFileBytes(&hostPath(&outputFile), &bytes)
+                .map_err(|error| format!("Failed to write bundled skill package asset: {}", error))?;
+        }
 
         let skills = self.getAvailableSkills();
         let Some(skill) = skills.get(skillName) else {

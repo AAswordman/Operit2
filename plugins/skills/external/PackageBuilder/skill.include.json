@@ -19,6 +19,7 @@
     {
       "source": "../../../packages/buildin",
       "target": "examples/packages/buildin",
+      "packageExamples": true,
       "excludeNames": [
         ".sync_state.json",
         ".sync_hot_reload_state.json",
@@ -31,6 +32,7 @@
     {
       "source": "../../../packages/external",
       "target": "examples/packages/external",
+      "packageExamples": true,
       "excludeNames": [
         ".sync_state.json",
         ".sync_hot_reload_state.json",
