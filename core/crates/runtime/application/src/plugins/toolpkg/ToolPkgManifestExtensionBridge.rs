@@ -9,7 +9,9 @@ use operit_util::GithubReleaseUtil::GithubReleaseUtil;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 use serde_json::{Map, Value};
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    ToolPkgBridgeRuntime, TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
+};
 
 static MANIFEST_EXTENSION_HANDLERS: OnceLock<Mutex<Vec<ToolPkgManifestExtensionRegistration>>> =
     OnceLock::new();
@@ -137,7 +139,7 @@ fn dispatchManifestExtension(
                     operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
                 match manager
-                    .runToolPkgMainHook(
+                    .runToolPkgMainHookWithTimeoutMillis(
                         &handler.containerPackageName,
                         &handler.functionName,
                         "toolpkg_manifest_extension",
@@ -148,6 +150,7 @@ fn dispatchManifestExtension(
                         None,
                         None,
                         None,
+                        TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                     )
                     .await
                 {

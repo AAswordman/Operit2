@@ -5,7 +5,9 @@ use operit_host_api::{
 };
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    ToolPkgBridgeRuntime, TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
+};
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_HOST_EVENT;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::ToolPkgHostEventRegistration;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
@@ -103,7 +105,7 @@ impl ToolPkgHostEventHookBridge {
                             "payload": eventPayload,
                         });
                         match manager
-                            .runToolPkgMainHook(
+                            .runToolPkgMainHookWithTimeoutMillis(
                                 &hook.containerPackageName,
                                 &hook.functionName,
                                 TOOLPKG_EVENT_HOST_EVENT,
@@ -114,6 +116,7 @@ impl ToolPkgHostEventHookBridge {
                                 None,
                                 None,
                                 None,
+                                TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                             )
                             .await
                         {

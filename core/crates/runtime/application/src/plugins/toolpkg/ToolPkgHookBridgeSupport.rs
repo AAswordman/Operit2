@@ -2,6 +2,18 @@ use operit_host_api::HostManager::HostManager;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 
+/// Execution budget for ToolPkg hooks dispatched through the shared notification queue.
+///
+/// Every ToolPkg notification is awaited sequentially, so one stalled hook delays unrelated
+/// work: a stalled message hook blocks the next send, a stalled chat view hook blocks the
+/// chat screen, and a stalled interval hook blocks the provider call queued behind it.
+/// Bounding the budget keeps one misbehaving container from stalling the application for the
+/// interactive default of one minute while still leaving room for real hook work.
+///
+/// These are background notifications, so they are not governed by the user facing
+/// `ToolPkgPreHookTimeout` preference that bounds the hooks running before a send.
+pub const TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS: u64 = 10_000;
+
 /// Holds the ToolPkg execution dependencies owned by one runtime instance.
 #[derive(Clone)]
 pub struct ToolPkgBridgeRuntime {

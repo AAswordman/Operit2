@@ -37,6 +37,21 @@ struct ToolPkgProviderTokenCounts {
     output: i64,
 }
 
+/// Classifies one ToolPkg provider hook failure.
+///
+/// A timeout means the shared ToolPkg execution path was still busy with another hook,
+/// not that the endpoint rejected the request, so the turn retries the attempt instead of
+/// aborting and dropping the reply. The predicate mirrors
+/// `ToolPkgPreHookTimeout::isTimeoutError` so both hook paths classify the same wording;
+/// the runtime module cannot be reused here because the provider layer sits below it.
+fn providerHookError(message: String) -> AiServiceError {
+    if message.to_ascii_lowercase().contains("timed out") {
+        AiServiceError::ConnectionFailed(message)
+    } else {
+        AiServiceError::RequestFailed(message)
+    }
+}
+
 impl ToolPkgJsAiProviderService {
     /// Creates a ToolPkg-backed provider bound to one provider runtime context.
     pub fn new(
@@ -95,7 +110,7 @@ impl ToolPkgJsAiProviderService {
                 onIntermediateResult,
             )
             .await
-            .map_err(AiServiceError::RequestFailed)?;
+            .map_err(providerHookError)?;
         self.runtimeContext
             .support()
             .decodeToolPkgHookResult(raw)
@@ -602,5 +617,47 @@ fn nonBlankOr(value: &str, text: &str) -> String {
         text.to_string()
     } else {
         value.to_string()
+    }
+}
+
+#[cfg(test)]
+mod provider_hook_error_tests {
+    use super::providerHookError;
+    use crate::chat::llmprovider::AIService::AiServiceError;
+
+    /// Starvation on the shared ToolPkg path must stay retryable.
+    #[test]
+    fn script_timeout_is_retryable() {
+        let error = providerHookError(
+            "Script execution timed out after 19989 milliseconds".to_string(),
+        );
+        assert_eq!(
+            error,
+            AiServiceError::ConnectionFailed(
+                "Script execution timed out after 19989 milliseconds".to_string()
+            ),
+        );
+    }
+
+    /// A wording the JavaScript executor does not use today must still retry.
+    #[test]
+    fn any_timeout_wording_is_retryable() {
+        let error = providerHookError("provider hook TIMED OUT after 5 seconds".to_string());
+        assert_eq!(
+            error,
+            AiServiceError::ConnectionFailed(
+                "provider hook TIMED OUT after 5 seconds".to_string()
+            ),
+        );
+    }
+
+    /// A rejected request must not be retried as a transport failure.
+    #[test]
+    fn ordinary_failure_stays_request_failed() {
+        let error = providerHookError("provider rejected model: unknown model".to_string());
+        assert_eq!(
+            error,
+            AiServiceError::RequestFailed("provider rejected model: unknown model".to_string()),
+        );
     }
 }
