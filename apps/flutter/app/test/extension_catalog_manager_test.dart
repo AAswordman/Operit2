@@ -155,12 +155,16 @@ void main() {
               'id': id,
               'type': 'package',
               'title': id,
-              'createdAt': DateTime.now().toUtc().toIso8601String(),
+              'updatedAt': '2026-11-05T12:00:00Z',
               'downloads': downloads,
             });
         bridge.marketPages[('updated', 1)] = [entry('first', 1)];
         bridge.marketPages[('updated', 2)] = [entry('second', 10)];
         bridge.marketPages[('updated', 3)] = [entry('third', 1000)];
+        bridge.marketPages[('downloads', 1)] = [
+          entry('old-downloads', 1000000),
+        ];
+        bridge.marketPages[('likes', 1)] = [entry('old-likes', 1000000)];
         if (failExtraPage) bridge.failedMarketPage = 2;
         await tester.pumpWidget(_manager(bridge));
         await tester.pumpAndSettle();
@@ -178,6 +182,12 @@ void main() {
               .entry
               .id,
           'third',
+        );
+        expect(
+          tester
+              .widgetList<StoreFeaturedBanner>(find.byType(StoreFeaturedBanner))
+              .map((banner) => banner.entry.id),
+          isNot(contains(startsWith('old-'))),
         );
         expect(find.text('推荐 · 插件'), findsWidgets);
         expect(find.text('市场暂时无法连接'), findsNothing);

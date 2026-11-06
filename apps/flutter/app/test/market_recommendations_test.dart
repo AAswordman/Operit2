@@ -18,7 +18,8 @@ MarketEntrySummary _entry(
   'type': type,
   'createdAt':
       createdAt ?? _now.subtract(Duration(days: days)).toIso8601String(),
-  'updatedAt': updatedAt ?? _now.toIso8601String(),
+  'updatedAt':
+      updatedAt ?? _now.subtract(Duration(days: days)).toIso8601String(),
   'downloads': downloads,
   'reactions': [
     {'reaction': '+1', 'total': likes},
@@ -26,36 +27,61 @@ MarketEntrySummary _entry(
 });
 
 void main() {
-  test('recent well-received entries can outrank old cumulative leaders', () {
-    final recent = _entry('recent', downloads: 100, likes: 10);
+  test('new releases outrank historical leaders regardless of feedback', () {
+    final recent = _entry('recent');
     final old = _entry('old', days: 365, downloads: 1000000, likes: 1000);
     expect(marketRecommendations([old, recent], now: _now), [recent, old]);
-    final liked = _entry('liked', downloads: 100, likes: 20);
-    expect(marketRecommendations([recent, liked], now: _now).first, liked);
   });
 
-  test('every fourth slot can expose a new entry with no feedback yet', () {
-    final entries = [
-      for (var i = 0; i < 12; i++)
-        _entry('established-$i', days: 30, downloads: 100000, likes: 1000),
-      for (var i = 0; i < 3; i++) _entry('new-$i'),
-    ];
-    final result = marketRecommendations(entries, now: _now);
-    expect(result.length, 12);
+  test('recent updates can bring established entries back into banners', () {
+    final updated = _entry(
+      'updated',
+      days: 365,
+      updatedAt: _now.toIso8601String(),
+    );
+    final fresh = _entry('new');
+    expect(marketRecommendations([fresh, updated], now: _now), [
+      updated,
+      fresh,
+    ]);
+  });
+
+  test('feedback weighs batch approvals without exact timestamp ties', () {
+    final recent = _entry('recent', downloads: 100, likes: 10);
+    final liked = _entry(
+      'liked',
+      downloads: 100,
+      likes: 20,
+      updatedAt: _now
+          .subtract(const Duration(days: 1, minutes: 2))
+          .toIso8601String(),
+    );
+    expect(marketRecommendations([recent, liked], now: _now), [liked, recent]);
+    final entries = [for (var i = 0; i < 15; i++) _entry('entry-$i', days: i)];
     expect(
-      [result[3].id, result[7].id, result[11].id],
-      ['new-0', 'new-1', 'new-2'],
+      marketRecommendations(entries, now: _now),
+      entries.take(12).toList(),
     );
   });
 
-  test('editing an old entry does not reset its publication age', () {
-    final edited = _entry('edited', days: 365);
-    final fresh = _entry('new');
-    expect(marketRecommendations([edited, fresh], now: _now), [fresh, edited]);
-    final unknownAge = _entry('unknown', createdAt: '');
-    expect(marketRecommendations([unknownAge, fresh], now: _now), [
+  test('feedback can outweigh a small age gap but not a stale update', () {
+    final fresh = _entry('fresh', days: 0);
+    final popularUpdate = _entry(
+      'popular-update',
+      days: 2,
+      downloads: 1000000,
+      likes: 1000,
+    );
+    final stale = _entry(
+      'stale',
+      days: 7,
+      downloads: 1000000000,
+      likes: 1000000,
+    );
+    expect(marketRecommendations([fresh, stale, popularUpdate], now: _now), [
+      popularUpdate,
       fresh,
-      unknownAge,
+      stale,
     ]);
   });
 

@@ -123,11 +123,7 @@ class _MarketPaneState extends State<MarketPane> {
       ]);
       if (!mounted || generation != _homeGeneration) return;
       final recent = results[0] as core_proxy.MarketListPage;
-      final candidates = <core_proxy.MarketEntrySummary>[
-        ...recent.items,
-        ...(results[1] as core_proxy.MarketListPage).items,
-        ...(results[2] as core_proxy.MarketListPage).items,
-      ];
+      final candidates = recent.items;
       setState(() {
         _recent = recent.items;
         _popular = (results[1] as core_proxy.MarketListPage).items;
