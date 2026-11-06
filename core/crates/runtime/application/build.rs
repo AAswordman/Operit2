@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -30,6 +30,25 @@ struct SkillIncludeEntry {
     target: String,
     #[serde(default)]
     exclude_names: Vec<String>,
+    #[serde(default)]
+    package_examples: bool,
+}
+
+/// Identifies one already embedded runtime package by its generated asset index.
+#[derive(Clone)]
+struct SkillPackageReference {
+    collection: &'static str,
+    index: usize,
+    archive: PathBuf,
+    member: String,
+}
+
+/// Keeps source-only skill files separate from files owned by a runtime package.
+struct SkillAsset {
+    skill_name: String,
+    source: PathBuf,
+    target: String,
+    package: Option<SkillPackageReference>,
 }
 
 fn main() {
@@ -103,7 +122,7 @@ fn main() {
     fs::write(generated, code).expect("write builtin plugin asset list");
 
     generate_workspace_template_assets(&manifest_dir, &out_dir);
-    generate_bundled_external_skill_assets(&manifest_dir, &out_dir);
+    generate_bundled_external_skill_assets(&manifest_dir, &out_dir, &assets, &external_assets);
 }
 
 /// Embeds each immutable package fingerprint alongside its exact compiled bytes.
@@ -370,12 +389,18 @@ fn generate_workspace_template_assets(manifest_dir: &Path, out_dir: &Path) {
     fs::write(generated, code).expect("write workspace template asset list");
 }
 
-fn generate_bundled_external_skill_assets(manifest_dir: &Path, out_dir: &Path) {
+/// Generates inline skill sources and references to existing packaged example files.
+fn generate_bundled_external_skill_assets(
+    manifest_dir: &Path,
+    out_dir: &Path,
+    builtin_assets: &[BuildinAsset],
+    external_assets: &[BuildinAsset],
+) {
     let plugins_dir = pluginsSourceRoot(manifest_dir);
     let source_dir = plugins_dir.join("skills").join("external");
     println!("cargo:rerun-if-changed={}", source_dir.display());
 
-    let mut assets = Vec::<(String, PathBuf, String)>::new();
+    let mut assets = Vec::<SkillAsset>::new();
     if source_dir.is_dir() {
         let mut skill_dirs = fs::read_dir(&source_dir)
             .expect("read plugins/skills/external")
@@ -395,9 +420,16 @@ fn generate_bundled_external_skill_assets(manifest_dir: &Path, out_dir: &Path) {
             collect_skill_source_files(&skill_dir, &skill_dir, &mut files);
             files.sort_by_key(|(_, relative)| relative.clone());
             for (path, relative) in files {
-                assets.push((skill_name.clone(), path, relative.replace('\\', "/")));
+                assets.push(SkillAsset {
+                    skill_name: skill_name.clone(),
+                    source: path,
+                    target: relative.replace('\\', "/"),
+                    package: None,
+                });
             }
-            collect_skill_includes(&plugins_dir, &skill_dir, &skill_name, &mut assets);
+            collect_skill_includes(
+                &plugins_dir, &skill_dir, &skill_name, builtin_assets, external_assets, &mut assets,
+            );
         }
     }
 
@@ -410,13 +442,29 @@ fn generate_bundled_external_skill_assets(manifest_dir: &Path, out_dir: &Path) {
     code.push_str("    pub bytes: &'static [u8],\n");
     code.push_str("}\n\n");
     code.push_str("pub static BUNDLED_EXTERNAL_SKILL_ASSETS: &[BundledExternalSkillAsset] = &[\n");
-    for (skill_name, path, relative) in assets {
+    let mut destinations = BTreeSet::new();
+    for asset in &assets {
+        assert!(destinations.insert((&asset.skill_name, &asset.target)), "duplicate bundled skill destination: {}/{}", asset.skill_name, asset.target);
+    }
+    for asset in assets.iter().filter(|asset| asset.package.is_none()) {
         code.push_str(&format!(
             "    BundledExternalSkillAsset {{ skill_name: {:?}, path: {:?}, bytes: include_bytes!({:?}) }},\n",
-            skill_name,
-            relative,
-            path.to_string_lossy()
+            asset.skill_name,
+            asset.target,
+            asset.source.to_string_lossy()
         ));
+    }
+    code.push_str("];\n");
+    code.push_str("#[derive(Clone, Copy)]\npub enum BundledSkillPackage { Builtin(usize), External(usize) }\n");
+    code.push_str("pub struct BundledExternalSkillPackageAsset {\n    pub skill_name: &'static str,\n    pub path: &'static str,\n    pub package: BundledSkillPackage,\n    pub member: &'static str,\n}\n");
+    code.push_str("pub static BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS: &[BundledExternalSkillPackageAsset] = &[\n");
+    for asset in &assets {
+        if let Some(package) = &asset.package {
+            code.push_str(&format!(
+                "    BundledExternalSkillPackageAsset {{ skill_name: {:?}, path: {:?}, package: BundledSkillPackage::{}({}), member: {:?} }},\n",
+                asset.skill_name, asset.target, package.collection, package.index, package.member,
+            ));
+        }
     }
     code.push_str("];\n");
     fs::write(generated, code).expect("write bundled external skill asset list");
@@ -458,11 +506,14 @@ fn collect_skill_source_files(base: &Path, current: &Path, files: &mut Vec<(Path
     }
 }
 
+/// Collects declared skill inputs and reuses files from their owning package archives.
 fn collect_skill_includes(
     plugins_dir: &Path,
     skill_dir: &Path,
     skill_name: &str,
-    assets: &mut Vec<(String, PathBuf, String)>,
+    builtin_assets: &[BuildinAsset],
+    external_assets: &[BuildinAsset],
+    assets: &mut Vec<SkillAsset>,
 ) {
     let include_file = skill_dir.join(SKILL_INCLUDE_FILE);
     if !include_file.is_file() {
@@ -488,12 +539,25 @@ fn collect_skill_includes(
         );
         println!("cargo:rerun-if-changed={}", source.display());
         let target = normalize_asset_relative_path(&include.target);
+        let packages = if include.package_examples {
+            let (collection, packaged_assets) = if source == plugins_canonical.join("packages").join("buildin") {
+                ("Builtin", builtin_assets)
+            } else if source == plugins_canonical.join("packages").join("external") {
+                ("External", external_assets)
+            } else {
+                panic!("packageExamples must name a declared plugin package source root: {}", source.display());
+            };
+            collect_example_packages(&source, collection, packaged_assets)
+        } else {
+            BTreeMap::new()
+        };
         if source.is_file() {
-            assets.push((
-                skill_name.to_string(),
+            assets.push(SkillAsset {
+                skill_name: skill_name.to_string(),
                 source,
-                path_to_asset_string(&target),
-            ));
+                target: path_to_asset_string(&target),
+                package: None,
+            });
             continue;
         }
 
@@ -506,13 +570,65 @@ fn collect_skill_includes(
         collect_include_files(&source, &source, &include.exclude_names, &mut include_files);
         include_files.sort_by_key(|(_, relative)| relative.clone());
         for (path, relative) in include_files {
-            assets.push((
-                skill_name.to_string(),
-                path,
-                path_to_asset_string(&target.join(relative)),
-            ));
+            let package = package_example_reference(&path, &relative, &packages);
+            assets.push(SkillAsset {
+                skill_name: skill_name.to_string(),
+                source: path,
+                target: path_to_asset_string(&target.join(relative)),
+                package,
+            });
         }
     }
+}
+
+/// Resolves source package directories to the exact runtime archives already embedded.
+fn collect_example_packages(
+    source: &Path,
+    collection: &'static str,
+    assets: &[BuildinAsset],
+) -> BTreeMap<String, (SkillPackageReference, BTreeSet<String>)> {
+    let mut packages = BTreeMap::new();
+    for entry in fs::read_dir(source).expect("read package example source root") {
+        let path = entry.expect("read package example entry").path();
+        if !path.is_dir() || !has_manifest(&path) {
+            continue;
+        }
+        let name = path.file_name().expect("package directory name").to_string_lossy().to_string();
+        let archive_name = format!("{name}.toolpkg");
+        let (index, asset) = assets.iter().enumerate().find(|(_, asset)| asset.name == archive_name)
+            .unwrap_or_else(|| panic!("package example has no embedded archive: {}", path.display()));
+        let archive = zip::ZipArchive::new(fs::File::open(&asset.path).expect("open package example archive"))
+            .expect("read package example archive");
+        let members = archive.file_names().map(str::to_string).collect();
+        packages.insert(name, (SkillPackageReference {
+            collection, index, archive: asset.path.clone(), member: String::new(),
+        }, members));
+    }
+    packages
+}
+
+/// References an archive member only through its declared owning package and exact path.
+fn package_example_reference(
+    source: &Path,
+    relative: &str,
+    packages: &BTreeMap<String, (SkillPackageReference, BTreeSet<String>)>,
+) -> Option<SkillPackageReference> {
+    let relative = Path::new(relative);
+    let mut components = relative.components();
+    let owner = components.next().expect("example path must not be empty").as_os_str().to_string_lossy();
+    let (package, members) = packages.get(owner.as_ref())?;
+    let member = path_to_asset_string(components.as_path());
+    if !members.contains(&member) {
+        return None;
+    }
+    let mut archive = zip::ZipArchive::new(fs::File::open(&package.archive).expect("open referenced package"))
+        .expect("read referenced package");
+    let mut bytes = Vec::new();
+    archive.by_name(&member).expect("read declared package member").read_to_end(&mut bytes)
+        .expect("read packaged example bytes");
+    assert!(bytes == fs::read(source).expect("read example source bytes"),
+        "packaged example differs from its source: {}", source.display());
+    Some(SkillPackageReference { member, ..package.clone() })
 }
 
 fn collect_include_files(

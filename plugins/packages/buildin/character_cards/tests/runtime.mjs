@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const { buildSync } = require("esbuild");
 const ts = require("typescript");
 

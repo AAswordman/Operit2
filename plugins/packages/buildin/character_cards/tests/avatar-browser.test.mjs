@@ -7,7 +7,7 @@ import { createHtmlDocument } from "../scripts/build.mjs";
 import { fixture, installBrowserFixture } from "./fixtures.mjs";
 import { loadModule } from "./runtime.mjs";
 
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const browserType = require("playwright")[process.env.CHARACTER_CARDS_UI_BROWSER ?? "chromium"];
 let browser, server, origin, resources;
 const counts = new Map();

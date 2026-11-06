@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { architectureViolations } from "../tests/architecture.mjs";
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const root = fileURLToPath(new URL("../", import.meta.url));
 

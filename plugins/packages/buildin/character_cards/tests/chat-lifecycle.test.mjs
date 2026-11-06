@@ -114,7 +114,7 @@ test("lifecycle parser rejects invalid envelope fields and source provenance", (
 
 /** Bundles the actual callback and existing service export into one test runtime, preserving their true shared repository instance. */
 async function callbackEnvironment(t) {
-  const require = createRequire(new URL("../../workflow/package.json", import.meta.url)), { buildSync } = require("esbuild");
+  const require = createRequire(import.meta.url), { buildSync } = require("esbuild");
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), module = { exports: {} };
   const result = buildSync({ absWorkingDir: fileURLToPath(new URL("../", import.meta.url)), stdin: { contents: 'export { beforeChatCreate } from "./chat-lifecycle"; export { dispatchDomain } from "./service-runtime";', resolveDir: fileURLToPath(new URL("../src", import.meta.url)), sourcefile: "chat-lifecycle-callback-check.ts", loader: "ts" }, bundle: true, format: "cjs", platform: "neutral", target: "es2020", write: false });
   assert.equal(result.outputFiles.length, 1);
