@@ -288,9 +288,6 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     /// Returns the root directory used by provider runtime data.
     fn dataDir(&self) -> Result<PathBuf, String>;
 
-    /// Returns the current thinking quality level.
-    fn thinkingQualityLevel(&self) -> Result<i32, String>;
-
     /// Records provider/model token usage.
     fn updateTokensForProviderModel(
         &self,

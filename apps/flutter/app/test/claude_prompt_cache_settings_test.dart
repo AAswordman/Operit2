@@ -55,22 +55,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('test-model').last);
       await tester.pumpAndSettle();
-      final cacheChip = find.textContaining(RegExp(r'Claude (1小时缓存|1h cache)'));
+      final cacheChip = find.text(l10n.settingsModelClaudeCache);
       if (providerType == core.ApiProviderType.openai) {
         expect(cacheChip, findsNothing);
         return;
       }
       expect(cacheChip, findsOneWidget);
-      final save = find.widgetWithText(FilledButton, l10n.save);
-      // Saving unrelated settings must not introduce an extra request update.
-      await tester.ensureVisible(save);
-      await tester.tap(save);
-      await tester.pumpAndSettle();
+      // Opening the settings must not save a request update by itself.
       expect(bridge.requestSaves, 0);
+      // The switch saves as soon as it is tapped.
       await tester.ensureVisible(cacheChip);
       await tester.tap(cacheChip);
-      await tester.ensureVisible(save);
-      await tester.tap(save);
       await tester.pumpAndSettle();
       expect(bridge.requestSaves, 1);
       expect(bridge.requestSettings.enableClaude1HPromptCache, isTrue);
@@ -90,8 +85,6 @@ void main() {
       // Reloading the form must retain true; toggling now saves false.
       await tester.ensureVisible(cacheChip);
       await tester.tap(cacheChip);
-      await tester.ensureVisible(save);
-      await tester.tap(save);
       await tester.pumpAndSettle();
       expect(bridge.requestSaves, 2);
       expect(bridge.requestSettings.enableClaude1HPromptCache, isFalse);
@@ -148,9 +141,20 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
     id: binding.modelId,
     pricingOverride: null,
     contextOverride: contextSpec,
-    capabilitiesOverride: capabilities,
+    capabilitiesOverride: core.ModelCapabilityOverrides(
+      directImage: capabilities.directImage,
+      directAudio: capabilities.directAudio,
+      directVideo: capabilities.directVideo,
+      toolCall: capabilities.toolCall,
+    ),
     builtinToolsOverride: const [],
-    requestOverride: requestSettings,
+    requestOverride: core.ModelRequestOverrides(
+      supportsStructuredTools: requestSettings.supportsStructuredTools,
+      enableClaude1HPromptCache: requestSettings.enableClaude1HPromptCache,
+    ),
+    listed: null,
+    thinkingOverride: null,
+    thinkingLevel: null,
     parameters: const [],
     summary: summarySettings,
     localRuntime: localRuntime,
@@ -174,8 +178,6 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
     customHeaders: '{}',
     requestLimitPerMinute: 0,
     maxConcurrentRequests: 1,
-    thinkingConfigurations: '[]',
-    thinkingOptionId: '',
     models: [model],
   );
 
@@ -200,8 +202,13 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
     builtinTools: const [],
     request: requestSettings,
     parameters: const [],
-    thinkingConfigurations: '[]',
-    thinkingOptionId: '',
+    thinking: const core.ModelThinkingSpec(
+      supported: false,
+      toggle: false,
+      efforts: [],
+      budget: null,
+    ),
+    thinkingLevel: null,
     summary: summarySettings,
     localRuntime: localRuntime,
   );
@@ -223,11 +230,32 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
             endpoint: provider.endpoint,
             modelId: binding.modelId,
             capabilities: capabilities,
+            context: contextSpec,
             pricing: null,
+            thinking: const core.ModelThinkingSpec(
+              supported: false,
+              toggle: false,
+              efforts: [],
+              budget: null,
+            ),
           ).toJson(),
         ];
       case 'getResolvedModelConfig':
         result = config.toJson();
+      case 'getThinkingSettingsForModel':
+        result = const core.ModelThinkingSettings(
+          spec: core.ModelThinkingSpec(
+            supported: false,
+            toggle: false,
+            efforts: [],
+            budget: null,
+          ),
+          source: core.ThinkingSpecSource.unknown,
+          catalog: null,
+          levels: [],
+          current: null,
+          chosen: false,
+        ).toJson();
       case 'updateCapabilitiesForModel':
         capabilities = core.ModelCapabilities.fromJson(
           (request.args as Map)['capabilities'] as Map<String, Object?>,

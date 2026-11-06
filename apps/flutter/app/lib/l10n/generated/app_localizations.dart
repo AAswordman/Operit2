@@ -2120,18 +2120,6 @@ abstract class AppLocalizations {
   /// **'Set active'**
   String get settingsModelSetCurrentActive;
 
-  /// No description provided for @settingsChatThinkingMode.
-  ///
-  /// In en, this message translates to:
-  /// **'Thinking mode'**
-  String get settingsChatThinkingMode;
-
-  /// No description provided for @settingsChatThinkingModeDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Let supported models produce steadier reasoning.'**
-  String get settingsChatThinkingModeDescription;
-
   /// No description provided for @settingsChatStreamOutput.
   ///
   /// In en, this message translates to:
@@ -3302,6 +3290,42 @@ abstract class AppLocalizations {
   /// **'No fetched models. Choose Include history to see catalog IDs.'**
   String get settingsModelAvailableEmptyFetched;
 
+  /// No description provided for @settingsModelUnrecognized.
+  ///
+  /// In en, this message translates to:
+  /// **'Unrecognized'**
+  String get settingsModelUnrecognized;
+
+  /// No description provided for @settingsModelCatalogUpdatedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Capabilities and context from models.dev, updated {time}'**
+  String settingsModelCatalogUpdatedAt(String time);
+
+  /// No description provided for @settingsModelCatalogUpdateFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not download model details: {error}'**
+  String settingsModelCatalogUpdateFailed(String error);
+
+  /// No description provided for @settingsModelCatalogUpdateFailedUsing.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not update model details, using those from {time}: {error}'**
+  String settingsModelCatalogUpdateFailedUsing(String time, String error);
+
+  /// No description provided for @settingsModelCatalogNotDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Model details have not been downloaded yet'**
+  String get settingsModelCatalogNotDownloaded;
+
+  /// No description provided for @settingsModelCatalogRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get settingsModelCatalogRetry;
+
   /// No description provided for @settingsModelCustomModel.
   ///
   /// In en, this message translates to:
@@ -3443,7 +3467,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsModelSummaryThreshold.
   ///
   /// In en, this message translates to:
-  /// **'Summary token threshold'**
+  /// **'Summarize at'**
   String get settingsModelSummaryThreshold;
 
   /// No description provided for @settingsModelSummaryByMessageCount.
@@ -3533,7 +3557,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsModelContext.
   ///
   /// In en, this message translates to:
-  /// **'Context window'**
+  /// **'Context'**
   String get settingsModelContext;
 
   /// No description provided for @settingsModelSummary.
@@ -3548,17 +3572,131 @@ abstract class AppLocalizations {
   /// **'Thinking'**
   String get settingsModelThinking;
 
-  /// No description provided for @settingsModelThinkingOption.
+  /// No description provided for @thinkingLevelLabel.
   ///
   /// In en, this message translates to:
-  /// **'Thinking option'**
-  String get settingsModelThinkingOption;
+  /// **'Thinking'**
+  String get thinkingLevelLabel;
 
-  /// No description provided for @settingsModelThinkingRules.
+  /// No description provided for @thinkingAlwaysOn.
   ///
   /// In en, this message translates to:
-  /// **'Thinking rules JSON'**
-  String get settingsModelThinkingRules;
+  /// **'Always thinking'**
+  String get thinkingAlwaysOn;
+
+  /// No description provided for @thinkingChip.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking'**
+  String get thinkingChip;
+
+  /// No description provided for @settingsModelThinkingSourceDeclared.
+  ///
+  /// In en, this message translates to:
+  /// **'Levels from your description'**
+  String get settingsModelThinkingSourceDeclared;
+
+  /// No description provided for @settingsModelThinkingSourceLocalRuntime.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs locally: thinking switches on or off, and the switch does nothing for a model that cannot think'**
+  String get settingsModelThinkingSourceLocalRuntime;
+
+  /// No description provided for @settingsModelThinkingUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'The catalog has no thinking details for this model'**
+  String get settingsModelThinkingUnknown;
+
+  /// No description provided for @settingsModelThinkingNotAdjustable.
+  ///
+  /// In en, this message translates to:
+  /// **'This API cannot change how this model thinks'**
+  String get settingsModelThinkingNotAdjustable;
+
+  /// No description provided for @settingsModelThinkingNotSupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This model does not think'**
+  String get settingsModelThinkingNotSupported;
+
+  /// No description provided for @settingsModelThinkingCarried.
+  ///
+  /// In en, this message translates to:
+  /// **'Carried over from the level you set last'**
+  String get settingsModelThinkingCarried;
+
+  /// No description provided for @settingsModelThinkingDescribe.
+  ///
+  /// In en, this message translates to:
+  /// **'Describe'**
+  String get settingsModelThinkingDescribe;
+
+  /// No description provided for @settingsModelThinkingUseCatalog.
+  ///
+  /// In en, this message translates to:
+  /// **'Use catalog'**
+  String get settingsModelThinkingUseCatalog;
+
+  /// No description provided for @settingsModelThinkingDescribeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How this model thinks'**
+  String get settingsModelThinkingDescribeTitle;
+
+  /// No description provided for @settingsModelThinkingKindNone.
+  ///
+  /// In en, this message translates to:
+  /// **'Does not think'**
+  String get settingsModelThinkingKindNone;
+
+  /// No description provided for @settingsModelThinkingKindAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Always thinks, no control'**
+  String get settingsModelThinkingKindAlways;
+
+  /// No description provided for @settingsModelThinkingKindSwitch.
+  ///
+  /// In en, this message translates to:
+  /// **'On or off'**
+  String get settingsModelThinkingKindSwitch;
+
+  /// No description provided for @settingsModelThinkingKindLevels.
+  ///
+  /// In en, this message translates to:
+  /// **'Levels'**
+  String get settingsModelThinkingKindLevels;
+
+  /// No description provided for @settingsModelThinkingKindBudget.
+  ///
+  /// In en, this message translates to:
+  /// **'Token budget'**
+  String get settingsModelThinkingKindBudget;
+
+  /// No description provided for @settingsModelThinkingCanTurnOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Can be turned off'**
+  String get settingsModelThinkingCanTurnOff;
+
+  /// No description provided for @settingsModelThinkingBudgetMin.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimum tokens'**
+  String get settingsModelThinkingBudgetMin;
+
+  /// No description provided for @settingsModelThinkingBudgetMax.
+  ///
+  /// In en, this message translates to:
+  /// **'Maximum tokens'**
+  String get settingsModelThinkingBudgetMax;
+
+  /// No description provided for @settingsModelThinkingLevelsRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick at least one level'**
+  String get settingsModelThinkingLevelsRequired;
 
   /// No description provided for @settingsModelMediaHistory.
   ///
@@ -3584,12 +3722,6 @@ abstract class AppLocalizations {
   /// **'Turns off external tool calling when enabled'**
   String get settingsModelBuiltinToolExclusive;
 
-  /// No description provided for @settingsModelConnectionTestSection.
-  ///
-  /// In en, this message translates to:
-  /// **'Connection test'**
-  String get settingsModelConnectionTestSection;
-
   /// No description provided for @settingsModelRunConnectionTest.
   ///
   /// In en, this message translates to:
@@ -3599,8 +3731,164 @@ abstract class AppLocalizations {
   /// No description provided for @settingsModelTestModel.
   ///
   /// In en, this message translates to:
-  /// **'Test model'**
+  /// **'Test'**
   String get settingsModelTestModel;
+
+  /// No description provided for @settingsModelCapabilityToolCall.
+  ///
+  /// In en, this message translates to:
+  /// **'Tools'**
+  String get settingsModelCapabilityToolCall;
+
+  /// No description provided for @settingsModelCapabilityImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Image'**
+  String get settingsModelCapabilityImage;
+
+  /// No description provided for @settingsModelCapabilityAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio'**
+  String get settingsModelCapabilityAudio;
+
+  /// No description provided for @settingsModelCapabilityVideo.
+  ///
+  /// In en, this message translates to:
+  /// **'Video'**
+  String get settingsModelCapabilityVideo;
+
+  /// No description provided for @settingsModelClaudeCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Claude 1h cache'**
+  String get settingsModelClaudeCache;
+
+  /// No description provided for @settingsModelClaudeCacheDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Sets a 1-hour TTL on explicit cache breakpoints; when off, the default TTL applies.'**
+  String get settingsModelClaudeCacheDescription;
+
+  /// No description provided for @settingsModelSummaryThresholdDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Summarize when the context fills to this share. 0 turns summaries off.'**
+  String get settingsModelSummaryThresholdDescription;
+
+  /// No description provided for @settingsModelMoreActions.
+  ///
+  /// In en, this message translates to:
+  /// **'More actions'**
+  String get settingsModelMoreActions;
+
+  /// No description provided for @settingsModelRestoreDefaults.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore defaults'**
+  String get settingsModelRestoreDefaults;
+
+  /// No description provided for @settingsModelDescribeThinking.
+  ///
+  /// In en, this message translates to:
+  /// **'Describe thinking levels'**
+  String get settingsModelDescribeThinking;
+
+  /// No description provided for @settingsModelDeleteModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete model'**
+  String get settingsModelDeleteModel;
+
+  /// No description provided for @settingsModelSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save: {error}'**
+  String settingsModelSaveFailed(String error);
+
+  /// No description provided for @settingsModelTestAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Test all'**
+  String get settingsModelTestAll;
+
+  /// No description provided for @settingsModelTestProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Testing {done}/{total}'**
+  String settingsModelTestProgress(int done, int total);
+
+  /// No description provided for @settingsModelTestSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{passed} passed, {failed} failed'**
+  String settingsModelTestSummary(int passed, int failed);
+
+  /// No description provided for @settingsModelTestAllPassed.
+  ///
+  /// In en, this message translates to:
+  /// **'All {count} passed'**
+  String settingsModelTestAllPassed(int count);
+
+  /// No description provided for @settingsModelTestCouldNotRun.
+  ///
+  /// In en, this message translates to:
+  /// **'The test could not run'**
+  String get settingsModelTestCouldNotRun;
+
+  /// No description provided for @settingsModelCopyError.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy error'**
+  String get settingsModelCopyError;
+
+  /// No description provided for @settingsModelSelect.
+  ///
+  /// In en, this message translates to:
+  /// **'Select'**
+  String get settingsModelSelect;
+
+  /// No description provided for @settingsModelCheckAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get settingsModelCheckAll;
+
+  /// No description provided for @settingsModelCheckedCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} selected'**
+  String settingsModelCheckedCount(int count);
+
+  /// No description provided for @settingsModelDeleteModelsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {count} models?'**
+  String settingsModelDeleteModelsTitle(int count);
+
+  /// No description provided for @settingsModelDeleteModelsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Their settings are deleted with them.'**
+  String get settingsModelDeleteModelsMessage;
+
+  /// No description provided for @settingsModelDeleteModelsKept.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} in use by functions will be kept: {names}'**
+  String settingsModelDeleteModelsKept(int count, String names);
+
+  /// No description provided for @settingsModelDeleteModelsBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected models are used by these functions. Change the function model assignments first: {functions}'**
+  String settingsModelDeleteModelsBlocked(String functions);
+
+  /// No description provided for @settingsModelDeletedCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted {count} models'**
+  String settingsModelDeletedCount(int count);
 
   /// No description provided for @settingsModelTestingConnection.
   ///

@@ -581,7 +581,7 @@ mod tests {
                 .getResolvedModelConfig(&chat.providerId, &chat.modelId)
                 .unwrap();
             model_manager
-                .getThinkingSettingsForProvider(&chat.providerId, &chat.modelId)
+                .getThinkingSettingsForModel(&chat.providerId, &chat.modelId)
                 .unwrap();
             assert!(model_manager
                 .getProviderProfiles()

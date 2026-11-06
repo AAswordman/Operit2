@@ -9,7 +9,7 @@ use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
 use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
 use super::StreamingResponseLines::{decodeStreamingTail, takeNextStreamingLine};
-use super::ThinkingConfiguration::ThinkingConfigurationApplier;
+use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
     SendMessageRequest, TokenCounts,
@@ -256,16 +256,7 @@ impl GeminiProvider {
 
         root.insert("generationConfig".to_string(), Value::Object(Map::new()));
         let mut request_object = Value::Object(root);
-        ThinkingConfigurationApplier::apply(
-            &mut request_object,
-            &self.provider_type,
-            &self.model_name,
-            &self.api_endpoint,
-            request.enable_thinking,
-            request.thinking_quality_level,
-            &request.thinking_configurations,
-            &request.thinking_option_id,
-        )?;
+        ThinkingDialect::Gemini.apply(&mut request_object, &request.thinking)?;
         let root = request_object
             .as_object_mut()
             .expect("thinking request remains an object");

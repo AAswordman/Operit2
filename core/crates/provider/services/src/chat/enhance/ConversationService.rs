@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use crate::chat::config::FunctionalPrompts::FunctionalPrompts;
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
     collect_stream_chunks, AiServiceError, SendMessageRequest,
 };
@@ -526,10 +527,7 @@ impl ConversationService {
                 .send_message(SendMessageRequest {
                     chat_history: preparedHistory.clone(),
                     model_parameters: modelParameters,
-                    enable_thinking: false,
-                    thinking_quality_level: 1,
-                    thinking_configurations: "[]".to_string(),
-                    thinking_option_id: String::new(),
+                    thinking: RequestThinking::default(),
                     stream: true,
                     available_tools: Vec::new(),
                     preserve_think_in_history: false,
@@ -564,10 +562,7 @@ impl ConversationService {
                     .send_message(SendMessageRequest {
                         chat_history: nudgedHistory,
                         model_parameters: Vec::new(),
-                        enable_thinking: false,
-                        thinking_quality_level: 1,
-                        thinking_configurations: "[]".to_string(),
-                        thinking_option_id: String::new(),
+                        thinking: RequestThinking::default(),
                         stream: true,
                         available_tools: Vec::new(),
                         preserve_think_in_history: false,
@@ -689,10 +684,7 @@ impl ConversationService {
                 .send_message(SendMessageRequest {
                     chat_history: prepared_history,
                     model_parameters,
-                    enable_thinking: false,
-                    thinking_quality_level: 1,
-                    thinking_configurations: "[]".to_string(),
-                    thinking_option_id: String::new(),
+                    thinking: RequestThinking::default(),
                     stream: false,
                     available_tools: Vec::new(),
                     preserve_think_in_history: false,

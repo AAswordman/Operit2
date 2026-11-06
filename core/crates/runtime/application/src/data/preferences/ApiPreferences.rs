@@ -21,8 +21,6 @@ impl ApiPreferences {
     pub const DEFAULT_MODEL_NAME: &'static str = "deepseek-v4-flash";
     pub const DEFAULT_CONFIG_ID: &'static str = "default";
     pub const DEFAULT_CONFIG_NAME: &'static str = "model_config_default_name";
-    pub const DEFAULT_ENABLE_THINKING_MODE: bool = false;
-    pub const DEFAULT_THINKING_QUALITY_LEVEL: i32 = 2;
     pub const DEFAULT_FEATURE_TOGGLE_STATE: bool = false;
     pub const DEFAULT_ENABLE_TOOLS: bool = true;
     pub const DEFAULT_DISABLE_STREAM_OUTPUT: bool = false;
@@ -49,7 +47,7 @@ impl ApiPreferences {
     /// Opens this module's single preference owner using an explicit runtime storage host.
     pub(crate) fn store(storage: std::sync::Arc<dyn RuntimeStorageHost>) -> PreferencesDataStore {
         PreferencesDataStore::newWithStorage(storage, OperitPaths::API_PREFERENCES_PATH)
-            .withSchema(2, Self::migratePreferences)
+            .withMigration(3, Self::migration)
     }
 
     /// Reads the committed typed values for another owning runtime module.
@@ -62,8 +60,25 @@ impl ApiPreferences {
         let path = OperitPaths::runtimePathFromRoot(&root_dir, OperitPaths::API_PREFERENCES_PATH)
             .expect("API preferences path must use the runtime storage prefix");
         Self {
-            apiDataStore: PreferencesDataStore::new(path).withSchema(2, Self::migratePreferences),
+            apiDataStore: PreferencesDataStore::new(path).withMigration(3, Self::migration),
         }
+    }
+
+    /// Drops the keys a version retires, then converts the remaining values.
+    fn migration(
+        from: u32,
+        context: &mut operit_store::Transaction::migration::Context,
+    ) -> Result<(), PreferencesDataStoreError> {
+        if from == 2 {
+            // Thinking moved to a level set per model in the model configuration; the global
+            // switch and quality level are dropped. A synced store removes keys only by rule.
+            for key in ["enable_thinking_mode", "thinking_quality_level"] {
+                operit_store::Transaction::Rule::DropKey { key: key.into() }
+                    .apply(context)
+                    .map_err(PreferencesDataStoreError::Message)?;
+            }
+        }
+        context.map_preferences(from, &Self::migratePreferences)
     }
 
     /// Converts the API module's declared scalar and structured values at version one.
@@ -123,6 +138,8 @@ impl ApiPreferences {
                 }
                 Ok(())
             }
+            // The thinking keys are dropped by rule in `migration`.
+            2 => Ok(()),
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
     }
@@ -404,15 +421,6 @@ impl ApiPreferences {
         })
     }
 
-    /// Observes whether thinking mode is enabled.
-    pub fn enableThinkingModeFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().mapResult(|preferences| {
-            Ok(preferences
-                .getTyped::<bool>(&stringPreferencesKey("enable_thinking_mode"))?
-                .unwrap_or(Self::DEFAULT_ENABLE_THINKING_MODE))
-        })
-    }
-
     /// Observes the persisted feature toggle map.
     pub fn featureTogglesFlow(&self) -> Flow<HashMap<String, bool>> {
         self.apiDataStore.dataFlow().map(|preferences| {
@@ -440,16 +448,6 @@ impl ApiPreferences {
             } else {
                 toggles.get(&normalizedKey).copied().unwrap_or(defaultValue)
             }
-        })
-    }
-
-    /// Observes the current thinking quality level.
-    pub fn thinkingQualityLevelFlow(&self) -> Flow<i32> {
-        self.apiDataStore.dataFlow().mapResult(|preferences| {
-            Ok(preferences
-                .getTyped::<i32>(&stringPreferencesKey("thinking_quality_level"))?
-                .unwrap_or(Self::DEFAULT_THINKING_QUALITY_LEVEL)
-                .clamp(1, 4))
         })
     }
 
@@ -537,13 +535,6 @@ impl ApiPreferences {
         })
     }
 
-    /// Saves the thinking-mode toggle.
-    pub fn saveEnableThinkingMode(&self, isEnabled: bool) -> Result<(), PreferencesDataStoreError> {
-        self.apiDataStore.edit(|preferences| {
-            preferences.set(&stringPreferencesKey("enable_thinking_mode"), isEnabled);
-        })
-    }
-
     /// Saves one feature toggle value.
     pub fn saveFeatureToggle(
         &self,
@@ -560,16 +551,6 @@ impl ApiPreferences {
                 &normalizedKey,
                 Value::Bool(isEnabled),
             )
-        })
-    }
-
-    /// Saves the thinking quality level.
-    pub fn saveThinkingQualityLevel(&self, level: i32) -> Result<(), PreferencesDataStoreError> {
-        self.apiDataStore.edit(|preferences| {
-            preferences.set(
-                &stringPreferencesKey("thinking_quality_level"),
-                level.clamp(1, 4),
-            );
         })
     }
 
@@ -714,27 +695,5 @@ impl ApiPreferences {
             .getTyped::<i32>(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))?
             .unwrap_or(Self::DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS)
             .clamp(1, 60))
-    }
-
-    /// Updates thinking settings in one edit transaction.
-    pub fn updateThinkingSettings(
-        &self,
-        enableThinkingMode: Option<bool>,
-        thinkingQualityLevel: Option<i32>,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.apiDataStore.edit(|preferences| {
-            if let Some(enableThinkingMode) = enableThinkingMode {
-                preferences.set(
-                    &stringPreferencesKey("enable_thinking_mode"),
-                    enableThinkingMode,
-                );
-            }
-            if let Some(thinkingQualityLevel) = thinkingQualityLevel {
-                preferences.set(
-                    &stringPreferencesKey("thinking_quality_level"),
-                    thinkingQualityLevel.clamp(1, 4),
-                );
-            }
-        })
     }
 }

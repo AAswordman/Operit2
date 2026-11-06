@@ -195,6 +195,7 @@ pub struct RuntimeChatCallRequest {
     pub functionType: operit_model::FunctionType::FunctionType,
     pub turns: Vec<operit_model::PromptTurn::PromptTurn>,
     pub recordTokenUsage: bool,
+    /// Lets the model think at the level set on it; `false` asks it not to think.
     pub enableThinking: bool,
 }
 

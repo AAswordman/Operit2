@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::chat::llmprovider::AIService::{ensure_response_completed, AIService, SendMessageRequest};
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
@@ -83,10 +84,7 @@ impl ModelConfigConnectionTester {
                     SendMessageRequest {
                         chat_history: vec![PromptTurn::new(PromptTurnKind::USER, "Hi")],
                         model_parameters: parameters.clone(),
-                        enable_thinking: false,
-                        thinking_quality_level: 1,
-                        thinking_configurations: "[]".to_string(),
-                        thinking_option_id: String::new(),
+                        thinking: RequestThinking::default(),
                         stream: false,
                         available_tools: Vec::new(),
                         preserve_think_in_history: false,
@@ -124,10 +122,7 @@ impl ModelConfigConnectionTester {
                         SendMessageRequest {
                             chat_history: toPromptTurns(&history),
                             model_parameters: parameters.clone(),
-                            enable_thinking: false,
-                            thinking_quality_level: 1,
-                            thinking_configurations: "[]".to_string(),
-                            thinking_option_id: String::new(),
+                            thinking: RequestThinking::default(),
                             stream: false,
                             available_tools: vec![Self::echoToolPrompt()],
                             preserve_think_in_history: false,
@@ -160,10 +155,7 @@ impl ModelConfigConnectionTester {
                         SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
-                            enable_thinking: false,
-                            thinking_quality_level: 1,
-                            thinking_configurations: "[]".to_string(),
-                            thinking_option_id: String::new(),
+                            thinking: RequestThinking::default(),
                             stream: false,
                             available_tools: Vec::new(),
                             preserve_think_in_history: false,
@@ -197,10 +189,7 @@ impl ModelConfigConnectionTester {
                         SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
-                            enable_thinking: false,
-                            thinking_quality_level: 1,
-                            thinking_configurations: "[]".to_string(),
-                            thinking_option_id: String::new(),
+                            thinking: RequestThinking::default(),
                             stream: false,
                             available_tools: Vec::new(),
                             preserve_think_in_history: false,
@@ -234,10 +223,7 @@ impl ModelConfigConnectionTester {
                         SendMessageRequest {
                             chat_history: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
                             model_parameters: parameters.clone(),
-                            enable_thinking: false,
-                            thinking_quality_level: 1,
-                            thinking_configurations: "[]".to_string(),
-                            thinking_option_id: String::new(),
+                            thinking: RequestThinking::default(),
                             stream: false,
                             available_tools: Vec::new(),
                             preserve_think_in_history: false,

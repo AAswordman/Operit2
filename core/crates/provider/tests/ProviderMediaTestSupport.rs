@@ -2,6 +2,7 @@
 
 use crate::chat::llmprovider::AIService::SendMessageRequest;
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::ImagePoolManager::ImagePoolManager;
@@ -44,10 +45,7 @@ pub(crate) fn send_request(chat_history: Vec<PromptTurn>) -> SendMessageRequest 
     SendMessageRequest {
         chat_history,
         model_parameters: Vec::new(),
-        enable_thinking: false,
-        thinking_quality_level: 1,
-        thinking_configurations: "[]".to_string(),
-        thinking_option_id: String::new(),
+        thinking: RequestThinking::default(),
         stream: false,
         available_tools: Vec::new(),
         preserve_think_in_history: false,
@@ -85,11 +83,6 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
     /// Returns no filesystem root in the isolated test runtime.
     fn dataDir(&self) -> Result<PathBuf, String> {
         Err("test runtime does not expose a data directory".to_string())
-    }
-
-    /// Returns a stable thinking quality level for the test runtime.
-    fn thinkingQualityLevel(&self) -> Result<i32, String> {
-        Ok(2)
     }
 
     /// Accepts token updates without persisting them.

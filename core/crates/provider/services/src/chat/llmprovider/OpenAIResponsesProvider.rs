@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
-use super::ThinkingConfiguration::ThinkingConfigurationApplier;
+use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
@@ -163,7 +163,7 @@ impl OpenAIResponsesProvider {
             self.enableToolCall,
         )
         .with_responses_api(true);
-        let request_history = if request.enable_thinking {
+        let request_history = if request.thinking.is_on() {
             request.chat_history.clone()
         } else {
             request
@@ -175,16 +175,7 @@ impl OpenAIResponsesProvider {
         let mut requestObject = OpenAIResponsesPayloadAdapter::to_responses_request(
             parent.create_request_body_without_thinking_for_history(request, &request_history)?,
         );
-        ThinkingConfigurationApplier::apply(
-            &mut requestObject,
-            &self.responsesProviderType,
-            &self.modelName,
-            &self.responsesApiEndpoint,
-            request.enable_thinking,
-            request.thinking_quality_level,
-            &request.thinking_configurations,
-            &request.thinking_option_id,
-        )?;
+        ThinkingDialect::Responses.apply(&mut requestObject, &request.thinking)?;
 
         let messagesArray = requestObject
             .get("input")
@@ -256,57 +247,6 @@ impl OpenAIResponsesProvider {
             return;
         };
         object.insert("prompt_cache_key".to_string(), json!(promptCacheKey));
-    }
-
-    pub fn apply_responses_reasoning_effort(
-        &self,
-        requestJson: &mut Value,
-        enableThinking: bool,
-    ) -> Result<(), AiServiceError> {
-        if !enableThinking {
-            return Ok(());
-        }
-        let Some(object) = requestJson.as_object_mut() else {
-            return Ok(());
-        };
-        match object.get("reasoning") {
-            Some(Value::Object(reasoning))
-                if reasoning
-                    .get("effort")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.trim().is_empty()) =>
-            {
-                return Ok(());
-            }
-            Some(Value::Object(_)) | None => {}
-            Some(_) => return Ok(()),
-        }
-
-        let Some(effort) = self.resolve_responses_reasoning_effort()? else {
-            return Ok(());
-        };
-        let reasoningObject = object
-            .entry("reasoning".to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Value::Object(reasoning) = reasoningObject {
-            reasoning.insert("effort".to_string(), json!(effort));
-        }
-        Ok(())
-    }
-
-    fn resolve_responses_reasoning_effort(&self) -> Result<Option<&'static str>, AiServiceError> {
-        let qualityLevel = self
-            .runtimeContext
-            .support()
-            .thinkingQualityLevel()
-            .map_err(AiServiceError::RequestFailed)?;
-        Ok(match qualityLevel.clamp(1, 4) {
-            1 => Some("low"),
-            2 => Some("medium"),
-            3 => Some("high"),
-            4 => Some("xhigh"),
-            _ => None,
-        })
     }
 
     fn should_attach_prompt_cache_key(&self) -> bool {

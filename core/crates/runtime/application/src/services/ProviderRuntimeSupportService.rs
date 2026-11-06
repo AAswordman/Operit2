@@ -504,14 +504,6 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
             .ok_or_else(|| "Provider runtime storage host has no data root".to_string())
     }
 
-    /// Returns the current thinking quality level.
-    fn thinkingQualityLevel(&self) -> Result<i32, String> {
-        ApiPreferences::getInstance()
-            .thinkingQualityLevelFlow()
-            .first()
-            .map_err(|error| error.to_string())
-    }
-
     /// Records provider/model token usage.
     fn updateTokensForProviderModel(
         &self,

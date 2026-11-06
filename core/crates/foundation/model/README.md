@@ -22,8 +22,13 @@ records, chat entities, memory data, configuration data, and prompt models.
   models.
 - `src/Model*.rs`: provider profiles, model configs, model catalogs, pricing,
   request specs, and standard parameters.
+- `src/ModelsDevCatalog.rs`: indexes the models.dev catalog the runtime downloads
+  and recognizes provider model ids against it; see `docs/model-catalog.md`.
+- `src/ModelThinking.rs`: the thinking controls a model accepts, the shared level
+  scale and how a level carries over to another model.
 - `src/ToolPrompt.rs`: shared tool prompt DTOs used by provider and tool code.
-- `collects/`: bundled model and TTS catalog data.
+- `collects/`: TTS catalog data and the fixed model lists of providers without a
+  model-list endpoint (OpenAI Codex).
 
 ## Boundary
 

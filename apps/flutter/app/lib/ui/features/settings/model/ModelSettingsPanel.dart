@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +12,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/CommonNetworkErrorView.dart';
+import '../../../common/ThinkingLevelText.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -36,7 +36,6 @@ class ModelSettingsPanel extends StatefulWidget {
 
 class ModelSettingsPanelState extends State<ModelSettingsPanel> {
   Future<ModelSettingsData>? _future;
-  String? _testingModelKey;
 
   @override
   void initState() {
@@ -210,9 +209,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           customHeaders: result.customHeaders,
           requestLimitPerMinute: result.requestLimitPerMinute,
           maxConcurrentRequests: result.maxConcurrentRequests,
-          thinkingConfigurations:
-              result.thinkingConfigurations ?? provider.thinkingConfigurations,
-          thinkingOptionId: provider.thinkingOptionId,
           models: provider.models,
         ),
       );
@@ -272,10 +268,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           customHeaders: saveResult.customHeaders,
           requestLimitPerMinute: saveResult.requestLimitPerMinute,
           maxConcurrentRequests: saveResult.maxConcurrentRequests,
-          thinkingConfigurations:
-              saveResult.thinkingConfigurations ??
-              provider.thinkingConfigurations,
-          thinkingOptionId: provider.thinkingOptionId,
           models: provider.models,
         ),
       );
@@ -373,7 +365,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       onDeleteProvider: _deleteProvider,
       clients: widget.clients,
       onDeleteModel: _deleteModel,
-      onTestModelConnection: _testModelConnection,
     );
   }
 
@@ -386,9 +377,12 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
   /// Adds a provider model from the remote catalog or a user-entered model ID.
   Future<void> _addProviderModel(core_proxy.ProviderProfile provider) async {
     final List<core_proxy.AvailableProviderModel> availableModels;
+    final core_proxy.ModelCatalogStatus catalogStatus;
     try {
       availableModels = await widget.clients.preferencesModelConfigManager
           .getAvailableProviderModels(providerId: provider.id);
+      catalogStatus = await widget.clients.preferencesModelConfigManager
+          .getModelCatalogStatus();
     } on CoreLinkError catch (error) {
       if (!mounted) {
         return;
@@ -419,15 +413,32 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     }
 
     final existingModelIds = provider.models.map((model) => model.id).toSet();
-    final selectableModels = availableModels
-        .where((model) => !existingModelIds.contains(model.modelId))
-        .toList(growable: false);
+    List<core_proxy.AvailableProviderModel> selectable(
+      List<core_proxy.AvailableProviderModel> models,
+    ) {
+      return models
+          .where((model) => !existingModelIds.contains(model.modelId))
+          .toList(growable: false);
+    }
+
     if (!mounted) {
       return;
     }
     final selection = await _AvailableModelDialog.show(
       context: context,
-      models: selectableModels,
+      models: selectable(availableModels),
+      catalogStatus: catalogStatus,
+      onRetryCatalog: () async {
+        final manager = widget.clients.preferencesModelConfigManager;
+        final status = await manager.refreshModelCatalog();
+        final models = await manager.getAvailableProviderModels(
+          providerId: provider.id,
+        );
+        return _AvailableModelsReload(
+          models: selectable(models),
+          catalogStatus: status,
+        );
+      },
     );
     if (selection == null) {
       return;
@@ -439,7 +450,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
             await widget.clients.preferencesModelConfigManager
                 .addProviderModelFromAvailable(
                   providerId: provider.id,
-                  modelId: model.modelId,
+                  model: model,
                 );
           }
           _reload();
@@ -515,87 +526,6 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       providerId: provider.id,
       modelId: model.id,
     );
-    _reload();
-  }
-
-  Future<core_proxy.ModelConnectionTestReport?> _testModelConnection(
-    core_proxy.ProviderProfile provider,
-    core_proxy.ModelProfile model,
-    core_proxy.ModelCapabilities capabilities,
-  ) async {
-    if (!mounted) {
-      return null;
-    }
-    final l10n = AppLocalizations.of(context)!;
-    final testKey = _modelTestKey(provider.id, model.id);
-    setState(() {
-      _testingModelKey = testKey;
-    });
-    try {
-      await widget.clients.preferencesModelConfigManager
-          .updateCapabilitiesForModel(
-            providerId: provider.id,
-            modelId: model.id,
-            capabilities: capabilities,
-          );
-      final report = await widget.clients.application.testModelConnection(
-        providerId: provider.id,
-        modelId: model.id,
-      );
-      if (!mounted) {
-        return report;
-      }
-      await _applyConnectionTestCapabilities(
-        providerId: provider.id,
-        modelId: model.id,
-        report: report,
-        current: capabilities,
-      );
-      if (!mounted) {
-        return report;
-      }
-      await _ConnectionTestReportDialog.show(context: context, report: report);
-      return report;
-    } catch (error) {
-      if (!mounted) {
-        return null;
-      }
-      await _ConnectionTestErrorDialog.show(
-        context: context,
-        message: l10n.settingsModelConnectionTestError('$error'),
-      );
-      return null;
-    } finally {
-      if (mounted && _testingModelKey == testKey) {
-        setState(() {
-          _testingModelKey = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _applyConnectionTestCapabilities({
-    required String providerId,
-    required String modelId,
-    required core_proxy.ModelConnectionTestReport report,
-    required core_proxy.ModelCapabilities current,
-  }) async {
-    final chatPassed = connectionTestSucceeded(
-      report,
-      core_proxy.ModelConnectionTestType.chat,
-    );
-    if (!chatPassed) {
-      return;
-    }
-    await widget.clients.preferencesModelConfigManager
-        .updateCapabilitiesForModel(
-          providerId: providerId,
-          modelId: modelId,
-          capabilities: capabilitiesFromConnectionTest(report, current),
-        );
-    if (!mounted) {
-      return;
-    }
     _reload();
   }
 
@@ -716,7 +646,6 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
     required this.customHeaders,
     required this.requestLimitPerMinute,
     required this.maxConcurrentRequests,
-    required this.thinkingConfigurations,
   });
 
   final String name;
@@ -726,7 +655,6 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
   final String customHeaders;
   final int requestLimitPerMinute;
   final int maxConcurrentRequests;
-  final String? thinkingConfigurations;
 }
 
 class _ProviderEditDeleteResult extends _ProviderEditResult {
@@ -776,9 +704,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   late final TextEditingController _customHeadersController;
   late final TextEditingController _requestLimitController;
   late final TextEditingController _maxConcurrentController;
-  late List<_ThinkingRuleEditor> _thinkingRules;
-  String? _thinkingConfigError;
-  bool _thinkingRulesChanged = false;
   String? _selectedProviderTypeId;
   core_proxy.CodexSessionStatus? _codexStatus;
 
@@ -805,16 +730,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
             'https://chatgpt.com/backend-api/codex/responses';
         unawaited(_refreshCodexStatus());
       }
-      try {
-        _thinkingRules = _parseThinkingRuleEditors(
-          provider.thinkingConfigurations,
-        );
-      } on FormatException catch (error) {
-        _thinkingRules = <_ThinkingRuleEditor>[];
-        _thinkingConfigError = error.message;
-      }
     } else {
-      _thinkingRules = <_ThinkingRuleEditor>[];
       _selectedProviderTypeId = _catalogDeepseek()?.providerTypeId;
       final catalog = _selectedCatalog();
       if (catalog != null) {
@@ -973,41 +889,9 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
     );
   }
 
-  /// Replaces the editable thinking rule list after a UI change.
-  void _setThinkingRules(List<_ThinkingRuleEditor> rules) {
-    setState(() {
-      _thinkingRules = rules;
-      _thinkingRulesChanged = true;
-      _thinkingConfigError = null;
-    });
-  }
-
-  /// Serializes provider thinking rules and reports validation problems.
-  String? _thinkingConfigurationsForSave() {
-    final provider = widget.provider;
-    if (provider == null) {
-      return null;
-    }
-    if (_thinkingConfigError != null && !_thinkingRulesChanged) {
-      return null;
-    }
-    try {
-      return _serializeThinkingRuleEditors(_thinkingRules);
-    } on FormatException catch (error) {
-      setState(() {
-        _thinkingConfigError = error.message;
-      });
-      return null;
-    }
-  }
-
   /// Saves provider settings from the dialog form.
   void _save() {
     if (!_formKey.currentState!.validate() || _selectedProviderTypeId == null) {
-      return;
-    }
-    final thinkingConfigurations = _thinkingConfigurationsForSave();
-    if (widget.provider != null && thinkingConfigurations == null) {
       return;
     }
     Navigator.of(context).pop(
@@ -1021,7 +905,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         customHeaders: _customHeadersController.text,
         requestLimitPerMinute: int.parse(_requestLimitController.text),
         maxConcurrentRequests: int.parse(_maxConcurrentController.text),
-        thinkingConfigurations: thinkingConfigurations,
       ),
     );
   }
@@ -1162,14 +1045,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                           ),
                         ],
                       ),
-                      if (editing) ...<Widget>[
-                        const SizedBox(height: 8),
-                        _ThinkingRulesEditor(
-                          rules: _thinkingRules,
-                          error: _thinkingConfigError,
-                          onChanged: _setThinkingRules,
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -1196,1521 +1071,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   }
 }
 
-class _ThinkingRulesEditor extends StatelessWidget {
-  /// Creates the provider-scoped thinking rules editor.
-  const _ThinkingRulesEditor({
-    required this.rules,
-    required this.error,
-    required this.onChanged,
-  });
-
-  final List<_ThinkingRuleEditor> rules;
-  final String? error;
-  final ValueChanged<List<_ThinkingRuleEditor>> onChanged;
-
-  /// Opens a focused editor for one thinking rule.
-  Future<void> _showRuleEditor(BuildContext context, int? index) async {
-    var draft = index == null ? _newThinkingRule() : rules[index];
-    final saved = await showDialog<_ThinkingRuleEditor>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final title = index == null
-                ? '新建思考配置'
-                : _thinkingRulePreviewTitle(draft);
-            return AlertDialog(
-              title: Text(title),
-              content: SizedBox(
-                width: 620,
-                child: SingleChildScrollView(
-                  child: _ThinkingRuleForm(
-                    rule: draft,
-                    onChanged: (rule) => setDialogState(() {
-                      draft = rule;
-                    }),
-                  ),
-                ),
-              ),
-              actions: <Widget>[
-                if (index != null)
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.error,
-                    ),
-                    onPressed: () {
-                      Navigator.of(dialogContext).pop();
-                      onChanged(_removeAt<_ThinkingRuleEditor>(rules, index));
-                    },
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('删除'),
-                  ),
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(draft),
-                  child: const Text('保存'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    if (saved == null) {
-      return;
-    }
-    if (index == null) {
-      onChanged(<_ThinkingRuleEditor>[...rules, saved]);
-      return;
-    }
-    onChanged(_replaceAt<_ThinkingRuleEditor>(rules, index, saved));
-  }
-
-  /// Builds the thinking rules list and rule management controls.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final controlSummary = _thinkingControlSummary(rules);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            Icon(Icons.psychology_outlined, color: colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    '思考配置',
-                    style: textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    '${rules.length} 条规则 · $controlSummary',
-                    style: textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            TextButton.icon(
-              onPressed: () => _showRuleEditor(context, null),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('添加规则'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '点击规则编辑；顺序靠前的规则先匹配。这里的配置只属于当前供应商。',
-          style: textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ),
-        if (error != null) ...<Widget>[
-          const SizedBox(height: 8),
-          Text(
-            error!,
-            style: textTheme.bodySmall?.copyWith(color: colorScheme.error),
-          ),
-        ],
-        const SizedBox(height: 8),
-        if (rules.isEmpty)
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              '当前供应商没有思考规则，点击右上角添加规则。',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          )
-        else
-          for (var index = 0; index < rules.length; index++) ...<Widget>[
-            _ThinkingRuleCard(
-              index: index,
-              totalCount: rules.length,
-              rule: rules[index],
-              onTap: () => _showRuleEditor(context, index),
-              onMoveUp: index == 0
-                  ? null
-                  : () => onChanged(
-                      _moveAt<_ThinkingRuleEditor>(rules, index, index - 1),
-                    ),
-              onMoveDown: index == rules.length - 1
-                  ? null
-                  : () => onChanged(
-                      _moveAt<_ThinkingRuleEditor>(rules, index, index + 1),
-                    ),
-            ),
-            const SizedBox(height: 8),
-          ],
-      ],
-    );
-  }
-}
-
-class _ThinkingRuleCard extends StatelessWidget {
-  /// Creates one compact thinking rule preview card.
-  const _ThinkingRuleCard({
-    required this.index,
-    required this.totalCount,
-    required this.rule,
-    required this.onTap,
-    required this.onMoveUp,
-    required this.onMoveDown,
-  });
-
-  final int index;
-  final int totalCount;
-  final _ThinkingRuleEditor rule;
-  final VoidCallback onTap;
-  final VoidCallback? onMoveUp;
-  final VoidCallback? onMoveDown;
-
-  /// Builds the card preview and rule ordering controls.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final optionCount = rule.control == 'levels' ? rule.options.length : 0;
-    final optionText = rule.control == 'levels' ? ' · $optionCount 档' : '';
-    return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            children: <Widget>[
-              CircleAvatar(
-                radius: 15,
-                backgroundColor: colorScheme.primaryContainer,
-                child: Text(
-                  '${index + 1}',
-                  style: textTheme.labelMedium?.copyWith(
-                    color: colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      _thinkingRulePreviewTitle(rule),
-                      style: textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${_thinkingControlLabel(rule.control)}$optionText · ${_thinkingRulePathSummary(rule)}',
-                      style: textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: index == 0 ? '已经是第一条' : '上移',
-                onPressed: onMoveUp,
-                icon: const Icon(Icons.keyboard_arrow_up),
-              ),
-              IconButton(
-                tooltip: index >= totalCount - 1 ? '已经是最后一条' : '下移',
-                onPressed: onMoveDown,
-                icon: const Icon(Icons.keyboard_arrow_down),
-              ),
-              Icon(Icons.chevron_right, color: colorScheme.onSurfaceVariant),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ThinkingRuleForm extends StatelessWidget {
-  /// Creates the form fields for one thinking rule.
-  const _ThinkingRuleForm({required this.rule, required this.onChanged});
-
-  final _ThinkingRuleEditor rule;
-  final ValueChanged<_ThinkingRuleEditor> onChanged;
-
-  /// Builds the editable fields for one thinking rule.
-  @override
-  Widget build(BuildContext context) {
-    final actionSummary =
-        '开启 ${rule.enableActions.length} 条 · 关闭 ${rule.disableActions.length} 条';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              child: _ThinkingChoiceField(
-                label: '控件类型',
-                value: rule.control,
-                choices: const <MapEntry<String, String>>[
-                  MapEntry<String, String>('levels', '多档位滑块'),
-                  MapEntry<String, String>('toggle_only', '仅开关'),
-                  MapEntry<String, String>('unsupported', '不支持思考'),
-                ],
-                onChanged: (value) => onChanged(
-                  rule.copyWith(
-                    control: value,
-                    options: value == 'levels'
-                        ? rule.options
-                        : const <_ThinkingOptionEditor>[],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _ThinkingSwitchRow(
-                title: '始终开启思考',
-                subtitle: '命中后写入开启动作',
-                value: rule.requiredValue,
-                onChanged: (value) =>
-                    onChanged(rule.copyWith(requiredValue: value)),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        _ThinkingMatchEditor(rule: rule, onChanged: onChanged),
-        const SizedBox(height: 10),
-        _ThinkingInlineTextField(
-          label: '默认请求路径',
-          value: rule.defaultPath,
-          hint: 'reasoning_effort 或 thinking.type',
-          onChanged: (value) => onChanged(rule.copyWith(defaultPath: value)),
-        ),
-        const SizedBox(height: 2),
-        _ThinkingCollapsibleEditor(
-          title: '开启 / 关闭时写入',
-          subtitle: actionSummary,
-          initiallyExpanded: false,
-          child: Column(
-            children: <Widget>[
-              _ThinkingActionListEditor(
-                title: '开启时写入',
-                actions: rule.enableActions,
-                onChanged: (actions) =>
-                    onChanged(rule.copyWith(enableActions: actions)),
-              ),
-              const SizedBox(height: 8),
-              _ThinkingActionListEditor(
-                title: '关闭时写入',
-                actions: rule.disableActions,
-                onChanged: (actions) =>
-                    onChanged(rule.copyWith(disableActions: actions)),
-              ),
-            ],
-          ),
-        ),
-        if (rule.control == 'levels') ...<Widget>[
-          const SizedBox(height: 8),
-          _ThinkingCollapsibleEditor(
-            title: '滑块档位',
-            subtitle: '${rule.options.length} 个档位，决定滑块长度',
-            initiallyExpanded: false,
-            child: _ThinkingOptionListEditor(
-              options: rule.options,
-              defaultPath: rule.defaultPath,
-              onChanged: (options) =>
-                  onChanged(rule.copyWith(options: options)),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _ThinkingChoiceField extends StatelessWidget {
-  /// Creates a compact dropdown-like choice field.
-  const _ThinkingChoiceField({
-    required this.label,
-    required this.value,
-    required this.choices,
-    required this.onChanged,
-  });
-
-  final String label;
-  final String value;
-  final List<MapEntry<String, String>> choices;
-  final ValueChanged<String> onChanged;
-
-  /// Builds a popup menu backed by readable choice labels.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final display = choices
-        .where((choice) => choice.key == value)
-        .map((choice) => choice.value)
-        .first;
-    return PopupMenuButton<String>(
-      initialValue: value,
-      onSelected: onChanged,
-      itemBuilder: (context) => <PopupMenuEntry<String>>[
-        for (final choice in choices)
-          PopupMenuItem<String>(value: choice.key, child: Text(choice.value)),
-      ],
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: <Widget>[
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    label,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    display,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.arrow_drop_down_rounded,
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ThinkingSwitchRow extends StatelessWidget {
-  /// Creates a compact switch row for thinking rule flags.
-  const _ThinkingSwitchRow({
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  /// Builds the switch row surface.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  title,
-                  style: textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  style: textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Switch(value: value, onChanged: onChanged),
-        ],
-      ),
-    );
-  }
-}
-
-class _ThinkingCollapsibleEditor extends StatelessWidget {
-  /// Creates a collapsible group for less frequently edited fields.
-  const _ThinkingCollapsibleEditor({
-    required this.title,
-    required this.subtitle,
-    required this.initiallyExpanded,
-    required this.child,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool initiallyExpanded;
-  final Widget child;
-
-  /// Builds the collapsible editor section.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
-      borderRadius: BorderRadius.circular(10),
-      child: ExpansionTile(
-        initiallyExpanded: initiallyExpanded,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        collapsedShape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-        title: Text(
-          title,
-          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ),
-        children: <Widget>[child],
-      ),
-    );
-  }
-}
-
-class _ThinkingMatchEditor extends StatelessWidget {
-  /// Creates the human-readable matcher editor for one thinking rule.
-  const _ThinkingMatchEditor({required this.rule, required this.onChanged});
-
-  final _ThinkingRuleEditor rule;
-  final ValueChanged<_ThinkingRuleEditor> onChanged;
-
-  /// Builds grouped model and endpoint matching controls.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(
-            '匹配条件',
-            style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '这些条件只属于当前供应商；多个值用逗号分隔。三项全空代表全部模型。',
-            style: textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: _ThinkingInlineTextField(
-                  label: '模型前缀',
-                  value: _joinThinkingValues(rule.modelPrefixes),
-                  hint: 'gemini-2.5, claude-3',
-                  onChanged: (value) => onChanged(
-                    rule.copyWith(modelPrefixes: _splitThinkingValues(value)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _ThinkingInlineTextField(
-                  label: '端点后缀',
-                  value: _joinThinkingValues(rule.endpointSuffixes),
-                  hint: '/responses',
-                  onChanged: (value) => onChanged(
-                    rule.copyWith(
-                      endpointSuffixes: _splitThinkingValues(value),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          _ThinkingInlineTextField(
-            label: '模型正则',
-            value: _joinThinkingValues(rule.modelRegexes),
-            hint: r'(?i)(?:^|/)gpt-[5-9]',
-            onChanged: (value) => onChanged(
-              rule.copyWith(modelRegexes: _splitThinkingValues(value)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ThinkingActionListEditor extends StatelessWidget {
-  /// Creates an editor for request write actions.
-  const _ThinkingActionListEditor({
-    required this.title,
-    required this.actions,
-    required this.onChanged,
-  });
-
-  final String title;
-  final List<_ThinkingActionEditor> actions;
-  final ValueChanged<List<_ThinkingActionEditor>> onChanged;
-
-  /// Builds editable action rows.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  title,
-                  style: textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: () => onChanged(<_ThinkingActionEditor>[
-                  ...actions,
-                  const _ThinkingActionEditor(path: '', value: 'true'),
-                ]),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('添加'),
-              ),
-            ],
-          ),
-          if (actions.isEmpty)
-            Text(
-              '未配置',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
-            for (var index = 0; index < actions.length; index++) ...<Widget>[
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: _ThinkingInlineTextField(
-                      label: '请求路径',
-                      value: actions[index].path,
-                      hint: 'reasoning.effort',
-                      onChanged: (value) => onChanged(
-                        _replaceAt<_ThinkingActionEditor>(
-                          actions,
-                          index,
-                          actions[index].copyWith(path: value),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _ThinkingInlineTextField(
-                      label: '写入值（JSON）',
-                      value: actions[index].value,
-                      hint: '"high", true, 1024',
-                      onChanged: (value) => onChanged(
-                        _replaceAt<_ThinkingActionEditor>(
-                          actions,
-                          index,
-                          actions[index].copyWith(value: value),
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '删除',
-                    onPressed: () => onChanged(
-                      _removeAt<_ThinkingActionEditor>(actions, index),
-                    ),
-                    icon: Icon(Icons.delete_outline, color: colorScheme.error),
-                  ),
-                ],
-              ),
-            ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ThinkingOptionListEditor extends StatelessWidget {
-  /// Creates an editor for level-based thinking options.
-  const _ThinkingOptionListEditor({
-    required this.options,
-    required this.defaultPath,
-    required this.onChanged,
-  });
-
-  final List<_ThinkingOptionEditor> options;
-  final String defaultPath;
-  final ValueChanged<List<_ThinkingOptionEditor>> onChanged;
-
-  /// Builds editable option rows.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  '档位列表',
-                  style: textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: () => onChanged(<_ThinkingOptionEditor>[
-                  ...options,
-                  _newThinkingOption(options.length, defaultPath),
-                ]),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('添加档位'),
-              ),
-            ],
-          ),
-          if (options.isEmpty)
-            Text(
-              '未配置',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
-            for (var index = 0; index < options.length; index++) ...<Widget>[
-              _ThinkingOptionCard(
-                index: index,
-                option: options[index],
-                defaultPath: defaultPath,
-                onChanged: (option) => onChanged(
-                  _replaceAt<_ThinkingOptionEditor>(options, index, option),
-                ),
-                onDelete: () =>
-                    onChanged(_removeAt<_ThinkingOptionEditor>(options, index)),
-                onMoveUp: index == 0
-                    ? null
-                    : () => onChanged(
-                        _moveAt<_ThinkingOptionEditor>(
-                          options,
-                          index,
-                          index - 1,
-                        ),
-                      ),
-                onMoveDown: index == options.length - 1
-                    ? null
-                    : () => onChanged(
-                        _moveAt<_ThinkingOptionEditor>(
-                          options,
-                          index,
-                          index + 1,
-                        ),
-                      ),
-              ),
-              const SizedBox(height: 6),
-            ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ThinkingOptionCard extends StatelessWidget {
-  /// Creates one collapsible thinking option card.
-  const _ThinkingOptionCard({
-    required this.index,
-    required this.option,
-    required this.defaultPath,
-    required this.onChanged,
-    required this.onDelete,
-    required this.onMoveUp,
-    required this.onMoveDown,
-  });
-
-  final int index;
-  final _ThinkingOptionEditor option;
-  final String defaultPath;
-  final ValueChanged<_ThinkingOptionEditor> onChanged;
-  final VoidCallback onDelete;
-  final VoidCallback? onMoveUp;
-  final VoidCallback? onMoveDown;
-
-  /// Builds one editable option card.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
-      borderRadius: BorderRadius.circular(8),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.only(left: 10, right: 4),
-        childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-        title: Text('档位 ${index + 1}: ${option.label}'),
-        subtitle: Text(_thinkingOptionPathSummary(option, defaultPath)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            IconButton(
-              tooltip: '上移',
-              onPressed: onMoveUp,
-              icon: const Icon(Icons.keyboard_arrow_up),
-            ),
-            IconButton(
-              tooltip: '下移',
-              onPressed: onMoveDown,
-              icon: const Icon(Icons.keyboard_arrow_down),
-            ),
-            IconButton(
-              tooltip: '删除',
-              onPressed: onDelete,
-              icon: Icon(Icons.delete_outline, color: colorScheme.error),
-            ),
-          ],
-        ),
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: _ThinkingInlineTextField(
-                  label: 'id',
-                  value: option.id,
-                  hint: 'high',
-                  onChanged: (value) => onChanged(option.copyWith(id: value)),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _ThinkingInlineTextField(
-                  label: '显示名称',
-                  value: option.label,
-                  hint: '高',
-                  onChanged: (value) =>
-                      onChanged(option.copyWith(label: value)),
-                ),
-              ),
-            ],
-          ),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: _ThinkingInlineTextField(
-                  label: '写入路径',
-                  value: option.path,
-                  hint: defaultPath,
-                  onChanged: (value) => onChanged(option.copyWith(path: value)),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _ThinkingInlineTextField(
-                  label: '写入值（JSON）',
-                  value: option.value,
-                  hint: '"high", true, 1024',
-                  onChanged: (value) =>
-                      onChanged(option.copyWith(value: value)),
-                ),
-              ),
-            ],
-          ),
-          _ThinkingActionListEditor(
-            title: '档位附加动作',
-            actions: option.actions,
-            onChanged: (actions) =>
-                onChanged(option.copyWith(actions: actions)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ThinkingInlineTextField extends StatelessWidget {
-  /// Creates a compact text field for thinking configuration forms.
-  const _ThinkingInlineTextField({
-    required this.label,
-    required this.value,
-    required this.hint,
-    required this.onChanged,
-  });
-
-  final String label;
-  final String value;
-  final String hint;
-  final ValueChanged<String> onChanged;
-
-  /// Builds a text form field using the current editor value.
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            label,
-            style: textTheme.labelSmall?.copyWith(
-              color: colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          TextFormField(
-            initialValue: value,
-            maxLines: 1,
-            decoration: InputDecoration(
-              hintText: hint,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 12,
-              ),
-            ),
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ThinkingRuleEditor {
-  /// Creates one editable provider-scoped thinking rule.
-  const _ThinkingRuleEditor({
-    required this.modelPrefixes,
-    required this.modelRegexes,
-    required this.endpointSuffixes,
-    required this.control,
-    required this.requiredValue,
-    required this.defaultPath,
-    required this.enableActions,
-    required this.disableActions,
-    required this.options,
-  });
-
-  final List<String> modelPrefixes;
-  final List<String> modelRegexes;
-  final List<String> endpointSuffixes;
-  final String control;
-  final bool requiredValue;
-  final String defaultPath;
-  final List<_ThinkingActionEditor> enableActions;
-  final List<_ThinkingActionEditor> disableActions;
-  final List<_ThinkingOptionEditor> options;
-
-  /// Returns a modified copy of this editor rule.
-  _ThinkingRuleEditor copyWith({
-    List<String>? modelPrefixes,
-    List<String>? modelRegexes,
-    List<String>? endpointSuffixes,
-    String? control,
-    bool? requiredValue,
-    String? defaultPath,
-    List<_ThinkingActionEditor>? enableActions,
-    List<_ThinkingActionEditor>? disableActions,
-    List<_ThinkingOptionEditor>? options,
-  }) {
-    return _ThinkingRuleEditor(
-      modelPrefixes: modelPrefixes ?? this.modelPrefixes,
-      modelRegexes: modelRegexes ?? this.modelRegexes,
-      endpointSuffixes: endpointSuffixes ?? this.endpointSuffixes,
-      control: control ?? this.control,
-      requiredValue: requiredValue ?? this.requiredValue,
-      defaultPath: defaultPath ?? this.defaultPath,
-      enableActions: enableActions ?? this.enableActions,
-      disableActions: disableActions ?? this.disableActions,
-      options: options ?? this.options,
-    );
-  }
-}
-
-class _ThinkingActionEditor {
-  /// Creates one editable request write action.
-  const _ThinkingActionEditor({required this.path, required this.value});
-
-  final String path;
-  final String value;
-
-  /// Returns a modified copy of this action.
-  _ThinkingActionEditor copyWith({String? path, String? value}) {
-    return _ThinkingActionEditor(
-      path: path ?? this.path,
-      value: value ?? this.value,
-    );
-  }
-}
-
-class _ThinkingOptionEditor {
-  /// Creates one editable thinking level option.
-  const _ThinkingOptionEditor({
-    required this.id,
-    required this.label,
-    required this.path,
-    required this.value,
-    required this.actions,
-  });
-
-  final String id;
-  final String label;
-  final String path;
-  final String value;
-  final List<_ThinkingActionEditor> actions;
-
-  /// Returns a modified copy of this option.
-  _ThinkingOptionEditor copyWith({
-    String? id,
-    String? label,
-    String? path,
-    String? value,
-    List<_ThinkingActionEditor>? actions,
-  }) {
-    return _ThinkingOptionEditor(
-      id: id ?? this.id,
-      label: label ?? this.label,
-      path: path ?? this.path,
-      value: value ?? this.value,
-      actions: actions ?? this.actions,
-    );
-  }
-}
-
-/// Creates a new provider-owned thinking rule.
-_ThinkingRuleEditor _newThinkingRule() {
-  return _ThinkingRuleEditor(
-    modelPrefixes: const <String>[],
-    modelRegexes: const <String>[],
-    endpointSuffixes: const <String>[],
-    control: 'levels',
-    requiredValue: false,
-    defaultPath: 'reasoning_effort',
-    enableActions: const <_ThinkingActionEditor>[],
-    disableActions: const <_ThinkingActionEditor>[],
-    options: <_ThinkingOptionEditor>[
-      const _ThinkingOptionEditor(
-        id: 'low',
-        label: 'low',
-        path: 'reasoning_effort',
-        value: '"low"',
-        actions: <_ThinkingActionEditor>[],
-      ),
-      const _ThinkingOptionEditor(
-        id: 'high',
-        label: 'high',
-        path: 'reasoning_effort',
-        value: '"high"',
-        actions: <_ThinkingActionEditor>[],
-      ),
-      const _ThinkingOptionEditor(
-        id: 'max',
-        label: 'max',
-        path: 'reasoning_effort',
-        value: '"max"',
-        actions: <_ThinkingActionEditor>[],
-      ),
-    ],
-  );
-}
-
-/// Creates a new editable thinking level option.
-_ThinkingOptionEditor _newThinkingOption(int index, String defaultPath) {
-  final label = 'option-${index + 1}';
-  return _ThinkingOptionEditor(
-    id: label,
-    label: label,
-    path: defaultPath,
-    value: 'null',
-    actions: const <_ThinkingActionEditor>[],
-  );
-}
-
-/// Parses current Rust thinking rules into UI editor models.
-List<_ThinkingRuleEditor> _parseThinkingRuleEditors(String raw) {
-  final decoded = jsonDecode(raw);
-  if (decoded is! List<Object?>) {
-    throw const FormatException('thinkingConfigurations 必须是 JSON 数组');
-  }
-  return <_ThinkingRuleEditor>[
-    for (var index = 0; index < decoded.length; index++)
-      _thinkingRuleFromJson(_jsonObject(decoded[index], '规则 ${index + 1}')),
-  ];
-}
-
-/// Serializes UI editor models into current Rust thinking rule JSON.
-String _serializeThinkingRuleEditors(List<_ThinkingRuleEditor> rules) {
-  final encoded = <Map<String, Object?>>[
-    for (var index = 0; index < rules.length; index++)
-      _thinkingRuleToJson(rules[index], index),
-  ];
-  return const JsonEncoder.withIndent('  ').convert(encoded);
-}
-
-/// Converts one JSON object into an editable thinking rule.
-_ThinkingRuleEditor _thinkingRuleFromJson(Map<String, Object?> json) {
-  final options = _thinkingOptionsFromJson(json['options']);
-  return _ThinkingRuleEditor(
-    modelPrefixes: _stringListFromJson(json['model_prefix'], 'model_prefix'),
-    modelRegexes: _stringListFromJson(json['model_regex'], 'model_regex'),
-    endpointSuffixes: _stringListFromJson(
-      json['endpoint_suffix'],
-      'endpoint_suffix',
-    ),
-    control: _thinkingControlFromJson(json['control']),
-    requiredValue: _boolFromJson(json['required'], 'required'),
-    defaultPath: _defaultThinkingPath(options),
-    enableActions: _thinkingActionsFromJson(json['enable'], 'enable'),
-    disableActions: _thinkingActionsFromJson(json['disable'], 'disable'),
-    options: options,
-  );
-}
-
-/// Converts one editable thinking rule into a Rust JSON object.
-Map<String, Object?> _thinkingRuleToJson(_ThinkingRuleEditor rule, int index) {
-  final label = '规则 ${index + 1}';
-  _validateThinkingRule(rule, label);
-  return <String, Object?>{
-    'model_prefix': rule.modelPrefixes,
-    'model_regex': rule.modelRegexes,
-    'endpoint_suffix': rule.endpointSuffixes,
-    'control': rule.control,
-    'required': rule.requiredValue,
-    'enable': _thinkingActionsToJson(rule.enableActions, '$label.enable'),
-    'disable': _thinkingActionsToJson(rule.disableActions, '$label.disable'),
-    'options': rule.control == 'levels'
-        ? _thinkingOptionsToJson(rule.options, rule.defaultPath, label)
-        : <Map<String, Object?>>[],
-  };
-}
-
-/// Validates one rule before serialization.
-void _validateThinkingRule(_ThinkingRuleEditor rule, String label) {
-  _thinkingControlLabel(rule.control);
-  if (rule.control == 'levels' && rule.options.isEmpty) {
-    throw FormatException('$label 缺少档位列表');
-  }
-}
-
-/// Converts action JSON into editor rows.
-List<_ThinkingActionEditor> _thinkingActionsFromJson(
-  Object? value,
-  String field,
-) {
-  if (value is! List<Object?>) {
-    throw FormatException('$field 必须是 JSON 数组');
-  }
-  return <_ThinkingActionEditor>[
-    for (var index = 0; index < value.length; index++)
-      _thinkingActionFromJson(_jsonObject(value[index], '$field[$index]')),
-  ];
-}
-
-/// Converts one action JSON object into an editor row.
-_ThinkingActionEditor _thinkingActionFromJson(Map<String, Object?> json) {
-  if (!json.containsKey('value')) {
-    throw const FormatException('动作缺少 value');
-  }
-  return _ThinkingActionEditor(
-    path: _stringFromJson(json['path'], 'path'),
-    value: jsonEncode(json['value']),
-  );
-}
-
-/// Converts editor action rows into JSON objects.
-List<Map<String, Object?>> _thinkingActionsToJson(
-  List<_ThinkingActionEditor> actions,
-  String label,
-) {
-  return <Map<String, Object?>>[
-    for (var index = 0; index < actions.length; index++)
-      _thinkingActionToJson(actions[index], '$label[$index]'),
-  ];
-}
-
-/// Converts one editor action into a JSON object.
-Map<String, Object?> _thinkingActionToJson(
-  _ThinkingActionEditor action,
-  String label,
-) {
-  final path = action.path.trim();
-  if (path.isEmpty) {
-    throw FormatException('$label 缺少 path');
-  }
-  return <String, Object?>{
-    'path': path,
-    'value': _decodeThinkingValue(action.value, '$label.value'),
-  };
-}
-
-/// Converts option JSON into editor rows.
-List<_ThinkingOptionEditor> _thinkingOptionsFromJson(Object? value) {
-  if (value is! List<Object?>) {
-    throw const FormatException('options 必须是 JSON 数组');
-  }
-  return <_ThinkingOptionEditor>[
-    for (var index = 0; index < value.length; index++)
-      _thinkingOptionFromJson(_jsonObject(value[index], 'options[$index]')),
-  ];
-}
-
-/// Converts one option JSON object into an editor row.
-_ThinkingOptionEditor _thinkingOptionFromJson(Map<String, Object?> json) {
-  if (!json.containsKey('value')) {
-    throw const FormatException('档位缺少 value');
-  }
-  final value = json['value'];
-  final id = _optionalStringFromJson(json['id']).trim();
-  final visibleId = id.isEmpty ? _thinkingValueId(value) : id;
-  final label = _optionalStringFromJson(json['label']).trim();
-  return _ThinkingOptionEditor(
-    id: visibleId,
-    label: label.isEmpty ? visibleId : label,
-    path: _optionalStringFromJson(json['path']),
-    value: jsonEncode(value),
-    actions: _optionalThinkingActionsFromJson(json['actions'], 'actions'),
-  );
-}
-
-/// Converts editor options into JSON objects.
-List<Map<String, Object?>> _thinkingOptionsToJson(
-  List<_ThinkingOptionEditor> options,
-  String defaultPath,
-  String label,
-) {
-  final ids = <String>{};
-  return <Map<String, Object?>>[
-    for (var index = 0; index < options.length; index++)
-      _thinkingOptionToJson(
-        options[index],
-        defaultPath,
-        '$label.options[$index]',
-        ids,
-      ),
-  ];
-}
-
-/// Converts one editor option into a JSON object.
-Map<String, Object?> _thinkingOptionToJson(
-  _ThinkingOptionEditor option,
-  String defaultPath,
-  String label,
-  Set<String> usedIds,
-) {
-  final id = option.id.trim();
-  final optionLabel = option.label.trim();
-  final path = option.path.trim().isEmpty
-      ? defaultPath.trim()
-      : option.path.trim();
-  if (id.isEmpty) {
-    throw FormatException('$label 缺少 id');
-  }
-  if (optionLabel.isEmpty) {
-    throw FormatException('$label 缺少 label');
-  }
-  if (path.isEmpty) {
-    throw FormatException('$label 缺少 path');
-  }
-  if (!usedIds.add(id)) {
-    throw FormatException('$label id 重复：$id');
-  }
-  return <String, Object?>{
-    'id': id,
-    'label': optionLabel,
-    'path': path,
-    'value': _decodeThinkingValue(option.value, '$label.value'),
-    'actions': _thinkingActionsToJson(option.actions, '$label.actions'),
-  };
-}
-
-/// Converts an optional action list into editor rows.
-List<_ThinkingActionEditor> _optionalThinkingActionsFromJson(
-  Object? value,
-  String field,
-) {
-  if (value == null) {
-    return const <_ThinkingActionEditor>[];
-  }
-  return _thinkingActionsFromJson(value, field);
-}
-
-/// Decodes one text field as a JSON value.
-Object? _decodeThinkingValue(String value, String label) {
-  final text = value.trim();
-  if (text.isEmpty) {
-    throw FormatException('$label 不能为空');
-  }
-  try {
-    return jsonDecode(text);
-  } on FormatException catch (error) {
-    throw FormatException('$label JSON 无效：${error.message}');
-  }
-}
-
-/// Reads a JSON object at the specified location.
-Map<String, Object?> _jsonObject(Object? value, String label) {
-  if (value is! Map) {
-    throw FormatException('$label 必须是 JSON 对象');
-  }
-  return value.cast<String, Object?>();
-}
-
-/// Reads a required string list from JSON.
-List<String> _stringListFromJson(Object? value, String field) {
-  if (value is! List<Object?>) {
-    throw FormatException('$field 必须是 JSON 数组');
-  }
-  return <String>[
-    for (var index = 0; index < value.length; index++)
-      _stringFromJson(value[index], '$field[$index]'),
-  ];
-}
-
-/// Reads a required string from JSON.
-String _stringFromJson(Object? value, String field) {
-  if (value is! String) {
-    throw FormatException('$field 必须是字符串');
-  }
-  return value;
-}
-
-/// Reads an optional string from JSON.
-String _optionalStringFromJson(Object? value) {
-  if (value == null) {
-    return '';
-  }
-  if (value is! String) {
-    throw const FormatException('字段必须是字符串');
-  }
-  return value;
-}
-
-/// Reads a required boolean from JSON.
-bool _boolFromJson(Object? value, String field) {
-  if (value is! bool) {
-    throw FormatException('$field 必须是布尔值');
-  }
-  return value;
-}
-
-/// Reads and validates a thinking control value.
-String _thinkingControlFromJson(Object? value) {
-  final control = _stringFromJson(value, 'control');
-  _thinkingControlLabel(control);
-  return control;
-}
-
-/// Returns the display label for one thinking control value.
-String _thinkingControlLabel(String value) {
-  return switch (value) {
-    'levels' => '多档位滑块',
-    'toggle_only' => '仅开关',
-    'unsupported' => '不支持思考',
-    _ => throw FormatException('control 不支持：$value'),
-  };
-}
-
-/// Joins a list of rule values for text editing.
-String _joinThinkingValues(List<String> values) {
-  return values.join(', ');
-}
-
-/// Splits a comma-separated editor value list.
-List<String> _splitThinkingValues(String value) {
-  return value
-      .split(',')
-      .map((item) => item.trim())
-      .where((item) => item.isNotEmpty)
-      .toList(growable: false);
-}
-
-/// Returns a stable option id from a JSON value.
-String _thinkingValueId(Object? value) {
-  if (value is String) {
-    return value;
-  }
-  return jsonEncode(value);
-}
-
-/// Returns a common option path for the rule-level path editor.
-String _defaultThinkingPath(List<_ThinkingOptionEditor> options) {
-  final paths = <String>{
-    for (final option in options)
-      if (option.path.trim().isNotEmpty) option.path.trim(),
-  };
-  if (paths.length == 1) {
-    return paths.single;
-  }
-  return '';
-}
-
-/// Builds a compact title for a thinking rule.
-String _thinkingRulePreviewTitle(_ThinkingRuleEditor rule) {
-  final parts = <String>[
-    for (final value in rule.modelPrefixes) '前缀 $value',
-    for (final value in rule.modelRegexes) '正则 $value',
-    for (final value in rule.endpointSuffixes) '端点 $value',
-  ];
-  if (parts.isEmpty) {
-    return '所有模型';
-  }
-  final visible = parts.take(3).join('、');
-  return parts.length > 3 ? '$visible、…' : visible;
-}
-
-/// Builds a compact path summary for a thinking rule.
-String _thinkingRulePathSummary(_ThinkingRuleEditor rule) {
-  if (rule.defaultPath.trim().isNotEmpty) {
-    return rule.defaultPath.trim();
-  }
-  final paths = <String>[
-    for (final action in rule.enableActions)
-      if (action.path.trim().isNotEmpty) action.path.trim(),
-    for (final action in rule.disableActions)
-      if (action.path.trim().isNotEmpty) action.path.trim(),
-    for (final option in rule.options)
-      if (option.path.trim().isNotEmpty) option.path.trim(),
-  ];
-  if (paths.isEmpty) {
-    return '未设置请求路径';
-  }
-  return paths.first;
-}
-
-/// Builds a compact path summary for a thinking level option.
-String _thinkingOptionPathSummary(
-  _ThinkingOptionEditor option,
-  String defaultPath,
-) {
-  final path = option.path.trim().isEmpty
-      ? defaultPath.trim()
-      : option.path.trim();
-  if (path.isEmpty) {
-    return '未设置写入路径';
-  }
-  return path;
-}
-
-/// Builds the summary text for all configured control types.
-String _thinkingControlSummary(List<_ThinkingRuleEditor> rules) {
-  final labels = <String>[];
-  for (final rule in rules) {
-    final label = _thinkingControlLabel(rule.control);
-    if (!labels.any((item) => item == label)) {
-      labels.add(label);
-    }
-  }
-  if (labels.isEmpty) {
-    return '未配置';
-  }
-  return labels.join(' / ');
-}
-
-/// Replaces one item in a list.
-List<T> _replaceAt<T>(List<T> items, int index, T value) {
-  return <T>[
-    for (var i = 0; i < items.length; i++) i == index ? value : items[i],
-  ];
-}
-
-/// Removes one item from a list.
-List<T> _removeAt<T>(List<T> items, int index) {
-  return <T>[
-    for (var i = 0; i < items.length; i++)
-      if (i != index) items[i],
-  ];
-}
-
-/// Moves one item inside a list.
-List<T> _moveAt<T>(List<T> items, int from, int to) {
-  final copy = <T>[...items];
-  final item = copy.removeAt(from);
-  copy.insert(to, item);
-  return copy;
-}
-
 sealed class _AvailableModelSelection {
   const _AvailableModelSelection();
 }
@@ -2725,18 +1085,41 @@ class _AvailableModelCustom extends _AvailableModelSelection {
   const _AvailableModelCustom();
 }
 
-class _AvailableModelDialog extends StatefulWidget {
-  const _AvailableModelDialog({required this.models});
+/// Selectable models and catalog freshness after the model catalog was downloaded again.
+class _AvailableModelsReload {
+  const _AvailableModelsReload({
+    required this.models,
+    required this.catalogStatus,
+  });
 
   final List<core_proxy.AvailableProviderModel> models;
+  final core_proxy.ModelCatalogStatus catalogStatus;
+}
+
+class _AvailableModelDialog extends StatefulWidget {
+  const _AvailableModelDialog({
+    required this.models,
+    required this.catalogStatus,
+    required this.onRetryCatalog,
+  });
+
+  final List<core_proxy.AvailableProviderModel> models;
+  final core_proxy.ModelCatalogStatus catalogStatus;
+  final Future<_AvailableModelsReload> Function() onRetryCatalog;
 
   static Future<_AvailableModelSelection?> show({
     required BuildContext context,
     required List<core_proxy.AvailableProviderModel> models,
+    required core_proxy.ModelCatalogStatus catalogStatus,
+    required Future<_AvailableModelsReload> Function() onRetryCatalog,
   }) {
     return showDialog<_AvailableModelSelection>(
       context: context,
-      builder: (context) => _AvailableModelDialog(models: models),
+      builder: (context) => _AvailableModelDialog(
+        models: models,
+        catalogStatus: catalogStatus,
+        onRetryCatalog: onRetryCatalog,
+      ),
     );
   }
 
@@ -2792,14 +1175,22 @@ class _LucideIcon extends StatelessWidget {
 }
 
 class _ModernCheckbox extends StatelessWidget {
-  const _ModernCheckbox({required this.checked, required this.onTap});
+  const _ModernCheckbox({
+    required this.checked,
+    required this.onTap,
+    this.partial = false,
+  });
 
   final bool checked;
+
+  /// Whether only some of what the box stands for is checked; the box shows a dash.
+  final bool partial;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final filled = checked || partial;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
@@ -2807,10 +1198,10 @@ class _ModernCheckbox extends StatelessWidget {
         width: 18,
         height: 18,
         decoration: BoxDecoration(
-          color: checked ? colorScheme.primary : Colors.transparent,
+          color: filled ? colorScheme.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(5),
           border: Border.all(
-            color: checked
+            color: filled
                 ? colorScheme.primary
                 : colorScheme.outlineVariant.withValues(alpha: 0.5),
             width: 1.4,
@@ -2824,7 +1215,15 @@ class _ModernCheckbox extends StatelessWidget {
                   color: colorScheme.onPrimary,
                 ),
               )
-            : null,
+            : (partial
+                  ? Center(
+                      child: Icon(
+                        Icons.remove_rounded,
+                        size: 14,
+                        color: colorScheme.onPrimary,
+                      ),
+                    )
+                  : null),
       ),
     );
   }
@@ -2987,14 +1386,53 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
   final _searchController = TextEditingController();
   final Set<String> _selectedModelIds = <String>{};
   late _AvailableModelListScope _scope;
+  late List<core_proxy.AvailableProviderModel> _models;
+  late core_proxy.ModelCatalogStatus _catalogStatus;
+  bool _retryingCatalog = false;
+  String? _retryError;
 
   @override
   void initState() {
     super.initState();
-    final hasFetched = widget.models.any(_availableProviderModelIsFetched);
+    _models = widget.models;
+    _catalogStatus = widget.catalogStatus;
+    final hasFetched = _models.any(_availableProviderModelIsFetched);
     _scope = hasFetched
         ? _AvailableModelListScope.fetched
         : _AvailableModelListScope.all;
+  }
+
+  /// Downloads the model catalog again and describes the provider's models with it.
+  Future<void> _retryCatalog() async {
+    setState(() {
+      _retryingCatalog = true;
+      _retryError = null;
+    });
+    try {
+      final reload = await widget.onRetryCatalog();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _models = reload.models;
+        _catalogStatus = reload.catalogStatus;
+        final modelIds = _models.map((model) => model.modelId).toSet();
+        _selectedModelIds.retainWhere(modelIds.contains);
+      });
+    } on CoreLinkError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _retryError = core_proxy.CoreProxyErrorDetails.fromCoreLinkError(
+          error,
+        ).message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _retryingCatalog = false);
+      }
+    }
   }
 
   @override
@@ -3006,9 +1444,9 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
   /// Returns models in the current fetched-or-history scope.
   List<core_proxy.AvailableProviderModel> _scopedModels() {
     if (_scope == _AvailableModelListScope.all) {
-      return widget.models;
+      return _models;
     }
-    return widget.models
+    return _models
         .where(_availableProviderModelIsFetched)
         .toList(growable: false);
   }
@@ -3038,7 +1476,7 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
       _scope = scope;
       if (scope == _AvailableModelListScope.fetched) {
         _selectedModelIds.removeWhere((modelId) {
-          return widget.models.any(
+          return _models.any(
             (model) =>
                 model.modelId == modelId &&
                 !_availableProviderModelIsFetched(model),
@@ -3061,7 +1499,7 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
 
   /// Returns the selected catalog models in their displayed catalog order.
   List<core_proxy.AvailableProviderModel> _selectedModels() {
-    return widget.models
+    return _models
         .where((model) => _selectedModelIds.contains(model.modelId))
         .toList(growable: false);
   }
@@ -3100,10 +1538,8 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
     final query = _searchController.text.trim();
     final filteredModels = _filteredModels(l10n);
     final includeSource = _scope == _AvailableModelListScope.all;
-    final fetchedCount = widget.models
-        .where(_availableProviderModelIsFetched)
-        .length;
-    final allCount = widget.models.length;
+    final fetchedCount = _models.where(_availableProviderModelIsFetched).length;
+    final allCount = _models.length;
     final allFilteredSelected = _areAllFilteredSelected(filteredModels);
 
     final viewport = MediaQuery.sizeOf(context);
@@ -3301,6 +1737,13 @@ class _AvailableModelDialogState extends State<_AvailableModelDialog> {
                         ),
                       ],
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  _CatalogStatusLine(
+                    status: _catalogStatus,
+                    retryError: _retryError,
+                    retrying: _retryingCatalog,
+                    onRetry: _retryCatalog,
                   ),
                 ],
               ),
@@ -3555,6 +1998,27 @@ class _AvailableModelItemCard extends StatelessWidget {
                             _ModelCapabilityCapsules(
                               capabilities: model.capabilities!,
                             ),
+                          if (model.catalogModelId == null &&
+                              model.capabilities == null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 1.5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colorScheme.errorContainer.withValues(
+                                  alpha: 0.45,
+                                ),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                l10n.settingsModelUnrecognized,
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: colorScheme.onErrorContainer,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
                           if (model.builtinTools.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -3587,6 +2051,90 @@ class _AvailableModelItemCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Says where model details come from and whether the last catalog download failed.
+class _CatalogStatusLine extends StatelessWidget {
+  const _CatalogStatusLine({
+    required this.status,
+    required this.retryError,
+    required this.retrying,
+    required this.onRetry,
+  });
+
+  final core_proxy.ModelCatalogStatus status;
+  final String? retryError;
+  final bool retrying;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final error = retryError ?? status.lastError;
+    final updatedAt = status.updatedAt;
+    final String message;
+    if (error != null && updatedAt != null) {
+      message = l10n.settingsModelCatalogUpdateFailedUsing(
+        _formatCatalogTime(updatedAt),
+        error,
+      );
+    } else if (error != null) {
+      message = l10n.settingsModelCatalogUpdateFailed(error);
+    } else if (updatedAt == null) {
+      message = l10n.settingsModelCatalogNotDownloaded;
+    } else {
+      message = l10n.settingsModelCatalogUpdatedAt(
+        _formatCatalogTime(updatedAt),
+      );
+    }
+    final failed = error != null || updatedAt == null;
+    final color = failed ? colorScheme.error : colorScheme.onSurfaceVariant;
+    return Row(
+      children: <Widget>[
+        Icon(
+          failed ? Icons.error_outline : Icons.info_outline,
+          size: 14,
+          color: color,
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            message,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: color,
+              fontSize: 11,
+            ),
+          ),
+        ),
+        if (failed && retrying)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: M3LoadingIndicator(size: 14),
+          )
+        else if (failed)
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            child: Text(l10n.settingsModelCatalogRetry),
+          ),
+      ],
+    );
+  }
+}
+
+/// Formats a catalog download time as local month, day and time.
+String _formatCatalogTime(int updatedAt) {
+  final time = DateTime.fromMillisecondsSinceEpoch(updatedAt).toLocal();
+  String twoDigits(int value) => value.toString().padLeft(2, '0');
+  return '${twoDigits(time.month)}-${twoDigits(time.day)} '
+      '${twoDigits(time.hour)}:${twoDigits(time.minute)}';
 }
 
 class _CustomModelActionCard extends StatelessWidget {
@@ -3801,7 +2349,7 @@ class _ProviderCard extends StatelessWidget {
         ? null
         : _summaryForModelOrNull(summaries, provider.id, displayedModel.id);
     final contextLabel = _formatContextLength(
-      displayedModel?.contextOverride?.maxContextLength,
+      displayedSummary?.context.maxContextLength,
     );
     final multimodal = _isMultimodalCapabilities(
       displayedSummary?.capabilities,
@@ -3971,39 +2519,47 @@ class _CapsuleActionButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.tooltip,
+    this.icon,
     this.primary = false,
+    this.destructive = false,
   });
 
   final String label;
   final VoidCallback? onTap;
   final String? tooltip;
+  final IconData? icon;
   final bool primary;
+
+  /// Marks an action that removes something, in the error color.
+  final bool destructive;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isEnabled = onTap != null;
-    final backgroundColor = primary
-        ? (isEnabled
-              ? colorScheme.primaryContainer.withValues(alpha: 0.7)
-              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.2))
-        : (isEnabled
-              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.45)
-              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.2));
-    final foregroundColor = primary
-        ? (isEnabled
-              ? colorScheme.onPrimaryContainer
-              : colorScheme.onSurface.withValues(alpha: 0.38))
-        : (isEnabled
-              ? colorScheme.onSurface
-              : colorScheme.onSurface.withValues(alpha: 0.38));
-    final borderColor = primary
-        ? (isEnabled
-              ? colorScheme.primary.withValues(alpha: 0.25)
-              : colorScheme.outlineVariant.withValues(alpha: 0.15))
-        : (isEnabled
-              ? colorScheme.outlineVariant.withValues(alpha: 0.35)
-              : colorScheme.outlineVariant.withValues(alpha: 0.15));
+    final Color backgroundColor;
+    final Color foregroundColor;
+    final Color borderColor;
+    if (onTap == null) {
+      backgroundColor = colorScheme.surfaceContainerHighest.withValues(
+        alpha: 0.2,
+      );
+      foregroundColor = colorScheme.onSurface.withValues(alpha: 0.38);
+      borderColor = colorScheme.outlineVariant.withValues(alpha: 0.15);
+    } else if (primary) {
+      backgroundColor = colorScheme.primaryContainer.withValues(alpha: 0.7);
+      foregroundColor = colorScheme.onPrimaryContainer;
+      borderColor = colorScheme.primary.withValues(alpha: 0.25);
+    } else if (destructive) {
+      backgroundColor = colorScheme.error.withValues(alpha: 0.08);
+      foregroundColor = colorScheme.error;
+      borderColor = colorScheme.error.withValues(alpha: 0.35);
+    } else {
+      backgroundColor = colorScheme.surfaceContainerHighest.withValues(
+        alpha: 0.45,
+      );
+      foregroundColor = colorScheme.onSurface;
+      borderColor = colorScheme.outlineVariant.withValues(alpha: 0.35);
+    }
 
     Widget button = Material(
       color: backgroundColor,
@@ -4013,13 +2569,27 @@ class _CapsuleActionButton extends StatelessWidget {
         onTap: onTap,
         customBorder: const StadiumBorder(),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.w600,
-            ),
+          padding: EdgeInsetsDirectional.fromSTEB(
+            icon == null ? 10 : 8,
+            5,
+            10,
+            5,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (icon != null) ...<Widget>[
+                Icon(icon, size: 14, color: foregroundColor),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: foregroundColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -4043,7 +2613,6 @@ class _ProviderDetailScreen extends StatefulWidget {
     required this.onDeleteProvider,
     required this.clients,
     required this.onDeleteModel,
-    required this.onTestModelConnection,
   });
 
   final String providerId;
@@ -4061,12 +2630,6 @@ class _ProviderDetailScreen extends StatefulWidget {
     core_proxy.ModelProfile model,
   )
   onDeleteModel;
-  final Future<core_proxy.ModelConnectionTestReport?> Function(
-    core_proxy.ProviderProfile provider,
-    core_proxy.ModelProfile model,
-    core_proxy.ModelCapabilities capabilities,
-  )
-  onTestModelConnection;
 
   static Future<void> open({
     required BuildContext context,
@@ -4087,12 +2650,6 @@ class _ProviderDetailScreen extends StatefulWidget {
       core_proxy.ModelProfile model,
     )
     onDeleteModel,
-    required Future<core_proxy.ModelConnectionTestReport?> Function(
-      core_proxy.ProviderProfile provider,
-      core_proxy.ModelProfile model,
-      core_proxy.ModelCapabilities capabilities,
-    )
-    onTestModelConnection,
   }) {
     return showDialog<void>(
       context: context,
@@ -4106,7 +2663,6 @@ class _ProviderDetailScreen extends StatefulWidget {
         onDeleteProvider: onDeleteProvider,
         clients: clients,
         onDeleteModel: onDeleteModel,
-        onTestModelConnection: onTestModelConnection,
       ),
     );
   }
@@ -4115,9 +2671,67 @@ class _ProviderDetailScreen extends StatefulWidget {
   State<_ProviderDetailScreen> createState() => _ProviderDetailScreenState();
 }
 
+/// How far one model's connection test has got.
+enum _ModelTestPhase { queued, testing, passed, failed }
+
+/// The latest connection test of one model in the list.
+class _ModelTestResult {
+  const _ModelTestResult._(this.phase, {this.report, this.error, this.note});
+
+  /// A test a batch has not reached yet.
+  const _ModelTestResult.queued() : this._(_ModelTestPhase.queued);
+
+  const _ModelTestResult.testing() : this._(_ModelTestPhase.testing);
+
+  /// A test that ran; it passed when every check did.
+  factory _ModelTestResult.finished(
+    core_proxy.ModelConnectionTestReport report, {
+    String? note,
+  }) {
+    return _ModelTestResult._(
+      report.success ? _ModelTestPhase.passed : _ModelTestPhase.failed,
+      report: report,
+      note: note,
+    );
+  }
+
+  /// A test that could not run at all.
+  const _ModelTestResult.crashed(String error)
+    : this._(_ModelTestPhase.failed, error: error);
+
+  final _ModelTestPhase phase;
+  final core_proxy.ModelConnectionTestReport? report;
+
+  /// Whether the test has an outcome to show, rather than still being waited on or run.
+  bool get isFinished =>
+      phase == _ModelTestPhase.passed || phase == _ModelTestPhase.failed;
+
+  /// Why the test could not run, when it could not.
+  final String? error;
+
+  /// What the test changed on the model, such as the capabilities it switched.
+  final String? note;
+}
+
 class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
+  /// Models a batch tests at once; a provider's models share its rate limit.
+  static const int _batchConcurrency = 3;
+
   late ModelSettingsData _data = widget.initialData;
   String? _expandedModelId;
+
+  /// The latest test of each model, keyed by [_modelTestKey].
+  final Map<String, _ModelTestResult> _tests = <String, _ModelTestResult>{};
+
+  /// Bumped when a model's result should show itself, keyed like [_tests].
+  final Map<String, int> _reveals = <String, int>{};
+  final Set<String> _checkedModelIds = <String>{};
+  bool _selecting = false;
+  bool _batchRunning = false;
+  bool _batchStopping = false;
+  int _batchDone = 0;
+  int _batchTotal = 0;
+  final GlobalKey<_DialogToastState> _toastKey = GlobalKey<_DialogToastState>();
 
   void _toggleModelSettings(String modelId) {
     setState(() {
@@ -4145,71 +2759,328 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
       if (!mounted) {
         return;
       }
-      final providerExists = data.providers.any(
-        (provider) => provider.id == widget.providerId,
-      );
-      if (!providerExists) {
+      core_proxy.ProviderProfile? provider;
+      for (final candidate in data.providers) {
+        if (candidate.id == widget.providerId) {
+          provider = candidate;
+        }
+      }
+      if (provider == null) {
         Navigator.of(context).pop();
         return;
       }
+      final modelIds = provider.models.map((model) => model.id).toSet();
+      final testKeys = modelIds
+          .map((modelId) => _modelTestKey(widget.providerId, modelId))
+          .toSet();
       setState(() {
         _data = data;
+        // Checks and results of models deleted meanwhile go with them.
+        _checkedModelIds.retainWhere(modelIds.contains);
+        _tests.removeWhere((key, _) => !testKeys.contains(key));
       });
     } catch (_) {
       // Keep showing the last snapshot if a background refresh fails.
     }
   }
 
-  Future<core_proxy.ModelConnectionTestReport?> _testModelConnection(
+  /// Shows a short message over the bottom of the list.
+  void _notify(String message, {bool error = false}) {
+    _toastKey.currentState?.show(message, error: error);
+  }
+
+  void _notifySaveFailure(Object error) {
+    if (!mounted) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    _notify(l10n.settingsModelSaveFailed(_errorMessage(error)), error: true);
+  }
+
+  void _startSelecting([String? modelId]) {
+    setState(() {
+      _selecting = true;
+      _expandedModelId = null;
+      _checkedModelIds.clear();
+      if (modelId != null) {
+        _checkedModelIds.add(modelId);
+      }
+    });
+  }
+
+  void _stopSelecting() {
+    setState(() {
+      _selecting = false;
+      _checkedModelIds.clear();
+    });
+  }
+
+  void _toggleChecked(String modelId) {
+    setState(() {
+      if (!_checkedModelIds.remove(modelId)) {
+        _checkedModelIds.add(modelId);
+      }
+    });
+  }
+
+  void _toggleCheckAll(core_proxy.ProviderProfile provider) {
+    setState(() {
+      if (_checkedModelIds.length == provider.models.length) {
+        _checkedModelIds.clear();
+      } else {
+        _checkedModelIds.addAll(provider.models.map((model) => model.id));
+      }
+    });
+  }
+
+  List<core_proxy.ModelProfile> _checkedModels(
+    core_proxy.ProviderProfile provider,
+  ) {
+    return provider.models
+        .where((model) => _checkedModelIds.contains(model.id))
+        .toList(growable: false);
+  }
+
+  /// Tests one model with the capabilities its settings show. When chat works, the
+  /// capabilities switch to what the checks found. Returns the capabilities the model is
+  /// left with, `null` when the test did not get that far.
+  Future<core_proxy.ModelCapabilities?> _testFromSettings(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
     core_proxy.ModelCapabilities capabilities,
   ) async {
-    if (!mounted) {
+    final key = _modelTestKey(provider.id, model.id);
+    final current = _tests[key];
+    if (current != null && !current.isFinished) {
+      // A test of this model is already running, or a batch has it queued.
       return null;
     }
-    final l10n = AppLocalizations.of(context)!;
+    final appliedNote = AppLocalizations.of(
+      context,
+    )!.settingsModelCapabilitiesApplied;
+    final manager = widget.clients.preferencesModelConfigManager;
+    setState(() {
+      _tests[key] = const _ModelTestResult.testing();
+    });
+    core_proxy.ModelCapabilities? found;
+    _ModelTestResult result;
     try {
-      await widget.clients.preferencesModelConfigManager
-          .updateCapabilitiesForModel(
-            providerId: provider.id,
-            modelId: model.id,
-            capabilities: capabilities,
-          );
+      await manager.updateCapabilitiesForModel(
+        providerId: provider.id,
+        modelId: model.id,
+        capabilities: capabilities,
+      );
       final report = await widget.clients.application.testModelConnection(
         providerId: provider.id,
         modelId: model.id,
       );
-      if (!mounted) {
-        return report;
-      }
-      final chatPassed = connectionTestSucceeded(
+      if (connectionTestSucceeded(
         report,
         core_proxy.ModelConnectionTestType.chat,
-      );
-      if (chatPassed) {
-        await widget.clients.preferencesModelConfigManager
-            .updateCapabilitiesForModel(
-              providerId: provider.id,
-              modelId: model.id,
-              capabilities: capabilitiesFromConnectionTest(
-                report,
-                capabilities,
-              ),
-            );
-        if (mounted) {
-          await _refresh();
-        }
-      }
-      return report;
-    } catch (error) {
-      if (mounted) {
-        await _ConnectionTestErrorDialog.show(
-          context: context,
-          message: l10n.settingsModelConnectionTestError('$error'),
+      )) {
+        final tested = capabilitiesFromConnectionTest(report, capabilities);
+        await manager.updateCapabilitiesForModel(
+          providerId: provider.id,
+          modelId: model.id,
+          capabilities: tested,
         );
+        found = tested;
       }
-      return null;
+      result = _ModelTestResult.finished(
+        report,
+        note: found == null || _sameCapabilities(found, capabilities)
+            ? null
+            : appliedNote,
+      );
+    } catch (error) {
+      result = _ModelTestResult.crashed(_errorMessage(error));
+    }
+    if (!mounted) {
+      return found;
+    }
+    setState(() {
+      _tests[key] = result;
+      _reveals[key] = (_reveals[key] ?? 0) + 1;
+    });
+    await _refresh();
+    return found;
+  }
+
+  /// Runs one model's connection test as its settings stand.
+  Future<_ModelTestResult> _testOnce(
+    core_proxy.ProviderProfile provider,
+    core_proxy.ModelProfile model,
+  ) async {
+    try {
+      final report = await widget.clients.application.testModelConnection(
+        providerId: provider.id,
+        modelId: model.id,
+      );
+      return _ModelTestResult.finished(report);
+    } catch (error) {
+      return _ModelTestResult.crashed(_errorMessage(error));
+    }
+  }
+
+  /// Tests [models] a few at a time and shows each result on its model as it comes in.
+  /// The models' settings are left as they are.
+  Future<void> _testModels(
+    core_proxy.ProviderProfile provider,
+    List<core_proxy.ModelProfile> models,
+  ) async {
+    if (_batchRunning || models.isEmpty) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    setState(() {
+      _batchRunning = true;
+      _batchStopping = false;
+      _batchDone = 0;
+      _batchTotal = models.length;
+      for (final model in models) {
+        _tests[_modelTestKey(provider.id, model.id)] =
+            const _ModelTestResult.queued();
+      }
+    });
+    var next = 0;
+    var passed = 0;
+    var failed = 0;
+    Future<void> worker() async {
+      while (next < models.length && !_batchStopping && mounted) {
+        final model = models[next];
+        next += 1;
+        // Only the models being run spin; those still waiting show a quiet ring.
+        setState(() {
+          _tests[_modelTestKey(provider.id, model.id)] =
+              const _ModelTestResult.testing();
+        });
+        final result = await _testOnce(provider, model);
+        if (!mounted) {
+          return;
+        }
+        if (result.phase == _ModelTestPhase.passed) {
+          passed += 1;
+        } else {
+          failed += 1;
+        }
+        setState(() {
+          _tests[_modelTestKey(provider.id, model.id)] = result;
+          _batchDone += 1;
+        });
+      }
+    }
+
+    final workers = models.length < _batchConcurrency
+        ? models.length
+        : _batchConcurrency;
+    await Future.wait(<Future<void>>[
+      for (var index = 0; index < workers; index++) worker(),
+    ]);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      // A stop leaves the rest untested, so they show nothing again.
+      for (final model in models.skip(next)) {
+        _tests.remove(_modelTestKey(provider.id, model.id));
+      }
+      _batchRunning = false;
+      _batchStopping = false;
+    });
+    if (passed + failed == 0) {
+      return;
+    }
+    _notify(
+      failed == 0
+          ? l10n.settingsModelTestAllPassed(passed)
+          : l10n.settingsModelTestSummary(passed, failed),
+      error: failed > 0,
+    );
+  }
+
+  void _stopTests() {
+    setState(() {
+      _batchStopping = true;
+    });
+  }
+
+  void _testChecked(core_proxy.ProviderProfile provider) {
+    final models = _checkedModels(provider);
+    _stopSelecting();
+    unawaited(_testModels(provider, models));
+  }
+
+  /// Deletes the checked models once the user confirms; models a function uses are kept.
+  Future<void> _deleteChecked(core_proxy.ProviderProfile provider) async {
+    final l10n = AppLocalizations.of(context)!;
+    final chosen = _checkedModels(provider);
+    if (chosen.isEmpty) {
+      return;
+    }
+    final bindings = await widget.clients.preferencesFunctionalConfigManager
+        .functionModelBindingFlow()
+        .first;
+    if (!mounted) {
+      return;
+    }
+    final kept = <core_proxy.ModelProfile>[];
+    final keptFunctions = <core_proxy.FunctionType>{};
+    final deletable = <core_proxy.ModelProfile>[];
+    for (final model in chosen) {
+      final functions = _boundFunctionTypesForModel(
+        bindings,
+        provider.id,
+        model.id,
+      );
+      if (functions.isEmpty) {
+        deletable.add(model);
+      } else {
+        kept.add(model);
+        keptFunctions.addAll(functions);
+      }
+    }
+    if (deletable.isEmpty) {
+      await _DeleteModelBlockedDialog.show(
+        context: context,
+        functionTypes: keptFunctions.toList(growable: false),
+        several: true,
+      );
+      return;
+    }
+    final confirmed = await _DeleteModelsConfirmDialog.show(
+      context: context,
+      count: deletable.length,
+      keptModelIds: kept.map((model) => model.id).toList(growable: false),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    var deleted = 0;
+    Object? failure;
+    for (final model in deletable) {
+      try {
+        await widget.clients.preferencesModelConfigManager.deleteModel(
+          providerId: provider.id,
+          modelId: model.id,
+        );
+        deleted += 1;
+      } catch (error) {
+        failure = error;
+        break;
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selecting = false;
+      _checkedModelIds.clear();
+    });
+    await _refresh();
+    if (failure != null) {
+      _notify('${l10n.failed}: ${_errorMessage(failure)}', error: true);
+    } else {
+      _notify(l10n.settingsModelDeletedCount(deleted));
     }
   }
 
@@ -4236,121 +3107,510 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
       child: SizedBox(
         width: dialogWidth,
         height: dialogHeight,
-        child: Column(
+        child: Stack(
           children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: _ProviderHeaderCapsule(
-                        provider: provider,
-                        modelCountLabel: l10n.settingsModelProviderModelCount(
-                          provider.models.length,
+            Column(
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: _ProviderHeaderCapsule(
+                            provider: provider,
+                            modelCountLabel: l10n
+                                .settingsModelProviderModelCount(
+                                  provider.models.length,
+                                ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _CapsuleActionButton(
-                    label: l10n.settingsModelAddModel,
-                    tooltip: l10n.settingsModelAddModel,
-                    primary: true,
-                    onTap: () => _run(() => widget.onAddModel(provider)),
-                  ),
-                  const SizedBox(width: 8),
-                  _CapsuleActionButton(
-                    label: l10n.edit,
-                    tooltip: l10n.settingsModelEditProvider,
-                    onTap: () => _run(() => widget.onEditProvider(provider)),
-                  ),
-                  const SizedBox(width: 8),
-                  _CapsuleActionButton(
-                    label: l10n.delete,
-                    tooltip: l10n.settingsModelDeleteProviderConfirmAction,
-                    onTap: () => _run(() => widget.onDeleteProvider(provider)),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: MaterialLocalizations.of(
-                      context,
-                    ).closeButtonTooltip,
-                    style: IconButton.styleFrom(
-                      hoverColor: colorScheme.surfaceContainerHighest
-                          .withValues(
-                            alpha:
-                                Theme.of(context).brightness == Brightness.dark
-                                ? 0.35
-                                : 0.5,
-                          ),
-                      shape: const CircleBorder(),
-                    ),
-                    icon: _LucideIcon(
-                      _kSvgClose,
-                      size: 16,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                children: <Widget>[
-                  if (provider.models.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 28),
-                      child: Column(
-                        children: <Widget>[
-                          Text(
-                            l10n.settingsModelNoModels,
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          FilledButton.icon(
-                            onPressed: () =>
-                                _run(() => widget.onAddModel(provider)),
-                            style: SettingsControlStyles.sectionFilledButton(),
-                            icon: const Icon(Icons.playlist_add, size: 18),
-                            label: Text(l10n.settingsModelAddModel),
-                          ),
-                        ],
+                      const SizedBox(width: 8),
+                      _CapsuleActionButton(
+                        label: l10n.settingsModelAddModel,
+                        tooltip: l10n.settingsModelAddModel,
+                        primary: true,
+                        onTap: () => _run(() => widget.onAddModel(provider)),
                       ),
-                    )
-                  else
-                    _ProviderModelList(
-                      provider: provider,
-                      summaries: _data.summaries,
-                      chatBinding: _data.chatBinding,
-                      onSelectModel: (providerId, modelId) =>
-                          _run(() => widget.onSelectModel(providerId, modelId)),
-                      testingModelKey: null,
-                      expandedModelId: _expandedModelId,
-                      onToggleSettings: _toggleModelSettings,
-                      clients: widget.clients,
-                      onDeleteModel: (p, m) async {
-                        setState(() {
-                          _expandedModelId = null;
-                        });
-                        await _run(() => widget.onDeleteModel(p, m));
-                      },
-                      onTestModelConnection: _testModelConnection,
-                      onModelSettingsSaved: _refresh,
-                    ),
-                ],
-              ),
+                      const SizedBox(width: 8),
+                      _CapsuleActionButton(
+                        label: l10n.edit,
+                        tooltip: l10n.settingsModelEditProvider,
+                        onTap: () =>
+                            _run(() => widget.onEditProvider(provider)),
+                      ),
+                      const SizedBox(width: 8),
+                      _CapsuleActionButton(
+                        label: l10n.delete,
+                        tooltip: l10n.settingsModelDeleteProviderConfirmAction,
+                        onTap: () =>
+                            _run(() => widget.onDeleteProvider(provider)),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: MaterialLocalizations.of(
+                          context,
+                        ).closeButtonTooltip,
+                        style: IconButton.styleFrom(
+                          hoverColor: colorScheme.surfaceContainerHighest
+                              .withValues(
+                                alpha:
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark
+                                    ? 0.35
+                                    : 0.5,
+                              ),
+                          shape: const CircleBorder(),
+                        ),
+                        icon: _LucideIcon(
+                          _kSvgClose,
+                          size: 16,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                if (provider.models.isNotEmpty)
+                  _ModelListToolbar(
+                    selecting: _selecting,
+                    checkedCount: _checkedModelIds.length,
+                    modelCount: provider.models.length,
+                    batchRunning: _batchRunning,
+                    batchStopping: _batchStopping,
+                    batchDone: _batchDone,
+                    batchTotal: _batchTotal,
+                    onTestAll: () =>
+                        unawaited(_testModels(provider, provider.models)),
+                    onStopTests: _stopTests,
+                    onStartSelecting: _startSelecting,
+                    onToggleCheckAll: () => _toggleCheckAll(provider),
+                    onTestChecked: () => _testChecked(provider),
+                    onDeleteChecked: () => unawaited(_deleteChecked(provider)),
+                    onStopSelecting: _stopSelecting,
+                  ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                    children: <Widget>[
+                      if (provider.models.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 28),
+                          child: Column(
+                            children: <Widget>[
+                              Text(
+                                l10n.settingsModelNoModels,
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              FilledButton.icon(
+                                onPressed: () =>
+                                    _run(() => widget.onAddModel(provider)),
+                                style:
+                                    SettingsControlStyles.sectionFilledButton(),
+                                icon: const Icon(Icons.playlist_add, size: 18),
+                                label: Text(l10n.settingsModelAddModel),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        _ProviderModelList(
+                          provider: provider,
+                          summaries: _data.summaries,
+                          chatBinding: _data.chatBinding,
+                          onSelectModel: (providerId, modelId) => _run(
+                            () => widget.onSelectModel(providerId, modelId),
+                          ),
+                          expandedModelId: _expandedModelId,
+                          onToggleSettings: _toggleModelSettings,
+                          clients: widget.clients,
+                          tests: _tests,
+                          reveals: _reveals,
+                          selecting: _selecting,
+                          checkedModelIds: _checkedModelIds,
+                          onToggleChecked: _toggleChecked,
+                          onStartSelecting: _startSelecting,
+                          onDeleteModel: (p, m) async {
+                            setState(() {
+                              _expandedModelId = null;
+                            });
+                            await _run(() => widget.onDeleteModel(p, m));
+                          },
+                          onTestModel: _testFromSettings,
+                          onModelSettingsSaved: _refresh,
+                          onModelSettingsFailed: _notifySaveFailure,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: _DialogToast(key: _toastKey),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Whether two capability sets switch the same things on.
+bool _sameCapabilities(
+  core_proxy.ModelCapabilities left,
+  core_proxy.ModelCapabilities right,
+) {
+  return left.toolCall == right.toolCall &&
+      left.directImage == right.directImage &&
+      left.directAudio == right.directAudio &&
+      left.directVideo == right.directVideo;
+}
+
+/// The message of a Core error, or the error as written.
+String _errorMessage(Object error) {
+  return error is CoreLinkError ? error.message : '$error';
+}
+
+/// The green that marks a passed check, legible on the panel's surfaces.
+Color _testPassedColor(bool isDark) {
+  return isDark ? const Color(0xFF5CC98A) : const Color(0xFF1E8F52);
+}
+
+/// The actions over a provider's models: test them all, or check some to test or delete.
+class _ModelListToolbar extends StatelessWidget {
+  const _ModelListToolbar({
+    required this.selecting,
+    required this.checkedCount,
+    required this.modelCount,
+    required this.batchRunning,
+    required this.batchStopping,
+    required this.batchDone,
+    required this.batchTotal,
+    required this.onTestAll,
+    required this.onStopTests,
+    required this.onStartSelecting,
+    required this.onToggleCheckAll,
+    required this.onTestChecked,
+    required this.onDeleteChecked,
+    required this.onStopSelecting,
+  });
+
+  final bool selecting;
+  final int checkedCount;
+  final int modelCount;
+  final bool batchRunning;
+  final bool batchStopping;
+  final int batchDone;
+  final int batchTotal;
+  final VoidCallback onTestAll;
+  final VoidCallback onStopTests;
+  final VoidCallback onStartSelecting;
+  final VoidCallback onToggleCheckAll;
+  final VoidCallback onTestChecked;
+  final VoidCallback onDeleteChecked;
+  final VoidCallback onStopSelecting;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final labelStyle = theme.textTheme.labelLarge?.copyWith(
+      fontWeight: FontWeight.w600,
+      fontSize: 12.5,
+      color: colorScheme.onSurfaceVariant,
+    );
+    final Widget content;
+    if (selecting) {
+      final anyChecked = checkedCount > 0;
+      content = Row(
+        key: const ValueKey<String>('selecting'),
+        children: <Widget>[
+          _ModernCheckbox(
+            checked: checkedCount == modelCount,
+            partial: anyChecked && checkedCount < modelCount,
+            onTap: onToggleCheckAll,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              anyChecked
+                  ? l10n.settingsModelCheckedCount(checkedCount)
+                  : l10n.settingsModelCheckAll,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: labelStyle?.copyWith(color: colorScheme.onSurface),
+            ),
+          ),
+          _CapsuleActionButton(
+            label: l10n.settingsModelTestModel,
+            icon: Icons.speed_rounded,
+            onTap: anyChecked && !batchRunning ? onTestChecked : null,
+          ),
+          const SizedBox(width: 6),
+          _CapsuleActionButton(
+            label: l10n.delete,
+            icon: Icons.delete_outline_rounded,
+            destructive: true,
+            onTap: anyChecked ? onDeleteChecked : null,
+          ),
+          const SizedBox(width: 6),
+          _CapsuleActionButton(label: l10n.cancel, onTap: onStopSelecting),
+        ],
+      );
+    } else {
+      content = Row(
+        key: const ValueKey<String>('browsing'),
+        children: <Widget>[
+          if (batchRunning) ...<Widget>[
+            const SizedBox.square(
+              dimension: 14,
+              child: Center(child: M3LoadingIndicator(size: 14)),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                l10n.settingsModelTestProgress(batchDone, batchTotal),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: labelStyle,
+              ),
+            ),
+          ],
+          const Spacer(),
+          if (batchRunning)
+            _CapsuleActionButton(
+              label: l10n.stop,
+              icon: Icons.stop_rounded,
+              onTap: batchStopping ? null : onStopTests,
+            )
+          else
+            _CapsuleActionButton(
+              label: l10n.settingsModelTestAll,
+              icon: Icons.speed_rounded,
+              onTap: onTestAll,
+            ),
+          const SizedBox(width: 6),
+          _CapsuleActionButton(
+            label: l10n.settingsModelSelect,
+            icon: Icons.checklist_rounded,
+            onTap: onStartSelecting,
+          ),
+        ],
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+      child: SizedBox(
+        height: 32,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.25),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
+            ),
+          ),
+          child: content,
+        ),
+      ),
+    );
+  }
+}
+
+/// A short message that rises over the bottom of the list and leaves by itself.
+class _DialogToast extends StatefulWidget {
+  const _DialogToast({super.key});
+
+  @override
+  State<_DialogToast> createState() => _DialogToastState();
+}
+
+class _DialogToastState extends State<_DialogToast> {
+  String? _message;
+  bool _error = false;
+  bool _visible = false;
+  Timer? _timer;
+
+  /// Shows [message] for a moment, replacing any message still showing.
+  void show(String message, {bool error = false}) {
+    _timer?.cancel();
+    setState(() {
+      _message = message;
+      _error = error;
+      _visible = true;
+    });
+    _timer = Timer(Duration(milliseconds: error ? 4200 : 2600), _dismiss);
+  }
+
+  void _dismiss() {
+    _timer?.cancel();
+    if (mounted) {
+      setState(() {
+        _visible = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final message = _message;
+    if (message == null) {
+      return const SizedBox.shrink();
+    }
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    // The toast sits on the inverse surface, so its accents come from the other theme.
+    final accent = _error
+        ? (isDark ? const Color(0xFFB3261E) : const Color(0xFFFFB4AB))
+        : colorScheme.inversePrimary;
+    return IgnorePointer(
+      ignoring: !_visible,
+      child: AnimatedOpacity(
+        opacity: _visible ? 1 : 0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        child: AnimatedSlide(
+          offset: _visible ? Offset.zero : const Offset(0, 0.4),
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+          child: Center(
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                color: colorScheme.inverseSurface,
+                shape: const StadiumBorder(),
+                shadows: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.22),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  customBorder: const StadiumBorder(),
+                  onTap: _dismiss,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 9, 16, 9),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(
+                          _error
+                              ? Icons.error_outline_rounded
+                              : Icons.check_circle_outline_rounded,
+                          size: 16,
+                          color: accent,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            message,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colorScheme.onInverseSurface,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Asks before deleting several models, naming the ones a function keeps.
+class _DeleteModelsConfirmDialog extends StatelessWidget {
+  const _DeleteModelsConfirmDialog({
+    required this.count,
+    required this.keptModelIds,
+  });
+
+  final int count;
+  final List<String> keptModelIds;
+
+  static Future<bool?> show({
+    required BuildContext context,
+    required int count,
+    required List<String> keptModelIds,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) =>
+          _DeleteModelsConfirmDialog(count: count, keptModelIds: keptModelIds),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text(l10n.settingsModelDeleteModelsTitle(count)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(l10n.settingsModelDeleteModelsMessage),
+          if (keptModelIds.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              l10n.settingsModelDeleteModelsKept(
+                keptModelIds.length,
+                keptModelIds.join(' · '),
+              ),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(l10n.delete),
+        ),
+      ],
     );
   }
 }
@@ -4402,35 +3662,47 @@ class _ProviderModelList extends StatelessWidget {
     required this.summaries,
     required this.chatBinding,
     required this.onSelectModel,
-    required this.testingModelKey,
     required this.expandedModelId,
     required this.onToggleSettings,
     required this.clients,
+    required this.tests,
+    required this.reveals,
+    required this.selecting,
+    required this.checkedModelIds,
+    required this.onToggleChecked,
+    required this.onStartSelecting,
     required this.onDeleteModel,
-    required this.onTestModelConnection,
+    required this.onTestModel,
     required this.onModelSettingsSaved,
+    required this.onModelSettingsFailed,
   });
 
   final core_proxy.ProviderProfile provider;
   final List<core_proxy.ProviderModelSummary> summaries;
   final core_proxy.FunctionModelBinding chatBinding;
   final void Function(String providerId, String modelId) onSelectModel;
-  final String? testingModelKey;
   final String? expandedModelId;
   final void Function(String modelId) onToggleSettings;
   final GeneratedCoreProxyClients clients;
+  final Map<String, _ModelTestResult> tests;
+  final Map<String, int> reveals;
+  final bool selecting;
+  final Set<String> checkedModelIds;
+  final void Function(String modelId) onToggleChecked;
+  final void Function(String modelId) onStartSelecting;
   final Future<void> Function(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
   )
   onDeleteModel;
-  final Future<core_proxy.ModelConnectionTestReport?> Function(
+  final Future<core_proxy.ModelCapabilities?> Function(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
     core_proxy.ModelCapabilities capabilities,
   )
-  onTestModelConnection;
+  onTestModel;
   final VoidCallback onModelSettingsSaved;
+  final ValueChanged<Object> onModelSettingsFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -4443,17 +3715,24 @@ class _ProviderModelList extends StatelessWidget {
             provider: provider,
             model: model,
             summary: summary,
-            selected:
+            active:
                 provider.id == chatBinding.providerId &&
                 model.id == chatBinding.modelId,
             onSelect: onSelectModel,
-            testing: testingModelKey == _modelTestKey(provider.id, model.id),
-            isExpanded: expandedModelId == model.id,
+            isExpanded: !selecting && expandedModelId == model.id,
             onToggleSettings: () => onToggleSettings(model.id),
             clients: clients,
+            test: tests[_modelTestKey(provider.id, model.id)],
+            revealToken: reveals[_modelTestKey(provider.id, model.id)] ?? 0,
+            showTestStatus: tests.isNotEmpty,
+            selecting: selecting,
+            checked: checkedModelIds.contains(model.id),
+            onToggleChecked: () => onToggleChecked(model.id),
+            onStartSelecting: () => onStartSelecting(model.id),
             onDeleteModel: onDeleteModel,
-            onTestModelConnection: onTestModelConnection,
+            onTestModel: onTestModel,
             onModelSettingsSaved: onModelSettingsSaved,
+            onModelSettingsFailed: onModelSettingsFailed,
           ),
     ];
     if (items.isEmpty) {
@@ -4477,45 +3756,63 @@ class _ProviderModelItem extends StatelessWidget {
     required this.provider,
     required this.model,
     required this.summary,
-    required this.selected,
+    required this.active,
     required this.onSelect,
-    required this.testing,
     required this.isExpanded,
     required this.onToggleSettings,
     required this.clients,
+    required this.test,
+    required this.revealToken,
+    required this.showTestStatus,
+    required this.selecting,
+    required this.checked,
+    required this.onToggleChecked,
+    required this.onStartSelecting,
     required this.onDeleteModel,
-    required this.onTestModelConnection,
+    required this.onTestModel,
     required this.onModelSettingsSaved,
+    required this.onModelSettingsFailed,
   });
 
   final core_proxy.ProviderProfile provider;
   final core_proxy.ModelProfile model;
   final core_proxy.ProviderModelSummary summary;
-  final bool selected;
+
+  /// Whether chats use this model.
+  final bool active;
   final void Function(String providerId, String modelId) onSelect;
-  final bool testing;
   final bool isExpanded;
   final VoidCallback onToggleSettings;
   final GeneratedCoreProxyClients clients;
+  final _ModelTestResult? test;
+  final int revealToken;
+  final bool showTestStatus;
+  final bool selecting;
+  final bool checked;
+  final VoidCallback onToggleChecked;
+  final VoidCallback onStartSelecting;
   final Future<void> Function(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
   )
   onDeleteModel;
-  final Future<core_proxy.ModelConnectionTestReport?> Function(
+  final Future<core_proxy.ModelCapabilities?> Function(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
     core_proxy.ModelCapabilities capabilities,
   )
-  onTestModelConnection;
+  onTestModel;
   final VoidCallback onModelSettingsSaved;
+  final ValueChanged<Object> onModelSettingsFailed;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // While picking models, the checked ones stand out instead of the active one.
+    final highlighted = selecting ? checked : active;
 
-    final cardBgColor = selected
+    final cardBgColor = highlighted
         ? (isDark
               ? Color.alphaBlend(
                   colorScheme.primary.withValues(alpha: 0.10),
@@ -4527,7 +3824,7 @@ class _ProviderModelItem extends StatelessWidget {
                 ))
         : colorScheme.surfaceContainerLow;
 
-    final borderColor = selected
+    final borderColor = highlighted
         ? colorScheme.primary.withValues(alpha: isDark ? 0.58 : 0.48)
         : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.35 : 0.55);
 
@@ -4540,7 +3837,7 @@ class _ProviderModelItem extends StatelessWidget {
       ),
       foregroundDecoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: borderColor, width: selected ? 1.0 : 0.8),
+        border: Border.all(color: borderColor, width: highlighted ? 1.0 : 0.8),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -4551,11 +3848,18 @@ class _ProviderModelItem extends StatelessWidget {
             provider: provider,
             model: model,
             summary: summary,
-            selected: selected,
+            active: active,
+            highlighted: highlighted,
             onSelect: onSelect,
-            testing: testing,
             isExpanded: isExpanded,
             onToggleSettings: onToggleSettings,
+            test: test,
+            revealToken: revealToken,
+            showTestStatus: showTestStatus,
+            selecting: selecting,
+            checked: checked,
+            onToggleChecked: onToggleChecked,
+            onStartSelecting: onStartSelecting,
           ),
           AnimatedSize(
             duration: const Duration(milliseconds: 240),
@@ -4576,10 +3880,12 @@ class _ProviderModelItem extends StatelessWidget {
                         provider: provider,
                         model: model,
                         clients: clients,
-                        onTest: (caps) =>
-                            onTestModelConnection(provider, model, caps),
+                        testing: !(test?.isFinished ?? true),
+                        onTest: (capabilities) =>
+                            onTestModel(provider, model, capabilities),
                         onDeleted: () => onDeleteModel(provider, model),
                         onSaved: onModelSettingsSaved,
+                        onFailed: onModelSettingsFailed,
                       ),
                     ],
                   )
@@ -4596,21 +3902,37 @@ class _ProviderModelTile extends StatelessWidget {
     required this.provider,
     required this.model,
     required this.summary,
-    required this.selected,
+    required this.active,
+    required this.highlighted,
     required this.onSelect,
-    required this.testing,
     required this.isExpanded,
     required this.onToggleSettings,
+    required this.test,
+    required this.revealToken,
+    required this.showTestStatus,
+    required this.selecting,
+    required this.checked,
+    required this.onToggleChecked,
+    required this.onStartSelecting,
   });
 
   final core_proxy.ProviderProfile provider;
   final core_proxy.ModelProfile model;
   final core_proxy.ProviderModelSummary summary;
-  final bool selected;
+  final bool active;
+  final bool highlighted;
   final void Function(String providerId, String modelId) onSelect;
-  final bool testing;
   final bool isExpanded;
   final VoidCallback onToggleSettings;
+  final _ModelTestResult? test;
+  final int revealToken;
+
+  /// Whether the row keeps room for a test dot, so names stay aligned while any model has one.
+  final bool showTestStatus;
+  final bool selecting;
+  final bool checked;
+  final VoidCallback onToggleChecked;
+  final VoidCallback onStartSelecting;
 
   @override
   Widget build(BuildContext context) {
@@ -4618,32 +3940,58 @@ class _ProviderModelTile extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final contextLabel = _formatContextLength(
-      model.contextOverride?.maxContextLength,
-    );
+    final contextLabel = _formatContextLength(summary.context.maxContextLength);
 
     return Material(
-      color: selected
+      color: highlighted
           ? colorScheme.primary.withValues(alpha: isDark ? 0.08 : 0.05)
           : Colors.transparent,
       child: InkWell(
-        onTap: onToggleSettings,
+        onTap: selecting ? onToggleChecked : onToggleSettings,
+        onLongPress: selecting ? null : onStartSelecting,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             children: <Widget>[
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                alignment: AlignmentDirectional.centerStart,
+                child: selecting
+                    ? Padding(
+                        padding: const EdgeInsetsDirectional.only(end: 12),
+                        child: _ModernCheckbox(
+                          checked: checked,
+                          onTap: onToggleChecked,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
-                      model.id,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurface,
-                      ),
+                    Row(
+                      children: <Widget>[
+                        if (showTestStatus) ...<Widget>[
+                          _TestStatusDot(
+                            result: test,
+                            revealToken: revealToken,
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Flexible(
+                          child: Text(
+                            model.id,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     if (_hasModelCapabilities(
                       summary.capabilities,
@@ -4659,50 +4007,563 @@ class _ProviderModelTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              if (selected)
+              if (active)
                 SettingsActivePill(label: l10n.settingsModelCurrentActive)
-              else
+              else if (!selecting)
                 SettingsSetActiveButton(
                   label: l10n.settingsModelSetCurrentActive,
                   onPressed: () => onSelect(provider.id, model.id),
                 ),
-              const SizedBox(width: 6),
-              IconButton(
-                tooltip: isExpanded ? l10n.commonCollapse : l10n.commonExpand,
-                style: IconButton.styleFrom(
-                  hoverColor: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: isDark ? 0.35 : 0.5,
+              if (!selecting) ...<Widget>[
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: isExpanded ? l10n.commonCollapse : l10n.commonExpand,
+                  style: IconButton.styleFrom(
+                    hoverColor: colorScheme.surfaceContainerHighest.withValues(
+                      alpha: isDark ? 0.35 : 0.5,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6),
+                  icon: AnimatedRotation(
+                    turns: isExpanded ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    child: _LucideIcon(
+                      _kSvgChevronDown,
+                      size: 16,
+                      color: isExpanded
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-                icon: AnimatedRotation(
-                  turns: isExpanded ? 0.5 : 0.0,
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeInOut,
-                  child: _LucideIcon(
-                    _kSvgChevronDown,
-                    size: 16,
-                    color: isExpanded
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
                   ),
-                ),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                onPressed: onToggleSettings,
-              ),
-              if (testing) ...<Widget>[
-                const SizedBox(width: 8),
-                const SizedBox.square(
-                  dimension: 24,
-                  child: Center(child: M3LoadingIndicator(size: 24)),
+                  onPressed: onToggleSettings,
                 ),
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A model's latest test as a small dot: a spinner while it runs, green when every check
+/// passed, red when one failed. Hovering or tapping a finished dot shows what the test found.
+class _TestStatusDot extends StatefulWidget {
+  const _TestStatusDot({required this.result, required this.revealToken});
+
+  final _ModelTestResult? result;
+
+  /// Changes when the result should show what it found without being asked.
+  final int revealToken;
+
+  @override
+  State<_TestStatusDot> createState() => _TestStatusDotState();
+}
+
+class _TestStatusDotState extends State<_TestStatusDot>
+    with SingleTickerProviderStateMixin {
+  final OverlayPortalController _portal = OverlayPortalController();
+  final LayerLink _link = LayerLink();
+  final Object _tapGroup = Object();
+  late final AnimationController _motion;
+  late final CurvedAnimation _curve;
+  Timer? _hideTimer;
+  bool _pinned = false;
+  bool _hovered = false;
+  bool _opensBelow = true;
+
+  bool get _finished => widget.result?.isFinished ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Built here rather than on first use: a dot that never opened its bubble would
+    // otherwise build the controller inside dispose(), where its ticker cannot look up
+    // the ticker mode of an element that is already deactivated.
+    _motion = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+      reverseDuration: const Duration(milliseconds: 130),
+    );
+    _curve = CurvedAnimation(
+      parent: _motion,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _TestStatusDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_finished) {
+      // A new test replaces the result whose bubble is open, so the bubble goes with it.
+      if (_portal.isShowing || _pinned) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_finished) {
+            _hideNow();
+          }
+        });
+      }
+    } else if (widget.revealToken != oldWidget.revealToken) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _finished) {
+          _show(linger: true);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _curve.dispose();
+    _motion.dispose();
+    super.dispose();
+  }
+
+  void _show({bool linger = false}) {
+    _hideTimer?.cancel();
+    final box = context.findRenderObject() as RenderBox?;
+    if (box != null && box.hasSize) {
+      final top = box.localToGlobal(Offset.zero).dy;
+      _opensBelow = top + 240 < MediaQuery.sizeOf(context).height;
+    }
+    if (!_portal.isShowing) {
+      _portal.show();
+    }
+    _motion.forward();
+    if (linger) {
+      // A result that shows itself leaves on its own; a failure stays longer to be read.
+      _hideTimer = Timer(
+        widget.result?.phase == _ModelTestPhase.passed
+            ? const Duration(milliseconds: 2400)
+            : const Duration(milliseconds: 5200),
+        _hideUnlessHeld,
+      );
+    }
+  }
+
+  void _hideUnlessHeld() {
+    if (!_pinned && !_hovered) {
+      _hide();
+    }
+  }
+
+  void _hideSoon() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 180), _hideUnlessHeld);
+  }
+
+  void _hide() {
+    _hideTimer?.cancel();
+    _pinned = false;
+    _motion.reverse().whenComplete(() {
+      if (mounted && _motion.isDismissed && _portal.isShowing) {
+        _portal.hide();
+      }
+    });
+  }
+
+  void _hideNow() {
+    _hideTimer?.cancel();
+    _pinned = false;
+    _motion.value = 0;
+    if (_portal.isShowing) {
+      _portal.hide();
+    }
+  }
+
+  void _toggle() {
+    if (_pinned) {
+      _hide();
+    } else {
+      _pinned = true;
+      _show();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final result = widget.result;
+    final Widget mark;
+    final String? label;
+    switch (result?.phase) {
+      case null:
+        mark = const SizedBox.shrink();
+        label = null;
+      case _ModelTestPhase.queued:
+        // Waiting for its turn in a batch: a quiet ring, not a spinner.
+        mark = Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: colorScheme.outline.withValues(alpha: 0.7),
+              width: 1.2,
+            ),
+          ),
+        );
+        label = null;
+      case _ModelTestPhase.testing:
+        mark = SizedBox.square(
+          dimension: 10,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.6,
+            color: colorScheme.primary,
+          ),
+        );
+        label = l10n.settingsModelTestingConnection;
+      case _ModelTestPhase.passed:
+        mark = _dot(_testPassedColor(theme.brightness == Brightness.dark));
+        label = l10n.settingsModelConnectionTestPassed;
+      case _ModelTestPhase.failed:
+        mark = _dot(colorScheme.error);
+        label = l10n.settingsModelConnectionTestFailed;
+    }
+    return Semantics(
+      label: label,
+      button: _finished,
+      child: OverlayPortal(
+        controller: _portal,
+        overlayChildBuilder: _buildBubble,
+        child: CompositedTransformTarget(
+          link: _link,
+          child: TapRegion(
+            groupId: _tapGroup,
+            onTapOutside: (_) {
+              if (_portal.isShowing) {
+                _hide();
+              }
+            },
+            child: CallbackShortcuts(
+              bindings: <ShortcutActivator, VoidCallback>{
+                const SingleActivator(LogicalKeyboardKey.escape): () {
+                  if (_portal.isShowing) {
+                    _hide();
+                  }
+                },
+              },
+              child: MouseRegion(
+                cursor: _finished
+                    ? SystemMouseCursors.click
+                    : MouseCursor.defer,
+                onEnter: (_) {
+                  _hovered = true;
+                  if (_finished) {
+                    _show();
+                  }
+                },
+                onExit: (_) {
+                  _hovered = false;
+                  _hideSoon();
+                },
+                child: InkResponse(
+                  onTap: _finished ? _toggle : null,
+                  radius: 14,
+                  child: SizedBox.square(
+                    dimension: 18,
+                    child: Center(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        switchInCurve: Curves.easeOutBack,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) =>
+                            ScaleTransition(
+                              scale: animation,
+                              child: FadeTransition(
+                                opacity: animation,
+                                child: child,
+                              ),
+                            ),
+                        child: KeyedSubtree(
+                          key: ValueKey<_ModelTestPhase?>(result?.phase),
+                          child: mark,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dot(Color color) {
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+
+  Widget _buildBubble(BuildContext context) {
+    final result = widget.result;
+    if (result == null || !result.isFinished) {
+      return const SizedBox.shrink();
+    }
+    final below = _opensBelow;
+    return Positioned(
+      left: 0,
+      top: 0,
+      child: CompositedTransformFollower(
+        link: _link,
+        showWhenUnlinked: false,
+        targetAnchor: below
+            ? AlignmentDirectional.bottomStart.resolve(
+                Directionality.of(context),
+              )
+            : AlignmentDirectional.topStart.resolve(Directionality.of(context)),
+        followerAnchor: below
+            ? AlignmentDirectional.topStart.resolve(Directionality.of(context))
+            : AlignmentDirectional.bottomStart.resolve(
+                Directionality.of(context),
+              ),
+        offset: Offset(-6, below ? 6 : -6),
+        child: TapRegion(
+          groupId: _tapGroup,
+          child: MouseRegion(
+            onEnter: (_) {
+              _hovered = true;
+              _hideTimer?.cancel();
+            },
+            onExit: (_) {
+              _hovered = false;
+              _hideSoon();
+            },
+            child: FadeTransition(
+              opacity: _curve,
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.9, end: 1).animate(_curve),
+                alignment: below
+                    ? AlignmentDirectional.topStart.resolve(
+                        Directionality.of(context),
+                      )
+                    : AlignmentDirectional.bottomStart.resolve(
+                        Directionality.of(context),
+                      ),
+                child: _TestResultBubble(result: result),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// What a model's test found: each check, why one failed, and what the test changed.
+class _TestResultBubble extends StatefulWidget {
+  const _TestResultBubble({required this.result});
+
+  final _ModelTestResult result;
+
+  @override
+  State<_TestResultBubble> createState() => _TestResultBubbleState();
+}
+
+class _TestResultBubbleState extends State<_TestResultBubble> {
+  bool _copied = false;
+  Timer? _copiedTimer;
+
+  @override
+  void dispose() {
+    _copiedTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _copied = true;
+    });
+    _copiedTimer?.cancel();
+    _copiedTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) {
+        setState(() {
+          _copied = false;
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final result = widget.result;
+    final report = result.report;
+    final passed = result.phase == _ModelTestPhase.passed;
+    final statusColor = passed ? _testPassedColor(isDark) : colorScheme.error;
+    final failures = <String>[
+      if (result.error != null) result.error!,
+      if (report != null)
+        for (final item in report.items)
+          if (!item.success && item.error != null)
+            '${_connectionTestTypeLabel(l10n, item.type)}: ${item.error}',
+    ];
+    final title = passed
+        ? l10n.settingsModelConnectionTestPassed
+        : (report == null
+              ? l10n.settingsModelTestCouldNotRun
+              : l10n.settingsModelConnectionTestFailed);
+    final detailStyle = theme.textTheme.bodySmall?.copyWith(
+      fontSize: 11,
+      height: 1.35,
+      color: colorScheme.onSurfaceVariant,
+    );
+    return Material(
+      type: MaterialType.transparency,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 180, maxWidth: 300),
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 9, 6, 10),
+        decoration: BoxDecoration(
+          color: isDark
+              ? colorScheme.surfaceContainerHigh
+              : colorScheme.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(
+              alpha: isDark ? 0.5 : 0.7,
+            ),
+            width: 0.8,
+          ),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.14),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(
+                  passed ? Icons.check_circle_rounded : Icons.error_rounded,
+                  size: 15,
+                  color: statusColor,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+                if (failures.isNotEmpty)
+                  IconButton(
+                    tooltip: l10n.settingsModelCopyError,
+                    onPressed: () => unawaited(_copy(failures.join('\n'))),
+                    icon: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 160),
+                      child: Icon(
+                        _copied ? Icons.check_rounded : Icons.copy_rounded,
+                        key: ValueKey<bool>(_copied),
+                        size: 14,
+                        color: _copied
+                            ? _testPassedColor(isDark)
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 26,
+                      minHeight: 26,
+                    ),
+                  )
+                else
+                  const SizedBox(width: 6),
+              ],
+            ),
+            if (report != null)
+              for (final item in report.items)
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: Icon(
+                          item.success
+                              ? Icons.check_rounded
+                              : Icons.close_rounded,
+                          size: 13,
+                          color: item.success
+                              ? _testPassedColor(isDark)
+                              : colorScheme.error,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              _connectionTestTypeLabel(l10n, item.type),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontSize: 11.5,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                            if (!item.success && item.error != null)
+                              Text(
+                                item.error!,
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                                style: detailStyle,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            if (result.error != null)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
+                child: Text(
+                  result.error!,
+                  maxLines: 5,
+                  overflow: TextOverflow.ellipsis,
+                  style: detailStyle,
+                ),
+              ),
+            if (result.note != null)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(top: 8, end: 6),
+                child: Text(result.note!, style: detailStyle),
+              ),
+          ],
         ),
       ),
     );
@@ -4714,28 +4575,46 @@ class _ModelInlineSettingsView extends StatefulWidget {
     required this.provider,
     required this.model,
     required this.clients,
+    required this.testing,
     required this.onTest,
     required this.onDeleted,
     required this.onSaved,
+    required this.onFailed,
   });
 
   final core_proxy.ProviderProfile provider;
   final core_proxy.ModelProfile model;
   final GeneratedCoreProxyClients clients;
-  final Future<core_proxy.ModelConnectionTestReport?> Function(
+
+  /// Whether the model's connection test is running.
+  final bool testing;
+  final Future<core_proxy.ModelCapabilities?> Function(
     core_proxy.ModelCapabilities capabilities,
   )
   onTest;
   final VoidCallback onDeleted;
   final VoidCallback onSaved;
+  final ValueChanged<Object> onFailed;
 
   @override
   State<_ModelInlineSettingsView> createState() =>
       _ModelInlineSettingsViewState();
 }
 
+/// A configured model's resolved settings and its thinking levels.
+class _ModelInlineSettingsData {
+  const _ModelInlineSettingsData({
+    required this.config,
+    required this.thinking,
+  });
+
+  final core_proxy.ResolvedModelConfig config;
+  final core_proxy.ModelThinkingSettings thinking;
+}
+
 class _ModelInlineSettingsViewState extends State<_ModelInlineSettingsView> {
-  Future<core_proxy.ResolvedModelConfig>? _configFuture;
+  Future<_ModelInlineSettingsData>? _dataFuture;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -4744,11 +4623,41 @@ class _ModelInlineSettingsViewState extends State<_ModelInlineSettingsView> {
   }
 
   void _load() {
-    _configFuture = widget.clients.preferencesModelConfigManager
-        .getResolvedModelConfig(
-          providerId: widget.provider.id,
-          modelId: widget.model.id,
-        );
+    _loadGeneration += 1;
+    _dataFuture = _fetch();
+  }
+
+  Future<_ModelInlineSettingsData> _fetch() async {
+    final manager = widget.clients.preferencesModelConfigManager;
+    final config = await manager.getResolvedModelConfig(
+      providerId: widget.provider.id,
+      modelId: widget.model.id,
+    );
+    final thinking = await manager.getThinkingSettingsForModel(
+      providerId: widget.provider.id,
+      modelId: widget.model.id,
+    );
+    return _ModelInlineSettingsData(config: config, thinking: thinking);
+  }
+
+  /// Gives back the catalog's values for everything the user set on this model.
+  Future<void> _restoreDefaults() async {
+    try {
+      await widget.clients.preferencesModelConfigManager
+          .clearModelSpecOverrides(
+            providerId: widget.provider.id,
+            modelId: widget.model.id,
+          );
+    } catch (error) {
+      widget.onFailed(error);
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    // The catalog's values arrive in a fresh form.
+    setState(_load);
+    widget.onSaved();
   }
 
   @override
@@ -4758,14 +4667,14 @@ class _ModelInlineSettingsViewState extends State<_ModelInlineSettingsView> {
     final isDark = theme.brightness == Brightness.dark;
     final l10n = AppLocalizations.of(context)!;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
         color: isDark
             ? Colors.black.withValues(alpha: 0.15)
             : colorScheme.surfaceContainerLow,
       ),
-      child: FutureBuilder<core_proxy.ResolvedModelConfig>(
-        future: _configFuture,
+      child: FutureBuilder<_ModelInlineSettingsData>(
+        future: _dataFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(
@@ -4783,15 +4692,20 @@ class _ModelInlineSettingsViewState extends State<_ModelInlineSettingsView> {
               ),
             );
           }
-          final config = snapshot.data!;
+          final data = snapshot.data!;
           return _ModelInlineSettingsForm(
+            key: ValueKey<int>(_loadGeneration),
             provider: widget.provider,
             model: widget.model,
             clients: widget.clients,
-            initialConfig: config,
+            initialConfig: data.config,
+            initialThinking: data.thinking,
+            testing: widget.testing,
             onTest: widget.onTest,
+            onRestoreDefaults: () => unawaited(_restoreDefaults()),
             onDeleted: widget.onDeleted,
             onSaved: widget.onSaved,
+            onFailed: widget.onFailed,
           );
         },
       ),
@@ -4799,27 +4713,45 @@ class _ModelInlineSettingsViewState extends State<_ModelInlineSettingsView> {
   }
 }
 
+/// What the more-actions menu of a model's settings can do.
+enum _ModelCardAction {
+  describeThinking,
+  useCatalogThinking,
+  restoreDefaults,
+  delete,
+}
+
+/// A model's settings, each saved as soon as it changes.
 class _ModelInlineSettingsForm extends StatefulWidget {
   const _ModelInlineSettingsForm({
+    super.key,
     required this.provider,
     required this.model,
     required this.clients,
     required this.initialConfig,
+    required this.initialThinking,
+    required this.testing,
     required this.onTest,
+    required this.onRestoreDefaults,
     required this.onDeleted,
     required this.onSaved,
+    required this.onFailed,
   });
 
   final core_proxy.ProviderProfile provider;
   final core_proxy.ModelProfile model;
   final GeneratedCoreProxyClients clients;
   final core_proxy.ResolvedModelConfig initialConfig;
-  final Future<core_proxy.ModelConnectionTestReport?> Function(
+  final core_proxy.ModelThinkingSettings initialThinking;
+  final bool testing;
+  final Future<core_proxy.ModelCapabilities?> Function(
     core_proxy.ModelCapabilities capabilities,
   )
   onTest;
+  final VoidCallback onRestoreDefaults;
   final VoidCallback onDeleted;
   final VoidCallback onSaved;
+  final ValueChanged<Object> onFailed;
 
   @override
   State<_ModelInlineSettingsForm> createState() =>
@@ -4827,54 +4759,89 @@ class _ModelInlineSettingsForm extends StatefulWidget {
 }
 
 class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
+  /// Below this width the labels sit above their controls.
+  static const double _wideLayoutWidth = 520;
+
   late bool _toolCall;
   late bool _directImage;
   late bool _directAudio;
   late bool _directVideo;
   late bool _claude1hPromptCache;
   late List<core_proxy.ModelBuiltinTool> _builtinTools;
-  late bool _enableSummary;
-  late final TextEditingController _maxContextLengthController;
-  late final TextEditingController _summaryThresholdController;
-  String? _maxContextLengthError;
-  bool _testingConnection = false;
-  bool _saving = false;
+  late core_proxy.ModelThinkingSettings _thinking;
+
+  /// The level just picked, shown while it saves.
+  core_proxy.ThinkingLevel? _pendingLevel;
+  int _thinkingChanges = 0;
+  late final TextEditingController _contextController;
+  late final TextEditingController _summaryController;
+  final FocusNode _contextFocus = FocusNode();
+  final FocusNode _summaryFocus = FocusNode();
+  late String _savedContext;
+  late String _savedSummary;
+  late double _summaryRatio;
+  bool _contextInvalid = false;
+  bool _summaryInvalid = false;
+
+  /// Saves run one after another, so a later change never lands before an earlier one.
+  Future<void> _writes = Future<void>.value();
 
   @override
   void initState() {
     super.initState();
-    final caps = widget.initialConfig.capabilities;
-    _toolCall = caps.toolCall;
-    _directImage = caps.directImage;
-    _directAudio = caps.directAudio;
-    _directVideo = caps.directVideo;
-    _claude1hPromptCache =
-        widget.initialConfig.request.enableClaude1HPromptCache;
-    _builtinTools = widget.initialConfig.builtinTools;
-    final summary = widget.initialConfig.summary;
-    _enableSummary = summary.enableSummary;
-    final rawContext = widget.initialConfig.context.maxContextLength;
+    final config = widget.initialConfig;
+    _applyCapabilities(config.capabilities);
+    _claude1hPromptCache = config.request.enableClaude1HPromptCache;
+    _builtinTools = config.builtinTools;
+    _thinking = widget.initialThinking;
+    final rawContext = config.context.maxContextLength;
     final normalizedContext = rawContext >= 10000
         ? (rawContext / 1000).roundToDouble()
         : rawContext;
-    _maxContextLengthController = TextEditingController(
-      text: normalizedContext > 0
-          ? normalizedContext.toStringAsFixed(0)
-          : '200',
-    );
-    final rawThresh = summary.summaryTokenThreshold;
-    final threshPercent = rawThresh <= 0
-        ? '70'
-        : (rawThresh <= 1.0
-              ? (rawThresh * 100).round().toString()
-              : rawThresh.clamp(1, 100).round().toString());
-    _summaryThresholdController = TextEditingController(text: threshPercent);
+    _savedContext = normalizedContext > 0
+        ? normalizedContext.toStringAsFixed(0)
+        : '200';
+    _contextController = TextEditingController(text: _savedContext);
+    final summary = config.summary;
+    final rawRatio = summary.summaryTokenThreshold;
+    _summaryRatio = rawRatio <= 0
+        ? 0.7
+        : (rawRatio <= 1.0 ? rawRatio : (rawRatio / 100).clamp(0.01, 1.0));
+    // A summary that is off reads 0, which is how it is turned off.
+    _savedSummary = summary.enableSummary
+        ? (_summaryRatio * 100).round().toString()
+        : '0';
+    _summaryController = TextEditingController(text: _savedSummary);
+    _contextFocus.addListener(_commitContextOnBlur);
+    _summaryFocus.addListener(_commitSummaryOnBlur);
+  }
+
+  /// Saves the context window when the user leaves its field.
+  void _commitContextOnBlur() {
+    if (!_contextFocus.hasFocus) {
+      _commitContext();
+    }
+  }
+
+  /// Saves the summary threshold when the user leaves its field.
+  void _commitSummaryOnBlur() {
+    if (!_summaryFocus.hasFocus) {
+      _commitSummary();
+    }
   }
 
   @override
   void dispose() {
-    _maxContextLengthController.dispose();
-    _summaryThresholdController.dispose();
+    // Releasing a focused field must not call back into a state that is going away.
+    _contextFocus.removeListener(_commitContextOnBlur);
+    _summaryFocus.removeListener(_commitSummaryOnBlur);
+    // Typing without leaving the field still counts when the settings close.
+    _commitContext(disposing: true);
+    _commitSummary(disposing: true);
+    _contextFocus.dispose();
+    _summaryFocus.dispose();
+    _contextController.dispose();
+    _summaryController.dispose();
     super.dispose();
   }
 
@@ -4892,112 +4859,1155 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
     );
   }
 
-  Future<void> _runConnectionTest() async {
-    setState(() => _testingConnection = true);
-    try {
-      final report = await widget.onTest(_currentCapabilities());
-      if (!mounted || report == null) {
-        return;
-      }
-      await _ConnectionTestReportDialog.show(context: context, report: report);
-    } finally {
-      if (mounted) {
-        setState(() => _testingConnection = false);
-      }
-    }
+  void _applyCapabilities(core_proxy.ModelCapabilities capabilities) {
+    _toolCall = capabilities.toolCall;
+    _directImage = capabilities.directImage;
+    _directAudio = capabilities.directAudio;
+    _directVideo = capabilities.directVideo;
   }
 
-  void _setBuiltinToolEnabled(int index, bool enabled) {
-    setState(() {
-      final item = _builtinTools[index];
-      _builtinTools = [
-        for (var i = 0; i < _builtinTools.length; i++)
-          if (i == index)
-            core_proxy.ModelBuiltinTool(
-              toolType: item.toolType,
-              displayName: item.displayName,
-              enabled: enabled,
-              requestFormat: item.requestFormat,
-              exclusivity: item.exclusivity,
-              config: item.config,
-            )
-          else
-            _builtinTools[i],
-      ];
+  /// Saves one change after those before it; when saving fails, [undo] puts it back.
+  void _persist(Future<Object?> Function() write, {VoidCallback? undo}) {
+    final onSaved = widget.onSaved;
+    final onFailed = widget.onFailed;
+    _writes = _writes.then((_) async {
+      try {
+        await write();
+        onSaved();
+      } catch (error) {
+        if (mounted && undo != null) {
+          setState(undo);
+        }
+        onFailed(error);
+      }
     });
   }
 
-  Future<void> _save() async {
-    final maxContextLength = double.tryParse(
-      _maxContextLengthController.text.trim(),
-    );
-    if (maxContextLength == null || maxContextLength <= 0) {
-      setState(() {
-        _maxContextLengthError = AppLocalizations.of(
-          context,
-        )!.settingsModelMaxContextLengthInvalid;
-      });
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      if (_supportsClaudePromptCache &&
-          _claude1hPromptCache !=
-              widget.initialConfig.request.enableClaude1HPromptCache) {
-        await widget.clients.preferencesModelConfigManager
-            .updateRequestForModel(
-              providerId: widget.provider.id,
-              modelId: widget.model.id,
-              request: core_proxy.ModelRequestSpec(
-                supportsStructuredTools:
-                    widget.initialConfig.request.supportsStructuredTools,
-                enableClaude1HPromptCache: _claude1hPromptCache,
-              ),
-            );
-      }
-      final newCaps = _currentCapabilities();
-      await widget.clients.preferencesModelConfigManager
+  void _changeCapabilities(VoidCallback change) {
+    final before = _currentCapabilities();
+    setState(change);
+    final after = _currentCapabilities();
+    _persist(
+      () => widget.clients.preferencesModelConfigManager
           .updateCapabilitiesForModel(
             providerId: widget.provider.id,
             modelId: widget.model.id,
-            capabilities: newCaps,
-          );
-      await widget.clients.preferencesModelConfigManager.updateContextForModel(
+            capabilities: after,
+          ),
+      undo: () => _applyCapabilities(before),
+    );
+  }
+
+  void _setClaudeCache(bool enabled) {
+    setState(() {
+      _claude1hPromptCache = enabled;
+    });
+    _persist(
+      () => widget.clients.preferencesModelConfigManager.updateRequestForModel(
         providerId: widget.provider.id,
         modelId: widget.model.id,
-        context: core_proxy.ModelContextSpec(
-          maxContextLength: maxContextLength,
+        request: core_proxy.ModelRequestSpec(
+          supportsStructuredTools:
+              widget.initialConfig.request.supportsStructuredTools,
+          enableClaude1HPromptCache: enabled,
         ),
-      );
-      await widget.clients.preferencesModelConfigManager.updateSummaryForModel(
-        providerId: widget.provider.id,
-        modelId: widget.model.id,
-        summary: () {
-          final rawThresh =
-              double.tryParse(_summaryThresholdController.text.trim()) ?? 70.0;
-          final ratioThreshold = rawThresh > 1.0
-              ? (rawThresh / 100.0).clamp(0.01, 1.0)
-              : rawThresh.clamp(0.01, 1.0);
-          return core_proxy.ModelSummarySettings(
-            enableSummary: _enableSummary,
-            summaryTokenThreshold: ratioThreshold,
-            enableSummaryByMessageCount: false,
-            summaryMessageCountThreshold: 0,
-          );
-        }(),
-      );
-      await widget.clients.preferencesModelConfigManager
+      ),
+      undo: () {
+        _claude1hPromptCache = !enabled;
+      },
+    );
+  }
+
+  void _setBuiltinToolEnabled(int index, bool enabled) {
+    final before = _builtinTools;
+    setState(() {
+      _builtinTools = <core_proxy.ModelBuiltinTool>[
+        for (var i = 0; i < before.length; i++)
+          if (i == index)
+            core_proxy.ModelBuiltinTool(
+              toolType: before[i].toolType,
+              displayName: before[i].displayName,
+              enabled: enabled,
+              requestFormat: before[i].requestFormat,
+              exclusivity: before[i].exclusivity,
+              config: before[i].config,
+            )
+          else
+            before[i],
+      ];
+    });
+    final after = _builtinTools;
+    _persist(
+      () => widget.clients.preferencesModelConfigManager
           .updateBuiltinToolsForModel(
             providerId: widget.provider.id,
             modelId: widget.model.id,
-            builtinTools: _builtinTools,
-          );
-      widget.onSaved();
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
+            builtinTools: after,
+          ),
+      undo: () {
+        _builtinTools = before;
+      },
+    );
+  }
+
+  /// Saves the context window once the user leaves the field. An entry that is not a
+  /// positive number is marked and left unsaved.
+  void _commitContext({bool disposing = false}) {
+    final text = _contextController.text.trim();
+    final value = double.tryParse(text);
+    if (value == null || value <= 0) {
+      if (!disposing && !_contextInvalid) {
+        setState(() {
+          _contextInvalid = true;
+        });
       }
+      return;
     }
+    if (!disposing && _contextInvalid) {
+      setState(() {
+        _contextInvalid = false;
+      });
+    }
+    if (text == _savedContext) {
+      return;
+    }
+    final previous = _savedContext;
+    _savedContext = text;
+    _persist(
+      () => widget.clients.preferencesModelConfigManager.updateContextForModel(
+        providerId: widget.provider.id,
+        modelId: widget.model.id,
+        context: core_proxy.ModelContextSpec(maxContextLength: value),
+      ),
+      undo: () {
+        _savedContext = previous;
+        _contextController.text = previous;
+      },
+    );
+  }
+
+  /// Saves the share of the context that starts a summary once the user leaves the field;
+  /// 0 turns summaries off. An entry outside 0 to 100 is marked and left unsaved.
+  void _commitSummary({bool disposing = false}) {
+    final text = _summaryController.text.trim();
+    final value = double.tryParse(text);
+    if (value == null || value < 0 || value > 100) {
+      if (!disposing && !_summaryInvalid) {
+        setState(() {
+          _summaryInvalid = true;
+        });
+      }
+      return;
+    }
+    if (!disposing && _summaryInvalid) {
+      setState(() {
+        _summaryInvalid = false;
+      });
+    }
+    if (text == _savedSummary) {
+      return;
+    }
+    final previousText = _savedSummary;
+    final previousRatio = _summaryRatio;
+    final enabled = value > 0;
+    if (enabled) {
+      // Values up to 1 are read as a share, larger ones as a percentage.
+      _summaryRatio = (value > 1 ? value / 100 : value).clamp(0.01, 1.0);
+    }
+    _savedSummary = text;
+    final stored = widget.initialConfig.summary;
+    final ratio = _summaryRatio;
+    _persist(
+      () => widget.clients.preferencesModelConfigManager.updateSummaryForModel(
+        providerId: widget.provider.id,
+        modelId: widget.model.id,
+        summary: core_proxy.ModelSummarySettings(
+          enableSummary: enabled,
+          summaryTokenThreshold: ratio,
+          enableSummaryByMessageCount: stored.enableSummaryByMessageCount,
+          summaryMessageCountThreshold: stored.summaryMessageCountThreshold,
+        ),
+      ),
+      undo: () {
+        _savedSummary = previousText;
+        _summaryRatio = previousRatio;
+        _summaryController.text = previousText;
+      },
+    );
+  }
+
+  /// Applies a thinking change; the newest one decides what the control shows.
+  void _changeThinking(
+    Future<core_proxy.ModelThinkingSettings> Function() change,
+  ) {
+    final ticket = ++_thinkingChanges;
+    final onSaved = widget.onSaved;
+    final onFailed = widget.onFailed;
+    _writes = _writes.then((_) async {
+      try {
+        final settings = await change();
+        if (mounted) {
+          setState(() {
+            _thinking = settings;
+            if (ticket == _thinkingChanges) {
+              _pendingLevel = null;
+            }
+          });
+        }
+        onSaved();
+      } catch (error) {
+        if (mounted && ticket == _thinkingChanges) {
+          setState(() {
+            _pendingLevel = null;
+          });
+        }
+        onFailed(error);
+      }
+    });
+  }
+
+  void _setThinkingLevel(core_proxy.ThinkingLevel level) {
+    setState(() {
+      _pendingLevel = level;
+    });
+    _changeThinking(
+      () =>
+          widget.clients.preferencesModelConfigManager.setThinkingLevelForModel(
+            providerId: widget.provider.id,
+            modelId: widget.model.id,
+            level: level,
+          ),
+    );
+  }
+
+  Future<void> _describeThinking() async {
+    final spec = await _ThinkingDescribeDialog.show(
+      context: context,
+      initial: _thinking.spec,
+    );
+    if (spec == null || !mounted) {
+      return;
+    }
+    _changeThinking(
+      () => widget.clients.preferencesModelConfigManager
+          .setThinkingOverrideForModel(
+            providerId: widget.provider.id,
+            modelId: widget.model.id,
+            spec: spec,
+          ),
+    );
+  }
+
+  void _useCatalogThinking() {
+    _changeThinking(
+      () => widget.clients.preferencesModelConfigManager
+          .setThinkingOverrideForModel(
+            providerId: widget.provider.id,
+            modelId: widget.model.id,
+            spec: null,
+          ),
+    );
+  }
+
+  /// Tests the model as saved and shows the capabilities the test leaves it with.
+  Future<void> _test() async {
+    await _writes;
+    if (!mounted) {
+      return;
+    }
+    final found = await widget.onTest(_currentCapabilities());
+    if (found == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _applyCapabilities(found);
+    });
+  }
+
+  void _onAction(_ModelCardAction action) {
+    switch (action) {
+      case _ModelCardAction.describeThinking:
+        unawaited(_describeThinking());
+      case _ModelCardAction.useCatalogThinking:
+        _useCatalogThinking();
+      case _ModelCardAction.restoreDefaults:
+        // Changes still saving would otherwise land on top of the restored values.
+        unawaited(
+          _writes.then((_) {
+            if (mounted) {
+              widget.onRestoreDefaults();
+            }
+          }),
+        );
+      case _ModelCardAction.delete:
+        widget.onDeleted();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= _wideLayoutWidth;
+        final rows = <(String, Widget)>[
+          (l10n.settingsModelCapabilities, _capabilityChips(l10n)),
+          if (_builtinTools.isNotEmpty)
+            (l10n.settingsModelBuiltinTools, _builtinToolChips(l10n)),
+          (
+            l10n.settingsModelThinking,
+            _ModelThinkingControl(
+              settings: _thinking,
+              selected: _pendingLevel ?? _thinking.current,
+              expand: !wide,
+              onSelect: _setThinkingLevel,
+              onDescribe: () => unawaited(_describeThinking()),
+            ),
+          ),
+        ];
+        final actions = _actions(l10n);
+        return wide
+            ? _wideLayout(context, l10n, rows, actions)
+            : _narrowLayout(l10n, rows, actions);
+      },
+    );
+  }
+
+  /// Labels in a column beside their controls, the actions closing the last row.
+  Widget _wideLayout(
+    BuildContext context,
+    AppLocalizations l10n,
+    List<(String, Widget)> rows,
+    Widget actions,
+  ) {
+    final labelTop = (_settingsControlHeight(context) - 16) / 2;
+    TableRow row(String label, Widget control, {bool last = false}) {
+      final bottom = last ? 0.0 : 10.0;
+      return TableRow(
+        children: <Widget>[
+          Padding(
+            padding: EdgeInsetsDirectional.only(
+              top: labelTop,
+              end: 16,
+              bottom: bottom,
+            ),
+            child: _SettingsRowLabel(label),
+          ),
+          Padding(
+            padding: EdgeInsets.only(bottom: bottom),
+            child: control,
+          ),
+        ],
+      );
+    }
+
+    return Table(
+      columnWidths: const <int, TableColumnWidth>{
+        0: IntrinsicColumnWidth(),
+        1: FlexColumnWidth(),
+      },
+      children: <TableRow>[
+        for (final (label, control) in rows) row(label, control),
+        row(
+          l10n.settingsModelContext,
+          Row(
+            children: <Widget>[
+              ..._contextFields(l10n, labelContext: false, expand: false),
+              const Spacer(),
+              actions,
+            ],
+          ),
+          last: true,
+        ),
+      ],
+    );
+  }
+
+  /// Each label above its control, the actions on a line of their own.
+  Widget _narrowLayout(
+    AppLocalizations l10n,
+    List<(String, Widget)> rows,
+    Widget actions,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        for (final (label, control) in rows) ...<Widget>[
+          _SettingsRowLabel(label),
+          const SizedBox(height: 6),
+          control,
+          const SizedBox(height: 12),
+        ],
+        Row(children: _contextFields(l10n, labelContext: true, expand: true)),
+        const SizedBox(height: 10),
+        Align(alignment: AlignmentDirectional.centerEnd, child: actions),
+      ],
+    );
+  }
+
+  List<Widget> _contextFields(
+    AppLocalizations l10n, {
+    required bool labelContext,
+    required bool expand,
+  }) {
+    Widget field({
+      required TextEditingController controller,
+      required FocusNode focusNode,
+      required String suffix,
+      required bool invalid,
+      required VoidCallback commit,
+      required double width,
+    }) {
+      final input = _ModernNumberField(
+        controller: controller,
+        focusNode: focusNode,
+        suffix: suffix,
+        invalid: invalid,
+        onSubmitted: (_) => commit(),
+      );
+      return expand
+          ? Expanded(child: input)
+          : SizedBox(width: width, child: input);
+    }
+
+    return <Widget>[
+      if (labelContext) ...<Widget>[
+        _SettingsRowLabel(l10n.settingsModelContext),
+        const SizedBox(width: 8),
+      ],
+      field(
+        controller: _contextController,
+        focusNode: _contextFocus,
+        suffix: 'K',
+        invalid: _contextInvalid,
+        commit: _commitContext,
+        width: 96,
+      ),
+      const SizedBox(width: 16),
+      Tooltip(
+        message: l10n.settingsModelSummaryThresholdDescription,
+        child: _SettingsRowLabel(l10n.settingsModelSummaryThreshold),
+      ),
+      const SizedBox(width: 8),
+      field(
+        controller: _summaryController,
+        focusNode: _summaryFocus,
+        suffix: '%',
+        invalid: _summaryInvalid,
+        commit: _commitSummary,
+        width: 76,
+      ),
+    ];
+  }
+
+  Widget _capabilityChips(AppLocalizations l10n) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: <Widget>[
+        _CapabilityToggleChip(
+          title: l10n.settingsModelCapabilityToolCall,
+          tooltip: l10n.settingsModelToolCallDescription,
+          icon: Icons.build_outlined,
+          checked: _toolCall,
+          onChanged: (value) => _changeCapabilities(() {
+            _toolCall = value;
+          }),
+        ),
+        _CapabilityToggleChip(
+          title: l10n.settingsModelCapabilityImage,
+          tooltip: l10n.settingsModelDirectImageDescription,
+          icon: Icons.image_outlined,
+          checked: _directImage,
+          onChanged: (value) => _changeCapabilities(() {
+            _directImage = value;
+          }),
+        ),
+        _CapabilityToggleChip(
+          title: l10n.settingsModelCapabilityAudio,
+          tooltip: l10n.settingsModelDirectAudioDescription,
+          icon: Icons.graphic_eq,
+          checked: _directAudio,
+          onChanged: (value) => _changeCapabilities(() {
+            _directAudio = value;
+          }),
+        ),
+        _CapabilityToggleChip(
+          title: l10n.settingsModelCapabilityVideo,
+          tooltip: l10n.settingsModelDirectVideoDescription,
+          icon: Icons.videocam_outlined,
+          checked: _directVideo,
+          onChanged: (value) => _changeCapabilities(() {
+            _directVideo = value;
+          }),
+        ),
+        if (_supportsClaudePromptCache)
+          _CapabilityToggleChip(
+            title: l10n.settingsModelClaudeCache,
+            tooltip: l10n.settingsModelClaudeCacheDescription,
+            icon: Icons.cached_outlined,
+            checked: _claude1hPromptCache,
+            onChanged: _setClaudeCache,
+          ),
+      ],
+    );
+  }
+
+  Widget _builtinToolChips(AppLocalizations l10n) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: <Widget>[
+        for (var index = 0; index < _builtinTools.length; index++)
+          _CapabilityToggleChip(
+            title: _builtinTools[index].displayName,
+            tooltip: _builtinToolSubtitle(l10n, _builtinTools[index]),
+            icon: Icons.extension_outlined,
+            checked: _builtinTools[index].enabled,
+            onChanged: (value) => _setBuiltinToolEnabled(index, value),
+          ),
+      ],
+    );
+  }
+
+  Widget _actions(AppLocalizations l10n) {
+    final describedThinking =
+        _thinking.source == core_proxy.ThinkingSpecSource.declared;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _TestModelPillButton(
+          testing: widget.testing,
+          onPressed: widget.testing ? null : () => unawaited(_test()),
+          label: l10n.settingsModelTestModel,
+        ),
+        const SizedBox(width: 2),
+        _ModelCardMenu(
+          canUseCatalogThinking: describedThinking,
+          canRestoreDefaults:
+              describedThinking || _modelHasSpecOverrides(widget.model),
+          onSelected: _onAction,
+        ),
+      ],
+    );
+  }
+}
+
+/// Height of the compact controls in a model's settings, roomier where people tap.
+double _settingsControlHeight(BuildContext context) {
+  return 36 + Theme.of(context).visualDensity.vertical * 4;
+}
+
+/// The name of one row of a model's settings.
+class _SettingsRowLabel extends StatelessWidget {
+  const _SettingsRowLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      text,
+      maxLines: 1,
+      style: theme.textTheme.labelMedium?.copyWith(
+        fontSize: 12,
+        height: 16 / 12,
+        fontWeight: FontWeight.w600,
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+}
+
+/// The more-actions button of a model's settings.
+class _ModelCardMenu extends StatelessWidget {
+  const _ModelCardMenu({
+    required this.canUseCatalogThinking,
+    required this.canRestoreDefaults,
+    required this.onSelected,
+  });
+
+  final bool canUseCatalogThinking;
+  final bool canRestoreDefaults;
+  final ValueChanged<_ModelCardAction> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    PopupMenuItem<_ModelCardAction> item(
+      _ModelCardAction action,
+      IconData icon,
+      String label, {
+      bool destructive = false,
+    }) {
+      final color = destructive ? colorScheme.error : colorScheme.onSurface;
+      return PopupMenuItem<_ModelCardAction>(
+        value: action,
+        height: 40,
+        child: Row(
+          children: <Widget>[
+            Icon(
+              icon,
+              size: 17,
+              color: destructive ? color : colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontSize: 13,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return PopupMenuButton<_ModelCardAction>(
+      tooltip: l10n.settingsModelMoreActions,
+      position: PopupMenuPosition.under,
+      padding: EdgeInsets.zero,
+      // As small as the test button beside it, so the row keeps its height.
+      style: IconButton.styleFrom(
+        minimumSize: const Size(30, 30),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      icon: Icon(
+        Icons.more_horiz_rounded,
+        size: 18,
+        color: colorScheme.onSurfaceVariant,
+      ),
+      onSelected: onSelected,
+      itemBuilder: (context) => <PopupMenuEntry<_ModelCardAction>>[
+        item(
+          _ModelCardAction.describeThinking,
+          Icons.psychology_outlined,
+          l10n.settingsModelDescribeThinking,
+        ),
+        if (canUseCatalogThinking)
+          item(
+            _ModelCardAction.useCatalogThinking,
+            Icons.undo_rounded,
+            l10n.settingsModelThinkingUseCatalog,
+          ),
+        if (canRestoreDefaults)
+          item(
+            _ModelCardAction.restoreDefaults,
+            Icons.restart_alt_rounded,
+            l10n.settingsModelRestoreDefaults,
+          ),
+        const PopupMenuDivider(),
+        item(
+          _ModelCardAction.delete,
+          Icons.delete_outline_rounded,
+          l10n.settingsModelDeleteModel,
+          destructive: true,
+        ),
+      ],
+    );
+  }
+}
+
+/// Returns whether the user set any pricing, context, capability, tool-format or thinking
+/// value.
+bool _modelHasSpecOverrides(core_proxy.ModelProfile model) {
+  final capabilities = model.capabilitiesOverride;
+  return model.pricingOverride != null ||
+      model.contextOverride != null ||
+      capabilities.directImage != null ||
+      capabilities.directAudio != null ||
+      capabilities.directVideo != null ||
+      capabilities.toolCall != null ||
+      model.requestOverride.supportsStructuredTools != null ||
+      model.thinkingOverride != null;
+}
+
+/// A model's thinking: the levels it offers as one segmented control, or why it has none.
+class _ModelThinkingControl extends StatelessWidget {
+  const _ModelThinkingControl({
+    required this.settings,
+    required this.selected,
+    required this.expand,
+    required this.onSelect,
+    required this.onDescribe,
+  });
+
+  final core_proxy.ModelThinkingSettings settings;
+
+  /// The level shown as chosen, which runs ahead of [settings] while a change saves.
+  final core_proxy.ThinkingLevel? selected;
+
+  /// Whether the levels share the whole width rather than keep a compact size.
+  final bool expand;
+  final ValueChanged<core_proxy.ThinkingLevel> onSelect;
+  final VoidCallback onDescribe;
+
+  /// Explains the levels where that helps: who described them, or that the level carries
+  /// over from the one set last.
+  String? _hint(AppLocalizations l10n) {
+    final lines = <String>[
+      if (settings.source == core_proxy.ThinkingSpecSource.declared)
+        l10n.settingsModelThinkingSourceDeclared,
+      if (settings.source == core_proxy.ThinkingSpecSource.localRuntime)
+        l10n.settingsModelThinkingSourceLocalRuntime,
+      if (!settings.chosen) l10n.settingsModelThinkingCarried,
+    ];
+    return lines.isEmpty ? null : lines.join('\n');
+  }
+
+  /// Says why a model offers no levels.
+  String _statusText(AppLocalizations l10n) {
+    if (!settings.spec.supported) {
+      return settings.source == core_proxy.ThinkingSpecSource.unknown
+          ? l10n.settingsModelThinkingUnknown
+          : l10n.settingsModelThinkingNotSupported;
+    }
+    if (thinkingAlwaysOn(settings.spec)) {
+      return l10n.thinkingAlwaysOn;
+    }
+    return l10n.settingsModelThinkingNotAdjustable;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    if (settings.levels.isEmpty) {
+      return ConstrainedBox(
+        constraints: BoxConstraints(minHeight: _settingsControlHeight(context)),
+        child: Row(
+          children: <Widget>[
+            Flexible(
+              child: Text(
+                _statusText(l10n),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 11.5,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (settings.source ==
+                core_proxy.ThinkingSpecSource.unknown) ...<Widget>[
+              const SizedBox(width: 4),
+              TextButton(
+                onPressed: onDescribe,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  textStyle: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                child: Text(l10n.settingsModelThinkingDescribe),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+    final segments = _ThinkingSegments(
+      levels: settings.levels,
+      selected: selected,
+      expand: expand,
+      onSelect: onSelect,
+    );
+    final hint = _hint(l10n);
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: hint == null ? segments : Tooltip(message: hint, child: segments),
+    );
+  }
+}
+
+/// A model's thinking levels as one segmented control, the chosen one under a sliding thumb.
+class _ThinkingSegments extends StatelessWidget {
+  const _ThinkingSegments({
+    required this.levels,
+    required this.selected,
+    required this.expand,
+    required this.onSelect,
+  });
+
+  /// Widest a segment grows when the levels keep a compact size.
+  static const double _compactSegmentWidth = 62;
+
+  final List<core_proxy.ThinkingLevelOption> levels;
+  final core_proxy.ThinkingLevel? selected;
+  final bool expand;
+  final ValueChanged<core_proxy.ThinkingLevel> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final hasBudget = levels.any((option) => option.budgetTokens != null);
+    final height = _settingsControlHeight(context) + (hasBudget ? 10 : 0);
+    final index = levels.indexWhere((option) => option.level == selected);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fitted = constraints.maxWidth / levels.length;
+        final segmentWidth = expand || fitted < _compactSegmentWidth
+            ? fitted
+            : _compactSegmentWidth;
+        return Container(
+          width: segmentWidth * levels.length,
+          height: height,
+          decoration: BoxDecoration(
+            color: isDark
+                ? colorScheme.surfaceContainer.withValues(alpha: 0.6)
+                : colorScheme.surfaceContainerHigh.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withValues(
+                alpha: isDark ? 0.35 : 0.55,
+              ),
+              width: 0.8,
+            ),
+          ),
+          child: Stack(
+            children: <Widget>[
+              if (index >= 0)
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  left: index * segmentWidth + 2,
+                  top: 2,
+                  bottom: 2,
+                  width: segmentWidth - 4,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Color.alphaBlend(
+                        colorScheme.primary.withValues(
+                          alpha: isDark ? 0.24 : 0.14,
+                        ),
+                        colorScheme.surface,
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: colorScheme.primary.withValues(
+                          alpha: isDark ? 0.55 : 0.4,
+                        ),
+                        width: 0.8,
+                      ),
+                    ),
+                  ),
+                ),
+              Row(
+                children: <Widget>[
+                  for (var i = 0; i < levels.length; i++)
+                    _ThinkingSegment(
+                      option: levels[i],
+                      width: segmentWidth,
+                      selected: i == index,
+                      onTap: i == index
+                          ? null
+                          : () => onSelect(levels[i].level),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// One level of the segmented thinking control.
+class _ThinkingSegment extends StatelessWidget {
+  const _ThinkingSegment({
+    required this.option,
+    required this.width,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final core_proxy.ThinkingLevelOption option;
+  final double width;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final color = selected ? colorScheme.primary : colorScheme.onSurfaceVariant;
+    final budget = option.budgetTokens;
+    Widget segment = Semantics(
+      button: true,
+      selected: selected,
+      child: SizedBox(
+        width: width,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(6),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    thinkingLevelName(option.level),
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.fade,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontSize: 11.5,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      color: color,
+                    ),
+                  ),
+                  if (budget != null)
+                    Text(
+                      thinkingBudgetText(budget),
+                      maxLines: 1,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontSize: 9.5,
+                        color: color.withValues(alpha: 0.75),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (budget != null) {
+      segment = Tooltip(message: '$budget tokens', child: segment);
+    }
+    return segment;
+  }
+}
+
+/// One thinking level to pick, styled like the capability chips beside it.
+class _ThinkingLevelPill extends StatelessWidget {
+  const _ThinkingLevelPill({
+    required this.label,
+    required this.detail,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+
+  /// Secondary text after the label, such as a budget's token count.
+  final String? detail;
+  final String? tooltip;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final background = selected
+        ? Color.alphaBlend(
+            colorScheme.primary.withValues(alpha: isDark ? 0.22 : 0.12),
+            colorScheme.surface,
+          )
+        : (isDark
+              ? colorScheme.surfaceContainer.withValues(alpha: 0.25)
+              : colorScheme.surfaceContainerLow);
+    final border = selected
+        ? colorScheme.primary.withValues(alpha: isDark ? 0.6 : 0.45)
+        : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.35 : 0.5);
+    final textColor = selected
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant;
+    final pill = Material(
+      color: background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(6),
+        side: BorderSide(color: border, width: selected ? 1.0 : 0.6),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontSize: 11.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: textColor,
+                ),
+              ),
+              if (detail != null) ...<Widget>[
+                const SizedBox(width: 4),
+                Text(
+                  detail!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 10,
+                    color: textColor.withValues(alpha: 0.7),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    return tooltip == null ? pill : Tooltip(message: tooltip!, child: pill);
+  }
+}
+
+/// The kinds of thinking control a user can describe a model with.
+enum _ThinkingKind { none, always, toggle, levels, budget }
+
+/// Lets the user describe how a model thinks; returns `null` when cancelled.
+class _ThinkingDescribeDialog extends StatefulWidget {
+  const _ThinkingDescribeDialog({required this.initial});
+
+  final core_proxy.ModelThinkingSpec initial;
+
+  static Future<core_proxy.ModelThinkingSpec?> show({
+    required BuildContext context,
+    required core_proxy.ModelThinkingSpec initial,
+  }) {
+    return showDialog<core_proxy.ModelThinkingSpec>(
+      context: context,
+      builder: (context) => _ThinkingDescribeDialog(initial: initial),
+    );
+  }
+
+  @override
+  State<_ThinkingDescribeDialog> createState() =>
+      _ThinkingDescribeDialogState();
+}
+
+class _ThinkingDescribeDialogState extends State<_ThinkingDescribeDialog> {
+  /// The graded levels a user can pick, weakest first.
+  static const List<core_proxy.ThinkingLevel> _gradedLevels =
+      <core_proxy.ThinkingLevel>[
+        core_proxy.ThinkingLevel.minimal,
+        core_proxy.ThinkingLevel.low,
+        core_proxy.ThinkingLevel.medium,
+        core_proxy.ThinkingLevel.high,
+        core_proxy.ThinkingLevel.xhigh,
+        core_proxy.ThinkingLevel.max,
+      ];
+
+  late _ThinkingKind _kind;
+  late Set<core_proxy.ThinkingLevel> _levels;
+  late bool _canTurnOff;
+  late final TextEditingController _budgetMin;
+  late final TextEditingController _budgetMax;
+  bool _showLevelsRequired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final spec = widget.initial;
+    final graded = spec.efforts
+        .where((level) => level != core_proxy.ThinkingLevel.off)
+        .toSet();
+    _kind = !spec.supported
+        ? _ThinkingKind.none
+        : graded.isNotEmpty
+        ? _ThinkingKind.levels
+        : spec.budget != null
+        ? _ThinkingKind.budget
+        : spec.toggle
+        ? _ThinkingKind.toggle
+        : _ThinkingKind.always;
+    _levels = graded;
+    _canTurnOff =
+        spec.toggle || spec.efforts.contains(core_proxy.ThinkingLevel.off);
+    _budgetMin = TextEditingController(
+      text: spec.budget?.min?.toString() ?? '',
+    );
+    _budgetMax = TextEditingController(
+      text: spec.budget?.max?.toString() ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _budgetMin.dispose();
+    _budgetMax.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final spec = switch (_kind) {
+      _ThinkingKind.none => const core_proxy.ModelThinkingSpec(
+        supported: false,
+        toggle: false,
+        efforts: <core_proxy.ThinkingLevel>[],
+        budget: null,
+      ),
+      _ThinkingKind.always => const core_proxy.ModelThinkingSpec(
+        supported: true,
+        toggle: false,
+        efforts: <core_proxy.ThinkingLevel>[],
+        budget: null,
+      ),
+      _ThinkingKind.toggle => const core_proxy.ModelThinkingSpec(
+        supported: true,
+        toggle: true,
+        efforts: <core_proxy.ThinkingLevel>[],
+        budget: null,
+      ),
+      // "Can be turned off" is both a switch and effort `none`, so every API can
+      // spell it in the field it reads.
+      _ThinkingKind.levels => core_proxy.ModelThinkingSpec(
+        supported: true,
+        toggle: _canTurnOff,
+        efforts: <core_proxy.ThinkingLevel>[
+          if (_canTurnOff) core_proxy.ThinkingLevel.off,
+          ..._gradedLevels.where(_levels.contains),
+        ],
+        budget: null,
+      ),
+      _ThinkingKind.budget => core_proxy.ModelThinkingSpec(
+        supported: true,
+        toggle: _canTurnOff,
+        efforts: const <core_proxy.ThinkingLevel>[],
+        budget: core_proxy.ThinkingBudgetRange(
+          min: int.tryParse(_budgetMin.text.trim()),
+          max: int.tryParse(_budgetMax.text.trim()),
+        ),
+      ),
+    };
+    if (_kind == _ThinkingKind.levels && _levels.isEmpty) {
+      setState(() => _showLevelsRequired = true);
+      return;
+    }
+    Navigator.of(context).pop(spec);
+  }
+
+  String _kindLabel(AppLocalizations l10n, _ThinkingKind kind) {
+    return switch (kind) {
+      _ThinkingKind.none => l10n.settingsModelThinkingKindNone,
+      _ThinkingKind.always => l10n.settingsModelThinkingKindAlways,
+      _ThinkingKind.toggle => l10n.settingsModelThinkingKindSwitch,
+      _ThinkingKind.levels => l10n.settingsModelThinkingKindLevels,
+      _ThinkingKind.budget => l10n.settingsModelThinkingKindBudget,
+    };
   }
 
   @override
@@ -5005,344 +6015,234 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final isZh =
-        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        // Top Header Row with Test Model Button
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
+    return AlertDialog(
+      title: Text(l10n.settingsModelThinkingDescribeTitle),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Text(
-                isZh ? '模型配置' : 'Model Configuration',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: colorScheme.onSurface,
-                  fontSize: 13,
+              for (final kind in _ThinkingKind.values)
+                _ThinkingKindOption(
+                  label: _kindLabel(l10n, kind),
+                  selected: _kind == kind,
+                  onTap: () => setState(() {
+                    _kind = kind;
+                    _showLevelsRequired = false;
+                  }),
                 ),
-              ),
-              const Spacer(),
-              _TestModelPillButton(
-                testing: _testingConnection,
-                onPressed: _testingConnection ? null : _runConnectionTest,
-                label: l10n.settingsModelTestModel,
-              ),
-            ],
-          ),
-        ),
-
-        // Group 1: 核心能力 (Checkable Chips in Wrap)
-        _SettingsGroupCard(
-          title: l10n.settingsModelCapabilities,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: <Widget>[
-                  _CheckableCapabilityChip(
-                    title: l10n.settingsModelToolCall,
-                    tooltip: l10n.settingsModelToolCallDescription,
-                    checked: _toolCall,
-                    icon: Icons.build_outlined,
-                    iconTint: _CapsuleTint.primary,
-                    onChanged: (v) => setState(() => _toolCall = v),
-                  ),
-                  _CheckableCapabilityChip(
-                    title: l10n.settingsModelDirectImage,
-                    tooltip: l10n.settingsModelDirectImageDescription,
-                    checked: _directImage,
-                    icon: Icons.image_outlined,
-                    iconTint: _CapsuleTint.primary,
-                    onChanged: (v) => setState(() => _directImage = v),
-                  ),
-                  _CheckableCapabilityChip(
-                    title: l10n.settingsModelDirectAudio,
-                    tooltip: l10n.settingsModelDirectAudioDescription,
-                    checked: _directAudio,
-                    icon: Icons.graphic_eq,
-                    iconTint: _CapsuleTint.primary,
-                    onChanged: (v) => setState(() => _directAudio = v),
-                  ),
-                  _CheckableCapabilityChip(
-                    title: l10n.settingsModelDirectVideo,
-                    tooltip: l10n.settingsModelDirectVideoDescription,
-                    checked: _directVideo,
-                    icon: Icons.videocam_outlined,
-                    iconTint: _CapsuleTint.primary,
-                    onChanged: (v) => setState(() => _directVideo = v),
-                  ),
-                  if (_supportsClaudePromptCache)
-                    _CheckableCapabilityChip(
-                      title: isZh ? 'Claude 1小时缓存' : 'Claude 1h cache',
-                      tooltip: isZh
-                          ? '为显式缓存断点设置 1h TTL；关闭时使用默认 TTL。'
-                          : 'Set a 1h TTL on explicit cache breakpoints; otherwise use the default TTL.',
-                      checked: _claude1hPromptCache,
-                      icon: Icons.cached_outlined,
-                      iconTint: _CapsuleTint.neutral,
-                      onChanged: (value) =>
-                          setState(() => _claude1hPromptCache = value),
-                    ),
-                ],
-              ),
-            ),
-            if (_builtinTools.isNotEmpty) ...<Widget>[
-              const _GroupDivider(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: <Widget>[
-                    for (var index = 0; index < _builtinTools.length; index++)
-                      _CheckableCapabilityChip(
-                        title: _builtinTools[index].displayName,
-                        tooltip: _builtinToolSubtitle(
-                          l10n,
-                          _builtinTools[index],
-                        ),
-                        checked: _builtinTools[index].enabled,
-                        icon: Icons.extension_outlined,
-                        iconTint: _CapsuleTint.neutral,
-                        onChanged: (value) =>
-                            _setBuiltinToolEnabled(index, value),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-
-        const SizedBox(height: 8),
-
-        // Group 2: 上下文与总结 (Single Symmetrical Row)
-        _SettingsGroupCard(
-          title: isZh ? '上下文与总结' : 'Context & Summary',
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              child: Row(
-                children: <Widget>[
-                  // Item 1: 上下文
-                  Expanded(
-                    child: Row(
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: switch (_kind) {
+                  _ThinkingKind.levels => Padding(
+                    padding: const EdgeInsets.fromLTRB(32, 6, 0, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        Text(
-                          isZh ? '上下文:' : 'Context:',
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: colorScheme.onSurface,
-                            fontSize: 12,
-                          ),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: <Widget>[
+                            for (final level in _gradedLevels)
+                              _ThinkingLevelPill(
+                                label: thinkingLevelName(level),
+                                detail: null,
+                                tooltip: null,
+                                selected: _levels.contains(level),
+                                onTap: () => setState(() {
+                                  _showLevelsRequired = false;
+                                  if (!_levels.remove(level)) {
+                                    _levels.add(level);
+                                  }
+                                }),
+                              ),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: _ModernNumberField(
-                            controller: _maxContextLengthController,
-                            suffix: 'K',
-                            hintText: '200',
-                            errorText: _maxContextLengthError,
-                            onChanged: (_) {
-                              if (_maxContextLengthError != null) {
-                                setState(() => _maxContextLengthError = null);
-                              }
-                            },
+                        if (_showLevelsRequired) ...<Widget>[
+                          const SizedBox(height: 6),
+                          Text(
+                            l10n.settingsModelThinkingLevelsRequired,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.error,
+                            ),
                           ),
+                        ],
+                        _ThinkingTurnOffSwitch(
+                          label: l10n.settingsModelThinkingCanTurnOff,
+                          value: _canTurnOff,
+                          onChanged: (value) =>
+                              setState(() => _canTurnOff = value),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  // Item 2: 总结阈值
-                  Expanded(
-                    child: Tooltip(
-                      message: isZh
-                          ? '当上下文占用达到设定百分比时触发总结（0% 为关闭，默认 70%）'
-                          : 'Trigger summary when context exceeds ratio (0% to disable, default 70%)',
-                      child: Row(
-                        children: <Widget>[
-                          Text(
-                            isZh ? '总结阈值:' : 'Summary:',
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: colorScheme.onSurface,
-                              fontSize: 12,
+                  _ThinkingKind.budget => Padding(
+                    padding: const EdgeInsets.fromLTRB(32, 6, 0, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: _ThinkingBudgetField(
+                                controller: _budgetMin,
+                                label: l10n.settingsModelThinkingBudgetMin,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: _ModernNumberField(
-                              controller: _summaryThresholdController,
-                              suffix: '%',
-                              hintText: '70',
-                              onChanged: (val) {
-                                final numVal = double.tryParse(val.trim()) ?? 0;
-                                setState(() {
-                                  _enableSummary = numVal > 0;
-                                });
-                              },
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _ThinkingBudgetField(
+                                controller: _budgetMax,
+                                label: l10n.settingsModelThinkingBudgetMax,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                        _ThinkingTurnOffSwitch(
+                          label: l10n.settingsModelThinkingCanTurnOff,
+                          value: _canTurnOff,
+                          onChanged: (value) =>
+                              setState(() => _canTurnOff = value),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
-
-        // Bottom Action Bar
-        Padding(
-          padding: const EdgeInsets.only(top: 10, bottom: 2),
-          child: Row(
-            children: <Widget>[
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colorScheme.error,
-                  side: BorderSide(
-                    color: colorScheme.error.withValues(
-                      alpha: isDark ? 0.35 : 0.5,
-                    ),
-                    width: 0.8,
-                  ),
-                  shape: const StadiumBorder(),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  visualDensity: VisualDensity.compact,
-                ),
-                onPressed: widget.onDeleted,
-                icon: const Icon(Icons.delete_outline_rounded, size: 15),
-                label: Text(
-                  l10n.delete,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 11.5,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  shape: const StadiumBorder(),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 6,
-                  ),
-                  visualDensity: VisualDensity.compact,
-                ),
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox.square(
-                        dimension: 13,
-                        child: Center(child: M3LoadingIndicator(size: 13)),
-                      )
-                    : _LucideIcon(
-                        _kSvgCheck,
-                        size: 14,
-                        color: colorScheme.onPrimary,
-                      ),
-                label: Text(
-                  l10n.save,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12.5,
-                  ),
-                ),
+                  _ => const SizedBox(width: double.infinity),
+                },
               ),
             ],
           ),
         ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(onPressed: _save, child: Text(l10n.save)),
       ],
     );
   }
 }
 
-class _SettingsGroupCard extends StatelessWidget {
-  const _SettingsGroupCard({required this.title, required this.children});
+/// One kind of thinking control in the describe dialog, picked like a radio button.
+class _ThinkingKindOption extends StatelessWidget {
+  const _ThinkingKindOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
-  final String title;
-  final List<Widget> children;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.only(left: 4, right: 4, bottom: 4),
-          child: Row(
-            children: <Widget>[
-              Text(
-                title,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: isDark
-                      ? colorScheme.onSurface.withValues(alpha: 0.8)
-                      : colorScheme.onSurfaceVariant,
-                  fontSize: 11.5,
-                  letterSpacing: 0.2,
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: Row(
+          children: <Widget>[
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              child: Icon(
+                selected
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                key: ValueKey<bool>(selected),
+                size: 20,
+                color: selected
+                    ? colorScheme.primary
+                    : colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
-            ],
-          ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(
-                alpha: isDark ? 0.45 : 0.70,
-              ),
-              width: 1.0,
             ),
-            boxShadow: isDark
-                ? null
-                : <BoxShadow>[
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.03),
-                      blurRadius: 3,
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: children,
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
 
-class _CheckableCapabilityChip extends StatelessWidget {
-  const _CheckableCapabilityChip({
+/// The "can be turned off" switch under a graded or budget description.
+class _ThinkingTurnOffSwitch extends StatelessWidget {
+  const _ThinkingTurnOffSwitch({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Switch(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+/// A token count field of a budget description; empty leaves the bound unknown.
+class _ThinkingBudgetField extends StatelessWidget {
+  const _ThinkingBudgetField({required this.controller, required this.label});
+
+  final TextEditingController controller;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      inputFormatters: <TextInputFormatter>[
+        FilteringTextInputFormatter.digitsOnly,
+      ],
+      decoration: InputDecoration(
+        labelText: label,
+        isDense: true,
+        border: const OutlineInputBorder(),
+      ),
+    );
+  }
+}
+
+/// A switch shaped as a chip: filled and tinted when on, quiet when off.
+class _CapabilityToggleChip extends StatelessWidget {
+  const _CapabilityToggleChip({
     required this.title,
     required this.tooltip,
     required this.checked,
     required this.onChanged,
     required this.icon,
-    required this.iconTint,
   });
 
   final String title;
@@ -5350,184 +6250,70 @@ class _CheckableCapabilityChip extends StatelessWidget {
   final bool checked;
   final ValueChanged<bool> onChanged;
   final IconData icon;
-  final _CapsuleTint iconTint;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-
-    final (
-      Color activeBg,
-      Color activeText,
-      Color activeBorder,
-    ) = switch (iconTint) {
-      _CapsuleTint.primary => (
-        Color.alphaBlend(
-          colorScheme.primary.withValues(alpha: isDark ? 0.10 : 0.04),
-          colorScheme.surface,
-        ),
-        colorScheme.onSurface,
-        colorScheme.primary.withValues(alpha: isDark ? 0.34 : 0.24),
-      ),
-      _CapsuleTint.neutral => (
-        isDark
-            ? colorScheme.surfaceContainerHigh.withValues(alpha: 0.7)
-            : colorScheme.surfaceContainerHighest,
-        colorScheme.onSurface,
-        colorScheme.outlineVariant.withValues(alpha: isDark ? 0.6 : 0.8),
-      ),
-    };
-
-    final bgColor = checked
-        ? activeBg
+    final background = checked
+        ? Color.alphaBlend(
+            colorScheme.primary.withValues(alpha: isDark ? 0.18 : 0.10),
+            colorScheme.surface,
+          )
         : (isDark
               ? colorScheme.surfaceContainer.withValues(alpha: 0.25)
               : colorScheme.surfaceContainerLow);
-
-    final borderColor = checked
-        ? activeBorder
+    final border = checked
+        ? colorScheme.primary.withValues(alpha: isDark ? 0.5 : 0.38)
         : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.35 : 0.5);
-
-    final textColor = checked ? activeText : colorScheme.onSurfaceVariant;
-
+    final foreground = checked
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant;
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: bgColor,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(6),
-          side: BorderSide(color: borderColor, width: checked ? 0.9 : 0.6),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => onChanged(!checked),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4.5),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _CustomCheckbox(
-                  checked: checked,
-                  activeColor: colorScheme.primary.withValues(
-                    alpha: isDark ? 0.78 : 0.68,
-                  ),
-                  onTap: () => onChanged(!checked),
+      child: Semantics(
+        toggled: checked,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          height: _settingsControlHeight(context),
+          decoration: ShapeDecoration(
+            color: background,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(7),
+              side: BorderSide(color: border, width: checked ? 0.9 : 0.6),
+            ),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: () => onChanged(!checked),
+              borderRadius: BorderRadius.circular(7),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(icon, size: 14, color: foreground),
+                    const SizedBox(width: 6),
+                    Text(
+                      title,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontSize: 12,
+                        fontWeight: checked ? FontWeight.w600 : FontWeight.w500,
+                        color: checked
+                            ? colorScheme.onSurface
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 5),
-                _TileIconBox(
-                  icon: icon,
-                  tint: checked ? iconTint : _CapsuleTint.neutral,
-                  size: 18,
-                  iconSize: 10.5,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  title,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: checked ? FontWeight.w600 : FontWeight.w500,
-                    color: textColor,
-                    fontSize: 11.0,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
       ),
-    );
-  }
-}
-
-class _CustomCheckbox extends StatelessWidget {
-  const _CustomCheckbox({required this.checked, this.activeColor, this.onTap});
-
-  final bool checked;
-  final Color? activeColor;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    final effectiveActiveColor = activeColor ?? colorScheme.primary;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(3.5),
-      child: Container(
-        width: 13,
-        height: 13,
-        decoration: BoxDecoration(
-          color: checked ? effectiveActiveColor : Colors.transparent,
-          borderRadius: BorderRadius.circular(3.5),
-          border: Border.all(
-            color: checked
-                ? effectiveActiveColor
-                : colorScheme.outlineVariant.withValues(
-                    alpha: isDark ? 0.55 : 0.65,
-                  ),
-            width: 1.0,
-          ),
-        ),
-        child: checked
-            ? Center(
-                child: _LucideIcon(
-                  _kSvgCheck,
-                  size: 8.5,
-                  color: colorScheme.onPrimary,
-                ),
-              )
-            : null,
-      ),
-    );
-  }
-}
-
-class _TileIconBox extends StatelessWidget {
-  const _TileIconBox({
-    required this.icon,
-    required this.tint,
-    this.size = 28,
-    this.iconSize = 15,
-  });
-
-  final IconData icon;
-  final _CapsuleTint tint;
-  final double size;
-  final double iconSize;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-
-    final (Color bgColor, Color iconColor) = switch (tint) {
-      _CapsuleTint.primary => (
-        Color.alphaBlend(
-          colorScheme.primary.withValues(alpha: isDark ? 0.10 : 0.04),
-          colorScheme.surface,
-        ),
-        colorScheme.primary.withValues(alpha: isDark ? 0.76 : 0.64),
-      ),
-      _CapsuleTint.neutral => (
-        colorScheme.surfaceContainerHigh.withValues(alpha: isDark ? 0.7 : 0.85),
-        colorScheme.onSurfaceVariant,
-      ),
-    };
-
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      alignment: Alignment.center,
-      child: Icon(icon, size: iconSize, color: iconColor),
     );
   }
 }
@@ -5536,92 +6322,78 @@ class _ModernNumberField extends StatelessWidget {
   const _ModernNumberField({
     required this.controller,
     required this.suffix,
-    this.hintText,
-    this.errorText,
-    this.onChanged,
+    this.focusNode,
+    this.invalid = false,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
   final String suffix;
-  final String? hintText;
-  final String? errorText;
-  final ValueChanged<String>? onChanged;
+  final FocusNode? focusNode;
+
+  /// Whether the entry is not a value the field takes; the border turns red.
+  final bool invalid;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    OutlineInputBorder border(Color color, double width) {
+      return OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6),
+        borderSide: BorderSide(color: color, width: width),
+      );
+    }
 
+    final idle = border(
+      invalid
+          ? colorScheme.error
+          : colorScheme.outline.withValues(alpha: isDark ? 0.4 : 0.55),
+      1.0,
+    );
+    final focused = border(
+      invalid ? colorScheme.error : colorScheme.primary,
+      1.3,
+    );
+    // Even padding centers the digits in the same height as the chips beside them.
+    final verticalPadding = (_settingsControlHeight(context) - 18) / 2;
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       style: theme.textTheme.bodyMedium?.copyWith(
         fontWeight: FontWeight.w600,
         fontSize: 12.5,
+        height: 18 / 12.5,
         color: colorScheme.onSurface,
       ),
       keyboardType: TextInputType.number,
-      onChanged: onChanged,
+      textInputAction: TextInputAction.done,
+      onSubmitted: onSubmitted,
       decoration: InputDecoration(
         isDense: true,
-        hintText: hintText,
-        errorText: errorText,
         filled: true,
         fillColor: isDark
             ? colorScheme.surfaceContainer
             : colorScheme.surfaceContainerLow,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: verticalPadding,
+        ),
         suffixText: suffix,
         suffixStyle: theme.textTheme.labelSmall?.copyWith(
           color: colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w600,
           fontSize: 10.5,
         ),
-        disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(
-            color: colorScheme.outlineVariant.withValues(
-              alpha: isDark ? 0.2 : 0.35,
-            ),
-            width: 0.8,
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(
-            color: colorScheme.outline.withValues(alpha: isDark ? 0.4 : 0.55),
-            width: 1.0,
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: colorScheme.primary, width: 1.3),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: colorScheme.error, width: 1.0),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
-          borderSide: BorderSide(color: colorScheme.error, width: 1.3),
+        enabledBorder: idle,
+        focusedBorder: focused,
+        disabledBorder: border(
+          colorScheme.outlineVariant.withValues(alpha: isDark ? 0.2 : 0.35),
+          0.8,
         ),
       ),
-    );
-  }
-}
-
-class _GroupDivider extends StatelessWidget {
-  const _GroupDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Divider(
-      height: 1.0,
-      thickness: 1.0,
-      color: Theme.of(
-        context,
-      ).colorScheme.outlineVariant.withValues(alpha: isDark ? 0.35 : 0.55),
     );
   }
 }
@@ -5725,25 +6497,25 @@ class _ModelCapabilityCapsules extends StatelessWidget {
         ),
       if (capabilities.toolCall)
         _CapabilityCapsule(
-          label: isZh ? '工具调用' : 'Tools',
+          label: l10n.settingsModelCapabilityToolCall,
           tooltip: l10n.settingsModelToolCall,
           tint: _CapsuleTint.primary,
         ),
       if (capabilities.directImage)
         _CapabilityCapsule(
-          label: isZh ? '图片' : 'Image',
+          label: l10n.settingsModelCapabilityImage,
           tooltip: l10n.settingsModelDirectImage,
           tint: _CapsuleTint.primary,
         ),
       if (capabilities.directAudio)
         _CapabilityCapsule(
-          label: isZh ? '音频' : 'Audio',
+          label: l10n.settingsModelCapabilityAudio,
           tooltip: l10n.settingsModelDirectAudio,
           tint: _CapsuleTint.primary,
         ),
       if (capabilities.directVideo)
         _CapabilityCapsule(
-          label: isZh ? '视频' : 'Video',
+          label: l10n.settingsModelCapabilityVideo,
           tooltip: l10n.settingsModelDirectVideo,
           tint: _CapsuleTint.primary,
         ),
@@ -6570,53 +7342,6 @@ class _FunctionModelOptionTile extends StatelessWidget {
   }
 }
 
-class _ConnectionTestReportDialog extends StatelessWidget {
-  const _ConnectionTestReportDialog({required this.report});
-
-  final core_proxy.ModelConnectionTestReport report;
-
-  static Future<void> show({
-    required BuildContext context,
-    required core_proxy.ModelConnectionTestReport report,
-  }) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) => _ConnectionTestReportDialog(report: report),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return AlertDialog(
-      title: Text(l10n.settingsModelConnectionTestSection),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              '${report.providerName} \u00b7 ${report.modelId}',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 8),
-            for (final item in report.items)
-              _ConnectionTestItemTile(item: item),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.ok),
-        ),
-      ],
-    );
-  }
-}
-
 class _ProviderConfigErrorDialog extends StatelessWidget {
   const _ProviderConfigErrorDialog({
     required this.title,
@@ -6644,37 +7369,6 @@ class _ProviderConfigErrorDialog extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
       title: Text(title),
-      content: Text(message),
-      actions: <Widget>[
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.ok),
-        ),
-      ],
-    );
-  }
-}
-
-class _ConnectionTestErrorDialog extends StatelessWidget {
-  const _ConnectionTestErrorDialog({required this.message});
-
-  final String message;
-
-  static Future<void> show({
-    required BuildContext context,
-    required String message,
-  }) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) => _ConnectionTestErrorDialog(message: message),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.settingsModelConnectionTestSection),
       content: Text(message),
       actions: <Widget>[
         FilledButton(
@@ -6763,18 +7457,27 @@ class _AddProviderModelErrorDialog extends StatelessWidget {
 }
 
 class _DeleteModelBlockedDialog extends StatelessWidget {
-  const _DeleteModelBlockedDialog({required this.functionTypes});
+  const _DeleteModelBlockedDialog({
+    required this.functionTypes,
+    required this.several,
+  });
 
   final List<core_proxy.FunctionType> functionTypes;
+
+  /// Whether the user tried to delete several models rather than one.
+  final bool several;
 
   static Future<void> show({
     required BuildContext context,
     required List<core_proxy.FunctionType> functionTypes,
+    bool several = false,
   }) {
     return showDialog<void>(
       context: context,
-      builder: (context) =>
-          _DeleteModelBlockedDialog(functionTypes: functionTypes),
+      builder: (context) => _DeleteModelBlockedDialog(
+        functionTypes: functionTypes,
+        several: several,
+      ),
     );
   }
 
@@ -6786,7 +7489,11 @@ class _DeleteModelBlockedDialog extends StatelessWidget {
         .join(' · ');
     return AlertDialog(
       title: Text(l10n.delete),
-      content: Text(l10n.settingsModelDeleteBlocked(names)),
+      content: Text(
+        several
+            ? l10n.settingsModelDeleteModelsBlocked(names)
+            : l10n.settingsModelDeleteBlocked(names),
+      ),
       actions: <Widget>[
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -6873,40 +7580,6 @@ class _DeleteProviderConfirmDialog extends StatelessWidget {
           child: Text(l10n.settingsModelDeleteProviderConfirmAction),
         ),
       ],
-    );
-  }
-}
-
-class _ConnectionTestItemTile extends StatelessWidget {
-  const _ConnectionTestItemTile({required this.item});
-
-  final core_proxy.CoreOperitProvidersChatLlmproviderModelConfigConnectionTesterModelConnectionTestItem
-  item;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    final color = item.success ? Colors.green : colorScheme.error;
-    return Material(
-      type: MaterialType.transparency,
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        contentPadding: EdgeInsets.zero,
-        leading: Icon(
-          item.success ? Icons.check_circle_outline : Icons.error_outline,
-          color: color,
-        ),
-        title: Text(_connectionTestTypeLabel(l10n, item.type)),
-        subtitle: item.error == null ? null : Text(item.error!),
-        trailing: Text(
-          item.success
-              ? l10n.settingsModelConnectionTestPassed
-              : l10n.settingsModelConnectionTestFailed,
-          style: TextStyle(color: color, fontWeight: FontWeight.w700),
-        ),
-      ),
     );
   }
 }

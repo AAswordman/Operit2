@@ -35,7 +35,6 @@ use crate::data::backup::Operit1RoomSchemaMigration::{
 use crate::data::backup::Operit1SnapshotArchive::{
     validateRelativePath, Operit1PreferenceValue, Operit1SnapshotArchive, Operit1SnapshotEntry,
 };
-use crate::data::backup::Operit1ThinkingMigration::convert_thinking_configurations;
 
 use super::CharacterPluginLegacyData::sanitizeMemoryOwnerId;
 use super::CharacterPluginLegacyData::{
@@ -57,8 +56,8 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    ApiProviderType, ModelCapabilities, ModelConfigDefaults, ModelContextSpec, ModelProfile,
-    ModelRequestSpec, ModelSummarySettings, ProviderProfile,
+    ApiProviderType, ModelCapabilityOverrides, ModelConfigDefaults, ModelContextSpec, ModelProfile,
+    ModelRequestOverrides, ModelSummarySettings, ProviderProfile,
 };
 use operit_model::ModelParameter::{ModelParameter, ParameterCategory};
 use operit_model::OperitChatArchive::{

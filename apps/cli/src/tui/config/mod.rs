@@ -9,7 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 
 use operit_model::ModelConfigData::{
-    ModelCapabilities, ModelContextSpec, ProviderProfile, ResolvedModelConfig,
+    ModelCapabilities, ModelContextSpec, ProviderModelSummary, ProviderProfile,
+    ResolvedModelConfig,
 };
 
 
@@ -48,6 +49,8 @@ impl ConfigState {
 pub(crate) struct ConfigUi {
     pub(crate) state: ConfigState,
     pub(crate) providers: Vec<ProviderProfile>,
+    /// Settings every configured model runs with, catalog values included.
+    pub(crate) model_summaries: Vec<ProviderModelSummary>,
     pub(crate) search: String,
     pub(crate) filtered_indices: Vec<usize>,
     pub(crate) selected_index: usize,
@@ -88,6 +91,7 @@ impl ConfigUi {
         Self {
             state: ConfigState::ProviderList,
             providers: Vec::new(),
+            model_summaries: Vec::new(),
             search: String::new(),
             filtered_indices: Vec::new(),
             selected_index: 0,
@@ -123,7 +127,16 @@ impl ConfigUi {
             }
             Err(e) => {
                 self.error_message = Some(e.to_string());
+                return;
             }
+        }
+        match core
+            .preferences_model_config_manager()
+            .getAllModelSummaries()
+            .await
+        {
+            Ok(summaries) => self.model_summaries = summaries,
+            Err(e) => self.error_message = Some(e.to_string()),
         }
     }
 
@@ -351,8 +364,14 @@ impl ConfigUi {
                     Span::styled(&model.id, Style::default().add_modifier(Modifier::BOLD)),
                 ];
 
-                // Show capabilities summary from the model profile if available
-                if let Some(caps) = &model.capabilitiesOverride {
+                // Show the capabilities and context the model runs with, catalog values included.
+                let summary = provider.and_then(|p| {
+                    self.model_summaries
+                        .iter()
+                        .find(|summary| summary.providerId == p.id && summary.modelId == model.id)
+                });
+                if let Some(summary) = summary {
+                    let caps = &summary.capabilities;
                     let mut tags = Vec::new();
                     if caps.toolCall {
                         tags.push("⚒");
@@ -373,16 +392,11 @@ impl ConfigUi {
                             Style::default().fg(theme::ACCENT),
                         ));
                     }
-                }
-
-                // Context length from override
-                let ctx_info = model
-                    .contextOverride
-                    .as_ref()
-                    .map(|c| format!("{}k", c.maxContextLength));
-                if let Some(ctx) = ctx_info {
                     line1.push(Span::raw("  "));
-                    line1.push(Span::styled(ctx, Style::default().fg(theme::TEXT_SUBTLE)));
+                    line1.push(Span::styled(
+                        format!("{}k", summary.context.maxContextLength.round()),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ));
                 }
 
                 ListItem::new(Line::from(line1))
@@ -725,12 +739,6 @@ impl ConfigUi {
                         Some(model_editor::MainFocus::MaxContextLength) => {
                             push_numeric_text(&mut editor.max_context_length, &text);
                         }
-                        Some(model_editor::MainFocus::ThinkingConfigurations) => {
-                            editor.thinking_configurations.push_str(&text);
-                        }
-                        Some(model_editor::MainFocus::ThinkingOption) => {
-                            editor.thinking_option_id.push_str(&text);
-                        }
                         _ => {}
                     },
                     model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
@@ -839,7 +847,7 @@ impl ConfigUi {
                             if let Some(model) = self.available_models.get(i) {
                                 match core
                                     .preferences_model_config_manager()
-                                    .addProviderModelFromAvailable(&pid, model.modelId.clone())
+                                    .addProviderModelFromAvailable(&pid, model.clone())
                                     .await
                                 {
                                     Ok(_) => {
@@ -984,7 +992,7 @@ impl ConfigUi {
                     };
                     let settings = match core
                         .preferences_model_config_manager()
-                        .getThinkingSettingsForProvider(&pid, &model.id)
+                        .getThinkingSettingsForModel(&pid, &model.id)
                         .await
                     {
                         Ok(settings) => settings,
@@ -999,11 +1007,12 @@ impl ConfigUi {
                         model.id.clone(),
                         &config,
                     );
-                    editor.thinking_options = settings
-                        .options
+                    editor.thinking_levels = settings
+                        .levels
                         .into_iter()
-                        .map(|option| option.id)
+                        .map(|option| option.level)
                         .collect();
+                    editor.thinking_level = settings.current;
                     self.state = ConfigState::ModelEditor(editor);
                 }
             }
@@ -1252,27 +1261,12 @@ impl ConfigUi {
                         .preferences_model_config_manager()
                         .updateSummaryForModel(&pid, &mid, changes.summary)
                         .await;
-                    match core
-                        .preferences_model_config_manager()
-                        .getProviderProfile(&pid)
-                        .await
-                    {
-                        Ok(mut provider) => {
-                            provider.thinkingConfigurations = changes.thinking_configurations;
-                            provider.thinkingOptionId = changes.thinking_option_id;
-                            match core
-                                .preferences_model_config_manager()
-                                .updateProviderProfile(provider)
-                                .await
-                            {
-                                Ok(_) => {}
-                                Err(error) => {
-                                    self.error_message = Some(error.to_string());
-                                    return Ok(false);
-                                }
-                            }
-                        }
-                        Err(error) => {
+                    if let Some(level) = changes.thinking_level {
+                        if let Err(error) = core
+                            .preferences_model_config_manager()
+                            .setThinkingLevelForModel(&pid, &mid, level)
+                            .await
+                        {
                             self.error_message = Some(error.to_string());
                             return Ok(false);
                         }
@@ -1342,9 +1336,8 @@ impl ConfigUi {
                         Some(model_editor::MainFocus::StructuredTools) => {
                             editor.supports_structured_tools = !editor.supports_structured_tools
                         }
-                        Some(model_editor::MainFocus::ThinkingConfigurations)
-                        | Some(model_editor::MainFocus::ThinkingOption) => {
-                            editor.editing_field = !editor.editing_field
+                        Some(model_editor::MainFocus::Thinking) => {
+                            editor.cycle_thinking_level()
                         }
                         Some(model_editor::MainFocus::BuiltinTool(index)) => {
                             if let Some(tool) = editor.builtin_tools.get_mut(index) {
@@ -1385,18 +1378,6 @@ impl ConfigUi {
                             editor.max_context_length.push(c);
                         }
                     }
-                    model_editor::EditorLevel::Main
-                        if editor.focused_main_item()
-                            == Some(model_editor::MainFocus::ThinkingConfigurations) =>
-                    {
-                        editor.thinking_configurations.push(c);
-                    }
-                    model_editor::EditorLevel::Main
-                        if editor.focused_main_item()
-                            == Some(model_editor::MainFocus::ThinkingOption) =>
-                    {
-                        editor.thinking_option_id.push(c);
-                    }
                     model_editor::EditorLevel::Summary => {
                         if c.is_ascii_digit() || c == '.' {
                             match editor.focused_summary_item() {
@@ -1421,18 +1402,6 @@ impl ConfigUi {
                                 == Some(model_editor::MainFocus::MaxContextLength) =>
                         {
                             editor.max_context_length.pop();
-                        }
-                        model_editor::EditorLevel::Main
-                            if editor.focused_main_item()
-                                == Some(model_editor::MainFocus::ThinkingConfigurations) =>
-                        {
-                            editor.thinking_configurations.pop();
-                        }
-                        model_editor::EditorLevel::Main
-                            if editor.focused_main_item()
-                                == Some(model_editor::MainFocus::ThinkingOption) =>
-                        {
-                            editor.thinking_option_id.pop();
                         }
                         model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
                             Some(model_editor::SummaryFocus::TokenThreshold) => {

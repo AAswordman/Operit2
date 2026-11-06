@@ -518,8 +518,6 @@
     }
   },
   "settingsModelSetCurrentActive": "Set active",
-  "settingsChatThinkingMode": "Thinking mode",
-  "settingsChatThinkingModeDescription": "Let supported models produce steadier reasoning.",
   "settingsChatStreamOutput": "Stream output",
   "settingsChatStreamOutputDescription": "Show generated replies progressively.",
   "settingsModelProfilesSection": "Model profiles",
@@ -857,6 +855,36 @@
   "settingsModelAvailableSourceFetched": "Fetched",
   "settingsModelAvailableSourceHistory": "History",
   "settingsModelAvailableEmptyFetched": "No fetched models. Choose Include history to see catalog IDs.",
+  "settingsModelUnrecognized": "Unrecognized",
+  "settingsModelCatalogUpdatedAt": "Capabilities and context from models.dev, updated {time}",
+  "@settingsModelCatalogUpdatedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogUpdateFailed": "Could not download model details: {error}",
+  "@settingsModelCatalogUpdateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogUpdateFailedUsing": "Could not update model details, using those from {time}: {error}",
+  "@settingsModelCatalogUpdateFailedUsing": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogNotDownloaded": "Model details have not been downloaded yet",
+  "settingsModelCatalogRetry": "Retry",
   "settingsModelCustomModel": "Custom model",
   "settingsModelModelId": "Model ID",
   "settingsModelDuplicateModelId": "This model has already been added to this provider.",
@@ -880,7 +908,7 @@
   "settingsModelContextLength": "Context length",
   "settingsModelMaxContextLength": "Max context length",
   "settingsModelMaxContextLengthInvalid": "Enter a max context length greater than 0",
-  "settingsModelSummaryThreshold": "Summary token threshold",
+  "settingsModelSummaryThreshold": "Summarize at",
   "settingsModelSummaryByMessageCount": "Summarize by message count",
   "settingsModelSummaryMessageCount": "Summary message threshold",
   "settingsModelCustomHeaders": "Custom headers",
@@ -895,18 +923,134 @@
   "settingsModelDirectVideoDescription": "Send video directly to models that support video input.",
   "settingsModelGoogleSearch": "Google Search",
   "settingsModelGoogleSearchDescription": "Enable provider-side search capability.",
-  "settingsModelContext": "Context window",
+  "settingsModelContext": "Context",
   "settingsModelSummary": "Auto summary",
   "settingsModelThinking": "Thinking",
-  "settingsModelThinkingOption": "Thinking option",
-  "settingsModelThinkingRules": "Thinking rules JSON",
+  "thinkingLevelLabel": "Thinking",
+  "thinkingAlwaysOn": "Always thinking",
+  "thinkingChip": "Thinking",
+  "settingsModelThinkingSourceDeclared": "Levels from your description",
+  "settingsModelThinkingSourceLocalRuntime": "Runs locally: thinking switches on or off, and the switch does nothing for a model that cannot think",
+  "settingsModelThinkingUnknown": "The catalog has no thinking details for this model",
+  "settingsModelThinkingNotAdjustable": "This API cannot change how this model thinks",
+  "settingsModelThinkingNotSupported": "This model does not think",
+  "settingsModelThinkingCarried": "Carried over from the level you set last",
+  "settingsModelThinkingDescribe": "Describe",
+  "settingsModelThinkingUseCatalog": "Use catalog",
+  "settingsModelThinkingDescribeTitle": "How this model thinks",
+  "settingsModelThinkingKindNone": "Does not think",
+  "settingsModelThinkingKindAlways": "Always thinks, no control",
+  "settingsModelThinkingKindSwitch": "On or off",
+  "settingsModelThinkingKindLevels": "Levels",
+  "settingsModelThinkingKindBudget": "Token budget",
+  "settingsModelThinkingCanTurnOff": "Can be turned off",
+  "settingsModelThinkingBudgetMin": "Minimum tokens",
+  "settingsModelThinkingBudgetMax": "Maximum tokens",
+  "settingsModelThinkingLevelsRequired": "Pick at least one level",
   "settingsModelMediaHistory": "Media history",
   "settingsModelCapabilities": "Capabilities",
   "settingsModelBuiltinTools": "Built-in tools",
   "settingsModelBuiltinToolExclusive": "Turns off external tool calling when enabled",
-  "settingsModelConnectionTestSection": "Connection test",
   "settingsModelRunConnectionTest": "Test current model",
-  "settingsModelTestModel": "Test model",
+  "settingsModelTestModel": "Test",
+  "settingsModelCapabilityToolCall": "Tools",
+  "settingsModelCapabilityImage": "Image",
+  "settingsModelCapabilityAudio": "Audio",
+  "settingsModelCapabilityVideo": "Video",
+  "settingsModelClaudeCache": "Claude 1h cache",
+  "settingsModelClaudeCacheDescription": "Sets a 1-hour TTL on explicit cache breakpoints; when off, the default TTL applies.",
+  "settingsModelSummaryThresholdDescription": "Summarize when the context fills to this share. 0 turns summaries off.",
+  "settingsModelMoreActions": "More actions",
+  "settingsModelRestoreDefaults": "Restore defaults",
+  "settingsModelDescribeThinking": "Describe thinking levels",
+  "settingsModelDeleteModel": "Delete model",
+  "settingsModelSaveFailed": "Could not save: {error}",
+  "@settingsModelSaveFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelTestAll": "Test all",
+  "settingsModelTestProgress": "Testing {done}/{total}",
+  "@settingsModelTestProgress": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestSummary": "{passed} passed, {failed} failed",
+  "@settingsModelTestSummary": {
+    "placeholders": {
+      "passed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestAllPassed": "All {count} passed",
+  "@settingsModelTestAllPassed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestCouldNotRun": "The test could not run",
+  "settingsModelCopyError": "Copy error",
+  "settingsModelSelect": "Select",
+  "settingsModelCheckAll": "Select all",
+  "settingsModelCheckedCount": "{count} selected",
+  "@settingsModelCheckedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteModelsTitle": "Delete {count} models?",
+  "@settingsModelDeleteModelsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteModelsMessage": "Their settings are deleted with them.",
+  "settingsModelDeleteModelsKept": "{count} in use by functions will be kept: {names}",
+  "@settingsModelDeleteModelsKept": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteModelsBlocked": "The selected models are used by these functions. Change the function model assignments first: {functions}",
+  "@settingsModelDeleteModelsBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeletedCount": "Deleted {count} models",
+  "@settingsModelDeletedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsModelTestingConnection": "Testing current model connection…",
   "settingsModelTestedModel": "Tested model",
   "settingsModelConnectionTestPassed": "All checks passed",

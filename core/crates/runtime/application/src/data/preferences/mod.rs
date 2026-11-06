@@ -24,6 +24,8 @@ pub mod GitHubAuthBus;
 pub mod GitHubAuthPreferences;
 #[path = "ModelConfigManager.rs"]
 pub mod ModelConfigManager;
+#[path = "ModelSpecResolver.rs"]
+pub(crate) mod ModelSpecResolver;
 #[path = "PreferenceStorageManager.rs"]
 pub mod PreferenceStorageManager;
 #[path = "PreferenceSpaceMerge.rs"]

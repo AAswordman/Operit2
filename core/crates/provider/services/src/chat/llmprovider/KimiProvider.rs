@@ -43,14 +43,11 @@ impl KimiProvider {
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
         let adjusted_request;
-        let effective_request = if request.enable_thinking && !request.preserve_think_in_history {
+        let effective_request = if request.thinking.is_on() && !request.preserve_think_in_history {
             adjusted_request = SendMessageRequest {
                 chat_history: request.chat_history.clone(),
                 model_parameters: request.model_parameters.clone(),
-                enable_thinking: request.enable_thinking,
-                thinking_quality_level: request.thinking_quality_level,
-                thinking_configurations: request.thinking_configurations.clone(),
-                thinking_option_id: request.thinking_option_id.clone(),
+                thinking: request.thinking.clone(),
                 stream: request.stream,
                 available_tools: request.available_tools.clone(),
                 preserve_think_in_history: true,
@@ -66,7 +63,7 @@ impl KimiProvider {
         let Some(object) = body.as_object_mut() else {
             return Ok(body);
         };
-        if request.enable_thinking {
+        if request.thinking.is_on() {
             let useToolCall = self.inner.enable_tool_call && !request.available_tools.is_empty();
             let providerReadyHistory = self
                 .inner

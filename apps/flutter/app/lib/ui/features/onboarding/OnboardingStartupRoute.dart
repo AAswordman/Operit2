@@ -896,8 +896,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
           customHeaders: provider.customHeaders,
           requestLimitPerMinute: provider.requestLimitPerMinute,
           maxConcurrentRequests: provider.maxConcurrentRequests,
-          thinkingConfigurations: provider.thinkingConfigurations,
-          thinkingOptionId: provider.thinkingOptionId,
           models: provider.models,
         ),
       );
@@ -967,9 +965,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         }
       }
       if (!selectedModelExists) {
+        final selectedModel = _availableModels.firstWhere(
+          (model) => model.modelId == modelId,
+          orElse: () => throw StateError(
+            'selected model $modelId is not among the fetched models',
+          ),
+        );
         await modelManager.addProviderModelFromAvailable(
           providerId: providerId,
-          modelId: modelId,
+          model: selectedModel,
         );
       }
       await functionManager.setModelForFunction(

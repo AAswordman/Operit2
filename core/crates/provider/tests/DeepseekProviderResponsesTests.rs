@@ -4,6 +4,8 @@ use super::DeepseekProvider;
 use super::DeepseekResponsesPayloadAdapter;
 use crate::chat::llmprovider::AIService::SendMessageRequest;
 use crate::chat::llmprovider::OpenAIResponsesProvider::OpenAIResponsesPayloadAdapter;
+use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
+use operit_model::ModelThinking::ModelThinkingSpec;
 use crate::chat::llmprovider::ProviderMediaTestSupport::test_runtime_context;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
@@ -24,10 +26,13 @@ fn tool_continuation_request(reasoning_metadata: &str) -> SendMessageRequest {
             PromptTurn::new(PromptTurnKind::USER, "Continue."),
         ],
         model_parameters: Vec::new(),
-        enable_thinking: true,
-        thinking_quality_level: 2,
-        thinking_configurations: "[]".to_string(),
-        thinking_option_id: String::new(),
+        thinking: RequestThinking {
+            spec: ModelThinkingSpec {
+                supported: true,
+                ..ModelThinkingSpec::default()
+            },
+            level: None,
+        },
         stream: false,
         available_tools: vec![ToolPrompt::new(
             "list_files".to_string(),

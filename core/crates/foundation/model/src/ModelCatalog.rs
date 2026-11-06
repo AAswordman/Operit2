@@ -1,6 +1,8 @@
 #[path = "../collects/ModelCatalog.rs"]
 mod ModelCatalogRows;
 
+use std::sync::OnceLock;
+
 use crate::BillingMode::BillingMode;
 use crate::ModelConfigData::{
     BuiltinToolExclusivity, BuiltinToolRequestFormat, BuiltinToolType, ModelBuiltinTool,
@@ -9,7 +11,13 @@ use crate::ModelConfigData::{
     ProviderOperationSpec,
 };
 
+/// Built-in provider definitions: endpoints, operations, and the fixed model lists of
+/// providers that serve no model-list endpoint. Every other model is described by the
+/// models.dev catalog downloaded at runtime (`ModelsDevCatalog`).
 pub struct ModelCatalog;
+
+/// Fixed model rows, parsed once.
+static FIXED_MODELS: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
 
 const MODEL_CATALOG_PROVIDER_ROWS: &str = r#"
 OPENAI|OpenAI|https://api.openai.com/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
@@ -58,21 +66,18 @@ impl ModelCatalog {
             .ok_or_else(|| format!("catalog provider not found: {providerTypeId}"))
     }
 
-    pub fn model(providerTypeId: &str, modelId: &str) -> Result<ModelCatalogEntry, String> {
-        let provider = Self::provider(providerTypeId)?;
-        if let Some(model) = provider
-            .models
-            .into_iter()
-            .find(|model| model.modelId.eq_ignore_ascii_case(modelId))
-        {
-            return Ok(model);
-        }
-        Self::modelByTerminalId(modelId)
-            .ok_or_else(|| format!("catalog model not found: {providerTypeId}:{modelId}"))
+    /// Returns the fixed model list of a provider without a model-list endpoint, empty for others.
+    #[allow(non_snake_case)]
+    pub fn fixedModels(providerTypeId: &str) -> Vec<ModelCatalogEntry> {
+        fixedModelRows()
+            .iter()
+            .filter(|model| model.providerTypeId.eq_ignore_ascii_case(providerTypeId))
+            .cloned()
+            .collect()
     }
 
     pub fn providers() -> Result<Vec<ProviderCatalogEntry>, String> {
-        let models = parseModelRows(ModelCatalogRows::MODEL_CATALOG_MODEL_ROWS)?;
+        let models = fixedModelRows();
         let mut providers = Vec::new();
         for line in dataLines(MODEL_CATALOG_PROVIDER_ROWS) {
             let parts: Vec<&str> = line.split('|').collect();
@@ -96,15 +101,15 @@ impl ModelCatalog {
         }
         Ok(providers)
     }
+}
 
-    #[allow(non_snake_case)]
-    pub fn modelByTerminalId(modelId: &str) -> Option<ModelCatalogEntry> {
-        let terminalId = terminalModelId(modelId);
+/// Returns the parsed fixed model rows; the rows are built in, so a malformed one is a build defect.
+#[allow(non_snake_case)]
+fn fixedModelRows() -> &'static [ModelCatalogEntry] {
+    FIXED_MODELS.get_or_init(|| {
         parseModelRows(ModelCatalogRows::MODEL_CATALOG_MODEL_ROWS)
-            .ok()?
-            .into_iter()
-            .find(|model| terminalModelId(&model.modelId).eq_ignore_ascii_case(terminalId))
-    }
+            .expect("built-in fixed model rows must parse")
+    })
 }
 
 fn dataLines(rows: &str) -> impl Iterator<Item = &str> {
@@ -136,11 +141,6 @@ fn parseEndpointOption(value: &str) -> Result<ProviderEndpointOption, String> {
         endpoint: endpoint.to_string(),
         label: label.to_string(),
     })
-}
-
-#[allow(non_snake_case)]
-fn terminalModelId(modelId: &str) -> &str {
-    modelId.rsplit('/').next().unwrap_or(modelId)
 }
 
 #[allow(non_snake_case)]
@@ -382,30 +382,12 @@ fn parseBool(value: &str, field: &str, line: &str) -> Result<bool, String> {
 mod tests {
     use super::ModelCatalog;
 
+    /// Verifies only providers without a model-list endpoint carry a fixed model list.
     #[test]
-    fn model_lookup_uses_terminal_model_id() {
-        let model = ModelCatalog::model("ZHIPU", "glm-5").expect("glm-5 catalog entry");
-
-        assert_eq!(model.providerTypeId, "OPENROUTER");
-        assert_eq!(model.modelId, "z-ai/glm-5");
-        assert!(model.context.is_some());
-        assert!(model.capabilities.is_some());
-        assert!(model.request.is_some());
-    }
-
-    /// Verifies cc-switch catalog rows carry seed pricing.
-    #[test]
-    fn ccswitch_catalog_row_has_pricing() {
-        let model = ModelCatalog::model("MIMO", "mimo-v2.5-pro").expect("MiMo catalog entry");
-        let pricing = model.pricing.expect("MiMo pricing");
-        let context = model.context.expect("MiMo context");
-        let capabilities = model.capabilities.expect("MiMo capabilities");
-
-        assert_eq!(model.providerTypeId, "MIMO");
-        assert!((pricing.inputPricePerMillion - 0.435).abs() < 0.001);
-        assert!((pricing.outputPricePerMillion - 0.87).abs() < 0.001);
-        assert!((context.maxContextLength - 1048.576).abs() < 0.001);
-        assert!(!capabilities.directImage);
+    fn fixed_models_belong_to_providers_without_model_lists() {
+        assert!(!ModelCatalog::fixedModels("OPENAI_CODEX").is_empty());
+        assert!(ModelCatalog::fixedModels("DEEPSEEK").is_empty());
+        assert!(ModelCatalog::fixedModels("OPENROUTER").is_empty());
     }
 
     /// Verifies the generic provider can fetch OpenAI-compatible model lists.

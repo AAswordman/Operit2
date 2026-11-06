@@ -12,8 +12,6 @@ pub(crate) mod Operit1RoomSchemaMigration;
 pub(crate) mod Operit1SnapshotArchive;
 #[path = "Operit1SnapshotImportManager.rs"]
 pub mod Operit1SnapshotImportManager;
-#[path = "operit1/Operit1ThinkingMigration.rs"]
-pub(crate) mod Operit1ThinkingMigration;
 #[path = "RawSnapshotBackupManager.rs"]
 pub mod RawSnapshotBackupManager;
 
