@@ -410,47 +410,13 @@ impl MessageCoordinationDelegate {
         let workspacePath = currentChat
             .as_ref()
             .and_then(|chat| self.chatHistoryDelegate.primaryWorkspacePathForChat(chat));
-        // Chats think at the level set on their model.
-        let enableThinking = true;
-        let modelProviderId = configuration.profile.modelBinding.providerId.clone();
-        let modelId = configuration.profile.modelBinding.modelId.clone();
-        self.regenerateSingleAiMessageWithRequest(
-            executionLease,
-            configuration,
-            enhancedAiService,
-            chatId,
-            targetMessage,
-            requestMessageContent,
-            requestHistory,
-            workspacePath,
-            enableThinking,
-            modelProviderId.clone(),
-            modelId.clone(),
-            chatProviderIdOverride,
-            chatModelIdOverride)
-        .await
-    }
-
-    /// Runs the prepared regeneration request using its resolved model configuration.
-    async fn regenerateSingleAiMessageWithRequest(
-        &mut self,
-        executionLease: ChatExecutionLease,
-        configuration: ChatConfigurationResult,
-        enhancedAiService: &mut EnhancedAIService,
-        chatId: String,
-        targetMessage: ChatMessage,
-        requestMessageContent: String,
-        requestHistory: Vec<ChatMessage>,
-        workspacePath: Option<String>,
-        enableThinking: bool,
-        modelProviderId: String,
-        modelId: String,
-        chatProviderIdOverride: Option<String>,
-        chatModelIdOverride: Option<String>) -> Result<(), String> {
         let chatContextSettings = self
             .messageProcessingDelegate
             .modelConfigManager
-            .getResolvedModelConfig(&modelProviderId, &modelId)
+            .getResolvedModelConfig(
+                &configuration.profile.modelBinding.providerId,
+                &configuration.profile.modelBinding.modelId,
+            )
             .map_err(|error| error.to_string())?;
         let maxTokens = chatContextSettings.context.maxContextTokens();
         let mut variantMessage = self
@@ -468,7 +434,7 @@ impl MessageCoordinationDelegate {
                 promptFunctionType: self.currentPromptFunctionType.clone(),
                 attachments: Vec::new(),
                 replyToMessage: None,
-                enableThinking,
+                enableThinking: true,
                 maxTokens,
                 tokenUsageThreshold: chatContextSettings.summary.tokenThresholdRatio(),
                 chatProviderIdOverride,
@@ -496,20 +462,23 @@ impl MessageCoordinationDelegate {
         else {
             return Err("Regenerated message stream is missing".to_string());
         };
-        let mut content = String::new();
-        contentStream
-            .collect(&mut |chunk| {
-                content.push_str(&chunk);
-            })
-            .await;
-        variantMessage.parts = MessagePartCodec::parseAssistantMarkup(&content)
-            .expect("regenerated assistant markup must parse into message parts");
-        variantMessage.isVariantPreview = false;
-        self.chatHistoryDelegate.addMessageVariant(
-            targetMessage.timestamp,
-            variantMessage,
-            Some(chatId),
-        );
+        // Match normal sends: accept the live preview now and collect outside Holder.
+        let mut history = self.chatHistoryDelegate.clone_for_core();
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+            "message-variant-collection",
+            Box::new(move || Box::pin(async move {
+                let mut content = String::new();
+                contentStream
+                    .collect(&mut |chunk| {
+                        content.push_str(&chunk);
+                    })
+                    .await;
+                variantMessage.parts = MessagePartCodec::parseAssistantMarkup(&content)
+                    .expect("regenerated assistant markup must parse into message parts");
+                variantMessage.isVariantPreview = false;
+                history.addMessageVariant(targetMessage.timestamp, variantMessage, Some(chatId));
+            })),
+        ).map_err(|error| error.to_string())?;
         Ok(())
     }
 

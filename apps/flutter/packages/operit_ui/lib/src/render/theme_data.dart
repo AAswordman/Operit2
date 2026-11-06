@@ -213,11 +213,11 @@ InputDecorationTheme _inputDecorationTheme(
     focusedErrorBorder: errorBorder.copyWith(
       borderSide: BorderSide(color: colorScheme.error, width: 1.4),
     ),
-    labelStyle: textTheme.labelSmall?.copyWith(
+    labelStyle: textTheme.labelMedium?.copyWith(
       color: colorScheme.onSurfaceVariant,
       fontWeight: FontWeight.w400,
     ),
-    floatingLabelStyle: textTheme.labelSmall?.copyWith(
+    floatingLabelStyle: textTheme.labelMedium?.copyWith(
       color: colorScheme.primary,
       fontWeight: FontWeight.w500,
     ),
