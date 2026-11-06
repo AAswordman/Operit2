@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkProject } from "./check.mjs";
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
 const { zipSync } = require("fflate");
 const ts = require("typescript");

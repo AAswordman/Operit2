@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const root = new URL("../../../../../", import.meta.url);
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const { buildSync } = require("esbuild");
 
 /** Reads the exact production source used by the native JavaScript execution boundary. */

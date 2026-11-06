@@ -8,7 +8,7 @@ import { createHtmlDocument } from "../scripts/build.mjs";
 import { fixture } from "./fixtures.mjs";
 import { plain } from "./runtime.mjs";
 import { CONTROLLED_CHAT_ID, CONTROLLED_OWNER, createMemoryJobsHarness } from "./memory-jobs-runtime.mjs";
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const html = await createHtmlDocument();
 let browser, server, origin;

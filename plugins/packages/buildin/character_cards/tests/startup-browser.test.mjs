@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { createHtmlDocument } from "../scripts/build.mjs";
 import { fixture, installBrowserFixture } from "./fixtures.mjs";
 
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const browserType = require("playwright")[process.env.CHARACTER_CARDS_UI_BROWSER ?? "chromium"];
 let browser, server, origin;
 

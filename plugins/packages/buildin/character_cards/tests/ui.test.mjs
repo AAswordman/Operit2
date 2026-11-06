@@ -16,7 +16,7 @@ import { importedCallCount } from "./runtime.mjs";
 import { keyedNode, mountRegisteredSelector, mountRegisteredComposeRoute } from "./selector-render.mjs";
 import { createNativeChatHost } from "./native-chat-host.mjs";
 import { createSelectionSettingsFixture } from "./selection-settings-fixture.mjs";
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const browserType = require("playwright")[process.env.CHARACTER_CARDS_UI_BROWSER ?? "chromium"];
 assert.ok(browserType?.launch, "Unknown CHARACTER_CARDS_UI_BROWSER");
 const html = await createHtmlDocument();

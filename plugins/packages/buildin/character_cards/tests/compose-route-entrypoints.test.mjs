@@ -102,7 +102,7 @@ test("preview and edit routes own a single untitled plugin Dialog", async t => {
 
 /** Checks installed/Core archives and each screen's bytes, not just an in-memory source bundle. */
 test("installed and Core production archives contain the executable registered screen modules", async () => {
-  const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+  const require = createRequire(import.meta.url);
   const { unzipSync } = require("fflate");
   const packaged = await readFile(new URL("../dist/character_cards.toolpkg", import.meta.url));
   const production = await readFile(new URL("../../../../../core/crates/runtime/application/assets/plugins/buildin/character_cards.toolpkg", import.meta.url));
@@ -148,7 +148,7 @@ test("UI bundles omit the file repository and memory job backend", async () => {
 
 /** Executes a user's edit to the installed screen JS through runtime compilation without rebuilding the UI. */
 test("editing packaged UI JavaScript changes the rendered text without build-time Compose compilation", async () => {
-  const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+  const require = createRequire(import.meta.url);
   const { unzipSync } = require("fflate");
   const modules = unzipSync(await readFile(new URL("../dist/character_cards.toolpkg", import.meta.url)));
   const route = registeredPackage(modules).routes.find(route => route.id === "main");

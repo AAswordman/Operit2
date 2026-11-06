@@ -10,7 +10,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { buildMainScript, buildUiScreenScripts, buildRuntimeToolsScript, createHtmlDocument, createPackageArchive } from "../scripts/build.mjs";
 
-const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
+const require = createRequire(import.meta.url);
 const { unzipSync } = require("fflate");
 const root = fileURLToPath(new URL("../", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
