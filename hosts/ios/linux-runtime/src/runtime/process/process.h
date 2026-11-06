@@ -1,5 +1,5 @@
 #pragma once
-#include "cpu/aarch64/interpreter.h"
+#include "cpu/aarch64/execution_engine.h"
 #include "fs/filesystem.h"
 #include "linux/syscalls.h"
 #include "linux/timers/process_timers.h"
@@ -13,7 +13,7 @@ struct ProcessImage {
     std::shared_ptr<Memory> memory;
     std::unique_ptr<Filesystem> filesystem;
     std::unique_ptr<Syscalls> syscalls;
-    std::unique_ptr<Interpreter> interpreter;
+    std::unique_ptr<ExecutionEngine> executor;
     std::unique_ptr<FixedComponents> acceleration;
     CpuState entry;
     std::string executable;

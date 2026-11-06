@@ -38,8 +38,8 @@ enum class Op : uint8_t {
     Fault
 };
 
-// Dispatch names describe statically compiled operations, never generated host code.
-enum class Dispatch : uint8_t {
+// Normalized operand encodings consumed by the static execution compiler.
+enum class Encoding : uint8_t {
     General,
     Noop,
     Syscall,
@@ -127,6 +127,10 @@ enum class Dispatch : uint8_t {
     ScalarCompare64,
     ScalarSelect64,
     VectorFma2D,
+    ScalarMultiply64,
+    ScalarDivide64,
+    ScalarSubtract64,
+    ScalarUnary32, ScalarUnary64,
     Count
 };
 
@@ -141,7 +145,7 @@ struct Instruction {
     uint64_t immediate = 0, auxiliary = 0;
     uint32_t raw = 0;
     Op op = Op::Unknown;
-    Dispatch dispatch = Dispatch::General;
+    Encoding encoding = Encoding::General;
     uint8_t rd = 0, rn = 0, rm = 0, ra = 0, width = 64, shift = 0, flags = 0;
     bool terminal = false;
 };

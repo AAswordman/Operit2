@@ -1,5 +1,5 @@
 #include "acceleration/fixed_components.h"
-#include "cpu/aarch64/interpreter.h"
+#include "cpu/aarch64/execution_engine.h"
 #include "elf/loader.h"
 #include "linux/threads/rseq.h"
 #include <array>
@@ -25,7 +25,7 @@ int run(const char *root) {
     CpuState cpu;
     cpu.pc = image.entry;
     cpu.sp = 0x70100000 - 16;
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     RseqState state;
     const std::array<RseqEvent, 3> events{RseqEvent::Preempt, RseqEvent::Signal, RseqEvent::Migrate};
     size_t injected = 0;

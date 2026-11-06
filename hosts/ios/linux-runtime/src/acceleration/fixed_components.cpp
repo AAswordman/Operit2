@@ -134,7 +134,9 @@ uint64_t FixedComponents::execute(CpuState &cpu, Memory &memory, uint64_t budget
                 return 0;
             exclusive.emplace(memory);
         }
-        if (module.checked_epoch != memory.code_epoch) {
+        const auto generation=memory.code_proof_generation();
+        if (module.checked_epoch != memory.code_epoch ||
+            (generation && module.checked_generation != generation)) {
             const uint64_t checked_epoch = memory.code_epoch.load(std::memory_order_relaxed);
             module.matches = true;
             for (const auto &snapshot : module.executable) {
@@ -161,6 +163,7 @@ uint64_t FixedComponents::execute(CpuState &cpu, Memory &memory, uint64_t budget
             // Use the epoch before validation. Writes to unrelated code can
             // only force another check; they cannot relabel unchecked bytes.
             module.checked_epoch = checked_epoch;
+            module.checked_generation = generation;
         }
         if (!module.matches)
             return 0;
@@ -211,7 +214,7 @@ uint64_t FixedComponents::execute(CpuState &cpu, Memory &memory, uint64_t budget
                 return 0;
         }
 
-        fixed::FixedExecution execution(cpu, memory, *module.manifest, module.base, helper_budget, completed_);
+        fixed::IntrinsicContext execution(cpu, memory, *module.manifest, module.base, helper_budget, completed_);
         switch (symbol->function) {
         case FixedFunction::Copy:
             fixed::copy(execution, copy_loop);

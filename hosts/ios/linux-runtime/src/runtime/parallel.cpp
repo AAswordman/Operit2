@@ -37,7 +37,7 @@ struct BatchTask {
     uint64_t budget = 0, instructions = 0, blocks = 0, hits = 0, calls = 0, bytes = 0;
     CpuUsage usage;
     Execution execution{Trap::Budget, 0};
-    Interpreter *interpreter = nullptr;
+    ExecutionEngine *executor = nullptr;
     FixedComponents *acceleration = nullptr;
     Memory *memory = nullptr;
     Task *task = nullptr;
@@ -91,7 +91,7 @@ bool Machine::run_parallel(uint64_t &budget) {
             engine.memory = image.memory;
             engine.source = image.acceleration.get();
             engine.generation = image.acceleration->generation();
-            engine.interpreter = std::make_unique<Interpreter>();
+            engine.executor = std::make_unique<ExecutionEngine>();
             // Digest manifests and executable snapshots remain checked. Each
             // worker owns its helper progress and cache; guest memory is shared.
             engine.acceleration = std::make_unique<FixedComponents>(*image.acceleration);
@@ -103,7 +103,7 @@ bool Machine::run_parallel(uint64_t &budget) {
         work.pid = process->pid;
         work.task = &task;
         work.memory = image.memory.get();
-        work.interpreter = engine.interpreter.get();
+        work.executor = engine.executor.get();
         work.acceleration = engine.acceleration.get();
         batch.push_back(std::move(work));
     }
@@ -126,13 +126,13 @@ bool Machine::run_parallel(uint64_t &budget) {
         jobs.emplace_back([&work](uint32_t cpu) {
             work.cpu = cpu;
             const auto before_cpu = worker_cpu_time();
-            const auto instructions = work.interpreter->executed_instructions;
-            const auto blocks = work.interpreter->decoded_blocks;
-            const auto hits = work.interpreter->cache_hits;
+            const auto instructions = work.executor->executed_instructions;
+            const auto blocks = work.executor->decoded_blocks;
+            const auto hits = work.executor->cache_hits;
             const auto calls = work.acceleration->calls;
             const auto bytes = work.acceleration->bytes;
             try {
-                work.execution = work.interpreter->run(work.task->cpu, *work.memory, work.budget,
+                work.execution = work.executor->run(work.task->cpu, *work.memory, work.budget,
                                                         work.acceleration);
             } catch (...) {
                 work.failure = std::current_exception();
@@ -141,9 +141,9 @@ bool Machine::run_parallel(uint64_t &budget) {
             work.usage = {after_cpu.user_nanoseconds - before_cpu.user_nanoseconds,
                           after_cpu.system_nanoseconds - before_cpu.system_nanoseconds,
                           after_cpu.runtime_nanoseconds - before_cpu.runtime_nanoseconds};
-            work.instructions = work.interpreter->executed_instructions - instructions;
-            work.blocks = work.interpreter->decoded_blocks - blocks;
-            work.hits = work.interpreter->cache_hits - hits;
+            work.instructions = work.executor->executed_instructions - instructions;
+            work.blocks = work.executor->decoded_blocks - blocks;
+            work.hits = work.executor->cache_hits - hits;
             work.calls = work.acceleration->calls - calls;
             work.bytes = work.acceleration->bytes - bytes;
         });
@@ -236,7 +236,7 @@ bool Machine::run_parallel(uint64_t &budget) {
         else
             ++it;
     }
-    quantum_remaining_ = 4096;
+    quantum_remaining_ = 262144;
     schedule_pending_ = !main_exited_;
     return true;
 }

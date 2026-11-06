@@ -1,5 +1,5 @@
 #include "cpu/aarch64/exclusive.h"
-#include "cpu/aarch64/interpreter.h"
+#include "cpu/aarch64/execution_engine.h"
 #include "fs/descriptor_table.h"
 #include "linux/files/memory_file.h"
 #include "memory/address_space.h"
@@ -331,7 +331,7 @@ void interpreter_invalidation() {
     memory.copy_in(address, program.data(), sizeof(program));
     memory.protect(address, page_size, exec_perm);
     const auto mappings = memory.mappings();
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     CpuState cpu;
     cpu.pc = address;
     interpreter.run(cpu, memory, 1);
@@ -350,7 +350,7 @@ void interpreter_invalidation() {
     Memory writer(2 * page_size), reader(2 * page_size);
     writer.map_file(address, page_size, read_perm | write_perm, file.rw, backing(true));
     reader.map_file(address, page_size, read_perm | exec_perm, file.ro, backing(true));
-    Interpreter shared_interpreter;
+    ExecutionEngine shared_interpreter;
     CpuState shared_cpu;
     shared_cpu.pc = address;
     shared_interpreter.run(shared_cpu, reader, 1);

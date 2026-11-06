@@ -186,7 +186,7 @@ uint32_t Machine::clone(const CpuState &cpu, const ProcessClone &request) {
     image.filesystem = std::make_unique<Filesystem>(*parent.image.filesystem);
     image.acceleration = std::make_unique<FixedComponents>(*parent.image.acceleration);
     image.acceleration->calls = image.acceleration->bytes = 0;
-    image.interpreter = std::make_unique<Interpreter>();
+    image.executor = std::make_unique<ExecutionEngine>();
     image.executable = parent.image.executable;
     image.heap_end = parent.image.heap_end;
     image.signal_trampoline = parent.image.signal_trampoline;
@@ -248,7 +248,7 @@ void Machine::exec(const std::string &path, const std::vector<std::string> &argu
     replacement->memory = std::make_shared<Memory>(process.image.memory->limit());
     replacement->filesystem = std::make_unique<Filesystem>(*process.image.filesystem);
     replacement->acceleration = std::make_unique<FixedComponents>(config_.enable_fixed_acceleration != 0);
-    replacement->interpreter = std::make_unique<Interpreter>();
+    replacement->executor = std::make_unique<ExecutionEngine>();
     load_process_executable(*replacement, path, arguments, environment, working_directory);
     limit_exec_image(*replacement, *limits);
     replacement->syscalls =
@@ -270,10 +270,10 @@ void Machine::exec(const std::string &path, const std::vector<std::string> &argu
 }
 void Machine::archive_image(Process &process) {
     auto &image = process.image;
-    if (image.interpreter) {
-        process.instructions += image.interpreter->executed_instructions;
-        process.decoded_blocks += image.interpreter->decoded_blocks;
-        process.cache_hits += image.interpreter->cache_hits;
+    if (image.executor) {
+        process.instructions += image.executor->executed_instructions;
+        process.decoded_blocks += image.executor->decoded_blocks;
+        process.cache_hits += image.executor->cache_hits;
     }
     if (image.syscalls) {
         process.calls += image.syscalls->calls;

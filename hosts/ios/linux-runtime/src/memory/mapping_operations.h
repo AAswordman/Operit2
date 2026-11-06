@@ -105,7 +105,7 @@ inline std::unique_ptr<Memory> Memory::fork_clone() {
     return child;
 }
 
-inline void Memory::synchronize_shared() {
+inline void Memory::synchronize_shared(bool code_proofs) {
     const AccessGuard access(*this);
     const uint64_t revision = shared_revision_->load(std::memory_order_relaxed);
     const uint64_t observed = observed_shared_revision_.load(std::memory_order_relaxed);
@@ -113,7 +113,9 @@ inline void Memory::synchronize_shared() {
         refresh_mapping_summary();
     if (revision != observed || file_mapping_) {
         exclusive_revision_.fetch_add(1, std::memory_order_relaxed);
-        if (revision != observed || executable_file_)
+        // Serial region links consult shared per-page proofs once per quantum.
+        // Parallel CPUs retain the conservative epoch barrier.
+        if (revision != observed || (executable_file_ && (!code_proofs || parallel_access_.load(std::memory_order_relaxed))))
             code_epoch.fetch_add(1, std::memory_order_relaxed);
         observed_shared_revision_.store(revision, std::memory_order_relaxed);
     }

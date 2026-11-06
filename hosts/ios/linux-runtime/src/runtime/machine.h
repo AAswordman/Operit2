@@ -27,7 +27,7 @@ class Machine final : public ProcessController {
         std::shared_ptr<Memory> memory;
         const FixedComponents *source = nullptr;
         uint64_t generation = 0;
-        std::unique_ptr<Interpreter> interpreter;
+        std::unique_ptr<ExecutionEngine> executor;
         std::unique_ptr<FixedComponents> acceleration;
     };
     std::map<uint32_t, ThreadExecution> thread_executions_;
@@ -35,7 +35,7 @@ class Machine final : public ProcessController {
     bool load_attempted_ = false, loaded_ = false, started_ = false, failed_ = false;
     bool schedule_pending_ = false, main_exited_ = false;
     int main_exit_code_ = 0;
-    uint64_t quantum_remaining_ = 4096;
+    uint64_t quantum_remaining_ = 262144;
     ort_arm64_status failure_status_ = ORT_ARM64_FAULT;
     ort_arm64_result retired_{};
     uint32_t accounting_pid_ = 0, accounting_tid_ = 0;

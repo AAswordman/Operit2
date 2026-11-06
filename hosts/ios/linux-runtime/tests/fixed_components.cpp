@@ -1,6 +1,6 @@
 #include "acceleration/fixed_components.h"
 #include "base/sha256.h"
-#include "cpu/aarch64/interpreter.h"
+#include "cpu/aarch64/execution_engine.h"
 #include "elf/loader.h"
 #include "memory/fault.h"
 #include <cstdio>
@@ -86,7 +86,7 @@ static void helper_budget_differential(const char *root) {
         memory->map(0x4000, page_size, read_perm | write_perm | exec_perm);
         memory->store<4>(0x4000, 0x14000000); // b .
     }
-    Interpreter accelerated, ordinary;
+    ExecutionEngine accelerated, ordinary;
     std::vector<uint8_t> initial(size), actual_bytes(size), expected_bytes(size);
     for (size_t index = 0; index < initial.size(); ++index)
         initial[index] = uint8_t(index % 251 + 1);
@@ -192,7 +192,7 @@ static void resumed_copy(const char *root) {
         actual.x[2] = test.length;
         actual.x[30] = 0x4000;
         reference = actual;
-        Interpreter accelerated, ordinary;
+        ExecutionEngine accelerated, ordinary;
         constexpr uint64_t budgets[] = {1, 7, 9, 10, 11, 31, 997, 4096};
         std::vector<uint8_t> actual_bytes(size), expected_bytes(size);
         bool complete = false;
@@ -248,8 +248,8 @@ static void resumed_copy_fault(const char *root) {
     CpuState actual = state, reference = state;
     require(!fixed.execute(actual, actual_memory, 10), "copy helper bypassed source protection");
     require_equal(actual, state);
-    Interpreter accelerated, ordinary;
-    auto fault = [](Interpreter &interpreter, CpuState &cpu, Memory &memory, FixedComponents *helpers) {
+    ExecutionEngine accelerated, ordinary;
+    auto fault = [](ExecutionEngine &interpreter, CpuState &cpu, Memory &memory, FixedComponents *helpers) {
         try {
             interpreter.run(cpu, memory, 10, helpers);
         } catch (const MemoryFault &error) {

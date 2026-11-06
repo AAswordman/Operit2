@@ -4,7 +4,7 @@
 #include "memory/address_space.h"
 
 namespace operit::arm64::fixed {
-class FixedExecution {
+class IntrinsicContext {
     const FixedManifest &image_;
     uint64_t base_, budget_, epoch_, block_completed_ = 0;
     uint64_t &completed_;
@@ -27,7 +27,7 @@ class FixedExecution {
     Memory &memory;
     bool complete = false;
 
-    FixedExecution(CpuState &state, Memory &address_space, const FixedManifest &image, uint64_t base,
+    IntrinsicContext(CpuState &state, Memory &address_space, const FixedManifest &image, uint64_t base,
                    uint64_t budget, uint64_t &completed)
         : image_(image), base_(base), budget_(budget), epoch_(address_space.code_epoch),
           completed_(completed), cpu(state), memory(address_space) {}

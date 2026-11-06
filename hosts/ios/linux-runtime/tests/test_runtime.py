@@ -142,7 +142,14 @@ class RuntimeTests(unittest.TestCase):
         result, stats = self.run_guest('loop', steps=50000)
         self.assertEqual(result.returncode, 124, result.stderr.decode())
         self.assertEqual(stats['instructions'], 50000)
-        self.assertGreater(stats['block_cache_hits'], 1000)
+        self.assertGreater(stats['block_cache_hits'], stats['decoded_blocks'])
+        # Regions can span many old basic blocks. Doubling executed work must
+        # reuse compiled code rather than require proportionally more images.
+        longer, long_stats = self.run_guest('loop', steps=100000)
+        self.assertEqual(longer.returncode, 124, longer.stderr.decode())
+        self.assertEqual(long_stats['instructions'], 100000)
+        self.assertGreater(long_stats['block_cache_hits'], stats['block_cache_hits'])
+        self.assertLessEqual(long_stats['decoded_blocks'], stats['decoded_blocks'] + 8)
 
     def test_vm_isolation_budget_resume_and_invalid_host_callback(self):
         result = subprocess.run([OPTIONS.api_tests, str(self.root)], capture_output=True, timeout=10)

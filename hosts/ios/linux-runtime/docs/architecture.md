@@ -11,8 +11,8 @@ Flutter / Rust / iOS native bridge 或 CLI
   → runtime/Machine（进程集合、共享调度与生命周期）
       ├─ process/image_loader → elf/loader、initial_stack → fs、Memory
       ├─ tasks/Scheduler → 每个 Task 的 CPU、TLS、等待、信号与计账
-      ├─ run_parallel → tasks/ParallelExecutor → Interpreter / Memory
-      ├─ cpu/Interpreter → decoder、execute、SIMD、exclusive
+      ├─ run_parallel → tasks/ParallelExecutor → ExecutionEngine / Memory
+      ├─ cpu/ExecutionEngine → 控制流图、静态汇编、语义函数、SIMD、exclusive
       ├─ linux/Syscalls → 文件 / 映射 / 进程 / 信号 / 定时器 / 网络 / 终端
       ├─ process/signals、timers、accounting、observability、wait
       └─ acceleration/FixedComponents → 固定清单、摘要、Memory
@@ -26,23 +26,21 @@ CPU 层不打开文件、不转换 Linux errno、不持有产品 session。SVC �
 
 `runtime/tasks/` 保存线程的寄存器、TLS、signal mask、clear_child_tid、robust-list、调度优先级、affinity 和等待状态。阻塞 syscall 让出执行，futex、poll、定时器与信号在调度边界恢复任务。PI 优先级传入 Scheduler 的有效优先级计算，robust owner-death 与退出有清理路径；未支持操作见功能矩阵。
 
-`execution_threads` 控制内部宿主执行线程数，0 自动选择最多四个。Machine 可调用 `run_parallel`，将可运行任务交给持久 ParallelExecutor；工作阶段执行 guest 指令，停止后由串行安全点处理 syscall、信号与生命周期。每个执行任务保留独立 Interpreter 状态与 CPU 计账。对同一 VM 的公开 C API 调用仍必须串行化。
+`execution_threads` 控制内部宿主执行线程数，0 自动选择最多四个。Machine 可调用 `run_parallel`，将可运行任务交给持久 ParallelExecutor；工作阶段执行 guest 指令，停止后由串行安全点处理 syscall、信号与生命周期。每个执行任务保留独立 ExecutionEngine 状态与 CPU 计账。对同一 VM 的公开 C API 调用仍必须串行化。
 
 多线程存在不等于获得加速。Memory 共享锁、块缓存重校验和调度成本需要同条件测量；Worker / 争用记录集中在交付状态。
 
 ## CPU、内存与代码失效
 
-Guest 使用 AArch64 寄存器和独立虚拟地址空间；初始栈按 ABI 对齐。Interpreter 将指令解码为块并缓存，按预算暂停 / 恢复；未知指令报告 opcode 与 PC。内部缓存规模与调度量是实现参数，不作为完整 ISA 能力的证明。
+Guest 使用 AArch64 寄存器和独立虚拟地址空间；初始栈按 ABI 对齐。`ExecutionEngine` 将唯一客体 PC 构成控制流图，完成纯整数常量传播和死值/标志处理，再按统一驻留 ABI 选择构建时生成的静态汇编执行单元。详见 [静态汇编执行器](static-execution.md)。
 
-ARM64 宿主的串行执行还可进入构建时编译的 [静态 gadget 解释器](static-gadgets.md)。
-支持的连续指令由独立汇编分派尾部连接；不支持的指令、跳转、内存检查失败与并行执行回到
-现有 C++ 路径。gadget 记录属于解码数据，不是运行时生成的可执行代码。
+所有图固定驻留 guest X0–X2、X19–X20、SP 和 V0–V7。跨图边在缓存代次、代码版本及观察作用域守卫后继续使用原有宿主寄存器，不再换位或保存/重载驻留值；其他寄存器直接使用架构 shadow。预算不足时执行原始指令短尾；系统调用、故障和外部返回恢复精确架构状态。已删除旧 region/kernel 的 C++ 函数指针 ABI、musttail 模板工厂、短预算缓存变体和两个入口值的桥接特例。
 
-Guest 采用 4 KiB 页、稀疏映射、访问权限、TLB、COW 与文件 / 共享映射。映射和驻留量分开计量，驻留限制不等于宿主进程全部内存。宿主不为 guest 指令生成可执行映射。
+Guest 采用 4 KiB 页、稀疏映射、访问权限、双路 TLB、COW 与文件/共享映射。原生访问只接受经过检查的 serial 私有翻译；COW、共享页、跨页、可执行页写入与并行访问继续走同步内存路径。映射和驻留量分开计量，驻留限制不等于宿主进程全部内存。
 
-可执行页写入、映射和权限变化需要使旧解码失效。`Interpreter::revalidate` 直接调用 `Memory::validate_code`，在页访问保护内比对已缓存的原始指令块；曾引入的 64 字节快照与 revision 层因维护开销较大已删除。读锁保存获取时的线程状态，解锁和页锁选择复用它，避免重复查询 TLS。映射、权限、文件大小和外部代码修改检查继续生效，构建 / 回归证据见交付状态。独占访问、原子操作与共享内存保护由 Memory 及 executor 协同，不能沿用旧“单线程因此无需并发一致性”的描述。seals / 共享写映射与代码缓存的一致性仍需对应生命周期测试。
+代码图共享不可变代码快照，覆盖的每个代码页都参与版本和字节校验。文件代码在新的观察作用域重新检查；缓存淘汰先使外来桥接失效再回收目标图。没有运行时机器码生成，也不依赖客体程序或语言版本白名单。独占访问、共享映射、seals、外部文件修改与截断继续服从 Memory 的语义。
 
-`cpu/aarch64/` 按职责拆分 decoder、execute、exclusive、floating_point、vector arithmetic / unary / widen / indexed / shift / narrow / memory / floating。`vector_lanes.h` 与 `vector_multiply.h` 统一部分 lane、饱和 / QC、doubling / polynomial 运算，`floating_point.h` 中的 `FloatingPointEnvironment` 管理宿主浮点环境。合法形式、尺寸 / lane 与保留编码须按族检查，不能靠解码后空操作代表支持。
+`cpu/aarch64/` 分为 decoder、block_graph、optimizer、register_allocator、static_lowering、static_executor、execution_engine、semantics 和各 ISA 语义模块。`semantics` 保留完整参考语义，用于复杂形式和短预算尾部；测试中的参考执行不经图编译器。宿主 FPCR/FPSR 在汇编执行边界与语义调用边界受到隔离。
 
 ## Linux ABI、文件系统与事件
 

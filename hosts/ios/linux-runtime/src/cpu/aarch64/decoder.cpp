@@ -78,44 +78,44 @@ bool bit_masks(Instruction &i, bool logical) {
     }
     return true;
 }
-void specialize(Instruction &i) {
+void normalize(Instruction &i) {
     const uint32_t r = i.raw;
     const bool wide = i.width == 64;
-    using D = Dispatch;
+    using D = Encoding;
     switch (i.op) {
     case Op::Hint: {
         const unsigned hint = (r >> 5) & 127;
         if (hint == 0 || hint == 1 || hint == 7 || hint == 25 || hint == 27 || hint == 29 || hint == 31 ||
             hint == 32 || hint == 34 || hint == 36 || hint == 38)
-            i.dispatch = D::Noop;
+            i.encoding = D::Noop;
         break;
     }
     case Op::Svc:
         if (!((r >> 5) & 0xffff))
-            i.dispatch = D::Syscall;
+            i.encoding = D::Syscall;
         break;
     case Op::Branch:
-        i.dispatch = r >> 31 ? D::BranchLink : D::Branch;
+        i.encoding = r >> 31 ? D::BranchLink : D::Branch;
         break;
     case Op::BranchRegister:
-        i.dispatch = (r & 0xfffffc1f) == 0xd63f0000 ? D::BranchLinkRegister : D::BranchRegister;
+        i.encoding = (r & 0xfffffc1f) == 0xd63f0000 ? D::BranchLinkRegister : D::BranchRegister;
         break;
     case Op::ConditionalBranch:
         i.flags = r & 15;
-        i.dispatch = D::ConditionalBranch;
+        i.encoding = D::ConditionalBranch;
         break;
     case Op::CompareBranch:
         i.flags = (r >> 24) & 1;
-        i.dispatch = wide ? D::CompareBranch64 : D::CompareBranch32;
+        i.encoding = wide ? D::CompareBranch64 : D::CompareBranch32;
         break;
     case Op::TestBranch:
         i.shift = ((r >> 19) & 31) | ((r >> 26) & 32);
         i.flags = (r >> 24) & 1;
-        i.dispatch = D::TestBranch;
+        i.encoding = D::TestBranch;
         break;
     case Op::Address:
         i.flags = r >> 31;
-        i.dispatch = D::Address;
+        i.encoding = D::Address;
         break;
     case Op::MoveWide: {
         const unsigned shift = ((r >> 21) & 3) * 16, op = (r >> 29) & 3;
@@ -125,12 +125,12 @@ void specialize(Instruction &i) {
         i.auxiliary = ~(uint64_t{0xffff} << shift);
         if (op == 0)
             i.immediate = ~i.immediate;
-        i.dispatch = op == 3 ? (wide ? D::Keep64 : D::Keep32) : (wide ? D::Move64 : D::Move32);
+        i.encoding = op == 3 ? (wide ? D::Keep64 : D::Keep32) : (wide ? D::Move64 : D::Move32);
         break;
     }
     case Op::AddImmediate:
         i.flags = (r >> 29) & 3;
-        i.dispatch = wide ? D::AddImmediate64 : D::AddImmediate32;
+        i.encoding = wide ? D::AddImmediate64 : D::AddImmediate32;
         break;
     case Op::AddRegister: {
         i.flags = (r >> 29) & 3;
@@ -152,19 +152,19 @@ void specialize(Instruction &i) {
             i.flags |= type << decoded::shift_type;
         }
         if ((r & 0xffe0fc1f) == 0xeb00001f)
-            i.dispatch = D::CompareRegister64;
+            i.encoding = D::CompareRegister64;
         else
-            i.dispatch = wide ? D::AddRegister64 : D::AddRegister32;
+            i.encoding = wide ? D::AddRegister64 : D::AddRegister32;
         break;
     }
     case Op::AddCarry:
         i.flags = (r >> 29) & 3;
-        i.dispatch = wide ? D::AddCarry64 : D::AddCarry32;
+        i.encoding = wide ? D::AddCarry64 : D::AddCarry32;
         break;
     case Op::LogicalImmediate:
         if (bit_masks(i, true)) {
             i.flags = (r >> 29) & 3;
-            i.dispatch = wide ? D::LogicalImmediate64 : D::LogicalImmediate32;
+            i.encoding = wide ? D::LogicalImmediate64 : D::LogicalImmediate32;
         }
         break;
     case Op::LogicalRegister:
@@ -172,7 +172,7 @@ void specialize(Instruction &i) {
         if (i.shift >= i.width)
             break;
         i.flags = ((r >> 29) & 3) | (((r >> 21) & 1) << 4) | (((r >> 22) & 3) << 2);
-        i.dispatch = wide ? D::LogicalRegister64 : D::LogicalRegister32;
+        i.encoding = wide ? D::LogicalRegister64 : D::LogicalRegister32;
         break;
     case Op::Bitfield:
         if (((r >> 29) & 3) == 3 || ((r >> 22) & 1) != wide || ((r >> 10) & 63) >= i.width ||
@@ -180,44 +180,44 @@ void specialize(Instruction &i) {
             break;
         i.shift = (r >> 16) & 63;
         i.flags = (r >> 29) & 3;
-        i.dispatch = wide ? D::Bitfield64 : D::Bitfield32;
+        i.encoding = wide ? D::Bitfield64 : D::Bitfield32;
         break;
     case Op::Extract:
         i.shift = (r >> 10) & 63;
         if (i.shift < i.width && ((r >> 22) & 1) == wide)
-            i.dispatch = wide ? D::Extract64 : D::Extract32;
+            i.encoding = wide ? D::Extract64 : D::Extract32;
         break;
     case Op::ConditionalSelect:
         i.flags = ((r >> 30) & 1) | (((r >> 10) & 1) << 1);
         i.shift = (r >> 12) & 15;
-        i.dispatch = wide ? D::Select64 : D::Select32;
+        i.encoding = wide ? D::Select64 : D::Select32;
         break;
     case Op::ConditionalCompare:
         if (!(r & (1u << 29)))
             break;
         i.flags = ((r >> 30) & 1) | (((r >> 11) & 1) << 1);
         i.shift = (r >> 12) & 15;
-        i.dispatch = wide ? D::Compare64 : D::Compare32;
+        i.encoding = wide ? D::Compare64 : D::Compare32;
         break;
     case Op::TwoSource:
         i.flags = (r >> 10) & 63;
         if (i.flags == 2 || i.flags == 3 || (i.flags >= 8 && i.flags <= 11))
-            i.dispatch = wide ? D::TwoSource64 : D::TwoSource32;
+            i.encoding = wide ? D::TwoSource64 : D::TwoSource32;
         break;
     case Op::OneSource:
         i.flags = (r >> 10) & 63;
         if (!i.rm && (i.flags <= 5) && (i.flags != 3 || wide))
-            i.dispatch = wide ? D::OneSource64 : D::OneSource32;
+            i.encoding = wide ? D::OneSource64 : D::OneSource32;
         break;
     case Op::Multiply:
         i.flags = ((r >> 21) & 7) | (((r >> 15) & 1) << 3);
         if (!(i.flags & 7) || (wide && ((i.flags & 7) == 1 || (i.flags & 7) == 5)))
-            i.dispatch = wide ? D::Multiply64 : D::Multiply32;
+            i.encoding = wide ? D::Multiply64 : D::Multiply32;
         break;
     case Op::MultiplyHigh:
         if (wide && i.ra == 31) {
             i.flags = (r >> 23) & 1;
-            i.dispatch = D::MultiplyHigh;
+            i.encoding = D::MultiplyHigh;
         }
         break;
     case Op::LoadStore: {
@@ -237,7 +237,7 @@ void specialize(Instruction &i) {
             op &= 1;
         }
         if (!vector && size == 3 && op == 2) {
-            i.dispatch = D::Noop;
+            i.encoding = D::Noop;
             break;
         }
         if (!vector && ((size == 3 && op > 1) || (size == 2 && op == 3)))
@@ -269,9 +269,9 @@ void specialize(Instruction &i) {
                                           D::VectorLoad128};
             constexpr D vector_stores[] = {D::General, D::General, D::VectorStore32, D::VectorStore64,
                                            D::VectorStore128};
-            i.dispatch = op ? vector_loads[size] : vector_stores[size];
+            i.encoding = op ? vector_loads[size] : vector_stores[size];
         } else
-            i.dispatch = op ? loads[size] : stores[size];
+            i.encoding = op ? loads[size] : stores[size];
         break;
     }
     case Op::LoadPair: {
@@ -286,13 +286,13 @@ void specialize(Instruction &i) {
         if (vector) {
             constexpr D loads[] = {D::VectorLoadPair32, D::VectorLoadPair64, D::VectorLoadPair128};
             constexpr D stores[] = {D::VectorStorePair32, D::VectorStorePair64, D::VectorStorePair128};
-            i.dispatch = load ? loads[op] : stores[op];
+            i.encoding = load ? loads[op] : stores[op];
         } else {
             if (op == 1)
                 i.flags |= decoded::signed_load;
             if (op == 0)
                 i.flags |= decoded::word_result;
-            i.dispatch = load ? (size == 8 ? D::LoadPair64 : D::LoadPair32)
+            i.encoding = load ? (size == 8 ? D::LoadPair64 : D::LoadPair32)
                               : (size == 8 ? D::StorePair64 : D::StorePair32);
         }
         break;
@@ -302,42 +302,53 @@ void specialize(Instruction &i) {
             break;
         const unsigned op = r >> 30;
         if (op == 3) {
-            i.dispatch = D::Noop;
+            i.encoding = D::Noop;
             break;
         }
         i.immediate = sign_extend((r >> 5) & 0x7ffff, 19) * 4;
         i.flags = op == 2 ? decoded::signed_load : 0;
-        i.dispatch = op == 1 ? D::LoadLiteral64 : D::LoadLiteral32;
+        i.encoding = op == 1 ? D::LoadLiteral64 : D::LoadLiteral32;
         break;
     }
     case Op::Simd: {
         const uint32_t move = r & 0xfffffc00;
 #if defined(__aarch64__)
-        if ((r & 0xffe08000) == 0x1f400000)
-            i.dispatch = D::ScalarFma64;
+        const auto unary=r&0xffbffc00;
+        if(unary==0x1e204000 || unary==0x1e20c000 || unary==0x1e214000) {
+            i.width=(r&(1u<<22)) ? 64:32;
+            i.flags=unary==0x1e204000 ? 0:unary==0x1e20c000 ? 1:2;
+            i.encoding=i.width==64 ? D::ScalarUnary64:D::ScalarUnary32;
+        } else if ((r & 0xffe08000) == 0x1f400000)
+            i.encoding = D::ScalarFma64;
         else if (move == 0x1e61c000)
-            i.dispatch = D::ScalarSqrt64;
+            i.encoding = D::ScalarSqrt64;
         else if (move == 0x9e630000)
-            i.dispatch = D::ScalarUnsignedToDouble64;
-        else if ((r & 0xffe0fc00) == 0x1e602800)
-            i.dispatch = D::ScalarAdd64;
-        else if ((r & 0xffe0fc1f) == 0x1e602000)
-            i.dispatch = D::ScalarCompare64;
+            i.encoding = D::ScalarUnsignedToDouble64;
+        else if ((r & 0xffe00c00) == 0x1e600800) {
+            switch ((r >> 12) & 15) {
+            case 0: i.encoding = D::ScalarMultiply64; break;
+            case 1: i.encoding = D::ScalarDivide64; break;
+            case 2: i.encoding = D::ScalarAdd64; break;
+            case 3: i.encoding = D::ScalarSubtract64; break;
+            default: break;
+            }
+        } else if ((r & 0xffe0fc1f) == 0x1e602000)
+            i.encoding = D::ScalarCompare64;
         else if ((r & 0xffe00c00) == 0x1e600c00) {
             i.flags = (r >> 12) & 15;
-            i.dispatch = D::ScalarSelect64;
+            i.encoding = D::ScalarSelect64;
         } else if ((r & 0xffe0fc00) == 0x4e60cc00)
-            i.dispatch = D::VectorFma2D;
+            i.encoding = D::VectorFma2D;
         else
 #endif
         if (move == 0x9e660000 || move == 0x1e260000)
-            i.dispatch = move == 0x9e660000 ? D::VectorToRegister64 : D::VectorToRegister32;
+            i.encoding = move == 0x9e660000 ? D::VectorToRegister64 : D::VectorToRegister32;
         else if (move == 0x9e670000 || move == 0x1e270000)
-            i.dispatch = move == 0x9e670000 ? D::RegisterToVector64 : D::RegisterToVector32;
+            i.encoding = move == 0x9e670000 ? D::RegisterToVector64 : D::RegisterToVector32;
         else if (move == 0x9eae0000)
-            i.dispatch = D::VectorHighToRegister;
+            i.encoding = D::VectorHighToRegister;
         else if (move == 0x9eaf0000)
-            i.dispatch = D::RegisterToVectorHigh;
+            i.encoding = D::RegisterToVectorHigh;
         else if ((r & 0xff201fe0) == 0x1e201000) {
             const unsigned type = (r >> 22) & 3;
             if (type > 1)
@@ -350,11 +361,11 @@ void specialize(Instruction &i) {
                                       ((immediate >> 4) & 3);
             i.immediate = ((immediate >> 7) << (width - 1)) | (exponent << fraction_bits) |
                           ((immediate & 15) << (fraction_bits - 4));
-            i.dispatch = D::VectorImmediate;
+            i.encoding = D::VectorImmediate;
         } else if ((r & 0x9f20fc00) == 0x0e201c00) {
             i.flags = ((r >> 22) & 3) | (((r >> 29) & 1) << 2);
             i.shift = r & (1u << 30) ? 16 : 8;
-            i.dispatch = D::VectorLogical;
+            i.encoding = D::VectorLogical;
         }
         break;
     }
@@ -362,9 +373,9 @@ void specialize(Instruction &i) {
         const unsigned code = (r >> 5) & 0xffff;
         const bool reading = (r >> 21) & 1;
         if (code == 0xde82)
-            i.dispatch = reading ? D::ReadTls : D::WriteTls;
+            i.encoding = reading ? D::ReadTls : D::WriteTls;
         else if (code == 0xda10)
-            i.dispatch = reading ? D::ReadFlags : D::WriteFlags;
+            i.encoding = reading ? D::ReadFlags : D::WriteFlags;
         break;
     }
     default:
@@ -462,7 +473,7 @@ Instruction decode(uint32_t raw) {
         i.op = Op::Barrier;
     if (i.op == Op::Unknown)
         i.terminal = true;
-    specialize(i);
+    normalize(i);
     return i;
 }
 

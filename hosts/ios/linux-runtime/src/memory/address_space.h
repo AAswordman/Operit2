@@ -2,7 +2,6 @@
 #include "base/support.h"
 #include "memory/access_sync.h"
 #include "memory/backing_store.h"
-#include "memory/translation_layout.h"
 #include <cstddef>
 #include <algorithm>
 #include <array>
@@ -18,6 +17,81 @@
 namespace operit::arm64 {
 class Memory {
   public:
+    struct alignas(64) ExecutionTranslation {
+        uint64_t tag = UINT64_MAX;
+        uint64_t epoch = 0;
+        uint8_t *data = nullptr;
+        memory_detail::ReservationState *reservation = nullptr;
+        memory_detail::FileBacking *file = nullptr;
+        uint64_t file_offset = 0, file_generation = 0;
+        unsigned permissions = 0;
+        bool shared = false, file_storage = false;
+        uint8_t serial_permissions = 0;
+    };
+    // Serial capabilities carry full page tags and a host-address bias. They
+    // expire on scope entry or mapping changes; physical file pages stay locked.
+    struct ExecutionPage {
+        uint64_t read_tag=UINT64_MAX;
+        uintptr_t bias=0;
+        uint64_t write_tag=UINT64_MAX;
+        memory_detail::ReservationState *reservation=nullptr;
+    };
+    static_assert(sizeof(ExecutionPage)==32 && offsetof(ExecutionPage,bias)==8 &&
+                  offsetof(ExecutionPage,write_tag)==16 && offsetof(ExecutionPage,reservation)==24);
+    using CodeWords = std::vector<uint32_t>;
+    // Owned by one address-space snapshot cache and its vCPU regions. Serial
+    // execution alone publishes these proofs; parallel execution uses the
+    // synchronized span-validation path. UINT64_MAX denotes private storage.
+    struct CodeProof {
+        const uint64_t identity;
+        uint64_t epoch = 0, generation = 0, verified = 0;
+        // Borrowed page pointers may be used only by serial native execution
+        // holding the mapping reader, at these exact code/mapping epochs.
+        uint64_t native_epoch=0,native_mapping_epoch=0;
+        const uint8_t *native_data=nullptr;
+        const uint32_t *native_words=nullptr;
+        const memory_detail::FileBacking *native_file=nullptr;
+        uint64_t native_file_offset=0;
+        memory_detail::PageMutex *native_mutex=nullptr;
+        void bind_native(const ExecutionTranslation &page,const CodeWords &words,
+                         uint64_t code,uint64_t mapping) noexcept {
+            native_epoch=page.file ? code:0;
+            native_mapping_epoch=mapping;
+            native_data=page.data;native_words=words.data();native_file=page.file;
+            native_file_offset=page.file_offset;
+            native_mutex=page.file_storage ? &page.reservation->mutex:nullptr;
+        }
+#if defined(OPERIT_EXECUTION_DIAGNOSTICS) && OPERIT_EXECUTION_DIAGNOSTICS
+        uint64_t diagnostic_epoch = 0, diagnostic_scope = 0;
+        uint64_t diagnostic_compared = 0, diagnostic_mismatched = 0;
+        void diagnose_comparison(uint64_t at_epoch,uint64_t scope,uint64_t lines) noexcept {
+            if (diagnostic_epoch != at_epoch || diagnostic_scope != scope) {
+                diagnostic_epoch = at_epoch; diagnostic_scope = scope;
+                diagnostic_compared = diagnostic_mismatched = 0;
+            }
+            OPERIT_MEMORY_DIAGNOSTIC(code_lines_recompared, __builtin_popcountll(lines & diagnostic_compared));
+            OPERIT_MEMORY_DIAGNOSTIC(code_lines_recompared_after_mismatch,
+                                     __builtin_popcountll(lines & diagnostic_mismatched));
+            diagnostic_compared |= lines;
+        }
+        void diagnose_mismatch(uint64_t lines) noexcept { diagnostic_mismatched |= lines; }
+#else
+        void diagnose_comparison(uint64_t,uint64_t,uint64_t) noexcept {}
+        void diagnose_mismatch(uint64_t) noexcept {}
+#endif
+        static uint64_t mask(size_t offset,size_t count) noexcept {
+            const auto first=offset*4/64,last=(offset+count-1)*4/64;
+            return (UINT64_MAX<<first)&(UINT64_MAX>>(63-last));
+        }
+        explicit CodeProof(uint64_t identity) : identity(identity) {}
+        bool current(uint64_t scope,uint64_t mask=UINT64_MAX) const noexcept {
+            return (generation == UINT64_MAX || generation == scope) && (verified&mask)==mask;
+        }
+    };
+    static_assert(offsetof(CodeProof,native_epoch)==32 && offsetof(CodeProof,native_mapping_epoch)==40);
+    static_assert(offsetof(CodeProof,native_data)==48 && offsetof(CodeProof,native_words)==56);
+    static_assert(offsetof(CodeProof,native_file)==64 && offsetof(CodeProof,native_file_offset)==72);
+    static_assert(offsetof(CodeProof,native_mutex)==80);
     struct Backing {
         std::string path;
         uint64_t offset = 0, device = 0, inode = 0;
@@ -54,24 +128,24 @@ class Memory {
         int advice = MADV_NORMAL;
         bool dont_fork = false, wipe_on_fork = false;
     };
-    struct Translation {
-        uint64_t tag = UINT64_MAX;
-        uint64_t epoch = 0;
-        uint8_t *data = nullptr;
-        memory_detail::ReservationState *reservation = nullptr;
-        memory_detail::FileBacking *file = nullptr;
-        uint64_t file_offset = 0, file_generation = 0;
-        unsigned permissions = 0;
-        bool shared = false, file_storage = false;
-    };
+    using Translation = ExecutionTranslation;
+    // Keep the hot translation in one aligned 64-byte entry. A word-sized
+    // serial_permissions field enlarges entries to 72 bytes: indexing needs a
+    // multiply, and hot fields can cross cache-line boundaries.
+    static_assert(sizeof(Translation)==64 && alignof(Translation)==64);
     // Different address spaces can alias the same shared anonymous pages or files.
     inline static std::atomic<uint64_t> next_identity_{1};
     const uint64_t identity_ = next_identity_.fetch_add(1, std::memory_order_relaxed);
     inline static std::atomic<uint64_t> exclusive_revision_{1};
     std::atomic<bool> parallel_access_{true};
+    uint64_t epoch_ = 1;
     std::map<uint64_t, Region> regions_;
     std::unordered_map<uint64_t, std::shared_ptr<Page>> pages_;
     std::array<Translation, 1024> tlb_{};
+    std::array<Translation, 1024> tlb_second_{};
+    std::array<uint8_t,1024> tlb_replace_{};
+    using ExecutionPages=std::array<ExecutionPage,8192>;
+    std::unique_ptr<ExecutionPages> execution_pages_;
     struct ThreadTranslations {
         uint64_t identity = 0;
         std::array<Translation, 1024> entries{};
@@ -81,8 +155,25 @@ class Memory {
         return translations;
     }
     Translation &translation(uint64_t address, bool parallel) {
-        if (!parallel)
-            return tlb_[translation_index(address)];
+        OPERIT_MEMORY_DIAGNOSTIC(tlb_lookups, 1);
+        if (!parallel) {
+            const auto index=translation_index(address);
+            auto &first=tlb_[index];auto &second=tlb_second_[index];
+            const auto tag=align_down(address);
+            if(first.tag==tag && first.epoch==epoch_) {
+                OPERIT_MEMORY_DIAGNOSTIC(tlb_first_hits, 1); return first;
+            }
+            if(second.tag==tag && second.epoch==epoch_) {
+                OPERIT_MEMORY_DIAGNOSTIC(tlb_second_hits, 1); return second;
+            }
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_misses, 1);
+            if(first.epoch!=epoch_) return first;
+            if(second.epoch!=epoch_) return second;
+            // Select a victim only on a double miss. Hits retain their page
+            // heads; no Translation or page contents are copied on promotion.
+            return (tlb_replace_[index]^=1) ? first : second;
+        }
+        OPERIT_MEMORY_DIAGNOSTIC(tlb_parallel_lookups, 1);
         auto &cache = thread_translations();
         if (cache.identity != identity_) {
             cache.entries.fill({});
@@ -98,7 +189,46 @@ class Memory {
         const uint64_t page = address / page_size;
         return (page ^ (page >> 10)) & 1023;
     }
-    uint64_t epoch_ = 1;
+    struct alignas(64) CodeValidation {
+        uint64_t address = UINT64_MAX, epoch = 0, generation = 0;
+        std::shared_ptr<const CodeWords> words;
+        uint64_t verified = 0;
+    };
+    static_assert(sizeof(CodeValidation)==64 && page_size==4096);
+    struct CodeValidations {
+        uint64_t identity = 0;
+        std::array<CodeValidation,256> entries{};
+    };
+    std::unique_ptr<CodeValidations> serial_code_validations_;
+    uint64_t serial_execution_generation_ = 0;
+    static CodeValidations &thread_code_validations() {
+        static thread_local CodeValidations cache;
+        return cache;
+    }
+    [[gnu::noinline]] bool validate_snapshot_slow(uint64_t address,CodeValidation &entry,
+        size_t offset,size_t count,uint64_t mask,uint64_t &epoch) {
+        OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_slow, 1);
+        const auto before=entry.epoch;
+        PageAccess access(*this,address,exec_perm);
+        const auto *data=access.data()-address%page_size;
+        const auto *expected=reinterpret_cast<const uint8_t *>(entry.words->data());
+        const size_t first=offset*4/64,last=(offset+count-1)*4/64;
+        // A 64-byte proof amortizes file/page guards across nearby regions.
+        // If only an uncovered byte differs, compare the exact dependency and
+        // leave this line unproved rather than invalidating unrelated code.
+        const bool lines_match=memory_detail::code_bytes_equal(data+first*64,expected+first*64,
+            (last-first+1)*64,memory_detail::CodeComparison::Line);
+        if(!lines_match && !memory_detail::code_bytes_equal(data+offset*4,expected+offset*4,
+            count*4,memory_detail::CodeComparison::Exact)) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_failures, 1); return false;
+        }
+        epoch=code_epoch.load(std::memory_order_relaxed);
+        if(epoch!=before) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_epoch_failures, 1); return false;
+        }
+        if(lines_match) entry.verified|=mask;
+        return true;
+    }
     uint64_t limit_;
     std::shared_ptr<std::atomic<uint64_t>> shared_revision_ = std::make_shared<std::atomic<uint64_t>>(1);
     std::atomic<uint64_t> observed_shared_revision_{1};
@@ -138,6 +268,7 @@ class Memory {
         }
     }
     void invalidate(bool executable = true) {
+        if(execution_pages_)execution_pages_->fill({});
         ++epoch_;
         refresh_mapping_summary();
         exclusive_revision_.fetch_add(1, std::memory_order_relaxed);
@@ -169,42 +300,62 @@ class Memory {
     };
     class ExecutionScope {
         memory_detail::FileMetadataCache &metadata_;
+        Memory &memory_;
         uint64_t previous_;
+        bool serial_;
+        uint64_t previous_serial_;
 
       public:
         explicit ExecutionScope(Memory &memory)
-            : metadata_(memory.file_metadata_), previous_(metadata_.enter()) {}
+            : metadata_(memory.file_metadata_), memory_(memory), previous_(metadata_.enter()),
+              serial_(!memory.parallel_access_.load(std::memory_order_relaxed)),
+              previous_serial_(serial_ ? memory.serial_execution_generation_ : 0) {
+            if(serial_) {
+                OPERIT_MEMORY_DIAGNOSTIC(serial_execution_scopes, 1);
+                memory_.serial_execution_generation_=metadata_.generation();
+            }
+        }
         ~ExecutionScope() {
+            if(serial_) memory_.serial_execution_generation_=previous_serial_;
             metadata_.leave(previous_);
         }
         ExecutionScope(const ExecutionScope &) = delete;
         ExecutionScope &operator=(const ExecutionScope &) = delete;
     };
     std::atomic<uint64_t> code_epoch{1};
-    explicit Memory(uint64_t limit) : limit_(limit) {}
+    explicit Memory(uint64_t limit) : limit_(limit) { memory_detail::MemoryDiagnostics::arm(); }
     // Change only at a CPU barrier. Serial CPUs still synchronize actual file
     // pages and raw spans; anonymous and privately copied pages bypass locks.
     void set_parallel_access(bool enabled) noexcept {
+        if(enabled && !parallel_access_.load(std::memory_order_relaxed)) {
+            if(execution_pages_)execution_pages_->fill({});
+            ++epoch_; // No serial capability survives a parallel mutation/COW.
+        }
         parallel_access_.store(enabled, std::memory_order_relaxed);
     }
-    // Valid only until control returns to a mapping-changing or parallel path.
-    // Static handlers decline shared/file storage, misses and executable stores.
-    // Owned private file pages also need a current execution-scope size check.
-    bool gadget_memory(GadgetMemory &view) const noexcept {
-        static_assert(sizeof(Translation) == G_TLB_SIZE);
-        static_assert(offsetof(Translation, tag) == G_TLB_TAG);
-        static_assert(offsetof(Translation, epoch) == G_TLB_EPOCH);
-        static_assert(offsetof(Translation, data) == G_TLB_DATA);
-        static_assert(offsetof(Translation, reservation) == G_TLB_RESERVATION);
-        static_assert(offsetof(Translation, file) == G_TLB_FILE);
-        static_assert(offsetof(Translation, file_generation) == G_TLB_FILE_GENERATION);
-        static_assert(offsetof(Translation, permissions) == G_TLB_PERMISSIONS);
-        static_assert(offsetof(Translation, shared) == G_TLB_SHARED);
-        static_assert(offsetof(Translation, file_storage) == G_TLB_FILE_STORAGE);
-        static_assert(offsetof(memory_detail::ReservationState, token) == G_RESERVATION_TOKEN);
-        if (parallel_access_.load(std::memory_order_relaxed)) return false;
-        view = {tlb_.data(), epoch_, file_mapping_ ? file_metadata_.generation() : 0};
-        return true;
+    struct ExecutionView {
+        const ExecutionTranslation *first, *second;
+        const uint64_t *mapping_epoch;
+        const void *pages;
+    };
+    ExecutionView execution_view() {
+        const bool parallel=parallel_access_.load(std::memory_order_relaxed);
+        if(!parallel) {
+            if(!execution_pages_)execution_pages_=std::make_unique<ExecutionPages>();
+            else execution_pages_->fill({});
+        }
+        return {parallel ? nullptr:tlb_.data(),tlb_second_.data(),&epoch_,
+                parallel ? nullptr:execution_pages_->data()};
+    }
+    uint64_t identity() const noexcept { return identity_; }
+    static_assert(offsetof(ExecutionTranslation,data)==16 && offsetof(ExecutionTranslation,reservation)==24);
+    static_assert(offsetof(ExecutionTranslation,file)==32 && offsetof(ExecutionTranslation,file_generation)==48);
+    static_assert(offsetof(ExecutionTranslation,serial_permissions)==62);
+    const auto *file_observations() const noexcept { return file_metadata_.observations(); }
+    uint64_t execution_generation() const { return file_metadata_.generation(); }
+    bool owns_code_proof(const CodeProof &proof) const noexcept { return proof.identity == identity_; }
+    uint64_t code_proof_generation() const noexcept {
+        return parallel_access_.load(std::memory_order_relaxed) ? 0 : serial_execution_generation_;
     }
     uint64_t exclusive_epoch(uint64_t address) {
         PageAccess access(*this, address, read_perm, true);
@@ -213,7 +364,7 @@ class Memory {
     Memory(const Memory &) = delete;
     Memory &operator=(const Memory &) = delete;
     std::unique_ptr<Memory> fork_clone();
-    void synchronize_shared();
+    void synchronize_shared(bool code_proofs=false);
     std::optional<SharedIdentity> shared_identity(uint64_t address) const;
     uint64_t limit() const {
         return limit_;
@@ -349,6 +500,7 @@ class Memory {
 
     [[gnu::noinline]] void refill(Translation &cached, uint64_t address, unsigned permissions,
                                  bool force = false) {
+        OPERIT_MEMORY_DIAGNOSTIC(tlb_refills, 1);
         const uint64_t page = align_down(address);
         auto region = regions_.upper_bound(address);
         if (region == regions_.begin())
@@ -385,6 +537,7 @@ class Memory {
         if (!mapping.backing.shared && permissions & write_perm && (storage.use_count() > 1 || storage->file)) {
             storage = storage->private_copy();
             // Other workers may have cached the previous physical page.
+            if(execution_pages_)execution_pages_->fill({});
             ++epoch_;
         }
         cache_translation(cached, page, region->first, mapping, storage);
@@ -403,34 +556,43 @@ class Memory {
                              file_metadata_.generation(),
                              available,
                              mapping.backing.shared,
-                             bool(storage->file)};
+                             bool(storage->file),
+                             uint8_t(mapping.backing.shared ? 0u :
+                                 available & (read_perm | ((storage->file || (available & exec_perm)) ? 0u : write_perm)))};
     }
     // A software TLB collision is not a mapping change. With the reader gate
     // held, an existing resident page can be cached without stopping all CPUs.
     // Allocation and private-file/fork COW still require the writer path.
     bool refill_resident(Translation &cached, uint64_t address, unsigned permissions) {
+        OPERIT_MEMORY_DIAGNOSTIC(tlb_resident_attempts, 1);
         auto region = regions_.upper_bound(address);
-        if (region == regions_.begin())
-            return false;
+        if (region == regions_.begin()) {
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_resident_declines, 1); return false;
+        }
         --region;
         const auto &mapping = region->second;
-        if (address >= mapping.end || (mapping.permissions & permissions) != permissions)
-            return false;
+        if (address >= mapping.end || (mapping.permissions & permissions) != permissions) {
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_resident_declines, 1); return false;
+        }
         const uint64_t page = align_down(address);
         const auto found = pages_.find(page);
-        if (found == pages_.end())
-            return false;
+        if (found == pages_.end()) {
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_resident_declines, 1); return false;
+        }
         const auto &storage = found->second;
         if (!mapping.backing.shared && (permissions & write_perm) &&
-            (storage.use_count() > 1 || storage->file))
-            return false;
+            (storage.use_count() > 1 || storage->file)) {
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_resident_declines, 1); return false;
+        }
         if (mapping.object && mapping.object->file)
             mapping.object->file->check_page(mapping.object_offset + page - region->first,
                                              address, permissions, &file_metadata_);
         cache_translation(cached, page, region->first, mapping, storage);
+        OPERIT_MEMORY_DIAGNOSTIC(tlb_resident_hits, 1);
         return true;
     }
     [[gnu::noinline]] void validate_file(Translation &cached, uint64_t address, unsigned permissions) {
+        OPERIT_MEMORY_DIAGNOSTIC(validate_file_calls, 1);
         cached.file->check_page(cached.file_offset, address, permissions, &file_metadata_);
         cached.file_generation = file_metadata_.generation();
     }
@@ -438,12 +600,14 @@ class Memory {
     [[gnu::always_inline]] uint8_t *translate_locked(uint64_t address, unsigned permissions) {
         auto &cached = translation(address);
         if (cached.tag != align_down(address) || cached.epoch != epoch_ ||
-            (cached.permissions & permissions) != permissions)
-            refill(cached, address, permissions);
+            (cached.permissions & permissions) != permissions) {
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_fallbacks, 1); refill(cached, address, permissions);
+        }
         else if (cached.file) {
             const auto generation = file_metadata_.generation();
             if (!generation || cached.file_generation != generation)
                 validate_file(cached, address, permissions);
+            else OPERIT_MEMORY_DIAGNOSTIC(validate_file_hits, 1);
         }
         return cached.data + address % page_size;
     }
@@ -455,6 +619,7 @@ class Memory {
 
         [[gnu::noinline]] void prepare(Memory &memory, Translation &entry, uint64_t address,
                                        unsigned permissions, bool parallel) {
+            OPERIT_MEMORY_DIAGNOSTIC(tlb_fallbacks, 1);
             while (entry.tag != align_down(address) || entry.epoch != memory.epoch_ ||
                    (entry.permissions & permissions) != permissions) {
                 // Prepared helpers may retain a reader even in serial execution.
@@ -465,7 +630,7 @@ class Memory {
                 assert(!memory_detail::AccessSynchronization::read_depth());
                 {
                     const AccessGuard update(memory);
-                    memory.translate_locked(address, permissions);
+                    memory.refill(entry, address, permissions);
                 }
                 read_.lock(parallel);
             }
@@ -475,6 +640,7 @@ class Memory {
         [[gnu::always_inline]] PageAccess(Memory &memory, uint64_t address, unsigned permissions,
                                         bool exclusive = false)
             : address_(address) {
+            OPERIT_MEMORY_DIAGNOSTIC(page_access_calls, 1);
             const bool parallel = memory.parallel_access_.load(std::memory_order_relaxed);
             read_.lock(parallel);
             auto &entry = memory.translation(address, parallel);
@@ -487,6 +653,7 @@ class Memory {
                 const auto generation = file_metadata_.generation();
                 if (!generation || entry.file_generation != generation)
                     memory.validate_file(entry, address, permissions);
+                else OPERIT_MEMORY_DIAGNOSTIC(validate_file_hits, 1);
             }
             entry_ = &entry;
             // Immutable private pages need only the mapping reader gate.
@@ -494,8 +661,10 @@ class Memory {
                                    !entry.file_storage && !exclusive;
             // A required reader is inactive only when this thread already owns
             // the writer gate. Its state records the result of the earlier TLS check.
-            if ((parallel || entry.file_storage) && !immutable && read_.active())
+            if ((parallel || entry.file_storage) && !immutable && read_.active()) {
+                OPERIT_MEMORY_DIAGNOSTIC(page_access_locks, 1);
                 lock_.lock(entry.reservation->mutex, exclusive || (permissions & write_perm));
+            }
         }
         uint8_t *data() const {
             return entry_->data + address_ % page_size;
@@ -661,6 +830,194 @@ class Memory {
         std::atomic_thread_fence(std::memory_order_seq_cst);
         code_epoch.fetch_add(1, std::memory_order_seq_cst);
     }
+    struct CodeSnapshot {
+        std::shared_ptr<const CodeWords> words;
+        uint64_t epoch = 0;
+        std::shared_ptr<CodeProof> proof;
+    };
+    // A thread owns its cache, while regions retain immutable shared snapshots.
+    // Refresh once per code epoch and execution scope; never retain a raw guest
+    // pointer, or cache an access fault. PageAccess still checks file bounds,
+    // execute permission, mappings, and synchronization before refreshing.
+    CodeSnapshot code_snapshot(uint64_t address) {
+        OPERIT_MEMORY_DIAGNOSTIC(snapshot_calls, 1);
+        struct Entry {
+            uint64_t epoch = 0, generation = 0;
+            std::shared_ptr<const CodeWords> words;
+            std::shared_ptr<CodeProof> proof;
+        };
+        struct Cache {
+            uint64_t identity = 0;
+            std::unordered_map<uint64_t,Entry> entries;
+        };
+        static thread_local Cache cache;
+        if (cache.identity != identity_) {
+            cache.entries.clear();
+            cache.identity = identity_;
+        }
+        const auto base = align_down(address);
+        auto found=cache.entries.find(base);
+        if(found==cache.entries.end()) {
+            // Bound retained snapshots even for guests cycling through new VAs.
+            // Regions keep their own immutable owner across this cold reset.
+            if(cache.entries.size()==4096) cache.entries.clear();
+            found=cache.entries.try_emplace(base).first;
+        }
+        auto &entry=found->second;
+        const auto before = code_epoch.load(std::memory_order_relaxed);
+        const auto generation = execution_generation();
+        if (generation && entry.words && entry.epoch == before && entry.generation == generation) {
+            OPERIT_MEMORY_DIAGNOSTIC(snapshot_hits, 1);
+            return {entry.words,before,entry.proof};
+        }
+        PageAccess access(*this,address,exec_perm);
+        const auto *data = access.data()-address%page_size;
+        const bool unchanged = entry.words && memory_detail::code_bytes_equal(
+            data,entry.words->data(),page_size,memory_detail::CodeComparison::Snapshot);
+        if (!unchanged) {
+            OPERIT_MEMORY_DIAGNOSTIC(snapshot_copies, 1);
+            auto words = std::make_shared<CodeWords>(page_size/sizeof(uint32_t));
+            std::memcpy(words->data(),data,page_size);
+            entry.words = std::move(words);
+            entry.proof = std::make_shared<CodeProof>(identity_);
+        }
+        if (unchanged) OPERIT_MEMORY_DIAGNOSTIC(snapshot_unchanged, 1);
+        const auto after = code_epoch.load(std::memory_order_relaxed);
+        // A store during acquisition must not relabel old bytes as a new epoch.
+        entry.epoch = before == after ? before : 0;
+        entry.generation = generation;
+        if (entry.proof && code_proof_generation()) {
+            entry.proof->epoch = entry.epoch;
+            entry.proof->verified = entry.epoch ? UINT64_MAX : 0;
+            entry.proof->generation = entry.epoch ?
+                (access.entry().file ? generation : UINT64_MAX) : 0;
+            entry.proof->bind_native(access.entry(),*entry.words,entry.epoch,epoch_);
+        }
+        return {entry.words,entry.epoch,entry.proof};
+    }
+    // Validate the selected lines of one owned page under one PageAccess.
+    // A graph can have many disjoint instruction spans on this page. Batching
+    // them avoids repeating synchronization, file-size checks and TLS lookup.
+    // A mismatch is inconclusive: callers must check their exact instruction
+    // spans, since an uncovered byte in a selected line may have changed.
+    [[gnu::noinline]] bool validate_code_lines(uint64_t address,
+        const std::shared_ptr<const CodeWords> &words,uint64_t mask,uint64_t &epoch,CodeProof *proof) {
+        OPERIT_MEMORY_DIAGNOSTIC(validate_lines_calls, 1);
+        OPERIT_MEMORY_DIAGNOSTIC(validate_lines_requested, __builtin_popcountll(mask));
+        const auto scope=code_proof_generation();
+        if(!scope || !proof || proof->identity!=identity_) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_ineligible, 1); return false;
+        }
+        const auto before=code_epoch.load(std::memory_order_relaxed);
+        if(proof->epoch==before && proof->current(scope,mask)) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_hits, 1);
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_reused, __builtin_popcountll(mask));
+            epoch=before;return true;
+        }
+        const bool same_observation=proof->epoch==before &&
+            (proof->generation==scope || proof->generation==UINT64_MAX);
+        uint64_t verified=same_observation ? proof->verified:0;
+        OPERIT_MEMORY_DIAGNOSTIC(validate_lines_reused, __builtin_popcountll(mask & verified));
+        if(mask & verified) OPERIT_MEMORY_DIAGNOSTIC(validate_lines_partial_hits, 1);
+        const auto pending=mask&~verified;
+#if defined(OPERIT_EXECUTION_DIAGNOSTICS) && OPERIT_EXECUTION_DIAGNOSTICS
+        if(proof->diagnostic_epoch==before && proof->diagnostic_scope==scope)
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_repeated_mismatches,
+                                     __builtin_popcountll(pending & proof->diagnostic_mismatched));
+#endif
+        PageAccess access(*this,align_down(address),exec_perm);
+        auto remaining=pending;
+        while(remaining) {
+            const auto first=unsigned(__builtin_ctzll(remaining));
+            const auto shifted=remaining>>first;
+            const auto count=shifted==UINT64_MAX ? 64u:unsigned(__builtin_ctzll(~shifted));
+            const auto run=(UINT64_MAX>>(64-count))<<first;
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_compared, count);
+            proof->diagnose_comparison(before,scope,run);
+            if(memory_detail::code_bytes_equal(access.data()+first*64,
+                reinterpret_cast<const uint8_t*>(words->data())+first*64,count*64,
+                memory_detail::CodeComparison::Line)) verified|=run;
+            else {
+                OPERIT_MEMORY_DIAGNOSTIC(validate_lines_inconclusive, count);
+                proof->diagnose_mismatch(run);
+            }
+            remaining&=~run;
+        }
+        epoch=code_epoch.load(std::memory_order_relaxed);
+        if(epoch!=before) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_epoch_failures, 1); return false;
+        }
+        proof->epoch=before;
+        proof->generation=access.entry().file ? scope:UINT64_MAX;
+        proof->verified=verified;
+        proof->bind_native(access.entry(),*words,before,epoch_);
+        if((verified&mask)!=mask) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_lines_failures, 1); return false;
+        }
+        return true;
+    }
+    [[gnu::noinline]] bool validate_code_snapshot_cached(uint64_t address,
+        const std::shared_ptr<const CodeWords> &words,size_t offset,size_t count,uint64_t &epoch,
+        CodeProof *proof=nullptr) {
+        OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_calls, 1);
+        const auto scope=code_proof_generation();
+        if (scope && proof && proof->identity==identity_) {
+            const auto before=code_epoch.load(std::memory_order_relaxed);
+            const auto mask=CodeProof::mask(offset,count);
+            if (proof->epoch==before && proof->current(scope,mask)) {
+                OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_hits, 1); epoch=before; return true;
+            }
+            const bool new_observation=proof->epoch!=before ||
+                (proof->generation!=scope && proof->generation!=UINT64_MAX);
+            if(new_observation)proof->verified=0;
+            if(proof->verified & mask) OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_partial_hits, 1);
+            PageAccess access(*this,align_down(address),exec_perm);
+            const auto first=offset*4/64,last=(offset+count-1)*4/64;
+            proof->diagnose_comparison(before,scope,mask);
+            const bool match=memory_detail::code_bytes_equal(access.data()+first*64,
+                reinterpret_cast<const uint8_t *>(words->data())+first*64,(last-first+1)*64,
+                memory_detail::CodeComparison::Line);
+            if(!match)proof->diagnose_mismatch(mask);
+            if(!match && !memory_detail::code_bytes_equal(access.data()+offset*4,words->data()+offset,
+                count*4,memory_detail::CodeComparison::Exact)) {
+                OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_failures, 1); return false;
+            }
+            epoch=code_epoch.load(std::memory_order_relaxed);
+            if(epoch!=before) {
+                OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_epoch_failures, 1); return false;
+            }
+            proof->epoch=before;
+            proof->generation=access.entry().file ? scope : UINT64_MAX;
+            if(match)proof->verified|=mask;
+            proof->bind_native(access.entry(),*words,before,epoch_);
+            return true;
+        }
+        const bool parallel=parallel_access_.load(std::memory_order_relaxed);
+        auto &cache=parallel ? thread_code_validations() :
+            *(serial_code_validations_ ? serial_code_validations_.get() :
+              (serial_code_validations_=std::make_unique<CodeValidations>()).get());
+        if(cache.identity!=identity_) { cache.entries.fill({});cache.identity=identity_; }
+        auto &entry=cache.entries[translation_index(address)&(cache.entries.size()-1)];
+        const auto before=code_epoch.load(std::memory_order_relaxed);
+        const auto generation=parallel ? execution_generation() : serial_execution_generation_;
+        if(entry.address!=align_down(address) || entry.words!=words || entry.epoch!=before || entry.generation!=generation) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_cache_resets, 1);
+            entry.address=align_down(address);
+            if(entry.words!=words) entry.words=words;
+            entry.epoch=before;entry.generation=generation;
+            entry.verified=0;
+        }
+        const size_t first=offset*4/64,last=(offset+count-1)*4/64;
+        const uint64_t mask=(UINT64_MAX<<first)&(UINT64_MAX>>(63-last));
+        if(generation && (entry.verified&mask)==mask) {
+            OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_hits, 1); epoch=before;return true;
+        }
+        if(entry.verified & mask) OPERIT_MEMORY_DIAGNOSTIC(validate_snapshot_partial_hits, 1);
+        return validate_snapshot_slow(address,entry,offset,count,mask,epoch);
+    }
+    bool code_snapshot_validation_required() const noexcept {
+        return parallel_access_.load(std::memory_order_relaxed) || file_mapping_;
+    }
     bool validate_code(uint64_t address, const void *expected, size_t size, uint64_t &validated_epoch) {
         if (!size) {
             validated_epoch = code_epoch.load(std::memory_order_relaxed);
@@ -668,7 +1025,7 @@ class Memory {
         }
         if (valid_range(address, size) && size <= page_size - address % page_size) {
             PageAccess access(*this, address, exec_perm);
-            if (std::memcmp(access.data(), expected, size))
+            if (!memory_detail::code_bytes_equal(access.data(), expected, size, memory_detail::CodeComparison::Exact))
                 return false;
             // Capture before releasing the code page, so a concurrent store
             // cannot relabel these verified bytes with a newer code epoch.
@@ -680,7 +1037,8 @@ class Memory {
         const auto *bytes = static_cast<const uint8_t *>(expected);
         while (size) {
             const size_t count = std::min<size_t>(size, page_size - address % page_size);
-            if (std::memcmp(translate_locked(address, exec_perm), bytes, count))
+            if (!memory_detail::code_bytes_equal(translate_locked(address, exec_perm), bytes, count,
+                                               memory_detail::CodeComparison::Exact))
                 return false;
             address += count;
             bytes += count;

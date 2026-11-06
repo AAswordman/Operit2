@@ -16,6 +16,7 @@ class FixedComponents {
         const FixedManifest *manifest = nullptr;
         bool matches = false;
         std::vector<ExecutableSnapshot> executable;
+        uint64_t checked_generation = 0;
     };
     bool enabled_;
     uint64_t generation_ = 1, completed_ = 0;

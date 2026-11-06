@@ -12,9 +12,6 @@ struct CpuState {
     uint64_t exclusive_address = 0, exclusive_epoch = 0;
     unsigned exclusive_size = 0;
     bool exclusive_valid = false;
-    // Internal read-only source for predecoded XZR/WZR operands. Refreshed on
-    // native entry; discarded destinations never write this slot.
-    uint64_t gadget_zero = 0;
     uint64_t get(unsigned index, unsigned bits = 64, bool stack = false) const {
         return (index == 31 ? (stack ? sp : 0) : x[index]) & mask(bits);
     }

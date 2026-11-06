@@ -2,7 +2,8 @@
 #include "cpu/aarch64/floating_point.h"
 #include "cpu/aarch64/instruction_fault.h"
 #include "memory/fault.h"
-#include "cpu/aarch64/interpreter.h"
+#include "cpu/aarch64/execution_engine.h"
+#include "execution_test_support.h"
 #include <cstring>
 #include <cstdio>
 #include <stdexcept>
@@ -18,7 +19,7 @@ void faults(uint32_t opcode, InstructionFault::Kind expected) {
     CpuState cpu;
     Memory memory(4096);
     try {
-        execute(cpu, memory, decode(opcode));
+        execute_one(cpu, memory, decode(opcode));
     } catch (const InstructionFault &fault) {
         require(fault.kind == expected, "architectural fault had wrong kind");
         return;
@@ -29,7 +30,7 @@ void rejects(uint32_t opcode) {
     CpuState cpu;
     Memory memory(4096);
     try {
-        execute(cpu, memory, decode(opcode));
+        execute_one(cpu, memory, decode(opcode));
     } catch (const Failure &failure) {
         require(failure.status == ORT_ARM64_UNSUPPORTED, "invalid encoding was not unsupported");
         return;
@@ -109,7 +110,7 @@ void floating_scalar_bits() {
                 auto expected = before;
                 expected[rd].fill(0);
                 std::memcpy(expected[rd].data(), &bits, bytes);
-                execute(cpu, memory, decode(0x1e204020 | (type << 22) | rd)); // FMOV Rd, R1.
+                execute_one(cpu, memory, decode(0x1e204020 | (type << 22) | rd)); // FMOV Rd, R1.
                 require(cpu.v == expected, "scalar FMOV changed raw bits or upper lanes");
                 require(cpu.fpsr == 0x10, "scalar FMOV raised a floating exception");
             }
@@ -137,21 +138,21 @@ void floating_dependency_chain() {
     for (unsigned iteration = 0; iteration < 100; ++iteration) {
         asm volatile("fmadd %d0, %d1, %d2, %d3" : "=w"(expected)
                      : "w"(expected), "w"(multiplier), "w"(increment));
-        execute(cpu, memory, decode(0x1f420504)); // fmadd d4, d8, d2, d1
+        execute_one(cpu, memory, decode(0x1f420504)); // fmadd d4, d8, d2, d1
         if (get(4) != expected)
             std::fprintf(stderr, "FMADD iteration %u: expected %.17g, got %.17g\n",
                          iteration, expected, get(4));
         require(get(4) == expected, "FMADD dependency result incorrect");
-        execute(cpu, memory, decode(0x1e632080)); // fcmp d4, d3
+        execute_one(cpu, memory, decode(0x1e632080)); // fcmp d4, d3
         require(cpu.nzcv == 8, "FCMP dependency flags incorrect");
-        execute(cpu, memory, decode(0x1e64cc08)); // fcsel d8, d0, d4, gt
+        execute_one(cpu, memory, decode(0x1e64cc08)); // fcsel d8, d0, d4, gt
         require(get(8) == expected, "FCSEL dependency result incorrect");
     }
 }
 void floating_interpreter_dispatch() {
     Memory memory(4096);
     memory.map(0x10000, 4096, read_perm | write_perm | exec_perm);
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     constexpr uint64_t inputs[] = {0, 0x8000000000000000ull, 0x3ff0000000000000ull,
                                    0x4008000000000000ull, 0x7ff0000000000000ull,
                                    0x7ff0000000000001ull, 0x0000000000000001ull};
@@ -181,7 +182,7 @@ void floating_interpreter_dispatch() {
                     std::memcpy(reference.v[reg].data() + 8, &high, sizeof(high));
                 }
                 actual = reference;
-                execute(reference, memory, decode(word));
+                execute_one(reference, memory, decode(word));
                 const auto result = interpreter.run(actual, memory, 1);
                 if (reference.v != actual.v || reference.fpsr != actual.fpsr ||
                     reference.nzcv != actual.nzcv || reference.pc != actual.pc) {
@@ -197,7 +198,7 @@ void floating_interpreter_dispatch() {
 void unsigned_to_double_dispatch() {
     Memory memory(4096);
     memory.map(0x10000, 4096, read_perm | write_perm | exec_perm);
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     constexpr uint64_t inputs[] = {0, 1, (uint64_t{1} << 53) - 1, uint64_t{1} << 53,
                                    (uint64_t{1} << 53) + 1, uint64_t{1} << 63, UINT64_MAX};
     for (unsigned rn : {0u, 7u, 31u}) {
@@ -214,7 +215,7 @@ void unsigned_to_double_dispatch() {
                         reference.x[rn] = value;
                     reference.v[rd].fill(0xff);
                     CpuState actual = reference;
-                    execute(reference, memory, decode(word));
+                    execute_one(reference, memory, decode(word));
                     const auto result = interpreter.run(actual, memory, 1);
                     require(actual.v == reference.v && actual.x == reference.x &&
                                 actual.fpsr == reference.fpsr && actual.fpcr == reference.fpcr &&
@@ -228,7 +229,7 @@ void unsigned_to_double_dispatch() {
 void compare_register_dispatch() {
     Memory memory(4096);
     memory.map(0x10000, 4096, read_perm | write_perm | exec_perm);
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     constexpr uint64_t inputs[] = {0, 1, 2, INT64_MAX, uint64_t{1} << 63, UINT64_MAX};
     for (unsigned rn : {0u, 7u, 31u}) {
         for (unsigned rm : {0u, 7u, 31u}) {
@@ -243,7 +244,7 @@ void compare_register_dispatch() {
                     if (rm != 31)
                         reference.x[rm] = rhs;
                     CpuState actual = reference;
-                    execute(reference, memory, decode(word));
+                    execute_one(reference, memory, decode(word));
                     const auto result = interpreter.run(actual, memory, 1);
                     require(actual.x == reference.x && actual.nzcv == reference.nzcv &&
                                 actual.pc == reference.pc && result.instructions == 1,
@@ -267,7 +268,7 @@ void code_cache_revalidation() {
     put(first, 7);
     put(second, 9);
     put(other, 13);
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     const auto run = [&](uint64_t at, unsigned value) {
         CpuState cpu{};
         cpu.pc = at;
@@ -309,7 +310,7 @@ void code_cache_full_block() {
     memory.map(align_down(address), page_size, read_perm | write_perm | exec_perm);
     for (size_t index = 0; index < 64; ++index)
         memory.store<4>(address + index * 4, 0x91000400); // ADD X0, X0, #1.
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     const auto run = [&](uint64_t expected) {
         CpuState cpu{};
         cpu.pc = address;
@@ -349,7 +350,7 @@ void file_code_revalidation() {
     Memory::Backing backing;
     backing.shared = true;
     memory.map_file(align_down(address), page_size, read_perm | exec_perm, fd, backing);
-    Interpreter interpreter;
+    ExecutionEngine interpreter;
     const auto run = [&] {
         CpuState cpu{};
         cpu.pc = address;
@@ -399,12 +400,12 @@ void cache_operations() {
     std::array<uint8_t, 192> contents;
     contents.fill(0xa5);
     memory.copy_in(0x10000, contents.data(), contents.size());
-    execute(cpu, memory, decode(0xd53b0023)); // MRS X3, CTR_EL0: Node/V8 probe.
+    execute_one(cpu, memory, decode(0xd53b0023)); // MRS X3, CTR_EL0: Node/V8 probe.
     require(cpu.x[3] == cache_profile::ctr_el0, "CTR_EL0 guest geometry");
     require((4u << (cpu.x[3] & 15)) == cache_profile::line_bytes &&
                 (4u << ((cpu.x[3] >> 16) & 15)) == cache_profile::line_bytes,
             "CTR_EL0 line sizes disagree with implementation");
-    execute(cpu, memory, decode(0xd53b00e3)); // MRS X3, DCZID_EL0.
+    execute_one(cpu, memory, decode(0xd53b00e3)); // MRS X3, DCZID_EL0.
     require(cpu.x[3] == cache_profile::dczid_el0 && !(cpu.x[3] & 16),
             "DCZID_EL0 must advertise the implemented ZVA block size");
     cpu.x[5] = 0x10051;
@@ -412,23 +413,23 @@ void cache_operations() {
                                  cache_profile::dc_civac, cache_profile::ic_ivau}) {
         const auto epoch = memory.code_epoch.load();
         require(decode(operation | 5).op == Op::Cache, "cache operation not decoded");
-        execute(cpu, memory, decode(operation | 5));
+        execute_one(cpu, memory, decode(operation | 5));
         require(memory.code_epoch.load() > epoch, "cache operation did not invalidate decoded code");
     }
-    execute(cpu, memory, decode(cache_profile::dc_zva | 5));
+    execute_one(cpu, memory, decode(cache_profile::dc_zva | 5));
     memory.copy_out(0x10000, contents.data(), contents.size());
     for (size_t index = 0; index < contents.size(); ++index)
         require(contents[index] == (index >= 64 && index < 128 ? 0 : 0xa5),
                 "DC ZVA must zero exactly the aligned guest block");
     cpu.x[5] = 0x10fff;
-    execute(cpu, memory, decode(cache_profile::dc_zva | 5));
+    execute_one(cpu, memory, decode(cache_profile::dc_zva | 5));
     std::array<uint8_t, cache_profile::line_bytes> last{};
     memory.copy_out(0x10fc0, last.data(), last.size());
     for (const auto byte : last)
         require(byte == 0, "DC ZVA crossed the final mapped cache line");
     memory.protect(0x10000, 4096, read_perm);
     try {
-        execute(cpu, memory, decode(cache_profile::dc_zva | 5));
+        execute_one(cpu, memory, decode(cache_profile::dc_zva | 5));
         throw std::runtime_error("DC ZVA bypassed guest write protection");
     } catch (const MemoryFault &fault) {
         require(fault.kind == MemoryFault::Kind::Protection, "DC ZVA wrong fault kind");
@@ -437,7 +438,7 @@ void cache_operations() {
     for (const auto operation : {cache_profile::dc_cvau, cache_profile::ic_ivau,
                                  cache_profile::dc_zva}) {
         try {
-            execute(cpu, memory, decode(operation | 5));
+            execute_one(cpu, memory, decode(operation | 5));
             throw std::runtime_error("cache operation accepted an unmapped guest address");
         } catch (const MemoryFault &fault) {
             require(fault.kind == MemoryFault::Kind::Unmapped, "cache operation wrong fault kind");

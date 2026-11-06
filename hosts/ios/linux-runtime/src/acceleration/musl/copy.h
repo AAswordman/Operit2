@@ -1,9 +1,9 @@
 #pragma once
-#include "acceleration/fixed_execution.h"
+#include "acceleration/intrinsic_context.h"
 #include "acceleration/scalar_ops.h"
 
 namespace operit::arm64::fixed {
-inline void copy(FixedExecution &c, bool loop_only = false) {
+inline void copy(IntrinsicContext &c, bool loop_only = false) {
     auto &cpu = c.cpu;
     auto &memory = c.memory;
     auto &x = cpu.x;

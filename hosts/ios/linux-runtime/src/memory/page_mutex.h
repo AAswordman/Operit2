@@ -21,6 +21,9 @@ class PageMutex {
     }
 
   public:
+    // Native read access uses the same word and writer-admission rule.
+    static constexpr size_t native_state_offset() { return offsetof(PageMutex,state_); }
+    static constexpr size_t native_waiting_offset() { return offsetof(PageMutex,waiting_writers_); }
     PageMutex() = default;
     PageMutex(const PageMutex &) = delete;
     PageMutex &operator=(const PageMutex &) = delete;

@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(OperitArm64Runtime VERSION 0.1.0 LANGUAGES C CXX ASM)
 
-option(OPERIT_ARM64_LTO "Optimize Release builds across interpreter module boundaries" ON)
+option(OPERIT_EXECUTION_DIAGNOSTICS "Collect static executor handler, path and sampled cursor diagnostics" OFF)
+
+option(OPERIT_ARM64_LTO "Optimize Release builds across execution compiler module boundaries" ON)
 # XCFramework packaging requires native Mach-O objects, not LLVM bitcode archives.
 # The embedding app can choose its own final-link optimization policy.
 if(OPERIT_ARM64_LTO AND NOT OPERIT_ARM64_SANITIZERS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -14,6 +16,19 @@ if(OPERIT_ARM64_LTO AND NOT OPERIT_ARM64_SANITIZERS AND NOT CMAKE_SYSTEM_NAME ST
     endif()
 endif()
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(OPERIT_EXECUTOR_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/static-executor")
+add_custom_command(
+    OUTPUT "${OPERIT_EXECUTOR_GENERATED}/static_entries.cpp"
+           "${OPERIT_EXECUTOR_GENERATED}/static_handlers.inc"
+           "${OPERIT_EXECUTOR_GENERATED}/static_tables.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_static_executor.py"
+        --definitions "${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/aarch64/superoperators.def"
+        --output "${OPERIT_EXECUTOR_GENERATED}"
+    DEPENDS tools/generate_static_executor.py src/cpu/aarch64/superoperators.def
+    VERBATIM)
+set_source_files_properties(src/cpu/aarch64/static_executor.S PROPERTIES
+    OBJECT_DEPENDS "${OPERIT_EXECUTOR_GENERATED}/static_handlers.inc;${OPERIT_EXECUTOR_GENERATED}/static_tables.inc")
 add_library(operit_arm64 STATIC
     src/acceleration/fixed_components.cpp
     src/api/c_api.cpp
@@ -22,12 +37,17 @@ add_library(operit_arm64 STATIC
     src/base/sha256.cpp
     src/cpu/aarch64/decoder.cpp
     src/cpu/aarch64/exclusive.cpp
-    src/cpu/aarch64/execute.cpp
+    src/cpu/aarch64/semantics.cpp
     src/cpu/aarch64/fixed_conversion.cpp
     src/cpu/aarch64/floating_point.cpp
-    src/cpu/aarch64/interpreter.cpp
-    src/cpu/aarch64/gadgets.cpp
-    src/cpu/aarch64/gadgets.S
+    src/cpu/aarch64/block_graph.cpp
+    src/cpu/aarch64/memory_effects.cpp
+    src/cpu/aarch64/optimizer.cpp
+    src/cpu/aarch64/static_lowering.cpp
+    src/cpu/aarch64/execution_engine.cpp
+    src/cpu/aarch64/execution_diagnostics.cpp
+    src/cpu/aarch64/static_executor.S
+    "${OPERIT_EXECUTOR_GENERATED}/static_entries.cpp"
     src/cpu/aarch64/simd.cpp
     src/cpu/aarch64/vector_arithmetic.cpp
     src/cpu/aarch64/vector_floating.cpp
@@ -139,8 +159,9 @@ add_library(operit_arm64 STATIC
     src/runtime/tasks/scheduler.cpp
     src/runtime/tasks/executor.cpp
 )
+target_compile_definitions(operit_arm64 PUBLIC OPERIT_EXECUTION_DIAGNOSTICS=$<BOOL:${OPERIT_EXECUTION_DIAGNOSTICS}>)
 target_compile_features(operit_arm64 PRIVATE cxx_std_17)
-target_include_directories(operit_arm64 PUBLIC include PRIVATE src)
+target_include_directories(operit_arm64 PUBLIC include PRIVATE src "${OPERIT_EXECUTOR_GENERATED}")
 target_compile_options(operit_arm64 PRIVATE -Wall -Wextra -Werror)
 set_target_properties(operit_arm64 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)
@@ -162,6 +183,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_features(operit-arm64 PRIVATE cxx_std_17)
     target_link_libraries(operit-arm64 PRIVATE operit_arm64)
     target_compile_options(operit-arm64 PRIVATE -Wall -Wextra -Werror)
+    add_executable(operit-arm64-execution-bench benchmarks/execution.cpp)
+    target_compile_features(operit-arm64-execution-bench PRIVATE cxx_std_17)
+    target_include_directories(operit-arm64-execution-bench PRIVATE src)
+    target_link_libraries(operit-arm64-execution-bench PRIVATE operit_arm64)
+    target_compile_options(operit-arm64-execution-bench PRIVATE -Wall -Wextra -Werror)
     include(CTest)
     if(BUILD_TESTING)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -190,7 +216,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         add_test(NAME arm64-worker-profile-validation
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_worker_profile.py")
         set_tests_properties(arm64-worker-profile-validation PROPERTIES TIMEOUT 10)
-        add_runtime_test(operit-arm64-gadget-tests tests/gadgets.cpp arm64-gadgets)
+        add_runtime_test(operit-arm64-execution-tests tests/execution_backend.cpp arm64-execution)
+        add_runtime_test(operit-arm64-memory-code-validation-tests tests/memory_code_validation.cpp arm64-memory-code-validation)
         add_runtime_test(operit-arm64-filesystem-tests tests/filesystem.cpp arm64-filesystem)
         add_runtime_test(operit-arm64-vfs-tests tests/virtual_filesystem.cpp arm64-virtual-filesystem)
         add_runtime_test(operit-arm64-inotify-tests tests/inotify.cpp arm64-inotify)

@@ -25,7 +25,7 @@ Machine::Machine(const ort_arm64_config &config) : config_(config) {
                                                                          : default_memory_limit);
     image.filesystem = std::make_unique<Filesystem>(config.root_directory);
     image.acceleration = std::make_unique<FixedComponents>(config.enable_fixed_acceleration != 0);
-    image.interpreter = std::make_unique<Interpreter>();
+    image.executor = std::make_unique<ExecutionEngine>();
     image.syscalls = std::make_unique<Syscalls>(*image.memory, *image.filesystem, config, scheduler_);
     image.syscalls->set_io_uring_context(io_uring_context_, image.memory);
     image.syscalls->set_process_identity(1, 0);
@@ -153,7 +153,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                 const auto cpu = uint32_t(__builtin_ctzll(task.cpu_affinity & available));
                 auto &image = process.image;
                 image.memory->set_parallel_access(false);
-                image.memory->synchronize_shared();
+                image.memory->synchronize_shared(true);
                 const bool in_traced_syscall = task.ptrace_syscall || task.ptrace_exit_pending;
                 const bool fatal_pending = signals::pending_mask(*process.signals, task.signals) &
                                            signals::bit(signals::kill_signal);
@@ -162,7 +162,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     delivery = deliver_signals(task, process, cpu);
                 if (task.ptrace_stopped) {
                     schedule_pending_ = true;
-                    quantum_remaining_ = 4096;
+                    quantum_remaining_ = 262144;
                     continue;
                 }
                 if (delivery.effect != signals::Effect::None && delivery.effect != signals::Effect::Handler) {
@@ -171,7 +171,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     if (task.state != Task::State::Runnable || task.stopped || task.ptrace_deferred_exit ||
                         main_exited_) {
                         schedule_pending_ = !main_exited_;
-                        quantum_remaining_ = 4096;
+                        quantum_remaining_ = 262144;
                         continue;
                     }
                 }
@@ -179,31 +179,31 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     wait_completed(task.tid);
                     if (task.ptrace_stopped) {
                         schedule_pending_ = true;
-                        quantum_remaining_ = 4096;
+                        quantum_remaining_ = 262144;
                         continue;
                     }
                 }
                 const bool resumed_syscall = bool(task.ptrace_syscall);
-                const auto before = image.interpreter->executed_instructions;
+                const auto before = image.executor->executed_instructions;
                 const auto queue_fault = [&](int number, int code, uint64_t address, bool executed) {
-                    const auto completed = image.interpreter->executed_instructions - before;
+                    const auto completed = image.executor->executed_instructions - before;
                     const auto charged = std::min(budget, completed + 1);
                     budget -= charged;
                     quantum_remaining_ -= std::min(quantum_remaining_, charged);
                     if (executed)
-                        ++image.interpreter->executed_instructions;
+                        ++image.executor->executed_instructions;
                     task.cpu.exclusive_valid = false;
                     signals::force_fault(*process.signals, task.signals, task.signal_mask, number, address,
                                          code);
                     if (!quantum_remaining_) {
                         schedule_pending_ = true;
-                        quantum_remaining_ = 4096;
+                        quantum_remaining_ = 262144;
                     }
                 };
                 Execution execution{Trap::Syscall, 0};
                 try {
                     if (!resumed_syscall)
-                        execution = image.interpreter->run(task.cpu, *image.memory,
+                        execution = image.executor->run(task.cpu, *image.memory,
                                                            std::min(budget, quantum_remaining_),
                                                            image.acceleration.get());
                 } catch (const InstructionFault &fault) {
@@ -250,7 +250,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                     accounting_syscall_ = true;
                     if (!dispatch_guest_syscall(task, process, resumed_syscall)) {
                         schedule_pending_ = true;
-                        quantum_remaining_ = 4096;
+                        quantum_remaining_ = 262144;
                         continue;
                     }
                 }
@@ -265,7 +265,7 @@ ort_arm64_result Machine::run(uint64_t budget) {
                 }
                 if (execution.trap == Trap::Syscall || !quantum_remaining_) {
                     schedule_pending_ = !main_exited_;
-                    quantum_remaining_ = 4096;
+                    quantum_remaining_ = 262144;
                     if (execution.trap == Trap::Syscall) {
                         ++process.voluntary_switches;
                         ++scheduler_.current().voluntary_switches;
@@ -309,9 +309,9 @@ ort_arm64_result Machine::run(uint64_t budget) {
     for (const auto &[pid, process] : processes_) {
         (void)pid;
         const auto &image = process->image;
-        result.instructions += process->instructions + image.interpreter->executed_instructions;
-        result.decoded_blocks += process->decoded_blocks + image.interpreter->decoded_blocks;
-        result.block_cache_hits += process->cache_hits + image.interpreter->cache_hits;
+        result.instructions += process->instructions + image.executor->executed_instructions;
+        result.decoded_blocks += process->decoded_blocks + image.executor->decoded_blocks;
+        result.block_cache_hits += process->cache_hits + image.executor->cache_hits;
         result.resident_bytes += image.memory->resident();
         result.syscalls += process->calls + image.syscalls->calls;
         result.unsupported_syscalls += process->unsupported + image.syscalls->unsupported_count;

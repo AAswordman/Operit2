@@ -33,7 +33,7 @@ linux-runtime/
 
 ## 构建和执行
 
-以下是使用方法，须在仓库根目录执行；命令列在此处不代表本轮已执行或通过。宿主需要 CMake 与 C++17 编译器，guest 测试需要 AArch64 Linux LLVM clang 和 `ld.lld`。非 Apple 构建需要 OpenSSL Crypto 开发库；Apple / iOS 使用系统 CommonCrypto。
+以下是使用方法，须在仓库根目录执行；命令列在此处不代表本轮已执行或通过。ARM64 宿主需要 CMake、Python 3（构建时生成静态汇编执行单元）与 C++17 编译器，guest 测试需要 AArch64 Linux LLVM clang 和 `ld.lld`。非 Apple 构建需要 OpenSSL Crypto 开发库；Apple / iOS 使用系统 CommonCrypto。
 
 ```sh
 bash tools/ios-runtime/arm64/build.sh host

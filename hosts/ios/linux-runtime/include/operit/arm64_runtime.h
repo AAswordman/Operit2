@@ -41,7 +41,7 @@ typedef struct {
     ort_arm64_status status;
     int exit_code;
     uint64_t pc;
-    /* Interpreted instructions plus one step per fixed helper invocation. */
+    /* Retired guest instructions plus one step per fixed helper invocation. */
     uint64_t instructions;
     uint64_t decoded_blocks;
     uint64_t block_cache_hits;

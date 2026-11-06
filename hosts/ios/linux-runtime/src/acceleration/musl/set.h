@@ -1,10 +1,10 @@
 #pragma once
-#include "acceleration/fixed_execution.h"
+#include "acceleration/intrinsic_context.h"
 #include "acceleration/scalar_ops.h"
 #include "cpu/aarch64/cache.h"
 
 namespace operit::arm64::fixed {
-inline void set(FixedExecution &c) {
+inline void set(IntrinsicContext &c) {
     auto &cpu = c.cpu;
     auto &memory = c.memory;
     auto &x = cpu.x;

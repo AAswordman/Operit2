@@ -1,9 +1,9 @@
 #pragma once
-#include "acceleration/fixed_execution.h"
+#include "acceleration/intrinsic_context.h"
 #include "acceleration/conditions.h"
 
 namespace operit::arm64::fixed {
-inline void length(FixedExecution &c) {
+inline void length(IntrinsicContext &c) {
     auto &cpu = c.cpu;
     auto &memory = c.memory;
     auto &x = cpu.x;

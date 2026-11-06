@@ -1,10 +1,10 @@
 #pragma once
-#include "acceleration/fixed_execution.h"
+#include "acceleration/intrinsic_context.h"
 #include "acceleration/musl/copy.h"
 #include "acceleration/scalar_ops.h"
 
 namespace operit::arm64::fixed {
-inline void move(FixedExecution &c) {
+inline void move(IntrinsicContext &c) {
     auto &cpu = c.cpu;
     auto &memory = c.memory;
     auto &x = cpu.x;

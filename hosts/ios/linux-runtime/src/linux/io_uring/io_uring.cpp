@@ -177,6 +177,10 @@ struct HostWork;
 struct CompletionQueue {
     std::mutex mutex;
     HostWork *first = nullptr, *last = nullptr;
+    // The coordinator polls every quantum, including programs that never
+    // submit I/O. Publish readiness under the queue mutex; an empty probe
+    // needs neither that mutex nor a host read(EAGAIN).
+    std::atomic<bool> ready{false};
     FD reader, writer;
 
     CompletionQueue() {
@@ -332,6 +336,7 @@ void CompletionQueue::enqueue(HostWork *work) noexcept {
     else
         first = work;
     last = work;
+    ready.store(true, std::memory_order_release);
     const char marker = 1;
     ssize_t status;
     do {
@@ -339,9 +344,12 @@ void CompletionQueue::enqueue(HostWork *work) noexcept {
     } while (status < 0 && errno == EINTR);
 }
 HostWork *CompletionQueue::take() noexcept {
+    if (!ready.load(std::memory_order_acquire))
+        return nullptr;
     std::lock_guard<std::mutex> lock(mutex);
     HostWork *result = first;
     first = last = nullptr;
+    ready.store(false, std::memory_order_release);
     char buffer[128];
     ssize_t status;
     do {

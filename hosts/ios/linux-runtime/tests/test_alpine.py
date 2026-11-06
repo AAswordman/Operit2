@@ -153,7 +153,7 @@ class AlpineTests(unittest.TestCase):
     def test_file_reads_and_root_symlinks(self):
         reference, _ = self.run_busybox('cat', '/etc/alpine-release')
         accelerated, _ = self.run_busybox('cat', '/etc/alpine-release', accelerated=True)
-        self.assertEqual(reference.strip(), b'3.23.6')
+        self.assertEqual(reference, (Path(OPTIONS.root) / 'etc/alpine-release').read_bytes())
         self.assertEqual(reference, accelerated)
 
     def test_fixed_helper_boundaries_identity_and_mutation(self):

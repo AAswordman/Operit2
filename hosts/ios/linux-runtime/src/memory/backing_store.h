@@ -4,6 +4,7 @@
 #include "linux/error_mapping.h"
 #include "linux/files/memory_file.h"
 #include "memory/fault.h"
+#include "memory/memory_diagnostics.h"
 #include "memory/page_mutex.h"
 #include <algorithm>
 #include <array>
@@ -32,13 +33,23 @@ struct FileBacking;
 // File syscalls execute outside an interpreter quantum. A quantum observes one
 // metadata version per backing; direct Memory callers retain fresh size checks.
 class FileMetadataCache {
+  public:
+    // Stable TLS observations consumed by native execution on this thread only.
     struct Entry {
         const FileBacking *file = nullptr;
         uint64_t generation = 0, bytes = 0;
     };
+  private:
     struct State {
         std::array<Entry, 64> entries{};
         uint64_t active = 0;
+#if defined(OPERIT_EXECUTION_DIAGNOSTICS) && OPERIT_EXECUTION_DIAGNOSTICS
+        struct Observation { const FileBacking *file; uint64_t generation; };
+        // Only metadata misses consult this bounded ledger. Keep outer-scope
+        // observations through nested scopes; overflow is reported explicitly.
+        std::array<Observation,128> diagnostic_observations{};
+        size_t diagnostic_count = 0;
+#endif
     };
     inline static std::atomic<uint64_t> next_generation_{1};
     static State &current() {
@@ -52,13 +63,21 @@ class FileMetadataCache {
     }
     uint64_t enter() {
         auto &state = current();
+        MemoryDiagnostics::arm();
+        OPERIT_MEMORY_DIAGNOSTIC(execution_scopes, 1);
         const uint64_t previous = state.active;
+        if (previous) OPERIT_MEMORY_DIAGNOSTIC(nested_scopes, 1);
+#if defined(OPERIT_EXECUTION_DIAGNOSTICS) && OPERIT_EXECUTION_DIAGNOSTICS
+        if (!previous) state.diagnostic_count = 0;
+#endif
         state.active = next_generation_.fetch_add(1, std::memory_order_relaxed);
         return previous;
     }
     void leave(uint64_t previous) {
         current().active = previous;
     }
+    const Entry *observations() const noexcept { return current().entries.data(); }
+    static_assert(sizeof(Entry)==24 && offsetof(Entry,generation)==8 && offsetof(Entry,bytes)==16);
     uint64_t size(const FileBacking &file);
 };
 
@@ -74,9 +93,14 @@ struct FileBacking {
         : descriptor(::fcntl(fd, F_DUPFD_CLOEXEC, 0)), open_reference(std::move(reference)) {
         if (descriptor.get() < 0)
             guest_error(linux_errno(errno));
+        MemoryDiagnostics::arm();
         struct stat info{};
-        if (::fstat(descriptor.get(), &info) < 0)
-            guest_error(linux_errno(errno));
+        OPERIT_MEMORY_DIAGNOSTIC(fstat_calls, 1);
+        if (::fstat(descriptor.get(), &info) < 0) {
+            const int error = errno;
+            OPERIT_MEMORY_DIAGNOSTIC(fstat_failures, 1);
+            guest_error(linux_errno(error));
+        }
         if (!S_ISREG(info.st_mode))
             guest_error(19);
         const int flags = ::fcntl(descriptor.get(), F_GETFL);
@@ -90,15 +114,22 @@ struct FileBacking {
     }
     uint64_t size() const {
         struct stat info{};
-        if (::fstat(descriptor.get(), &info) < 0)
-            guest_error(linux_errno(errno));
+        OPERIT_MEMORY_DIAGNOSTIC(fstat_calls, 1);
+        if (::fstat(descriptor.get(), &info) < 0) {
+            const int error = errno;
+            OPERIT_MEMORY_DIAGNOSTIC(fstat_failures, 1);
+            guest_error(linux_errno(error));
+        }
         return info.st_size < 0 ? 0 : uint64_t(info.st_size);
     }
     void check_page(uint64_t offset, uint64_t guest_address, unsigned permissions,
                     FileMetadataCache *metadata = nullptr) const {
+        OPERIT_MEMORY_DIAGNOSTIC(file_page_checks, 1);
         const uint64_t bytes = metadata ? metadata->size(*this) : size();
-        if (offset >= ((bytes + page_size - 1) & ~(page_size - 1)))
+        if (offset >= ((bytes + page_size - 1) & ~(page_size - 1))) {
+            OPERIT_MEMORY_DIAGNOSTIC(file_page_failures, 1);
             throw MemoryFault(guest_address, permissions, MemoryFault::Kind::Bus);
+        }
     }
     template <class Operation> void file_range(uint64_t offset, uint64_t length, Operation operation) const {
         const uint64_t bytes = size();
@@ -135,13 +166,31 @@ struct FileBacking {
 };
 
 inline uint64_t FileMetadataCache::size(const FileBacking &file) {
+    OPERIT_MEMORY_DIAGNOSTIC(file_metadata_calls, 1);
     auto &state = current();
-    if (!state.active)
+    if (!state.active) {
+        OPERIT_MEMORY_DIAGNOSTIC(file_metadata_unscoped, 1);
         return file.size();
+    }
     const auto identity = reinterpret_cast<uintptr_t>(&file);
     auto &entry = state.entries[((identity >> 4) ^ (identity >> 12)) & (state.entries.size() - 1)];
-    if (entry.file != &file || entry.generation != state.active)
+    if (entry.file != &file || entry.generation != state.active) {
+        OPERIT_MEMORY_DIAGNOSTIC(file_metadata_misses, 1);
+#if defined(OPERIT_EXECUTION_DIAGNOSTICS) && OPERIT_EXECUTION_DIAGNOSTICS
+        size_t seen = 0;
+        while (seen < state.diagnostic_count &&
+               (state.diagnostic_observations[seen].file != &file ||
+                state.diagnostic_observations[seen].generation != state.active)) ++seen;
+        if (seen < state.diagnostic_count) OPERIT_MEMORY_DIAGNOSTIC(file_metadata_repeat_fstats, 1);
+        else if (seen < state.diagnostic_observations.size()) {
+            state.diagnostic_observations[state.diagnostic_count++] = {&file, state.active};
+            OPERIT_MEMORY_DIAGNOSTIC(file_metadata_first_fstats, 1);
+        } else OPERIT_MEMORY_DIAGNOSTIC(file_metadata_untracked_fstats, 1);
+#endif
+        if (entry.file && entry.file != &file && entry.generation == state.active)
+            OPERIT_MEMORY_DIAGNOSTIC(file_metadata_collisions, 1);
         entry = {&file, state.active, file.size()};
+    } else OPERIT_MEMORY_DIAGNOSTIC(file_metadata_hits, 1);
     return entry.bytes;
 }
 
