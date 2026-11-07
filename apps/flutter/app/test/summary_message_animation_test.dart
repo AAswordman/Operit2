@@ -7,6 +7,72 @@ import 'package:operit2/ui/features/chat/components/style/SummaryMessageComposab
 import 'support/markdown_event_fixture.dart';
 
 void main() {
+  for (final fresh in [false, true]) {
+    for (final content in ['', ' \n\t']) {
+      testWidgets(
+        'empty summary remains editable and deletable ($fresh, "$content")',
+        (tester) async {
+          var edited = false;
+          var deleted = false;
+          var message = _summaryMessage(
+            content: content,
+            timestamp: fresh ? DateTime.now().millisecondsSinceEpoch : 1,
+          );
+          await tester.pumpWidget(
+            MaterialApp(
+              locale: const Locale('en'),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: StatefulBuilder(
+                  builder: (context, setState) => SummaryMessageComposable(
+                    message: message,
+                    onEdit: (value) {
+                      expect(value, same(message));
+                      edited = true;
+                      setState(() {
+                        message = _summaryMessage(
+                          content: 'Manually edited summary.',
+                          timestamp: message.timestamp,
+                        );
+                      });
+                    },
+                    onDelete: () => deleted = true,
+                    splitMarkdownContent: splitMarkdownEventFixture,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('summary-toggle')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byIcon(Icons.edit_outlined));
+          await tester.pumpAndSettle();
+          expect(edited, isTrue);
+          expect(
+            find.text('Manually edited summary.', findRichText: true),
+            findsOneWidget,
+          );
+          await tester.pump(const Duration(seconds: 2));
+          expect(
+            find.byIcon(Icons.delete_outline).hitTestable(),
+            findsOneWidget,
+          );
+
+          await tester.tap(find.byIcon(Icons.delete_outline));
+          await tester.pumpAndSettle();
+          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(deleted, isFalse);
+          await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+          await tester.pumpAndSettle();
+          expect(deleted, isTrue);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   for (final brightness in Brightness.values) {
     for (final width in [280.0, 640.0]) {
       for (final locale in [const Locale('zh'), const Locale('en')]) {
@@ -166,21 +232,27 @@ void main() {
   }
 }
 
-final _message = ChatMessage(
+final _message = _summaryMessage();
+
+/// Creates saved summaries with explicit content and identity for interaction tests.
+ChatMessage _summaryMessage({
+  String content = 'Summary content.',
+  int timestamp = 1,
+}) => ChatMessage(
   pluginExtensions: const {},
-  sender: 'ai',
-  parts: const [
+  sender: 'summary',
+  parts: [
     MessagePart(
       partId: 'summary',
       sequence: 0,
       kind: MessagePartKind.markdown,
-      content: 'Summary content.',
+      content: content,
       toolCallId: null,
       toolName: null,
       attributes: {},
     ),
   ],
-  timestamp: 1,
+  timestamp: timestamp,
   roleName: 'assistant',
   selectedVariantIndex: 0,
   variantCount: 1,

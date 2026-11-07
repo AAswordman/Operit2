@@ -1472,21 +1472,7 @@ impl ChatServiceCore {
                 return false;
             }
         };
-        let startTime = currentTimeMillis();
-        let pendingPlaceholder = ChatMessage {
-            sender: "summary".to_string(),
-            timestamp: ChatMessageTimestampAllocator::next(),
-            roleName: "system".to_string(),
-            sentAt: startTime,
-            ..ChatMessage::new("summary".to_string())
-        };
-        let persistedPending = self.chatHistoryDelegate.addSummaryMessage(
-            pendingPlaceholder,
-            beforeTimestamp.clone(),
-            afterTimestamp.clone(),
-            Some(currentChatId.clone()),
-        );
-
+        // Generation must not persist a summary boundary before valid content exists.
         let summaryMessage = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
             messagesToSummarize,
@@ -1495,36 +1481,29 @@ impl ChatServiceCore {
             &configuration,
         )
         .await
+        .map_err(|error| error.to_string())
+        .and_then(|summary| summary.ok_or_else(|| "No valid conversation summary was generated".to_string()))
         {
-            Ok(Some(summaryMessage)) => summaryMessage,
-            _ => {
-                if let Some(pending) = persistedPending {
-                    let _ = self.chatHistoryDelegate.deleteMessageByTimestamp(currentChatId.clone(), pending.timestamp);
-                }
+            Ok(summaryMessage) => summaryMessage,
+            Err(error) => {
+                AppLogger::e("ChatSummary", &format!("Summary insertion failed for {currentChatId}: {error}"));
                 self.messageProcessingDelegate
-                    .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
+                    .setInputProcessingStateForChat(currentChatId, InputProcessingState::Error { message: error });
                 return false;
             }
         };
 
-        if let Some(pending) = persistedPending {
-            let updated = ChatMessage {
-                parts: summaryMessage.parts,
-                inputTokens: summaryMessage.inputTokens,
-                outputTokens: summaryMessage.outputTokens,
-                waitDurationMs: summaryMessage.waitDurationMs,
-                completedAt: summaryMessage.completedAt,
-                sentAt: summaryMessage.sentAt,
-                ..pending
-            };
-            self.chatHistoryDelegate.updateSummaryMessage(updated, Some(currentChatId.clone()));
-        } else {
-            self.chatHistoryDelegate.addSummaryMessage(
-                summaryMessage,
-                beforeTimestamp,
-                afterTimestamp,
-                Some(currentChatId.clone()),
-            );
+        if self.chatHistoryDelegate.addSummaryMessage(
+            summaryMessage,
+            beforeTimestamp,
+            afterTimestamp,
+            Some(currentChatId.clone()),
+        ).is_none() {
+            self.messageProcessingDelegate
+                .setInputProcessingStateForChat(currentChatId, InputProcessingState::Error {
+                    message: "Summary could not be inserted at the selected message".to_string(),
+                });
+            return false;
         }
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();

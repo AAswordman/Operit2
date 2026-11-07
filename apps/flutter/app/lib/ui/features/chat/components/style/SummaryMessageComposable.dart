@@ -12,9 +12,9 @@ import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import 'MessageHeaderMetadata.dart';
 
-enum _SummaryDisplayPhase { running, streaming, settled }
+enum _SummaryDisplayPhase { streaming, settled }
 
-/// Renders a summary with seamless water-bottle inline expansion and streaming lifecycle.
+/// Renders a saved summary with inline expansion and a reveal animation.
 class SummaryMessageComposable extends StatefulWidget {
   const SummaryMessageComposable({
     super.key,
@@ -45,8 +45,6 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
 
   _SummaryDisplayPhase _phase = _SummaryDisplayPhase.settled;
   int _streamedCharacterCount = 0;
-  int _elapsedSeconds = 0;
-  Timer? _runTimer;
   Timer? _streamTimer;
   Timer? _autoCollapseTimer;
   final ScrollController _scrollController = ScrollController();
@@ -73,9 +71,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
             20000 &&
         !_animatedSummaryTimestamps.contains(widget.message.timestamp);
 
-    if (isTextEmpty) {
-      _startRunningPhase();
-    } else if (isFreshMessage) {
+    if (!isTextEmpty && isFreshMessage) {
       _animatedSummaryTimestamps.add(widget.message.timestamp);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -90,24 +86,15 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
   @override
   void didUpdateWidget(covariant SummaryMessageComposable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final hadEmptyText = oldWidget.message.displayText.trim().isEmpty;
-    final hasNewText = widget.message.displayText.trim().isNotEmpty;
-
-    if (hadEmptyText && hasNewText) {
-      _runTimer?.cancel();
-      _runTimer = null;
-      if (!_animatedSummaryTimestamps.contains(widget.message.timestamp)) {
-        _animatedSummaryTimestamps.add(widget.message.timestamp);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _startStreamingPhase();
-          }
-        });
-      }
-    } else if (oldWidget.message.timestamp != widget.message.timestamp) {
+    if (oldWidget.message.timestamp != widget.message.timestamp) {
       _cancelAllTimers();
       _phase = _SummaryDisplayPhase.settled;
       _expandController.value = 0.0;
+    } else if (oldWidget.message.displayText != widget.message.displayText) {
+      // Edits are saved content, not a new generation or reveal animation.
+      _cancelAllTimers();
+      _phase = _SummaryDisplayPhase.settled;
+      _streamedCharacterCount = widget.message.displayText.length;
     }
   }
 
@@ -120,29 +107,10 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
   }
 
   void _cancelAllTimers() {
-    _runTimer?.cancel();
-    _runTimer = null;
     _streamTimer?.cancel();
     _streamTimer = null;
     _autoCollapseTimer?.cancel();
     _autoCollapseTimer = null;
-  }
-
-  void _startRunningPhase() {
-    _cancelAllTimers();
-    setState(() {
-      _phase = _SummaryDisplayPhase.running;
-      _elapsedSeconds = 1;
-    });
-    _runTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      setState(() {
-        _elapsedSeconds++;
-      });
-    });
   }
 
   void _startStreamingPhase() {
@@ -212,8 +180,6 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
   }
 
   void _handleManualToggle() {
-    if (_phase == _SummaryDisplayPhase.running) return;
-
     if (_expandController.isAnimating) return;
 
     if (_expandController.value > 0.5) {
@@ -254,10 +220,8 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     BuildContext context,
     AppLocalizations l10n,
   ) {
-    final hasTiming = widget.message.waitDurationMs > 0 || _elapsedSeconds > 0;
-    final durationSeconds = widget.message.waitDurationMs > 0
-        ? (widget.message.waitDurationMs / 1000).round()
-        : _elapsedSeconds;
+    final hasTiming = widget.message.waitDurationMs > 0;
+    final durationSeconds = (widget.message.waitDurationMs / 1000).round();
 
     final hasTokens =
         widget.message.inputTokens > 0 || widget.message.outputTokens > 0;
@@ -352,17 +316,9 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     double expandValue,
   ) {
     final colorScheme = theme.colorScheme;
-    final isRunning = _phase == _SummaryDisplayPhase.running;
-    final capsuleTitle = isRunning
-        ? '${l10n.historyDialogSummary} · 已运行 $_elapsedSeconds秒'
-        : _formatSettledCapsuleTitle(context, l10n);
+    final capsuleTitle = _formatSettledCapsuleTitle(context, l10n);
     final details = capsuleTitle.substring(l10n.historyDialogSummary.length);
-    final collapsedBackground = isRunning
-        ? Color.alphaBlend(
-            colorScheme.primaryContainer.withValues(alpha: 0.25),
-            theme.scaffoldBackgroundColor,
-          )
-        : bottleColors.isDarkSurface
+    final collapsedBackground = bottleColors.isDarkSurface
         ? bottleColors.cardBackground
         : Color.alphaBlend(
             colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
@@ -370,7 +326,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
           );
     final titleStyle = (theme.textTheme.labelSmall ?? const TextStyle())
         .copyWith(
-          color: isRunning ? colorScheme.primary : colorScheme.onSurfaceVariant,
+          color: colorScheme.onSurfaceVariant,
           fontWeight: FontWeight.w500,
           letterSpacing: 0.2,
         );
@@ -379,7 +335,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
-    final capsuleWidth = titlePainter.width + 20 + (isRunning ? 10 : 18);
+    final capsuleWidth = titlePainter.width + 38;
     final capsuleHeight = math.max(titlePainter.height, 14.0) + 7;
     titlePainter.text = TextSpan(
       text: l10n.historyDialogSummary,
@@ -439,9 +395,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
                         bottleColors.cardBackground,
                         expandValue,
                       )!,
-                      borderColor: isRunning
-                          ? colorScheme.primary
-                          : bottleColors.cardBorder,
+                      borderColor: bottleColors.cardBorder,
                       shadowColor: bottleColors.shadowColor,
                       elevation: bottleColors.elevation * expandValue,
                       neckWidth: neckWidth,
@@ -472,7 +426,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
                                 color: Colors.transparent,
                                 child: InkWell(
                                   key: const ValueKey('summary-toggle'),
-                                  onTap: isRunning ? null : _handleManualToggle,
+                                  onTap: _handleManualToggle,
                                   child: ClipRect(
                                     child: OverflowBox(
                                       minWidth: 0,
@@ -480,17 +434,6 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: <Widget>[
-                                          if (isRunning) ...<Widget>[
-                                            Container(
-                                              width: 5,
-                                              height: 5,
-                                              decoration: BoxDecoration(
-                                                color: colorScheme.primary,
-                                                shape: BoxShape.circle,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 5),
-                                          ],
                                           Text(
                                             l10n.historyDialogSummary,
                                             style: titleStyle,
@@ -504,18 +447,16 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
                                               ),
                                             ),
                                           ),
-                                          if (!isRunning) ...<Widget>[
-                                            const SizedBox(width: 4),
-                                            Transform.rotate(
-                                              angle: math.pi * expandValue,
-                                              child: Icon(
-                                                Icons.keyboard_arrow_down,
-                                                size: 14,
-                                                color: colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
+                                          const SizedBox(width: 4),
+                                          Transform.rotate(
+                                            angle: math.pi * expandValue,
+                                            child: Icon(
+                                              Icons.keyboard_arrow_down,
+                                              size: 14,
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
                                             ),
-                                          ],
+                                          ),
                                         ],
                                       ),
                                     ),

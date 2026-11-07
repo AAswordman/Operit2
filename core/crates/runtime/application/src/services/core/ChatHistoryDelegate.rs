@@ -2559,26 +2559,6 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Updates an existing summary message and notifies the display history flow.
-    pub fn updateSummaryMessage(
-        &mut self,
-        message: ChatMessage,
-        chatIdOverride: Option<String>,
-    ) {
-        let Some(chatId) = chatIdOverride.or_else(|| self.currentChatIdFlow.value()) else {
-            return;
-        };
-        let isCurrentChat = self.currentChatIdFlow.value().as_ref() == Some(&chatId);
-        let persisted = Self::persistentChatMessage(message);
-        self.chatHistoryManager
-            .updateMessage(chatId.clone(), persisted)
-            .expect("updateMessage must succeed");
-        if isCurrentChat {
-            self.reloadCurrentChatDisplayHistory(chatId);
-        }
-    }
-
-    #[allow(non_snake_case)]
     /// Finds the insertion position after the latest AI message.
     pub fn findProperSummaryPosition(&self, messages: Vec<ChatMessage>) -> usize {
         messages
