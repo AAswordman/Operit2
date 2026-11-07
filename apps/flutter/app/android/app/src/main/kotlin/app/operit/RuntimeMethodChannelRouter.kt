@@ -57,6 +57,7 @@ class RuntimeMethodChannelRouter(
 
     /** Delivers one Android document picker result to the document input channel. */
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+        if (androidPlatformChannel.onActivityResult(requestCode)) return true
         return documentInputChannel.onActivityResult(requestCode, resultCode, data)
     }
 }
