@@ -4,7 +4,6 @@ import 'dart:async';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
@@ -21,7 +20,7 @@ import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
-import '../common/ChatInputEnterActivator.dart';
+import '../common/ChatInputEnterShortcuts.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -629,11 +628,11 @@ class _ClassicInputBody extends StatelessWidget {
               onInterruptAndSendMessage != null
           ? 66
           : 36,
-      editor: _ClassicEnterSendShortcuts(
+      editor: ChatInputEnterShortcuts(
         controller: controller,
+        inputExpanded: inputExpanded,
         canSendMessage: canSendMessage,
         onSendMessage: onSendMessage,
-        enabled: !inputExpanded,
         child: ChatPastedImageHandler(
           focusNode: focusNode,
           enabled: !isSpeechRecording && !isSpeechTranscribing,
@@ -1348,75 +1347,6 @@ class _ClassicActionButton extends StatelessWidget {
       buttonSize: 36,
       contentSize: 32,
       iconSize: 17,
-    );
-  }
-}
-
-class _ClassicEnterSendShortcuts extends StatelessWidget {
-  const _ClassicEnterSendShortcuts({
-    required this.controller,
-    required this.canSendMessage,
-    required this.onSendMessage,
-    required this.enabled,
-    required this.child,
-  });
-
-  final TextEditingController controller;
-  final bool canSendMessage;
-  final VoidCallback onSendMessage;
-  final bool enabled;
-  final Widget child;
-
-  /// Builds hardware enter-to-send shortcuts around the text field.
-  @override
-  Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: enabled
-          ? <ShortcutActivator, VoidCallback>{
-              ChatInputEnterActivator(
-                LogicalKeyboardKey.enter,
-                controller: controller,
-              ): _sendIfReady,
-              ChatInputEnterActivator(
-                LogicalKeyboardKey.numpadEnter,
-                controller: controller,
-              ): _sendIfReady,
-              ChatInputEnterActivator(
-                LogicalKeyboardKey.enter,
-                controller: controller,
-                control: true,
-              ): _insertNewline,
-              ChatInputEnterActivator(
-                LogicalKeyboardKey.numpadEnter,
-                controller: controller,
-                control: true,
-              ): _insertNewline,
-            }
-          : const <ShortcutActivator, VoidCallback>{},
-      child: child,
-    );
-  }
-
-  /// Sends the draft when there is content.
-  void _sendIfReady() {
-    if (canSendMessage) {
-      onSendMessage();
-    }
-  }
-
-  /// Inserts a newline at the current selection.
-  void _insertNewline() {
-    final value = controller.value;
-    final text = value.text;
-    final selection = value.selection;
-    final range = selection.isValid
-        ? selection
-        : TextSelection.collapsed(offset: text.length);
-    final nextText = text.replaceRange(range.start, range.end, '\n');
-    controller.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: range.start + 1),
-      composing: TextRange.empty,
     );
   }
 }

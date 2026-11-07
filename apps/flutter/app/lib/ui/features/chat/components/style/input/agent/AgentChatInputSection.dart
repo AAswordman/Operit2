@@ -4,7 +4,6 @@ import 'dart:async';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../../../../core/logging/ClientLogger.dart';
@@ -21,7 +20,7 @@ import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
-import '../common/ChatInputEnterActivator.dart';
+import '../common/ChatInputEnterShortcuts.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -902,8 +901,9 @@ class _InputBody extends StatelessWidget {
             onInsertAttachment: onInsertAttachment,
           ),
       ],
-      editor: _EnterSendShortcuts(
+      editor: ChatInputEnterShortcuts(
         controller: controller,
+        inputExpanded: inputExpanded,
         canSendMessage: canSendMessage,
         onSendMessage: onSendMessage,
         child: ChatPastedImageHandler(
@@ -1652,68 +1652,6 @@ IconData _attachmentIcon(String mimeType) {
     return Icons.image;
   }
   return Icons.description;
-}
-
-class _EnterSendShortcuts extends StatelessWidget {
-  const _EnterSendShortcuts({
-    required this.controller,
-    required this.canSendMessage,
-    required this.onSendMessage,
-    required this.child,
-  });
-
-  final TextEditingController controller;
-  final bool canSendMessage;
-  final VoidCallback onSendMessage;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        ChatInputEnterActivator(
-          LogicalKeyboardKey.enter,
-          controller: controller,
-        ): _sendIfReady,
-        ChatInputEnterActivator(
-          LogicalKeyboardKey.numpadEnter,
-          controller: controller,
-        ): _sendIfReady,
-        ChatInputEnterActivator(
-          LogicalKeyboardKey.enter,
-          controller: controller,
-          control: true,
-        ): _insertNewline,
-        ChatInputEnterActivator(
-          LogicalKeyboardKey.numpadEnter,
-          controller: controller,
-          control: true,
-        ): _insertNewline,
-      },
-      child: child,
-    );
-  }
-
-  void _sendIfReady() {
-    if (canSendMessage) {
-      onSendMessage();
-    }
-  }
-
-  void _insertNewline() {
-    final value = controller.value;
-    final text = value.text;
-    final selection = value.selection;
-    final range = selection.isValid
-        ? selection
-        : TextSelection.collapsed(offset: text.length);
-    final nextText = text.replaceRange(range.start, range.end, '\n');
-    controller.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: range.start + 1),
-      composing: TextRange.empty,
-    );
-  }
 }
 
 class _PopupPlacement {
