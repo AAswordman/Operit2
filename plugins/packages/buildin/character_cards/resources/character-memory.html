@@ -2791,7 +2791,9 @@ ${sections.join("\n\n")}`;
         renderDialogs();
       }
       try {
-        return await host().request(operation);
+        const result = await host().request(operation);
+        if (result === null || result === void 0) throw new Error("\u5BBF\u4E3B\u672A\u8FD4\u56DE\u6267\u884C\u7ED3\u679C");
+        return result;
       } finally {
         if (dialog !== null) dialog.busy = false;
       }

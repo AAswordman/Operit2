@@ -28,23 +28,25 @@ test("memory queue status renders retry and confirmed clear only while failed ca
   assert.match(memoryQueueStatus(dialog({ ...queue(1), lastError: "<failed>" }, false)), /&lt;failed&gt;/u);
 });
 
-/** Routes owner-scoped recovery through the real WebView UI channel instead of a chat-derived owner. */
-test("controlled Chat/AI: the settings page UI channel retries and clears owner-scoped failures", async t => {
+/** Exercises empty, small and oversized queues through production IPC with bounded writes and untouched active records. */
+for (const count of [0, 5, 1000, 1001, 1486]) for (const action of ["retryFailedCandidates", "clearFailedCandidates"]) test(`${action}: ${count} failed candidates`, async t => {
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
-  await runtime.enqueueReplies(); await runtime.makeDue();
-  const failure = new Error("Controlled model outage"); harness.queueExecutionError(failure);
-  await runtime.interval();
-  assert.equal((await readOwner(harness)).candidates.length, 5);
-  assert.deepEqual(plain(await runtime.web({ action: "retryFailedCandidates", ownerKey: CONTROLLED_OWNER })), { retried: 5 });
-  const retried = await readOwner(harness);
-  for (const candidate of retried.candidates) assert.equal(candidate.status, "pending");
-  await runtime.makeDue(); harness.queueAnalysis({});
-  await runtime.interval(); harness.assertOutputsConsumed();
-  assert.equal((await readOwner(harness)).candidates.length, 0);
-  /** A second genuine terminal set is removed through the explicit confirmation request. */
-  await runtime.enqueueReplies(); await runtime.makeDue(); harness.queueExecutionError(failure);
-  await runtime.interval();
-  assert.equal((await readOwner(harness)).candidates.length, 5);
-  assert.deepEqual(plain(await runtime.web({ action: "clearFailedCandidates", ownerKey: CONTROLLED_OWNER })), { cleared: 5 });
-  assert.equal((await readOwner(harness)).candidates.length, 0);
+  await runtime.enqueueReplies(); const seed = (await readOwner(harness)).candidates[0];
+  harness.disk.storage.inspect(sql => {
+    sql.exec("BEGIN; DELETE FROM records WHERE collection='candidates'");
+    const insert = sql.prepare("INSERT INTO records VALUES('candidates',?,?,'fixture-version')");
+    for (let index = 0; index < count + 2; index += 1) {
+      const record = { ...seed, id: String(index).padStart(5, "0"), status: index < count ? "failed" : index === count ? "pending" : "processing", lastError: index < count ? "SQL parse failure" : "" };
+      insert.run(CONTROLLED_OWNER + "/" + record.id, JSON.stringify({ ownerKey: CONTROLLED_OWNER, record }));
+    }
+    sql.exec("COMMIT");
+  });
+  harness.disk.clearCalls();
+  assert.deepEqual(plain(await runtime.web({ action, ownerKey: CONTROLLED_OWNER })), action === "retryFailedCandidates" ? { retried: count } : { cleared: count });
+  const commits = harness.disk.calls.filter(call => call.method === "storage.commit");
+  assert.equal(commits.length, Math.ceil(count / 100)); for (const call of commits) assert.ok(call.args[0].length <= 100);
+  const candidates = (await readOwner(harness)).candidates;
+  assert.equal(candidates.length, action === "retryFailedCandidates" ? count + 2 : 2);
+  assert.equal(candidates.filter(record => record.status === "processing").length, 1);
+  for (const record of candidates) if (record.status !== "processing") { assert.equal(record.status, "pending"); assert.equal(record.lastError, ""); }
 });

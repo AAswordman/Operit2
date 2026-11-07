@@ -4197,6 +4197,31 @@ var DatabaseMemoryRepository = class {
       this.snapshots.delete(state);
     });
   }
+  /** Changes only failed candidates in bounded pages under their exact source and owner versions. */
+  recoverFailedCandidates(ownerKey, producerNodeId) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.owner(ownerKey), now = Date.now();
+      let count = 0, after = "";
+      for (; ; ) {
+        const rows = yield this.memoryDatabase.select("candidates", ownerKey, "json_extract(value,'$.record.status')='failed'", [], 100, after);
+        if (rows.length === 0) return count;
+        yield this.commit(
+          rows.map(
+            /** Preserves concurrent status changes through the exact candidate version. */
+            (row) => producerNodeId === null ? remove({ collection: "candidates", ...row }) : put(
+              "candidates",
+              row.key,
+              { ...row.value, record: { ...row.value.record, producerNodeId, status: "pending", lastError: "", updatedAt: now } },
+              row.version
+            )
+          ),
+          [{ collection: "owners", key: ownerKey, expectedVersion: owner2.version }]
+        );
+        count += rows.length;
+        after = rows[rows.length - 1].key;
+      }
+    });
+  }
   /** Computes record-level mutations only for explicitly selected records. */
   diff(before, after) {
     const previous = new Map(before.map(
@@ -6256,35 +6281,6 @@ function enqueueCandidate(input, repository2) {
     return result2;
   });
 }
-function retryFailedCandidates(ownerKey, repository2) {
-  return __async(this, null, function* () {
-    const space = yield repository2.readMemoryJobState(ownerKey), now = Date.now(), producerNodeId = yield memoryJobProducer();
-    let retried = 0;
-    for (const candidate of space.candidates) if (candidate.status === "failed") {
-      candidate.producerNodeId = producerNodeId;
-      candidate.status = "pending";
-      candidate.lastError = "";
-      candidate.updatedAt = now;
-      retried += 1;
-    }
-    if (retried !== 0) yield repository2.writeMemoryJobState(ownerKey, space);
-    return { retried };
-  });
-}
-function clearFailedCandidates(ownerKey, repository2) {
-  return __async(this, null, function* () {
-    const space = yield repository2.readMemoryJobState(ownerKey);
-    const remaining = space.candidates.filter(
-      /** Retains pending and processing records for their real owners. */
-      (candidate) => candidate.status !== "failed"
-    ), cleared = space.candidates.length - remaining.length;
-    if (cleared !== 0) {
-      space.candidates = remaining;
-      yield repository2.writeMemoryJobState(ownerKey, space);
-    }
-    return { cleared };
-  });
-}
 function startMemoryRebuild(ownerKey, rebuild, repository2) {
   return __async(this, null, function* () {
     assertObject(rebuild, "memory rebuild");
@@ -7674,14 +7670,9 @@ function dispatch(request, host) {
           host
         );
       case "retryFailedCandidates":
-        return executeDomain(
-          "memory.candidates.retryFailed",
-          { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
-          host
-        );
       case "clearFailedCandidates":
         return executeDomain(
-          "memory.candidates.clearFailed",
+          request.action === "retryFailedCandidates" ? "memory.candidates.retryFailed" : "memory.candidates.clearFailed",
           { ownerKey: "ownerKey" in request ? request.ownerKey : yield menuMemoryOwner(request.chatId, host) },
           host
         );
@@ -8034,9 +8025,13 @@ var handlers = {
   /** Enqueues only actual persisted message sources and genuine bound owners. */
   "memory.candidate.enqueue": (input, repository2) => enqueueCandidate(input, repository2),
   /** Returns genuine terminal failures to the pending queue for one later interval retry. */
-  "memory.candidates.retryFailed": (input, repository2) => retryFailedCandidates(input.ownerKey, repository2),
+  "memory.candidates.retryFailed": (input, repository2) => __async(null, null, function* () {
+    return { retried: yield repository2.recoverFailedCandidates(input.ownerKey, yield memoryJobProducer()) };
+  }),
   /** Removes genuine terminal failures from the owner queue. */
-  "memory.candidates.clearFailed": (input, repository2) => clearFailedCandidates(input.ownerKey, repository2),
+  "memory.candidates.clearFailed": (input, repository2) => __async(null, null, function* () {
+    return { cleared: yield repository2.recoverFailedCandidates(input.ownerKey, null) };
+  }),
   /** Resolves chat configuration using this operation's existing repository snapshot. */
   "chat.configuration.resolve": (input, repository2) => resolveConfiguration(input, {
     /** Reads only the requested character. */

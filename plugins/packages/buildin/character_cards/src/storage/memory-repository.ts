@@ -33,7 +33,7 @@ function put(collection: string, recordKey: string, value: object, version: stri
 }
 
 /** Builds one guarded deletion from its original database snapshot. */
-function remove(row: Row): ObjectMutation { return { op: "delete", collection: row.collection, key: row.key, expectedVersion: row.version }; }
+function remove(row: Pick<Row, "collection" | "key" | "version">): ObjectMutation { return { op: "delete", collection: row.collection, key: row.key, expectedVersion: row.version }; }
 
 /** Implements memory operations on synchronized database records using synchronized source records and derived owner-local search indexes. */
 export class DatabaseMemoryRepository {
@@ -325,6 +325,22 @@ export class DatabaseMemoryRepository {
     const after = [{ collection: "owners", key: ownerKey, value: storedValue(owner) }, ...candidates.map(
       /** Uses stable candidate identities for concurrent scheduler claims. */ record => ({ collection: "candidates", key: key(ownerKey, record.id), value: storedValue({ ownerKey, record }) }))];
     await this.commit(this.diff(before, after)); this.snapshots.delete(state);
+  }
+
+  /** Changes only failed candidates in bounded pages under their exact source and owner versions. */
+  async recoverFailedCandidates(ownerKey: string, producerNodeId: string | null): Promise<number> {
+    const owner = await this.owner(ownerKey), now = Date.now();
+    let count = 0, after = "";
+    for (;;) {
+      const rows = await this.memoryDatabase.select<Envelope<MemoryJobState["candidates"][number]>>("candidates", ownerKey, "json_extract(value,'$.record.status')='failed'", [], 100, after);
+      if (rows.length === 0) return count;
+      await this.commit(rows.map(
+        /** Preserves concurrent status changes through the exact candidate version. */
+        row => producerNodeId === null ? remove({ collection: "candidates", ...row }) : put("candidates", row.key,
+          { ...row.value, record: { ...row.value.record, producerNodeId, status: "pending", lastError: "", updatedAt: now } }, row.version)),
+        [{ collection: "owners", key: ownerKey, expectedVersion: owner.version }]);
+      count += rows.length; after = rows[rows.length - 1].key;
+    }
   }
 
   /** Computes record-level mutations only for explicitly selected records. */

@@ -113,6 +113,8 @@ export interface CharacterRepository {
   readMemoryJobState(ownerKey: string): Promise<import("./model").MemoryJobState>;
   /** Writes job changes under their original exact record versions. */
   writeMemoryJobState(ownerKey: string, state: import("./model").MemoryJobState): Promise<void>;
+  /** Retries failures on the selected producer, or clears them when explicitly passed null. */
+  recoverFailedCandidates(ownerKey: string, producerNodeId: string | null): Promise<number>;
   /** Rebuilds source vectors through bounded durable database pages. */
   rebuildMemoryEmbeddings(ownerKey: string): Promise<number>;
   /** Ranks original document chunks without constructing source vectors during queries. */

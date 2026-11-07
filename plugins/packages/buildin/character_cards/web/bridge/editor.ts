@@ -87,7 +87,11 @@ export function createEditor() {
   async function request<A extends WebAction>(operation: WebRequest<A>, options?: { background: boolean }): Promise<WebResponses[A]> {
     const dialog = options?.background || state.dialogs.length === 0 ? null : topDialog();
     if (dialog !== null) { dialog.busy = true; renderDialogs(); }
-    try { return await host().request(operation); }
+    try {
+      const result = await host().request(operation);
+      if (result === null || result === undefined) throw new Error("宿主未返回执行结果");
+      return result;
+    }
     finally { if (dialog !== null) dialog.busy = false; }
   }
   /** Delegates top-level painting to the role-card page composer. */

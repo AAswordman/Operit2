@@ -105,28 +105,6 @@ export async function enqueueCandidate(input: CandidateRequest, repository: Char
   return result;
 }
 
-/** Returns genuine terminal failures to the pending queue so a later interval can retry them. */
-export async function retryFailedCandidates(ownerKey: string, repository: CharacterRepository): Promise<{ retried: number }> {
-  const space = await repository.readMemoryJobState(ownerKey), now = Date.now(), producerNodeId = await memoryJobProducer();
-  let retried = 0;
-  for (const candidate of space.candidates) if (candidate.status === "failed") {
-    candidate.producerNodeId = producerNodeId; candidate.status = "pending"; candidate.lastError = ""; candidate.updatedAt = now; retried += 1;
-  }
-  if (retried !== 0) await repository.writeMemoryJobState(ownerKey, space);
-  return { retried };
-}
-
-/** Removes only terminal failed records so the queue stops reporting permanent failures. */
-export async function clearFailedCandidates(ownerKey: string, repository: CharacterRepository): Promise<{ cleared: number }> {
-  const space = await repository.readMemoryJobState(ownerKey);
-  const remaining = space.candidates.filter(
-    /** Retains pending and processing records for their real owners. */
-    candidate => candidate.status !== "failed",
-  ), cleared = space.candidates.length - remaining.length;
-  if (cleared !== 0) { space.candidates = remaining; await repository.writeMemoryJobState(ownerKey, space); }
-  return { cleared };
-}
-
 /** Plans and persists a genuine requested rebuild for later existing host interval execution. */
 export async function startMemoryRebuild(ownerKey: string, rebuild: MemoryRebuild, repository: CharacterRepository): Promise<MemoryRebuildProgress> {
   assertObject(rebuild, "memory rebuild"); assertStrings(rebuild.chatIds, "rebuild chat ids"); assertInteger(rebuild.windowMessageCount, "rebuild window size", 1);
