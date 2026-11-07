@@ -24,7 +24,7 @@ operit-store = { version = "0.1.0", path = "../../persistence/store" }
 operit-tools = { version = "2.0.0-preview.17", path = "../../tool/services", default-features = false }
 operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util" }
 regex.workspace = true
-reqwest.workspace = true
+http = "1"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -33,3 +33,6 @@ tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true

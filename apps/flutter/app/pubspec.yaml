@@ -65,6 +65,7 @@ dependencies:
       ref: 35fb467533e174411a117b2a030c15d2a3a9687c
       path: packages/path_provider/path_provider_ohos
   path: ^1.9.1
+  pub_semver: ^2.2.1
   record: ^6.2.1
   record_ohos:
     path: ../thirdparty/record_ohos

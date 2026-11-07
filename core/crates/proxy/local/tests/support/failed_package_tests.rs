@@ -317,9 +317,9 @@ async fn shared_builtin_modes_ignore_device_local_retirement() {
     }
 }
 
-/// Keeps bundled provenance separate from ownership and uses independent scope ranks for every hook.
+/// Keeps ownership independent of execution order and ignores obsolete user ranks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn builtin_scope_and_user_order_share_one_execution_order() {
+async fn builtin_scope_uses_dependencies_instead_of_user_ranks() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
     let storage = register_test_runtime_roots();
     let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
@@ -344,34 +344,18 @@ async fn builtin_scope_and_user_order_share_one_execution_order() {
         .any(|candidate| candidate.packageName == name));
     let store = ExtensionStore::new(storage.clone());
     assert_eq!(store.record("package", name).unwrap().scope, "space");
-    let mut requested = manager.getToolPkgContainerOrder();
-    requested.reverse();
-    manager.setToolPkgContainerOrder(requested.clone()).unwrap();
-    let mut expected = Vec::new();
-    for scope in ["space", "device"] {
-        let members = requested.iter().filter(|id| store.record("package", id).unwrap().scope == scope);
-        for (rank, id) in members.enumerate() {
-            assert_eq!(store.record("package", id).unwrap().settings["order"], rank);
-            expected.push(id.clone());
+    let active = manager.getEnabledToolPkgContainerRuntimes();
+    let expected = active.iter().map(|runtime| runtime.packageName.clone()).collect::<Vec<_>>();
+    for (index, runtime) in active.iter().enumerate() {
+        for requirement in &runtime.requires {
+            assert!(expected.iter().position(|id| id == requirement.id.trim()).unwrap() < index);
         }
+        let mut record = store.record("package", &runtime.packageName).unwrap();
+        record.settings["order"] = json!(active.len() - index);
+        store.setSettings("package", &runtime.packageName, record.settings).unwrap();
     }
-    assert_eq!(manager.getToolPkgContainerOrder(), expected);
-    assert_eq!(manager.getToolPkgContainerRuntimes().into_iter().map(|runtime| runtime.packageName).collect::<Vec<_>>(), expected);
-    let enabled = manager.getEnabledPackageNames();
-    assert_eq!(manager.getEnabledToolPkgContainerRuntimes().into_iter().map(|runtime| runtime.packageName).collect::<Vec<_>>(),
-        expected.iter().filter(|id| enabled.contains(id)).cloned().collect::<Vec<_>>());
-    let sync = operit_store::SyncOperationStore::SyncOperationStore::new(storage.clone(), "runtime/sync");
-    let before = sync.localClock().unwrap();
-    let mut local_order = expected.iter().filter(|id| store.record("package", id).unwrap().scope == "device")
-        .cloned().collect::<Vec<_>>();
-    assert!(local_order.len() > 1);
-    local_order.reverse();
-    let mut reordered = expected.iter().filter(|id| store.record("package", id).unwrap().scope == "space")
-        .cloned().collect::<Vec<_>>();
-    reordered.extend(local_order);
-    manager.setToolPkgContainerOrder(reordered.clone()).unwrap();
-    assert_eq!(manager.getToolPkgContainerOrder(), reordered);
-    assert_eq!(sync.localClock().unwrap(), before, "Device-only ordering must not rewrite shared ranks");
+    assert_eq!(manager.getEnabledToolPkgContainerRuntimes().iter()
+        .map(|runtime| runtime.packageName.clone()).collect::<Vec<_>>(), expected);
     manager.setPackageScope(name, "device").unwrap();
     assert!(!manager.getBundledExternalPackageCandidates().iter()
         .any(|candidate| candidate.packageName == name));

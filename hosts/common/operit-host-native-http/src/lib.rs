@@ -34,7 +34,7 @@ pub struct NativeHttpHost {
     httpClients: Arc<Mutex<BTreeMap<HttpClientPolicy, AsyncClient>>>,
 }
 
-/// Identifies the connection pool for an exact buffered HTTP request policy.
+/// Identifies the shared connection pool for an exact HTTP request policy.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct HttpClientPolicy {
     connectTimeoutSeconds: u64,
@@ -262,6 +262,7 @@ impl NativeHttpHost {
             streams.insert(streamId.clone(), cancelSender.clone());
         }
         let streams = self.byteStreams.clone();
+        let clients = self.httpClients.clone();
         let taskStreamId = streamId.clone();
         let spawnResult = NativeHostRuntimeTaskSchedulerHost::new().scheduleNetworkAsyncTask(
             "native-http-stream",
@@ -269,6 +270,7 @@ impl NativeHttpHost {
                 Box::pin(async move {
                     let result = executeHttpByteStream(
                         request,
+                        clients,
                         cancelReceiver,
                         onOpened,
                         onResponse,
@@ -353,45 +355,18 @@ impl HttpStreamHost for NativeHttpHost {
 #[allow(non_snake_case)]
 async fn executeHttpByteStream(
     request: HttpRequestData,
+    clients: Arc<Mutex<BTreeMap<HttpClientPolicy, AsyncClient>>>,
     mut cancelReceiver: tokio::sync::watch::Receiver<bool>,
     onOpened: HttpStreamOpenedCallback,
     onResponse: Option<HttpStreamResponseCallback>,
     onChunk: HttpStreamChunkCallback,
 ) -> HostResult<()> {
-    let method = Method::from_bytes(request.method.as_bytes())
-        .map_err(|error| HostError::new(error.to_string()))?;
-    let client = buildHttpStreamClient(
-        request.connectTimeoutSeconds,
-        request.readTimeoutSeconds,
-        request.followRedirects,
-        request.ignoreSsl,
-        &request.proxyHost,
-        request.proxyPort,
-    )?;
-    let mut httpRequest = client.request(method, request.url);
-    httpRequest = httpRequest.headers(headersToReqwest(&request.headers)?);
-    if !request.fileParts.is_empty() || !request.formFields.is_empty() {
-        let mut form = reqwest::multipart::Form::new();
-        for (name, value) in request.formFields {
-            form = form.text(name, value);
-        }
-        for file in request.fileParts {
-            let part = reqwest::multipart::Part::bytes(file.content)
-                .file_name(file.fileName)
-                .mime_str(&file.contentType)
-                .map_err(httpError)?;
-            form = form.part(file.fieldName, part);
-        }
-        httpRequest = httpRequest.multipart(form);
-    } else if !request.body.is_empty() {
-        httpRequest = httpRequest.body(request.body);
-    }
     let mut response = tokio::select! {
         changed = cancelReceiver.changed() => {
             changed.map_err(|error| HostError::new(error.to_string()))?;
             return Ok(());
         }
-        response = sendOnNetworkTask(httpRequest) => {
+        response = sendHttpRequestAsync(request, clients) => {
             response?
         }
     };

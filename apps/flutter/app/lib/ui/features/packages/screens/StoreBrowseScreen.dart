@@ -42,17 +42,21 @@ class MarketSortMenu extends StatelessWidget {
     super.key,
     required this.sort,
     required this.onChanged,
+    this.compact = false,
   });
 
   final MarketSortOption sort;
   final ValueChanged<MarketSortOption> onChanged;
+  final bool compact;
 
+  /// Shows the current order in the tooltip when only the icon is visible.
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<MarketSortOption>(
-      tooltip: '排序',
+      tooltip: '排序：${marketSortLabel(sort)}',
       initialValue: sort,
       onSelected: onChanged,
+      icon: compact ? const Icon(Icons.sort_rounded, size: 20) : null,
       itemBuilder: (context) => <PopupMenuEntry<MarketSortOption>>[
         for (final option in MarketSortOption.values)
           PopupMenuItem<MarketSortOption>(
@@ -60,17 +64,19 @@ class MarketSortMenu extends StatelessWidget {
             child: Text(marketSortLabel(option)),
           ),
       ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Icon(Icons.sort_rounded, size: 20),
-            const SizedBox(width: 6),
-            Text(marketSortLabel(sort)),
-          ],
-        ),
-      ),
+      child: compact
+          ? null
+          : Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Icon(Icons.sort_rounded, size: 20),
+                  const SizedBox(width: 6),
+                  Text(marketSortLabel(sort)),
+                ],
+              ),
+            ),
     );
   }
 }

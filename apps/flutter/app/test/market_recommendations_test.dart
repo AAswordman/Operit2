@@ -5,6 +5,7 @@ import 'package:operit2/ui/features/packages/market/MarketRecommendations.dart';
 
 final _now = DateTime.utc(2026, 11, 5);
 
+/// Creates market candidates with controlled ranking inputs.
 MarketEntrySummary _entry(
   String id, {
   int days = 1,
@@ -13,6 +14,7 @@ MarketEntrySummary _entry(
   String type = 'package',
   String? createdAt,
   String? updatedAt,
+  String? apiVersion,
 }) => MarketEntrySummary.fromJson({
   'id': id,
   'type': type,
@@ -21,12 +23,69 @@ MarketEntrySummary _entry(
   'updatedAt':
       updatedAt ?? _now.subtract(Duration(days: days)).toIso8601String(),
   'downloads': downloads,
+  if (apiVersion != null) 'latestVersion': {'apiVersion': apiVersion},
   'reactions': [
     {'reaction': '+1', 'total': likes},
   ],
 });
 
 void main() {
+  for (final apiVersion in [
+    '2.0.0',
+    '2.0.0+build.1',
+    '2.0.1',
+    '2.10.0',
+    '10.0.0',
+  ]) {
+    test('ToolPkg API $apiVersion receives a recommendation boost', () {
+      final legacy = _entry('a-legacy', apiVersion: '1.99.99');
+      final modern = _entry('z-modern', days: 2, apiVersion: apiVersion);
+      expect(marketRecommendations([legacy, modern], now: _now), [
+        modern,
+        legacy,
+      ]);
+      expect(marketRecommendations([modern, legacy], now: _now), [
+        modern,
+        legacy,
+      ]);
+    });
+  }
+
+  for (final apiVersion in [null, '', 'invalid', '1.99.99', '2.0.0-beta.1']) {
+    test('ToolPkg API $apiVersion does not receive a recommendation boost', () {
+      final baseline = _entry('a-baseline');
+      final candidate = _entry('z-candidate', apiVersion: apiVersion);
+      expect(marketRecommendations([candidate, baseline], now: _now), [
+        baseline,
+        candidate,
+      ]);
+    });
+  }
+
+  test(
+    'the boost uses the latest API version rather than package version or history',
+    () {
+      final modern = _entry('z-modern', apiVersion: '2.0.0');
+      final legacy = MarketEntrySummary.fromJson({
+        ..._entry('a-legacy').toJson(),
+        'latestVersion': {'version': '10.0.0', 'apiVersion': '1.0.0'},
+        'versions': [
+          {'apiVersion': '3.0.0'},
+        ],
+      });
+      expect(marketRecommendations([legacy, modern], now: _now), [
+        modern,
+        legacy,
+      ]);
+    },
+  );
+
+  test('API version boost preserves recency decay', () {
+    final fresh = _entry('fresh', days: 0);
+    final stale = _entry('stale', days: 30, apiVersion: '2.0.0');
+    expect(marketRecommendations([stale, fresh], now: _now), [fresh, stale]);
+  });
+
   test('new releases outrank historical leaders regardless of feedback', () {
     final recent = _entry('recent');
     final old = _entry('old', days: 365, downloads: 1000000, likes: 1000);

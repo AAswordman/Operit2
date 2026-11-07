@@ -24,16 +24,28 @@ impl ResponseStream {
         let headSender = sender.clone();
         let chunkSender = sender.clone();
         host.openHttpResponseStream(
-            id.clone(), request,
-            Arc::new(move |head| { let _ = headSender.send(ResponseEvent::Head(head)); }),
-            Arc::new(move |bytes| { let _ = chunkSender.send(ResponseEvent::Bytes(bytes)); }),
-            Arc::new(move |result| { let _ = sender.send(ResponseEvent::Closed(result)); }),
-        ).map_err(|error| error.to_string())?;
+            id.clone(),
+            request,
+            Arc::new(move |head| {
+                let _ = headSender.send(ResponseEvent::Head(head));
+            }),
+            Arc::new(move |bytes| {
+                let _ = chunkSender.send(ResponseEvent::Bytes(bytes));
+            }),
+            Arc::new(move |result| {
+                let _ = sender.send(ResponseEvent::Closed(result));
+            }),
+        )
+        .map_err(|error| error.to_string())?;
         Ok(Self { host, id, events })
     }
 
-    pub(super) async fn next(&mut self, deadline: &StartupDeadline) -> Result<ResponseEvent, String> {
-        let remaining = deadline.remainingMs()
+    pub(super) async fn next(
+        &mut self,
+        deadline: &StartupDeadline,
+    ) -> Result<ResponseEvent, String> {
+        let remaining = deadline
+            .remainingMs()
             .map_err(|error| format!("Remote MCP HTTP request timed out: {error}"))?;
         tokio::select! {
             biased;
@@ -51,24 +63,82 @@ impl ResponseStream {
 }
 
 impl Drop for ResponseStream {
-    fn drop(&mut self) { let _ = self.host.closeHttpByteStream(&self.id); }
+    fn drop(&mut self) {
+        let _ = self.host.closeHttpByteStream(&self.id);
+    }
 }
 
 pub(super) async fn sendJsonRpc(
-    session: &mut RemoteMcpSession, payload: Value, expectedId: Option<u64>, timeoutMs: u64,
+    session: &mut RemoteMcpSession,
+    payload: Value,
+    expectedId: Option<u64>,
+    timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
     let endpoint = session.endpoint.clone();
     sendJsonRpcTo(session, payload, expectedId, timeoutMs, &endpoint).await
 }
 
+/// Opens the Streamable HTTP server event channel before requests can return 202.
+pub(super) async fn connectServerEvents(
+    session: &mut RemoteMcpSession,
+    deadline: &StartupDeadline,
+) -> Result<(), String> {
+    if session.sseReader.is_some() {
+        return Ok(());
+    }
+    let mut request = remoteHttpRequest(
+        "GET",
+        &session.endpoint,
+        buildRemoteHeaders(session, false)?,
+        Vec::new(),
+        deadline.remainingMs()?,
+    );
+    request.readTimeoutSeconds = 0;
+    let mut stream = ResponseStream::open(session.httpHost.clone(), request)?;
+    let head = match stream.next(deadline).await? {
+        ResponseEvent::Head(head) => head,
+        ResponseEvent::Closed(Err(error)) => return Err(error),
+        _ => return Err("Remote MCP GET stream did not send response headers".to_string()),
+    };
+    // HTTP 405 explicitly declares that this server has no standalone event channel.
+    if head.statusCode == 405 {
+        return Ok(());
+    }
+    if !isSuccess(head.statusCode) {
+        return Err(format!(
+            "Remote MCP GET stream failed with status {}",
+            head.statusCode
+        ));
+    }
+    let content_type = head
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.split(';').next().unwrap_or_default().trim());
+    if !content_type.is_some_and(|value| value.eq_ignore_ascii_case("text/event-stream")) {
+        return Err("Remote MCP GET stream must return text/event-stream".to_string());
+    }
+    rememberRemoteSessionId(session, &head.headers)?;
+    session.sseReader = Some(RemoteSseReader::new(stream));
+    Ok(())
+}
+
 /// Legacy SSE POSTs only acknowledge delivery; their responses arrive on the GET stream.
 pub(super) async fn sendJsonRpcTo(
-    session: &mut RemoteMcpSession, payload: Value, expectedId: Option<u64>, timeoutMs: u64,
+    session: &mut RemoteMcpSession,
+    payload: Value,
+    expectedId: Option<u64>,
+    timeoutMs: u64,
     endpoint: &str,
 ) -> Result<Option<Value>, String> {
     let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
-    let mut request = remoteHttpRequest("POST", endpoint, buildRemoteHeaders(session, true)?,
-        serde_json::to_vec(&payload).map_err(|error| error.to_string())?, timeoutMs);
+    let mut request = remoteHttpRequest(
+        "POST",
+        endpoint,
+        buildRemoteHeaders(session, true)?,
+        serde_json::to_vec(&payload).map_err(|error| error.to_string())?,
+        timeoutMs,
+    );
     request.readTimeoutSeconds = 0;
     let mut stream = ResponseStream::open(session.httpHost.clone(), request)?;
     let head = match stream.next(&deadline).await? {
@@ -108,7 +178,13 @@ pub(super) async fn sendJsonRpcTo(
     let Some(expectedId) = expectedId else {
         return Ok(None);
     };
-    if head.statusCode == 202 || head.statusCode == 204 {
+    if head.statusCode == 202 {
+        drop(stream);
+        return readRemoteSseResponse(session, expectedId, &deadline)
+            .await
+            .map(Some);
+    }
+    if head.statusCode == 204 {
         return Err(format!(
             "Remote MCP HTTP response {} did not contain JSON-RPC response {expectedId}",
             head.statusCode

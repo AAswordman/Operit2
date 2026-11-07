@@ -1620,24 +1620,26 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
   }
 }
 
+/// Describes why a prerequisite prevents automatic loading.
 String _dependencyIssueStatus(core_proxy.ToolPkgDependencyIssue issue) {
   return switch (issue.code) {
     'missing' => '未安装',
     'disabled' => '未启用',
     'version_incompatible' => '版本不兼容',
-    'load_order' => '加载顺序错误',
+    'unresolved' => '依赖无法解析',
     _ => throw StateError(
       'Unsupported ToolPkg dependency issue code: ${issue.code}',
     ),
   };
 }
 
+/// Explains the prerequisite failure and its declared version range.
 String _dependencyIssueDescription(core_proxy.ToolPkgDependencyIssue issue) {
   final base = switch (issue.code) {
     'missing' => '未安装这个前置插件。',
     'disabled' => '前置插件已安装，但当前未启用。',
     'version_incompatible' => '前置插件的版本不满足 manifest 声明的范围。',
-    'load_order' => '前置插件必须排在当前插件之前加载。',
+    'unresolved' => '前置插件存在循环依赖或其依赖无法满足，当前插件已停止加载。',
     _ => throw StateError(
       'Unsupported ToolPkg dependency issue code: ${issue.code}',
     ),

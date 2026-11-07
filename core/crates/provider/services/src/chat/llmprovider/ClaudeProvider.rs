@@ -1,17 +1,17 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
+use super::StreamingResponseLines::SseDecoder;
 use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
-use super::StreamingResponseLines::{decodeStreamingTail, takeNextStreamingLine};
 use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
-    SendMessageRequest, TokenCounts,
+    SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
@@ -21,7 +21,7 @@ use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel_and_failure, RevisableTextStream,
-    RevisableTextStreamLike, TerminalFailureState,
+    RevisableTextStreamLike, TerminalFailureState, TextStreamEvent, TextStreamEventType,
 };
 use operit_util::stream::Stream::FnStream;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
@@ -37,6 +37,7 @@ pub struct ClaudeProvider {
     pub custom_headers: Vec<(String, String)>,
     enable_claude_1h_prompt_cache: bool,
     state: Arc<Mutex<ClaudeProviderState>>,
+    cancel_signal: tokio::sync::watch::Sender<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -66,6 +67,7 @@ impl ClaudeProvider {
             custom_headers,
             enable_claude_1h_prompt_cache: false,
             state: Arc::new(Mutex::new(ClaudeProviderState::default())),
+            cancel_signal: tokio::sync::watch::channel(false).0,
         }
     }
 
@@ -80,6 +82,7 @@ impl ClaudeProvider {
             .lock()
             .expect("ClaudeProvider state mutex poisoned")
             .cancelled = cancelled;
+        self.cancel_signal.send_replace(cancelled);
     }
 
     fn is_cancelled(&self) -> bool {
@@ -105,50 +108,51 @@ impl ClaudeProvider {
         state.outputTokenCount = state.tokenCacheManager.output_token_count();
     }
 
+    /// Wakes blocked header and body reads immediately when cancellation is requested.
     async fn waitUntilCancelled(self) {
-        loop {
-            if self.is_cancelled() {
+        let mut receiver = self.cancel_signal.subscribe();
+        while !*receiver.borrow_and_update() {
+            if receiver.changed().await.is_err() {
                 break;
             }
-            defaultHostRuntimeTaskSchedulerHost()
-                .waitForHostRuntimeDelay(50)
-                .await
-                .expect("provider cancellation polling delay must be provided by the Host");
         }
     }
 
     async fn sendHttpRequest(
         &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response, AiServiceError> {
+        request: super::ProviderHttp::RequestBuilder,
+    ) -> Result<super::ProviderHttp::Response, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            response = request.send() => response,
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
 
     async fn readResponseText(
         &self,
-        response: reqwest::Response,
+        response: super::ProviderHttp::Response,
     ) -> Result<String, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            text = response.text() => text.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            text = response.text() => text,
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
 
-    async fn readResponseJson(&self, response: reqwest::Response) -> Result<Value, AiServiceError> {
+    async fn readResponseJson(
+        &self,
+        response: super::ProviderHttp::Response,
+    ) -> Result<Value, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            json = response.json() => json.map_err(|error| AiServiceError::RequestFailed(error.to_string())),
+            json = response.json() => json,
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
@@ -422,7 +426,9 @@ impl ClaudeProvider {
         }
 
         let image_links = MediaLinkParser::extract_image_links(&text_after_media_removal);
-        let text_without_links = MediaLinkParser::remove_image_links(&text_after_media_removal).trim().to_string();
+        let text_without_links = MediaLinkParser::remove_image_links(&text_after_media_removal)
+            .trim()
+            .to_string();
         let mut content_blocks = Vec::new();
         for link in image_links {
             content_blocks.push(json!({
@@ -768,40 +774,27 @@ impl AIService for ClaudeProvider {
         self.set_cancelled(false);
         self.reset_token_counts();
         if request.stream {
-            let event_channel = empty_revisable_event_channel();
-            let streamEventChannel = event_channel.clone();
-            let terminalFailure = TerminalFailureState::new();
-            let producerTerminalFailure = terminalFailure.clone();
-            let mut ownedProvider = Some(self.clone());
-            let mut ownedRequest = Some(request);
-            let coldStream = FnStream::new(move |emit| {
-                let request = ownedRequest
-                    .take()
-                    .expect("ClaudeProvider stream must only be collected once");
-                let mut provider = ownedProvider
-                    .take()
-                    .expect("ClaudeProvider stream must only be collected once");
-                let eventChannel = streamEventChannel.clone();
-                let producerTerminalFailure = producerTerminalFailure.clone();
-                Box::pin(async move {
-                    match provider.send_streaming_message(request).await {
-                        Ok(mut responseStream) => {
-                            responseStream.collect(emit).await;
-                            if let Some(error) = responseStream.terminal_failure() {
-                                producerTerminalFailure.set(error);
+            let output = SharedAiResponseStream::new_ordered(
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+            );
+            let producer = output.clone();
+            let mut provider = self.clone();
+            defaultHostRuntimeTaskSchedulerHost()
+                .scheduleHostRuntimeAsyncTask(
+                    "claude-response-stream",
+                    Box::new(move || {
+                        Box::pin(async move {
+                            match provider.send_streaming_message(request, &producer).await {
+                                Ok(()) | Err(AiServiceError::RequestCancelled) => {}
+                                Err(error) => producer.set_terminal_failure(error.to_string()),
                             }
-                        }
-                        Err(AiServiceError::RequestCancelled) => {}
-                        Err(error) => producerTerminalFailure.set(error.to_string()),
-                    }
-                    eventChannel.close();
-                })
-            });
-            return Ok(Box::new(with_event_channel_and_failure(
-                coldStream,
-                event_channel,
-                terminalFailure,
-            )));
+                            producer.close();
+                        })
+                    }),
+                )
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            return Ok(Box::new(output));
         }
         let event_channel = empty_revisable_event_channel();
         let streamEventChannel = event_channel.clone();
@@ -850,84 +843,61 @@ impl AIService for ClaudeProvider {
 }
 
 impl ClaudeProvider {
+    /// Publishes each event immediately and rolls back only when another attempt is accepted.
     async fn send_streaming_message(
         &mut self,
         request: SendMessageRequest,
-    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
-        let mut retryCount = 0;
+        output: &SharedAiResponseStream,
+    ) -> Result<(), AiServiceError> {
+        let savepoint = uuid::Uuid::new_v4().to_string();
+        output.emit_revision(TextStreamEvent {
+            event_type: TextStreamEventType::Savepoint,
+            id: savepoint.clone(),
+        });
+        let mut retry_count = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match self
-                .sendHttpRequest(
-                    reqwest::Client::new()
-                        .post(&self.api_endpoint)
-                        .headers(self.headers()?)
-                        .json(&request_body),
-                )
-                .await
-            {
-                Ok(response) => response,
+            let result = async {
+                let response = self
+                    .sendHttpRequest(
+                        super::ProviderHttp::post(&self.api_endpoint)
+                            .headers(self.headers()?)
+                            .json(&request_body),
+                    )
+                    .await?;
+                if !response.status().is_success() {
+                    let status = response.status();
+                    return Err(AiServiceError::RequestFailed(format!(
+                        "{status}: {}",
+                        self.readResponseText(response).await?
+                    )));
+                }
+                self.process_streaming_response(response, output).await
+            }
+            .await;
+            match result {
+                Ok(()) => return Ok(()),
                 Err(AiServiceError::RequestCancelled) => {
-                    return Err(AiServiceError::RequestCancelled);
+                    return Err(AiServiceError::RequestCancelled)
                 }
                 Err(error) => {
-                    let errorText = retry_error_text(&error);
-                    if !request.enable_retry {
+                    if !request.enable_retry
+                        || retry_count >= super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS
+                    {
                         return Err(error);
                     }
-                    let newRetryCount = retryCount + 1;
-                    if newRetryCount > maxRetries {
-                        return Err(error);
+                    retry_count += 1;
+                    output.emit_revision(TextStreamEvent {
+                        event_type: TextStreamEventType::Rollback,
+                        id: savepoint.clone(),
+                    });
+                    self.reset_token_counts();
+                    if let Some(callback) = &request.on_non_fatal_error {
+                        callback(retry_message(&retry_error_text(&error), retry_count));
                     }
-                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                    }
-                    self.delayRetryOrCancel(newRetryCount).await?;
-                    retryCount = newRetryCount;
-                    continue;
+                    self.delayRetryOrCancel(retry_count).await?;
                 }
-            };
-            let status = response.status();
-            if !status.is_success() {
-                let text = self.readResponseText(response).await?;
-                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
-                let errorText = retry_error_text(&error);
-                if !request.enable_retry {
-                    return Err(error);
-                }
-                let newRetryCount = retryCount + 1;
-                if newRetryCount > maxRetries {
-                    return Err(error);
-                }
-                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                }
-                self.delayRetryOrCancel(newRetryCount).await?;
-                retryCount = newRetryCount;
-                continue;
             }
-            let error = match self.process_streaming_response(response).await {
-                Ok(responseStream) => return Ok(responseStream),
-                Err(AiServiceError::RequestCancelled) => {
-                    return Err(AiServiceError::RequestCancelled);
-                }
-                Err(error) => error,
-            };
-            let errorText = retry_error_text(&error);
-            if !request.enable_retry {
-                return Err(error);
-            }
-            let newRetryCount = retryCount + 1;
-            if newRetryCount > maxRetries {
-                return Err(error);
-            }
-            if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                on_non_fatal_error(retry_message(&errorText, newRetryCount));
-            }
-            self.delayRetryOrCancel(newRetryCount).await?;
-            retryCount = newRetryCount;
-            continue;
         }
     }
 
@@ -941,8 +911,7 @@ impl ClaudeProvider {
             let request_body = self.create_request_body(&request)?;
             let response = match self
                 .sendHttpRequest(
-                    reqwest::Client::new()
-                        .post(&self.api_endpoint)
+                    super::ProviderHttp::post(&self.api_endpoint)
                         .headers(self.headers()?)
                         .json(&request_body),
                 )
@@ -1020,111 +989,108 @@ impl ClaudeProvider {
         }
     }
 
-    /// Parses response lines after their complete UTF-8 bytes have arrived.
-    async fn process_streaming_response(
+    /// Emits complete SSE events while preserving an interrupted response as a failure.
+    pub(super) async fn process_streaming_response(
         &mut self,
-        response: reqwest::Response,
-    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
+        response: super::ProviderHttp::Response,
+        output: &SharedAiResponseStream,
+    ) -> Result<(), AiServiceError> {
+        if response
+            .media_type()
+            .eq_ignore_ascii_case("application/json")
+        {
+            let json: Value = self.readResponseJson(response).await?;
+            if let Some(error) = json.get("error") {
+                return Err(AiServiceError::RequestFailed(error.to_string()));
+            }
+            self.apply_usage_with_format(json.get("usage"), json.get("choices").is_some());
+            output.emit_chunk(self.parse_anthropic_non_streaming(&json));
+            return Ok(());
+        }
         let mut chunks = Vec::new();
         let mut accumulated_usage = Map::new();
-        let mut pending_bytes = Vec::new();
+        let mut decoder = SseDecoder::default();
         let mut bytes_stream = response.bytes_stream();
-        let mut current_tool_parser: Option<StreamingJsonXmlConverter> = None;
-        let mut current_tool_tag_name: Option<String> = None;
+        let mut current_tool_parser = None;
+        let mut current_tool_tag_name = None;
         let mut is_in_tool_call = false;
         let mut is_in_thinking_block = false;
-        let mut non_sse_json_lines_buffer = String::new();
-        let mut emitted_any = false;
-
-        while let Some(item) = bytes_stream.next().await {
+        let mut completed = false;
+        let cancelled = self.clone().waitUntilCancelled();
+        tokio::pin!(cancelled);
+        loop {
             if self.is_cancelled() {
-                break;
+                return Err(AiServiceError::RequestCancelled);
             }
-            let bytes =
-                item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            pending_bytes.extend_from_slice(&bytes);
-            while let Some(line) = takeNextStreamingLine(&mut pending_bytes)? {
-                self.process_streaming_line(
-                    &line,
+            let item = tokio::select! {
+                item = bytes_stream.next() => item,
+                _ = &mut cancelled => return Err(AiServiceError::RequestCancelled),
+            };
+            let Some(item) = item else {
+                break;
+            };
+            for data in decoder.push(&item?)? {
+                self.process_streaming_event(
+                    &data,
                     &mut chunks,
                     &mut accumulated_usage,
                     &mut current_tool_parser,
                     &mut current_tool_tag_name,
                     &mut is_in_tool_call,
                     &mut is_in_thinking_block,
-                    &mut non_sse_json_lines_buffer,
-                    &mut emitted_any,
+                    &mut completed,
                 )?;
-            }
-        }
-        let pending = decodeStreamingTail(&mut pending_bytes)?;
-        if !pending.is_empty() {
-            self.process_streaming_line(
-                &pending,
-                &mut chunks,
-                &mut accumulated_usage,
-                &mut current_tool_parser,
-                &mut current_tool_tag_name,
-                &mut is_in_tool_call,
-                &mut is_in_thinking_block,
-                &mut non_sse_json_lines_buffer,
-                &mut emitted_any,
-            )?;
-        }
-        if !emitted_any && !non_sse_json_lines_buffer.trim().is_empty() {
-            if let Ok(json_response) =
-                serde_json::from_str::<Value>(non_sse_json_lines_buffer.trim())
-            {
-                let text = self.parse_anthropic_non_streaming(&json_response);
-                if !text.is_empty() {
-                    chunks.push(text);
+                for chunk in chunks.drain(..) {
+                    output.emit_chunk(chunk);
                 }
-                self.apply_usage_with_format(
-                    json_response.get("usage"),
-                    json_response.get("choices").is_some(),
-                );
+                if completed {
+                    if let Some(mut parser) = current_tool_parser.take() {
+                        append_converter_events(&mut chunks, parser.flush());
+                    }
+                    if let Some(tag) = current_tool_tag_name.take() {
+                        chunks.push(format!("\n</{tag}>\n"));
+                    }
+                    if is_in_thinking_block {
+                        chunks.push("</think>\n".to_string());
+                    }
+                    for chunk in chunks.drain(..) {
+                        output.emit_chunk(chunk);
+                    }
+                    return Ok(());
+                }
             }
         }
-        if is_in_tool_call {
-            if let Some(mut parser) = current_tool_parser {
-                append_converter_events(&mut chunks, parser.flush());
-            }
-            if let Some(tag) = current_tool_tag_name {
-                chunks.push(format!("\n</{tag}>\n"));
-            }
-        }
-        if is_in_thinking_block {
-            chunks.push("</think>\n".to_string());
-        }
-        Ok(response_stream_from_chunks(chunks))
+        decoder.finish()?;
+        Err(AiServiceError::ConnectionFailed(
+            "Claude response stream ended before completion".to_string(),
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process_streaming_line(
+    /// Interprets one fully framed event and reports protocol completion explicitly.
+    fn process_streaming_event(
         &mut self,
-        line: &str,
+        data: &str,
         chunks: &mut Vec<String>,
         accumulated_usage: &mut Map<String, Value>,
         current_tool_parser: &mut Option<StreamingJsonXmlConverter>,
         current_tool_tag_name: &mut Option<String>,
         is_in_tool_call: &mut bool,
         is_in_thinking_block: &mut bool,
-        non_sse_json_lines_buffer: &mut String,
-        emitted_any: &mut bool,
+        completed: &mut bool,
     ) -> Result<(), AiServiceError> {
-        if !line.starts_with("data:") {
-            if line.starts_with('{') || line.starts_with('[') {
-                non_sse_json_lines_buffer.push_str(line);
-                non_sse_json_lines_buffer.push('\n');
-            }
+        if data.trim() == "[DONE]" {
+            *completed = true;
             return Ok(());
         }
-        let data = line.trim_start_matches("data:").trim_start();
-        if data == "[DONE]" || data.is_empty() {
+        if data.trim().is_empty() {
             return Ok(());
         }
         let json_response: Value = serde_json::from_str(data)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        if let Some(error) = json_response.get("error") {
+            return Err(AiServiceError::RequestFailed(error.to_string()));
+        }
         let event_type = json_response
             .get("type")
             .and_then(Value::as_str)
@@ -1139,7 +1105,6 @@ impl ClaudeProvider {
             {
                 if !content.is_empty() {
                     chunks.push(content.to_string());
-                    *emitted_any = true;
                 }
             }
             return Ok(());
@@ -1168,7 +1133,6 @@ impl ClaudeProvider {
                             chunks.push(format!("\n<{tag} name=\"{tool_name}\">"));
                             *current_tool_parser = Some(StreamingJsonXmlConverter::new());
                             *is_in_tool_call = true;
-                            *emitted_any = true;
                             if let Some(input) = content_block.get("input") {
                                 if let Some(parser) = current_tool_parser.as_mut() {
                                     append_converter_events(
@@ -1182,7 +1146,6 @@ impl ClaudeProvider {
                     "thinking" => {
                         chunks.push("\n<think>".to_string());
                         *is_in_thinking_block = true;
-                        *emitted_any = true;
                         if let Some(thinking) =
                             content_block.get("thinking").and_then(Value::as_str)
                         {
@@ -1201,7 +1164,6 @@ impl ClaudeProvider {
                     if let Some(content) = delta.get("text").and_then(Value::as_str) {
                         if !content.is_empty() {
                             chunks.push(content.to_string());
-                            *emitted_any = true;
                         }
                     }
                 } else if *is_in_thinking_block
@@ -1210,7 +1172,6 @@ impl ClaudeProvider {
                     if let Some(thinking) = delta.get("thinking").and_then(Value::as_str) {
                         if !thinking.is_empty() {
                             chunks.push(thinking.to_string());
-                            *emitted_any = true;
                         }
                     }
                 } else if self.enable_tool_call
@@ -1244,7 +1205,9 @@ impl ClaudeProvider {
                     self.apply_streaming_usage(usage, accumulated_usage);
                 }
             }
-            "message_stop" => {}
+            "message_stop" => {
+                *completed = true;
+            }
             _ => {}
         }
         Ok(())

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
@@ -1352,20 +1352,17 @@ impl AIService for OpenAIResponsesProvider {
             )));
         }
 
-        let response = reqwest::Client::new()
-            .post(&self.responsesApiEndpoint)
+        let response = super::ProviderHttp::post(&self.responsesApiEndpoint)
             .headers(self.headers()?)
             .json(&requestBody)
             .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            .await?;
 
         let status = response.status();
         if !status.is_success() {
             let message = response
                 .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                .await?;
             return Err(AiServiceError::RequestFailed(format!(
                 "{status}: {message}"
             )));
@@ -1373,8 +1370,7 @@ impl AIService for OpenAIResponsesProvider {
 
         let jsonResponse: Value = response
             .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            .await?;
         let parsed = OpenAIResponsesPayloadAdapter::parse_non_streaming_response(&jsonResponse);
         if let Some(usage) = parsed.usage {
             self.apply_usage_counts(&usage);

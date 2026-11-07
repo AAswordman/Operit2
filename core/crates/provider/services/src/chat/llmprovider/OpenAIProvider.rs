@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -9,10 +9,11 @@ use uuid::Uuid;
 
 use super::DeepseekProvider::DeepseekResponsesPayloadAdapter;
 use super::OpenAIResponsesProvider::{
-    build_responses_web_search_chunks, strip_responses_protocol_markup, OpenAIResponsesPayloadAdapter,
+    build_responses_web_search_chunks, strip_responses_protocol_markup,
+    OpenAIResponsesPayloadAdapter,
 };
+use super::StreamingResponseLines::SseDecoder;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
-use super::StreamingResponseLines::{decodeStreamingTail, takeNextStreamingLine};
 use super::ThinkingDialect::{apply_thinking, ThinkingDialect};
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
@@ -88,7 +89,6 @@ impl Default for OpenAIProviderState {
 
 pub struct StreamingState {
     pub chunks: Vec<String>,
-    pub pending_bytes: Vec<u8>,
     pub usage: TokenCounts,
     pub chunkCount: i32,
     pub isInReasoningMode: bool,
@@ -655,8 +655,8 @@ impl OpenAIProvider {
     /// Sends one provider request and records the response-header boundary.
     async fn sendHttpRequest(
         &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response, AiServiceError> {
+        request: super::ProviderHttp::RequestBuilder,
+    ) -> Result<super::ProviderHttp::Response, AiServiceError> {
         let provider_model = self.provider_model();
         let endpoint = self.diagnosticEndpoint()?;
         let started_at = currentTimeMillis();
@@ -674,7 +674,7 @@ impl OpenAIProvider {
             return Err(AiServiceError::RequestCancelled);
         }
         let result = tokio::select! {
-            response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            response = request.send() => response,
             _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
         };
         match &result {
@@ -705,7 +705,7 @@ impl OpenAIProvider {
 
     /// Produces a secret-free endpoint identifier for provider transport diagnostics.
     fn diagnosticEndpoint(&self) -> Result<String, AiServiceError> {
-        let url = reqwest::Url::parse(&self.api_endpoint).map_err(|error| {
+        let url = url::Url::parse(&self.api_endpoint).map_err(|error| {
             AiServiceError::RequestFailed(format!("invalid provider endpoint: {error}"))
         })?;
         let host = url.host_str().ok_or_else(|| {
@@ -720,7 +720,7 @@ impl OpenAIProvider {
 
     async fn readResponseText(
         &self,
-        response: reqwest::Response,
+        response: super::ProviderHttp::Response,
     ) -> Result<String, AiServiceError> {
         let receiver = self.cancel_receiver();
         let observedGeneration = *receiver.borrow();
@@ -728,19 +728,22 @@ impl OpenAIProvider {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            text = response.text() => text.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            text = response.text() => text,
             _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
         }
     }
 
-    async fn readResponseJson(&self, response: reqwest::Response) -> Result<Value, AiServiceError> {
+    async fn readResponseJson(
+        &self,
+        response: super::ProviderHttp::Response,
+    ) -> Result<Value, AiServiceError> {
         let receiver = self.cancel_receiver();
         let observedGeneration = *receiver.borrow();
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            json = response.json() => json.map_err(|error| AiServiceError::RequestFailed(error.to_string())),
+            json = response.json() => json,
             _ = Self::waitForCancellation(receiver, observedGeneration) => Err(AiServiceError::RequestCancelled),
         }
     }
@@ -1244,17 +1247,16 @@ impl OpenAIProvider {
     }
 
     /// Reads provider stream bytes and records first-byte and completion boundaries.
-    /// Parses response lines after their complete UTF-8 bytes have arrived.
-    async fn read_streaming_response(
+    /// Frames complete SSE events before parsing provider JSON and emitting deltas.
+    pub(super) async fn read_streaming_response(
         &self,
-        response: reqwest::Response,
+        response: super::ProviderHttp::Response,
         on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
         output: &SharedAiResponseStream,
         emitter: &mut StreamEmitter,
     ) -> Result<(), AiServiceError> {
         let mut state = StreamingState {
             chunks: Vec::new(),
-            pending_bytes: Vec::new(),
             usage: TokenCounts {
                 input: 0,
                 cached_input: 0,
@@ -1287,14 +1289,23 @@ impl OpenAIProvider {
         let mut received_first_byte = false;
         let mut received_byte_count = 0usize;
         let mut response_stream = response.bytes_stream();
+        let mut decoder = SseDecoder::default();
+        let receiver = self.cancel_receiver();
+        let observed_generation = *receiver.borrow();
+        let cancelled = Self::waitForCancellation(receiver, observed_generation);
+        tokio::pin!(cancelled);
 
         let result = async {
-            while let Some(item) = response_stream.next().await {
+            loop {
+                let item = tokio::select! {
+                    item = response_stream.next() => item,
+                    _ = &mut cancelled => return Err(AiServiceError::RequestCancelled),
+                };
+                let Some(item) = item else { break; };
                 if self.is_cancelled() {
-                    break;
+                    return Err(AiServiceError::RequestCancelled);
                 }
-                let bytes =
-                    item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let bytes = item?;
                 received_byte_count += bytes.len();
                 if !received_first_byte {
                     received_first_byte = true;
@@ -1308,11 +1319,9 @@ impl OpenAIProvider {
                         operit_util::AppLogger::VERBOSE_LEVEL_3,
                     );
                 }
-                state.pending_bytes.extend_from_slice(&bytes);
-
-                while let Some(line) = takeNextStreamingLine(&mut state.pending_bytes)? {
+                for data in decoder.push(&bytes)? {
                     let emitted_before = state.chunks.len();
-                    self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
+                    self.process_streaming_line(&format!("data: {data}"), &mut state, on_tool_invocation)?;
                     for chunk in state.chunks[emitted_before..].iter().cloned() {
                         output.emit_chunk(chunk.clone());
                         emitter.emit_chunk(&chunk);
@@ -1326,15 +1335,7 @@ impl OpenAIProvider {
                 }
             }
 
-            let pending = decodeStreamingTail(&mut state.pending_bytes)?;
-            if !pending.is_empty() {
-                let emitted_before = state.chunks.len();
-                self.process_streaming_line(&pending, &mut state, on_tool_invocation)?;
-                for chunk in state.chunks[emitted_before..].iter().cloned() {
-                    output.emit_chunk(chunk.clone());
-                    emitter.emit_chunk(&chunk);
-                }
-            }
+            if !state.streamEndReceived { decoder.finish()?; }
 
             if self.is_cancelled() {
                 return Err(AiServiceError::RequestCancelled);
@@ -1379,6 +1380,9 @@ impl OpenAIProvider {
         }
 
         let data = line.trim_start_matches("data:").trim();
+        if data.is_empty() {
+            return Ok(());
+        }
         if data == "[DONE]" {
             self.closeAllOpenToolCalls(state);
             self.closeAssistantReasoning(state);
@@ -1387,8 +1391,20 @@ impl OpenAIProvider {
             return Ok(());
         }
 
-        let json_response: Value = serde_json::from_str(data)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        let json_response: Value = match serde_json::from_str(data) {
+            Ok(value) => value,
+            Err(error) => {
+                AppLogger::w(
+                    PROVIDER_TRANSPORT_LOG_TAG,
+                    &format!(
+                        "provider.sse.invalidJson providerModel={} bytes={} error={error}",
+                        self.provider_model(),
+                        data.len(),
+                    ),
+                );
+                return Ok(());
+            }
+        };
         state.chunkCount += 1;
 
         if let Some(error) = json_response.get("error").and_then(Value::as_object) {
@@ -2457,9 +2473,7 @@ impl AIService for OpenAIProvider {
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&self.api_endpoint)
+        let response = super::ProviderHttp::post(&self.api_endpoint)
             .headers(self.headers()?)
             .json(&json!({
                 "model": self.model_name,
@@ -2468,17 +2482,13 @@ impl AIService for OpenAIProvider {
                 "max_tokens": 1
             }))
             .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            .await?;
 
         if response.status().is_success() {
             Ok("ok".to_string())
         } else {
             let status = response.status();
-            let text = response
-                .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let text = response.text().await?;
             Err(AiServiceError::RequestFailed(format!("{status}: {text}")))
         }
     }
@@ -2502,10 +2512,8 @@ impl AIService for OpenAIProvider {
         } else {
             Some(StructuredToolCallBridge::buildToolsArray(Some(available_tools)).to_string())
         };
-        let comparable_history = self.build_comparable_history(
-            &provider_ready_history,
-            self.preserve_reasoning_content,
-        );
+        let comparable_history =
+            self.build_comparable_history(&provider_ready_history, self.preserve_reasoning_content);
         let token_count = if let Ok(mut state) = self.state.lock() {
             state.tokenCacheManager.calculate_input_tokens(
                 &comparable_history,
@@ -2542,7 +2550,6 @@ impl OpenAIProvider {
             let on_tool_invocation = request.on_tool_invocation.clone();
             let request_body_bytes = serde_json::to_vec(&request_body)
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let http_client = reqwest::Client::new();
             defaultHostRuntimeTaskSchedulerHost()
                 .scheduleHostRuntimeAsyncTask(
                     "openai-response-stream",
@@ -2564,8 +2571,7 @@ impl OpenAIProvider {
                             );
                             let response = provider
                                 .sendHttpRequest(
-                                    http_client
-                                        .post(&api_endpoint)
+                                    super::ProviderHttp::post(&api_endpoint)
                                         .headers(headers.clone())
                                         .body(request_body_bytes.clone()),
                                 )
@@ -2674,13 +2680,11 @@ impl OpenAIProvider {
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         let response = {
             let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
-            let client = reqwest::Client::new();
             let mut retryCount = 0;
             loop {
                 let response = match self
                     .sendHttpRequest(
-                        client
-                            .post(&api_endpoint)
+                        super::ProviderHttp::post(&api_endpoint)
                             .headers(headers.clone())
                             .body(request_body_bytes.clone()),
                     )
@@ -2776,7 +2780,10 @@ fn audio_format_from_mime(mime_type: &str) -> &str {
         "audio/mpeg" | "audio/mp3" => "mp3",
         "audio/ogg" => "ogg",
         "audio/webm" => "webm",
-        _ => mime_type.rsplit_once('/').map(|(_, ext)| ext).unwrap_or("wav"),
+        _ => mime_type
+            .rsplit_once('/')
+            .map(|(_, ext)| ext)
+            .unwrap_or("wav"),
     }
 }
 

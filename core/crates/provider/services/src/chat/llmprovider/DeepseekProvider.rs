@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
@@ -817,21 +817,17 @@ impl AIService for DeepseekProvider {
             )));
         }
 
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&self.api_endpoint)
+        let response = super::ProviderHttp::post(&self.api_endpoint)
             .headers(self.headers()?)
             .json(&request_body)
             .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            .await?;
 
         let status = response.status();
         if !status.is_success() {
             let message = response
                 .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                .await?;
             return Err(AiServiceError::RequestFailed(format!(
                 "{status}: {message}"
             )));
@@ -839,8 +835,7 @@ impl AIService for DeepseekProvider {
 
         let json_response: Value = response
             .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            .await?;
         if self.uses_responses_protocol()? {
             let parsed =
                 DeepseekResponsesPayloadAdapter::parse_non_streaming_response(&json_response);
@@ -898,7 +893,6 @@ impl AIService for DeepseekProvider {
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
-        let client = reqwest::Client::new();
         let request_body = if self.uses_responses_protocol()? {
             json!({
                 "model": self.model_name,
@@ -916,21 +910,18 @@ impl AIService for DeepseekProvider {
                 "thinking": {"type": "disabled"}
             })
         };
-        let response = client
-            .post(&self.api_endpoint)
+        let response = super::ProviderHttp::post(&self.api_endpoint)
             .headers(self.headers()?)
             .json(&request_body)
             .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            .await?;
         if response.status().is_success() {
             Ok("Connection successful".to_string())
         } else {
             let status = response.status();
             let body = response
                 .text()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                .await?;
             Err(AiServiceError::ConnectionFailed(format!(
                 "{status}: {body}"
             )))

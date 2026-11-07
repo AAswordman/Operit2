@@ -35,6 +35,11 @@ Messages and variants retain their historical text and metadata; the importer do
 not construct historical frozen send profiles. Binary embedding vectors are derived
 cache data without the new cache's endpoint/model/text identity and are not adopted.
 
+ObjectBox keys declare their record kind, model ID and ID width. Memory adoption
+reads forward kind-2 relations 7 (tags) and 8 (properties), including 32/64-bit IDs.
+Reverse relations are duplicates; kind-8 index entries are not domain relations.
+In particular, MemoryLink source/target indexes 8/9 must never supply tag/property IDs.
+
 ## Completion and failures
 
 The import key uses the snapshot package identity and creation timestamp. The writer

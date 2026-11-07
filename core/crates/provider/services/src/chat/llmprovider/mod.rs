@@ -63,14 +63,14 @@ pub mod RequestConcurrencyRegistry;
 pub mod SlidingWindowRateLimiter;
 #[path = "StreamingResponseLines.rs"]
 mod StreamingResponseLines;
+#[path = "ProviderHttp.rs"]
+mod ProviderHttp;
 #[path = "StructuredToolCallBridge.rs"]
 pub mod StructuredToolCallBridge;
 #[path = "ThinkingDialect.rs"]
 pub mod ThinkingDialect;
 #[path = "ToolPkgJsAiProviderService.rs"]
 pub mod ToolPkgJsAiProviderService;
-#[path = "UnsafeModelSsl.rs"]
-pub mod UnsafeModelSsl;
 
 #[cfg(test)]
 #[path = "../../../../tests/ProviderMediaTestSupport.rs"]

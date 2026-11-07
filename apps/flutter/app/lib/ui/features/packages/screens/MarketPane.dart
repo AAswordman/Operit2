@@ -278,6 +278,7 @@ class _MarketPaneState extends State<MarketPane> {
     );
   }
 
+  /// Keeps action labels only when the filter row has room for the tabs.
   Widget _buildFilterBar(BuildContext context, {required bool searching}) {
     final kind = _kind;
     return LayoutBuilder(
@@ -286,6 +287,11 @@ class _MarketPaneState extends State<MarketPane> {
           constraints.maxWidth,
           gutter: constraints.maxWidth < 600 ? 16 : 24,
         );
+        final showSort = kind != null && !searching;
+        final compactActions =
+            showSort &&
+            constraints.maxWidth - padding.horizontal <
+                600 * storeTextScale(context);
         return Padding(
           padding: EdgeInsets.fromLTRB(padding.left, 8, padding.right, 8),
           child: Row(
@@ -316,13 +322,14 @@ class _MarketPaneState extends State<MarketPane> {
                   ),
                 ),
               ),
-              if (kind != null && !searching)
+              if (showSort)
                 MarketSortMenu(
                   sort: _kindSort,
+                  compact: compactActions,
                   onChanged: (sort) => setState(() => _kindSort = sort),
                 ),
               const SizedBox(width: 4),
-              _CreatorEntry(account: _account),
+              _CreatorEntry(account: _account, compact: compactActions),
             ],
           ),
         );
@@ -988,26 +995,32 @@ class _HomeSkeleton extends StatelessWidget {
 
 /// Way into the creator center; wears the signed-in GitHub profile picture.
 class _CreatorEntry extends StatelessWidget {
-  const _CreatorEntry({required this.account});
+  const _CreatorEntry({required this.account, required this.compact});
 
   final GitHubAccountState account;
+  final bool compact;
 
+  /// Keeps the account avatar and accessible label in either presentation.
   @override
   Widget build(BuildContext context) {
     final user = account.user;
+    final icon = user != null
+        ? StoreAvatar(name: user.login, url: user.avatarUrl, radius: 10)
+        : const Icon(Icons.badge_outlined, size: 18);
+    if (compact) {
+      return IconButton(
+        tooltip: '创作者中心',
+        onPressed: openMarketCreator,
+        color: Theme.of(context).colorScheme.primary,
+        icon: icon,
+      );
+    }
     return TextButton(
       onPressed: openMarketCreator,
       style: SettingsControlStyles.sectionTextButton(),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (user != null)
-            StoreAvatar(name: user.login, url: user.avatarUrl, radius: 10)
-          else
-            const Icon(Icons.badge_outlined, size: 18),
-          const SizedBox(width: 6),
-          const Text('创作者中心'),
-        ],
+        children: <Widget>[icon, const SizedBox(width: 6), const Text('创作者中心')],
       ),
     );
   }

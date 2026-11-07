@@ -80,7 +80,7 @@ pub fn browser_authorization() -> Result<CodexBrowserAuthorization, AiServiceErr
     let codeVerifier = random_pkce_verifier()?;
     let state = random_token(32)?;
     let challenge = pkce_challenge(&codeVerifier);
-    let mut url = reqwest::Url::parse(&format!("{CODEX_OAUTH_ISSUER}/oauth/authorize"))
+    let mut url = url::Url::parse(&format!("{CODEX_OAUTH_ISSUER}/oauth/authorize"))
         .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
     url.query_pairs_mut()
         .append_pair("client_id", CODEX_OAUTH_CLIENT_ID)
@@ -112,19 +112,16 @@ pub async fn exchange_browser_code(
 
 /// Starts a headless device-code login.
 pub async fn start_device_authorization() -> Result<CodexDeviceAuthorization, AiServiceError> {
-    let response = reqwest::Client::new()
-        .post(format!(
+    let response = super::ProviderHttp::post(format!(
             "{CODEX_OAUTH_ISSUER}/api/accounts/deviceauth/usercode"
         ))
         .json(&serde_json::json!({ "client_id": CODEX_OAUTH_CLIENT_ID }))
         .send()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     let status = response.status();
     let body = response
         .text()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     if !status.is_success() {
         return Err(AiServiceError::RequestFailed(format!(
             "Codex device authorization failed: {status}: {body}"
@@ -155,8 +152,7 @@ pub async fn poll_device_authorization_once(
     deviceAuthId: &str,
     userCode: &str,
 ) -> Result<Option<CodexOAuthTokens>, AiServiceError> {
-    let response = reqwest::Client::new()
-        .post(format!(
+    let response = super::ProviderHttp::post(format!(
             "{CODEX_OAUTH_ISSUER}/api/accounts/deviceauth/token"
         ))
         .json(&serde_json::json!({
@@ -164,16 +160,14 @@ pub async fn poll_device_authorization_once(
             "user_code": userCode,
         }))
         .send()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     let status = response.status();
     if status.as_u16() == 403 || status.as_u16() == 404 {
         return Ok(None);
     }
     let body = response
         .text()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     if !status.is_success() {
         return Err(AiServiceError::RequestFailed(format!(
             "Codex device token polling failed: {status}: {body}"
@@ -205,21 +199,18 @@ pub async fn ensure_fresh_tokens(
             "Codex authorization has expired".to_string(),
         ));
     }
-    let response = reqwest::Client::new()
-        .post(format!("{CODEX_OAUTH_ISSUER}/oauth/token"))
+    let response = super::ProviderHttp::post(format!("{CODEX_OAUTH_ISSUER}/oauth/token"))
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", tokens.refreshToken.as_str()),
             ("client_id", CODEX_OAUTH_CLIENT_ID),
         ])
         .send()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     let status = response.status();
     let body = response
         .text()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     if !status.is_success() {
         return Err(AiServiceError::RequestFailed(format!(
             "Codex token refresh failed: {status}: {body}"
@@ -250,8 +241,7 @@ async fn exchange_authorization_code(
     redirectUri: &str,
     codeVerifier: &str,
 ) -> Result<CodexOAuthTokens, AiServiceError> {
-    let response = reqwest::Client::new()
-        .post(format!("{CODEX_OAUTH_ISSUER}/oauth/token"))
+    let response = super::ProviderHttp::post(format!("{CODEX_OAUTH_ISSUER}/oauth/token"))
         .form(&[
             ("grant_type", "authorization_code"),
             ("client_id", CODEX_OAUTH_CLIENT_ID),
@@ -260,13 +250,11 @@ async fn exchange_authorization_code(
             ("code_verifier", codeVerifier),
         ])
         .send()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     let status = response.status();
     let body = response
         .text()
-        .await
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        .await?;
     if !status.is_success() {
         return Err(AiServiceError::RequestFailed(format!(
             "Codex token exchange failed: {status}: {body}"

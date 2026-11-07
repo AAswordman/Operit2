@@ -69,7 +69,7 @@ impl HttpStreamHost for ResponseHost {
         chunk: HttpStreamChunkCallback,
         closed: HttpStreamClosedCallback,
     ) -> HostResult<()> {
-        assert_eq!(request.method, "POST");
+        assert!(matches!(request.method.as_str(), "POST" | "GET"));
         self.requests.lock().unwrap().push(request);
         self.streams
             .lock()
@@ -303,7 +303,9 @@ async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
         "application/json",
         "{\"id\":2,\"result\":{\"tools\":[{\"name\":\"echo\"}]}}",
     );
-    let host = ResponseHost::with(vec![initialize, notification, tools]);
+    let mut no_events = ScriptedResponse::response("", "");
+    no_events.head.as_mut().unwrap().statusCode = 405;
+    let host = ResponseHost::with(vec![initialize, notification, no_events, tools]);
     let service = RegisteredService {
         name: "fixture".into(),
         serviceType: "remote".into(),
@@ -328,7 +330,7 @@ async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
     assert!(active.ready);
     assert_eq!(active.tools[0]["name"], "echo");
     let requests = host.requests.lock().unwrap();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 4);
     for (index, request) in requests.iter().enumerate() {
         assert!(request
             .headers
@@ -349,7 +351,116 @@ async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
                 .any(|(key, value)| key == "mcp-protocol-version" && value == "2025-03-26"));
         }
     }
-    assert_eq!(host.cancelled.lock().unwrap().len(), 3);
+    assert_eq!(host.cancelled.lock().unwrap().len(), 4);
+}
+
+/// Receives accepted requests on the already open GET channel without a second POST.
+#[tokio::test]
+async fn acceptedToolResultArrivesOnServerEvents() {
+    let events = ScriptedResponse::response(
+        "text/event-stream",
+        concat!(
+        "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n",
+        "data: {\"id\":99,\"result\":{}}\n\n",
+        "data: {\"id\":7,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"异步结果\"}]}}\n\n"
+    ),
+    );
+    let mut accepted = ScriptedResponse::response("", "");
+    accepted.head.as_mut().unwrap().statusCode = 202;
+    let host = ResponseHost::with(vec![events, accepted]);
+    let mut session = session(host.clone());
+    let deadline = StartupDeadline::new(testScheduler(), 1000).unwrap();
+    connectServerEvents(&mut session, &deadline).await.unwrap();
+    let result = sendJsonRpc(&mut session, request(7), Some(7), 1000)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result["result"]["content"][0]["text"], "异步结果");
+    assert_eq!(
+        host.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.method.as_str())
+            .collect::<Vec<_>>(),
+        ["GET", "POST"]
+    );
+    assert_eq!(host.cancelled.lock().unwrap().len(), 1);
+    drop(session);
+    assert_eq!(host.cancelled.lock().unwrap().len(), 2);
+}
+
+/// Preserves the deadline and releases both streams when an accepted result never arrives.
+#[tokio::test]
+async fn acceptedResultTimeoutDoesNotReplayTheTool() {
+    let events = ScriptedResponse::response("text/event-stream", ": heartbeat\n\n");
+    let mut accepted = ScriptedResponse::response("", "");
+    accepted.head.as_mut().unwrap().statusCode = 202;
+    let host = ResponseHost::with(vec![events, accepted]);
+    let mut session = session(host.clone());
+    connectServerEvents(
+        &mut session,
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .await
+    .unwrap();
+    let error = sendJsonRpc(&mut session, request(7), Some(7), 25)
+        .await
+        .unwrap_err();
+    assert!(error.contains("timed out"), "{error}");
+    assert_eq!(host.requests.lock().unwrap().len(), 2);
+    drop(session);
+    assert_eq!(host.cancelled.lock().unwrap().len(), 2);
+}
+
+/// Discovers all remote tools with cursor parameters and unique JSON-RPC request ids.
+#[tokio::test]
+async fn remoteToolsFollowEveryPage() {
+    let init = ScriptedResponse::response(
+        "application/json",
+        "{\"id\":1,\"result\":{\"protocolVersion\":\"2025-03-26\"}}",
+    );
+    let mut notification = ScriptedResponse::response("", "");
+    notification.head.as_mut().unwrap().statusCode = 202;
+    let mut no_events = ScriptedResponse::response("", "");
+    no_events.head.as_mut().unwrap().statusCode = 405;
+    let first = ScriptedResponse::response(
+        "application/json",
+        "{\"id\":2,\"result\":{\"tools\":[{\"name\":\"first\"}],\"nextCursor\":\"page2\"}}",
+    );
+    let second = ScriptedResponse::response(
+        "application/json",
+        "{\"id\":3,\"result\":{\"tools\":[{\"name\":\"second\"}]}}",
+    );
+    let host = ResponseHost::with(vec![init, notification, no_events, first, second]);
+    let mut active = ActiveService {
+        scheduler: testScheduler(),
+        process: None,
+        remote: Some(session(host.clone())),
+        requestId: 0,
+        tools: Vec::new(),
+        ready: false,
+        logs: String::new(),
+    };
+    initializeRemoteService(
+        &mut active,
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(active.ready);
+    assert_eq!(
+        active
+            .tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    let requests = host.requests.lock().unwrap();
+    let last: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert_eq!(last["params"]["cursor"], "page2");
+    assert_eq!(last["id"], 3);
 }
 
 #[test]

@@ -68,6 +68,20 @@ the top-level runtime injects an SDK `JsExecutionProvider`.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
 
+## MCP Transport Lifecycle
+
+Remote MCP uses the HTTP Host for both POST responses and server event streams.
+Streamable HTTP opens its GET event channel after initialization; HTTP 405
+explicitly declares that the server does not provide this optional channel.
+An accepted HTTP 202 request waits for its matching JSON-RPC result on the
+existing channel under the original deadline. It never resends the tool POST.
+The POST stream is released after acknowledgment, and the GET stream belongs
+to the MCP session until that session closes.
+
+Local and remote tool discovery follow `nextCursor` through every page before
+marking a server ready. Repeated cursors, malformed pages and later-page errors
+fail initialization instead of publishing an incomplete tool catalog.
+
 ## Finalized AI Tool Results
 
 `ToolExecutionManager` retains serial invocation ordering and aggregates each

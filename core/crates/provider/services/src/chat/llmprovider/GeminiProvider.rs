@@ -1,18 +1,18 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
+use super::StreamingResponseLines::SseDecoder;
 use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
-use super::StreamingResponseLines::{decodeStreamingTail, takeNextStreamingLine};
 use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
-    SendMessageRequest, TokenCounts,
+    SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
@@ -26,7 +26,7 @@ use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel_and_failure, RevisableTextStream,
-    RevisableTextStreamLike, TerminalFailureState,
+    RevisableTextStreamLike, TerminalFailureState, TextStreamEvent, TextStreamEventType,
 };
 use operit_util::stream::Stream::FnStream;
 use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
@@ -42,6 +42,7 @@ pub struct GeminiProvider {
     pub enable_tool_call: bool,
     pub api_key_header_name: Option<String>,
     state: Arc<Mutex<GeminiProviderState>>,
+    cancel_signal: tokio::sync::watch::Sender<bool>,
     isInThinkingMode: bool,
 }
 
@@ -104,6 +105,7 @@ impl GeminiProvider {
             enable_tool_call,
             api_key_header_name,
             state: Arc::new(Mutex::new(GeminiProviderState::default())),
+            cancel_signal: tokio::sync::watch::channel(false).0,
             isInThinkingMode: false,
         }
     }
@@ -113,6 +115,7 @@ impl GeminiProvider {
             .lock()
             .expect("GeminiProvider state mutex poisoned")
             .cancelled = cancelled;
+        self.cancel_signal.send_replace(cancelled);
     }
 
     fn is_cancelled(&self) -> bool {
@@ -148,50 +151,51 @@ impl GeminiProvider {
             .outputTokenCount += output;
     }
 
+    /// Wakes blocked header and body reads immediately when cancellation is requested.
     async fn waitUntilCancelled(self) {
-        loop {
-            if self.is_cancelled() {
+        let mut receiver = self.cancel_signal.subscribe();
+        while !*receiver.borrow_and_update() {
+            if receiver.changed().await.is_err() {
                 break;
             }
-            defaultHostRuntimeTaskSchedulerHost()
-                .waitForHostRuntimeDelay(50)
-                .await
-                .expect("provider cancellation polling delay must be provided by the Host");
         }
     }
 
     async fn sendHttpRequest(
         &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response, AiServiceError> {
+        request: super::ProviderHttp::RequestBuilder,
+    ) -> Result<super::ProviderHttp::Response, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            response = request.send() => response.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            response = request.send() => response,
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
 
     async fn readResponseText(
         &self,
-        response: reqwest::Response,
+        response: super::ProviderHttp::Response,
     ) -> Result<String, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            text = response.text() => text.map_err(|error| AiServiceError::ConnectionFailed(error.to_string())),
+            text = response.text() => text,
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
 
-    async fn readResponseJson(&self, response: reqwest::Response) -> Result<Value, AiServiceError> {
+    async fn readResponseJson(
+        &self,
+        response: super::ProviderHttp::Response,
+    ) -> Result<Value, AiServiceError> {
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
         tokio::select! {
-            json = response.json() => json.map_err(|error| AiServiceError::RequestFailed(error.to_string())),
+            json = response.json() => json,
             _ = self.clone().waitUntilCancelled() => Err(AiServiceError::RequestCancelled),
         }
     }
@@ -441,13 +445,19 @@ impl GeminiProvider {
                                         object.insert("name".to_string(), json!(pending_name));
                                     }
                                 }
-                                let result = response["response"]["result"].as_str().unwrap_or_default();
+                                let result =
+                                    response["response"]["result"].as_str().unwrap_or_default();
                                 let media_parts = self.build_parts_array(result);
-                                response["response"]["result"] = json!(MediaLinkParser::remove_media_links(
-                                    &MediaLinkParser::remove_image_links(result),
-                                ));
+                                response["response"]["result"] =
+                                    json!(MediaLinkParser::remove_media_links(
+                                        &MediaLinkParser::remove_image_links(result),
+                                    ));
                                 parts.push(json!({"functionResponse": response}));
-                                parts.extend(media_parts.into_iter().filter(|part| part.get("text").is_none()));
+                                parts.extend(
+                                    media_parts
+                                        .into_iter()
+                                        .filter(|part| part.get("text").is_none()),
+                                );
                             }
                             append_unmatched_open_function_responses(
                                 &mut contents_array,
@@ -699,7 +709,8 @@ impl GeminiProvider {
         Ok(())
     }
 
-    fn request_url(&self, stream: bool) -> String {
+    /// Builds the authenticated Gemini URL with explicit SSE response negotiation.
+    fn request_url(&self, stream: bool) -> Result<String, AiServiceError> {
         if let Some(api_key_header_name) = self.api_key_header_name.as_deref() {
             let base_url = self
                 .api_endpoint
@@ -713,10 +724,10 @@ impl GeminiProvider {
                 "generateContent"
             };
             let suffix = if stream { "?alt=sse" } else { "" };
-            return format!(
+            return Ok(format!(
                 "{base_url}/models/{}:{method}{suffix}",
                 self.model_name
-            );
+            ));
         }
         let base_url = determine_base_url(&self.api_endpoint);
         let method = if stream {
@@ -725,11 +736,13 @@ impl GeminiProvider {
             "generateContent"
         };
         let url = format!("{base_url}/v1beta/models/{}:{method}", self.model_name);
-        if url.contains('?') {
-            format!("{url}&key={}", self.api_key)
-        } else {
-            format!("{url}?key={}", self.api_key)
+        let mut url = url::Url::parse(&url)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        url.query_pairs_mut().append_pair("key", &self.api_key);
+        if stream {
+            url.query_pairs_mut().append_pair("alt", "sse");
         }
+        Ok(url.to_string())
     }
 
     fn headers(&self) -> Result<HeaderMap, AiServiceError> {
@@ -764,8 +777,7 @@ impl GeminiProvider {
         let mut retryCount = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match reqwest::Client::new()
-                .post(self.request_url(false))
+            let response = match super::ProviderHttp::post(self.request_url(false)?)
                 .headers(self.headers()?)
                 .json(&request_body)
                 .send()
@@ -792,10 +804,7 @@ impl GeminiProvider {
             };
             let status = response.status();
             if !status.is_success() {
-                let text = response
-                    .text()
-                    .await
-                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+                let text = response.text().await?;
                 let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
                 let errorText = retry_error_text(&error);
                 if !request.enable_retry {
@@ -812,152 +821,114 @@ impl GeminiProvider {
                 retryCount = newRetryCount;
                 continue;
             }
-            let json: Value = response
-                .json()
-                .await
-                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            let json: Value = response.json().await?;
             let content = self.extract_content_from_json(&json)?;
             return Ok(response_stream_from_chunks(vec![content]));
         }
     }
 
+    /// Streams every complete Gemini event and retracts failed attempts before retrying.
     async fn send_streaming_message(
         &mut self,
         request: SendMessageRequest,
-    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
-        let mut retryCount = 0;
+        output: &SharedAiResponseStream,
+    ) -> Result<(), AiServiceError> {
+        let savepoint = uuid::Uuid::new_v4().to_string();
+        output.emit_revision(TextStreamEvent {
+            event_type: TextStreamEventType::Savepoint,
+            id: savepoint.clone(),
+        });
+        let mut retry_count = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match reqwest::Client::new()
-                .post(self.request_url(true))
-                .headers(self.headers()?)
-                .json(&request_body)
-                .send()
-                .await
-            {
-                Ok(response) => response,
+            let result = async {
+                let response = self
+                    .sendHttpRequest(
+                        super::ProviderHttp::post(self.request_url(true)?)
+                            .headers(self.headers()?)
+                            .json(&request_body),
+                    )
+                    .await?;
+                if !response.status().is_success() {
+                    let status = response.status();
+                    return Err(AiServiceError::RequestFailed(format!(
+                        "{status}: {}",
+                        self.readResponseText(response).await?
+                    )));
+                }
+                self.process_streaming_response(response, output).await
+            }
+            .await;
+            match result {
+                Ok(()) => return Ok(()),
+                Err(AiServiceError::RequestCancelled) => {
+                    return Err(AiServiceError::RequestCancelled)
+                }
                 Err(error) => {
-                    let error = AiServiceError::ConnectionFailed(error.to_string());
-                    let errorText = retry_error_text(&error);
-                    if !request.enable_retry {
+                    if !request.enable_retry
+                        || retry_count >= super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS
+                    {
                         return Err(error);
                     }
-                    let newRetryCount = retryCount + 1;
-                    if newRetryCount > maxRetries {
-                        return Err(error);
+                    retry_count += 1;
+                    output.emit_revision(TextStreamEvent {
+                        event_type: TextStreamEventType::Rollback,
+                        id: savepoint.clone(),
+                    });
+                    self.reset_token_counts();
+                    if let Some(callback) = &request.on_non_fatal_error {
+                        callback(retry_message(&retry_error_text(&error), retry_count));
                     }
-                    if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                    }
-                    delay_retry_ms(newRetryCount).await;
-                    retryCount = newRetryCount;
-                    continue;
+                    self.delayRetryOrCancel(retry_count).await?;
                 }
-            };
-            let status = response.status();
-            if !status.is_success() {
-                let text = response
-                    .text()
-                    .await
-                    .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
-                let errorText = retry_error_text(&error);
-                if !request.enable_retry {
-                    return Err(error);
-                }
-                let newRetryCount = retryCount + 1;
-                if newRetryCount > maxRetries {
-                    return Err(error);
-                }
-                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                }
-                delay_retry_ms(newRetryCount).await;
-                retryCount = newRetryCount;
-                continue;
             }
-            let error = match self.process_streaming_response(response).await {
-                Ok(responseStream) => return Ok(responseStream),
-                Err(error) => error,
-            };
-            let errorText = retry_error_text(&error);
-            if !request.enable_retry {
-                return Err(error);
-            }
-            let newRetryCount = retryCount + 1;
-            if newRetryCount > maxRetries {
-                return Err(error);
-            }
-            if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                on_non_fatal_error(retry_message(&errorText, newRetryCount));
-            }
-            delay_retry_ms(newRetryCount).await;
-            retryCount = newRetryCount;
-            continue;
         }
     }
 
-    /// Parses response lines after their complete UTF-8 bytes have arrived.
-    async fn process_streaming_response(
+    /// Emits each SSE event and accepts only an explicit provider termination reason.
+    pub(super) async fn process_streaming_response(
         &mut self,
-        response: reqwest::Response,
-    ) -> Result<Box<dyn RevisableTextStreamLike>, AiServiceError> {
-        let mut chunks = Vec::new();
-        let mut pending_bytes = Vec::new();
-        let mut bytes_stream = response.bytes_stream();
-        while let Some(item) = bytes_stream.next().await {
-            if self.is_cancelled() {
-                break;
-            }
-            let bytes =
-                item.map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
-            pending_bytes.extend_from_slice(&bytes);
-            while let Some(line) = takeNextStreamingLine(&mut pending_bytes)? {
-                self.process_response_line(&line, &mut chunks)?;
-            }
-        }
-        let tail = decodeStreamingTail(&mut pending_bytes)?;
-        if !tail.is_empty() {
-            self.process_response_line(&tail, &mut chunks)?;
-        }
-        if self.isInThinkingMode {
-            chunks.push("</think>".to_string());
-            self.isInThinkingMode = false;
-        }
-        if chunks.is_empty() {
-            chunks.push(" ".to_string());
-        }
-        Ok(response_stream_from_chunks(chunks))
-    }
-
-    fn process_response_line(
-        &mut self,
-        line: &str,
-        chunks: &mut Vec<String>,
+        response: super::ProviderHttp::Response,
+        output: &SharedAiResponseStream,
     ) -> Result<(), AiServiceError> {
-        if line.is_empty() || line == "[" || line == "]" {
-            return Ok(());
+        let mut decoder = SseDecoder::default();
+        let mut bytes_stream = response.bytes_stream();
+        let cancelled = self.clone().waitUntilCancelled();
+        tokio::pin!(cancelled);
+        loop {
+            if self.is_cancelled() {
+                return Err(AiServiceError::RequestCancelled);
+            }
+            let item = tokio::select! {
+                item = bytes_stream.next() => item,
+                _ = &mut cancelled => return Err(AiServiceError::RequestCancelled),
+            };
+            let Some(item) = item else {
+                break;
+            };
+            for data in decoder.push(&item?)? {
+                let json: Value = serde_json::from_str(&data)
+                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+                let content = self.extract_content_from_json(&json)?;
+                if !content.is_empty() {
+                    output.emit_chunk(content);
+                }
+                if gemini_stream_completed(&json) {
+                    if self.isInThinkingMode {
+                        output.emit_chunk("</think>".to_string());
+                        self.isInThinkingMode = false;
+                    }
+                    return Ok(());
+                }
+            }
         }
-        let data = if line.starts_with("data: ") {
-            line.trim_start_matches("data: ").trim()
-        } else if line.starts_with("data:") {
-            line.trim_start_matches("data:").trim()
-        } else {
-            line.trim().trim_end_matches(',')
-        };
-        if data == "[DONE]" || data.is_empty() || data == "[" || data == "]" {
-            return Ok(());
-        }
-        let json: Value = serde_json::from_str(data)
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let content = self.extract_content_from_json(&json)?;
-        if !content.is_empty() {
-            chunks.push(content);
-        }
-        Ok(())
+        decoder.finish()?;
+        Err(AiServiceError::ConnectionFailed(
+            "Gemini response stream ended before completion".to_string(),
+        ))
     }
 
+    /// Decodes Gemini text, tool calls and metadata from one response object.
     fn extract_content_from_json(
         &mut self,
         json_response: &Value,
@@ -1181,40 +1152,27 @@ impl AIService for GeminiProvider {
         self.set_cancelled(false);
         self.reset_token_counts();
         if request.stream {
-            let event_channel = empty_revisable_event_channel();
-            let streamEventChannel = event_channel.clone();
-            let terminalFailure = TerminalFailureState::new();
-            let producerTerminalFailure = terminalFailure.clone();
-            let mut ownedProvider = Some(self.clone());
-            let mut ownedRequest = Some(request);
-            let coldStream = FnStream::new(move |emit| {
-                let request = ownedRequest
-                    .take()
-                    .expect("GeminiProvider stream must only be collected once");
-                let mut provider = ownedProvider
-                    .take()
-                    .expect("GeminiProvider stream must only be collected once");
-                let eventChannel = streamEventChannel.clone();
-                let producerTerminalFailure = producerTerminalFailure.clone();
-                Box::pin(async move {
-                    match provider.send_streaming_message(request).await {
-                        Ok(mut responseStream) => {
-                            responseStream.collect(emit).await;
-                            if let Some(error) = responseStream.terminal_failure() {
-                                producerTerminalFailure.set(error);
+            let output = SharedAiResponseStream::new_ordered(
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+                operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
+            );
+            let producer = output.clone();
+            let mut provider = self.clone();
+            defaultHostRuntimeTaskSchedulerHost()
+                .scheduleHostRuntimeAsyncTask(
+                    "gemini-response-stream",
+                    Box::new(move || {
+                        Box::pin(async move {
+                            match provider.send_streaming_message(request, &producer).await {
+                                Ok(()) | Err(AiServiceError::RequestCancelled) => {}
+                                Err(error) => producer.set_terminal_failure(error.to_string()),
                             }
-                        }
-                        Err(AiServiceError::RequestCancelled) => {}
-                        Err(error) => producerTerminalFailure.set(error.to_string()),
-                    }
-                    eventChannel.close();
-                })
-            });
-            return Ok(Box::new(with_event_channel_and_failure(
-                coldStream,
-                event_channel,
-                terminalFailure,
-            )));
+                            producer.close();
+                        })
+                    }),
+                )
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            return Ok(Box::new(output));
         }
         let event_channel = empty_revisable_event_channel();
         let streamEventChannel = event_channel.clone();
@@ -1481,3 +1439,39 @@ fn xml_unescape(text: &str) -> String {
 #[cfg(test)]
 #[path = "../../../../tests/GeminiProviderTests.rs"]
 mod tests;
+
+/// Recognizes documented terminal finish reasons and explicit prompt blocking.
+fn gemini_stream_completed(json: &Value) -> bool {
+    let blocked = json
+        .pointer("/promptFeedback/blockReason")
+        .and_then(Value::as_str)
+        .is_some_and(|reason| !reason.is_empty() && reason != "BLOCK_REASON_UNSPECIFIED");
+    blocked
+        || json
+            .pointer("/candidates/0/finishReason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| {
+                matches!(
+                    reason,
+                    "STOP"
+                        | "MAX_TOKENS"
+                        | "SAFETY"
+                        | "RECITATION"
+                        | "LANGUAGE"
+                        | "OTHER"
+                        | "BLOCKLIST"
+                        | "PROHIBITED_CONTENT"
+                        | "SPII"
+                        | "MALFORMED_FUNCTION_CALL"
+                        | "IMAGE_SAFETY"
+                        | "IMAGE_PROHIBITED_CONTENT"
+                        | "IMAGE_OTHER"
+                        | "NO_IMAGE"
+                        | "IMAGE_RECITATION"
+                        | "UNEXPECTED_TOOL_CALL"
+                        | "TOO_MANY_TOOL_CALLS"
+                        | "MISSING_THOUGHT_SIGNATURE"
+                        | "MALFORMED_RESPONSE"
+                )
+            })
+}

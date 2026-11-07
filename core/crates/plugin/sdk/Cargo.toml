@@ -16,6 +16,7 @@ chacha20poly1305 = "0.10"
 chrono.workspace = true
 json5.workspace = true
 operit-host-api = { path = "../../foundation/host-api" }
+operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util", default-features = false }
 regex.workspace = true
 serde.workspace = true
 serde_bytes = "0.11"

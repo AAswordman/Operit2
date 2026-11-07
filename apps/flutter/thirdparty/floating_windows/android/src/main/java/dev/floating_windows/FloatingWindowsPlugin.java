@@ -102,9 +102,10 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
             if (surface.owner == messenger) destroy(surface);
         }
     }
+    /** Resolves the surface through the plugin instance registered on its engine. */
     private Surface current() {
         for (Surface surface : surfaces.values()) {
-            if (surface.engine.getDartExecutor().getBinaryMessenger() == messenger) return surface;
+            if (surface.engine.getPlugins().get(FloatingWindowsPlugin.class) == this) return surface;
         }
         throw new IllegalStateException("Only an overlay engine can control its current surface");
     }

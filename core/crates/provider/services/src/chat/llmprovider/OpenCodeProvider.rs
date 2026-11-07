@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 use std::ops::{Deref, DerefMut};
 
@@ -293,8 +293,7 @@ impl OpenCodeProvider {
 
     /// Fetches the OpenCode model catalog using its OpenAI-compatible endpoint.
     async fn get_models_list_internal(&self) -> Result<Vec<ModelOption>, AiServiceError> {
-        let mut request = reqwest::Client::new()
-            .get(OpenCodeRouting::models_endpoint(&self.base_endpoint))
+        let mut request = super::ProviderHttp::get(OpenCodeRouting::models_endpoint(&self.base_endpoint))
             .header(CONTENT_TYPE, "application/json");
         if !self.api_key.trim().is_empty() {
             request = request.header(AUTHORIZATION, format!("Bearer {}", self.api_key.trim()));
@@ -309,13 +308,11 @@ impl OpenCodeProvider {
         }
         let response = request
             .send()
-            .await
-            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            .await?;
         let status = response.status();
         let body: Value = response
             .json()
-            .await
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            .await?;
         if !status.is_success() {
             return Err(AiServiceError::RequestFailed(format!(
                 "{status}: {body}"

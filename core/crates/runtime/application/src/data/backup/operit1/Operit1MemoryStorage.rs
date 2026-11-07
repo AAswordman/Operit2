@@ -124,38 +124,35 @@ fn joinVirtualPath(root: &str, relative: &str) -> String {
     format!("{}/{relative}", root.trim_end_matches('/'))
 }
 
-#[derive(Clone, Debug)]
-#[allow(non_snake_case)]
-struct Operit1MemoryRecord {
-    id: i64,
-    uuid: String,
-    title: String,
-    content: String,
-    contentType: String,
-    source: String,
-    credibility: f32,
-    importance: f32,
-    folderPath: Option<String>,
-    createdAt: i64,
-    updatedAt: i64,
-    isDocumentNode: bool,
-}
-
-#[derive(Clone, Debug)]
-#[allow(non_snake_case)]
-struct Operit1MemoryLinkRecord {
-    id: i64,
-    type_: String,
-    weight: f32,
-    description: String,
-    sourceId: i64,
-    targetId: i64,
-}
-
-#[derive(Clone, Debug)]
-struct Operit1MemoryTagRecord {
-    id: i64,
-    name: String,
+/// Decodes forward entity/relation keys; index keys and reverse relations are not domain records.
+fn decodeOperit1ObjectBoxKey(key: &[u8]) -> Result<Option<(u32, u32, Vec<i64>)>, String> {
+    let Some(header) = key.get(..4) else { return Ok(None) };
+    let prefix = u32::from_be_bytes(header.try_into().map_err(|_| "Invalid ObjectBox prefix")?);
+    let kind = prefix >> 26;
+    let model_id = (prefix >> 2) & 0x00ff_ffff;
+    if !matches!((kind, model_id), (6, 4 | 5 | 6 | 7 | 8 | 11) | (2, 7 | 8))
+        || prefix & 2 != 0
+    {
+        return Ok(None);
+    }
+    let width = 4 << (prefix & 1);
+    let end = 4 + width;
+    let widths = match (kind, key.len().checked_sub(end)) {
+        (6, Some(0)) => vec![width],
+        (2, Some(target_width @ (4 | 8))) => vec![width, target_width],
+        _ => return Err("Invalid Operit1 ObjectBox key length".to_string()),
+    };
+    let mut offset = 4;
+    let mut ids = Vec::new();
+    for width in widths {
+        let mut bytes = [0; 8];
+        bytes[8 - width..].copy_from_slice(&key[offset..offset + width]);
+        let id = i64::try_from(u64::from_be_bytes(bytes)).map_err(|_| "ObjectBox ID exceeds i64")?;
+        if id <= 0 { return Err("Invalid Operit1 ObjectBox ID".to_string()); }
+        ids.push(id);
+        offset += width;
+    }
+    Ok(Some((kind, model_id, ids)))
 }
 
 /// Reads full Operit1 entities into plugin records instead of passing through the lossy portable memory export.
@@ -177,21 +174,16 @@ fn buildOperit1PluginMemoryRecords(
     let mut properties = BTreeMap::<i64, Value>::new();
     let mut chunks = Vec::<(i64, Value)>::new();
     let mut candidates = Vec::new();
-    let mut tag_relations = BTreeSet::new();
-    let mut property_relations = BTreeSet::new();
+    let mut relations = BTreeSet::new();
     let mut dropped_candidates = 0usize;
-    // Prefixes follow the checked-in Operit1 ObjectBox model entity and relation identifiers.
+    // Native ObjectBox encodes (kind << 26) | (model ID << 2) | width/direction flags.
+    // Treating kind 8 indexes as kind 2 relations mislabels MemoryLink IDs as property IDs.
     visitLmdbRecords(storage, path, length, &mut |key, bytes| {
-        if key.len() < 4 {
-            return Ok(());
-        }
-        let prefix: [u8; 4] = key[0..4]
-            .try_into()
-            .map_err(|_| "Invalid ObjectBox key prefix")?;
-        match (key.len(), prefix) {
-            (8, OPERIT1_OBJECTBOX_KEY_MEMORY) if !bytes.is_empty() => {
-                let memory = parseOperit1MemoryRecord(bytes)?;
+        let Some((kind, model_id, ids)) = decodeOperit1ObjectBoxKey(key)? else { return Ok(()) };
+        match (kind, model_id) {
+            (6, 4) if !bytes.is_empty() => {
                 let table = FlatObjectBoxTable::new(bytes)?;
+                let id = table.requiredI64(0, "Memory.id")?;
                 let document = table
                     .optionalString(12)?
                     .map(|path| plan.rewritePath(&path))
@@ -200,36 +192,41 @@ fn buildOperit1PluginMemoryRecords(
                     .optionalString(14)?
                     .map(|path| plan.rewritePath(&path))
                     .transpose()?;
-                let value = serde_json::json!({"id":memory.id,"uuid":memory.uuid,"title":memory.title,
-                    "content":memory.content,"contentType":memory.contentType,"source":memory.source,
-                    "credibility":memory.credibility,"importance":memory.importance,"folderPath":memory.folderPath,
-                    "createdAt":memory.createdAt,"updatedAt":memory.updatedAt,"lastAccessedAt":table.requiredI64(10,"Memory.lastAccessedAt")?,
-                    "documentPath":document,"isDocumentNode":memory.isDocumentNode,"chunkIndexFilePath":index,"tags":[],"properties":[]});
-                if memories.insert(memory.id, value).is_some() {
+                let value = serde_json::json!({"id":id,"uuid":table.requiredString(1,"Memory.uuid")?,
+                    "title":table.requiredString(2,"Memory.title")?,"content":table.requiredString(3,"Memory.content")?,
+                    "contentType":table.requiredString(4,"Memory.contentType")?,"source":table.requiredString(5,"Memory.source")?,
+                    "credibility":table.scalarF32(6,"Memory.credibility")?,"importance":table.scalarF32(7,"Memory.importance")?,
+                    "folderPath":table.optionalString(17)?,"createdAt":table.requiredI64(8,"Memory.createdAt")?,
+                    "updatedAt":table.requiredI64(9,"Memory.updatedAt")?,"lastAccessedAt":table.requiredI64(10,"Memory.lastAccessedAt")?,
+                    "documentPath":document,"isDocumentNode":table.scalarBool(13)?,"chunkIndexFilePath":index,"tags":[],"properties":[]});
+                if memories.insert(id, value).is_some() {
                     return Err("Duplicate Operit1 memory identity".to_string());
                 }
             }
-            (8, OPERIT1_OBJECTBOX_KEY_LINK) if !bytes.is_empty() => {
-                let link = parseOperit1MemoryLinkRecord(bytes)?;
-                links.push(serde_json::json!({"id":link.id,"sourceMemoryId":link.sourceId,"targetMemoryId":link.targetId,
-                    "type_":link.type_,"weight":link.weight,"description":link.description}));
+            (6, 5) if !bytes.is_empty() => {
+                let table = FlatObjectBoxTable::new(bytes)?;
+                links.push(serde_json::json!({"id":table.requiredI64(0,"MemoryLink.id")?,
+                    "sourceMemoryId":table.requiredI64(6,"MemoryLink.sourceId")?,"targetMemoryId":table.requiredI64(7,"MemoryLink.targetId")?,
+                    "type_":table.requiredString(1,"MemoryLink.type")?,"weight":table.scalarF32(2,"MemoryLink.weight")?,
+                    "description":table.requiredString(3,"MemoryLink.description")?}));
             }
-            (8, OPERIT1_OBJECTBOX_KEY_TAG) if !bytes.is_empty() => {
-                let tag = parseOperit1MemoryTagRecord(bytes)?;
-                tags.insert(tag.id, serde_json::json!({"id":tag.id,"name":tag.name}));
+            (6, 7) if !bytes.is_empty() => {
+                let table = FlatObjectBoxTable::new(bytes)?;
+                let id = table.requiredI64(0, "MemoryTag.id")?;
+                tags.insert(id, serde_json::json!({"id":id,"name":table.requiredString(1,"MemoryTag.name")?}));
             }
-            (8, [0x18, 0x00, 0x00, 0x18]) if !bytes.is_empty() => {
+            (6, 6) if !bytes.is_empty() => {
                 let table = FlatObjectBoxTable::new(bytes)?;
                 let id = table.requiredI64(0, "MemoryProperty.id")?;
                 properties.insert(id, serde_json::json!({"id":id,"key":table.requiredString(1,"MemoryProperty.key")?,"value":table.requiredString(2,"MemoryProperty.value")?}));
             }
-            (8, [0x18, 0x00, 0x00, 0x20]) if !bytes.is_empty() => {
+            (6, 8) if !bytes.is_empty() => {
                 let table = FlatObjectBoxTable::new(bytes)?;
                 let memory_id = table.requiredI64(4, "DocumentChunk.memoryId")?;
                 chunks.push((memory_id, serde_json::json!({"id":table.requiredI64(0,"DocumentChunk.id")?,
                     "content":table.requiredString(1,"DocumentChunk.content")?,"chunkIndex":table.scalarI32(2,"DocumentChunk.chunkIndex")?})));
             }
-            (8, [0x18, 0x00, 0x00, 0x2c]) if !bytes.is_empty() => {
+            (6, 11) if !bytes.is_empty() => {
                 let table = FlatObjectBoxTable::new(bytes)?;
                 let chat = table.requiredString(1, "MemoryAutoSaveCandidate.chatId")?;
                 let timestamp =
@@ -257,45 +254,25 @@ fn buildOperit1PluginMemoryRecords(
                     candidates.push(candidate);
                 }
             }
-            (16, OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION) if bytes.is_empty() => {
-                tag_relations.insert((
-                    i64::from(readBigEndianU32(&key[8..12])?),
-                    i64::from(readBigEndianU32(&key[12..16])?),
-                ));
-            }
-            (16, [0x20, 0x00, 0x00, 0x24]) if bytes.is_empty() => {
-                property_relations.insert((
-                    i64::from(readBigEndianU32(&key[8..12])?),
-                    i64::from(readBigEndianU32(&key[12..16])?),
-                ));
+            (2, relation_id) => {
+                if !bytes.is_empty() { return Err("Invalid Operit1 ObjectBox relation value".to_string()); }
+                relations.insert((if relation_id == 7 { "tags" } else { "properties" }, ids[0], ids[1]));
             }
             _ => {}
         }
         Ok(())
     })?;
-    for (memory_id, tag_id) in tag_relations {
-        let tag = tags
-            .get(&tag_id)
-            .ok_or_else(|| format!("Missing Operit1 memory tag: {tag_id}"))?;
+    for (memory_field, memory_id, target_id) in relations {
+        let targets = if memory_field == "tags" { &tags } else { &properties };
+        let target = targets.get(&target_id)
+            .ok_or_else(|| format!("Missing Operit1 {memory_field} target: {target_id}"))?;
         let memory = memories
             .get_mut(&memory_id)
-            .ok_or_else(|| format!("Missing Operit1 tagged memory: {memory_id}"))?;
-        memory["tags"]
+            .ok_or_else(|| format!("Missing Operit1 {memory_field} owner: {memory_id}"))?;
+        memory[memory_field]
             .as_array_mut()
-            .ok_or("Invalid memory tags")?
-            .push(tag.clone());
-    }
-    for (memory_id, property_id) in property_relations {
-        let property = properties
-            .get(&property_id)
-            .ok_or_else(|| format!("Missing Operit1 memory property: {property_id}"))?;
-        let memory = memories
-            .get_mut(&memory_id)
-            .ok_or_else(|| format!("Missing Operit1 property owner: {memory_id}"))?;
-        memory["properties"]
-            .as_array_mut()
-            .ok_or("Invalid memory properties")?
-            .push(property.clone());
+            .ok_or("Invalid memory relation field")?
+            .push(target.clone());
     }
     let memory_count = i32::try_from(memories.len()).map_err(|error| error.to_string())?;
     let mut records = Vec::new();
@@ -348,50 +325,6 @@ fn buildOperit1PluginMemoryRecords(
         records.push(ownerRecord("memories", owner, memory)?);
     }
     Ok((records, memory_count, link_count))
-}
-
-/// Reads the declared source layout for parseOperit1MemoryRecord.
-#[allow(non_snake_case)]
-fn parseOperit1MemoryRecord(bytes: &[u8]) -> Result<Operit1MemoryRecord, String> {
-    let table = FlatObjectBoxTable::new(bytes)?;
-    Ok(Operit1MemoryRecord {
-        id: table.requiredI64(0, "Memory.id")?,
-        uuid: table.requiredString(1, "Memory.uuid")?,
-        title: table.requiredString(2, "Memory.title")?,
-        content: table.requiredString(3, "Memory.content")?,
-        contentType: table.requiredString(4, "Memory.contentType")?,
-        source: table.requiredString(5, "Memory.source")?,
-        credibility: table.scalarF32(6, "Memory.credibility")?,
-        importance: table.scalarF32(7, "Memory.importance")?,
-        createdAt: table.requiredI64(8, "Memory.createdAt")?,
-        updatedAt: table.requiredI64(9, "Memory.updatedAt")?,
-        isDocumentNode: table.scalarBool(13)?,
-        folderPath: table.optionalString(17)?,
-    })
-}
-
-/// Reads the declared source layout for parseOperit1MemoryLinkRecord.
-#[allow(non_snake_case)]
-fn parseOperit1MemoryLinkRecord(bytes: &[u8]) -> Result<Operit1MemoryLinkRecord, String> {
-    let table = FlatObjectBoxTable::new(bytes)?;
-    Ok(Operit1MemoryLinkRecord {
-        id: table.requiredI64(0, "MemoryLink.id")?,
-        type_: table.requiredString(1, "MemoryLink.type")?,
-        weight: table.scalarF32(2, "MemoryLink.weight")?,
-        description: table.requiredString(3, "MemoryLink.description")?,
-        sourceId: table.requiredI64(6, "MemoryLink.sourceId")?,
-        targetId: table.requiredI64(7, "MemoryLink.targetId")?,
-    })
-}
-
-/// Reads the declared source layout for parseOperit1MemoryTagRecord.
-#[allow(non_snake_case)]
-fn parseOperit1MemoryTagRecord(bytes: &[u8]) -> Result<Operit1MemoryTagRecord, String> {
-    let table = FlatObjectBoxTable::new(bytes)?;
-    Ok(Operit1MemoryTagRecord {
-        id: table.requiredI64(0, "MemoryTag.id")?,
-        name: table.requiredString(1, "MemoryTag.name")?,
-    })
 }
 
 struct FlatObjectBoxTable<'a> {
@@ -546,14 +479,6 @@ impl<'a> FlatObjectBoxTable<'a> {
         }
         Ok(self.bytes[abs] != 0)
     }
-}
-
-/// Reads the declared source layout for readBigEndianU32.
-#[allow(non_snake_case)]
-fn readBigEndianU32(bytes: &[u8]) -> Result<u32, String> {
-    Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| {
-        "Operit1 ObjectBox u32 字节长度无效".to_string()
-    })?))
 }
 
 /// Reads the declared source layout for readLittleEndianU16.

@@ -2,10 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde_json::json;
 
-use super::{
-    takeNextStreamingLine, OpenAIProvider, ResponsesStreamProtocol, StreamingState, TokenCounts,
-    ToolCallState,
-};
+use super::{OpenAIProvider, ResponsesStreamProtocol, StreamingState, TokenCounts, ToolCallState};
 use crate::chat::llmprovider::AIService::SendMessageRequest;
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
@@ -17,7 +14,6 @@ use operit_util::ImagePoolManager::ImagePoolManager;
 fn streamingState() -> StreamingState {
     StreamingState {
         chunks: Vec::new(),
-        pending_bytes: Vec::new(),
         usage: TokenCounts {
             input: 0,
             cached_input: 0,
@@ -197,22 +193,6 @@ fn textResponseEmitsContentDeltasImmediately() {
     );
 }
 
-/// Verifies an SSE line remains lossless when a UTF-8 character spans transport chunks.
-#[test]
-fn streamingLinePreservesSplitUtf8Characters() {
-    let mut pending_bytes = Vec::new();
-    let encoded = "data: {\"text\":\"芯片\"}\n".as_bytes();
-    pending_bytes.extend_from_slice(&encoded[..15]);
-    assert_eq!(takeNextStreamingLine(&mut pending_bytes).unwrap(), None);
-    pending_bytes.extend_from_slice(&encoded[15..]);
-
-    assert_eq!(
-        takeNextStreamingLine(&mut pending_bytes).unwrap(),
-        Some("data: {\"text\":\"芯片\"}".to_string()),
-    );
-    assert!(pending_bytes.is_empty());
-}
-
 /// Verifies Responses stream completion closes protocol state and deduplicates search output.
 #[test]
 fn responsesStreamCompletesAndDeduplicatesWebSearch() {
@@ -362,30 +342,48 @@ fn responsesStreamAcceptsReasoningItemAfterCompletedEvent() {
 /// Preserves partial output and reports the original request error after closing the response.
 #[tokio::test]
 async fn terminal_request_failure_reaches_the_response_consumer() {
-    use crate::chat::llmprovider::AIService::{ensure_response_completed, AiServiceError, SharedAiResponseStream};
+    use crate::chat::llmprovider::AIService::{
+        ensure_response_completed, AiServiceError, SharedAiResponseStream,
+    };
     use operit_util::stream::HotStream::mutable_shared_stream;
-    use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream, RevisableTextStreamLike};
+    use operit_util::stream::RevisableTextStream::{
+        ResponseStreamItem, RevisableTextStream, RevisableTextStreamLike,
+    };
 
-    let output = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+    let output = SharedAiResponseStream::new_ordered(
+        mutable_shared_stream(usize::MAX),
+        mutable_shared_stream(usize::MAX),
+    );
     let mut response: Box<dyn RevisableTextStreamLike> = Box::new(output.clone());
     output.emit_chunk("unfinished answer".to_string());
     let error = AiServiceError::ConnectionFailed("transport closed".to_string());
     super::finish_response_stream(&output, Err(error.clone()));
     let mut items = Vec::new();
     response.collect_ordered(&mut |item| items.push(item)).await;
-    assert_eq!(items, vec![ResponseStreamItem::Chunk("unfinished answer".to_string())]);
-    assert_eq!(ensure_response_completed(response.as_ref()), Err(AiServiceError::RequestFailed(error.to_string())));
+    assert_eq!(
+        items,
+        vec![ResponseStreamItem::Chunk("unfinished answer".to_string())]
+    );
+    assert_eq!(
+        ensure_response_completed(response.as_ref()),
+        Err(AiServiceError::RequestFailed(error.to_string()))
+    );
 }
 
 /// Does not record user cancellation or successful empty completion as a transport failure.
 #[tokio::test]
 async fn cancelled_and_successful_requests_do_not_report_terminal_failure() {
-    use crate::chat::llmprovider::AIService::{ensure_response_completed, AiServiceError, SharedAiResponseStream};
+    use crate::chat::llmprovider::AIService::{
+        ensure_response_completed, AiServiceError, SharedAiResponseStream,
+    };
     use operit_util::stream::HotStream::mutable_shared_stream;
     use operit_util::stream::RevisableTextStream::RevisableTextStream;
 
     for result in [Ok(()), Err(AiServiceError::RequestCancelled)] {
-        let mut output = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+        let mut output = SharedAiResponseStream::new_ordered(
+            mutable_shared_stream(usize::MAX),
+            mutable_shared_stream(usize::MAX),
+        );
         super::finish_response_stream(&output, result);
         output.collect_ordered(&mut |_| {}).await;
         assert_eq!(ensure_response_completed(&output), Ok(()));

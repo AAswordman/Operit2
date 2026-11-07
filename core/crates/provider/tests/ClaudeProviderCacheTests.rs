@@ -303,8 +303,7 @@ fn streaming_output_only_usage_preserves_input_and_cache_counts() {
     let mut tag = None;
     let mut in_tool = false;
     let mut in_thinking = false;
-    let mut fallback = String::new();
-    let mut emitted = false;
+    let mut completed = false;
     for event in [
         json!({"type":"message_start", "message":{"usage":{
             "input_tokens":20, "cache_read_input_tokens":100,
@@ -314,16 +313,15 @@ fn streaming_output_only_usage_preserves_input_and_cache_counts() {
         json!({"type":"message_stop"}),
     ] {
         provider
-            .process_streaming_line(
-                &format!("data: {event}"),
+            .process_streaming_event(
+                &event.to_string(),
                 &mut chunks,
                 &mut accumulated_usage,
                 &mut parser,
                 &mut tag,
                 &mut in_tool,
                 &mut in_thinking,
-                &mut fallback,
-                &mut emitted,
+                &mut completed,
             )
             .unwrap();
     }
@@ -381,8 +379,7 @@ fn compatible_streaming_usage_input_alias_is_total_not_native_anthropic_input() 
     let mut tag = None;
     let mut in_tool = false;
     let mut in_thinking = false;
-    let mut fallback = String::new();
-    let mut emitted = false;
+    let mut completed = false;
     for event in [
         json!({"choices":[], "usage":{
             "input_tokens":120, "input_tokens_details":{"cached_tokens":100}, "output_tokens":0
@@ -390,16 +387,15 @@ fn compatible_streaming_usage_input_alias_is_total_not_native_anthropic_input() 
         json!({"choices":[], "usage":{"output_tokens":7}}),
     ] {
         provider
-            .process_streaming_line(
-                &format!("data: {event}"),
+            .process_streaming_event(
+                &event.to_string(),
                 &mut chunks,
                 &mut accumulated_usage,
                 &mut parser,
                 &mut tag,
                 &mut in_tool,
                 &mut in_thinking,
-                &mut fallback,
-                &mut emitted,
+                &mut completed,
             )
             .unwrap();
     }

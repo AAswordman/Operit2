@@ -10,7 +10,7 @@ use crate::javascript::{JsExecutionFuture, JsExecutionEngine, ToolPkgExecutionCo
 use crate::package::ToolPackage;
 use crate::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
 use crate::toolpkg::ToolPkgParser::{
-    ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
+    ToolPkgContainerRuntime, ToolPkgDependencyIssue, ToolPkgLoadResult, ToolPkgSourceType, ToolPkgSubpackageRuntime,
 };
 
 /// Listener notified when the set of active ToolPkg containers changes.
@@ -357,46 +357,97 @@ impl ToolPkgManager {
         Some(())
     }
 
-    /// Checks one container using the same direct-or-subpackage rule as the active catalog.
+    /// Checks whether a container and its transitive prerequisites can execute.
     #[allow(non_snake_case)]
     pub fn isEnabledToolPkgContainer(
         &self,
         packageName: &str,
         enabledPackageNames: &[String],
     ) -> bool {
-        let containers = self.containers.read().expect("toolpkg container runtime lock poisoned");
-        let Some(runtime) = containers.get(packageName.trim()) else {
-            return false;
-        };
-        enabledPackageNames.iter().any(|enabled| {
-            enabled == &runtime.packageName
-                || runtime.subpackages.iter().any(|subpackage| enabled == &subpackage.packageName)
-        })
+        self.getEnabledToolPkgContainerRuntimes(enabledPackageNames).iter()
+            .any(|runtime| runtime.packageName == packageName.trim())
     }
 
-    /// Returns the ToolPkg containers enabled directly or through a subpackage.
+    /// Sorts prerequisites before dependents and annotates every unsatisfied dependency.
+    #[allow(non_snake_case)]
+    pub fn resolveToolPkgDependencies(&self, enabledPackageNames: &[String]) -> Vec<ToolPkgContainerRuntime> {
+        let mut pending = self.getToolPkgContainerRuntimeMap();
+        let names = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
+        let enabled = pending.values().filter(|runtime| names.contains(&runtime.packageName)
+            || runtime.subpackages.iter().any(|child| names.contains(&child.packageName)))
+            .map(|runtime| runtime.packageName.clone()).collect::<BTreeSet<_>>();
+        let mut issues = BTreeMap::new();
+        for runtime in pending.values() {
+            let dependencyIssues = runtime.requires.iter().filter_map(|requirement| {
+                let id = requirement.id.trim();
+                let dependency = pending.get(id);
+                let code = match dependency {
+                    None => "missing",
+                    Some(dependency) if ![
+                        (requirement.minVersion.as_ref(), true),
+                        (requirement.maxVersion.as_ref(), false),
+                    ].into_iter().all(|(bound, minimum)| bound.is_none_or(|bound|
+                        operit_util::GithubReleaseUtil::GithubReleaseUtil::compareVersions(&dependency.version, bound)
+                            .is_ok_and(|order| if minimum { order >= 0 } else { order <= 0 }))) => "version_incompatible",
+                    Some(_) if !enabled.contains(id) => "disabled",
+                    Some(_) => return None,
+                };
+                Some(ToolPkgDependencyIssue {
+                    id: id.to_string(), code: code.to_string(),
+                    requiredMinVersion: requirement.minVersion.clone(),
+                    requiredMaxVersion: requirement.maxVersion.clone(),
+                    installedVersion: dependency.map(|dependency| dependency.version.clone()),
+                    enabled: enabled.contains(id),
+                })
+            }).collect();
+            issues.insert(runtime.packageName.clone(), dependencyIssues);
+        }
+        for runtime in pending.values_mut() {
+            runtime.dependencyIssues = issues.remove(&runtime.packageName).expect("Dependency issues were computed for every container");
+        }
+        let mut ordered = Vec::new();
+        let mut resolved = BTreeSet::new();
+        while let Some(name) = pending.iter().find(|(_, runtime)| runtime.dependencyIssues.is_empty()
+            && runtime.requires.iter().all(|requirement| resolved.contains(requirement.id.trim())))
+            .map(|(name, _)| name.clone()) {
+            resolved.insert(name.clone());
+            ordered.push(pending.remove(&name).expect("Selected container is pending"));
+        }
+        // Keep blocked containers visible in the catalog, but never in the executable projection.
+        let versions = pending.iter().map(|(name, runtime)| (name.clone(), runtime.version.clone())).collect::<BTreeMap<_, _>>();
+        for runtime in pending.values_mut() {
+            for requirement in &runtime.requires {
+                let id = requirement.id.trim();
+                if resolved.contains(id) || runtime.dependencyIssues.iter().any(|issue| issue.id == id) { continue; }
+                runtime.dependencyIssues.push(ToolPkgDependencyIssue {
+                    id: id.to_string(), code: "unresolved".to_string(),
+                    requiredMinVersion: requirement.minVersion.clone(),
+                    requiredMaxVersion: requirement.maxVersion.clone(),
+                    installedVersion: Some(versions[id].clone()),
+                    enabled: enabled.contains(id),
+                });
+            }
+        }
+        ordered.extend(pending.into_values());
+        ordered
+    }
+
+    /// Returns executable containers in dependency order, including enabled child owners.
     #[allow(non_snake_case)]
     pub fn getEnabledToolPkgContainerRuntimes(
         &self,
         enabledPackageNames: &[String],
     ) -> Vec<ToolPkgContainerRuntime> {
+        let runtimes = self.resolveToolPkgDependencies(enabledPackageNames);
         let enabledPackageNames = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
-        let mut runtimes = self
-            .containers
-            .read()
-            .expect("toolpkg container runtime lock poisoned")
-            .values()
-            .filter(|runtime| {
+        runtimes
+            .into_iter().filter(|runtime| runtime.dependencyIssues.is_empty() && (
                 enabledPackageNames.contains(&runtime.packageName)
                     || runtime
                         .subpackages
                         .iter()
                         .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        runtimes.sort_by(|left, right| left.packageName.cmp(&right.packageName));
-        runtimes
+            )).collect()
     }
 
     /// Registers a listener and immediately sends the current active containers.
@@ -441,14 +492,8 @@ impl ToolPkgManager {
     ) -> Option<String> {
         let normalizedContainerPackageName = containerPackageName.trim();
         let runtime = self.getToolPkgContainerRuntime(normalizedContainerPackageName)?;
-        let enabledPackageNames = BTreeSet::from_iter(enabledPackageNames.iter().cloned());
-        let enabled = runtime.packageName.eq(normalizedContainerPackageName)
-            && enabledPackageNames.contains(&runtime.packageName)
-            || runtime
-                .subpackages
-                .iter()
-                .any(|subpackage| enabledPackageNames.contains(&subpackage.packageName));
-        if !enabled || runtime.mainEntry.trim().is_empty() {
+        if !self.isEnabledToolPkgContainer(normalizedContainerPackageName, enabledPackageNames)
+            || runtime.mainEntry.trim().is_empty() {
             return None;
         }
         self.readToolPkgMainScript(&runtime)
@@ -1479,6 +1524,80 @@ mod tests {
             });
         }
         (manager, factory)
+    }
+
+    /// Creates a registered dependency graph without requiring archive files.
+    fn dependency_manager(graph: &[(&str, &[&str])]) -> ToolPkgManager {
+        let (mut manager, _) = recordingManager();
+        manager.containers.write().unwrap().clear();
+        for (name, dependencies) in graph {
+            manager.registerToolPkg(ToolPkgLoadResult {
+                containerPackage: ToolPackage { name: (*name).into(), ..Default::default() },
+                containerRuntime: ToolPkgContainerRuntime {
+                    packageName: (*name).into(), version: "1.0.0".into(), mainEntry: "main.js".into(),
+                    requires: dependencies.iter().map(|id| crate::toolpkg::ToolPkgParser::ToolPkgManifestRequirement {
+                        id: (*id).into(), ..Default::default()
+                    }).collect(), ..Default::default()
+                }, ..Default::default()
+            });
+        }
+        manager
+    }
+
+    /// Orders a diamond graph before its consumers regardless of registration or alphabetical order.
+    #[test]
+    fn dependencies_order_executable_containers() {
+        let manager = dependency_manager(&[("a", &["c", "b"]), ("c", &["z"]), ("b", &["z"]), ("z", &[])]);
+        let enabled = vec!["a".into(), "b".into(), "c".into(), "z".into()];
+        assert_eq!(manager.getEnabledToolPkgContainerRuntimes(&enabled).iter()
+            .map(|runtime| runtime.packageName.as_str()).collect::<Vec<_>>(), ["z", "b", "c", "a"]);
+        assert!(manager.resolveToolPkgDependencies(&enabled).iter().all(|runtime| runtime.dependencyIssues.is_empty()));
+    }
+
+    /// Reports cycles, self-dependencies and missing prerequisites without activating their consumers.
+    #[test]
+    fn dependencies_report_unresolvable_graphs() {
+        let manager = dependency_manager(&[("a", &["b"]), ("b", &["a"]), ("consumer", &["a"]),
+            ("self", &["self"]), ("missing", &["absent"]), ("blocked", &["missing"]), ("valid", &[])]);
+        let enabled = manager.getToolPkgContainerRuntimes().iter().map(|runtime| runtime.packageName.clone()).collect::<Vec<_>>();
+        let active = manager.getEnabledToolPkgContainerRuntimes(&enabled);
+        assert_eq!(active.iter().map(|runtime| runtime.packageName.as_str()).collect::<Vec<_>>(), ["valid"]);
+        for runtime in manager.resolveToolPkgDependencies(&enabled).iter().filter(|runtime| runtime.packageName != "valid") {
+            assert_eq!(runtime.dependencyIssues.len(), 1, "{}", runtime.packageName);
+            assert_eq!(runtime.dependencyIssues[0].code, if runtime.packageName == "missing" { "missing" } else { "unresolved" });
+            assert!(!manager.isEnabledToolPkgContainer(&runtime.packageName, &enabled));
+            assert!(manager.getToolPkgMainScriptInternal(&runtime.packageName, &enabled).is_none());
+        }
+    }
+
+    /// Recomputes transitive activation after enabling, upgrading or removing a prerequisite.
+    #[test]
+    fn dependencies_recover_after_prerequisite_changes() {
+        let manager = dependency_manager(&[("a", &["b"]), ("b", &["z"]), ("z", &[])]);
+        let enabled = vec!["a".into(), "b".into()];
+        let catalog = manager.resolveToolPkgDependencies(&enabled);
+        assert_eq!(catalog.iter().find(|runtime| runtime.packageName == "b").unwrap().dependencyIssues[0].code, "disabled");
+        assert!(manager.getEnabledToolPkgContainerRuntimes(&enabled).is_empty());
+        let enabled = vec!["a".into(), "b".into(), "z".into()];
+        assert_eq!(manager.getEnabledToolPkgContainerRuntimes(&enabled).len(), 3);
+        for (minimum, maximum, version, compatible) in [
+            (Some("2.0.0"), None, "1.0.0", false), (None, Some("1.0.0"), "2.0.0", false),
+            (Some("1.0.0"), Some("1.0.0"), "1.0.0", true), (Some("1.0.0"), None, "invalid", false),
+        ] {
+            {
+                let mut containers = manager.containers.write().unwrap();
+                let requirement = &mut containers.get_mut("b").unwrap().requires[0];
+                requirement.minVersion = minimum.map(str::to_string);
+                requirement.maxVersion = maximum.map(str::to_string);
+                containers.get_mut("z").unwrap().version = version.into();
+            }
+            assert_eq!(manager.isEnabledToolPkgContainer("a", &enabled), compatible);
+            let catalog = manager.resolveToolPkgDependencies(&enabled);
+            let issues = &catalog.iter().find(|runtime| runtime.packageName == "b").unwrap().dependencyIssues;
+            if compatible { assert!(issues.is_empty()); } else { assert_eq!(issues[0].code, "version_incompatible"); }
+        }
+        manager.containers.write().unwrap().remove("z");
+        assert!(manager.getEnabledToolPkgContainerRuntimes(&enabled).is_empty());
     }
 
     /// Keeps container activation consistent for hooks and execution owners when only a child is enabled.

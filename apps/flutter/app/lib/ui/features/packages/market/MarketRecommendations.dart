@@ -2,10 +2,24 @@
 
 import 'dart:math' as math;
 
+import 'package:pub_semver/pub_semver.dart';
+
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../components/StoreVisuals.dart';
 
-/// Weights recent updates most strongly, with a bounded boost from feedback.
+final _preferredToolPkgApiVersion = Version(2, 0, 0);
+
+/// Checks whether the declared API version meets the recommendation threshold.
+bool _hasPreferredToolPkgApi(String? apiVersion) {
+  if (apiVersion == null) return false;
+  try {
+    return Version.parse(apiVersion) >= _preferredToolPkgApiVersion;
+  } on FormatException {
+    return false;
+  }
+}
+
+/// Weights recent updates with bounded feedback and ToolPkg API version boosts.
 List<core_proxy.MarketEntrySummary> marketRecommendations(
   Iterable<core_proxy.MarketEntrySummary> entries, {
   DateTime? now,
@@ -30,12 +44,16 @@ List<core_proxy.MarketEntrySummary> marketRecommendations(
     final feedback =
         math.log(1 + math.max(0, marketEntryDownloads(entry))) +
         2 * math.log(1 + math.max(0, marketEntryLikes(entry)));
+    final apiWeight = _hasPreferredToolPkgApi(entry.latestVersion?.apiVersion)
+        ? 1.5
+        : 1.0;
     ranked.add((
       entry: entry,
-      // Seven-day half-life; lifetime feedback can boost a score by at most 50%.
+      // Seven-day half-life, up to 50% feedback boost, and 50% API version boost.
       score:
           math.pow(0.5, days / 7).toDouble() *
-          (1 + 0.5 * feedback / (feedback + 10)),
+          (1 + 0.5 * feedback / (feedback + 10)) *
+          apiWeight,
     ));
   }
   ranked.sort((a, b) {

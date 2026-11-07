@@ -1,101 +1,122 @@
 use super::AIService::AiServiceError;
 
-/// Extracts one complete UTF-8 line without decoding partial transport chunks.
-#[allow(non_snake_case)]
-pub(super) fn takeNextStreamingLine(
-    pending_bytes: &mut Vec<u8>,
-) -> Result<Option<String>, AiServiceError> {
-    let Some(newline_index) = pending_bytes.iter().position(|byte| *byte == b'\n') else {
-        return Ok(None);
-    };
-    let line_bytes = pending_bytes.drain(..=newline_index).collect::<Vec<u8>>();
-    String::from_utf8(line_bytes)
-        .map(|line| Some(line.trim().to_string()))
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))
+/// Frames complete SSE events before a provider interprets their JSON payload.
+#[derive(Default)]
+pub(super) struct SseDecoder {
+    pending: Vec<u8>,
+    data: Vec<String>,
+    skip_lf: bool,
+    started: bool,
 }
 
-/// Strictly decodes the remaining line when the response stream ends.
-#[allow(non_snake_case)]
-pub(super) fn decodeStreamingTail(pending_bytes: &mut Vec<u8>) -> Result<String, AiServiceError> {
-    String::from_utf8(std::mem::take(pending_bytes))
-        .map(|line| line.trim().to_string())
-        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))
+impl SseDecoder {
+    /// Handles UTF-8, CR/LF/CRLF, comments and multiline data across arbitrary chunks.
+    pub(super) fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, AiServiceError> {
+        let bytes = if self.skip_lf && !bytes.is_empty() {
+            self.skip_lf = false;
+            bytes.strip_prefix(b"\n").unwrap_or(bytes)
+        } else {
+            bytes
+        };
+        self.pending.extend_from_slice(bytes);
+        let mut consumed = 0;
+        let mut events = Vec::new();
+        while let Some(offset) = self.pending[consumed..]
+            .iter()
+            .position(|b| matches!(b, b'\r' | b'\n'))
+        {
+            let end = consumed + offset;
+            let mut line = std::str::from_utf8(&self.pending[consumed..end])
+                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+            if !self.started {
+                self.started = true;
+                line = line.strip_prefix('\u{feff}').unwrap_or(line);
+            }
+            consumed = end + 1;
+            if self.pending[end] == b'\r' {
+                if self.pending.get(consumed) == Some(&b'\n') {
+                    consumed += 1;
+                } else if consumed == self.pending.len() {
+                    self.skip_lf = true;
+                }
+            }
+            if line.is_empty() {
+                let data = std::mem::take(&mut self.data).join("\n");
+                if !data.trim().is_empty() {
+                    events.push(data);
+                }
+            } else {
+                let (field, value) = line.split_once(':').unwrap_or((line, ""));
+                if field == "data" {
+                    self.data
+                        .push(value.strip_prefix(' ').unwrap_or(value).to_string());
+                }
+            }
+        }
+        self.pending.drain(..consumed);
+        Ok(events)
+    }
+
+    /// Rejects an unfinished event rather than parsing a truncated transport tail.
+    pub(super) fn finish(&self) -> Result<(), AiServiceError> {
+        std::str::from_utf8(&self.pending)
+            .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
+        if !self.pending.is_empty() || !self.data.is_empty() {
+            return Err(AiServiceError::ConnectionFailed(
+                "response ended during an SSE event".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decodeStreamingTail, takeNextStreamingLine};
-    use crate::chat::llmprovider::AIService::AiServiceError;
+    use super::SseDecoder;
 
-    /// Preserves multilingual tool content at every possible transport split.
+    /// Preserves multiline JSON and multilingual text at every transport split and line ending.
     #[test]
-    fn every_transport_split_preserves_tool_content() {
-        let line = "data: {\"content\":\"协同空间 中文 👩‍💻 & <tag>\"}";
-        let encoded = format!("{line}\r\n").into_bytes();
-        for split in 0..encoded.len() {
-            let mut pending = encoded[..split].to_vec();
-            assert_eq!(takeNextStreamingLine(&mut pending).unwrap(), None);
-            pending.extend_from_slice(&encoded[split..]);
-            assert_eq!(
-                takeNextStreamingLine(&mut pending).unwrap(),
-                Some(line.to_string())
-            );
-            assert!(pending.is_empty());
-        }
-    }
-
-    /// Preserves text even when every byte arrives in a separate network chunk.
-    #[test]
-    fn single_byte_chunks_preserve_tool_content() {
-        let line = "data: {\"content\":\"你好😀\"}";
-        let mut pending = Vec::new();
-        let mut lines = Vec::new();
-        for byte in format!("{line}\n").bytes() {
-            pending.push(byte);
-            while let Some(decoded) = takeNextStreamingLine(&mut pending).unwrap() {
-                lines.push(decoded);
+    fn every_split_preserves_complete_events() {
+        for newline in ["\n", "\r\n", "\r"] {
+            let wire = format!("\u{feff}: heartbeat{newline}{newline}event: message{newline}data: {{\"text\":{newline}data: \"你好😀\"}}{newline}{newline}");
+            for split in 0..=wire.len() {
+                let mut decoder = SseDecoder::default();
+                let mut events = decoder.push(&wire.as_bytes()[..split]).unwrap();
+                events.extend(decoder.push(&wire.as_bytes()[split..]).unwrap());
+                assert_eq!(events, ["{\"text\":\n\"你好😀\"}"]);
+                decoder.finish().unwrap();
             }
         }
-        assert_eq!(lines, vec![line.to_string()]);
-        assert_eq!(decodeStreamingTail(&mut pending).unwrap(), "");
     }
 
-    /// Retains an unfinished final line after extracting complete SSE lines.
+    /// Empty data, comments and metadata never become JSON parse failures.
     #[test]
-    fn multiple_lines_retain_the_unterminated_tail() {
-        let mut pending = "data: 一\n\ndata: 二".as_bytes().to_vec();
-        assert_eq!(
-            takeNextStreamingLine(&mut pending).unwrap(),
-            Some("data: 一".to_string())
-        );
-        assert_eq!(
-            takeNextStreamingLine(&mut pending).unwrap(),
-            Some(String::new())
-        );
-        assert_eq!(takeNextStreamingLine(&mut pending).unwrap(), None);
-        assert_eq!(decodeStreamingTail(&mut pending).unwrap(), "data: 二");
-        assert!(pending.is_empty());
+    fn ignores_empty_events_and_comments() {
+        let mut decoder = SseDecoder::default();
+        assert!(decoder
+            .push(b": ping\n\ndata:\n\nevent: ping\nid: 1\n\n")
+            .unwrap()
+            .is_empty());
+        assert_eq!(decoder.push(b"data: [DONE]\n\n").unwrap(), ["[DONE]"]);
     }
 
-    /// Rejects invalid UTF-8 instead of injecting replacement characters.
+    /// A partial event at EOF is never passed to a provider as complete JSON.
     #[test]
-    fn invalid_utf8_line_returns_a_transport_error() {
-        let mut pending = vec![b'd', 0xff, b'\n'];
-        assert!(matches!(
-            takeNextStreamingLine(&mut pending),
-            Err(AiServiceError::ConnectionFailed(_))
-        ));
+    fn rejects_unfinished_event_at_eof() {
+        for wire in ["data: {}", "data: {}\n", "data: {\n"] {
+            let mut decoder = SseDecoder::default();
+            assert!(decoder.push(wire.as_bytes()).unwrap().is_empty());
+            assert!(decoder.finish().is_err());
+        }
     }
 
-    /// Rejects a stream that ends before completing a multibyte character.
+    /// Rejects invalid UTF-8 without inserting replacement characters into tool parameters.
     #[test]
-    fn truncated_utf8_tail_returns_a_transport_error() {
-        let encoded = "中".as_bytes();
-        let mut pending = encoded[..2].to_vec();
-        assert_eq!(takeNextStreamingLine(&mut pending).unwrap(), None);
-        assert!(matches!(
-            decodeStreamingTail(&mut pending),
-            Err(AiServiceError::ConnectionFailed(_))
-        ));
+    fn rejects_invalid_and_truncated_utf8() {
+        let mut decoder = SseDecoder::default();
+        assert!(decoder.push(&[b'd', 0xff, b'\n']).is_err());
+        let mut decoder = SseDecoder::default();
+        assert!(decoder.push(&[b'd', 0xe4, 0xb8]).unwrap().is_empty());
+        assert!(decoder.finish().is_err());
     }
 }

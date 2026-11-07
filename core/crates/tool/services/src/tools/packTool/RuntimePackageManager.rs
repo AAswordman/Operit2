@@ -68,8 +68,8 @@ use operit_plugin_sdk::toolpkg::ToolPkgPackageService::{
     ToolPkgPackageHost, ToolPkgPackageService,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{
-    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgDependencyIssue, ToolPkgLoadResult,
-    ToolPkgManifestRequirement, ToolPkgMarketOrigin, ToolPkgResourceRuntime, ToolPkgSourceType,
+    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult,
+    ToolPkgMarketOrigin, ToolPkgResourceRuntime, ToolPkgSourceType,
     ToolPkgSubpackageRuntime,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgProtection;
@@ -1575,98 +1575,16 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
-    /// Returns ToolPkg container runtimes that are currently enabled.
+    /// Returns executable ToolPkg containers in prerequisite order.
     pub fn getEnabledToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
-        let runtimes = self
-            .toolPkgManager()
-            .getEnabledToolPkgContainerRuntimes(&self.getEnabledPackageNames());
-        self.orderToolPkgRuntimes(runtimes)
+        self.toolPkgManager().getEnabledToolPkgContainerRuntimes(&self.getEnabledPackageNames())
     }
 
     #[allow(non_snake_case)]
-    /// Orders Space containers before device containers, preserving user order within each scope.
-    fn orderToolPkgRuntimes(
-        &self,
-        mut runtimes: Vec<ToolPkgContainerRuntime>,
-    ) -> Vec<ToolPkgContainerRuntime> {
-        let ranks = self.decodeToolPkgContainerOrderFromPrefs().into_iter()
-            .enumerate().map(|(rank, name)| (name, rank)).collect::<BTreeMap<_, _>>();
-        runtimes.sort_by_key(|runtime| *ranks.get(&runtime.packageName)
-            .expect("Registered ToolPkg container must have an owner rank"));
-        runtimes
-    }
-
-    #[allow(non_snake_case)]
-    /// Returns all registered ToolPkg container runtimes.
+    /// Returns the dependency-ordered catalog with diagnostics for blocked containers.
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn getToolPkgContainerRuntimes(&self) -> Vec<ToolPkgContainerRuntime> {
-        let enabledPackageNames = self.getEnabledPackageNameSetInternal();
-        let order = self
-            .getToolPkgContainerOrder()
-            .into_iter()
-            .enumerate()
-            .map(|(index, packageName)| (packageName, index))
-            .collect::<BTreeMap<_, _>>();
-        let runtimes = self.orderToolPkgRuntimes(self.toolPkgManager().getToolPkgContainerRuntimes());
-        runtimes
-            .into_iter()
-            .map(|runtime| self.withToolPkgDependencyIssues(runtime, &enabledPackageNames, &order))
-            .collect()
-    }
-
-    #[allow(non_snake_case)]
-    /// Returns the same scope and user order used for plugin execution.
-    #[operit_route_macros::operit_plugin_sdk_expose]
-    pub fn getToolPkgContainerOrder(&self) -> Vec<String> {
-        self.orderToolPkgRuntimes(self.toolPkgManager().getToolPkgContainerRuntimes())
-            .into_iter().map(|runtime| runtime.packageName).collect()
-    }
-
-    #[allow(non_snake_case)]
-    /// Persists independent user ranks for Space and device containers.
-    #[operit_route_macros::operit_plugin_sdk_expose]
-    pub fn setToolPkgContainerOrder(
-        &self,
-        packageNames: Vec<String>,
-    ) -> Result<(), PreferencesDataStoreError> {
-        let installed = self
-            .toolPkgManager()
-            .getToolPkgContainerRuntimes()
-            .into_iter()
-            .map(|runtime| runtime.packageName)
-            .collect::<BTreeSet<_>>();
-        let mut ordered = Vec::new();
-        let mut seen = BTreeSet::new();
-        for packageName in packageNames {
-            let normalized = self.normalizePackageName(&packageName);
-            if installed.contains(&normalized) && seen.insert(normalized.clone()) {
-                ordered.push(normalized);
-            }
-        }
-        for packageName in installed {
-            if seen.insert(packageName.clone()) {
-                ordered.push(packageName);
-            }
-        }
-        let result = (|| -> Result<(), PreferencesDataStoreError> {
-            let mut ranks = BTreeMap::from([("space", 0usize), ("device", 0usize)]);
-            for name in &ordered {
-                let mut record = ExtensionStore::default()
-                    .record("package", name)
-                    .map_err(PreferencesDataStoreError::Message)?;
-                let rank = ranks.get_mut(record.scope.as_str())
-                    .expect("Registered package must have a valid scope");
-                record.settings["order"] = serde_json::json!(*rank);
-                *rank += 1;
-                self.writeScopeSettings(name, record.settings)
-                    .map_err(PreferencesDataStoreError::Message)?;
-            }
-            Ok(())
-        })();
-        if result.is_ok() {
-            self.notifyToolPkgRuntimeChangeListeners();
-        }
-        result
+        self.toolPkgManager().resolveToolPkgDependencies(&self.getEnabledPackageNames())
     }
 
     #[allow(non_snake_case)]
@@ -5028,125 +4946,6 @@ impl RuntimePackageManager {
             names.extend(values);
         }
         self.normalizeEnabledPackageNames(&names)
-    }
-
-    #[allow(non_snake_case)]
-    /// Reads the persisted ToolPkg container order.
-    fn decodeToolPkgContainerOrderFromPrefs(&self) -> Vec<String> {
-        let mut records = self.scopeRecords();
-        records.sort_by_key(|record| {
-            (
-                record.scope != "space",
-                record.settings["order"]
-                    .as_u64()
-                    .expect("Registered package rank must be an integer"),
-                record.id.clone(),
-            )
-        });
-        records.into_iter().map(|record| record.id).collect()
-    }
-
-    #[allow(non_snake_case)]
-    /// Calculates prerequisite issues for one ToolPkg runtime from installed package state.
-    fn withToolPkgDependencyIssues(
-        &self,
-        mut runtime: ToolPkgContainerRuntime,
-        enabledPackageNames: &BTreeSet<String>,
-        order: &BTreeMap<String, usize>,
-    ) -> ToolPkgContainerRuntime {
-        runtime.dependencyIssues = runtime
-            .requires
-            .iter()
-            .filter_map(|requirement| {
-                self.toolPkgDependencyIssue(
-                    &runtime.packageName,
-                    requirement,
-                    enabledPackageNames,
-                    order,
-                )
-            })
-            .collect();
-        runtime
-    }
-
-    #[allow(non_snake_case)]
-    /// Resolves one manifest prerequisite against installed and enabled ToolPkg containers.
-    fn toolPkgDependencyIssue(
-        &self,
-        packageName: &str,
-        requirement: &ToolPkgManifestRequirement,
-        enabledPackageNames: &BTreeSet<String>,
-        order: &BTreeMap<String, usize>,
-    ) -> Option<ToolPkgDependencyIssue> {
-        let dependencyId = self.normalizePackageName(&requirement.id);
-        let dependency = self
-            .toolPkgManager()
-            .getToolPkgContainerRuntime(&dependencyId);
-        let Some(dependency) = dependency else {
-            return Some(ToolPkgDependencyIssue {
-                id: dependencyId,
-                code: "missing".to_string(),
-                requiredMinVersion: requirement.minVersion.clone(),
-                requiredMaxVersion: requirement.maxVersion.clone(),
-                installedVersion: None,
-                enabled: false,
-            });
-        };
-        let versionCompatible = requirement.minVersion.as_ref().map_or(true, |minimum| {
-            operit_util::GithubReleaseUtil::GithubReleaseUtil::compareVersions(
-                &dependency.version,
-                minimum,
-            )
-            .map(|order| order >= 0)
-            .unwrap_or(false)
-        }) && requirement.maxVersion.as_ref().map_or(true, |maximum| {
-            operit_util::GithubReleaseUtil::GithubReleaseUtil::compareVersions(
-                &dependency.version,
-                maximum,
-            )
-            .map(|order| order <= 0)
-            .unwrap_or(false)
-        });
-        let enabled = enabledPackageNames.contains(&dependencyId);
-        if !versionCompatible {
-            return Some(ToolPkgDependencyIssue {
-                id: dependencyId,
-                code: "version_incompatible".to_string(),
-                requiredMinVersion: requirement.minVersion.clone(),
-                requiredMaxVersion: requirement.maxVersion.clone(),
-                installedVersion: Some(dependency.version),
-                enabled,
-            });
-        }
-        if !enabled {
-            return Some(ToolPkgDependencyIssue {
-                id: dependencyId,
-                code: "disabled".to_string(),
-                requiredMinVersion: requirement.minVersion.clone(),
-                requiredMaxVersion: requirement.maxVersion.clone(),
-                installedVersion: Some(dependency.version),
-                enabled,
-            });
-        }
-        let packageOrder = order
-            .get(packageName)
-            .copied()
-            .expect("registered ToolPkg container must have a persisted order");
-        let dependencyOrder = order
-            .get(&dependencyId)
-            .copied()
-            .expect("registered ToolPkg prerequisite must have a persisted order");
-        if dependencyOrder > packageOrder {
-            return Some(ToolPkgDependencyIssue {
-                id: dependencyId,
-                code: "load_order".to_string(),
-                requiredMinVersion: requirement.minVersion.clone(),
-                requiredMaxVersion: requirement.maxVersion.clone(),
-                installedVersion: Some(dependency.version),
-                enabled,
-            });
-        }
-        None
     }
 
     #[allow(non_snake_case)]

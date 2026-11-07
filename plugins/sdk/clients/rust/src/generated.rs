@@ -1026,20 +1026,6 @@ impl OperitApplicationPackageManagerClient {
         let value = response.result?;
         decode_messagepack_value(&value)
     }
-    /// Calls `getToolPkgContainerOrder` through the Core Link route.
-    pub async fn getToolPkgContainerOrder(&self) -> Result<Vec<String>, CoreLinkError> {
-        let args = CoreValue::Map(std::collections::BTreeMap::from([]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, "core/application.packageManager", "getToolPkgContainerOrder", args)).await;
-        let value = response.result?;
-        decode_messagepack_value(&value)
-    }
-    /// Calls `setToolPkgContainerOrder` through the Core Link route.
-    pub async fn setToolPkgContainerOrder(&self, packageNames: Vec<String>) -> Result<(), CoreLinkError> {
-        let args = CoreValue::Map(std::collections::BTreeMap::from([("packageNames".to_string(), operit_link::toCoreValue(&packageNames).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, "core/application.packageManager", "setToolPkgContainerOrder", args)).await;
-        let value = response.result?;
-        decode_messagepack_value(&value)
-    }
     /// Calls `getToolPkgContainerDetails` through the Core Link route.
     pub async fn getToolPkgContainerDetails(&self, packageName: &str, useEnglish: bool) -> Result<Option<SdkToolPkgContainerDetails>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?), ("useEnglish".to_string(), operit_link::toCoreValue(&useEnglish).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
