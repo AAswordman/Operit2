@@ -68,7 +68,7 @@ jobs:
   build-android:
     needs: build-android-runtime
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
@@ -181,10 +181,23 @@ jobs:
           }
           python tools/build_scripts/build_flutter_android.py --build-name $version[0].Groups[1].Value --build-number $version[0].Groups[2].Value --enforce-lockfile
 
+      - name: Build and package Android module
+        shell: pwsh
+        run: python tools/build_scripts/build_android_module_release.py --enforce-lockfile
+
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
           name: operit2-android-${{ github.sha }}
           path: tools/release/dist/operit2-app-android-arm64-v8a-*.apk
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Android module artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-android-module-${{ github.sha }}
+          path: tools/release/dist/operit2-module-android-arm64-v8a-*.zip
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 14

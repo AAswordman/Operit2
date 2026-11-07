@@ -1,0 +1,6 @@
+id=operit2
+name=Operit2 Android Module (Trial)
+version=0.1.0-trial.3
+versionCode=3
+author=Operit
+description=Operit2 module application with privileged Android Hosts and shared Core/JNI/Dart UI. ARM64, mounting metamodule and reboot required. No duplicate Core executable or pm install.

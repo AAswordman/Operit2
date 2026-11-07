@@ -33,6 +33,10 @@ object OperitRuntimeNative {
     @JvmStatic external fun destroy(handle: Long)
     /** Creates a retained direct FFI connection to the host runtime. */
     @JvmStatic external fun connectCoreFfi(handle: Long): String
+    /** Connects to the module without creating a Core in this Android process. */
+    @JvmStatic external fun connectModuleCoreFfi(endpoint: String): String
+    /** Persists module client metadata over its authenticated loopback session. */
+    @JvmStatic external fun writeModuleBootstrap(endpoint: String, content: String)
 
 
     @JvmStatic external fun emitRuntimeEvent(handle: Long, eventJson: String): String

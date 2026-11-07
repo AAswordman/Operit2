@@ -28,8 +28,21 @@ impl FileSystemHost for AndroidFileSystemHost {
         "android"
     }
 
+    /// Reports actual Core privileges and removes redundant Root authorization actions.
     fn environmentDescriptor(&self) -> HostEnvironmentDescriptor {
-        HostEnvironmentDescriptor::android()
+        let mut descriptor = HostEnvironmentDescriptor::android();
+        #[cfg(target_os = "android")]
+        if unsafe { libc::geteuid() } == 0 {
+            descriptor.privilege = operit_host_api::HostPrivilege::AndroidRoot;
+            descriptor.isolation = operit_host_api::HostIsolation::None;
+            for requirement in &mut descriptor.onboardingRequirements {
+                if matches!(requirement.id.as_str(), "android.fileManagement" | "android.root" | "android.shizuku" | "android.batteryOptimization") {
+                    requirement.status = operit_host_api::HostRequirementStatus::Satisfied;
+                    requirement.action = operit_host_api::HostRequirementAction::None;
+                }
+            }
+        }
+        descriptor
     }
 
     fn validatePath(&self, path: &str, paramName: &str) -> HostResult<()> {

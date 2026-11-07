@@ -60,8 +60,8 @@ def build_command() -> list[str]:
         "这次要处理什么？",
         [
             Choice(ChoiceKey.CLI, "CLI/TUI", ("--scope", "cli")),
-            Choice(ChoiceKey.APP, "App（Android + OpenHarmony + 当前桌面平台）", ("--scope", "app")),
-            Choice(ChoiceKey.FULL, "全量：App（Android + OpenHarmony + 当前桌面平台）+ CLI/TUI", ("--scope", "full")),
+            Choice(ChoiceKey.APP, "App（Android APK + Android 模块 + OpenHarmony + 当前桌面平台）", ("--scope", "app")),
+            Choice(ChoiceKey.FULL, "全量：App（含 Android 模块）+ CLI/TUI", ("--scope", "full")),
             Choice(ChoiceKey.CHECK, "只检查版本和脚本入口", ("--scope", "none", "--no-wsl")),
         ],
     )

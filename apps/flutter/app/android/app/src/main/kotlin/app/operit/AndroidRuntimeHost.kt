@@ -107,6 +107,7 @@ class AndroidRuntimeHost(context: Context) {
 
     /** Serializes native creation without blocking main-thread storage and lifecycle callbacks. */
     fun ensureRuntimeHandle(): Long {
+        check(!BuildConfig.OPERIT_EXTERNAL_RUNTIME) { "The module UI does not own an application Core" }
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
                 return runtimeHandle

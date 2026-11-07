@@ -120,6 +120,8 @@ tools/web-runtime/.wrangler/
 
 # Local dependency extraction/package scratch
 package/
+!apps/android-module/package/
+!apps/android-module/package/**
 
 # Go
 go.work.sum

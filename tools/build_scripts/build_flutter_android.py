@@ -83,6 +83,8 @@ def parse_args() -> argparse.Namespace:
 def verify_android_runtime_assets(apk_path: Path, abi: str) -> None:
     prefix = "assets/android-runtime/"
     with zipfile.ZipFile(apk_path) as archive:
+        if "assets/operit-android-module.json" in archive.namelist():
+            raise RuntimeError("Ordinary Android App release must not contain the module runtime")
         asset_names = {
             entry.filename for entry in archive.infolist()
             if not entry.is_dir() and entry.filename.startswith(prefix)
@@ -135,6 +137,7 @@ def main() -> int:
         "--split-per-abi",
         "--target-platform",
         "android-arm64",
+        "--android-project-arg=operitRuntime=app",
     ]
     if args.build_name:
         command.extend(["--build-name", args.build_name])

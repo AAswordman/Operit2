@@ -263,6 +263,52 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_connectCoreFfi
     result
 }
 
+/// Creates an App-local FFI client for the independently running module Core.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_connectModuleCoreFfi(
+    mut env: JNIEnv,
+    _class: JClass,
+    endpoint: JString,
+) -> jstring {
+    let result = env
+        .get_string(&endpoint)
+        .map(String::from)
+        .map_err(|e| e.to_string())
+        .and_then(|endpoint| crate::LocalRuntimeTransport::connect_ffi(&endpoint));
+    match result {
+        Ok(descriptor) => {
+            let text = CStr::from_ptr(descriptor)
+                .to_str()
+                .expect("Module FFI JSON");
+            let result = env.new_string(text).expect("Module FFI string").into_raw();
+            operit_flutter_bridge_free_string(descriptor);
+            result
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Writes client bootstrap metadata through the authenticated module connection.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_writeModuleBootstrap(
+    mut env: JNIEnv,
+    _class: JClass,
+    endpoint: JString,
+    content: JString,
+) {
+    let result = (|| -> Result<(), String> {
+        let endpoint: String = env.get_string(&endpoint).map_err(|e| e.to_string())?.into();
+        let content: String = env.get_string(&content).map_err(|e| e.to_string())?.into();
+        crate::LocalRuntimeTransport::write_bootstrap(&endpoint, &content)
+    })();
+    if let Err(error) = result {
+        let _ = env.throw_new("java/lang/IllegalStateException", error);
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_emitRuntimeEvent(
     mut env: JNIEnv,

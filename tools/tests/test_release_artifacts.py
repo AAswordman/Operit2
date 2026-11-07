@@ -42,6 +42,7 @@ TARGETS = (
     ("app", "android", "arm64-v8a", "apk"),
     ("app", "android", "armeabi-v7a", "apk"),
     ("app", "android", "x86_64", "apk"),
+    ("module", "android", "arm64-v8a", "zip"),
     ("app", "ohos", "arm64", "hap"),
     ("cli", "windows", "x86_64", "zip"),
     ("cli", "windows", "aarch64", "zip"),
@@ -215,6 +216,44 @@ class ReleaseArtifactTests(unittest.TestCase):
             (download / name).write_bytes(b"excluded")
         self.assertEqual(download_action_artifacts.release_assets(download), sorted(expected))
 
+    def test_app_and_full_release_include_module_before_incrementing_build_number(self):
+        """Include both Android application forms and advance platform metadata only after successful builds."""
+        for scope in ("app", "full", "cli"):
+            with self.subTest(scope=scope), ExitStack() as stack:
+                stack.enter_context(patch.object(sys, "argv", ["build_release.py", "--scope", scope, "--no-wsl"]))
+                stack.enter_context(patch.object(release_build, "release_version", return_value=release_build.parse_semver("2.0.0-preview.16", "test")))
+                stack.enter_context(patch.object(release_build, "flutter_platform_version", return_value=release_build.FlutterPlatformVersion("2.0.0", "2042")))
+                stack.enter_context(patch.object(release_build, "DIST_DIR", self.root / "dist"))
+                stack.enter_context(patch.object(release_build, "reset_dir"))
+                operations = []
+                for operation in ("build_android_app", "build_android_module", "build_ohos_app", "build_host_app", "build_host_cli"):
+                    stack.enter_context(patch.object(release_build, operation, side_effect=lambda *args, name=operation: operations.append((name, args))))
+                increment = stack.enter_context(patch.object(release_build, "increment_flutter_platform_build_number", return_value=release_build.FlutterPlatformVersion("2.0.0", "2043")))
+                release_build.main()
+                if scope == "cli":
+                    self.assertEqual([name for name, _ in operations], ["build_host_cli"])
+                    increment.assert_not_called()
+                else:
+                    self.assertEqual([name for name, _ in operations[:2]], ["build_android_app", "build_android_module"])
+                    self.assertEqual(operations[0][1], ("2.0.0", "2042"))
+                    self.assertEqual(operations[0][1], operations[1][1])
+                    increment.assert_called_once()
+
+    def test_failed_module_build_does_not_advance_release_metadata(self):
+        """Keep the current build number when the required module release cannot be packaged."""
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", ["build_release.py", "--scope", "app", "--no-wsl"]))
+            stack.enter_context(patch.object(release_build, "release_version", return_value=release_build.parse_semver("2.0.0-preview.16", "test")))
+            stack.enter_context(patch.object(release_build, "flutter_platform_version", return_value=release_build.FlutterPlatformVersion("2.0.0", "2042")))
+            stack.enter_context(patch.object(release_build, "DIST_DIR", self.root / "dist"))
+            stack.enter_context(patch.object(release_build, "reset_dir"))
+            stack.enter_context(patch.object(release_build, "build_android_app"))
+            stack.enter_context(patch.object(release_build, "build_android_module", side_effect=RuntimeError("module failed")))
+            increment = stack.enter_context(patch.object(release_build, "increment_flutter_platform_build_number"))
+            with self.assertRaisesRegex(RuntimeError, "module failed"):
+                release_build.main()
+            increment.assert_not_called()
+
     # Rejects outdated package names and checksum sidecars before any release upload.
     def test_publish_rejects_files_outside_the_current_naming_rule(self):
         dist = self.root / "dist"
@@ -241,6 +280,7 @@ class ReleaseArtifactTests(unittest.TestCase):
     def test_workflow_paths_find_versioned_packages(self):
         cases = (
             ("android-flutter-build.yml", "app", "android", "arm64-v8a", "apk"),
+            ("android-flutter-build.yml", "module", "android", "arm64-v8a", "zip"),
             ("windows-release-build.yml", "app", "windows", "x86_64", "zip"),
             ("windows-release-build.yml", "cli", "windows", "aarch64", "zip"),
             ("linux-release-build.yml", "app", "linux", "x86_64", "tar.gz"),

@@ -298,7 +298,7 @@ class AndroidPlatformChannel(
         return mapOf(
             "android.fileManagement" to requirement(
                 "android.fileManagement",
-                storageAccess.isGranted(),
+                activity.isExternalRuntime || storageAccess.isGranted(),
             ),
             "android.notifications" to requirement(
                 "android.notifications",
@@ -327,18 +327,22 @@ class AndroidPlatformChannel(
             "android.overlay" to requirement("android.overlay", canDrawOverlays()),
             "android.batteryOptimization" to requirement(
                 "android.batteryOptimization",
-                isIgnoringBatteryOptimizations(),
+                activity.isExternalRuntime || isIgnoringBatteryOptimizations(),
             ),
-            "android.shizuku" to shizukuAuthorizationRequirement(),
+            "android.shizuku" to if (activity.isExternalRuntime) requirement("android.shizuku", true) else shizukuAuthorizationRequirement(),
             "android.root" to requirement(
                 "android.root",
-                AndroidPrivilegeAuthorization.isRootAuthorized(activity),
+                activity.isExternalRuntime || AndroidPrivilegeAuthorization.isRootAuthorized(activity),
             ),
         )
     }
 
     /** Routes an Android onboarding authorization request to its native implementation. */
     private fun onboardingRequestPermission(call: MethodCall, result: MethodChannel.Result) {
+        if (activity.isExternalRuntime && call.argument<String>("requirementId") in MODULE_GRANTED_REQUIREMENTS) {
+            result.success(null)
+            return
+        }
         when (call.argument<String>("requirementId")) {
             "android.fileManagement" -> requestFileManagementPermission(result)
             "android.notifications" -> requestNotificationPermission(result)
@@ -681,6 +685,9 @@ class AndroidPlatformChannel(
     }
 
     private companion object {
+        private val MODULE_GRANTED_REQUIREMENTS = setOf(
+            "android.fileManagement", "android.root", "android.shizuku", "android.batteryOptimization",
+        )
         private const val ONBOARDING_PERMISSION_REQUEST_CODE = 2407
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 2408
         private const val ROOT_AUTHORIZATION_TIMEOUT_MS = 30_000L

@@ -13,22 +13,45 @@ use operit_link::LinkDeviceInfo;
 use super::{install_owner_media, BridgeStartup, StartupMetadata};
 use crate::FlutterHostAdapters::FlutterWebVisitBridge;
 use crate::FlutterOwnerCapabilities::{
-    ownerBluetooth, ownerDeviceInfo, ownerGetSystemSetting, ownerLocation, ownerModifySystemSetting,
-    ownerNotifications, ownerRecognizeText, ownerScreenshot, ownerSendNotification,
-    FlutterSystemBindings, FlutterSystemOperationBridge, FlutterTtsSynthesisHost,
+    ownerBluetooth, ownerDeviceInfo, ownerGetSystemSetting, ownerLocation,
+    ownerModifySystemSetting, ownerNotifications, ownerRecognizeText, ownerScreenshot,
+    ownerSendNotification, FlutterSystemBindings, FlutterSystemOperationBridge,
+    FlutterTtsSynthesisHost,
 };
 
 /// Creates Android hosts and binds operations owned by the Flutter application.
 pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager, String> {
-    let mut context = createRuntimeHostManager(
-        startup.runtimeRoot.clone(),
-        startup.workspaceRoot.clone(),
-        Arc::new(FlutterWebVisitBridge::new()),
-        Arc::new(AndroidSystemOperationHost::new(
-            Arc::new(ownerGetSystemSetting),
-            Arc::new(ownerModifySystemSetting),
-        )),
-    )
+    let module = match &startup.metadata {
+        StartupMetadata::AndroidPrivileged {
+            language,
+            secretRoot,
+            ..
+        } => Some((language, secretRoot)),
+        _ => None,
+    };
+    let mut context = if let Some((language, secretRoot)) = module {
+        operit_host_android_native::createPrivilegedRuntimeHostManager(
+            startup.runtimeRoot.clone(),
+            startup.workspaceRoot.clone(),
+            secretRoot.clone(),
+            Arc::new(FlutterWebVisitBridge::new()),
+            Arc::new(AndroidSystemOperationHost::forPrivilegedRuntime(
+                language.clone(),
+                Arc::new(ownerGetSystemSetting),
+                Arc::new(ownerModifySystemSetting),
+            )),
+        )
+    } else {
+        createRuntimeHostManager(
+            startup.runtimeRoot.clone(),
+            startup.workspaceRoot.clone(),
+            Arc::new(FlutterWebVisitBridge::new()),
+            Arc::new(AndroidSystemOperationHost::new(
+                Arc::new(ownerGetSystemSetting),
+                Arc::new(ownerModifySystemSetting),
+            )),
+        )
+    }
     .withTerminalHost(Arc::new(AndroidTerminalHost::new()));
     let system = context
         .systemOperationHost
@@ -57,8 +80,11 @@ pub(crate) fn startup_device_info(
     context: &HostManager,
     metadata: &StartupMetadata,
 ) -> Result<LinkDeviceInfo, String> {
-    let StartupMetadata::AndroidDevice { model } = metadata else {
-        return Err("Android startup requires owner-supplied device identity".to_string());
+    let model = match metadata {
+        StartupMetadata::AndroidDevice { model } | StartupMetadata::AndroidPrivileged { model, .. } => {
+            model
+        }
+        _ => return Err("Android startup requires owner-supplied device identity".to_string()),
     };
     if model.trim().is_empty() {
         return Err("Android startup device model must not be empty".to_string());
@@ -66,8 +92,8 @@ pub(crate) fn startup_device_info(
     Ok(LinkDeviceInfo {
         platform: context.hostEnvironment.id.clone(),
         model: model.clone(),
-    pairingIncarnation: None,
-})
+        pairingIncarnation: None,
+    })
 }
 
 /// Requires Android to receive storage roots from its application owner.
@@ -97,8 +123,13 @@ impl crate::OperitFlutterBridge {
 }
 
 /// Creates only the platform secret-store adapter without starting Core or owner services.
-pub(crate) fn rescue_secret_store(default_runtime: &std::path::Path) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
-    Ok(Some(std::sync::Arc::new(operit_host_android_native::AndroidRuntimeStorageHost::new(
-        default_runtime.to_path_buf(), default_runtime.with_file_name("workspaces"),
-    ))))
+pub(crate) fn rescue_secret_store(
+    default_runtime: &std::path::Path,
+) -> Result<Option<std::sync::Arc<dyn operit_host_api::HostSecretStore>>, String> {
+    Ok(Some(std::sync::Arc::new(
+        operit_host_android_native::AndroidRuntimeStorageHost::new(
+            default_runtime.to_path_buf(),
+            default_runtime.with_file_name("workspaces"),
+        ),
+    )))
 }

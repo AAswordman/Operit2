@@ -5,6 +5,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
@@ -42,6 +43,9 @@ abstract class StageOperitAndroidAssets : DefaultTask() {
     @get:Input
     abstract val selectedAbis: ListProperty<String>
 
+    @get:Input
+    abstract val externalRuntime: Property<Boolean>
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -61,6 +65,10 @@ abstract class StageOperitAndroidAssets : DefaultTask() {
                 }
             }
             into(outputDirectory)
+        }
+        if (externalRuntime.get()) {
+            outputDirectory.file("operit-android-module.json").get().asFile
+                .writeText("{\"runtime\":\"external\",\"protocol\":1,\"app\":\"android-module\",\"bootstrap\":\"app_process\"}\n")
         }
     }
 }
@@ -119,11 +127,16 @@ val operitRustTargets = listOf(
     OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI", "arm"),
 )
 val selectedOperitRustTargets = selectedOperitRustTargets(operitRustTargets)
+val operitRuntime = providers.gradleProperty("operitRuntime").getOrElse("app")
+require(operitRuntime in setOf("app", "module")) { "Unsupported operitRuntime=$operitRuntime" }
+val operitExternalRuntime = operitRuntime == "module"
+val operitModuleAndroid = layout.projectDirectory.dir("../../../../android-module/android")
 
 android {
     namespace = "app.operit"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+    buildFeatures { buildConfig = true }
 
     signingConfigs {
         create("release") {
@@ -146,6 +159,8 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "app.operit"
+        buildConfigField("boolean", "OPERIT_EXTERNAL_RUNTIME", operitExternalRuntime.toString())
+        manifestPlaceholders["operitAppCoreEnabled"] = (!operitExternalRuntime).toString()
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -161,6 +176,9 @@ android {
 
     sourceSets.getByName("main").assets.setSrcDirs(emptyList<String>())
     sourceSets.getByName("main").jniLibs.setSrcDirs(emptyList<String>())
+    if (operitExternalRuntime) {
+        sourceSets.getByName("main").java.srcDir(operitModuleAndroid.dir("src/main/kotlin"))
+    }
 
     buildTypes {
         configureEach {
@@ -174,6 +192,9 @@ android {
         release {
             signingConfig = signingConfigs.getByName("release")
             proguardFiles("proguard-rules.pro")
+            if (operitExternalRuntime) {
+                proguardFiles(operitModuleAndroid.file("proguard-rules.pro"))
+            }
         }
     }
 
@@ -192,6 +213,7 @@ androidComponents {
         ) {
             sourceDirectory.set(layout.projectDirectory.dir("src/main/assets"))
             selectedAbis.set(selectedOperitRustTargets.map { it.abi })
+            externalRuntime.set(operitExternalRuntime)
         }
         val assets = variant.sources.assets
             ?: throw GradleException("Android variant ${variant.name} has no asset sources")
@@ -236,6 +258,7 @@ val operitPluginSyncPython = if (System.getProperty("os.name").lowercase().conta
 }
 val operitBridgeJniLibs = project.layout.projectDirectory.dir("src/main/jniLibs").asFile
 val operitIsWindows = System.getProperty("os.name").lowercase().contains("windows")
+
 val operitCmakeBin = android.sdkDirectory.resolve("cmake/3.22.1/bin")
 val operitLibclangDir = when {
     System.getenv("OPERIT_LIBCLANG_DIR") != null ->
@@ -389,6 +412,9 @@ androidComponents {
                 )
                 if (rustProfile == "release") {
                     cargoArguments.add("--release")
+                }
+                if (operitExternalRuntime) {
+                    cargoArguments.addAll(listOf("--features", "android-module-app"))
                 }
                 // Rust disables default compiler libraries; V8 needs the NDK's cache flush builtin.
                 cargoArguments.addAll(listOf(

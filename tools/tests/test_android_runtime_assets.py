@@ -41,6 +41,13 @@ class AndroidRuntimeAssetsTests(unittest.TestCase):
             ])
             android_build.verify_android_runtime_assets(apk, "arm64-v8a")
 
+    def test_rejects_module_apk_as_ordinary_app(self):
+        """Prevent the module build from replacing a normal App artifact in the shared build directory."""
+        with tempfile.TemporaryDirectory() as directory:
+            apk = self.make_apk(directory, self.runtime_assets() + ["assets/operit-android-module.json"])
+            with self.assertRaisesRegex(RuntimeError, "must not contain the module runtime"):
+                android_build.verify_android_runtime_assets(apk, "arm64-v8a")
+
     # Rejects the three-architecture packaging error reported in production.
     def test_rejects_three_packaged_abis(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -124,11 +131,12 @@ class AndroidRuntimeAssetsTests(unittest.TestCase):
                 patch.object(android_build, "flutter_pub_get"),
                 patch.object(android_build, "generate_dart_proxy_artifacts"),
                 patch.object(android_build, "require_command"),
-                patch.object(android_build, "run"),
+                patch.object(android_build, "run") as run,
                 patch.object(android_build, "publish_android_apk") as publish,
             ):
                 self.assertEqual(android_build.main(), 0)
                 self.assertEqual(publish.call_args.args[0], apk)
+                self.assertIn("--android-project-arg=operitRuntime=app", run.call_args.args[0])
 
     # Publishes only the versioned APK and never creates a checksum sidecar.
     def test_publishes_full_release_version_without_checksum(self):

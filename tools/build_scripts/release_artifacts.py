@@ -20,6 +20,7 @@ RELEASE_TARGETS = (
     ("app", "android", "arm64-v8a", "apk"),
     ("app", "android", "armeabi-v7a", "apk"),
     ("app", "android", "x86_64", "apk"),
+    ("module", "android", "arm64-v8a", "zip"),
     ("app", "ohos", "arm64", "hap"),
     ("cli", "windows", "x86_64", "zip"),
     ("cli", "windows", "aarch64", "zip"),

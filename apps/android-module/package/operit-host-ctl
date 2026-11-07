@@ -1,0 +1,110 @@
+#!/system/bin/sh
+# Controls the privileged Android Host using the same JNI library as the Flutter application.
+MODDIR=$(CDPATH= cd -- "${0%/*}/.." && pwd) || exit 1
+DATADIR=/data/adb/operit2
+PIDFILE=$DATADIR/run/supervisor.pid
+SYSTEM_APK=/system/app/Operit/Operit.apk
+HOST_APK=$MODDIR/system/app/Operit/Operit.apk
+HOST_LIB=$MODDIR/system/app/Operit/lib/arm64
+HOST_MAIN=app.operit.ModuleMain
+umask 077
+
+# Requires PackageManager to use this system client rather than a data-partition APK.
+resolve_client() {
+    [ -f "$SYSTEM_APK" ] || { echo "System client is not mounted; check the KernelSU mount provider and reboot" >&2; return 1; }
+    # Capture Binder output through pipes; private /data/adb log descriptors are not shareable.
+    PACKAGE_PATH=$(pm path --user 0 app.operit 2>&1)
+    [ "$PACKAGE_PATH" = "package:$SYSTEM_APK" ] || {
+        printf 'Expected mounted system client at %s; PackageManager reports: %s\n' "$SYSTEM_APK" "$PACKAGE_PATH" >&2
+        return 1
+    }
+    PACKAGE_INFO=$(cmd package list packages --user 0 -s -U app.operit 2>&1)
+    CLIENT_UID=$(printf '%s\n' "$PACKAGE_INFO" | sed -n 's/^package:app\.operit uid:\([0-9][0-9]*\)$/\1/p')
+    case "$CLIENT_UID" in ''|*[!0-9]*) printf 'Cannot resolve system client UID: %s\n' "$PACKAGE_INFO" >&2; return 1 ;; esac
+}
+
+# Tests PID ownership before sending signals to a process from a saved PID file.
+owned_core() {
+    [ -f "$DATADIR/run/core.pid" ] || return 1
+    read -r COREPID < "$DATADIR/run/core.pid"
+    case "$COREPID" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(readlink "/proc/$COREPID/exe")" = "$(readlink -f /system/bin/app_process)" ] || return 1
+    [ -r "/proc/$COREPID/cmdline" ] || return 1
+    tr '\000' '\n' < "/proc/$COREPID/cmdline" | grep -Fxq "$HOST_MAIN" || return 1
+    tr '\000' '\n' < "/proc/$COREPID/cmdline" | grep -Fxq "$MODDIR"
+}
+
+# Checks supervisor ownership independently from the lifetime of its native child.
+owned_supervisor() {
+    [ -f "$PIDFILE" ] || return 1
+    read -r SUPPID < "$PIDFILE"
+    case "$SUPPID" in ''|*[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$SUPPID/cmdline" ] && tr '\000' '\n' < "/proc/$SUPPID/cmdline" | grep -Fxq "$MODDIR/bin/operit-host-ctl"
+}
+
+case "$1" in
+    start)
+        mkdir -p "$DATADIR/run" "$DATADIR/users/0/logs"
+        rm -f "$DATADIR/run/stop"
+        if owned_supervisor; then
+            echo "Module supervisor is already running"
+            exit 0
+        fi
+        nohup "$MODDIR/bin/operit-host-ctl" supervise </dev/null >>"$DATADIR/users/0/logs/core.log" 2>&1 &
+        ;;
+    supervise)
+        echo "$$" > "$PIDFILE"
+        trap 'rm -f "$PIDFILE"' EXIT
+        export LD_LIBRARY_PATH="$HOST_LIB"
+        export CLASSPATH="$HOST_APK"
+        trap 'touch "$DATADIR/run/stop"; if owned_core; then kill -TERM "$COREPID"; fi' TERM INT
+        while [ "$(getprop sys.boot_completed)" != 1 ]; do
+            [ -f "$DATADIR/run/stop" ] && exit 0
+            sleep 2
+        done
+        while [ "$(getprop sys.user.0.ce_available)" != true ]; do
+            [ -f "$DATADIR/run/stop" ] && exit 0
+            sleep 2
+        done
+        if ! resolve_client; then
+            printf '{"state":"failed","detail":"System application deployment is not ready; see core.log","pid":%s}\n' "$$" > "$DATADIR/run/status.json"
+            exit 1
+        fi
+        ATTEMPT=0
+        while [ "$ATTEMPT" -lt 5 ] && [ ! -f "$DATADIR/run/stop" ] && [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ]; do
+            /system/bin/app_process "-Djava.library.path=$HOST_LIB" /system/bin "$HOST_MAIN" \
+                "$MODDIR" "$DATADIR" "$(getprop ro.product.model)" "$(getprop ro.product.locale)" "$CLIENT_UID"
+            RESULT=$?
+            echo "Module Core exited: $RESULT"
+            [ -f "$DATADIR/run/stop" ] && break
+            [ "$RESULT" -eq 0 ] && break
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep $((ATTEMPT * 2))
+        done
+        ;;
+    open)
+        resolve_client || exit 1
+        LAUNCH_OUTPUT=$(am start --user 0 -n app.operit/.MainActivity 2>&1)
+        LAUNCH_RESULT=$?
+        printf '%s\n' "$LAUNCH_OUTPUT"
+        exit "$LAUNCH_RESULT"
+        ;;
+    stop)
+        mkdir -p "$DATADIR/run"
+        touch "$DATADIR/run/stop"
+        if owned_core; then kill -TERM "$COREPID"; fi
+        if owned_supervisor; then kill -TERM "$SUPPID"; fi
+        REMAINING=15
+        while owned_core || owned_supervisor; do
+            [ "$REMAINING" -gt 0 ] || { echo "Module processes are still stopping" >&2; exit 1; }
+            sleep 1
+            REMAINING=$((REMAINING - 1))
+        done
+        echo "Module stopped; system client mount and user data are preserved"
+        ;;
+    status)
+        [ -f "$DATADIR/run/status.json" ] || { echo "Module has not started"; exit 1; }
+        cat "$DATADIR/run/status.json"
+        ;;
+    *) echo "Usage: operit-host-ctl start|stop|status|open" >&2; exit 2 ;;
+esac

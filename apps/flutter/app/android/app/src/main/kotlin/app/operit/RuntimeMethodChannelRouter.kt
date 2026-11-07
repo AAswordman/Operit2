@@ -9,6 +9,7 @@ class RuntimeMethodChannelRouter(
     ownerSystem: OwnerSystemCapabilityChannel,
 ) {
     private val coreLinkChannel = RuntimeCoreLinkChannel(runtimeHost)
+    private val externalRuntimeChannel = if (activity.isExternalRuntime) ExternalRuntimeChannel(activity, runtimeHost) else null
     private val ownerSystemChannel = ownerSystem
     private val androidPlatformChannel = AndroidPlatformChannel(activity, runtimeHost)
     private val documentInputChannel = DocumentInputChannel(activity)
@@ -18,6 +19,7 @@ class RuntimeMethodChannelRouter(
         runtimeChannel = MethodChannel(messenger, "operit/runtime").also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when {
+                    externalRuntimeChannel?.handle(call, result) == true -> Unit
                     call.method == "notificationActivationInitial" ->
                         result.success(activity.takeNotificationActivation())
                     call.method == "notificationActivationReady" -> {

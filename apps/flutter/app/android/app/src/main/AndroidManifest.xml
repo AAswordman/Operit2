@@ -73,6 +73,7 @@
         </service>
         <activity
             android:name=".DataRescueActivity"
+            android:enabled="${operitAppCoreEnabled}"
             android:label="Operit2 数据救援"
             android:exported="true"
             android:process=":maintenance"
@@ -112,6 +113,7 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <service
             android:name=".OperitCoreService"
+            android:enabled="${operitAppCoreEnabled}"
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:stopWithTask="false">

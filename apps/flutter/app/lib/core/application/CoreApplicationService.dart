@@ -31,6 +31,7 @@ class CoreApplicationService with WidgetsBindingObserver {
       StreamController<Object>.broadcast();
 
   bool _initialized = false;
+  bool _ownsRuntime = true;
   AppLifecycleState? _lastEmittedLifecycleState;
   KeepAliveLease? _coreResidency;
   Future<void>? _runtimeServicesStart;
@@ -46,7 +47,7 @@ class CoreApplicationService with WidgetsBindingObserver {
   }
 
   /// Installs process-level Core lifecycle listeners.
-  void initialize() {
+  void initialize({bool ownsRuntime = true}) {
     if (_initialized) {
       ClientLogger.v(
         'initialize skipped alreadyInitialized=true',
@@ -62,7 +63,10 @@ class CoreApplicationService with WidgetsBindingObserver {
       verboseLevel: VerboseLevel.level1,
     );
     _initialized = true;
-    OperitKeepAlive.instance.report.addListener(_handleResidencyChanged);
+    _ownsRuntime = ownsRuntime;
+    if (_ownsRuntime) {
+      OperitKeepAlive.instance.report.addListener(_handleResidencyChanged);
+    }
     PluginHotReload.register(_coreClients);
     WidgetsBinding.instance.addObserver(this);
     _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
@@ -80,7 +84,9 @@ class CoreApplicationService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_syncHostSubscriber());
-      unawaited(WorkActivityPresentationService.instance.refreshCapabilities());
+      if (_ownsRuntime) {
+        unawaited(WorkActivityPresentationService.instance.refreshCapabilities());
+      }
     }
     unawaited(_emitLifecycleEvent(state));
   }
@@ -189,6 +195,11 @@ class CoreApplicationService with WidgetsBindingObserver {
     final stopwatch = Stopwatch()..start();
     try {
       ClientLogger.attachPersistentStorage();
+      if (!_ownsRuntime) {
+        await _syncHostSubscriber();
+        AppNotificationService.instance.initialize();
+        return;
+      }
       ClientLogger.v(
         'runtime services start localConfirmed=${_runtimeManager.config.confirmed}',
         tag: _logTag,
@@ -206,7 +217,10 @@ class CoreApplicationService with WidgetsBindingObserver {
         return;
       }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
-      Future<void> spaceStep(String operation, Future<void> Function() run) async {
+      Future<void> spaceStep(
+        String operation,
+        Future<void> Function() run,
+      ) async {
         try {
           await run();
         } catch (error, stackTrace) {
@@ -218,6 +232,7 @@ class CoreApplicationService with WidgetsBindingObserver {
           );
         }
       }
+
       await spaceStep('Initialize Space device presentation', () async {
         await _coreClients.server.runtimeRemoteLinkService.initializeDeviceInfo(
           supplied: deviceInfo,

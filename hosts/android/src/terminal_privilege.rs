@@ -33,6 +33,14 @@ impl ShellPrivileges {
 
 /// Reads approved Android privileges through the runtime-owned JNI bridge.
 pub(crate) fn privileges() -> HostResult<ShellPrivileges> {
+    // A module already owns a Root process; no application JVM or su child is required.
+    #[cfg(target_os = "android")]
+    if unsafe { libc::geteuid() } == 0 {
+        return Ok(ShellPrivileges {
+            root_su_arguments: None,
+            shizuku_authorized: false,
+        });
+    }
     serde_json::from_value(call(json!({"operation": "privileges"}))?)
         .map_err(|error| HostError::new(error.to_string()))
 }

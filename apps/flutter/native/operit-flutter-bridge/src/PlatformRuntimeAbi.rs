@@ -8,6 +8,9 @@ pub(crate) mod NativeDataRescue;
 #[cfg(target_os = "android")]
 #[path = "AndroidJni.rs"]
 pub(crate) mod AndroidJni;
+#[cfg(all(target_os = "android", feature = "android-module-app"))]
+#[path = "../../../../android-module/src/Runtime.rs"]
+pub(crate) mod AndroidModuleRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "FfiTransport.rs"]
 pub(crate) mod FfiTransport;

@@ -395,6 +395,9 @@ class _FfiConnection implements Finalizable {
       case 3:
         final controller = _watches.remove(id);
         if (controller != null) unawaited(controller.close());
+      case 4:
+        decodeNativeCoreVoidResult(payload);
+        throw const FormatException('Expected terminal Core connection error');
       default:
         throw FormatException('Unknown Core FFI frame type: $kind');
     }

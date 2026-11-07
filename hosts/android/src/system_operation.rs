@@ -15,6 +15,7 @@ pub type AndroidSystemSettingWriter =
 pub struct AndroidSystemOperationHost {
     settingReader: AndroidSystemSettingReader,
     settingWriter: AndroidSystemSettingWriter,
+    language: Option<String>,
 }
 
 impl AndroidSystemOperationHost {
@@ -26,6 +27,20 @@ impl AndroidSystemOperationHost {
         Self {
             settingReader,
             settingWriter,
+            language: None,
+        }
+    }
+
+    /// Creates the standalone Android host with an explicit boot-time locale.
+    pub fn forPrivilegedRuntime(
+        language: String,
+        settingReader: AndroidSystemSettingReader,
+        settingWriter: AndroidSystemSettingWriter,
+    ) -> Self {
+        Self {
+            settingReader,
+            settingWriter,
+            language: Some(language),
         }
     }
 }
@@ -33,6 +48,9 @@ impl AndroidSystemOperationHost {
 impl SystemOperationHost for AndroidSystemOperationHost {
     /// Reads the system language directly from the Android runtime host.
     fn getSystemLanguageCode(&self) -> HostResult<String> {
+        if let Some(language) = &self.language {
+            return Ok(language.clone());
+        }
         #[cfg(target_os = "android")]
         {
             return crate::secret_store::androidHostSystemLanguageCode();

@@ -966,6 +966,23 @@ def build_android_app(build_name, build_number):
     )
 
 
+# Builds the module application directory and versioned KernelSU installer archive.
+def build_android_module(build_name, build_number):
+    run(
+        [
+            sys.executable,
+            BUILD_SCRIPTS_DIR / "build_android_module_release.py",
+            "--build-name",
+            build_name,
+            "--build-number",
+            build_number,
+            "--enforce-lockfile",
+            "--dist-dir",
+            DIST_DIR,
+        ],
+    )
+
+
 # Builds the OpenHarmony Flutter application package.
 def build_ohos_app(build_name, build_number):
     run(
@@ -1315,6 +1332,7 @@ def main():
 
     if ReleaseProduct.APP in products:
         build_android_app(platform_version.build_name, platform_version.build_number)
+        build_android_module(platform_version.build_name, platform_version.build_number)
         build_ohos_app(platform_version.build_name, platform_version.build_number)
         build_host_app(platform_version.build_name, platform_version.build_number)
 

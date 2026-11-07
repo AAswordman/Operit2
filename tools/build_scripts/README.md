@@ -28,8 +28,27 @@ include hashes in the existing build manifest.
 - `build_local.py`: existing current-host App/CLI/ESP32 dispatcher.
 - `build_apple_release.py`: Apple release asset dispatcher.
 - `build_esp32.py`: ESP32 firmware builder.
+- `build_android_module.py`: forwards to `apps/android-module/build.py`, whose canonical output is a module folder.
+- `build_android_module_release.py`: builds that folder and stages its installer ZIP as `operit2-module-android-arm64-v8a-<release-version>.zip`.
 - `check_build_environment.py`: shared local/CI environment checker.
 - `common.py`, `cli_common.py`, and `appstore_connect_common.py`: shared helpers.
+
+App/full release runs and Android Flutter Build in GitHub Actions include both
+the ordinary Android APK and the Android module ZIP. They build serially using
+the same platform build name/number and separate `operitRuntime` values. The
+module's `module.prop` uses the shared Cargo release version and the Flutter
+build number as `versionCode`. The folder is retained under
+`tools/release/work/android-module/module-arm64-v8a`; only the installer ZIP is
+staged in `tools/release/dist`. Its root directly contains `module.prop`.
+
+To build only the module release using the current version sources:
+
+```powershell
+.venv/Scripts/python.exe tools/build_scripts/build_android_module_release.py --enforce-lockfile
+```
+
+The same Android signing material and build prerequisites as the ordinary APK
+are required. This command builds packages without installing them on a phone.
 
 ## Generated plugin assets
 

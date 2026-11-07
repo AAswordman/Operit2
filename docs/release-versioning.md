@@ -99,6 +99,7 @@ operit2-cli-linux-aarch64-2.0.0-preview.16.tar.gz
 operit2-cli-macos-x86_64-2.0.0-preview.16.tar.gz
 operit2-cli-macos-aarch64-2.0.0-preview.16.tar.gz
 operit2-app-android-arm64-v8a-2.0.0-preview.16.apk
+operit2-module-android-arm64-v8a-2.0.0-preview.16.zip
 operit2-app-ohos-arm64-2.0.0-preview.16.hap
 operit2-app-windows-x86_64-2.0.0-preview.16.zip
 operit2-app-linux-x86_64-2.0.0-preview.16.tar.gz
@@ -157,6 +158,15 @@ For `2.0.0-preview.1`, the Flutter platform version is:
 The build and publish scripts use the full Operit2 SemVer for Git tags and updater metadata. The Flutter `major.minor.patch` must match the Operit2 release version. Flutter `buildNumber` is only platform package metadata for Android, Windows, Linux, and macOS builds.
 
 For App and full runs, the build release script builds with the current Flutter `buildNumber` and then increments `apps/flutter/app/pubspec.yaml` by 1 after all selected App assets succeed. CLI-only runs do not change the Flutter `buildNumber`.
+
+Android modules are an App type included in App/full releases. Their installer
+ZIP is a distinct `module` release product. `module.prop` uses the shared full
+release version and the same Flutter `buildNumber` as `versionCode`. Both Android
+forms must succeed before the App/full release increments the build number once.
+The application directory builder remains `apps/android-module/build.py`;
+`tools/build_scripts/build_android_module_release.py` builds the directory and
+packages its contents at ZIP root. It can also run independently with
+`--enforce-lockfile`, using current version sources.
 
 ## Build Release Script
 
@@ -241,7 +251,7 @@ macOS Flutter Build       macOS App and/or CLI
 iOS Flutter Build         unsigned iOS App
 Windows Release Build     Windows App and/or CLI
 Linux Release Build       Linux App and/or CLI
-Android Flutter Build     signed Android APKs
+Android Flutter Build     signed Android APK and module installer ZIP
 ```
 
 Android Flutter Build requires these repository secrets:

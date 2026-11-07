@@ -8,6 +8,9 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+android-module-app = []
+
 [dependencies]
 operit-data-rescue = { path = "../../../../core/crates/persistence/rescue" }
 operit-core-application = { path = "../../../../core/crates/application/core" }
@@ -43,6 +46,8 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
+libc = "0.2"
+fs2 = "0.4"
 operit-host-android-native = { path = "../../../../hosts/android" }
 
 [target.'cfg(windows)'.dependencies]
