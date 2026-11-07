@@ -202,6 +202,34 @@ void main() {
   });
 
   testWidgets(
+    'renders an interrupted tool call through the partial XML renderer',
+    (tester) async {
+      await tester.pumpWidget(
+        _messagePartApp(
+          const <MessagePart>[
+            MessagePart(
+              partId: 'interrupted-tool',
+              sequence: 0,
+              kind: MessagePartKind.toolCall,
+              content: '<tool name="read_file"><param name="path">README.md',
+              toolCallId: 'call-1',
+              toolName: 'read_file',
+              attributes: <String, String>{'path': 'README.md'},
+            ),
+          ],
+          nodeGrouper: const NoopMarkdownNodeGrouper(),
+          splitMarkdownContent: _splitInterruptedToolContent,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(ToolCallRow), findsOneWidget);
+      expect(find.text('read_file'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'replays persisted display and typed results without a tool registry',
     (tester) async {
       await tester.pumpWidget(
@@ -452,6 +480,8 @@ Widget _messagePartApp(
   List<MessagePart> parts, {
   Locale? locale,
   required MarkdownNodeGrouper nodeGrouper,
+  Future<List<MarkdownStreamEvent>> Function(String) splitMarkdownContent =
+      _splitMarkdownContent,
 }) {
   return MaterialApp(
     locale: locale,
@@ -465,7 +495,7 @@ Widget _messagePartApp(
         backgroundColor: Colors.white,
         showThinkingProcess: true,
         streamState: StreamMarkdownRendererState(),
-        splitMarkdownContent: _splitMarkdownContent,
+        splitMarkdownContent: splitMarkdownContent,
         nodeGrouper: nodeGrouper,
       ),
     ),
@@ -475,6 +505,39 @@ Widget _messagePartApp(
 /// Produces a complete plain Markdown event sequence for renderer tests.
 Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) =>
     splitMarkdownEventFixture(content);
+
+/// Supplies Core's unfinished XML metadata while asserting that serialization retained the source.
+Future<List<MarkdownStreamEvent>> _splitInterruptedToolContent(
+  String content,
+) async {
+  expect(content, '<tool name="read_file"><param name="path">README.md');
+  return [
+    for (final type in [
+      'markdownBlockStart',
+      'markdownBlockChunk',
+      'markdownBlockEnd',
+    ])
+      MarkdownStreamEvent(
+        chatId: 'test',
+        eventType: type,
+        value: type == 'markdownBlockChunk' ? content : null,
+        id: null,
+        blockId: 1,
+        inlineId: null,
+        parentBlockId: null,
+        nodeType: 'XmlBlock',
+        headerLevel: null,
+        xml: const MarkdownXmlStreamEvent(
+          tagName: 'tool',
+          attributes: {'name': 'read_file'},
+          bodyChunk: null,
+          children: [],
+          isClosed: false,
+        ),
+      ),
+    _markdownEvent('completed'),
+  ];
+}
 
 /// Creates a generated Markdown stream event for renderer tests.
 MarkdownStreamEvent _markdownEvent(String type, {String? value, int? blockId}) {

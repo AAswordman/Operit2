@@ -174,6 +174,10 @@ String _structuredPartMarkup(core_proxy.MessagePart part) {
         ..write('</think>');
       break;
     case core_proxy.MessagePartKind.toolCall:
+      if (part.content.isNotEmpty) {
+        markup.write(part.content);
+        break;
+      }
       final toolName = part.toolName;
       final toolCallId = part.toolCallId;
       if (toolName == null || toolCallId == null) {
@@ -199,13 +203,13 @@ String _structuredPartMarkup(core_proxy.MessagePart part) {
       break;
     case core_proxy.MessagePartKind.toolResult:
       final toolName = part.toolName;
-      if (toolName == null) {
-        throw StateError('Tool-result parts require a tool name.');
+      markup.write('<tool_result');
+      if (toolName != null) {
+        markup
+          ..write(' name="')
+          ..write(_escapeProtocolAttribute(toolName))
+          ..write('"');
       }
-      markup
-        ..write('<tool_result name="')
-        ..write(_escapeProtocolAttribute(toolName))
-        ..write('"');
       final toolCallId = part.toolCallId;
       if (toolCallId != null) {
         markup

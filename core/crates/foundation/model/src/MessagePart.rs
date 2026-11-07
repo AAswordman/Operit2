@@ -19,6 +19,7 @@ pub struct MessagePart {
     pub partId: String,
     pub sequence: i32,
     pub kind: MessagePartKind,
+    /// Text payload, or the original protocol fragment for an interrupted tool call.
     pub content: String,
     pub toolCallId: Option<String>,
     pub toolName: Option<String>,

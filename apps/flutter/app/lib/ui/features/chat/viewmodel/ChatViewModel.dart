@@ -773,6 +773,10 @@ extension ChatMessagePresentation on core_proxy.ChatMessage {
             ..write(part.content)
             ..write('</think>');
         case core_proxy.MessagePartKind.toolCall:
+          if (part.content.isNotEmpty) {
+            markup.write(part.content);
+            continue;
+          }
           markup
             ..write('<tool name="')
             ..write(_escapeProtocolAttribute(part.toolName!))
@@ -791,10 +795,14 @@ extension ChatMessagePresentation on core_proxy.ChatMessage {
           }
           markup.write('</tool>');
         case core_proxy.MessagePartKind.toolResult:
-          markup
-            ..write('<tool_result name="')
-            ..write(_escapeProtocolAttribute(part.toolName!))
-            ..write('"');
+          markup.write('<tool_result');
+          final toolName = part.toolName;
+          if (toolName != null) {
+            markup
+              ..write(' name="')
+              ..write(_escapeProtocolAttribute(toolName))
+              ..write('"');
+          }
           final toolCallId = part.toolCallId;
           if (toolCallId != null) {
             markup

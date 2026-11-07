@@ -1269,10 +1269,10 @@ fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
             }
             MessagePartKind::Thinking => None,
             MessagePartKind::ToolCall => {
-                let tool_name = part
-                    .toolName
-                    .as_deref()
-                    .expect("tool-call parts require a tool name");
+                let tool_label = match &part.toolName {
+                    Some(name) => format!("工具: {name}"),
+                    None => "工具".to_string(),
+                };
                 let params = part
                     .attributes
                     .iter()
@@ -1290,13 +1290,13 @@ fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
                 } else {
                     format!(" {}", params.join("; "))
                 };
-                Some(format!("[工具: {tool_name}]{params_text}"))
+                Some(format!("[{tool_label}]{params_text}"))
             }
             MessagePartKind::ToolResult => {
-                let tool_name = part
-                    .toolName
-                    .as_deref()
-                    .expect("tool-result parts require a tool name");
+                let tool_label = match &part.toolName {
+                    Some(name) => format!("结果: {name}"),
+                    None => "结果".to_string(),
+                };
                 let status = part
                     .attributes
                     .get("status")
@@ -1317,7 +1317,7 @@ fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
                 } else {
                     format!(" {result}")
                 };
-                Some(format!("[结果: {tool_name}{status_text}]{result_text}"))
+                Some(format!("[{tool_label}{status_text}]{result_text}"))
             }
         };
         if let Some(segment) = segment {
