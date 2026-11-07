@@ -4,7 +4,9 @@
 区域发现后通过 `build_instruction_graph` 构建与原生后端共用的 `BlockGraph`，调用 `optimize_graph`，再由 Wasm 后端降低优化后的 `InstructionNode`。共用基本块划分、指令副作用分析、常量传播/折叠、死结果消除和无用 NZCV 计算消除；原生 `StaticOperation` 降低不参与 Wasm 生成。
 条件分支的目标和落空路径都作为基本块入口，块间不传播常量事实。死结果和标志位消除以访存、控制流和辅助操作为边界，常量事实按指令副作用失效。原始指令节点和 PC 保留，用于预算准入、退休计数与精确退出；删除或折叠发射代码不改变客体指令数。`WasmRegion` 提供消除数、常量结果数和无用标志位计算数，供集成验证检查优化器实际生效。
 直接生成 baseline Wasm 的整数运算、部分浮点与 SIMD 操作、普通访存和控制流，没有把 ARM64 解释器编译进 Wasm。
-没有启用开关、热度门槛或按退休量禁用的规则。
+构建开关为 `OPERIT_ARM64_WASM`，默认 `OFF`。关闭时执行入口跳过 Wasm，且不编译或链接 WebKit 执行后端；开启时没有热度门槛或按退休量禁用的规则。
+
+直接 CMake 构建使用 `-DOPERIT_ARM64_WASM=ON`。iOS/macOS App 打包脚本也默认关闭，可通过环境变量 `OPERIT_ARM64_WASM=ON` 开启；这是构建配置，不提供运行时设置。
 
 Wasm 区域最多发现 16384 条指令。相连的基本块、直接调用及其返回尽可能在同一个模块里执行。
 回边及跨组边使用两级 `br_table`；跨模块的已编译入口通过共享 Wasm 函数表调度，客体寄存器直接保存在共享线性内存中。
@@ -28,7 +30,7 @@ macOS 26.6、Apple M5 上，原始 100×100 Python 负载在交替执行的五�
 
 ```sh
 cmake -S hosts/ios/linux-runtime -B /tmp/operit-wasm -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DOPERIT_ARM64_LTO=OFF
+  -DCMAKE_BUILD_TYPE=Release -DOPERIT_ARM64_LTO=OFF -DOPERIT_ARM64_WASM=ON
 cmake --build /tmp/operit-wasm --target operit-arm64-wasm
 ctest --test-dir /tmp/operit-wasm -R arm64-wasm --output-on-failure
 ```

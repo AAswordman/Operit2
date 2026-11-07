@@ -26,7 +26,7 @@ case "$target" in
         exit 0
         ;;
     host)
-        cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE="$build_type" "$@"
+        cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE="$build_type" -DOPERIT_ARM64_WASM="${OPERIT_ARM64_WASM:-OFF}" "$@"
         cmake --build "$build_dir" --config "$build_type" --parallel "$jobs"
         ;;
     ios|ios-simulator)
@@ -39,7 +39,8 @@ case "$target" in
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${OPERIT_ARM64_DEPLOYMENT_TARGET:-15.0}" \
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-            -DCMAKE_BUILD_TYPE="$build_type" -DBUILD_TESTING=OFF -DOPERIT_ARM64_LTO=OFF "$@"
+            -DCMAKE_BUILD_TYPE="$build_type" -DBUILD_TESTING=OFF -DOPERIT_ARM64_LTO=OFF \
+            -DOPERIT_ARM64_WASM="${OPERIT_ARM64_WASM:-OFF}" "$@"
         cmake --build "$build_dir" --config "$build_type" --target operit_arm64 --parallel "$jobs"
         ;;
     *) printf 'usage: %s [host|ios|ios-simulator|xcframework] [cmake options...]\n' "$0" >&2; exit 2 ;;

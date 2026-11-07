@@ -446,6 +446,7 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
         const auto resume_pc=continuation_pc_,resume_entry=continuation_entry_;
         continuation_pc_=0;
         const StaticOperation *entry=nullptr;bool resumed=false;
+#if OPERIT_ARM64_WASM
         int wasm_reason=WasmRegion::Branch;
         const auto wasm_retired=wasm.run(frame_.shadow,memory,budget,wasm_reason,intrinsics);
         frame_.completed=wasm_retired;
@@ -454,6 +455,7 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
             else if(frame_.completed<budget)entry=select(frame_.shadow.pc);
             resumed=true;
         }
+#endif
         if(!resumed && cpu.pc==resume_pc && resume_pc!=resume_entry && (!intrinsics_ || !intrinsics_->contains(cpu.pc))) {
             const auto found=entries_.find(resume_entry);
             if(found!=entries_.end()) {
@@ -491,7 +493,9 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
     }
     executed_instructions+=frame_.completed;cache_hits+=frame_.block_hits;
     OPERIT_EXEC_DIAGNOSTIC(diagnose_finish(false);)
+#if OPERIT_ARM64_WASM
     wasm.record(cpu,executed_instructions,frame_.completed,frame_.reason==StopReason::Syscall);
+#endif
     return {frame_.reason==StopReason::Syscall ? Trap::Syscall:Trap::Budget,frame_.completed};
 }
 }

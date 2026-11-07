@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -74,6 +76,79 @@ class _MarketStats extends StatelessWidget {
   }
 }
 
+/// Marks the currently advertised ToolPkg API, not the plugin's release version.
+class _MarketV2Ribbon extends StatelessWidget {
+  const _MarketV2Ribbon({
+    required this.entry,
+    required this.child,
+    this.borderRadius = storeCardRadius,
+  });
+
+  final core_proxy.MarketEntrySummary entry;
+  final Widget child;
+  final BorderRadius borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    if ((entry.type != 'package' && entry.type != 'toolpkg') ||
+        entry.latestVersion?.apiVersion?.trim() != '2.0.0') {
+      return child;
+    }
+    final colors = Theme.of(context).colorScheme;
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: Stack(
+        children: <Widget>[
+          child,
+          Positioned(
+            top: 0,
+            left: 0,
+            child: IgnorePointer(
+              child: Semantics(
+                label: 'ToolPkg API 2.0.0',
+                excludeSemantics: true,
+                child: SizedBox.square(
+                  dimension: 32,
+                  child: ClipRect(
+                    child: Stack(
+                      children: <Widget>[
+                        Positioned(
+                          top: 9,
+                          left: -12,
+                          child: Transform.rotate(
+                            angle: -math.pi / 4,
+                            child: Container(
+                              width: 56,
+                              height: 14,
+                              alignment: Alignment.center,
+                              color: colors.primary,
+                              child: Text(
+                                'v2',
+                                textDirection: TextDirection.ltr,
+                                textScaler: TextScaler.noScaling,
+                                style: TextStyle(
+                                  color: colors.onPrimary,
+                                  fontSize: 10,
+                                  height: 1,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Card for horizontal shelves: avatar, name, publisher, summary and stats.
 class StoreMarketCard extends StatelessWidget {
   const StoreMarketCard({
@@ -92,59 +167,67 @@ class StoreMarketCard extends StatelessWidget {
     final publisher = marketEntryPublisher(entry);
     return StorePressable(
       onTap: () => openMarketEntryDetail(entry),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
+      child: _MarketV2Ribbon(
+        entry: entry,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              ExtensionAvatar(
-                seed: marketEntryAvatarSeed(entry),
-                label: entry.title,
-                size: 44,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  ExtensionAvatar(
+                    seed: marketEntryAvatarSeed(entry),
+                    label: entry.title,
+                    size: 44,
+                  ),
+                  const Spacer(),
+                  StoreBadge(label: kind.label, icon: kind.icon),
+                ],
               ),
-              const Spacer(),
-              StoreBadge(label: kind.label, icon: kind.icon),
+              const SizedBox(height: 12),
+              Text(
+                entry.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                publisher.isEmpty ? '社区市场' : publisher,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Expanded(
+                child: Text(
+                  entry.description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+              Row(
+                children: <Widget>[
+                  Expanded(child: _MarketStats(entry: entry)),
+                  StoreMarketGetButton(
+                    entry: entry,
+                    installState: installState,
+                  ),
+                ],
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            entry.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            publisher.isEmpty ? '社区市场' : publisher,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Expanded(
-            child: Text(
-              entry.description,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.45,
-              ),
-            ),
-          ),
-          Row(
-            children: <Widget>[
-              Expanded(child: _MarketStats(entry: entry)),
-              StoreMarketGetButton(entry: entry, installState: installState),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -261,11 +344,15 @@ class StoreMarketRow extends StatelessWidget {
     final publisher = marketEntryPublisher(entry);
     return StoreAppRow(
       rank: rank,
-      icon: ExtensionAvatar(
-        seed: marketEntryAvatarSeed(entry),
-        label: entry.title,
-        kind: kind,
-        size: 44,
+      icon: _MarketV2Ribbon(
+        entry: entry,
+        borderRadius: BorderRadius.circular(44 * 0.3),
+        child: ExtensionAvatar(
+          seed: marketEntryAvatarSeed(entry),
+          label: entry.title,
+          kind: kind,
+          size: 44,
+        ),
       ),
       title: entry.title,
       subtitle: <String>[
@@ -319,92 +406,96 @@ class StoreFeaturedBanner extends StatelessWidget {
           type: MaterialType.transparency,
           child: InkWell(
             onTap: () => openMarketEntryDetail(entry),
-            child: Stack(
-              children: <Widget>[
-                Positioned(
-                  right: -12,
-                  bottom: -56,
-                  child: Text(
-                    extensionMonogram(entry.title),
-                    maxLines: 1,
-                    softWrap: false,
-                    textScaler: TextScaler.noScaling,
-                    style: TextStyle(
-                      fontSize: 200,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      color: ink.withValues(alpha: dark ? 0.08 : 0.07),
+            child: _MarketV2Ribbon(
+              entry: entry,
+              borderRadius: radius,
+              child: Stack(
+                children: <Widget>[
+                  Positioned(
+                    right: -12,
+                    bottom: -56,
+                    child: Text(
+                      extensionMonogram(entry.title),
+                      maxLines: 1,
+                      softWrap: false,
+                      textScaler: TextScaler.noScaling,
+                      style: TextStyle(
+                        fontSize: 200,
+                        height: 1,
+                        fontWeight: FontWeight.w800,
+                        color: ink.withValues(alpha: dark ? 0.08 : 0.07),
+                      ),
                     ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        '${entry.featured ? '精选' : '推荐'} · ${kind.label}',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: ink.withValues(alpha: 0.72),
-                          fontWeight: FontWeight.w600,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          '${entry.featured ? '精选' : '推荐'} · ${kind.label}',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: ink.withValues(alpha: 0.72),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        entry.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          color: ink,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: 6),
+                        Text(
+                          entry.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: ink,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        entry.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: ink.withValues(alpha: 0.8),
-                          height: 1.45,
+                        const SizedBox(height: 6),
+                        Text(
+                          entry.description,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: ink.withValues(alpha: 0.8),
+                            height: 1.45,
+                          ),
                         ),
-                      ),
-                      const Spacer(),
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                Text(
-                                  publisher.isEmpty ? '社区市场' : publisher,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.labelLarge?.copyWith(
-                                    color: ink,
-                                    fontWeight: FontWeight.w600,
+                        const Spacer(),
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Text(
+                                    publisher.isEmpty ? '社区市场' : publisher,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                      color: ink,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 2),
-                                _MarketStats(
-                                  entry: entry,
-                                  color: ink.withValues(alpha: 0.7),
-                                ),
-                              ],
+                                  const SizedBox(height: 2),
+                                  _MarketStats(
+                                    entry: entry,
+                                    color: ink.withValues(alpha: 0.7),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          StoreMarketGetButton(
-                            entry: entry,
-                            installState: installState,
-                            prominent: true,
-                          ),
-                        ],
-                      ),
-                    ],
+                            StoreMarketGetButton(
+                              entry: entry,
+                              installState: installState,
+                              prominent: true,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

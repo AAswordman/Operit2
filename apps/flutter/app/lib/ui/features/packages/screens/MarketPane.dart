@@ -443,24 +443,17 @@ class _MarketPaneState extends State<MarketPane> {
                   _section(
                     padding: padding,
                     title: '按分类浏览',
-                    child: Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: <Widget>[
-                        for (final category in _categories)
-                          _CategoryTile(
-                            category: category,
-                            onTap: () => openMarketBrowse(
-                              heading: marketCategoryText(
-                                category,
-                                languageCode: Localizations.localeOf(
-                                  context,
-                                ).languageCode,
-                              ).name,
-                              categoryId: category.id,
-                            ),
-                          ),
-                      ],
+                    child: _CategoryGrid(
+                      categories: _categories,
+                      onTap: (category) => openMarketBrowse(
+                        heading: marketCategoryText(
+                          category,
+                          languageCode: Localizations.localeOf(
+                            context,
+                          ).languageCode,
+                        ).name,
+                        categoryId: category.id,
+                      ),
                     ),
                   ),
               ],
@@ -860,6 +853,55 @@ class _FeaturedCarouselState extends State<_FeaturedCarousel> {
   }
 }
 
+/// Shares each row's available width, including an incomplete final row.
+class _CategoryGrid extends StatelessWidget {
+  const _CategoryGrid({required this.categories, required this.onTap});
+
+  final List<core_proxy.MarketCategoryInfo> categories;
+  final ValueChanged<core_proxy.MarketCategoryInfo> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (categories.isEmpty) return const SizedBox.shrink();
+    final textScale = storeTextScale(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 10.0;
+        final columns = math.min(
+          categories.length,
+          math.max(1, (constraints.maxWidth / (176 * textScale)).round()),
+        );
+        return Column(
+          children: <Widget>[
+            for (var start = 0; start < categories.length; start += columns)
+              Padding(
+                padding: EdgeInsets.only(top: start == 0 ? 0 : spacing),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (
+                      var index = start;
+                      index < math.min(start + columns, categories.length);
+                      index++
+                    ) ...<Widget>[
+                      if (index > start) const SizedBox(width: spacing),
+                      Expanded(
+                        child: _CategoryTile(
+                          category: categories[index],
+                          onTap: () => onTap(categories[index]),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 /// Category in its own tonal colors, its first character as quiet artwork.
 class _CategoryTile extends StatelessWidget {
   const _CategoryTile({required this.category, required this.onTap});
@@ -882,11 +924,7 @@ class _CategoryTile extends StatelessWidget {
     );
     final description = text.description;
     return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minWidth: 176,
-        maxWidth: 176,
-        minHeight: 80,
-      ),
+      constraints: BoxConstraints(minHeight: 80 * storeTextScale(context)),
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: storeCardRadius,

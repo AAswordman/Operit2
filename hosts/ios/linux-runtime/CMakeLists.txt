@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(OperitArm64Runtime VERSION 0.1.0 LANGUAGES C CXX ASM)
 
+option(OPERIT_ARM64_WASM "Enable the Apple WebKit Wasm execution backend" OFF)
+
 option(OPERIT_EXECUTION_DIAGNOSTICS "Collect static executor handler, path and sampled cursor diagnostics" OFF)
 
 option(OPERIT_ARM64_LTO "Optimize Release builds across execution compiler module boundaries" ON)
@@ -162,9 +164,10 @@ add_library(operit_arm64 STATIC
     src/runtime/tasks/executor.cpp
 )
 target_compile_definitions(operit_arm64 PUBLIC OPERIT_EXECUTION_DIAGNOSTICS=$<BOOL:${OPERIT_EXECUTION_DIAGNOSTICS}>)
+target_compile_definitions(operit_arm64 PRIVATE OPERIT_ARM64_WASM=$<BOOL:${OPERIT_ARM64_WASM}>)
 target_compile_features(operit_arm64 PRIVATE cxx_std_17)
 target_include_directories(operit_arm64 PUBLIC include PRIVATE src "${OPERIT_EXECUTOR_GENERATED}")
-if(APPLE)
+if(APPLE AND OPERIT_ARM64_WASM)
     enable_language(OBJCXX)
     target_sources(operit_arm64 PRIVATE src/cpu/aarch64/wasm_webkit.mm)
     set_source_files_properties(src/cpu/aarch64/wasm_webkit.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc" COMPILE_FLAGS "-std=c++17")
@@ -188,7 +191,7 @@ endif()
 
 option(BUILD_TESTING "Build runtime regression tests" ON)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    if(APPLE)
+    if(APPLE AND OPERIT_ARM64_WASM)
         add_library(operit-wasm-cli OBJECT cli/main.cpp)
         target_compile_features(operit-wasm-cli PRIVATE cxx_std_17)
         target_include_directories(operit-wasm-cli PRIVATE include)
@@ -210,7 +213,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_options(operit-arm64-execution-bench PRIVATE -Wall -Wextra -Werror)
     include(CTest)
     if(BUILD_TESTING)
-        if(APPLE)
+        if(APPLE AND OPERIT_ARM64_WASM)
             add_test(NAME arm64-wasm COMMAND operit-arm64-wasm)
             set_tests_properties(arm64-wasm PROPERTIES TIMEOUT 60)
         endif()

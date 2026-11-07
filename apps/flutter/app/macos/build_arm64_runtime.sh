@@ -30,7 +30,8 @@ for arch in ${ARCHS:-$(uname -m)}; do
     esac
     build_dir="$output_dir/build-$arch"
     cmake -S "$repo_dir/hosts/ios/linux-runtime" -B "$build_dir" \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DOPERIT_ARM64_LTO=OFF \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DOPERIT_ARM64_LTO=ON \
+        -DOPERIT_ARM64_WASM="${OPERIT_ARM64_WASM:-OFF}" \
         -DCMAKE_OSX_SYSROOT="$sdk" -DCMAKE_OSX_ARCHITECTURES="$arch" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
     cmake --build "$build_dir" --target operit_arm64 \
