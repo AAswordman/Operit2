@@ -3,6 +3,8 @@
 #include "linux/syscalls.h"
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
@@ -116,6 +118,34 @@ void mount_resolution() {
     std::filesystem::rename(f.source, f.source + "-moved");
     require(f.read(int(f.open("/workspace/message"))) == "shared-data",
             "host rename invalidated mount anchor");
+}
+void external_file_bindings_keep_inodes() {
+    Fixture f;
+    std::filesystem::create_symlink(f.source + "/message", f.source + "/file-link");
+    f.fs.bind(f.source + "/message", "/bound-file", false);
+    f.fs.bind(f.source + "/message", "/readonly-file", true);
+    f.fs.bind(f.source + "/file-link", "/linked-file", false);
+    require(f.open("/readonly-file", 1) == -30, "readonly file binding accepted a write");
+    std::filesystem::remove(f.source + "/message");
+    std::ofstream(f.source + "/message") << "replacement";
+    require(f.read(int(f.open("/bound-file"))) == "shared-data", "file binding lost its pinned inode");
+    require(f.read(int(f.open("/readonly-file"))) == "shared-data", "readonly file binding lost its pinned inode");
+    require(f.read(int(f.open("/linked-file"))) == "shared-data", "source symlink binding lost its pinned inode");
+    require(f.read(int(f.open("/workspace/message"))) == "replacement", "file replacement was not visible in directory binding");
+}
+void sandbox_directory_binding(const char *root, const char *source, const char *parent) {
+    FD forbidden(::open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    require(forbidden.get() < 0 && errno == EPERM, "test sandbox did not deny opening the source parent");
+    FD authorized(::open(source, O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    require(authorized.get() >= 0, "test sandbox denied the authorized source directory");
+    Filesystem fs(root);
+    fs.bind(source, "/sandbox", false);
+    FD message = fs.resolve("/sandbox/message").open(O_RDONLY);
+    char bytes[64] = {};
+    ssize_t count = ::read(message.get(), bytes, sizeof(bytes));
+    require(count > 0 && std::string(bytes, size_t(count)) == "sandbox-directory-data",
+            "binding an authorized directory required access to its parent");
+    std::puts("authorized directory binding passed with its parent denied");
 }
 void mount_writes_and_readonly() {
     Fixture f;
@@ -545,9 +575,15 @@ void robust_owner_death_and_scheduler_queries() {
 }
 
 } // namespace
-int main() {
+int main(int argc, char **argv) {
     try {
+        if (argc == 5 && std::strcmp(argv[1], "--sandbox-bind") == 0) {
+            sandbox_directory_binding(argv[2], argv[3], argv[4]);
+            return 0;
+        }
+        require(argc == 1, "unexpected filesystem test arguments");
         mount_resolution();
+        external_file_bindings_keep_inodes();
         mount_writes_and_readonly();
         descriptor_flags_and_ioctl();
         pipe_capacity_and_short_writes();

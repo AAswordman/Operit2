@@ -246,6 +246,12 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         add_runtime_test(operit-arm64-execution-tests tests/execution_backend.cpp arm64-execution)
         add_runtime_test(operit-arm64-memory-code-validation-tests tests/memory_code_validation.cpp arm64-memory-code-validation)
         add_runtime_test(operit-arm64-filesystem-tests tests/filesystem.cpp arm64-filesystem)
+        if(APPLE)
+            add_test(NAME arm64-bind-sandbox
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bind_sandbox.py"
+                --fixture "$<TARGET_FILE:operit-arm64-filesystem-tests>")
+            set_tests_properties(arm64-bind-sandbox PROPERTIES TIMEOUT 30)
+        endif()
         add_runtime_test(operit-arm64-vfs-tests tests/virtual_filesystem.cpp arm64-virtual-filesystem)
         add_runtime_test(operit-arm64-inotify-tests tests/inotify.cpp arm64-inotify)
         add_runtime_test(operit-arm64-network-tests tests/network.cpp arm64-network)

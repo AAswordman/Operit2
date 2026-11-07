@@ -85,16 +85,11 @@ void Filesystem::bind(const std::string &source, const std::string &target, bool
     auto destination = resolve(target);
     if (destination.guest == "/" || destination.mount_root || destination.virtual_path)
         guest_error(16);
-    size_t slash = source.rfind('/');
-    const std::string parent = slash == std::string::npos ? "." : slash == 0 ? "/" : source.substr(0, slash);
-    const std::string name = slash == std::string::npos ? source : source.substr(slash + 1);
-    Path native;
-    native.parent = FD(::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-    check_host(native.parent.get());
-    native.name = name.empty() ? "." : name;
-    // The external binding API follows a source symlink; the guest resolver does
-    // not get this host pathname and can never use it as a namespace escape.
-    FD anchor(::openat(native.parent.get(), native.name.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC));
+    // An authorized directory need not grant access to its parent (for example
+    // an iOS app container). Open the source directly and retain that directory.
+    // The external binding API follows source symlinks; guest paths never use
+    // this host pathname to resolve outside the guest namespace.
+    FD anchor(::open(source.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC));
     check_host(anchor.get());
     struct stat info{};
     check_host(::fstat(anchor.get(), &info));
@@ -102,8 +97,17 @@ void Filesystem::bind(const std::string &source, const std::string &target, bool
     if (S_ISDIR(info.st_mode)) {
         backing = std::make_shared<mounts::Source>();
         backing->root = std::move(anchor);
-    } else
+    } else {
+        // Regular files still need their parent to pin the inode with linkat.
+        size_t slash = source.rfind('/');
+        const std::string parent = slash == std::string::npos ? "." : slash == 0 ? "/" : source.substr(0, slash);
+        const std::string name = slash == std::string::npos ? source : source.substr(slash + 1);
+        Path native;
+        native.parent = FD(::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+        check_host(native.parent.get());
+        native.name = name.empty() ? "." : name;
         backing = pinned_file(native, anchor.get());
+    }
     struct stat existing{};
     const int present =
         ::fstatat(destination.parent.get(), destination.name.c_str(), &existing, AT_SYMLINK_NOFOLLOW);
