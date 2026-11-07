@@ -76,6 +76,40 @@ void main() {
   });
 
   testWidgets(
+    'two concurrent visits both return and close their own sessions',
+    (tester) async {
+      final browser = _Browser()..ready = 'loading';
+      final registry = RuntimeWebVisitRegistry(sessions: browser);
+      final first = registry.visitWeb(request('first'));
+      final second = registry.visitWeb(request('second'));
+      await tester.pump();
+      expect(
+        registry.sessionFor('first')?.browserSession?.sessionId,
+        'session-1',
+      );
+      expect(
+        registry.sessionFor('second')?.browserSession?.sessionId,
+        'session-2',
+      );
+      browser.finish('session-2');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      final secondResult = await _resolve(tester, second);
+      expect(secondResult.requestId, 'second');
+      expect(secondResult.success, isTrue);
+      expect(browser.closed, ['session-2']);
+      expect(registry.sessionFor('first'), isNotNull);
+      browser.finish('session-1');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      final firstResult = await _resolve(tester, first);
+      expect(firstResult.requestId, 'first');
+      expect(firstResult.success, isTrue);
+      expect(browser.closed, ['session-2', 'session-1']);
+    },
+  );
+
+  testWidgets(
     'explicit cancellation closes only the requested concurrent visit',
     (tester) async {
       final browser = _Browser()..ready = 'loading';

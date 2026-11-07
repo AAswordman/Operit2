@@ -50,7 +50,12 @@ class RuntimeBrowserOwner extends ChangeNotifier {
   RuntimeBrowserOwner._() {
     _sessionRegistry.setBrowserSessionOpener(
       openBrowserTab: ({url, userAgent, headers}) async {
-        await openTab(url: url, userAgent: userAgent, headers: headers);
+        final tab = await openTab(
+          url: url,
+          userAgent: userAgent,
+          headers: headers,
+        );
+        return tab.id;
       },
     );
     _sessionRegistry.setBrowserSessionUpdater(updateSessionMetadata);

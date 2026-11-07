@@ -70,7 +70,7 @@ class _WorkspaceBrowserSessionOpener {
   /// Creates the owner-host browser tab opener.
   const _WorkspaceBrowserSessionOpener({required this.openBrowserTab});
 
-  final Future<void> Function({
+  final Future<String> Function({
     String? url,
     String? userAgent,
     Map<String, String>? headers,
@@ -92,11 +92,12 @@ class _RuntimeBrowserSessionUpdater {
 
 class _WorkspaceBrowserOpenRequest {
   /// Captures a browser open request until the owner host attaches.
-  const _WorkspaceBrowserOpenRequest({this.url, this.userAgent, this.headers});
+  _WorkspaceBrowserOpenRequest({this.url, this.userAgent, this.headers});
 
   final String? url;
   final String? userAgent;
   final Map<String, String>? headers;
+  final Completer<String> completion = Completer<String>();
 }
 
 class _WorkspaceBrowserSessionControls {
@@ -185,7 +186,7 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
 
   /// Registers the host callback that creates real browser tabs.
   void setBrowserSessionOpener({
-    required Future<void> Function({
+    required Future<String> Function({
       String? url,
       String? userAgent,
       Map<String, String>? headers,
@@ -215,24 +216,23 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     return sessions.map((session) => session.toJson()).toList(growable: false);
   }
 
-  /// Opens a browser tab through the registered host opener.
-  Future<void> openBrowserTab({
+  /// Opens a browser tab and returns the session created by this request.
+  Future<String> openBrowserTab({
     String? url,
     String? userAgent,
     Map<String, String>? headers,
   }) async {
     final opener = _browserSessionOpener;
     if (opener == null) {
-      _pendingOpenRequests.add(
-        _WorkspaceBrowserOpenRequest(
-          url: url,
-          userAgent: userAgent,
-          headers: headers,
-        ),
+      final request = _WorkspaceBrowserOpenRequest(
+        url: url,
+        userAgent: userAgent,
+        headers: headers,
       );
-      return;
+      _pendingOpenRequests.add(request);
+      return request.completion.future;
     }
-    await opener.openBrowserTab(
+    return opener.openBrowserTab(
       url: url,
       userAgent: userAgent,
       headers: headers,
@@ -831,15 +831,15 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
   Future<RuntimeBrowserCommandResult> _createRuntimeSession(
     RuntimeBrowserCommand command,
   ) async {
-    final before = _sessions.keys.toSet();
-    await openBrowserTab(
+    final sessionId = await openBrowserTab(
       url: _requireCommandUrl(command),
       userAgent: command.userAgent,
       headers: command.headers,
     );
-    await waitForSession(timeout: const Duration(seconds: 20));
-    final openedSession = _latestOpenedSession(before);
-    final session = openedSession ?? _requireActiveSession();
+    final session = _sessions[sessionId];
+    if (session == null) {
+      throw StateError('Created browser session is not registered: $sessionId');
+    }
     return _commandResult(success: true, command: command, session: session);
   }
 
@@ -931,19 +931,6 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     return session;
   }
 
-  /// Returns the required active session.
-  WorkspaceBrowserSessionInfo _requireActiveSession() {
-    final activeSessionId = _activeSessionId;
-    if (activeSessionId == null) {
-      throw StateError('No active browser session');
-    }
-    final session = _sessions[activeSessionId];
-    if (session == null) {
-      throw StateError('Active browser session is not registered');
-    }
-    return session;
-  }
-
   /// Returns the controls targeted by the command.
   _WorkspaceBrowserSessionControls _controlsForCommand(
     RuntimeBrowserCommand command,
@@ -986,17 +973,6 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
       throw StateError('Browser zoom command is missing numeric value');
     }
     return value.toDouble();
-  }
-
-  /// Finds the session opened after a create command began.
-  WorkspaceBrowserSessionInfo? _latestOpenedSession(Set<String> before) {
-    final opened = _sessions.values
-        .where((session) => !before.contains(session.sessionId))
-        .toList(growable: false);
-    if (opened.isEmpty) {
-      return null;
-    }
-    return opened.last;
   }
 
   /// Serializes a WebView JavaScript result for the runtime command result.
@@ -1074,10 +1050,16 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     _WorkspaceBrowserSessionOpener opener,
     _WorkspaceBrowserOpenRequest request,
   ) async {
-    await opener.openBrowserTab(
-      url: request.url,
-      userAgent: request.userAgent,
-      headers: request.headers,
-    );
+    try {
+      request.completion.complete(
+        await opener.openBrowserTab(
+          url: request.url,
+          userAgent: request.userAgent,
+          headers: request.headers,
+        ),
+      );
+    } catch (error, stackTrace) {
+      request.completion.completeError(error, stackTrace);
+    }
   }
 }
