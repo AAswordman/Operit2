@@ -224,6 +224,7 @@ pub struct StreamingJsonXmlConverter {
     state: StreamingJsonXmlState,
     buffer: String,
     unicodeCount: i32,
+    pendingHighSurrogate: Option<u16>,
     primitiveNestingDepth: i32,
     primitiveInString: bool,
     primitiveEscape: bool,
@@ -239,11 +240,13 @@ impl Default for StreamingJsonXmlConverter {
 }
 
 impl StreamingJsonXmlConverter {
+    /// Initializes the incremental JSON-to-XML parser for one tool invocation.
     pub fn new() -> Self {
         Self {
             state: StreamingJsonXmlState::WAIT_BRACE,
             buffer: String::new(),
             unicodeCount: 0,
+            pendingHighSurrogate: None,
             primitiveNestingDepth: 0,
             primitiveInString: false,
             primitiveEscape: false,
@@ -283,6 +286,24 @@ impl StreamingJsonXmlConverter {
         self.hasOpenParam
     }
 
+    /// Decodes a BMP escape or joins adjacent UTF-16 surrogate escapes into one scalar.
+    fn decodeUnicodeEscape(&mut self) -> Option<char> {
+        let high = self.pendingHighSurrogate.take();
+        let code = u16::from_str_radix(&self.buffer, 16).ok()?;
+        match (high, code) {
+            (None, 0xD800..=0xDBFF) => {
+                self.pendingHighSurrogate = Some(code);
+                None
+            }
+            (Some(high), 0xDC00..=0xDFFF) => char::from_u32(
+                0x10000 + ((u32::from(high) - 0xD800) << 10) + (u32::from(code) - 0xDC00),
+            ),
+            (None, _) => char::from_u32(u32::from(code)),
+            _ => None,
+        }
+    }
+
+    /// Converts each JSON fragment while retaining incomplete escapes between fragments.
     pub fn feed(&mut self, chunk: &str) -> Vec<StreamingJsonXmlEvent> {
         let mut events = Vec::new();
 
@@ -343,6 +364,9 @@ impl StreamingJsonXmlConverter {
                     }
                 }
                 StreamingJsonXmlState::READ_STRING => {
+                    if c != '\\' {
+                        self.pendingHighSurrogate = None;
+                    }
                     if c == '"' {
                         self.state = StreamingJsonXmlState::WAIT_COMMA;
                         events.push(StreamingJsonXmlEvent::Tag("</param>".to_string()));
@@ -359,6 +383,7 @@ impl StreamingJsonXmlConverter {
                         self.unicodeCount = 0;
                         self.buffer.clear();
                     } else {
+                        self.pendingHighSurrogate = None;
                         let unescaped = match c {
                             'n' => "\n".to_string(),
                             'r' => "\r".to_string(),
@@ -378,12 +403,10 @@ impl StreamingJsonXmlConverter {
                     self.buffer.push(c);
                     self.unicodeCount += 1;
                     if self.unicodeCount == 4 {
-                        if let Ok(code) = u32::from_str_radix(&self.buffer, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                events.push(StreamingJsonXmlEvent::Content(escapeXml(
-                                    &ch.to_string(),
-                                )));
-                            }
+                        if let Some(ch) = self.decodeUnicodeEscape() {
+                            events.push(StreamingJsonXmlEvent::Content(escapeXml(
+                                &ch.to_string(),
+                            )));
                         }
                         self.state = StreamingJsonXmlState::READ_STRING;
                     }
@@ -2929,3 +2952,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../../tests/OpenAIProviderContentFieldTests.rs"]
 mod content_field_tests;
+
+#[cfg(test)]
+#[path = "../../../../tests/StreamingJsonXmlConverterTests.rs"]
+mod streaming_json_xml_tests;

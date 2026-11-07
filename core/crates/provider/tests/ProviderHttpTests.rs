@@ -154,6 +154,43 @@ async fn claude_emits_before_completion_and_stops_without_eof() {
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
+/// Preserves escaped emoji across Claude tool-input events before message completion.
+#[tokio::test]
+async fn claude_streams_tool_arguments_with_split_surrogate_pairs() {
+    let host = ControlledHost::new("");
+    let response = post("https://fixture.invalid")
+        .send_with_host(host.clone())
+        .await
+        .unwrap();
+    host.emit(
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_test\",\"name\":\"echo\",\"input\":{}}}\n\n",
+    );
+    let mut provider = claude();
+    let output = output();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    assert!(futures_util::poll!(&mut read).is_pending());
+    for fragment in [r#"{"text":"hello\uD8"#, r#"3D\uDE"#, r#"00"}"#] {
+        let event = serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": fragment}
+        });
+        host.emit(&format!("data: {event}\n\n"));
+        assert!(futures_util::poll!(&mut read).is_pending());
+    }
+    let rendered = output.current_render_content();
+    assert!(
+        rendered.contains("<param name=\"text\">hello😀</param>"),
+        "unexpected tool output: {rendered}"
+    );
+    host.emit(concat!(
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
+    ));
+    read.await.unwrap();
+    assert_eq!(host.cancelled.lock().unwrap().len(), 1);
+}
+
 /// Rejects a clean socket EOF that lacks Claude's authoritative completion marker.
 #[tokio::test]
 async fn claude_rejects_truncation_and_keeps_partial_output() {
