@@ -5,7 +5,9 @@ use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 use serde_json::Value;
 
-use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::{
+    ToolPkgBridgeRuntime, TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
+};
 
 static APP_LIFECYCLE_HOOKS: OnceLock<Mutex<Vec<ToolPkgAppLifecycleHookRegistration>>> =
     OnceLock::new();
@@ -155,7 +157,7 @@ fn runAppLifecycleHook(
                     operit_util::AppLogger::VERBOSE_LEVEL_3,
                 );
                 match manager
-                    .runToolPkgMainHook(
+                    .runToolPkgMainHookWithTimeoutMillis(
                         &hook.containerPackageName,
                         &hook.functionName,
                         eventName,
@@ -166,6 +168,7 @@ fn runAppLifecycleHook(
                         None,
                         None,
                         None,
+                        TOOLPKG_NOTIFICATION_HOOK_TIMEOUT_MILLIS,
                     )
                     .await
                 {
