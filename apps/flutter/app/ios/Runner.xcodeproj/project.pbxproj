@@ -606,6 +606,8 @@
 					"$(DERIVED_FILE_DIR)/Arm64Runtime",
 				);
 				OTHER_LDFLAGS = (
+					"-framework",
+					WebKit,
 					"$(inherited)",
 					"-loperit_flutter_bridge",
 					"-lc++",
@@ -811,6 +813,8 @@
 					"$(DERIVED_FILE_DIR)/Arm64Runtime",
 				);
 				OTHER_LDFLAGS = (
+					"-framework",
+					WebKit,
 					"$(inherited)",
 					"-loperit_flutter_bridge",
 					"-lc++",
@@ -855,6 +859,8 @@
 					"$(DERIVED_FILE_DIR)/Arm64Runtime",
 				);
 				OTHER_LDFLAGS = (
+					"-framework",
+					WebKit,
 					"$(inherited)",
 					"-loperit_flutter_bridge",
 					"-lc++",

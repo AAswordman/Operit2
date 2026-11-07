@@ -435,7 +435,7 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
             if(intrinsics_!=intrinsics)diagnostics_.count("cache.reset.intrinsics_pointer");
             if(intrinsic_generation_!=generation)diagnostics_.count("cache.reset.intrinsics_generation");
         )
-        continuation_pc_=0;entries_.clear();graphs_.clear();++cache_generation_;memory_=&memory;memory_identity_=memory.identity();intrinsics_=intrinsics;intrinsic_generation_=generation;
+        continuation_pc_=0;entries_.clear();graphs_.clear();wasm.clear();++cache_generation_;memory_=&memory;memory_identity_=memory.identity();intrinsics_=intrinsics;intrinsic_generation_=generation;
     }
     frame_.shadow=cpu;frame_.graph=nullptr;frame_.completed=0;frame_.budget=budget;frame_.exception=nullptr;
     frame_.reason=StopReason::Budget;frame_.engine=this;frame_.memory=&memory;frame_.block_hits=0;
@@ -446,7 +446,15 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
         const auto resume_pc=continuation_pc_,resume_entry=continuation_entry_;
         continuation_pc_=0;
         const StaticOperation *entry=nullptr;bool resumed=false;
-        if(cpu.pc==resume_pc && resume_pc!=resume_entry && (!intrinsics_ || !intrinsics_->contains(cpu.pc))) {
+        int wasm_reason=WasmRegion::Branch;
+        const auto wasm_retired=wasm.run(frame_.shadow,memory,budget,wasm_reason,intrinsics);
+        frame_.completed=wasm_retired;
+        if(wasm_retired) {
+            if(wasm_reason==WasmRegion::Syscall)frame_.reason=StopReason::Syscall;
+            else if(frame_.completed<budget)entry=select(frame_.shadow.pc);
+            resumed=true;
+        }
+        if(!resumed && cpu.pc==resume_pc && resume_pc!=resume_entry && (!intrinsics_ || !intrinsics_->contains(cpu.pc))) {
             const auto found=entries_.find(resume_entry);
             if(found!=entries_.end()) {
                 auto &owner=*found->second.graph;auto &block=*found->second.block;
@@ -483,6 +491,7 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
     }
     executed_instructions+=frame_.completed;cache_hits+=frame_.block_hits;
     OPERIT_EXEC_DIAGNOSTIC(diagnose_finish(false);)
+    wasm.record(cpu,executed_instructions,frame_.completed,frame_.reason==StopReason::Syscall);
     return {frame_.reason==StopReason::Syscall ? Trap::Syscall:Trap::Budget,frame_.completed};
 }
 }

@@ -347,6 +347,31 @@ class Memory {
         return {parallel ? nullptr:tlb_.data(),tlb_second_.data(),&epoch_,
                 parallel ? nullptr:execution_pages_->data()};
     }
+    bool wasm_serial() const noexcept { return !parallel_access_.load(std::memory_order_relaxed); }
+    unsigned wasm_page(uint64_t base,unsigned permissions,void *destination,bool &file) {
+        if(!wasm_serial() || !valid_range(base,page_size))return 0;
+        const AccessGuard access(*this);
+        auto it=regions_.upper_bound(base);
+        if(it==regions_.begin())return 0;
+        const auto &region=(--it)->second;
+        unsigned granted=region.permissions&(read_perm|write_perm);
+        if(region.permissions&exec_perm)granted&=~write_perm;
+        if(base<it->first || base+page_size>region.end || (granted&permissions)!=permissions || region.backing.shared)return 0;
+        copy_out(base,destination,page_size,permissions);
+        PageAccess page(*this,base,permissions);file=page.entry().file_storage;
+        if(file)granted&=~write_perm;
+        return granted;
+
+    }
+    uint64_t wasm_revision(uint64_t address,unsigned permissions) {
+        PageAccess access(*this,address,permissions,true);
+        return access.entry().reservation->epoch(exclusive_revision_.load(std::memory_order_relaxed));
+    }
+    std::vector<uint64_t> wasm_resident_pages() const {
+        std::vector<uint64_t> result;result.reserve(pages_.size());
+        for(const auto &page:pages_)result.push_back(page.first);
+        return result;
+    }
     uint64_t identity() const noexcept { return identity_; }
     static_assert(offsetof(ExecutionTranslation,data)==16 && offsetof(ExecutionTranslation,reservation)==24);
     static_assert(offsetof(ExecutionTranslation,file)==32 && offsetof(ExecutionTranslation,file_generation)==48);

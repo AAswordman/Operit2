@@ -14,7 +14,7 @@
 
 static const NSUInteger ORTOutputCapacity = 1024 * 1024;
 static const NSUInteger ORTCommandCapacity = 16 * 1024 * 1024;
-static const uint64_t ORTRunBudget = 16384;
+static const uint64_t ORTRunBudget = 268435456;
 static const int64_t ORTLinuxAgain = -11;
 static const int ORTLinuxInterrupt = 2;
 

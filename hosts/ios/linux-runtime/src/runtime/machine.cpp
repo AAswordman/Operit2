@@ -202,6 +202,11 @@ ort_arm64_result Machine::run(uint64_t budget) {
                 };
                 Execution execution{Trap::Syscall, 0};
                 try {
+                    // A sole ordinary task has no competing quantum to rotate.
+                    // Let its resident WebKit execution consume a large run;
+                    // timers, RT policies and multiple tasks keep their quantum.
+                    if (wasm_webkit_available() && can_defer_accounting())
+                        quantum_remaining_=std::min<uint64_t>(budget,1ull<<28);
                     if (!resumed_syscall)
                         execution = image.executor->run(task.cpu, *image.memory,
                                                            std::min(budget, quantum_remaining_),

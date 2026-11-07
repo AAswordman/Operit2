@@ -172,6 +172,8 @@ struct BlockGraph {
     bool current(Memory &memory,uint64_t scope) const;
 };
 static_assert(offsetof(BlockGraph,referenced)==0);
+// Shared decoded CFG and optimization pipeline, before backend-specific lowering.
+std::unique_ptr<BlockGraph> build_instruction_graph(const std::vector<std::pair<uint64_t,uint32_t>> &words,uint64_t pc);
 std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedComponents *intrinsics=nullptr);
 void lower_graph(BlockGraph &graph);
 // Table lookup happens during lowering, never to select arithmetic at runtime.

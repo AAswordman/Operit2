@@ -2,6 +2,7 @@
 #include "acceleration/fixed_components.h"
 #include "cpu/aarch64/block_graph.h"
 #include "cpu/aarch64/execution_frame.h"
+#include "cpu/aarch64/wasm_executor.h"
 #include <unordered_map>
 #include <deque>
 namespace operit::arm64 {
@@ -38,6 +39,7 @@ class ExecutionEngine {
     ExecutionEngine &operator=(const ExecutionEngine &)=delete;
     ExecutionEngine(ExecutionEngine &&)=delete;
     ExecutionEngine &operator=(ExecutionEngine &&)=delete;
+    WasmExecutor wasm;
     uint64_t executed_instructions=0,decoded_blocks=0,cache_hits=0;
     uint64_t compiled_operations=0,eliminated_values=0,fused_operations=0;
     uint64_t slow_calls=0,materializations=0;

@@ -16,7 +16,16 @@ unset SDKROOT
 libraries=()
 for arch in ${ARCHS:-$(uname -m)}; do
     case "$arch" in
-        arm64|x86_64) ;;
+        arm64) ;;
+        x86_64)
+            # Keep a linkable Intel slice without compiling the ARM64 executor.
+            stub="$output_dir/arm64-runtime-unavailable-x86_64.o"
+            library="$output_dir/liboperit_arm64-x86_64.a"
+            xcrun --sdk macosx clang -arch x86_64 -x c -c /dev/null -o "$stub"
+            xcrun libtool -static -o "$library" "$stub"
+            libraries+=("$library")
+            continue
+            ;;
         *) printf 'Unsupported macOS runtime architecture: %s\n' "$arch" >&2; exit 1 ;;
     esac
     build_dir="$output_dir/build-$arch"

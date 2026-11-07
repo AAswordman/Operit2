@@ -44,6 +44,8 @@ add_library(operit_arm64 STATIC
     src/cpu/aarch64/memory_effects.cpp
     src/cpu/aarch64/optimizer.cpp
     src/cpu/aarch64/static_lowering.cpp
+    src/cpu/aarch64/wasm_region.cpp
+    src/cpu/aarch64/wasm_executor.cpp
     src/cpu/aarch64/execution_engine.cpp
     src/cpu/aarch64/execution_diagnostics.cpp
     src/cpu/aarch64/static_executor.S
@@ -162,6 +164,13 @@ add_library(operit_arm64 STATIC
 target_compile_definitions(operit_arm64 PUBLIC OPERIT_EXECUTION_DIAGNOSTICS=$<BOOL:${OPERIT_EXECUTION_DIAGNOSTICS}>)
 target_compile_features(operit_arm64 PRIVATE cxx_std_17)
 target_include_directories(operit_arm64 PUBLIC include PRIVATE src "${OPERIT_EXECUTOR_GENERATED}")
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(operit_arm64 PRIVATE src/cpu/aarch64/wasm_webkit.mm)
+    set_source_files_properties(src/cpu/aarch64/wasm_webkit.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc" COMPILE_FLAGS "-std=c++17")
+    target_compile_definitions(operit_arm64 PRIVATE OPERIT_WASM_WEBKIT=1)
+    target_link_libraries(operit_arm64 PRIVATE "-framework Foundation" "-framework WebKit")
+endif()
 target_compile_options(operit_arm64 PRIVATE -Wall -Wextra -Werror)
 set_target_properties(operit_arm64 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)
@@ -179,6 +188,17 @@ endif()
 
 option(BUILD_TESTING "Build runtime regression tests" ON)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(APPLE)
+        add_library(operit-wasm-cli OBJECT cli/main.cpp)
+        target_compile_features(operit-wasm-cli PRIVATE cxx_std_17)
+        target_include_directories(operit-wasm-cli PRIVATE include)
+        target_compile_definitions(operit-wasm-cli PRIVATE main=operit_wasm_cli_main)
+        add_executable(operit-arm64-wasm tools/wasm_region/integration.mm $<TARGET_OBJECTS:operit-wasm-cli>)
+        target_compile_features(operit-arm64-wasm PRIVATE cxx_std_17)
+        target_include_directories(operit-arm64-wasm PRIVATE src)
+        target_compile_options(operit-arm64-wasm PRIVATE -fobjc-arc)
+        target_link_libraries(operit-arm64-wasm PRIVATE operit_arm64 "-framework Cocoa")
+    endif()
     add_executable(operit-arm64 cli/main.cpp)
     target_compile_features(operit-arm64 PRIVATE cxx_std_17)
     target_link_libraries(operit-arm64 PRIVATE operit_arm64)
@@ -190,6 +210,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_options(operit-arm64-execution-bench PRIVATE -Wall -Wextra -Werror)
     include(CTest)
     if(BUILD_TESTING)
+        if(APPLE)
+            add_test(NAME arm64-wasm COMMAND operit-arm64-wasm)
+            set_tests_properties(arm64-wasm PROPERTIES TIMEOUT 60)
+        endif()
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
         function(add_runtime_test target source test_name)
             add_executable(${target} ${source})

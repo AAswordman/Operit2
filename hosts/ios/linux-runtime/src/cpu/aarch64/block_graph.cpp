@@ -20,6 +20,26 @@ bool ends(const Instruction &i) {
     return i.terminal || i.op==Op::Branch || i.op==Op::BranchRegister || i.op==Op::ConditionalBranch ||
            i.op==Op::CompareBranch || i.op==Op::TestBranch || i.op==Op::Svc || i.op==Op::Fault || i.op==Op::Unknown;
 }
+// Both backends split before every possible entry and after every control edge.
+// Optimizations are block-local: a conditional fallthrough must start a block
+// even when its target lies outside this region.
+void partition_graph(BlockGraph &graph,const std::map<uint64_t,InstructionNode> &nodes) {
+    std::set<uint64_t> leaders{graph.address};
+    for(const auto &[pc,node]:nodes) {
+        auto previous=nodes.find(pc-4);
+        if(previous==nodes.end() || ends(previous->second.instruction))leaders.insert(pc);
+        if(ends(node.instruction))for(auto target:successors(node))leaders.insert(target);
+    }
+    for(const auto &[pc,node]:nodes) {
+        if(graph.blocks.empty() || leaders.count(pc)) {
+            auto block=std::make_unique<BasicBlock>();block->pc=pc;
+            graph.entries.emplace(pc,block.get());graph.blocks.push_back(std::move(block));
+        }
+        auto &block=*graph.blocks.back();
+        block.instructions.push_back(node);block.successors=successors(node);
+    }
+}
+
 }
 bool BlockGraph::current(Memory &memory,uint64_t scope) const {
     if(validated_epoch!=memory.code_epoch.load(std::memory_order_relaxed)) {
@@ -72,6 +92,19 @@ bool BlockGraph::validate(Memory &memory) {
     OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->validation(private_code ? "success_private":"success_observed");)
     return true;
 }
+std::unique_ptr<BlockGraph> build_instruction_graph(const std::vector<std::pair<uint64_t,uint32_t>> &words,uint64_t pc) {
+    auto graph=std::make_unique<BlockGraph>();graph->address=pc;
+    std::map<uint64_t,InstructionNode> nodes;
+    for(auto [at,word]:words) {
+        if(at&3)throw Failure("unaligned instruction address "+hex(at));
+        InstructionNode node;node.pc=at;node.instruction=decode(word);
+        node.effects=instruction_effects(node.instruction);node.semantic=select_semantic(node.instruction);
+        if(!nodes.emplace(at,node).second)throw Failure("duplicate instruction address "+hex(at));
+    }
+    if(!nodes.count(pc))throw Failure("missing region entry "+hex(pc));
+    partition_graph(*graph,nodes);optimize_graph(*graph);
+    return graph;
+}
 std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedComponents *intrinsics) {
     if(pc&3) throw Failure("unaligned instruction address "+hex(pc));
     auto graph=std::make_unique<BlockGraph>(); graph->address=pc;
@@ -83,17 +116,17 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
     )
     std::map<uint64_t,InstructionNode> nodes;
     std::map<uint64_t,Memory::CodeSnapshot> pages;
-    std::set<uint64_t> leaders{pc}; std::deque<uint64_t> queue{pc};
+    std::deque<uint64_t> queue{pc};
     // Discover unique instructions first. Splitting at all leaders afterwards
     // prevents overlapping entries and represents a backedge exactly once.
-    while(!queue.empty() && nodes.size()<512) {
+    while(!queue.empty() && nodes.size()<16384) {
         auto at=queue.front(); queue.pop_front();
         if(nodes.count(at)) {OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->count("discover.already_seen");) continue;}
         if(intrinsics && at!=pc && intrinsics->contains(at)) {OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->count("discover.intrinsic_boundary");) continue;}
         if(at&3) {OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->count("discover.unaligned_successor");) continue;}
         const auto page=align_down(at); auto found=pages.find(page);
         if(found==pages.end()) {
-            if(pages.size()==8) {OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->count("discover.page_limit");) continue;}
+            if(pages.size()==64) {OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->count("discover.page_limit");) continue;}
             try { found=pages.emplace(page,memory.code_snapshot(at)).first; }
             catch(const Failure &) {
                 OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)diagnostics->count(at==pc ? "discover.required_fetch_fault":"discover.speculative_fetch_fault");)
@@ -105,10 +138,7 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
         InstructionNode node;node.pc=at;node.instruction=instruction;node.effects=instruction_effects(instruction);
         node.semantic=select_semantic(instruction);nodes.emplace(at,node);
         auto edges=successors(node);
-        for(auto target:edges) {
-            if(ends(instruction)) leaders.insert(target);
-            queue.push_back(target);
-        }
+        for(auto target:edges)queue.push_back(target);
     }
     OPERIT_EXEC_DIAGNOSTIC(if(diagnostics) {
         diagnostics->count("compile.instructions",nodes.size());diagnostics->count("compile.pages",pages.size());
@@ -122,19 +152,8 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
            graph->dependencies.back().offset+graph->dependencies.back().count==index)++graph->dependencies.back().count;
         else graph->dependencies.push_back({at,snapshot.words,snapshot.proof,index,1});
     }
-    for(auto at:leaders) {
-        if(!nodes.count(at)) continue;
-        auto block=std::make_unique<BasicBlock>(); block->pc=at;
-        for(;;) {
-            auto found=nodes.find(at); if(found==nodes.end()) break;
-            block->instructions.push_back(found->second);
-            block->successors=successors(found->second);
-            if(ends(found->second.instruction)) break;
-            at+=4; if(leaders.count(at)) break;
-        }
-        OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)++diagnostics->pcs[block->pc].block_compiles;)
-        graph->entries.emplace(block->pc,block.get()); graph->blocks.push_back(std::move(block));
-    }
+    partition_graph(*graph,nodes);
+    OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)for(const auto &block:graph->blocks)++diagnostics->pcs[block->pc].block_compiles;)
     // Aggregate required lines per owned snapshot proof. This immutable list
     // lets native bridges consume proofs established by another overlapping
     // graph in the same serial observation scope.
