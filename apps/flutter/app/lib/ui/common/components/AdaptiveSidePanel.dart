@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'RetainedPage.dart';
 
-/// Hosts a resizable trailing panel on wide layouts and an overlay panel on phones.
+/// Hosts a resizable trailing panel on wide layouts and a full-width overlay in narrow hosts.
 class AdaptiveSidePanel extends StatefulWidget {
   /// Creates a responsive trailing panel around the primary content.
   const AdaptiveSidePanel({
@@ -24,6 +24,7 @@ class AdaptiveSidePanel extends StatefulWidget {
     this.resizeHandleVisualWidth = 3,
     this.resizeHandleHeight = 56,
     this.closedDropTarget,
+    this.overlayTopInset = 0,
     this.widePanelPadding = const EdgeInsets.all(8),
     this.animate = true,
   });
@@ -41,6 +42,9 @@ class AdaptiveSidePanel extends StatefulWidget {
   final double resizeHandleVisualWidth;
   final double resizeHandleHeight;
   final Widget? closedDropTarget;
+
+  /// Leaves the host's existing toolbar visible and interactive above an overlay.
+  final double overlayTopInset;
 
   /// Embedded panes can meet the host edges without adding a second frame.
   final EdgeInsetsGeometry widePanelPadding;
@@ -148,8 +152,12 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
           ],
         ),
         if (!useWideLayout && widget.open)
-          Positioned.fill(
+          PositionedDirectional(
             key: const ValueKey<String>('sidePanelDismissBarrier'),
+            top: widget.overlayTopInset,
+            bottom: 0,
+            start: 0,
+            end: 0,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => widget.onOpenChanged(false),
@@ -162,7 +170,7 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
           onEnd: _finishPanelTransition,
           duration: _animationDuration,
           curve: Curves.easeOutCubic,
-          top: 0,
+          top: useWideLayout ? 0 : widget.overlayTopInset,
           bottom: 0,
           end: widget.open ? 0 : -width,
           width: width,
@@ -172,12 +180,12 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
               Positioned.fill(
                 child: RetainedPage(
                   active: widget.open || _closing,
-                  child: useWideLayout
-                      ? Padding(
-                          padding: widget.widePanelPadding,
-                          child: widget.panel,
-                        )
-                      : widget.panel,
+                  child: Padding(
+                    padding: useWideLayout
+                        ? widget.widePanelPadding
+                        : EdgeInsets.zero,
+                    child: widget.panel,
+                  ),
                 ),
               ),
               if (useWideLayout && widget.open)

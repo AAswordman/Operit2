@@ -3,6 +3,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart';
 
 import '../../../common/components/AdaptiveSidePanel.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -64,15 +65,21 @@ class WorkspaceShell extends StatelessWidget {
   /// Builds the workspace panel with plugins rendered as peer tabs.
   @override
   Widget build(BuildContext context) {
-    final dockController =
-        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+    final usesMainLayoutAttachment =
+        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint;
+    final dockController = usesMainLayoutAttachment
         ? SidebarDockScope.maybeOf(context)
         : null;
     return AdaptiveSidePanel(
       open: workspaceOpen,
       widePanelPadding: EdgeInsets.zero,
       onOpenChanged: onWorkspaceOpenChanged,
-      breakpoint: workspaceTabletBreakpoint,
+      breakpoint: workspaceSideBySideBreakpoint,
+      // Match the phone shell: cover only the body, leaving the original
+      // title and workspace toggle in the host toolbar visible.
+      overlayTopInset: usesMainLayoutAttachment
+          ? ThemeTopBarChrome.toolbarHeight + MediaQuery.paddingOf(context).top
+          : 0,
       defaultWidth: workspaceDefaultTabletWidth,
       defaultWidthFraction: workspaceDefaultWidthFraction,
       minWidth: workspaceMinWidth,

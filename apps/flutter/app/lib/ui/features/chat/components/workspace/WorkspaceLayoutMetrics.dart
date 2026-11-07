@@ -2,7 +2,11 @@
 
 import '../../../../main/layout/NavigationLayoutMetrics.dart';
 
+// Navigation and tab chrome still share the application's navigation breakpoint.
 const double workspaceTabletBreakpoint = navigationTabletBreakpoint;
+
+// Leave enough room for both chat and workspace before placing them side by side.
+const double workspaceSideBySideBreakpoint = 1024;
 const double workspaceDefaultTabletWidth = 360;
 const double workspaceDefaultWidthFraction = 0.45;
 const double workspaceMinWidth = 280;
