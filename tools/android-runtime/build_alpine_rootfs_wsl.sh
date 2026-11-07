@@ -121,6 +121,7 @@ minirootfs_metadata() {
     '
 }
 
+## Writes package repositories, DNS and runtime defaults into the packaged rootfs.
 write_rootfs_config() {
     local root_dir="$1"
     local release_branch="$2"
@@ -148,6 +149,7 @@ export LANG=C.UTF-8
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EOF
     printf 'operit-android\n' > "$root_dir/etc/hostname"
+    printf 'nameserver 223.5.5.5\n' > "$root_dir/etc/resolv.conf"
 }
 
 build_rootfs_for_abi() {

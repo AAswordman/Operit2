@@ -11,6 +11,11 @@ This directory prepares the Android phone runtime binaries:
 
 Build instructions are in [BUILDING.md](BUILDING.md).
 
+The packaged rootfs includes `/etc/resolv.conf` with `nameserver 223.5.5.5`
+so freshly installed PRoot environments can resolve domains for terminal commands
+and MCP processes. This configuration is generated with the rootfs; no migration
+is applied to existing environments.
+
 PRoot edits live in:
 
 ```text
