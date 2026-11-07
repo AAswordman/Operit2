@@ -123,6 +123,14 @@ architecture, or product do not match the requested release asset. The Actions
 artifact collector accepts the exact current-version package names; publishing
 rejects outdated names and unrelated files in the distribution directory.
 
+Update discovery loads release pages lazily, starting with the most recent 30
+releases. It skips releases without the exact platform and architecture package
+or outside the installed version's channel. Once a page contains compatible
+packages, it selects the highest SemVer on that page and stops requesting older
+pages. An older page is loaded only when the current page has no compatible
+package. The selected version is offered only when newer than the installed
+version; discovery does not downgrade an installed application.
+
 ## Version Sources
 
 The Operit2 release version is the full SemVer value used by the updater:

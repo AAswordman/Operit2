@@ -12,6 +12,7 @@ use std::cmp::Ordering as CmpOrdering;
 
 const GITHUB_RELEASE_OWNER: &str = "AAswordman";
 const GITHUB_RELEASE_REPO: &str = "Operit2";
+const GITHUB_RELEASE_PAGE_SIZE: usize = 30;
 #[cfg(not(target_arch = "wasm32"))]
 const GITHUB_API_BASE: &str = "https://api.github.com";
 
@@ -348,31 +349,32 @@ impl GithubReleaseUtil {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let url = format!(
-                "{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page=1&per_page=30"
-            );
-            let mut request = updateHttpRequest(&url, "GET");
-            request.headers = vec![
-                ("User-Agent".into(), "Operit-MCP-Client".into()),
-                ("Accept".into(), "application/vnd.github.v3+json".into()),
-            ];
-            if let Some(authHeader) = authorizationHeader {
-                request
-                    .headers
-                    .push(("Authorization".into(), authHeader.into()));
-            }
-            let response = defaultHttpHost()
-                .executeHttpRequest(request)
-                .map_err(|error| error.to_string())?;
-            if !(200..300).contains(&response.statusCode) {
-                return Err(format!(
-                    "HTTP {}: {}",
-                    response.statusCode, response.statusMessage
-                ));
-            }
-            let releases = serde_json::from_slice::<Vec<GitHubRelease>>(&response.body)
-                .map_err(|error| error.to_string())?;
-            selectLatestReleaseInfo(releases, &target, channel)
+            selectLatestReleaseInfoFromPages(&target, channel, |page| {
+                let url = format!(
+                    "{GITHUB_API_BASE}/repos/{repoOwner}/{repoName}/releases?page={page}&per_page={GITHUB_RELEASE_PAGE_SIZE}"
+                );
+                let mut request = updateHttpRequest(&url, "GET");
+                request.headers = vec![
+                    ("User-Agent".into(), "Operit-MCP-Client".into()),
+                    ("Accept".into(), "application/vnd.github.v3+json".into()),
+                ];
+                if let Some(authHeader) = authorizationHeader {
+                    request
+                        .headers
+                        .push(("Authorization".into(), authHeader.into()));
+                }
+                let response = defaultHttpHost()
+                    .executeHttpRequest(request)
+                    .map_err(|error| error.to_string())?;
+                if !(200..300).contains(&response.statusCode) {
+                    return Err(format!(
+                        "HTTP {}: {}",
+                        response.statusCode, response.statusMessage
+                    ));
+                }
+                serde_json::from_slice::<Vec<GitHubRelease>>(&response.body)
+                    .map_err(|error| error.to_string())
+            })
         }
     }
 
@@ -748,6 +750,27 @@ fn validateReleaseChannelMarker(
     Ok(())
 }
 
+/// Loads older release pages only until a compatible target package is found.
+#[allow(non_snake_case)]
+fn selectLatestReleaseInfoFromPages(
+    target: &FullUpdateTarget,
+    channel: FullUpdateChannel,
+    mut fetchPage: impl FnMut(u32) -> Result<Vec<GitHubRelease>, String>,
+) -> Result<Option<ReleaseInfo>, String> {
+    let mut page = 1;
+    loop {
+        let batch = fetchPage(page)?;
+        let isLastPage = batch.len() < GITHUB_RELEASE_PAGE_SIZE;
+        if let Some(release) = selectLatestReleaseInfo(batch, target, channel)? {
+            return Ok(Some(release));
+        }
+        if isLastPage {
+            return Ok(None);
+        }
+        page += 1;
+    }
+}
+
 /// Selects the newest release containing the exact target asset.
 #[allow(non_snake_case)]
 fn selectLatestReleaseInfo(
@@ -949,9 +972,152 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        selectLatestReleaseInfo, FullUpdateChannel, FullUpdateTarget, GitHubRelease,
-        GitHubReleaseAsset, GithubReleaseUtil,
+        selectLatestReleaseInfo, selectLatestReleaseInfoFromPages, FullUpdateChannel,
+        FullUpdateTarget, GitHubRelease, GitHubReleaseAsset, GithubReleaseUtil,
+        GITHUB_RELEASE_PAGE_SIZE,
     };
+
+    /// Builds a release containing one exact platform package for discovery tests.
+    fn release_for_target(version: &str, target: &FullUpdateTarget) -> GitHubRelease {
+        GitHubRelease {
+            tag_name: format!("v{version}"),
+            body: None,
+            html_url: format!("https://example.com/releases/v{version}"),
+            draft: false,
+            prerelease: !super::parseVersion(version)
+                .unwrap()
+                .prerelease
+                .identifiers
+                .is_empty(),
+            assets: vec![GitHubReleaseAsset {
+                name: target.assetNameForVersion(version).unwrap(),
+                browser_download_url: "https://example.com/update".to_string(),
+            }],
+        }
+    }
+
+    /// Finds a compatible older release beyond a full page of other architectures.
+    #[test]
+    fn finds_older_target_package_on_next_page() {
+        let target = FullUpdateTarget::new("app", "windows", "aarch64").unwrap();
+        let other = FullUpdateTarget::new("app", "windows", "x86_64").unwrap();
+        let mut requested_pages = Vec::new();
+        let selected =
+            selectLatestReleaseInfoFromPages(&target, FullUpdateChannel::Preview, |page| {
+                requested_pages.push(page);
+                match page {
+                    1 => Ok(vec![
+                        release_for_target("2.0.0-preview.30", &other);
+                        GITHUB_RELEASE_PAGE_SIZE
+                    ]),
+                    2 => Ok(vec![release_for_target("2.0.0-preview.20", &target)]),
+                    _ => panic!("unexpected release page {page}"),
+                }
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(requested_pages, vec![1, 2]);
+        assert_eq!(selected.version, "2.0.0-preview.20");
+        assert_eq!(
+            selected.assetName,
+            target.assetNameForVersion(&selected.version).unwrap()
+        );
+        assert!(
+            GithubReleaseUtil::compareVersions(&selected.version, "2.0.0-preview.19").unwrap() > 0
+        );
+        assert!(
+            GithubReleaseUtil::compareVersions(&selected.version, "2.0.0-preview.21").unwrap() < 0
+        );
+    }
+
+    /// Stops after the first matching page even when that page is full.
+    #[test]
+    fn stops_loading_pages_when_target_package_is_found() {
+        let target = FullUpdateTarget::new("cli", "linux", "aarch64").unwrap();
+        let selected =
+            selectLatestReleaseInfoFromPages(&target, FullUpdateChannel::Preview, |page| {
+                assert_eq!(page, 1, "older pages must not be fetched after a match");
+                let mut releases =
+                    vec![release_for_target("2.0.0-preview.9", &target); GITHUB_RELEASE_PAGE_SIZE];
+                releases[1] = release_for_target("2.0.0-preview.16", &target);
+                Ok(releases)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.version, "2.0.0-preview.16");
+    }
+
+    /// Loads older pages only when the installed channel rejects the current page.
+    #[test]
+    fn loads_older_pages_only_for_compatible_channel() {
+        let target = FullUpdateTarget::new("cli", "linux", "aarch64").unwrap();
+        for (channel, expected, expected_pages) in [
+            (FullUpdateChannel::Preview, "2.1.0-preview.1", vec![1]),
+            (FullUpdateChannel::Stable, "2.0.1", vec![1, 2]),
+        ] {
+            let mut requested_pages = Vec::new();
+            let selected = selectLatestReleaseInfoFromPages(&target, channel, |page| {
+                requested_pages.push(page);
+                match page {
+                    1 => Ok(vec![
+                        release_for_target("2.1.0-preview.1", &target);
+                        GITHUB_RELEASE_PAGE_SIZE
+                    ]),
+                    2 => Ok(vec![release_for_target("2.0.1", &target)]),
+                    _ => panic!("unexpected release page {page}"),
+                }
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(selected.version, expected);
+            assert_eq!(requested_pages, expected_pages);
+        }
+    }
+
+    /// Exhausts a full final page before reporting that no compatible package exists.
+    #[test]
+    fn returns_no_package_after_exhausting_pages() {
+        let target = FullUpdateTarget::new("app", "windows", "aarch64").unwrap();
+        let other = FullUpdateTarget::new("cli", "windows", "aarch64").unwrap();
+        let mut requested_pages = Vec::new();
+        let selected =
+            selectLatestReleaseInfoFromPages(&target, FullUpdateChannel::Preview, |page| {
+                requested_pages.push(page);
+                match page {
+                    1 => Ok(vec![
+                        release_for_target("2.0.0", &other);
+                        GITHUB_RELEASE_PAGE_SIZE
+                    ]),
+                    2 => Ok(Vec::new()),
+                    _ => panic!("unexpected release page {page}"),
+                }
+            })
+            .unwrap();
+        assert_eq!(requested_pages, vec![1, 2]);
+        assert!(selected.is_none());
+    }
+
+    /// Reports a network error encountered while loading a required older page.
+    #[test]
+    fn propagates_later_page_errors() {
+        let target = FullUpdateTarget::new("cli", "windows", "x86_64").unwrap();
+        let other = FullUpdateTarget::new("cli", "windows", "aarch64").unwrap();
+        let error =
+            selectLatestReleaseInfoFromPages(
+                &target,
+                FullUpdateChannel::Preview,
+                |page| match page {
+                    1 => Ok(vec![
+                        release_for_target("2.0.0", &other);
+                        GITHUB_RELEASE_PAGE_SIZE
+                    ]),
+                    2 => Err("HTTP 403".to_string()),
+                    _ => panic!("unexpected release page {page}"),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error, "HTTP 403");
+    }
 
     /// Builds installed-version CLI names for the supported desktop targets.
     #[test]
