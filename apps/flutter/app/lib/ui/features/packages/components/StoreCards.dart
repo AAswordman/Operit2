@@ -76,6 +76,10 @@ class _MarketStats extends StatelessWidget {
   }
 }
 
+bool _hasMarketV2Api(core_proxy.MarketEntrySummary entry) =>
+    (entry.type == 'package' || entry.type == 'toolpkg') &&
+    entry.latestVersion?.apiVersion?.trim() == '2.0.0';
+
 /// Keeps the API marker on the avatar without clipping its kind badge.
 class _MarketAvatar extends StatelessWidget {
   const _MarketAvatar({required this.entry, this.kind});
@@ -86,62 +90,72 @@ class _MarketAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const size = 44.0;
-    const cornerSize = 20.0;
     final avatar = ExtensionAvatar(
       seed: marketEntryAvatarSeed(entry),
       label: entry.title,
       kind: kind,
       size: size,
     );
-    if ((entry.type != 'package' && entry.type != 'toolpkg') ||
-        entry.latestVersion?.apiVersion?.trim() != '2.0.0') {
+    if (!_hasMarketV2Api(entry)) {
       return avatar;
     }
-    final colors = Theme.of(context).colorScheme;
     return Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
         avatar,
         Positioned.fill(
-          child: IgnorePointer(
-            child: Semantics(
-              label: 'ToolPkg API 2.0.0',
-              excludeSemantics: true,
-              child: ClipPath(
-                clipper: ShapeBorderClipper(
-                  shape: RoundedSuperellipseBorder(
-                    borderRadius: BorderRadius.circular(size * 0.3),
-                  ),
-                ),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: ClipPath(
-                    clipper: const _MarketCornerClipper(),
-                    child: SizedBox.square(
-                      dimension: cornerSize,
-                      child: ColoredBox(
-                        color: colors.primary,
-                        child: Align(
-                          alignment: Alignment.topLeft,
-                          child: SizedBox.square(
-                            dimension: cornerSize * 2 / 3,
-                            child: Center(
-                              child: Transform.rotate(
-                                angle: -math.pi / 4,
-                                child: Text(
-                                  'v2',
-                                  textDirection: TextDirection.ltr,
-                                  textScaler: TextScaler.noScaling,
-                                  style: TextStyle(
-                                    color: colors.onPrimary,
-                                    fontSize: 8,
-                                    height: 1,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
+          child: ClipPath(
+            clipper: ShapeBorderClipper(
+              shape: RoundedSuperellipseBorder(
+                borderRadius: BorderRadius.circular(size * 0.3),
+              ),
+            ),
+            child: const Align(
+              alignment: Alignment.topLeft,
+              child: _MarketV2CornerMark(size: 20),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Shared triangular API mark for avatar and promotional banner corners.
+class _MarketV2CornerMark extends StatelessWidget {
+  const _MarketV2CornerMark({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return IgnorePointer(
+      child: Semantics(
+        label: 'ToolPkg API 2.0.0',
+        excludeSemantics: true,
+        child: ClipPath(
+          clipper: const _MarketCornerClipper(),
+          child: SizedBox.square(
+            dimension: size,
+            child: ColoredBox(
+              color: colors.primary,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox.square(
+                  dimension: size * 2 / 3,
+                  child: Center(
+                    child: Transform.rotate(
+                      angle: -math.pi / 4,
+                      child: Text(
+                        'v2',
+                        textDirection: TextDirection.ltr,
+                        textScaler: TextScaler.noScaling,
+                        style: TextStyle(
+                          color: colors.onPrimary,
+                          fontSize: size >= 32 ? 10 : 8,
+                          height: 1,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
@@ -151,7 +165,7 @@ class _MarketAvatar extends StatelessWidget {
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -493,6 +507,12 @@ class StoreFeaturedBanner extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (_hasMarketV2Api(entry))
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    child: _MarketV2CornerMark(size: 32),
+                  ),
               ],
             ),
           ),
