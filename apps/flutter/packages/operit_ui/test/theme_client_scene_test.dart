@@ -40,7 +40,8 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       final snapshot = ThemePreferenceSnapshot.fromJson(<String, Object?>{
         ...ThemePreferenceDefaults.snapshot.toJson(),
-        'chatStyle': ThemePreferenceDefaults.CHAT_STYLE_BUBBLE,
+        'userChatStyle': ThemePreferenceDefaults.CHAT_STYLE_BUBBLE,
+        'aiChatStyle': ThemePreferenceDefaults.CHAT_STYLE_BUBBLE,
       });
 
       await tester.pumpWidget(
@@ -85,7 +86,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     final snapshot = ThemePreferenceSnapshot.fromJson(<String, Object?>{
       ...ThemePreferenceDefaults.snapshot.toJson(),
-      'chatStyle': ThemePreferenceDefaults.CHAT_STYLE_BUBBLE,
+      'userChatStyle': ThemePreferenceDefaults.CHAT_STYLE_BUBBLE,
+      'aiChatStyle': ThemePreferenceDefaults.CHAT_STYLE_BUBBLE,
     });
 
     for (final mode in <ThemeClientSceneMode>[

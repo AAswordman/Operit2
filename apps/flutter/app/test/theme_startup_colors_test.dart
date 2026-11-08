@@ -28,7 +28,7 @@ void main() {
           }
           final snapshot = ThemePreferenceSnapshot.fromJson(values);
           final expected = ColorScheme.fromSeed(
-            seedColor: Color(custom ? 0xFFAC2855 : 0xFFBBDEFB),
+            seedColor: Color(custom ? 0xFFAC2855 : 0xFF3B82F6),
             brightness: brightness,
             dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
           );
