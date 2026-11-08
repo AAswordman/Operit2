@@ -530,42 +530,31 @@ const agnesVideo = (function () {
     }
 
     async function submit_video_wrapper(params: any) {
-        try {
-            const result = await submitVideo(params);
-            complete({
-                success: true,
-                message: `视频任务已成功提交，video_id: ${result.video_id}。`,
-                data: result,
-            });
-        } catch (error: any) {
-            console.error("submit_video 执行失败:", error);
-            complete({
-                success: false,
-                message: `提交视频任务失败: ${error?.message || error}`,
-                error_stack: error?.stack,
-            });
+        const result = await submitVideo(params);
+        const hintLines: string[] = [];
+        hintLines.push(`视频任务已成功提交，video_id: ${result.video_id}。`);
+        if (result.model) {
+            hintLines.push(
+                result.model !== DEFAULT_MODEL
+                    ? `查询时请传入 model="${result.model}"。`
+                    : "查询时无需额外传 model。"
+            );
         }
+        hintLines.push(result.hint);
+        return {
+            success: true,
+            message: hintLines.join("\n"),
+            data: result,
+        };
     }
 
     async function query_video_wrapper(params: any) {
-        try {
-            const result = await queryVideo(params);
-            const isCompleted = result.status === "completed";
-            complete({
-                success: true,
-                message: isCompleted
-                    ? `视频已生成并下载到 ${PLUGIN_DIR}/。`
-                    : `任务状态: ${result.status}，进度: ${result.progress}%。`,
-                data: result,
-            });
-        } catch (error: any) {
-            console.error("query_video 执行失败:", error);
-            complete({
-                success: false,
-                message: `查询视频失败: ${error?.message || error}`,
-                error_stack: error?.stack,
-            });
-        }
+        const result = await queryVideo(params);
+        return {
+            success: true,
+            message: result.hint,
+            data: result,
+        };
     }
 
     const PROMPT_GUIDE_STEPS = [
@@ -594,21 +583,12 @@ const agnesVideo = (function () {
     }
 
     async function prompt_guide_wrapper(_params: any) {
-        try {
-            const result = buildPromptGuide();
-            complete({
-                success: true,
-                message: result.guide,
-                data: result,
-            });
-        } catch (error: any) {
-            console.error("prompt_guide 执行失败:", error);
-            complete({
-                success: false,
-                message: `获取提示词写法失败: ${error?.message || error}`,
-                error_stack: error?.stack,
-            });
-        }
+        const result = buildPromptGuide();
+        return {
+            success: true,
+            message: result.guide,
+            data: result,
+        };
     }
 
     return {
