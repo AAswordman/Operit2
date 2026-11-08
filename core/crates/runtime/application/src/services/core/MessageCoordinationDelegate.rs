@@ -955,8 +955,20 @@ impl MessageCoordinationDelegate {
             "chat-summary",
             Box::new(move || {
                 Box::pin(async move {
+                    let progressDelegate = std::sync::Mutex::new(worker.messageProcessingDelegate.clone_for_core());
+                    let progressChatId = workerChatId.clone();
+                    let progressTaskId = workerTaskId.clone();
+                    let progress: operit_providers::chat::enhance::ConversationService::SummaryProgressCallback = Arc::new(move |stage| {
+                        let mut delegate = progressDelegate.lock().expect("summary progress mutex poisoned");
+                        let ownsTask = delegate.summaryTaskForChat(&progressChatId)
+                            .is_some_and(|task| Arc::ptr_eq(&task.taskId, &progressTaskId));
+                        if ownsTask {
+                            delegate.setInputProcessingStateForChat(progressChatId.clone(),
+                                InputProcessingState::Summarizing { message: stage.to_string() });
+                        }
+                    });
                     let outcome = Abortable::new(
-                        worker.generateAndStoreSummary(&mut service, messages, request),
+                        worker.generateAndStoreSummary(&mut service, messages, request, Some(progress)),
                         registration,
                     )
                     .await;
@@ -1018,6 +1030,7 @@ impl MessageCoordinationDelegate {
         enhancedAiService: &mut EnhancedAIService,
         messages: Vec<ChatMessage>,
         request: ConversationSummaryRequest,
+        progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
     ) -> Result<(), String> {
         let insertPosition = self
             .chatHistoryDelegate
@@ -1031,7 +1044,7 @@ impl MessageCoordinationDelegate {
             .map(|message| message.timestamp);
         let summary =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration,
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress,
             )
                 .await
                 .map_err(|error| error.to_string())?

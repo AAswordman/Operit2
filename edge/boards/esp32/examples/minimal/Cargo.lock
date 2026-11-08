@@ -1665,6 +1665,7 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "sha2",
  "spake2",
  "syn 2.0.119",
  "tokio",

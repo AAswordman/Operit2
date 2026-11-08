@@ -310,6 +310,13 @@ impl SystemOperationHost for FlutterSystemOperationBridge {
     fn startApp(&self, name: &str) -> HostResult<AppOperationData> {
         self.host.startApp(name)
     }
+    fn startAppWithActivity(
+        &self,
+        name: &str,
+        activity: Option<&str>,
+    ) -> HostResult<AppOperationData> {
+        self.host.startAppWithActivity(name, activity)
+    }
     /// Stops an app through the selected system host.
     fn stopApp(&self, name: &str) -> HostResult<AppOperationData> {
         self.host.stopApp(name)

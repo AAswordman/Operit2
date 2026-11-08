@@ -22,3 +22,19 @@ python3 hosts/ios/linux-runtime/tools/profile_execution.py \
 ```
 
 工具固定核验原始源文件 SHA256、checksum、零固定函数替换与零 unsupported syscall，交替执行顺序，保存逐次输出、二进制 hash、循环/进程中位数、每对节省和胜出次数。macOS 的宿主指令/周期来自整个进程，不能写成仅循环的计数。可加 `--sample 3` 在验收计时结束后另行采样；采样窗口由原负载的两个单调时钟系统调用界定，不修改 Python 文件。诊断构建也必须与生产验收分开运行。
+
+
+## 全局值编号 / 加载调度微基准
+
+`operit-arm64-global-opt-bench cse` 测跨块重复整数表达式；`operit-arm64-global-opt-bench loads` 测可合并的独立加载。每次先预热，再运行 3 亿条客体指令，核对完整 GP 结果、PC、NZCV 与原始语义，并输出 JSON 时间、退休数、慢路径数和 checksum。它们是刻意匹配优化机会的组件测试，不能替代原样 Python 或真实终端负载。
+
+```sh
+cmake -S hosts/ios/linux-runtime -B /tmp/operit-global-values \
+  -DCMAKE_BUILD_TYPE=Release -DOPERIT_ARM64_GLOBAL_VALUES=ON \
+  -DOPERIT_ARM64_MEMORY_SCHEDULING=ON
+cmake --build /tmp/operit-global-values --target operit-arm64-global-opt-bench
+/tmp/operit-global-values/operit-arm64-global-opt-bench cse
+/tmp/operit-global-values/operit-arm64-global-opt-bench loads
+```
+
+对照版本将两个开关均设为 OFF，其余构建配置相同；同一轮交替顺序、保存所有原始输出，不能把不同负载的客体指令数直接当作同一工作量。实验的 Python 同场对照、初版退步与最终默认配置见 [实验记录](../docs/performance/2026-11-08-global-values.md)。

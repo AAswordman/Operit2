@@ -68,3 +68,11 @@ SignedLoadWriteback wbsignedload ldr 2
 VectorLoadWriteback wbvload ldr 1
 VectorStoreWriteback wbvstore str 1
 FUnary fpunary fmov 3
+
+ScheduledLoads scheduledloads ldp 1
+SignedToDouble uitod scvtf 1
+DoubleToSigned ftosi fcvtzs 1
+SmaddLong longacc smaddl 2
+UmaddLong longacc umaddl 2
+SmsubLong longacc smsubl 2
+UmsubLong longacc umsubl 2

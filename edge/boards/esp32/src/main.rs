@@ -301,6 +301,7 @@ fn runFirmware(
         spaceService.clone(),
         edgeRouter.clone(),
         operit_edge_sdk::storage::CoreSpaceStore::CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: identity.nodeId.clone(),
             displayName: deviceInfo.model.clone(),
             userName: String::new(),

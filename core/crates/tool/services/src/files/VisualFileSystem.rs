@@ -15,6 +15,16 @@ pub struct VisualFileSystem {
 }
 
 impl VisualFileSystem {
+    /// Binds a VFS to one runtime's storage roots and registered mounts.
+    #[allow(non_snake_case)]
+    pub fn fromContext(context: &operit_host_api::HostManager::HostManager) -> Result<Self, String> {
+        let storage = context.runtimeStorageHost.clone().ok_or("RuntimeStorageHost is required for VFS")?;
+        let runtimeRoot = storage.runtimeRootDir().ok_or("Runtime storage root is unavailable")?;
+        let workspaceRoot = storage.workspaceRootDir().ok_or("Workspace storage root is unavailable")?;
+        let host = context.fileSystemHost.clone().ok_or("FileSystemHost is required for VFS")?;
+        Ok(Self::new(host, PathMapper::new(runtimeRoot, workspaceRoot, storage)))
+    }
+
     /// Creates a VFS wrapper around a host file system and path mapper.
     pub fn new(host: Arc<dyn FileSystemHost>, mapper: PathMapper) -> Self {
         Self { host, mapper }
@@ -292,6 +302,23 @@ mod tests {
             PathMapper::new(root.clone(), root.join("workspaces"), storage),
         );
         (vfs, root)
+    }
+
+    #[test]
+    fn resource_inputs_keep_vfs_native_and_relative_compatibility() {
+        let (vfs, root) = vfs();
+        vfs.makeDirectory("/operitapp/data/uploads", true).unwrap();
+        vfs.writeFile("/operitapp/data/uploads/input.txt", "through VFS", false).unwrap();
+        for input in ["/operitapp/data/uploads/input.txt", "/app/data/uploads/input.txt", "input.txt", "./input.txt", "../uploads/input.txt"] {
+            let path = PathMapper::resolveFileResourcePath(Some("/operitapp/data/uploads"), input).unwrap();
+            assert_eq!(vfs.readFile(&path).unwrap(), "through VFS", "{input}");
+        }
+        let native = root.join("uploads/input.txt").to_string_lossy().into_owned();
+        let path = PathMapper::resolveFileResourcePath(None, &native).unwrap();
+        assert_eq!(vfs.readFile(&path).unwrap(), "through VFS");
+        assert_eq!(PathMapper::resolveFileResourcePath(None, "/").unwrap(), "/");
+        assert!(!vfs.listFiles("/").unwrap().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -2573,12 +2573,8 @@ impl RuntimePackageManager {
         author: Vec<String>,
         minifyArtifact: bool,
     ) -> Result<Vec<u8>, String> {
-        let fileSystemHost = self.context.fileSystemHost.as_ref().ok_or_else(|| {
-            "FileSystemHost is required for ToolPkg artifact protection".to_string()
-        })?;
-        let sourceBytes = fileSystemHost
-            .readFileBytes(&sourcePath)
-            .map_err(|error| error.to_string())?;
+        let (vfs, path) = self.resolveInputFile(&sourcePath)?;
+        let sourceBytes = vfs.readFileBytes(&path)?;
         let marketOrigin = ToolPkgMarketOrigin {
             market: "Operit".to_string(),
             toolpkgId: packageId,
@@ -3832,6 +3828,29 @@ impl RuntimePackageManager {
         Ok(leftBytes == rightBytes)
     }
 
+    /// Resolves caller file paths through the runtime VFS, preserving compatibility inputs.
+    #[allow(non_snake_case)]
+    fn resolveInputFile(&self, path: &str) -> Result<(crate::files::VisualFileSystem::VisualFileSystem, String), String> {
+        let storage = self.context.runtimeStorageHost.clone().ok_or("Package import requires runtime storage")?;
+        let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+        let directory = context.as_ref().map(|context| context.fileDirectory(storage)).transpose()?.flatten();
+        let path = crate::files::PathMapper::PathMapper::resolveFileResourcePath(directory.as_deref(), path)?;
+        Ok((crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?, path))
+    }
+
+    /// Archive registration requires a native file; materialize resource mounts only at this boundary.
+    #[allow(non_snake_case)]
+    fn resolveNativeImportFile(&self, path: &str) -> Result<NativePackageImportFile, String> {
+        let (vfs, path) = self.resolveInputFile(path)?;
+        let resolved = vfs.resolvePath(&path)?;
+        if let Ok(native) = resolved.nativePath() {
+            return Ok(NativePackageImportFile { path: native.into(), staging: None });
+        }
+        let bytes = vfs.readFileBytes(&path)?;
+        let name = path.rsplit('/').next().filter(|name| !name.is_empty()).ok_or("Invalid package filename")?;
+        NativePackageImportFile::stage(vfs, name, &bytes)
+    }
+
     /// Imports a package file from external storage into package storage.
     #[allow(non_snake_case)]
     pub fn addPackageFileFromExternalStorage(&mut self, filePath: &str) -> String {
@@ -3863,6 +3882,8 @@ impl RuntimePackageManager {
         &mut self,
         filePath: &str,
     ) -> Result<ExternalPackageImportResult, String> {
+        let source = self.resolveNativeImportFile(filePath)?;
+        let filePath = source.path.to_str().ok_or("Package path is not UTF-8")?;
         let file = PathBuf::from(filePath);
         let downloadedFileExists = matches!(
             self.fileSystemHost.fileExists(filePath),
@@ -4285,10 +4306,8 @@ impl RuntimePackageManager {
             if !isSha256Hex(&normalizedSha256) {
                 return Err("Market artifact SHA-256 is invalid".to_string());
             }
-            let bytes = self
-                .fileSystemHost
-                .readFileBytes(&filePath)
-                .map_err(|error| format!("Error reading market artifact: {error}"))?;
+            let (vfs, path) = self.resolveInputFile(&filePath)?;
+            let bytes = vfs.readFileBytes(&path)?;
             if sha256Hex(&bytes) != normalizedSha256 {
                 return Err("Market artifact SHA-256 mismatch".to_string());
             }
@@ -4315,6 +4334,12 @@ impl RuntimePackageManager {
         filePath: &str,
         expectedMarketAssetSha256: &str,
     ) -> String {
+        let source = match self.resolveNativeImportFile(filePath) {
+            Ok(source) => source,
+            Err(error) => return self.recordAndReturnPackageError(filePath, "market_import_failed", &error, "market_toolpkg"),
+        };
+        let filePath = source.path.to_string_lossy();
+        let filePath = filePath.as_ref();
         let downloadedFileExists = matches!(
             self.fileSystemHost.fileExists(filePath),
             Ok(info) if info.exists && !info.isDirectory
@@ -6107,5 +6132,54 @@ mod hook_timeout_notification_tests {
             notifyToolPkgHookTimeout(&context, "bridge.wechat", "before-send", "submit_requested");
         assert!(error.starts_with("TOOLPKG_BEFORE_HOOK_TIMEOUT: "));
         assert!(error.ends_with("超时提示显示失败：toast channel closed"));
+    }
+}
+
+/// Owns native staging only while a non-native VFS package is being imported.
+struct NativePackageImportFile {
+    path: PathBuf,
+    staging: Option<(crate::files::VisualFileSystem::VisualFileSystem, String)>,
+}
+
+impl NativePackageImportFile {
+    fn stage(vfs: crate::files::VisualFileSystem::VisualFileSystem, name: &str, bytes: &[u8]) -> Result<Self, String> {
+        let directory = format!("/operitapp/data/temp/package_imports/{}", uuid::Uuid::new_v4());
+        let staged = crate::files::PathMapper::PathMapper::joinVfsPath(&directory, name)?;
+        let native = vfs.resolvePath(&staged)?.nativePath()?;
+        vfs.makeDirectory(&directory, true)?;
+        let file = Self { path: native.into(), staging: Some((vfs.clone(), directory)) };
+        vfs.writeFileBytes(&staged, bytes)?;
+        Ok(file)
+    }
+}
+
+impl Drop for NativePackageImportFile {
+    fn drop(&mut self) {
+        if let Some((vfs, directory)) = &self.staging {
+            let _ = vfs.deleteFile(directory, true);
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_import_staging_tests {
+    use super::*;
+    use crate::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
+    use operit_host_native_filesystem::PosixFileSystemHost;
+
+    #[test]
+    fn package_staging_preserves_bytes_and_cleans_up_on_drop() {
+        let root = std::env::temp_dir().join(format!("operit-import-test-{}", uuid::Uuid::new_v4()));
+        let vfs = VisualFileSystem::new(
+            Arc::new(PosixFileSystemHost::new()),
+            PathMapper::builtinOnly(root.clone(), root.join("workspaces")),
+        );
+        let file = NativePackageImportFile::stage(vfs, "中文 package.toolpkg", &[0, 255, 1]).unwrap();
+        let path = file.path.clone();
+        assert_eq!(std::fs::read(&path).unwrap(), [0, 255, 1]);
+        assert_eq!(path.file_name().unwrap(), "中文 package.toolpkg");
+        drop(file);
+        assert!(!path.parent().unwrap().exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

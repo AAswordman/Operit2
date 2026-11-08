@@ -1925,8 +1925,11 @@ impl SyncOperationStore {
 
     /// Queries only failed ordinary files, without decoding unrelated skipped owner payloads.
     fn fileRetryOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        self.withJournal(|journal|journal.skipped_ids(Some(crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN)))?
-            .iter().map(|id|self.original(id)).filter(|op|op.as_ref().map_or(true, crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState)).collect()
+        #[cfg(not(feature = "full"))]
+        { Ok(Vec::new()) }
+        #[cfg(feature = "full")]
+        { self.withJournal(|journal|journal.skipped_ids(Some(crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN)))?
+            .iter().map(|id|self.original(id)).filter(|op|op.as_ref().map_or(true, crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState)).collect() }
     }
 
     /// Skipped originals still relay normally, but no longer block file correction as pending work.
@@ -1944,6 +1947,7 @@ impl SyncOperationStore {
         for header in self.withJournal(|journal| journal.headers(Some(true)))? {
             if domains.is_empty() || domains.contains(&header.domain.as_str()) { visit(&self.original(&header.op_id)?); }
         }
+        #[cfg(feature = "full")]
         if domains.is_empty() || domains.contains(&crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN) {
             for operation in self.fileRetryOperations()? { visit(&operation); }
         }

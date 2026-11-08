@@ -38,6 +38,21 @@ void main() {
     },
   );
 
+  testWidgets('optional probe and scroll failures do not abort a visit', (
+    tester,
+  ) async {
+    final browser = _Browser()
+      ..failProbe = true
+      ..failScroll = true;
+    final registry = RuntimeWebVisitRegistry(sessions: browser);
+    final response = registry.visitWeb(request());
+    await tester.pump();
+    browser.finish('session-1');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect((await _resolve(tester, response)).result?.content, 'Page content');
+  });
+
   testWidgets(
     'a workspace attaching late presents a running visit exactly once',
     (tester) async {
@@ -252,6 +267,8 @@ RuntimeBrowserSessionInfo _info(String id) => RuntimeBrowserSessionInfo(
 class _Browser extends BrowserSessions {
   int count = 0;
   String ready = 'complete';
+  bool failProbe = false;
+  bool failScroll = false;
   String? agent;
   Map<String, String>? headers;
   Completer<RuntimeBrowserSessionInfo>? creation;
@@ -314,6 +331,16 @@ class _Browser extends BrowserSessions {
     String script,
   ) async {
     if (evaluation != null) return evaluation!.future;
+    if ((failProbe && script.contains('readyState: document.readyState')) ||
+        (failScroll && script.contains('window.scrollTo'))) {
+      return RuntimeBrowserCommandResult(
+        success: false,
+        session: _info(sessionId),
+        sessions: [],
+        resultJson: 'null',
+        error: 'WebKit evaluation failed',
+      );
+    }
     final Object? value;
     if (script.contains('readyState: document.readyState')) {
       value = jsonEncode({'readyState': ready, 'url': 'https://example.com'});

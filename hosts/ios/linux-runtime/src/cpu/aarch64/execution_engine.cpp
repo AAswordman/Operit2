@@ -7,6 +7,10 @@
 #include "memory/memory_diagnostics.h"
 #endif
 namespace operit::arm64 {
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+extern "C" void operit_static_hot_bridge();
+static const void *hot_bridge_entry() { return reinterpret_cast<const void *>(&operit_static_hot_bridge); }
+#endif
 #if defined(OPERIT_EXECUTION_DIAGNOSTICS) && OPERIT_EXECUTION_DIAGNOSTICS
 static_assert(sizeof(execution_diagnostics::static_code_names)/sizeof(*execution_diagnostics::static_code_names)==unsigned(StaticCode::Count));
 static_assert(sizeof(execution_diagnostics::encoding_names)/sizeof(*execution_diagnostics::encoding_names)==unsigned(Encoding::Count));
@@ -141,7 +145,18 @@ ExecutionEngine::Entry ExecutionEngine::find(uint64_t pc) {
     }
     std::unique_ptr<BlockGraph> graph;
     for(;;) {
-        graph=build_graph(pc,*memory_,intrinsics_);
+        graph=build_graph(pc,*memory_,intrinsics_,[](const void *context,uint64_t address) {
+            const auto &entries=*static_cast<const decltype(entries_) *>(context);
+            return entries.find(address)!=entries.end();
+        },&entries_,OPERIT_ARM64_RETAIN_LOOP_CALLS ? GraphDiscoveryPolicy::DeferNonLoopCalls:
+                    OPERIT_ARM64_DEFER_CALL_TARGETS ? GraphDiscoveryPolicy::DeferCallTargets:GraphDiscoveryPolicy::Eager
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+        ,[](const void *context,uint64_t source,uint64_t target) {
+            const auto &calls=*static_cast<const decltype(hot_calls_) *>(context);
+            const auto found=calls.find(source);return found!=calls.end() && found->second==target;
+        },&hot_calls_
+#endif
+        );
         try {
             OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::ValidationScope validation_site(&diagnostics_,"compiled");)
             if(graph->validate(*memory_)) {OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("compile.accepted");) break;}
@@ -155,10 +170,11 @@ ExecutionEngine::Entry ExecutionEngine::find(uint64_t pc) {
     }
     OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics_observe_graph(frame_,*graph);)
     for(auto &block:graph->blocks) {
+        ++decoded_blocks;compiled_operations+=block->code.size();
+        if(graph->root_entry_only && block->pc!=graph->address)continue;
         const auto inserted=entries_.emplace(block->pc,Entry{graph.get(),block.get()}).second;
         OPERIT_EXEC_DIAGNOSTIC(if(!inserted) {diagnostics_.count("cache.entry_collision");++diagnostics_.pcs[block->pc].entry_collisions;})
-        (void)inserted;++decoded_blocks;
-        compiled_operations+=block->code.size();
+        (void)inserted;
     }
     eliminated_values+=graph->eliminated;fused_operations+=graph->fused;
     const auto entry=entries_.at(pc);graphs_.push_back(std::move(graph));return entry;
@@ -243,11 +259,58 @@ const StaticOperation *ExecutionEngine::link(const StaticOperation &source,uint6
         diagnostics_.count(indirect ? "link.cross_graph.indirect":"link.cross_graph.direct");
         ++diagnostics_.links[{source_pc,pc,true,indirect,0,0}];
     )
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+    // Recompiling a large graph costs more; require proportionally more
+    // observed calls before considering it worth rebuilding.
+    const auto initial_hot_count=uint32_t(std::min<size_t>(std::max<size_t>(old->blocks.size(),1),256)*4096);
+    const auto prior_hot_count=plan.operation.entry==hot_bridge_entry() && plan.metadata.origin==pc ? plan.metadata.payload:initial_hot_count;
+#endif
     plan.operation.entry=static_entry(StaticCode::Bridge);plan.operation.index=OP_DETACHED_INDEX;
     plan.metadata=detached_operation_metadata(pc,StaticCode::Bridge);
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+    const auto previous_hot=hot_calls_.find(source_pc);
+    if(opcode==StaticCode::Call && (previous_hot==hot_calls_.end() || previous_hot->second!=pc) &&
+       (hot_calls_.size()<4096 || previous_hot!=hot_calls_.end())) {
+        plan.operation.entry=hot_bridge_entry();plan.metadata.payload=prior_hot_count;
+    }
+#endif
     plan.operation.immediate=reinterpret_cast<uint64_t>(&plan);plan.operation.target=next;
     if(target)target->operation=&plan.operation;else edge.target=&plan.operation;return next;
 }
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+const StaticOperation *ExecutionEngine::promote_call(const BridgePlan &plan,uint64_t pc) {
+    OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("adaptive.attempts");execution_diagnostics::Timer timer(&diagnostics_,"adaptive.ns");)
+    if(frame_.completed==frame_.budget) {
+        OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("adaptive.budget_deferred");)
+        const_cast<BridgePlan &>(plan).metadata.payload=1;
+        return select(pc);
+    }
+    const auto source_pc=operation_info(*plan.source).pc;
+    auto *old=frame_.graph;const auto root=old->address;
+    OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("adaptive.replaced_blocks",old->blocks.size());)
+    hot_calls_[source_pc]=pc;
+    frame_.publish();++materializations;frame_.graph=nullptr;frame_.shadow.pc=pc;
+    ++cache_generation_;++*old->lifetime;erase_entries(*old);
+    graphs_.erase(std::remove_if(graphs_.begin(),graphs_.end(),[&](const auto &graph){return graph.get()==old;}),graphs_.end());
+    try {
+        const auto owner=find(root);
+        const auto target=owner.graph->entries.find(pc);
+        if(!owner.graph->root_entry_only && target!=owner.graph->entries.end()) {
+            OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("adaptive.success");diagnostics_.count("adaptive.new_blocks",owner.graph->blocks.size());)
+            ++adaptive_promotions;owner.graph->referenced=1;frame_.graph=owner.graph;
+            frame_.reload();frame_.epoch=owner.graph->validated_epoch;
+            frame_.guest_fpcr=read_floating_control(frame_.shadow);
+            return target->second->code.data();
+        }
+    } catch(const MemoryFault &) {
+        OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("adaptive.speculative_fault");)
+        // The speculative caller may have changed; the actual target is the
+        // required fetch and must determine the guest-visible fault instead.
+    }
+    OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("adaptive.fallback");)
+    return select(pc);
+}
+#endif
 const StaticOperation *ExecutionEngine::tail(uint64_t pc) {
     return tail_from(*frame_.graph->entries.at(pc),pc);
 }
@@ -302,9 +365,24 @@ const StaticOperation *ExecutionEngine::slow(const StaticOperation &op) {
         frame_.shadow.pc=info.pc;
         if(memory_->code_epoch.load(std::memory_order_relaxed)!=frame_.epoch)return select(info.pc);
         return tail(info.pc);
+    case StaticCode::ScheduledLoads: {
+        // The private-page scheduling guard has no architectural effects.
+        // On a miss execute the original suffix, including partial effects
+        // and retirement if the second load faults.
+        frame_.completed=frame_.block_base+info.prefix-1;
+        for(const auto &block:frame_.graph->blocks)
+            if(info.pc>=block->pc && info.pc<=block->instructions.back().pc) {
+                try {return tail_from(*block,info.pc);}
+                catch(...) {frame_.reload();throw;}
+            }
+        throw Failure("scheduled load lost its source block");
+    }
     case StaticCode::IndirectDispatch:return link(*reinterpret_cast<const IndirectCache*>(op.immediate)->source,frame_.pending_pc);
     case StaticCode::Bridge: {
         const auto &plan=*reinterpret_cast<const BridgePlan*>(op.immediate);
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+        if(op.entry==hot_bridge_entry() && !plan.metadata.payload)return promote_call(plan,info.pc);
+#endif
         OPERIT_EXEC_DIAGNOSTIC(
             diagnostics_.count("bridge.slow_calls");
             execution_diagnostics::ValidationScope validation_site(&diagnostics_,"bridge");
@@ -436,6 +514,9 @@ Execution ExecutionEngine::run(CpuState &cpu,Memory &memory,uint64_t budget,Fixe
             if(intrinsic_generation_!=generation)diagnostics_.count("cache.reset.intrinsics_generation");
         )
         continuation_pc_=0;entries_.clear();graphs_.clear();wasm.clear();++cache_generation_;memory_=&memory;memory_identity_=memory.identity();intrinsics_=intrinsics;intrinsic_generation_=generation;
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+        hot_calls_.clear();
+#endif
     }
     frame_.shadow=cpu;frame_.graph=nullptr;frame_.completed=0;frame_.budget=budget;frame_.exception=nullptr;
     frame_.reason=StopReason::Budget;frame_.engine=this;frame_.memory=&memory;frame_.block_hits=0;

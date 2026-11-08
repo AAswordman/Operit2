@@ -283,7 +283,7 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
                 if (!(attributes.local & 2)) {
                     const size_t minimum = std::min<size_t>(vectors->size(), attributes.characters[6]);
                     const unsigned deciseconds = attributes.characters[5];
-                    const size_t available = size_t(terminal::input_queued(host_fd));
+                    const size_t available = size_t(terminals_->input_queued(*terminal));
                     const auto now = TaskClock::now();
                     if (!terminal_wait->initialized) {
                         terminal_wait->initialized = true;
@@ -410,6 +410,9 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
             }
         } else if (callback) {
             result = callback(config_.io_context, description->standard_stream, data.data(), data.size());
+        } else if (terminal) {
+            result = writing ? terminals_->write(*terminal, host_fd, data.data(), data.size())
+                             : terminals_->read(*terminal, host_fd, data.data(), data.size());
         } else if (description->pipe) {
             result = writing ? description->pipe->write(host_fd, data.data(), data.size())
                              : description->pipe->read(host_fd, data.data(), data.size());

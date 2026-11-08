@@ -226,6 +226,7 @@ RuntimeDeviceSpaceDevice _device(
   platform: 'desktop',
   model: '',
   coreVersion: 'test-core',
+  protocolVersion: 1,
   online: online,
   relayHops: relayHops,
   relayPath: const [],

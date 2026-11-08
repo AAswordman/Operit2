@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -18,9 +19,11 @@ use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageSt
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
+use operit_util::stream::Stream::Stream;
 use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
 
 const APPLY_FILE_TOOL_NAME: &str = "apply_file";
+pub type SummaryProgressCallback = Arc<dyn Fn(&'static str) + Send + Sync>;
 
 /// Controls how much tool metadata is exposed in prompt history.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -417,6 +420,16 @@ impl ConversationService {
         previousSummary: Option<String>,
         multiServiceManager: &mut MultiServiceManager,
     ) -> Result<String, AiServiceError> {
+        self.generateSummaryWithProgress(messages, previousSummary, multiServiceManager, None).await
+    }
+
+    pub async fn generateSummaryWithProgress(
+        &self,
+        messages: Vec<PromptTurn>,
+        previousSummary: Option<String>,
+        multiServiceManager: &mut MultiServiceManager,
+        progress: Option<SummaryProgressCallback>,
+    ) -> Result<String, AiServiceError> {
         let useEnglish = false;
         let mut systemPrompt =
             FunctionalPrompts::buildSummarySystemPrompt(previousSummary.as_deref(), useEnglish);
@@ -521,7 +534,8 @@ impl ConversationService {
             )
         };
 
-        let summaryStream = {
+        if let Some(callback) = &progress { callback("summary_preparing"); }
+        let mut summaryStream = {
             let mut service = summaryService.lock().await;
             service
                 .send_message(SendMessageRequest {
@@ -537,9 +551,20 @@ impl ConversationService {
                 })
                 .await?
         };
-        let summaryChunks = collect_stream_chunks(summaryStream).await;
-        let mut summaryContent = removeThinkingContent(&summaryChunks.join("").trim().to_string());
-        if !checkpointTemplateMatches(&summaryContent) {
+        let mut content = String::new();
+        let mut stage = 0;
+        summaryStream.collect(&mut |chunk| {
+            content.push_str(&chunk);
+            let next = summaryProgressStage(&content);
+            if next > stage {
+                stage = next;
+                if let Some(callback) = &progress { callback(SUMMARY_STAGES[stage - 1].2); }
+            }
+        }).await;
+        crate::chat::llmprovider::AIService::ensure_response_completed(summaryStream.as_ref())?;
+        let mut summaryContent = removeThinkingContent(content.trim());
+        if !summaryContent.trim().is_empty() && !checkpointTemplateMatches(&summaryContent) {
+            if let Some(callback) = &progress { callback("summary_formatting"); }
             let nudgeTurn = PromptTurn::new(
                 PromptTurnKind::USER,
                 FunctionalPrompts::boundaryNudge(useEnglish).to_string(),
@@ -570,12 +595,15 @@ impl ConversationService {
                         on_non_fatal_error: None,
                         on_tool_invocation: None,
                     })
-                    .await?
+                    .await
             };
-            let nudgeChunks = collect_stream_chunks(nudgeStream).await;
-            let nudgedContent = removeThinkingContent(&nudgeChunks.join("").trim().to_string());
-            if checkpointTemplateMatches(&nudgedContent) {
-                summaryContent = nudgedContent;
+            if let Ok(mut nudgeStream) = nudgeStream {
+                let mut nudgeChunks = Vec::new();
+                nudgeStream.collect(&mut |chunk| nudgeChunks.push(chunk)).await;
+                let nudgedContent = removeThinkingContent(&nudgeChunks.join("").trim().to_string());
+                if crate::chat::llmprovider::AIService::ensure_response_completed(nudgeStream.as_ref()).is_ok() {
+                    summaryContent = selectSummaryAfterNudge(summaryContent, nudgedContent);
+                }
             }
         }
         let (summaryInputTokens, summaryCachedInputTokens, summaryOutputTokens) = {
@@ -619,11 +647,7 @@ impl ConversationService {
         summaryContent = afterGenerateContext.summary_result.expect(
             "SummaryHookContext.summary_result must be present after after_generate_summary",
         );
-        if summaryContent.trim().is_empty() || !checkpointTemplateMatches(&summaryContent) {
-            return Err(AiServiceError::RequestFailed(
-                "Compaction checkpoint did not match the required template".to_string(),
-            ));
-        }
+        validateSummaryContent(&summaryContent)?;
         self.runtime_context
             .support()
             .updateTokensForProviderModel(
@@ -927,6 +951,39 @@ fn checkpointTemplateMatches(reply: &str) -> bool {
     all_cn || all_en
 }
 
+const SUMMARY_STAGES: [(&str, &str, &str); 6] = [
+    ("【核心任务状态】", "[Core Task Status]", "summary_core_task"),
+    ("【用户消息与约束】", "[User Messages & Constraints]", "summary_user_constraints"),
+    ("【关键文件与代码】", "[Key Files & Code]", "summary_key_files"),
+    ("【错误与修复】", "[Errors & Fixes]", "summary_errors"),
+    ("【互动情节与设定】", "[Interaction & Scenario]", "summary_interaction"),
+    ("【下一步】", "[Next Move]", "summary_next_steps"),
+];
+
+fn summaryProgressStage(content: &str) -> usize {
+    SUMMARY_STAGES.iter().rposition(|(cn, en, _)| content.contains(cn) || content.contains(en))
+        .map_or(0, |index| index + 1)
+}
+
+#[allow(non_snake_case)]
+fn selectSummaryAfterNudge(original: String, nudged: String) -> String {
+    if checkpointTemplateMatches(&nudged) {
+        nudged
+    } else {
+        original
+    }
+}
+
+#[allow(non_snake_case)]
+fn validateSummaryContent(summary: &str) -> Result<(), AiServiceError> {
+    if summary.trim().is_empty() {
+        return Err(AiServiceError::RequestFailed(
+            "Compaction checkpoint was empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 fn serializeSummaryHookModelParameters(
     modelParameters: &[ModelParameter<Value>],
@@ -1048,6 +1105,52 @@ fn build_media_intent_prompt(media_type: &str, path: &str, user_intent: Option<&
     match user_intent {
         Some(intent) => format!("{}:{}\n{}", media_type, path, intent),
         None => format!("{}:{}", media_type, path),
+    }
+}
+
+#[cfg(test)]
+mod summary_checkpoint_tests {
+    use super::*;
+
+    const CN_CHECKPOINT: &str = "==========对话检查点==========\n【核心任务状态】\n任务\n【用户消息与约束】\n要求\n【关键文件与代码】\n无\n【错误与修复】\n无\n【互动情节与设定】\n无\n【下一步】\n继续";
+    const EN_CHECKPOINT: &str = "==========Conversation Checkpoint==========\n[Core Task Status]\nTask\n[User Messages & Constraints]\nRequest\n[Key Files & Code]\nNone\n[Errors & Fixes]\nNone\n[Interaction & Scenario]\nNone\n[Next Move]\nContinue";
+
+    #[test]
+    fn accepts_both_checkpoint_templates() {
+        assert!(checkpointTemplateMatches(CN_CHECKPOINT));
+        assert!(checkpointTemplateMatches(EN_CHECKPOINT));
+    }
+
+    #[test]
+    fn progress_detects_split_and_skipped_sections_in_both_languages() {
+        let mut output = String::from("【核心任务");
+        assert_eq!(summaryProgressStage(&output), 0);
+        output.push_str("状态】\n内容\n【下一步】");
+        assert_eq!(summaryProgressStage(&output), 6);
+        assert_eq!(summaryProgressStage("[Key Files & Code]"), 3);
+    }
+
+    #[test]
+    fn keeps_original_summary_when_nudge_is_incomplete_or_empty() {
+        let original = "## 任务状态\n保留的重要上下文";
+        for nudge in ["", "【核心任务状态】\n简短内容"] {
+            assert_eq!(selectSummaryAfterNudge(original.into(), nudge.into()), original);
+        }
+        assert!(validateSummaryContent(original).is_ok());
+    }
+
+    #[test]
+    fn prefers_a_complete_nudged_checkpoint() {
+        assert_eq!(
+            selectSummaryAfterNudge("original".into(), CN_CHECKPOINT.into()),
+            CN_CHECKPOINT
+        );
+    }
+
+    #[test]
+    fn accepts_custom_hook_output_but_rejects_empty_summary() {
+        assert!(validateSummaryContent("Custom summary from a plugin").is_ok());
+        assert!(validateSummaryContent(" \n\t").is_err());
     }
 }
 

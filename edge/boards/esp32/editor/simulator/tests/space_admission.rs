@@ -221,6 +221,7 @@ fn node_from_storage(
     let space = NodeSpaceService::new(storage.clone(), peer.clone()).unwrap();
     space
         .initialize(CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: id,
             displayName: if bounded {
                 "ESP32-2432S028"
@@ -1081,6 +1082,7 @@ mod core_edge {
         let service = NodeSpaceService::new(storage.clone(), peers.clone()).unwrap();
         service
             .initialize(CoreSpaceDeviceProfile {
+                protocolVersion: None,
                 nodeId: id,
                 displayName: "ESP32-2432S028".into(),
                 userName: String::new(),
@@ -2598,6 +2600,7 @@ mod core_edge {
             let new_store = CoreSpaceStore::new(new.storage.clone());
             for index in 0..4 {
                 new_store.importDeviceProfiles(vec![CoreSpaceDeviceProfile {
+                    protocolVersion: None,
                     nodeId: format!("previous-space-peer-{index}"), displayName: format!("Unrelated desktop {index}"),
                     userName: String::new(), platform: "windows".into(), model: "Previous desktop".into(), coreVersion: None, updatedAt: 1,
                     pairingIncarnation: None,

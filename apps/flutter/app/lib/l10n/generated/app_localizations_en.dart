@@ -175,6 +175,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get summaryGenerating => 'Generating summary...';
 
   @override
+  String get summaryStageCore => 'Summarizing the core task...';
+
+  @override
+  String get summaryStageConstraints =>
+      'Summarizing user requests and constraints...';
+
+  @override
+  String get summaryStageFiles => 'Summarizing key files and code...';
+
+  @override
+  String get summaryStageErrors => 'Summarizing errors and fixes...';
+
+  @override
+  String get summaryStageInteraction =>
+      'Summarizing interaction and context...';
+
+  @override
+  String get summaryStageNext => 'Summarizing next steps...';
+
+  @override
+  String get summaryStageFormatting => 'Formatting the summary...';
+
+  @override
   String get chatCompressingHistory => 'Compressing history records...';
 
   @override

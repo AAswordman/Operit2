@@ -15,17 +15,17 @@ int64_t Console::read(void *bytes, size_t length) {
         guest_error(14);
     if (!length)
         return 0;
-    const auto result = ::read(master_.host.get(), bytes, std::min<size_t>(length, 0x7ffff000));
-    return manager_->read_result(*master_.endpoint, bytes, result < 0 ? -linux_errno(errno) : result);
+    const auto result = manager_->read(*master_.endpoint, master_.host.get(), bytes, std::min<size_t>(length, 0x7ffff000));
+    return manager_->read_result(*master_.endpoint, bytes, result);
 }
 int64_t Console::write(const void *bytes, size_t length) {
     if (!bytes && length)
         guest_error(14);
     if (!length)
         return 0;
-    const auto result = host_write(master_.host.get(), bytes, std::min<size_t>(length, 0x7ffff000));
+    const auto result = manager_->write(*master_.endpoint, master_.host.get(), bytes, std::min<size_t>(length, 0x7ffff000));
     if (result < 0)
-        return -linux_errno(errno);
+        return result;
     if (result)
         manager_->written_input(*master_.endpoint, bytes, size_t(result));
     return result;

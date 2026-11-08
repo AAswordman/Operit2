@@ -40,6 +40,7 @@ impl SpaceDevice {
         let services = NodeServices::new(peers);
         let space = NodeSpaceService::new(storage, services.peers())?;
         space.initialize(CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: node_id.clone(),
             displayName: info.model.clone(),
             userName: String::new(),

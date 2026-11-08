@@ -8,6 +8,7 @@
 #include "linux/process/pidfd.h"
 #include "linux/signals/signal_file.h"
 #include "linux/syscalls.h"
+#include "linux/terminal/manager.h"
 #include <algorithm>
 #include <cerrno>
 #include <climits>
@@ -46,6 +47,8 @@ struct FileTransfer {
     std::function<void()> broken_pipe;
     std::shared_ptr<process::ResourceLimits> limits;
     std::function<void()> file_size_signal;
+    std::shared_ptr<TerminalManager> terminals;
+    uint32_t pid = 0;
 
     void buffer(uint64_t address, size_t length, unsigned permissions) {
         if (!memory.accessible(address, length, permissions))
@@ -113,6 +116,15 @@ struct FileTransfer {
                                                            bool(output.offset_pointer));
         if (output.description->pipe)
             return output.description->pipe->write(output.fd->get(), data.data(), count);
+        if (auto endpoint = output.description->terminal) {
+            if (output.offset_pointer)
+                return -29;
+            terminals->before_io(*endpoint, pid, true);
+            auto result = terminals->write(*endpoint, output.fd->get(), data.data(), count);
+            if (result > 0)
+                terminals->written_input(*endpoint, data.data(), size_t(result));
+            return result;
+        }
         if (output.description->standard_stream >= 0 && config.write)
             return config.write(config.io_context, output.description->standard_stream,
                                 const_cast<uint8_t *>(data.data()), count);
@@ -253,7 +265,7 @@ int64_t Syscalls::dispatch_file_transfer(CpuState &cpu) {
         guest_error(22);
     auto state = std::make_shared<FileTransfer>(
         FileTransfer{memory_, config_, {}, {}, kind, a[sendfile ? 3 : (tee ? 2 : 4)], flags, {}, false,
-                     {}, resource_limits(), {}});
+                     {}, resource_limits(), {}, terminals_, scheduler_.current().pid});
     const uint32_t calling_tid = scheduler_.current().tid;
     state->broken_pipe = [this, calling_tid]() { broken_pipe(calling_tid); };
     state->file_size_signal = [this, calling_tid]() {

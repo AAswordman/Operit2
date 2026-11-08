@@ -481,6 +481,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
             platform: 'windows',
             model: 'PC',
             coreVersion: null,
+            protocolVersion: 1,
             online: true,
             relayHops: null,
             relayPath: <String>[],

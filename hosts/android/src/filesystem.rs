@@ -1,21 +1,30 @@
 use base64::Engine;
 use operit_host_api::FileSystemResource::FileSystemResource;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use operit_host_api::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
     GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult,
 };
 
-#[derive(Clone, Debug, Default)]
+type FilePresentation = Arc<dyn Fn(&str, &str, &str) -> HostResult<()> + Send + Sync>;
+
+#[derive(Clone, Default)]
 pub struct AndroidFileSystemHost {
     inner: operit_host_native_common::PosixFileSystemHost,
+    presentation: Option<FilePresentation>,
 }
 
 impl AndroidFileSystemHost {
     pub fn new() -> Self {
         Self {
             inner: operit_host_native_common::PosixFileSystemHost::new(),
+            presentation: None,
         }
+    }
+
+    pub fn withPresentation(presentation: FilePresentation) -> Self {
+        Self { inner: operit_host_native_common::PosixFileSystemHost::new(), presentation: Some(presentation) }
     }
 }
 
@@ -207,6 +216,9 @@ impl FileSystemHost for AndroidFileSystemHost {
 
     fn openFile(&self, path: &str) -> HostResult<()> {
         self.validatePath(path, "path")?;
+        if let Some(presentation) = &self.presentation {
+            return presentation("openFile", path, "");
+        }
         let value = crate::document_filesystem::call(json!({
             "operation": "openFile", "path": path
         }))?;
@@ -218,9 +230,12 @@ impl FileSystemHost for AndroidFileSystemHost {
     }
 
     fn shareFile(&self, path: &str, title: &str) -> HostResult<()> {
-        Err(HostError::new(format!(
-            "Android share_file requires the Flutter Android host bridge: {path} ({title})"
-        )))
+        self.validatePath(path, "path")?;
+        if let Some(presentation) = &self.presentation {
+            return presentation("shareFile", path, title);
+        }
+        let value = crate::document_filesystem::call(json!({"operation": "shareFile", "path": path, "title": title}))?;
+        if value.is_null() { Ok(()) } else { Err(HostError::new("Invalid Android share-file response")) }
     }
 }
 
@@ -230,4 +245,27 @@ fn isResource(path: &str) -> HostResult<bool> {
 fn decodeBytes(value: Value) -> HostResult<Vec<u8>> {
     let text = value.as_str().ok_or_else(|| HostError::new("Invalid document byte response"))?;
     base64::engine::general_purpose::STANDARD.decode(text).map_err(|e| HostError::new(e.to_string()))
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn open_and_share_forward_only_valid_paths_and_preserve_errors() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let saved = calls.clone();
+        let host = AndroidFileSystemHost::withPresentation(Arc::new(move |operation, path, title| {
+            saved.lock().unwrap().push((operation.to_string(), path.to_string(), title.to_string()));
+            if operation == "shareFile" { return Err(HostError::new("share denied")); }
+            Ok(())
+        }));
+        host.openFile("/tmp/a").unwrap();
+        assert!(host.shareFile("/tmp/a", "Example").unwrap_err().to_string().contains("share denied"));
+        assert!(host.openFile("relative").is_err());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1], ("shareFile".into(), "/tmp/a".into(), "Example".into()));
+    }
 }

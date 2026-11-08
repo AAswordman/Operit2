@@ -405,3 +405,9 @@ cargo run --manifest-path apps/cli/Cargo.toml -- tui --update-current-version 0.
 ```
 
 Use a prerelease current version such as `0.0.0-preview.0` to test preview releases. A stable current version such as `0.0.0` selects the stable channel and ignores GitHub prereleases.
+
+## Peer protocol compatibility
+
+App/CLI release versions do not control Core or Edge pairing, routing or synchronization.
+See [Core / Edge protocol versioning](peer-protocol-versioning.md) for the independent integer protocol version,
+build-time source fingerprint, and required version increments. Runtime checks compare only the protocol version.

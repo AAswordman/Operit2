@@ -63,7 +63,11 @@
     ldrh w12, [x28, #OP_EDGE_PREFIX]
     add x26, x6, x12
     ldr x28, [x28, #OP_SIZE+OP_TARGET]
+#if OPERIT_ARM64_DIRECT_CHAINS
+    b LBlockBody
+#else
     DISPATCH
+#endif
     .else
     DIAG_COUNT ED_EVENT_CROSS_EDGE_ATTEMPT
     DIAG_COUNT ED_EVENT_FALLTHROUGH_CROSS
@@ -121,9 +125,8 @@ SYM(operit_static_execute):
     mrs x10, fpsr
     stp x9, x10, [x27, #EF_HOST_FPCR]
 Lreload:
-    // These invocation invariants survive every native handler and graph edge.
-    // A C++ boundary can change the active epoch, so always reload them here.
-    ldr x3, [x27, #EF_EPOCH]
+    // X3 carries guest X30 and uses its shadow home at C++ boundaries.
+    ldr x3, [x27, #EF_RESIDENT_X30]
     ldr x4, [x27, #EF_CODE_EPOCH]
     ldr x5, [x27, #EF_BUDGET]
     ldr x7, [x27, #EF_PAGES]
@@ -144,8 +147,9 @@ Ldispatch:
     br x16
 LBlock:
     DIAG_HANDLER
+    ldr x10, [x27, #EF_EPOCH]
     ldar x9, [x4]
-    cmp x9, x3
+    cmp x9, x10
     b.ne Lslow
     sub x9, x5, x26
     ldr x10, [x28, #OP_IMMEDIATE]
@@ -158,8 +162,9 @@ LBlockBody:
     // The serial native reader pins code; parallel execution still observes
     // concurrent code writes at each guest block boundary.
     cbnz x7, Lblock_admitted
+    ldr x10, [x27, #EF_EPOCH]
     ldar x9, [x4]
-    cmp x9, x3
+    cmp x9, x10
     b.ne Lslow
 Lblock_admitted:
     DIAG_COUNT ED_EVENT_BLOCK_ADMITTED
@@ -223,7 +228,21 @@ Lbridge_valid:
     str x9, [x27, #EF_GRAPH]
     // Every bridge target is the Block header returned by select().
     ldr x28, [x28, #OP_TARGET]
+#if OPERIT_ARM64_DIRECT_CHAINS
+    b LBlock
+#else
     DISPATCH
+#endif
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+// Temporary bridge for a cold direct call. Only this bridge counts; once the
+// threshold is reached the slow path rebuilds the caller or falls back.
+LHotBridge:
+    ldr w10, [x28, #OP_SIZE+OM_PAYLOAD]
+    subs w10, w10, #1
+    str w10, [x28, #OP_SIZE+OM_PAYLOAD]
+    b.eq Lslow
+    b LBridge
+#endif
 // x15 proof, x16 required lines, x10 scope, x14 code epoch. Native execution
 // retains the mapping reader; only x0-x2/x11 and v0-v4 are scratch here.
 // An absent observation or a contended page returns to the precise C++ path.
@@ -379,7 +398,20 @@ LLocalNext:
     ldrh w12, [x28, #OP_EDGE_PREFIX]
     add x26, x6, x12
     ldr x28, [x28, #OP_TARGET]
+    // Shared by Next and Jump: a Jump can target a guarded backedge.
     DISPATCH
+// Only selected for Next records, whose in-graph successor is always forward.
+LLocalForward:
+    DIAG_HANDLER
+    DIAG_COUNT ED_EVENT_LOCAL_EDGE
+    ldrh w12, [x28, #OP_EDGE_PREFIX]
+    add x26, x6, x12
+    ldr x28, [x28, #OP_TARGET]
+#if OPERIT_ARM64_DIRECT_CHAINS
+    b LBlockBody
+#else
+    DISPATCH
+#endif
 // No operands or host NZCV are clobbered before a handler starts its work.
 // The outer function already owns LR; this internal leaf needs no stack frame.
 Lfp_enter:
@@ -391,6 +423,7 @@ Lfp_enter:
     ret
 Lslow:
     DIAG_COUNT ED_EVENT_SLOW_ENTRY
+    str x3, [x27, #EF_RESIDENT_X30]
     and x9, x8, #EXEC_BLOCK_HITS_MASK
     str x9, [x27, #EF_BLOCK_HITS]
     str x6, [x27, #EF_BLOCK_BASE]
@@ -680,6 +713,19 @@ Ldiagnostic_return:
 #endif
 #include "static_handlers.inc"
 .cfi_endproc
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+.globl SYM(operit_static_hot_bridge)
+.set SYM(operit_static_hot_bridge), LHotBridge
+#endif
+#if OPERIT_ARM64_PROFILE_SUPERBLOCKS
+#include "profile_superblocks.inc"
+#endif
+#if OPERIT_ARM64_GUEST_AOT
+#include "guest_aot.inc"
+#endif
+#if OPERIT_ARM64_GUEST_AOT_TRACES
+#include "guest_traces.inc"
+#endif
 .globl SYM(operit_static_kind_FPEnter)
 .set SYM(operit_static_kind_FPEnter), Lfp_enter
 .globl SYM(operit_static_kind_NativeCodeProof)

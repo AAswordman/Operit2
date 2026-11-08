@@ -525,6 +525,7 @@ impl AIMessageManager {
         autoContinue: bool,
         chatId: String,
         configuration: &ChatConfigurationResult,
+        progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
     ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
     {
         let lastSummaryIndex = messages
@@ -571,7 +572,7 @@ impl AIMessageManager {
 
         let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
         let summary = enhancedAiService
-            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration)
+            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress)
             .await?;
         let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
         if summary.trim().is_empty() {

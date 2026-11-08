@@ -1,4 +1,5 @@
 #include "linux/terminal/manager.h"
+#include "linux/terminal/software_pty.h"
 #include "base/host_io.h"
 #include "base/support.h"
 #include "linux/error_mapping.h"
@@ -38,6 +39,7 @@ struct TerminalState {
     size_t slave_opens = 0;
     uint64_t settings_generation = 1;
     std::string native_slave;
+    std::shared_ptr<SoftwarePty> software;
     std::weak_ptr<TerminalEndpoint> master;
     std::weak_ptr<TerminalEvents> events;
     // Linux N_TTY leaves these three character slots uninterpreted.
@@ -119,6 +121,8 @@ TerminalEndpoint::~TerminalEndpoint() {
         return;
     }
     state->master_alive = false;
+    if (state->software)
+        state->software->close_master();
     auto foreground = state->foreground;
     state->session = state->foreground = 0;
     if (auto events = state->events.lock()) {
@@ -263,23 +267,32 @@ std::shared_ptr<TerminalState> TerminalManager::find(uint32_t number) const {
 TerminalOpen TerminalManager::open_multiplexer(int guest_flags) {
     if ((guest_flags & 3) == 3)
         guest_error(22);
-    FD host(::posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK));
-    check_host(host.get());
-    nonblocking(host.get());
-    check_host(::grantpt(host.get()));
-    check_host(::unlockpt(host.get()));
-    char name[PATH_MAX]{};
-    int result = ::ptsname_r(host.get(), name, sizeof(name));
-    if (result)
-        guest_error(linux_errno(result > 0 ? result : errno));
     auto state = std::make_shared<TerminalState>();
     state->number = next_number();
-    state->native_slave = name;
     state->events = events_;
-    {
-        FD slave(::open(state->native_slave.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
+    FD host;
+    try {
+        FD native(::posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK));
+        check_host(native.get());
+        nonblocking(native.get());
+        check_host(::grantpt(native.get()));
+        check_host(::unlockpt(native.get()));
+        char name[PATH_MAX]{};
+        int result = ::ptsname_r(native.get(), name, sizeof(name));
+        if (result)
+            guest_error(linux_errno(result > 0 ? result : errno));
+        FD slave(::open(name, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
         check_host(slave.get());
         terminal::set_attributes(slave.get(), initial_attributes());
+        state->native_slave = name;
+        host = std::move(native);
+    } catch (const GuestError &error) {
+        // iOS application sandboxes can deny the host PTY device or its setup
+        // ioctls. Guest /dev/ptmx remains usable without those host privileges.
+        if (error.number != 1 && error.number != 13)
+            throw;
+        state->software = std::make_shared<SoftwarePty>(initial_attributes());
+        host = duplicate(state->software->descriptor(true));
     }
     auto endpoint = std::make_shared<TerminalEndpoint>(state, duplicate(host.get()), true, guest_flags);
     state->master = endpoint;
@@ -294,7 +307,9 @@ TerminalOpen TerminalManager::open_slave(uint32_t number, int guest_flags) {
         guest_error(5);
     if (state->exclusive[1])
         guest_error(16);
-    FD host(::open(state->native_slave.c_str(), (guest_flags & 3) | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
+    FD host = state->software ? duplicate(state->software->descriptor(false))
+                              : FD(::open(state->native_slave.c_str(),
+                                          (guest_flags & 3) | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
     check_host(host.get());
     nonblocking(host.get());
     auto endpoint = std::make_shared<TerminalEndpoint>(state, duplicate(host.get()), false, guest_flags);
@@ -341,7 +356,7 @@ std::pair<TerminalOpen, TerminalOpen> TerminalManager::open_pair(int guest_flags
     if (attributes)
         this->attributes(*slave.endpoint, *attributes);
     if (size)
-        check_host(::ioctl(slave.host.get(), TIOCSWINSZ, size));
+        resize(*slave.endpoint, *size);
     return {std::move(master), std::move(slave)};
 }
 VirtualNode::Ptr TerminalManager::multiplexer_node() {
@@ -418,7 +433,7 @@ bool TerminalManager::exclusive(const TerminalEndpoint &endpoint) const {
     return endpoint.state->exclusive[endpoint.master ? 0 : 1];
 }
 void TerminalManager::exclusive(const TerminalEndpoint &endpoint, bool enabled) {
-    if (!endpoint.master)
+    if (!endpoint.master && !endpoint.state->software)
         terminal::exclusive(endpoint.anchor.get(), enabled);
     endpoint.state->exclusive[endpoint.master ? 0 : 1] = enabled;
 }
@@ -428,10 +443,15 @@ bool TerminalManager::packet(const TerminalEndpoint &endpoint) const {
 }
 void TerminalManager::packet(const TerminalEndpoint &endpoint, bool enabled) {
     require_master(endpoint);
-    terminal::packet_mode(endpoint.anchor.get(), enabled);
+    if (endpoint.state->software)
+        endpoint.state->software->packet(enabled);
+    else
+        terminal::packet_mode(endpoint.anchor.get(), enabled);
     endpoint.state->packet = enabled;
 }
 terminal::Attributes TerminalManager::attributes(const TerminalEndpoint &endpoint) const {
+    if (endpoint.state->software)
+        return endpoint.state->software->attributes();
     const auto fd = control_descriptor(endpoint);
     auto value = terminal::attributes(fd.get());
     value.characters[7] = endpoint.state->unused_characters[0];
@@ -442,18 +462,47 @@ terminal::Attributes TerminalManager::attributes(const TerminalEndpoint &endpoin
 void TerminalManager::attributes(const TerminalEndpoint &endpoint, const terminal::Attributes &value,
                                  unsigned action) {
     const auto previous = attributes(endpoint);
-    const auto fd = control_descriptor(endpoint);
-    terminal::set_attributes(fd.get(), value, action);
+    if (endpoint.state->software)
+        endpoint.state->software->attributes(value, action);
+    else {
+        const auto fd = control_descriptor(endpoint);
+        terminal::set_attributes(fd.get(), value, action);
+    }
     endpoint.state->unused_characters = {value.characters[7], value.characters[17], value.characters[18]};
     if (action == 2 || ((previous.local ^ value.local) & 0x10002))
         endpoint.state->literal_next = false;
     ++endpoint.state->settings_generation;
 }
 void TerminalManager::flush(const TerminalEndpoint &endpoint, unsigned action) {
-    const auto fd = control_descriptor(endpoint);
-    terminal::flush(fd.get(), action);
+    if (endpoint.state->software)
+        endpoint.state->software->flush(action);
+    else {
+        const auto fd = control_descriptor(endpoint);
+        terminal::flush(fd.get(), action);
+    }
     if (action != 1)
         endpoint.state->literal_next = false;
+}
+void TerminalManager::flow(const TerminalEndpoint &endpoint, unsigned action) {
+    if (endpoint.state->software)
+        endpoint.state->software->flow(action);
+    else
+        terminal::flow(endpoint.anchor.get(), action);
+}
+bool TerminalManager::software(const TerminalEndpoint &endpoint) {
+    return bool(endpoint.state->software);
+}
+int64_t TerminalManager::read(const TerminalEndpoint &endpoint, int fd, void *bytes, size_t length) {
+    if (endpoint.state->software)
+        return endpoint.state->software->read(endpoint.master, bytes, length);
+    const auto result = ::read(fd, bytes, length);
+    return result < 0 ? -linux_errno(errno) : result;
+}
+int64_t TerminalManager::write(const TerminalEndpoint &endpoint, int fd, const void *bytes, size_t length) {
+    if (endpoint.state->software)
+        return endpoint.state->software->write(endpoint.master, bytes, length);
+    const auto result = host_write(fd, bytes, length);
+    return result < 0 ? -linux_errno(errno) : result;
 }
 void TerminalManager::opened(const TerminalEndpoint &endpoint, uint32_t pid, bool no_controlling) {
     if (endpoint.master || no_controlling || !endpoint.state->master_alive)
@@ -586,20 +635,32 @@ void TerminalManager::window_changed(const TerminalEndpoint &endpoint) {
     signal(endpoint.state->foreground, 28);
 }
 struct winsize TerminalManager::window_size(const TerminalEndpoint &endpoint) const {
+    if (endpoint.state->software)
+        return endpoint.state->software->window_size();
     const auto fd = control_descriptor(endpoint);
     winsize size{};
     check_host(::ioctl(fd.get(), TIOCGWINSZ, &size));
     return size;
 }
+int TerminalManager::input_queued(const TerminalEndpoint &endpoint) const {
+    if (endpoint.state->software)
+        return endpoint.state->software->input_queued(endpoint.master);
+    return terminal::input_queued(endpoint.anchor.get());
+}
 int TerminalManager::output_queued(const TerminalEndpoint &endpoint) const {
+    if (endpoint.state->software)
+        return endpoint.state->software->output_queued();
     const auto fd = control_descriptor(endpoint);
     return terminal::output_queued(fd.get());
 }
 void TerminalManager::resize(const TerminalEndpoint &endpoint, const struct winsize &size) {
-    const auto fd = control_descriptor(endpoint);
-    winsize previous{};
-    check_host(::ioctl(fd.get(), TIOCGWINSZ, &previous));
-    check_host(::ioctl(fd.get(), TIOCSWINSZ, &size));
+    const auto previous = window_size(endpoint);
+    if (endpoint.state->software)
+        endpoint.state->software->resize(size);
+    else {
+        const auto fd = control_descriptor(endpoint);
+        check_host(::ioctl(fd.get(), TIOCSWINSZ, &size));
+    }
     if (previous.ws_row != size.ws_row || previous.ws_col != size.ws_col ||
         previous.ws_xpixel != size.ws_xpixel || previous.ws_ypixel != size.ws_ypixel)
         window_changed(endpoint);
@@ -627,9 +688,9 @@ void TerminalManager::inject(const TerminalEndpoint &endpoint, uint32_t pid, uin
     auto master = endpoint.state->master.lock();
     if (!master)
         guest_error(5);
-    ssize_t count = host_write(master->anchor.get(), &byte, 1);
+    int64_t count = write(*master, master->anchor.get(), &byte, 1);
     if (count < 0)
-        guest_error(linux_errno(errno));
+        guest_error(int(-count));
     if (count != 1)
         guest_error(5);
     written_input(*master, &byte, 1);
@@ -750,7 +811,7 @@ TerminalManager::ReadStatus TerminalManager::read_status(const TerminalEndpoint 
     const auto value = attributes(endpoint);
     if ((value.local & 2) && !(value.local & 0x10000))
         return readable ? ReadStatus::Ready : ReadStatus::Waiting;
-    const auto available = size_t(terminal::input_queued(endpoint.anchor.get()));
+    const auto available = size_t(input_queued(endpoint));
     const bool external_canonical = (value.local & 0x10002) == 0x10002;
     const auto minimum = external_canonical ? size_t{1} : std::min<size_t>(capacity, value.characters[6]);
     const unsigned deciseconds = external_canonical ? 0 : value.characters[5];
@@ -784,7 +845,7 @@ int64_t TerminalManager::read_result(const TerminalEndpoint &endpoint, void *byt
     if (endpoint.master && !endpoint.state->slave_opens) {
         if (!endpoint.state->slave_ever_opened && (result == 0 || result == -5))
             return -11;
-        if (result == 0)
+        if (result == 0 || (endpoint.state->software && result == -11 && endpoint.state->slave_ever_opened))
             return -5;
     }
     if ((result == -5 || result == -11) && !endpoint.master && !endpoint.state->master_alive)

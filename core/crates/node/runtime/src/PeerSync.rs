@@ -13,6 +13,7 @@ pub(crate) struct SyncRequest { pub limit: usize, pub force: bool }
 #[serde(rename_all = "camelCase")]
 pub(crate) enum PeerSyncMethod {
     CoreVersion,
+    Protocol,
     DeviceSpace,
     SyncClock,
     SyncClockDigest,
@@ -127,6 +128,7 @@ mod tests {
     fn peer_sync_methods_round_trip_through_standard_link_requests() {
         for method in [
             PeerSyncMethod::CoreVersion,
+            PeerSyncMethod::Protocol,
             PeerSyncMethod::DeviceSpace,
             PeerSyncMethod::SyncClock,
             PeerSyncMethod::SyncClockDigest,

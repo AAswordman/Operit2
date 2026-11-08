@@ -51,3 +51,6 @@ python -X utf8 edge/tools/check-sdk-dependencies.py
 [Edge 首页](../README.md)中的产品验收入口。
 
 这不是 `no_std` SDK。启用空间接入需要 Rust `std`、持久化、熵源和异步 Host；ESP32 产品使用 ESP-IDF。默认零依赖不意味着启用网络与认证也零成本。见 [厂商指南](../docs/manufacturer-guide.md)。
+
+Core 与 Edge 的运行时兼容性只按独立通信协议版本判断，与 Operit 软件版本及厂商固件版本无关。
+协议源码指纹在构建时检查；变化后必须递增协议版本。见[协议版本规则](../../docs/peer-protocol-versioning.md)。

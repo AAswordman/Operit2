@@ -140,6 +140,7 @@ class OwnerSystemCapabilityChannel(
             "ownerSystemLanguageCode" -> ownerSystemLanguageCode(result)
             "ownerSystemRecognizeText" -> ownerSystemRecognizeText(call, result)
             "ownerSystemOperation" -> ownerSystemOperation(call, result)
+            "ownerLocalInference" -> ownerLocalInference(call, result)
             "ownerAudioPlay" -> ownerAudioPlay(call, result)
             "ownerMusicPlayback" -> ownerMusicPlayback(call, result)
             "ownerBluetooth" -> ownerBluetooth(call, result)
@@ -148,6 +149,28 @@ class OwnerSystemCapabilityChannel(
             else -> return false
         }
         return true
+    }
+
+    private fun ownerLocalInference(call: MethodCall, result: MethodChannel.Result) {
+        val payload = call.arguments as? Map<*, *>
+        val method = payload?.get("method") as? String
+        val request = payload?.get("requestJson") as? String
+        if (method == null || request == null) {
+            result.error("INVALID_ARGS", "ownerLocalInference expects method and requestJson", null)
+            return
+        }
+        runtimeHost.runBackground {
+            try {
+                val response = when (method) {
+                    "transcribeLocalSpeech" -> runtimeHost.transcribeLocalSpeech(request)
+                    "synthesizeLocalSpeech" -> runtimeHost.synthesizeLocalSpeech(request)
+                    else -> throw IllegalArgumentException("unsupported local inference method: $method")
+                }
+                activity.runOnUiThread { result.success(mapOf("resultJson" to response)) }
+            } catch (error: Throwable) {
+                activity.runOnUiThread { result.error("OWNER_LOCAL_INFERENCE_ERROR", error.message, null) }
+            }
+        }
     }
 
     /** Releases owner-host resources and invalidates every active TTS generation. */
@@ -279,6 +302,13 @@ class OwnerSystemCapabilityChannel(
                         )
                         "get_system_setting" -> systemGetSystemSetting(JSONObject(paramsJson))
                         "modify_system_setting" -> systemModifySystemSetting(JSONObject(paramsJson))
+                        "android_file_presentation" -> {
+                            val response = JSONObject(runtimeHost.fileSystemResourceOperation(paramsJson))
+                            check(response.getBoolean("ok")) { response.optString("error", "File presentation failed") }
+                            mapOf("resultJson" to JSONObject().put("success", true).toString())
+                        }
+                        "install_app", "uninstall_app", "list_installed_apps", "start_app", "stop_app", "get_app_usage_time" ->
+                            mapOf("resultJson" to AndroidPackageOperations(activity).execute(operation, JSONObject(paramsJson)).toString())
                         "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
                         else -> throw IllegalArgumentException("unsupported system operation: $operation")
                     }

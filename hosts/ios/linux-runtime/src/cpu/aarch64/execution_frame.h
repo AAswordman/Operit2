@@ -9,9 +9,10 @@ namespace operit::arm64 {
 class ExecutionEngine;
 class Memory;
 // One guest residency ABI spans every graph: arguments X0-X2, the first
-// callee-saved locals X19-X20, SP, and SIMD argument/result registers V0-V7.
-// Other registers stay in shadow; helpers and exits materialize this same set.
-inline constexpr std::array<uint8_t,6> resident_gp{0,1,2,19,20,31};
+// callee-saved locals X19-X20, SP, X30, and SIMD argument/result registers V0-V7.
+// The first six GP values use the ABI prefix below; X30 uses its shadow home
+// directly at every C++ boundary. Other registers remain in shadow.
+inline constexpr std::array<uint8_t,7> resident_gp{0,1,2,19,20,31,30};
 inline constexpr std::array<uint8_t,8> resident_vector{0,1,2,3,4,5,6,7};
 struct BlockGraph;
 struct StaticOperation;
@@ -52,6 +53,7 @@ static_assert(offsetof(ExecutionFrame,file_generation)==248 && offsetof(Executio
 static_assert(offsetof(ExecutionFrame,guest_fpcr)==280 && offsetof(ExecutionFrame,pending_pc)==288);
 static_assert(offsetof(ExecutionFrame,block_hits)==296 && offsetof(ExecutionFrame,shadow)==304);
 static_assert(offsetof(ExecutionFrame,shadow)+offsetof(CpuState,pc)==1072);
+static_assert(offsetof(ExecutionFrame,shadow)+offsetof(CpuState,x)+30*8==EF_RESIDENT_X30);
 static_assert(offsetof(ExecutionFrame,shadow)+offsetof(CpuState,tls)==1080);
 static_assert(offsetof(ExecutionFrame,shadow)+offsetof(CpuState,fpsr)==1096);
 static_assert(offsetof(ExecutionFrame,graph)==1152);

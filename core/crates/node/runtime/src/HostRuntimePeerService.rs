@@ -193,6 +193,7 @@ struct PairingInvitation {
 }
 #[derive(Serialize, Deserialize)]
 struct Hello {
+    #[serde(default)] protocol: Option<crate::PeerProtocol::PeerProtocol>,
     version: u32, nodeId: String, expectedNodeId: String, info: LinkDeviceInfo,
     public: Vec<u8>, purpose: String, sessionId: String,
     duplex: bool,
@@ -445,7 +446,7 @@ impl HostRuntimePeerService {
         saved: Option<&[u8]>, pairingCode: Option<&str>, invitationId: Option<&str>,
     ) -> Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String), CoreLinkError> {
         let (private, public) = crypto::ephemeral()?;
-        let hello = Hello { version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
+        let hello = Hello { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
             expectedNodeId: raw.target().nodeId.clone(),
             info: self.state.store.announcedDeviceInfo(&self.state.info), public: public.clone(),
             purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
@@ -454,6 +455,7 @@ impl HostRuntimePeerService {
         let reply: HelloReply = rawCall(&raw, "hello", &hello).await?;
         if !reply.duplex { return Err(error("Peer must support one bidirectional Link channel")); }
         let t = &reply.transcript;
+        crate::PeerProtocol::PeerProtocol::requireAdvertised(t.protocol.as_ref())?;
         if t.version != PAIRING_SERVICE_VERSION || t.clientNodeId != self.state.nodeId || t.clientPublic != public
             || (!raw.target().nodeId.is_empty() && t.serverNodeId != raw.target().nodeId)
             || t.serverNodeId == self.state.nodeId || t.serverPublic.len() != 32 || t.challenge.len() != 32
@@ -741,6 +743,9 @@ impl HostRuntimePeerService {
         };
         let hello: Hello =
             fromCoreValue(helloRequest.args).map_err(|e| error(e.to_string()))?;
+        if let Err(error) = crate::PeerProtocol::PeerProtocol::requireAdvertised(hello.protocol.as_ref()) {
+            return sendError(&raw, helloRequest.requestId, error).await;
+        }
         if !hello.duplex { return sendError(&raw, helloRequest.requestId, error("Peer must support one bidirectional Link channel")).await; }
         if hello.version != PAIRING_SERVICE_VERSION
             || hello.nodeId.is_empty()
@@ -809,7 +814,7 @@ impl HostRuntimePeerService {
         }
         let (private, public) = crypto::ephemeral()?;
         let id = if hello.purpose == "start" { uuid::Uuid::new_v4().to_string() } else { hello.sessionId.clone() };
-        let transcript = crypto::Transcript { version: PAIRING_SERVICE_VERSION, sessionId: id.clone(),
+        let transcript = crypto::Transcript { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, sessionId: id.clone(),
             clientNodeId: hello.nodeId.clone(), serverNodeId: self.state.nodeId.clone(),
             clientPublic: hello.public, serverPublic: public, challenge: crypto::random()?.to_vec() };
         let context = crypto::transcript(&transcript)?;
@@ -1719,6 +1724,34 @@ mod single_channel_tests {
         async fn send(&self, message: PeerMessage) -> Result<(), String> { self.tx.send(message).map_err(|e| e.to_string()) }
         async fn receive(&self) -> Result<Option<PeerMessage>, String> { Ok(self.rx.lock().await.recv().await) }
         async fn close(&self) {}
+    }
+
+    /// Both initial pairings and credential reconnects reject an incompatible
+    /// protocol before creating pending state or looking up saved credentials.
+    #[tokio::test]
+    async fn protocol_version_is_checked_for_pairing_and_session_reconnect() {
+        for purpose in ["start", "finish", "session"] {
+            for protocol in [None, Some(crate::PeerProtocol::PeerProtocol { version: crate::PeerProtocol::VERSION + 1 })] {
+                let expected = if protocol.is_none() { "PEER_PROTOCOL_UPGRADE_REQUIRED" } else { "PEER_PROTOCOL_MISMATCH" };
+                let (incoming, receive) = tokio::sync::mpsc::unbounded_channel();
+                let (send, mut outgoing) = tokio::sync::mpsc::unbounded_channel();
+                let raw: Arc<dyn PeerConnection> = Arc::new(MemoryPeer {
+                    endpoint: PeerEndpoint { nodeId: "peer".into(), address: "memory".into() },
+                    tx: send, rx: AsyncMutex::new(receive),
+                });
+                let hello = Hello { protocol, version: PAIRING_SERVICE_VERSION, nodeId: "peer".into(),
+                    expectedNodeId: "self".into(), info: LinkDeviceInfo { platform: "edge".into(), model: "sensor".into(), pairingIncarnation: None },
+                    public: vec![0;32], purpose: purpose.into(), sessionId: "test".into(), duplex: true,
+                    invitationId: None, pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
+                incoming.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+                    "version-check", HANDSHAKE, "hello", toCoreValue(hello).unwrap())))).unwrap();
+                service().serve(raw).await.unwrap();
+                match outgoing.recv().await.unwrap() {
+                    PeerMessage::Response(CoreLinkResponse::Call(reply)) => assert_eq!(reply.result.unwrap_err().code, expected),
+                    _ => panic!("expected an explicit protocol compatibility error"),
+                }
+            }
+        }
     }
 
     /// Models synchronous persistence work inside an otherwise asynchronous routed Call.

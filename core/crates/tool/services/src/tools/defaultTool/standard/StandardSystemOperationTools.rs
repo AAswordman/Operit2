@@ -244,7 +244,13 @@ impl StandardSystemOperationTools {
         if packageName.is_empty() {
             return toolError(tool, "Must provide package_name parameter".to_string());
         }
-        match self.host().and_then(|host| host.startApp(&packageName)) {
+        let activity = optionalParameterValue(tool, "activity");
+        match self.host().and_then(|host| {
+            host.startAppWithActivity(
+                &packageName,
+                activity.as_deref().filter(|value| !value.is_empty()),
+            )
+        }) {
             Ok(data) => toolSuccessData(
                 tool,
                 ToolResultData::AppOperationData(appOperationData(data)),

@@ -4,6 +4,7 @@
 namespace operit::arm64 {
 // Resident values remain in the same slots across every native graph edge.
 // Shadow homes are synchronized only at helper, budget and fault boundaries.
+// X30 is saved directly to shadow by the assembly entry to the slow path.
 inline void ExecutionFrame::publish(uint32_t gp_mask,uint32_t vector_mask) {
     if(!graph) return;
     for(unsigned n=0;n<gp.size();++n) {

@@ -43,6 +43,11 @@ impl CoreNodeRouter {
         method: PeerSyncMethod,
         mut request: CoreCallRequest,
     ) -> CoreCallResponse {
+        if method == PeerSyncMethod::Protocol {
+            return CoreCallResponse { requestId: request.requestId,
+                result: operit_link::toCoreValue(crate::PeerProtocol::PeerProtocol::current())
+                    .map_err(|error| CoreLinkError::internal(error.to_string())) };
+        }
         if method == PeerSyncMethod::DeviceSpace {
             let service =
                 RuntimeRemoteLinkService::newWithRouter((*self.localCore).clone(), self.clone());

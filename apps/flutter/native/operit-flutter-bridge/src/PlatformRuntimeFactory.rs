@@ -54,10 +54,10 @@ pub(crate) fn startBridge(startup: BridgeStartup) -> Result<OperitFlutterBridge,
     let mut context = platform::create_host_context(&startup)?;
     let composeDslHost =
         FlutterComposeDslWebViewBridge::new(&context).map_err(|error| error.to_string())?;
+    let browserAutomationHost =
+        FlutterBrowserAutomationBridge::new(&context).map_err(|error| error.to_string())?;
     context = context
-        .withBrowserAutomationHostFactory(Arc::new(|files| {
-            Arc::new(FlutterBrowserAutomationBridge::new(files))
-        }))
+        .withBrowserAutomationHost(Arc::new(browserAutomationHost))
         .withBrowserSessionHost(Arc::new(FlutterBrowserSessionBridge::new()))
         .withComposeDslWebViewHost(Arc::new(composeDslHost))
         .withFloatingWindowHost(Arc::new(|request: serde_json::Value| {

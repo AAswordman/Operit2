@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::Arc;
-
-use operit_host_api::FileSystemHost;
+use operit_tools::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
 use operit_plugin_sdk::package::PublishablePackageSource;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgArchiveParser;
 use serde::{Deserialize, Serialize};
@@ -17,13 +15,13 @@ pub struct LocalArtifactAuthorDeclaration {
 
 #[derive(Clone)]
 pub struct ArtifactAuthorValidation {
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    fileSystem: VisualFileSystem,
 }
 
 impl ArtifactAuthorValidation {
     /// Creates a validator for local artifact author declarations.
-    pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
-        Self { fileSystemHost }
+    pub fn new(fileSystem: VisualFileSystem) -> Self {
+        Self { fileSystem }
     }
 
     #[allow(non_snake_case)]
@@ -32,10 +30,8 @@ impl ArtifactAuthorValidation {
         &self,
         source: PublishablePackageSource,
     ) -> Result<LocalArtifactAuthorDeclaration, String> {
-        let sourceInfo = self
-            .fileSystemHost
-            .fileExists(&source.sourcePath)
-            .map_err(|error| error.to_string())?;
+        let path = PathMapper::resolveFileResourcePath(None, &source.sourcePath)?;
+        let sourceInfo = self.fileSystem.fileExists(&path)?;
         if !sourceInfo.exists || sourceInfo.isDirectory {
             return Ok(LocalArtifactAuthorDeclaration {
                 hasAuthorField: false,
@@ -44,9 +40,8 @@ impl ArtifactAuthorValidation {
         }
 
         let sourceBytes = self
-            .fileSystemHost
-            .readFileBytes(&source.sourcePath)
-            .map_err(|error| error.to_string())?;
+            .fileSystem
+            .readFileBytes(&path)?;
         inspectArtifactAuthorDeclaration(&source, &sourceBytes)
     }
 }

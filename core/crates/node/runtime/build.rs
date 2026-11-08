@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use syn::{Expr, ImplItem, Item, Lit, Meta, MetaNameValue, ReturnType, Type};
 
+#[path = "build_support/peer_protocol.rs"]
+mod peer_protocol;
+
 /// Scans every runtime source file for route annotations and writes server-owned route lookup code.
 fn main() {
     if std::env::var_os("CARGO_FEATURE_ROUTE_CATALOG").is_none() {
@@ -14,8 +17,11 @@ fn main() {
     let runtime_root = manifest_dir.join("../../runtime/application/src");
     println!("cargo:rerun-if-changed={}", runtime_root.display());
     let mut declarations = BTreeSet::new();
-    scan_source_tree(&runtime_root, &runtime_root, &mut declarations);
+    let mut signatures = BTreeSet::new();
+    scan_source_tree(&runtime_root, &runtime_root, &mut declarations, &mut signatures);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR must be available"));
+    peer_protocol::generate(&manifest_dir, &out_dir, &format!("{}\n{}",
+        render_route_catalog(&declarations), signatures.into_iter().collect::<Vec<_>>().join("\n")));
     fs::write(
         out_dir.join("generated_route_catalog.rs"),
         render_route_catalog(&declarations),
@@ -35,6 +41,7 @@ fn scan_source_tree(
     runtime_root: &Path,
     path: &Path,
     declarations: &mut BTreeSet<(String, String, String, String, String, String, String, String, String)>,
+    signatures: &mut BTreeSet<String>,
 ) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
@@ -42,14 +49,15 @@ fn scan_source_tree(
     for entry in entries.flatten() {
         let entry_path = entry.path();
         if entry_path.is_dir() {
-            scan_source_tree(runtime_root, &entry_path, declarations);
+            scan_source_tree(runtime_root, &entry_path, declarations, signatures);
             continue;
         }
         if entry_path.extension().and_then(|value| value.to_str()) != Some("rs") {
             continue;
         }
         let content = fs::read_to_string(&entry_path)
-            .unwrap_or_else(|error| panic!("read route source {}: {error}", entry_path.display()));
+            .unwrap_or_else(|error| panic!("read route source {}: {error}", entry_path.display()))
+            .replace("\r\n", "\n");
         let syntax = syn::parse_file(&content)
             .unwrap_or_else(|error| panic!("parse route source {}: {error}", entry_path.display()));
         for item in syntax.items {
@@ -60,9 +68,18 @@ fn scan_source_tree(
                 let ImplItem::Fn(function) = impl_item else {
                     continue;
                 };
+                // JSON-valued synchronization RPCs have no typed schema to hash;
+                // include their complete implementation, independently of routes.
+                if function.sig.ident.to_string().starts_with("sync") {
+                    let source = entry_path.strip_prefix(runtime_root).unwrap().to_string_lossy().replace('\\', "/");
+                    signatures.insert(format!("sync:{source}:{}", quote::quote!(#function)));
+                }
                 let Some(binding) = route_binding(&function.attrs) else {
                     continue;
                 };
+                let signature = &function.sig;
+                let source = entry_path.strip_prefix(runtime_root).unwrap().to_string_lossy().replace('\\', "/");
+                signatures.insert(format!("{source}:{}", quote::quote!(#signature)));
                 let targetType =
                     generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
                 let reverseItem = function.sig.inputs.iter().find_map(|argument| {

@@ -891,6 +891,8 @@ class _GraphDeviceDetails extends StatelessWidget {
                               : l10n.deviceSpaceRelayHops(device.relayHops!),
                         device.platform,
                         if (device.coreVersion != null) device.coreVersion!,
+                        if (device.protocolVersion != null)
+                          '${Localizations.localeOf(context).languageCode == "zh" ? "协议" : "Protocol"} v${device.protocolVersion}',
                       ].join(' · '),
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: scheme.onSurfaceVariant,
@@ -1006,7 +1008,7 @@ class _GraphCopy {
     generated.RuntimeDeviceSpaceConnectionStatus.offline =>
       zh ? '离线' : 'Offline',
     generated.RuntimeDeviceSpaceConnectionStatus.versionMismatch =>
-      zh ? 'Core 版本不匹配' : 'Core version mismatch',
+      zh ? '通信协议不匹配' : 'Peer protocol mismatch',
     generated.RuntimeDeviceSpaceConnectionStatus.announced =>
       zh ? '已宣告' : 'Announced',
     generated.RuntimeDeviceSpaceConnectionStatus.unknown =>

@@ -13,9 +13,14 @@ def emit(*lines):handlers.extend(lines)
 # Profiles count selected register operand slots, not estimated guest work.
 # Mutating a profile during emission avoids duplicating the role rules in C++.
 active_profile=None;pending_profiles=[];definition_names=[]
+# Roles 6 and 7 remain spill and zero/immediate; role 8 is guest X30.
+gp_roles=9
+def gp_host(role):
+    return 19+role if role<6 else 3 if role==8 else None
 def binding(group,role):
     if active_profile is None:return
     limit=8 if group.startswith('vector') else 6
+    if not group.startswith('vector') and role==8:role=0
     if role>limit:return  # GP immediate/zero/discard roles have no register slot.
     slot={'gp_read':0,'gp_write':2,'vector_read':4,'vector_write':6}[group]
     active_profile[slot+int(role==limit)]+=1
@@ -26,22 +31,22 @@ def begin_handler(label,flags=0):
 def gp(role,field,dest,bits=64):
     binding('gp_read',role)
     r='x' if bits==64 else 'w'
-    if role<6:emit(f'    mov {r}{dest}, {r}{19+role}')
+    if gp_host(role) is not None:emit(f'    mov {r}{dest}, {r}{gp_host(role)}')
     elif role==6:emit(f'    ldrh w12, [x28, #{field}]',f'    ldr {r}{dest}, [x27, x12]')
     elif field=='OP_B':emit(f'    ldr {r}{dest}, [x28, #OP_IMMEDIATE]')
     else:emit(f'    mov {r}{dest}, {r}zr')
 def input_gp(role,field,scratch,bits=64):
     r='x' if bits==64 else 'w'
-    if role<6:
+    if gp_host(role) is not None:
         binding('gp_read',role)
-        return f'{r}{19+role}'
+        return f'{r}{gp_host(role)}'
     gp(role,field,scratch,bits)
     return f'{r}{scratch}'
 def output_gp(role,scratch=11,bits=64):
-    if role<6:binding('gp_write',role)
-    return ('x' if bits==64 else 'w')+str(19+role if role<6 else scratch)
+    if gp_host(role) is not None:binding('gp_write',role)
+    return ('x' if bits==64 else 'w')+str(gp_host(role) if gp_host(role) is not None else scratch)
 def complete_gp(role,field,src=11):
-    if role>=6:store(role,field,src)
+    if gp_host(role) is None:store(role,field,src)
 def input_fp(role,field,scratch):
     if role<8:
         binding('vector_read',role)
@@ -51,7 +56,7 @@ def input_fp(role,field,scratch):
 def store(role,field,src=11,bits=64):
     # A W destination always zero-extends the architectural X register.
     binding('gp_write',role)
-    if role<6:emit(f'    mov x{19+role}, x{src}')
+    if gp_host(role) is not None:emit(f'    mov x{gp_host(role)}, x{src}')
     elif role==6:emit(f'    ldrh w12, [x28, #{field}]',f'    str x{src}, [x27, x12]')
 def vector(role,field,dest):
     binding('vector_read',role)
@@ -151,6 +156,23 @@ def memory_release():
 for writing in (False,True):memory_fallback(writing)
 for writing in (False,True):
     for size in (1,2,4,8,16,32):memory_guard(size,writing)
+# A cold scheduling guard can refill through the ordinary native TLB guard.
+# Recheck the private-page capability after refill; file locks and any access
+# that cannot establish that capability return to the original semantics.
+for size in (8,16):
+    def scheduled_check(miss):
+        emit('    eor x12, x9, x9, lsr #13','    ubfx x12, x12, #12, #13',
+             '    add x12, x7, x12, lsl #5','    ldp x14, x11, [x12]',
+             f'    tbnz x14, #0, {miss}','    sub x14, x9, x14',
+             f'    mov x12, #{4096-size}','    cmp x14, x12',f'    b.hi {miss}',
+             '    add x11, x9, x11','    ret')
+    emit(f'Lscheduledguard_{size}:', '    cbz x7, Lslow')
+    scheduled_check(f'Lscheduledrefill_{size}')
+    emit(f'Lscheduledrefill_{size}:','    mov x0, x30',f'    bl Lmemoryguard_0_{size}',
+         f'    cbz x13, Lscheduledprivate_{size}')
+    memory_release()
+    emit('    b Lslow',f'Lscheduledprivate_{size}:','    mov x30, x0')
+    scheduled_check('Lslow')
 for line in args.definitions.read_text().splitlines():
     if not line or line.startswith('#'):continue
     name,kind,mn,fc=line.split();fc=int(fc);labels=[];definition_names.append(name)
@@ -161,33 +183,34 @@ for line in args.definitions.read_text().splitlines():
     if writeback:kind=kind[2:]
     indexed=kind in ('pload','pstore','pvload','pvstore','psignedload')
     if indexed:kind=kind[1:]
-    if kind=='sysread':configs=[(64,0,d,7,7) for d in range(8)]
-    elif kind=='syswrite':configs=[(64,0,7,a,7) for a in range(8)]
-    elif kind=='conditionalcmp':configs=[(bits,f,7,a,b) for bits in (32,64) for f in range(fc) for a in range(8) for b in range(8)]
+    if kind=='sysread':configs=[(64,0,d,7,7) for d in range(gp_roles)]
+    elif kind=='syswrite':configs=[(64,0,7,a,7) for a in range(gp_roles)]
+    elif kind=='conditionalcmp':configs=[(bits,f,7,a,b) for bits in (32,64) for f in range(fc) for a in range(gp_roles) for b in range(gp_roles)]
     elif kind=='fpunary':configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(9) for a in range(9)]
-    elif kind in ('gptov','uitod'):configs=[(bits,f,d,a,7) for bits in ((64,) if kind=='uitod' else (32,64)) for f in range(fc) for d in range(9) for a in range(8)]
-    elif kind=='vtogp':configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(8) for a in range(9)]
+    elif kind in ('gptov','uitod'):configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(9) for a in range(gp_roles)]
+    elif kind in ('vtogp','ftosi'):configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(gp_roles) for a in range(9)]
     elif kind=='vimm':configs=[(bits,0,d,7,7) for bits in (32,64) for d in range(9)]
-    elif kind in ('pairload','pairstore','vpairload','vpairstore'):
-        roles=9 if kind.startswith('v') else 8
-        configs=[(bits,f,d,a,b) for bits in ((32,64,128) if kind.startswith('v') else (32,64)) for f in range(fc) for d in range(roles) for a in range(8) for b in range(roles)]
-    elif kind=='signedload':configs=[(bits,f,d,a,7) for bits in (8,16,32) for f in range(2) for d in range(8) for a in range(8)]
-    elif kind in ('move','keep'):configs=[(bits,0,d,7,7) for bits in (32,64) for d in range(8)]
-    elif kind in ('load','vload'):configs=[(bits,0,d,a,7) for bits in ((8,16,32,64) if kind=='load' else (32,64,128)) for d in range(8 if kind=='load' else 9) for a in range(8)]
-    elif kind in ('store','vstore'):configs=[(bits,0,7,a,b) for bits in ((8,16,32,64) if kind=='store' else (32,64,128)) for a in range(8) for b in range(8 if kind=='store' else 9)]
-    elif kind=='high':configs=[(64,0,d,a,b) for d in range(8) for a in range(8) for b in range(8)]
-    elif kind in ('prepare','operand'):configs=[(bits,f,7,a,7) for bits in (32,64) for f in range(fc) for a in range(8)]
-    elif kind in ('prepared','unary','bitfield'):configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(8) for a in range(8)]
-    elif kind=='comparebranch':configs=[(bits,f,7,a,7) for bits in (32,64) for f in range(fc) for a in range(8)]
+    elif kind in ('pairload','pairstore','vpairload','vpairstore','scheduledloads'):
+        roles=9 if kind.startswith('v') else gp_roles
+        configs=[(bits,f,d,a,b) for bits in ((32,64,128) if kind.startswith('v') else (32,64)) for f in range(fc) for d in range(roles) for a in range(gp_roles) for b in range(roles)]
+    elif kind=='signedload':configs=[(bits,f,d,a,7) for bits in (8,16,32) for f in range(2) for d in range(gp_roles) for a in range(gp_roles)]
+    elif kind in ('move','keep'):configs=[(bits,0,d,7,7) for bits in (32,64) for d in range(gp_roles)]
+    elif kind in ('load','vload'):configs=[(bits,0,d,a,7) for bits in ((8,16,32,64) if kind=='load' else (32,64,128)) for d in range(gp_roles if kind=='load' else 9) for a in range(gp_roles)]
+    elif kind in ('store','vstore'):configs=[(bits,0,7,a,b) for bits in ((8,16,32,64) if kind=='store' else (32,64,128)) for a in range(gp_roles) for b in range(gp_roles if kind=='store' else 9)]
+    elif kind=='longacc':configs=[(64,f,d,a,b) for f in range(fc) for d in range(gp_roles) for a in range(gp_roles) for b in range(gp_roles)]
+    elif kind=='high':configs=[(64,0,d,a,b) for d in range(gp_roles) for a in range(gp_roles) for b in range(gp_roles)]
+    elif kind in ('prepare','operand'):configs=[(bits,f,7,a,7) for bits in (32,64) for f in range(fc) for a in range(gp_roles)]
+    elif kind in ('prepared','unary','bitfield'):configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(gp_roles) for a in range(gp_roles)]
+    elif kind=='comparebranch':configs=[(bits,f,7,a,7) for bits in (32,64) for f in range(fc) for a in range(gp_roles)]
     elif kind=='fpma':configs=[(64,f,d,a,b) for f in range(fc) for d in range(9) for a in range(9) for b in range(9)]
-    elif kind=='fpcmp':configs=[(64,f,7,a,b) for f in range(2) for a in range(9) for b in range(9)]
+    elif kind=='fpcmp':configs=[(64,f,7,a,b) for f in range(4) for a in range(9) for b in range(9)]
     elif kind in ('fp','fpsqrt','fpselect'):configs=[(64,0,d,a,b) for d in range(9) for a in range(9) for b in (range(9) if kind in ('fp','fpselect') else [7])]
-    else:configs=[(bits,f,d,a,b) for bits in (32,64) for f in range(fc) for d in range(8) for a in range(8) for b in range(8)]
+    else:configs=[(bits,f,d,a,b) for bits in (32,64) for f in range(fc) for d in range(gp_roles) for a in range(gp_roles) for b in range(gp_roles)]
     for bits,f,d,a,b in configs:
         label=f'L{name}_{bits}_{f}_{d}_{a}_{b}';labels.append(label);emit('.p2align 2')
         profile_flags=(1 if kind=='conditionalcmp' else 0)|(2 if kind in ('load','signedload','store','vload','vstore','pairload','pairstore','vpairload','vpairstore') else 0)|(4 if writeback or kind in ('pairload','pairstore','vpairload','vpairstore') else 0)|(8 if kind=='fpma' else 0)
         begin_handler(label,profile_flags);r='x' if bits==64 else 'w'
-        if kind in ('fp','fpsqrt','fpcmp','fpma','fpselect','fpunary','uitod'):emit('    FP_ENTER')
+        if kind in ('fp','fpsqrt','fpcmp','fpma','fpselect','fpunary','uitod','ftosi'):emit('    FP_ENTER')
         if kind=='sysread':
             dest=output_gp(d)
             if name=='ReadTls':emit(f'    ldr {dest}, [x27, #EF_SHADOW_TLS]')
@@ -214,6 +237,11 @@ for line in args.definitions.read_text().splitlines():
             emit(f'    {("fmov","fabs","fneg")[f]} {dest}, {src}')
             if d>=8:vstore(d)
             finish()
+        elif kind=='scheduledloads':
+            gp(a,'OP_A',9)
+            emit('    ldr x12, [x28, #OP_IMMEDIATE]','    add x9, x9, x12',
+                 f'    bl Lscheduledguard_{bits//4}',f'    ldp {r}1, {r}2, [x11]')
+            store(d,'OP_D',1);store(b,'OP_B',2);finish()
         elif kind in ('move','keep'):
             if kind=='move':
                 emit(f'    ldr {output_gp(d,bits=bits)}, [x28, #OP_IMMEDIATE]')
@@ -223,11 +251,16 @@ for line in args.definitions.read_text().splitlines():
                 gp(d,'OP_D',9,bits);emit('    ldrb w12, [x28, #OP_B]','    lsl x12, x12, #4','    mov x10, #65535','    lsl x10, x10, x12','    bic x9, x9, x10','    orr x11, x11, x9')
             if bits==32:emit('    mov w11, w11')
             store(d,'OP_D');finish()
-        elif name=='Or' and a==7 and b<7:
+        elif name=='Or' and a==7 and b!=7:
             # Unprepared ORR with ZR as its left operand is a register copy.
             source=input_gp(b,'OP_B',11,bits);dest=output_gp(d,bits=bits)
             # A resident W self-copy must still clear the architectural high half.
-            if source!=dest or (bits==32 and b<6):emit(f'    mov {dest}, {source}')
+            if source!=dest or (bits==32 and gp_host(b) is not None):emit(f'    mov {dest}, {source}')
+            complete_gp(d,'OP_D');finish()
+        elif kind=='longacc':
+            left=input_gp(a,'OP_A',9,32);right=input_gp(b,'OP_B',10,32)
+            dest=output_gp(d)
+            emit(f'    {mn} {dest}, {left}, {right}, '+('x15' if f else 'xzr'))
             complete_gp(d,'OP_D');finish()
         elif kind in ('binary','prepared','multiplyacc','high'):
             left=input_gp(a,'OP_A',9,bits)
@@ -290,7 +323,7 @@ for line in args.definitions.read_text().splitlines():
                 left=input_fp(a,'OP_A',0)
                 right=input_fp(b,'OP_B',1) if kind!='fpsqrt' else None
                 if kind=='fpcmp':
-                    emit(f'    fcmp {left}, '+('#0.0' if f else right),'    mrs x25, nzcv')
+                    emit(f'    {"fcmpe" if f&2 else "fcmp"} {left}, '+('#0.0' if f&1 else right),'    mrs x25, nzcv')
                 else:
                     if d<8:binding('vector_write',d)
                     dest=f'd{8+d}' if d<8 else 'd0'
@@ -308,7 +341,18 @@ for line in args.definitions.read_text().splitlines():
                 emit('    fcmp d0, #0.0' if f else '    fcmp d0, d1','    mrs x25, nzcv');finish();continue
             else:emit(f'    {mn} d0, d0'+(', d1' if kind=='fp' else ''))
             vstore(d);finish()
-        elif kind in ('gptov','uitod','vtogp','vimm'):
+        elif kind=='uitod':
+            source=input_gp(a,'OP_A',9,bits)
+            if d<8:binding('vector_write',d)
+            dest=f'd{8+d}' if d<8 else 'd0'
+            emit(f'    {mn} {dest}, {source}')
+            if d>=8:vstore(d)
+            finish()
+        elif kind=='ftosi':
+            source=input_fp(a,'OP_A',0);dest=output_gp(d,bits=bits)
+            emit(f'    {mn} {dest}, {source}')
+            complete_gp(d,'OP_D');finish()
+        elif kind in ('gptov','vtogp','vimm'):
             if kind=='vtogp':
                 binding('vector_read',a)
                 if a<8:emit(f'    mov v0.16b, v{a+8}.16b')
@@ -318,8 +362,7 @@ for line in args.definitions.read_text().splitlines():
             else:
                 if kind=='vimm':emit('    ldr x9, [x28, #OP_IMMEDIATE]')
                 else:gp(a,'OP_A',9,bits)
-                if kind=='uitod':emit('    ucvtf d0, x9')
-                elif f:
+                if f:
                     binding('vector_read',d)
                     if d<8:emit(f'    mov v0.16b, v{d+8}.16b')
                     else:emit('    ldrh w12, [x28, #OP_D]','    ldr q0, [x27, x12]')
@@ -391,30 +434,32 @@ for line in args.definitions.read_text().splitlines():
     table='operit_handlers_'+name;cpp.append(f'extern const void *const {table}[];');tables.extend(['.p2align 3',f'SYM({table}):']+['    .quad '+label for label in labels])
     if kind=='sysread':index='d'
     elif kind=='syswrite':index='a'
-    elif kind=='conditionalcmp':index=f'(((bits==64)*{fc}+flags)*8+a)*8+b'
+    elif kind=='conditionalcmp':index=f'(((bits==64)*{fc}+flags)*{gp_roles}+a)*{gp_roles}+b'
     elif kind=='fpunary':index=f'(((bits==64)*{fc}+flags)*9+d)*9+a'
-    elif kind=='gptov':index=f'((((bits==64)*{fc}+flags)*9+d)*8+a)'
-    elif kind=='uitod':index='(d*8+a)'
-    elif kind=='vtogp':index=f'((((bits==64)*{fc}+flags)*8+d)*9+a)'
+    elif kind=='gptov':index=f'((((bits==64)*{fc}+flags)*9+d)*{gp_roles}+a)'
+    elif kind=='uitod':index=f'(((bits==64)*9+d)*{gp_roles}+a)'
+    elif kind=='ftosi':index=f'(((bits==64)*{gp_roles}+d)*9+a)'
+    elif kind=='vtogp':index=f'((((bits==64)*{fc}+flags)*{gp_roles}+d)*9+a)'
     elif kind=='vimm':index='((bits==64)*9+d)'
-    elif kind in ('pairload','pairstore','vpairload','vpairstore'):
-        roles=9 if kind.startswith('v') else 8
-        index=f'(((((bits==32?0:bits==64?1:2)*{fc}+flags)*{roles}+d)*8+a)*{roles}+b)'
-    elif kind=='signedload':index='((((bits==8?0:bits==16?1:2)*2+flags)*8+d)*8+a)'
-    elif kind in ('move','keep'):index='((bits==64)*8+d)'
-    elif kind=='load':index='(((bits==8?0:bits==16?1:bits==32?2:3)*8+d)*8+a)'
-    elif kind=='vload':index='(((bits==32?0:bits==64?1:2)*9+d)*8+a)'
-    elif kind=='store':index='(((bits==8?0:bits==16?1:bits==32?2:3)*8+a)*8+b)'
-    elif kind=='vstore':index='(((bits==32?0:bits==64?1:2)*8+a)*9+b)'
-    elif kind=='high':index='((d*8+a)*8+b)'
-    elif kind in ('prepare','operand'):index=f'(((bits==64)*{fc}+flags)*8+a)'
-    elif kind in ('prepared','unary','bitfield'):index=f'((((bits==64)*{fc}+flags)*8+d)*8+a)'
-    elif kind=='comparebranch':index=f'(((bits==64)*{fc}+flags)*8+a)'
+    elif kind in ('pairload','pairstore','vpairload','vpairstore','scheduledloads'):
+        roles=9 if kind.startswith('v') else gp_roles
+        index=f'(((((bits==32?0:bits==64?1:2)*{fc}+flags)*{roles}+d)*{gp_roles}+a)*{roles}+b)'
+    elif kind=='signedload':index=f'((((bits==8?0:bits==16?1:2)*2+flags)*{gp_roles}+d)*{gp_roles}+a)'
+    elif kind in ('move','keep'):index=f'((bits==64)*{gp_roles}+d)'
+    elif kind=='load':index=f'(((bits==8?0:bits==16?1:bits==32?2:3)*{gp_roles}+d)*{gp_roles}+a)'
+    elif kind=='vload':index=f'(((bits==32?0:bits==64?1:2)*9+d)*{gp_roles}+a)'
+    elif kind=='store':index=f'(((bits==8?0:bits==16?1:bits==32?2:3)*{gp_roles}+a)*{gp_roles}+b)'
+    elif kind=='vstore':index=f'(((bits==32?0:bits==64?1:2)*{gp_roles}+a)*9+b)'
+    elif kind=='longacc':index=f'(((flags*{gp_roles}+d)*{gp_roles}+a)*{gp_roles}+b)'
+    elif kind=='high':index=f'((d*{gp_roles}+a)*{gp_roles}+b)'
+    elif kind in ('prepare','operand'):index=f'(((bits==64)*{fc}+flags)*{gp_roles}+a)'
+    elif kind in ('prepared','unary','bitfield'):index=f'((((bits==64)*{fc}+flags)*{gp_roles}+d)*{gp_roles}+a)'
+    elif kind=='comparebranch':index=f'(((bits==64)*{fc}+flags)*{gp_roles}+a)'
     elif kind in ('fp','fpselect'):index='((d*9+a)*9+b)'
     elif kind=='fpma':index='(((flags*9+d)*9+a)*9+b)'
     elif kind=='fpcmp':index='((flags*9+a)*9+b)'
     elif kind=='fpsqrt':index='(d*9+a)'
-    else:index=f'((((bits==64)*{fc}+flags)*8+d)*8+a)*8+b'
+    else:index=f'((((bits==64)*{fc}+flags)*{gp_roles}+d)*{gp_roles}+a)*{gp_roles}+b'
     cases.append(f'case StaticCode::{name}: return {table}[{index}];')
 active_profile=None
 for condition in range(16):
@@ -445,7 +490,7 @@ for name in ('Call','Indirect','IndirectCall','CompareBranch','TestBranch','Bran
     emit('Lstatic_kind_'+name+':')
     tables.extend(['.globl SYM(operit_static_kind_'+name+')','.set SYM(operit_static_kind_'+name+'), Lstatic_kind_'+name])
     labels=[]
-    configs=range(32) if name=='Branch' else range(16) if name=='Call' else range(8) if name=='Indirect' else range(64)
+    configs=range(32) if name=='Branch' else range(2*gp_roles) if name=='Call' else range(gp_roles) if name=='Indirect' else range(gp_roles*gp_roles) if name=='IndirectCall' else range(8*gp_roles)
     for index in configs:
         label=f'L{name}_{index}';labels.append(label);begin_handler(label)
         if name=='Branch':
@@ -464,24 +509,24 @@ for name in ('Call','Indirect','IndirectCall','CompareBranch','TestBranch','Bran
             # existing condition table. Fall directly into the taken edge.
             emit(label+'_taken:',f'    DIAG_BRANCH {index}, 1');taken(index>=16)
         elif name in ('Call','Indirect','IndirectCall'):
-            a=index%8;d=index//8 if name=='IndirectCall' else index%8
+            a=index%gp_roles;d=index//gp_roles if name=='IndirectCall' else index%gp_roles
             if name!='Call':gp(a,'OP_A',9);emit('    str x9, [x27, #EF_PENDING_PC]')
             if name!='Indirect':emit('    ldr x11, [x28, #OP_IMMEDIATE]');store(d,'OP_D')
-            if name=='Call':taken(index>=8)
+            if name=='Call':taken(index>=gp_roles)
             else:
                 # link() binds every installed indirect edge to a PIC record.
                 emit('    DIAG_COUNT ED_EVENT_INDIRECT_EDGE','    ldrh w12, [x28, #OP_EDGE_PREFIX]','    add x26, x6, x12','    ldr x16, [x28, #OP_TARGET]','    cbz x16, Lslow','    mov x28, x16','    b LIndirectDispatch')
         else:
-            bits=64 if index//32 else 32;f=(index//8)&3;a=index%8;gp(a,'OP_A',9,bits)
+            bits=64 if index//(4*gp_roles) else 32;f=(index//gp_roles)&3;a=index%gp_roles;gp(a,'OP_A',9,bits)
             if name=='TestBranch':emit('    ldrh w12, [x28, #OP_IMMEDIATE]','    lsr x9, x9, x12','    and x9, x9, #1')
             emit(f'    {"cbnz" if f&1 else "cbz"} {"x" if bits==64 else "w"}9, {label}_taken',f'    FALLTHROUGH {int(bool(f&2))}');emit(label+'_taken:');taken(bool(f&2))
     table='operit_handlers_'+name;cpp.append(f'extern const void *const {table}[];');tables.extend(['.p2align 3',f'SYM({table}):']+['    .quad '+label for label in labels])
-    index='flags' if name=='Branch' else 'flags*8+d' if name=='Call' else 'a' if name=='Indirect' else 'd*8+a' if name=='IndirectCall' else '(bits==64)*32+flags*8+a'
+    index='flags' if name=='Branch' else f'flags*{gp_roles}+d' if name=='Call' else 'a' if name=='Indirect' else f'd*{gp_roles}+a' if name=='IndirectCall' else f'(bits==64)*{4*gp_roles}+flags*{gp_roles}+a'
     cases.append(f'case StaticCode::{name}: return {table}[{index}];')
-cpp.append('extern const void *const operit_handlers_local[];');tables.extend(['.p2align 3','SYM(operit_handlers_local):','    .quad LLocalNext']);
+cpp.append('extern const void *const operit_handlers_local[];');tables.extend(['.p2align 3','SYM(operit_handlers_local):','    .quad LLocalNext','    .quad LLocalForward']);
 cpp.append('extern const void *const operit_handlers_basic[];');tables.extend(['.p2align 3','SYM(operit_handlers_basic):']+['    .quad '+label for label in base_labels]);cpp.append('}')
 cpp.append('const void *static_entry(StaticCode code,unsigned bits,unsigned d,unsigned a,unsigned b,unsigned flags) { switch(code) {')
-cpp.extend(f'case StaticCode::{name}:return '+(f'flags ? operit_handlers_local[0] : ' if name in ('Next','Jump') else '')+f'operit_handlers_basic[{n}];' for n,name in enumerate(basics));cpp+=cases;cpp+=[f'default: return operit_handlers_basic[{basics.index("Helper")}];','}}','}']
+cpp.extend(f'case StaticCode::{name}:return '+('flags ? operit_handlers_local[OPERIT_ARM64_DIRECT_CHAINS ? 1 : 0] : ' if name=='Next' else 'flags ? operit_handlers_local[0] : ' if name=='Jump' else '')+f'operit_handlers_basic[{n}];' for n,name in enumerate(basics));cpp+=cases;cpp+=[f'default: return operit_handlers_basic[{basics.index("Helper")}];','}}','}']
 active_profile=None
 profiles=[(0,)*9];profile_ids={profiles[0]:0}
 for number,profile in enumerate(pending_profiles):

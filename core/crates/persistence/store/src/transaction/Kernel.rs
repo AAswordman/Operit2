@@ -65,6 +65,7 @@ impl From<crate::PreferencesDataStore::PreferencesDataStoreError> for ApplyError
     }
 }
 
+#[cfg(feature = "full")]
 impl From<crate::SqliteStore::SqliteStoreError> for ApplyError {
     fn from(error: crate::SqliteStore::SqliteStoreError) -> Self {
         match error {
@@ -214,9 +215,12 @@ impl<'a> Registry<'a> {
                 continue;
             }
             let first = &operations[0];
-            if first.domain == "preferences" && !self.owners.contains_key(&path)
-                || first.domain == crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN
-                    && operit_util::RuntimeStorageLayout::runtimeStorageOwnership(&first.entityId) != Ok(operit_util::RuntimeStorageLayout::RuntimeStorageOwnership::Space) {
+            #[cfg(feature = "full")]
+            let nonSpaceFile = first.domain == crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN
+                && operit_util::RuntimeStorageLayout::runtimeStorageOwnership(&first.entityId) != Ok(operit_util::RuntimeStorageLayout::RuntimeStorageOwnership::Space);
+            #[cfg(not(feature = "full"))]
+            let nonSpaceFile = false;
+            if first.domain == "preferences" && !self.owners.contains_key(&path) || nonSpaceFile {
                 self.journal.ignoreFileOperations(&first.domain, if first.domain == "preferences" { &path } else { &first.entityId }).map_err(|e|e.to_string())?;
                 report.skipped += operations.len();
                 continue;
@@ -226,7 +230,11 @@ impl<'a> Registry<'a> {
                 continue;
             }
             if operations.is_empty() { continue; }
-            if skipped.contains_key(&path) && !operations.iter().all(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState)
+            #[cfg(feature = "full")]
+            let completeFileStates = operations.iter().all(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState);
+            #[cfg(not(feature = "full"))]
+            let completeFileStates = false;
+            if skipped.contains_key(&path) && !completeFileStates
                 && !operations.iter().any(|operation|
                 operation.operation == "initialize" && operation.entityType == "initialization") {
                 self.journal.skipOperations(&operations).map_err(|e|e.to_string())?;

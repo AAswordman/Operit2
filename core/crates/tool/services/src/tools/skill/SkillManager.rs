@@ -440,41 +440,6 @@ impl SkillManager {
             .is_ok()
     }
 
-    /// Imports a skill from a zip archive by searching for SKILL.md.
-    #[allow(non_snake_case)]
-    pub fn importSkillFromZip(&self, zipFile: &Path) -> String {
-        self.importSkillFromZipWithSubDir(zipFile, None)
-    }
-
-    /// Imports a skill from a zip archive using an optional subdirectory inside the zip.
-    #[allow(non_snake_case)]
-    pub fn importSkillFromZipWithSubDir(
-        &self,
-        zipFile: &Path,
-        subDirPathInZip: Option<&str>,
-    ) -> String {
-        let zipPath = hostPath(zipFile);
-        let zipInfo = match self.fileSystemHost.fileExists(&zipPath) {
-            Ok(info) => info,
-            Err(error) => return format!("Cannot read skill file: {}", error),
-        };
-        if !zipInfo.exists || zipInfo.isDirectory {
-            return format!("Cannot read skill file: {}", zipFile.to_string_lossy());
-        }
-        let extension = zipFile
-            .extension()
-            .map(|value| value.to_string_lossy().to_ascii_lowercase());
-        if extension.as_deref() != Some("zip") {
-            return "Only .zip files are supported".to_string();
-        }
-
-        let zipBytes = match self.fileSystemHost.readFileBytes(&zipPath) {
-            Ok(bytes) => bytes,
-            Err(error) => return format!("Cannot read skill file: {}", error),
-        };
-        self.importSkillArchiveBytes(&zipBytes, zipFile, subDirPathInZip)
-    }
-
     /// Imports a skill from archive bytes supplied by a host-backed transport.
     #[allow(non_snake_case)]
     pub fn importSkillArchiveBytes(

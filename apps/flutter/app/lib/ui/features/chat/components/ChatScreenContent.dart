@@ -216,10 +216,7 @@ class ChatScreenContent extends StatelessWidget {
         inputProcessingState.tag == 'ToolProgress' ||
         inputProcessingState.tag == 'Receiving' ||
         inputProcessingState.tag == 'Processing' ||
-        inputProcessingState.tag == 'Summarizing' ||
         inputProcessingState.tag == 'Connecting' ||
-        inputProcessingState.message == 'chat_compressing_history' ||
-        inputProcessingState.message == 'chat_summarizing_generating' ||
         inputProcessingState.message == 'enhanced_receiving_tool_result' ||
         inputProcessingState.message == 'enhanced_receiving_response' ||
         inputProcessingState.message == 'enhanced_processing_message' ||

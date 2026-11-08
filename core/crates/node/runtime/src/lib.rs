@@ -90,6 +90,8 @@ pub mod NodeSpaceService;
 mod fault_isolation;
 #[cfg(feature = "peer-runtime")]
 mod space_policy;
+#[cfg(feature = "peer-runtime")]
+pub mod PeerProtocol;
 pub mod NodeServices;
 #[cfg(feature = "peer-state")]
 pub mod PeerStateStore;

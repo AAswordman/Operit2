@@ -1510,7 +1510,7 @@ mod snapshot_retry_tests {
                     self.protocols.fetch_add(1, Ordering::SeqCst);
                     if self.terminal { return CoreCallResponse::err(request.requestId,
                         operit_link::CoreLinkError::new("PEER_PERMISSION", "denied")); }
-                    serde_json::json!({"version":1,"nodeId":"peer","endpoint":true,
+                    serde_json::json!({"protocol": crate::PeerProtocol::PeerProtocol::current(), "version":1,"nodeId":"peer","endpoint":true,
                         "authorityMode":"localReplay","maxMessageBytes":8192,"snapshotPaging":true})
                 }
                 "snapshotHeader" => {

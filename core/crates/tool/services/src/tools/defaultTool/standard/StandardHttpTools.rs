@@ -5,11 +5,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use operit_host_api::{
-    FileSystemHost, HttpFilePart, HttpHost, HttpRequestData,
+    RuntimeStorageHost, HttpFilePart, HttpHost, HttpRequestData,
     HttpResponseData as HostHttpResponseData,
 };
 use serde_json::{json, Map, Value};
 use url::Url;
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, HttpResponseData, ToolResultData,
@@ -34,7 +36,8 @@ struct CookieRecord {
 /// Defines built-in HTTP tools and host bindings.
 pub struct StandardHttpTools {
     httpHost: Arc<dyn HttpHost>,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    fileSystem: VisualFileSystem,
+    runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,11 +60,12 @@ const USER_AGENT_VALUE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleW
 
 impl StandardHttpTools {
     /// Creates HTTP tools backed by host HTTP and file-system services.
-    pub fn new(httpHost: Arc<dyn HttpHost>, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
-        Self {
-            httpHost,
-            fileSystemHost,
-        }
+    pub fn new(
+        httpHost: Arc<dyn HttpHost>,
+        fileSystem: VisualFileSystem,
+        runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
+    ) -> Self {
+        Self { httpHost, fileSystem, runtimeStorageHost }
     }
 
     #[allow(non_snake_case)]
@@ -371,9 +375,11 @@ impl StandardHttpTools {
                     "Error parsing file data: field_name and file_path are required".to_string(),
                 );
             }
-            let content = self
-                .fileSystemHost
-                .readFileBytes(filePath)
+            let context = operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+            let directory = context.as_ref()
+                .map(|context| context.fileDirectory(self.runtimeStorageHost.clone()))
+                .transpose()?.flatten();
+            let content = readUploadFile(&self.fileSystem, directory.as_deref(), filePath)
                 .map_err(|error| {
                     format!("File does not exist or cannot be read: {filePath}: {error}")
                 })?;
@@ -386,6 +392,12 @@ impl StandardHttpTools {
         }
         Ok(parts)
     }
+}
+
+#[allow(non_snake_case)]
+fn readUploadFile(vfs: &VisualFileSystem, directory: Option<&str>, path: &str) -> Result<Vec<u8>, String> {
+    let path = PathMapper::resolveFileResourcePath(directory, path)?;
+    vfs.readFileBytes(&path)
 }
 
 impl ToolExecutor for HttpToolExecutor {
@@ -865,5 +877,23 @@ mod binary_body_tests {
     #[test]
     fn rejects_malformed_binary_body() {
         assert!(decodeBinaryRequestBody("not base64?").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn multipart_reads_virtual_paths_from_runtime_storage() {
+        use super::*;
+        use operit_host_native_filesystem::PosixFileSystemHost;
+        let root = std::env::temp_dir().join(format!("operit-upload-test-{}", uuid::Uuid::new_v4()));
+        let mapper = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
+        let host = Arc::new(PosixFileSystemHost::new());
+        let vfs = VisualFileSystem::new(host.clone(), mapper.clone());
+        vfs.makeDirectory("/operitapp/data/uploads", true).unwrap();
+        vfs.writeFileBytes("/operitapp/data/uploads/file.bin", &[0, 255, 1]).unwrap();
+        for path in ["/operitapp/data/uploads/file.bin", "/app/data/uploads/file.bin", "file.bin", "./file.bin", "../uploads/file.bin"] {
+            assert_eq!(readUploadFile(&vfs, Some("/operitapp/data/uploads"), path).unwrap(), [0, 255, 1]);
+        }
+        assert!(readUploadFile(&vfs, None, "file.bin").is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -104,7 +104,9 @@ int64_t Syscalls::descriptor_ioctl(CpuState &cpu) {
         if (description.counter || description.poll || description.virtual_file)
             guest_error(25);
         int available = 0;
-        if (description.socket && description.socket->type == 2) {
+        if (description.terminal)
+            available = terminals_->input_queued(*description.terminal);
+        else if (description.socket && description.socket->type == 2) {
             std::vector<uint8_t> packet(max_io);
             ssize_t count = ::recv(entry.host.get(), packet.data(), packet.size(), MSG_PEEK | MSG_DONTWAIT);
             if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK)

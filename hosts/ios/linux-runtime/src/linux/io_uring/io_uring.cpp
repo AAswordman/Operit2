@@ -3,6 +3,7 @@
 #include "base/fd.h"
 #include "base/host_io.h"
 #include "base/support.h"
+#include "linux/terminal/manager.h"
 #include "fs/descriptor_table.h"
 #include "linux/abi.h"
 #include "linux/error_mapping.h"
@@ -637,6 +638,10 @@ class Ring {
             files::require_descriptor_io(entry, writing);
         if (entry.host.get() < 0 || entry.description->virtual_file ||
             entry.description->standard_stream >= 0)
+            return -95;
+        // Worker I/O cannot bypass the software terminal's line discipline.
+        // Callers can fall back to the regular read/write paths.
+        if (entry.description->terminal && TerminalManager::software(*entry.description->terminal))
             return -95;
         if (sync && (sqe.offset > uint64_t(INT64_MAX) ||
                      sqe.length > uint64_t(INT64_MAX) - sqe.offset))

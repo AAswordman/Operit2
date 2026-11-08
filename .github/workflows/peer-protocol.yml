@@ -1,0 +1,31 @@
+name: Peer Protocol Compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Preserve published protocol revisions
+        env:
+          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE_REVISION" ] && [ "$BASE_REVISION" != "0000000000000000000000000000000000000000" ]; then
+            python3 tools/check_peer_protocol.py --base "$BASE_REVISION"
+          else
+            python3 tools/check_peer_protocol.py
+          fi
+      - name: Test revision guard
+        run: python3 -m unittest discover -s tools/tests -p test_peer_protocol.py
+      - name: Verify protocol source and route fingerprint
+        run: cargo check --locked --manifest-path core/Cargo.toml -p operit-node-runtime --no-default-features --features peer-runtime

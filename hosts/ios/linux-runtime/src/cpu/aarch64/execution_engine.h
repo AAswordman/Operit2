@@ -19,6 +19,10 @@ class ExecutionEngine {
     ExecutionFrame frame_;
     memory_detail::AccessSynchronization::ReadGuard native_read_;
     uint64_t continuation_pc_=0,continuation_entry_=0;
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+    std::unordered_map<uint64_t,uint64_t> hot_calls_;
+    const StaticOperation *promote_call(const BridgePlan &plan,uint64_t pc);
+#endif
     void erase_entries(const BlockGraph &graph);
     Entry find(uint64_t pc);
     const StaticOperation *select(uint64_t pc);
@@ -43,6 +47,9 @@ class ExecutionEngine {
     uint64_t executed_instructions=0,decoded_blocks=0,cache_hits=0;
     uint64_t compiled_operations=0,eliminated_values=0,fused_operations=0;
     uint64_t slow_calls=0,materializations=0;
+#if OPERIT_ARM64_ADAPTIVE_CALLS
+    uint64_t adaptive_promotions=0;
+#endif
     Execution run(CpuState &cpu,Memory &memory,uint64_t budget,FixedComponents *intrinsics=nullptr);
     void enter_native() { native_read_.lock(frame_.fast_first!=nullptr); }
     void leave_native() noexcept { native_read_.unlock(); }

@@ -17,7 +17,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use async_trait::async_trait;
 use operit_host_api::{
-    BrowserAutomationRequest, BrowserAutomationResponse, FileSystemHost, HostError, HostResult,
+    BrowserAutomationRequest, BrowserAutomationResponse, HostError, HostResult,
 };
 
 use operit_tools::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
@@ -27,16 +27,20 @@ use crate::current_time_millis_u64;
 /// Adapts browser automation operations to the Flutter owner transport.
 #[derive(Clone)]
 pub(crate) struct FlutterBrowserAutomationBridge {
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    fileSystem: VisualFileSystem,
+    storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
 }
 
 impl FlutterBrowserAutomationBridge {
-    /// Creates the owner bridge with the file-system capability of its runtime.
-    pub(crate) fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
-        Self { fileSystemHost }
+    /// Creates the owner bridge with the VFS and storage of its runtime.
+    pub(crate) fn new(context: &operit_host_api::HostManager::HostManager) -> HostResult<Self> {
+        Ok(Self {
+            fileSystem: VisualFileSystem::fromContext(context).map_err(HostError::new)?,
+            storage: context.runtimeStorageHost.clone().ok_or_else(|| HostError::new("Browser uploads require runtime storage"))?,
+        })
     }
 
-    /// Prepares the upload-specific owner payload through the host file system.
+    /// Reads upload inputs through VFS and prepares the owner payload.
     fn fileUpload(
         &self,
         mut request: BrowserAutomationRequest,
@@ -50,7 +54,13 @@ impl FlutterBrowserAutomationBridge {
             .map(|paths| {
                 paths
                     .iter()
-                    .map(|path| BrowserUploadFile::read(self.fileSystemHost.as_ref(), path))
+                    .map(|path| {
+                        let context = operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+                        let directory = context.as_ref().map(|context| context.fileDirectory(self.storage.clone()))
+                            .transpose().map_err(HostError::new)?.flatten();
+                        let path = PathMapper::resolveFileResourcePath(directory.as_deref(), path).map_err(HostError::new)?;
+                        BrowserUploadFile::read(&self.fileSystem, &path)
+                    })
                     .collect::<HostResult<Vec<_>>>()
             })
             .transpose()?;
@@ -146,10 +156,9 @@ struct BrowserUploadFile {
 }
 
 impl BrowserUploadFile {
-    /// Validates and reads one file exclusively through the runtime's host API.
-    fn read(fileSystemHost: &dyn FileSystemHost, path: &str) -> HostResult<Self> {
-        fileSystemHost.validatePath(path, "paths")?;
-        let existence = fileSystemHost.fileExists(path)?;
+    /// Validates and reads one file through the runtime VFS.
+    fn read(fileSystem: &VisualFileSystem, path: &str) -> HostResult<Self> {
+        let existence = fileSystem.fileExists(path).map_err(HostError::new)?;
         if !existence.exists || existence.isDirectory {
             return Err(HostError::new(format!(
                 "Browser upload requires an existing file: {path}"
@@ -162,10 +171,10 @@ impl BrowserUploadFile {
             .ok_or_else(|| {
                 HostError::new(format!("Browser upload path has no file name: {path}"))
             })?;
-        let bytes = fileSystemHost.readFileBytes(path).map_err(|error| {
+        let bytes = fileSystem.readFileBytes(path).map_err(|error| {
             HostError::new(format!(
                 "Failed to read browser upload file {path}: {}",
-                error.message
+                error
             ))
         })?;
         Ok(Self {
@@ -394,21 +403,8 @@ pub(crate) struct FlutterComposeDslWebViewBridge {
 impl FlutterComposeDslWebViewBridge {
     /// Binds Compose host responses to the owning runtime's VFS capabilities.
     pub(crate) fn new(host: &operit_host_api::HostManager::HostManager) -> HostResult<Self> {
-        let storage = host.runtimeStorageHost.clone().ok_or_else(|| {
-            HostError::new("RuntimeStorageHost is not registered for file selection")
-        })?;
-        let files = host
-            .fileSystemHost
-            .clone()
-            .ok_or_else(|| HostError::new("FileSystemHost is not registered for file selection"))?;
-        let root = storage
-            .runtimeRootDir()
-            .ok_or_else(|| HostError::new("File selection requires a runtime storage root"))?;
-        let workspaces = storage
-            .workspaceRootDir()
-            .ok_or_else(|| HostError::new("File selection requires a workspace storage root"))?;
         Ok(Self {
-            vfs: VisualFileSystem::new(files, PathMapper::new(root, workspaces, storage)),
+            vfs: VisualFileSystem::fromContext(host).map_err(HostError::new)?,
         })
     }
 
@@ -529,6 +525,25 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
 #[cfg(test)]
 mod browser_upload_tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn upload_reads_binary_files_from_vfs() {
+        use operit_host_native_filesystem::PosixFileSystemHost;
+        let root = std::env::temp_dir().join(format!("operit-browser-upload-{}", uuid::Uuid::new_v4()));
+        let vfs = VisualFileSystem::new(
+            Arc::new(PosixFileSystemHost::new()),
+            PathMapper::builtinOnly(root.clone(), root.join("workspaces")),
+        );
+        let path = "/operitapp/data/uploads/中文 file.bin";
+        vfs.makeDirectory("/operitapp/data/uploads", true).unwrap();
+        vfs.writeFileBytes(path, &[0, 255, 1]).unwrap();
+        let upload = BrowserUploadFile::read(&vfs, path).unwrap();
+        assert_eq!(upload.name, "中文 file.bin");
+        assert_eq!(STANDARD.decode(upload.base64).unwrap(), [0, 255, 1]);
+        assert!(BrowserUploadFile::read(&vfs, "/operitapp/data/uploads").is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// Decodes the owner's public string-valued paths protocol for boundary tests.
     fn upload_paths(parameters: serde_json::Value) -> HostResult<Option<Vec<String>>> {

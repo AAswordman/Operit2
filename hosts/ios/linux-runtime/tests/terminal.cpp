@@ -114,6 +114,12 @@ int main(int argc, char **argv) {
         terminal.expect("37 101\r\n", start);
         terminal.expect("__TERMINAL_OK__\r\n", start);
         terminal.wait();
+        start = terminal.size();
+        terminal.write("d=$(mktemp -d /tmp/ort-terminal.XXXXXX); "
+                       "printf 'sandbox-pipe-ok\\n' > \"$d/message\"; ln -s message \"$d/link\"; "
+                       "cat \"$d/link\" | tr a-z A-Z; rm -rf \"$d\"\n");
+        terminal.expect("SANDBOX-PIPE-OK\r\n", start);
+        terminal.wait();
         terminal.write("sleep 30\n");
         terminal.wait();
         start = terminal.size();

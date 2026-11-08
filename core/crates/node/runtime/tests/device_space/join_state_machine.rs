@@ -22,6 +22,7 @@ fn record(status: SpaceJoinStatus) -> Record {
         sourceRevision: 1,
         targetSpaceId: "target".into(),
         profile: CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: "applicant".into(),
             displayName: "Applicant".into(),
             userName: String::new(),

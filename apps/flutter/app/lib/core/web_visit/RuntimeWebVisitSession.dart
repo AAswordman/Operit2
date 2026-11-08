@@ -119,17 +119,23 @@ class RuntimeWebVisitSession extends ChangeNotifier {
       _armLoadTimeout();
       // Navigation can finish before the event subscription attaches. Probe the
       // current document once so that fast/cached pages need no replay event.
-      final raw = await _evaluate(
-        'JSON.stringify({readyState: document.readyState, url: location.href})',
-      );
-      final state = raw is String ? jsonDecode(raw) : raw;
-      if (!_completed &&
-          !_pageLoaded &&
-          state is Map &&
-          state['readyState'] == 'complete' &&
-          state['url'] is String &&
-          (Uri.tryParse(state['url'] as String)?.hasAuthority ?? false)) {
-        unawaited(_handlePageFinished(state['url'] as String));
+      try {
+        final raw = await _evaluate(
+          'JSON.stringify({readyState: document.readyState, url: location.href})',
+        );
+        final state = raw is String ? jsonDecode(raw) : raw;
+        if (!_completed &&
+            !_pageLoaded &&
+            state is Map &&
+            state['readyState'] == 'complete' &&
+            state['url'] is String &&
+            (Uri.tryParse(state['url'] as String)?.hasAuthority ?? false)) {
+          unawaited(_handlePageFinished(state['url'] as String));
+        }
+      } on TimeoutException {
+        rethrow;
+      } catch (_) {
+        // Navigation may replace the document during this optional probe.
       }
     } catch (error) {
       _finishError(error.toString());
@@ -308,9 +314,16 @@ class RuntimeWebVisitSession extends ChangeNotifier {
       });
     }
     try {
-      await _evaluate(r'''
-window.scrollTo(0, document.body ? document.body.scrollHeight : document.documentElement.scrollHeight);
+      try {
+        await _evaluate(r'''
+(function() {
+  window.scrollTo(0, document.body ? document.body.scrollHeight : document.documentElement.scrollHeight);
+  return true;
+})()
 ''');
+      } catch (_) {
+        // Scrolling is only a best-effort hint for lazy-loaded content.
+      }
       if (!_isCurrentNavigation(generation)) return;
       final raw = await _evaluate(
         _webVisitExtractionScript(request.includeImageLinks),

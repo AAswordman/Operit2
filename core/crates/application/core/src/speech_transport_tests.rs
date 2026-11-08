@@ -75,6 +75,7 @@ impl HttpHost for SpeechHttp {
 }
 fn profile(nodeId: String) -> operit_store::CoreSpaceStore::CoreSpaceDeviceProfile {
     operit_store::CoreSpaceStore::CoreSpaceDeviceProfile {
+        protocolVersion: None,
         nodeId,
         displayName: "Speech device".into(),
         userName: String::new(),

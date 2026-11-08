@@ -10,6 +10,7 @@ fn approvalService(node: &str) -> (CoreNodeRouter, RuntimeRemoteLinkService) {
         .spaceStore
         .writeLocalDeviceProfile(node.into(), "test".into(), "test".into(), "1".into(), Some(incarnation))
         .unwrap();
+    router.spaceStore.writeLocalProtocol(crate::PeerProtocol::VERSION).unwrap();
     router.networkControlStore.initializeCurrentSpace().unwrap();
     let service =
         RuntimeRemoteLinkService::newWithRouter((*router.localCore).clone(), router.clone());

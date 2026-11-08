@@ -29,6 +29,7 @@ fn reviewingRecord(reviewer: &str, targetSpaceId: &str, version: u64) -> join::R
         sourceRevision: 1,
         targetSpaceId: targetSpaceId.into(),
         profile: CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: "gx-applicant".into(),
             displayName: "Applicant".into(),
             userName: String::new(),
@@ -46,6 +47,7 @@ fn reviewingRecord(reviewer: &str, targetSpaceId: &str, version: u64) -> join::R
                 members: vec!["gx-applicant".into()],
             },
             deviceProfiles: vec![CoreSpaceDeviceProfile {
+                protocolVersion: None,
                 nodeId: "gx-applicant".into(),
                 displayName: "Applicant".into(),
                 userName: String::new(),

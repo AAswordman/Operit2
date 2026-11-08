@@ -19,7 +19,7 @@ fn fullPassMarkers(peer: &ApprovalMeshPeer) -> usize {
         "snapshotControlPage",
         "observeSpaceSnapshot",
         "exchange",
-        "coreVersion",
+        "protocol",
         "deviceSpace",
         "syncOperationsSince",
         "syncApplyOperations",
@@ -913,4 +913,21 @@ async fn concurrent_peer_wakeups_use_one_coordinator_and_verified_boundaries() {
             .map(|op|op.opId).collect::<BTreeSet<_>>()).collect::<Vec<_>>();
         assert_eq!(histories[0],histories[1]);
     }
+}
+
+
+#[tokio::test]
+async fn different_software_versions_still_synchronize_with_one_protocol_version() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, _, peers, _) = gateMesh("protocol-release-independence");
+    for (index, router) in routers.iter().enumerate() {
+        router.spaceStore.writeLocalDeviceProfile(format!("device-{index}"), "test".into(), "test".into(),
+            format!("{}.0.0", index + 2), None).unwrap();
+        router.spaceStore.writeLocalProtocol(crate::PeerProtocol::VERSION).unwrap();
+    }
+    routers[0].networkControlStore.updatePolicy("release-independent".into(), "synced".into()).unwrap();
+    idleObserver(&routers[1]).synchronizeOnce().await.unwrap();
+    assert!(synchronizedMethodCount(&peers[1], "protocol") > 0);
+    assert_eq!(routers[1].networkControlStore.currentState().unwrap().policies.get("release-independent"), Some(&"synced".to_owned()));
 }

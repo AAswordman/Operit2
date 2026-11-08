@@ -61,8 +61,11 @@ private fun verify(value: Boolean, message: String) { check(value) { message }; 
 fun main() {
     val docs = FakeDocuments()
     val opened = mutableListOf<Triple<File?, String?, String?>>()
+    val shared = mutableListOf<Pair<Triple<File?, String?, String?>, String>>()
     var openFailure = false
-    val fs = AndroidDocumentFileSystem(docs) { file, tree, id ->
+    val fs = AndroidDocumentFileSystem(docs, { file, tree, id, title ->
+        shared.add(Triple(file, tree, id) to title)
+    }) { file, tree, id ->
         check(!openFailure) { "Viewer denied opening" }
         opened.add(Triple(file, tree, id))
     }
@@ -88,6 +91,9 @@ fun main() {
         verify(read(docs.target("src/项目 file.py")).contentEquals(text.toByteArray()), "Unicode document read/write")
         docs.writeGrant = false
         success("openFile", "path" to docs.target("src/项目 file.py"))
+        success("shareFile", "path" to docs.target("src/项目 file.py"), "title" to "Share title")
+        verify(shared.single().first.second == docs.tree && shared.single().second == "Share title", "Share uses the tree grant and title")
+        failure("shareFile", "path" to docs.target("src"))
         docs.writeGrant = true
         verify(opened.single().second == docs.tree, "Opener retains the persisted tree grant")
         verify(opened.single().third == docs.items.values.single { it.name == "项目 file.py" }.id,

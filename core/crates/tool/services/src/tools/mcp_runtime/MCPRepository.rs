@@ -233,7 +233,19 @@ impl MCPRepository {
     ) -> InstallResult {
         progressCallback(InstallProgress::Preparing);
 
-        let zipInfo = match self.fileSystemHost.fileExists(zipPath) {
+        let source = (|| -> Result<_, String> {
+            let storage = self.context.runtimeStorageHost.clone().ok_or("Runtime storage is required for MCP import")?;
+            let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+            let directory = context.as_ref().map(|context| context.fileDirectory(storage)).transpose()?.flatten();
+            let path = crate::files::PathMapper::PathMapper::resolveFileResourcePath(directory.as_deref(), zipPath)?;
+            let vfs = crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?;
+            Ok((vfs, path))
+        })();
+        let (vfs, sourcePath) = match source {
+            Ok(source) => source,
+            Err(message) => return InstallResult::Error { message },
+        };
+        let zipInfo = match vfs.fileExists(&sourcePath) {
             Ok(info) => info,
             Err(error) => {
                 return InstallResult::Error {
@@ -265,7 +277,7 @@ impl MCPRepository {
         }
 
         progressCallback(InstallProgress::Extracting(0));
-        let zipBytes = match self.fileSystemHost.readFileBytes(zipPath) {
+        let zipBytes = match vfs.readFileBytes(&sourcePath) {
             Ok(bytes) => bytes,
             Err(error) => {
                 let _ = self.fileSystemHost.deleteFile(&pluginDir, true);

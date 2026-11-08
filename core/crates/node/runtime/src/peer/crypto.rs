@@ -242,6 +242,8 @@ mod spake_tests {
 /// 整个 transcript 编码绑定版本、双方身份、两份公钥和服务端随机挑战。
 #[derive(Serialize, Deserialize)]
 pub(super) struct Transcript {
+    /// Included in the authenticated transcript for both new pairings and reconnects.
+    #[serde(default)] pub protocol: Option<crate::PeerProtocol::PeerProtocol>,
     pub version: u32, pub sessionId: String,
     pub clientNodeId: String, pub serverNodeId: String,
     pub clientPublic: Vec<u8>, pub serverPublic: Vec<u8>, pub challenge: Vec<u8>,

@@ -39,6 +39,8 @@ pub struct CoreSpaceDeviceProfile {
     pub model: String,
     #[serde(default)]
     pub coreVersion: Option<String>,
+    #[serde(default)]
+    pub protocolVersion: Option<u32>,
     /// The pairing generation this device announced while admitted. A removal
     /// revokes exactly this generation: only pairings stamped with it are
     /// forgotten, while a pairing the device made after leaving and resetting
@@ -372,6 +374,7 @@ impl CoreSpaceStore {
             .filter(|profile| validateDeviceProfile(profile).is_ok() && profile.nodeId == identity.nodeId);
         let now = currentTimeMillis();
         let profile = profile.unwrap_or_else(|| CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: identity.nodeId.clone(), displayName: defaultSpaceName(), userName: String::new(),
             platform: "unknown".into(), model: "unknown".into(), coreVersion: None,
             pairingIncarnation: None, updatedAt: now,
@@ -577,6 +580,7 @@ impl CoreSpaceStore {
         validateDeviceProfileField("core version", &coreVersion)?;
         let space = self.initialize()?;
         let profile = CoreSpaceDeviceProfile {
+            protocolVersion: None,
             nodeId: nodeId.clone(),
             displayName,
             userName: String::new(),
@@ -604,6 +608,19 @@ impl CoreSpaceStore {
                 .chain(std::iter::once(nodeId))
                 .collect(),
         )
+    }
+
+    /// Refreshes protocol identity without treating software releases as compatibility changes.
+    pub fn writeLocalProtocol(&self, version: u32) -> Result<(), String> {
+        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
+        if let Some(mut profile) = self.deviceProfiles()?.remove(&identity.nodeId) {
+            if profile.protocolVersion != Some(version) {
+                profile.protocolVersion = Some(version);
+                profile.updatedAt = currentTimeMillis().max(profile.updatedAt.saturating_add(1));
+                self.importDeviceProfiles(vec![profile])?;
+            }
+        }
+        Ok(())
     }
 
     /// Publishes the current device presentation as synchronized device-space metadata.
@@ -641,6 +658,7 @@ impl CoreSpaceStore {
                 return Ok(profile.clone());
             }
             Some(profile) => CoreSpaceDeviceProfile {
+                protocolVersion: profile.protocolVersion,
                 nodeId: identity.nodeId,
                 displayName,
                 userName: profile.userName.clone(),
@@ -651,6 +669,7 @@ impl CoreSpaceStore {
                 updatedAt: currentTimeMillis(),
             },
             None => CoreSpaceDeviceProfile {
+                protocolVersion: None,
                 nodeId: identity.nodeId,
                 displayName,
                 userName: String::new(),
@@ -1498,6 +1517,9 @@ fn validateDeviceProfile(profile: &CoreSpaceDeviceProfile) -> Result<(), String>
     if let Some(coreVersion) = &profile.coreVersion {
         validateDeviceProfileField("core version", coreVersion)?;
     }
+    if profile.protocolVersion == Some(0) {
+        return Err("Device space profile has an invalid protocol version".into());
+    }
     if profile.updatedAt <= 0 {
         return Err("Device space profile has an invalid update timestamp".to_string());
     }
@@ -1956,6 +1978,7 @@ mod tests {
             .expect("test Space member projection must write");
         store
             .writeDeviceProfile(&CoreSpaceDeviceProfile {
+                protocolVersion: None,
                 nodeId: nodeId.to_string(),
                 displayName: format!("Device {nodeId}"),
                 userName: String::new(),
@@ -1979,6 +2002,23 @@ mod tests {
                 None,
             )
             .expect("test device profile must initialize");
+    }
+
+    #[test]
+    fn protocol_version_survives_software_updates_and_legacy_profiles_decode() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host);
+        initializeTestDeviceProfile(&store);
+        store.writeLocalProtocol(3).unwrap();
+        let profile = store.writeLocalDeviceProfile("Device".into(), "test".into(), "test".into(), "99.0.0".into(), None).unwrap();
+        assert_eq!(profile.protocolVersion, Some(3));
+        assert_eq!(profile.coreVersion.as_deref(), Some("99.0.0"));
+        let mut legacy = serde_json::to_value(profile).unwrap();
+        legacy.as_object_mut().unwrap().remove("protocolVersion");
+        assert_eq!(serde_json::from_value::<CoreSpaceDeviceProfile>(legacy).unwrap().protocolVersion, None);
+        store.writeLocalProtocol(4).unwrap();
+        let identity = CoreNodeIdentityStore::new(store.storage.clone()).initialize().unwrap();
+        assert_eq!(store.deviceProfiles().unwrap()[&identity.nodeId].protocolVersion, Some(4));
     }
 
     /// Schema-only files are incomplete records and must remain explicit errors.

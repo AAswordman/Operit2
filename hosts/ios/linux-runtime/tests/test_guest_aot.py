@@ -1,0 +1,465 @@
+#!/usr/bin/env python3
+import importlib.util
+import json
+from pathlib import Path
+import struct
+import subprocess
+import sys
+import tempfile
+import unittest
+
+path = Path(__file__).resolve().parents[1] / 'tools/generate_guest_aot.py'
+spec = importlib.util.spec_from_file_location('guest_aot', path)
+aot = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(aot)
+sys.path.insert(0, str(path.parent))
+import generate_guest_traces as traces
+
+
+def elf_image(segments):
+    """Build a small ELF with (address, flags, payload) load segments."""
+    data = bytearray(64 + 56 * len(segments))
+    data[:7] = b'\x7fELF\x02\x01\x01'
+    struct.pack_into('<HHI', data, 16, 3, 183, 1)
+    struct.pack_into('<Q', data, 32, 64)
+    struct.pack_into('<HHH', data, 52, 64, 56, len(segments))
+    for i, (address, flags, payload) in enumerate(segments):
+        offset = len(data)
+        struct.pack_into('<IIQQQQQQ', data, 64 + 56 * i,
+                         1, flags, offset, address, address, len(payload), len(payload), 1)
+        data.extend(payload)
+    return data
+
+
+class GuestAotTests(unittest.TestCase):
+    def test_two_word_index_separates_common_first_instructions(self):
+        patterns = [(1, 2, 3), (1, 2), (1, 9), (4, 9)]
+        ordered, slots = aot.sequence_index(patterns)
+        self.assertEqual(sorted(ordered), sorted(patterns))
+        for first, second, offset, count in (s for s in slots if s):
+            self.assertTrue(all(sequence[:2] == (first, second)
+                                for sequence in ordered[offset:offset + count]))
+        group = next(s for s in slots if s and s[:2] == (1, 2))
+        self.assertEqual(ordered[group[2]:group[2] + group[3]], [(1, 2, 3), (1, 2)])
+
+    def test_binary_integer_and_conditional_select_remap_registers(self):
+        for width in (0, 1 << 31):
+            for operation in (2, 3, 8, 9, 10, 11):
+                word = width | 0x1ac00000 | (operation << 10) | (11 << 16) | (10 << 5) | 12
+                self.assertEqual(aot.decode(word)[0], 'native_binary')
+                generated = '\n'.join(aot.compile_sequence([word, 0x910004a5]))
+                expected = width | 0x1ac00000 | (operation << 10) | (10 << 16) | (9 << 5) | 11
+                self.assertIn(f'.long 0x{expected:08x}', generated)
+            word = width | 0x1a800000 | (11 << 16) | (10 << 5) | 12
+            generated = '\n'.join(aot.compile_sequence([word, 0x910004a5]))
+            self.assertIn('msr nzcv, x25', generated)
+        self.assertIsNone(aot.decode(0x1ac00000 | (4 << 10)))
+        self.assertIsNone(aot.decode(0x3a800000))
+
+    def test_multiple_profiles_accumulate_weights_before_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            first = directory / 'python.json'
+            second = directory / 'node.json'
+            first.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'samples': 2, 'words': ['0x9100054a', '0x9100056b']},
+                {'samples': 2, 'words': ['0x9100054a', '0x9100056b']}]}))
+            second.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'samples': 2, 'words': ['0x9100054a', '0x9100056b']},
+                {'samples': 5, 'words': ['0x9100058c', '0x910005ad']}]}))
+            output = directory / 'output'
+            subprocess.run([sys.executable, str(path), '--profile', str(first),
+                            '--profile', str(second), '--output', str(output), '--limit', '1'],
+                           check=True, capture_output=True, text=True)
+            generated = (output / 'guest_aot.cpp').read_text()
+            self.assertIn('0x9100054au,0x9100056bu', generated)
+            self.assertNotIn('0x9100058cu,0x910005adu', generated)
+
+    def test_trace_profiles_do_not_create_edges_between_recordings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            profiles = []
+            # Adjacent guest PCs belong to independent recordings. Neither
+            # recording includes a full edge, so no combined trace is valid.
+            for n, (pc, words) in enumerate(((0x10000, [0x9100054a, 0x9100056b]),
+                                            (0x10008, [0x9100058c, 0x910005ad]))):
+                profile = directory / (str(n) + '.json')
+                profile.write_text(json.dumps({'schema': 'operit.execution-diagnostics.v1',
+                    'top_sites': [{'handler': 'BlockBody', 'samples': 10, 'mappings': [{
+                        'block_pc': hex(pc), 'instructions': [
+                            {'pc': hex(pc + i * 4), 'raw': hex(word)} for i, word in enumerate(words)]}]}]}))
+                profiles.append(profile)
+            result = subprocess.run([sys.executable, str(path.parent / 'generate_guest_traces.py'),
+                                     '--profile', str(profiles[0]), '--profile', str(profiles[1]),
+                                     '--output', str(directory / 'output')],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('no supported local fallthrough traces', result.stderr)
+
+    def test_register_memory_is_opt_in_and_uses_two_lowering_records(self):
+        word = 0xf869d8cb
+        self.assertEqual(aot.decode(word), ('memory_reg', 8, 11, 6, 9, 6, True, False))
+        asm = '\n'.join(aot.compile_sequence([0x9100054a, word, 0x9100056c]))
+        self.assertIn('add x28, x28, #64', asm)
+        self.assertIn('add x9, x9, w10, sxtw #3', asm)
+        self.assertIn('bl Lmemoryguard_0_8', asm)
+        self.assertLess(asm.index('ED_EVENT_GUEST_AOT_REGISTER_MEMORY_ATTEMPT'), asm.index('bl Lmemoryguard_0_8'))
+        self.assertGreater(asm.index('ED_EVENT_GUEST_AOT_REGISTER_MEMORY_SUCCESS'), asm.index('bl Lmemoryguard_0_8'))
+        trace = '\n'.join(aot.compile_sequence([0x9100054a, word, 0xb400006a, word, 0x9100056c], trace_index=2))
+        self.assertIn('add x28, x28, #32\n    cbz x7, Lguest_aot_local_trace_fallback', trace)
+        natural = '\n'.join(aot.compile_sequence([word, 0x9100056c], trace_index=1, trace_natural=True))
+        self.assertIn('add x28, x28, #32\n    cbz x7, Lguest_aot_local_trace_fallback', natural)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'words': ['0x9100054a', hex(word), '0x9100056c']}]}))
+            disabled = subprocess.run([sys.executable, str(path), '--profile', str(profile),
+                                       '--output', str(directory / 'disabled')], capture_output=True)
+            self.assertNotEqual(disabled.returncode, 0)
+            output = directory / 'enabled'
+            subprocess.run([sys.executable, str(path), '--profile', str(profile), '--output', str(output),
+                            '--register-memory'], check=True, capture_output=True)
+            generated = (output / 'guest_aot.cpp').read_text()
+            generated_asm = (output / 'guest_aot.inc').read_text()
+            self.assertIn('1,2,1,', generated)
+            self.assertIn('next.node!=info.node', generated)
+            self.assertIn('ED_EVENT_GUEST_AOT_SCHEDULED_INSTRUCTIONS, x16, x17, 3', generated_asm)
+
+    def test_register_memory_traces_are_opt_in(self):
+        profile = {'schema': 'operit.guest-aot-fixture.v1', 'traces': [
+            {'source': ['0x9100054a', '0xf86968cb', '0xb400006a'],
+             'target': ['0xf86968ec', '0x9100058d']},
+            {'source': ['0xf86968cb'], 'target': ['0x9100056c', '0x9100058d']}]}
+        self.assertEqual(len(traces.candidates(profile, 8)), 0)
+        self.assertEqual(len(traces.candidates(profile, 8, register_memory=True)), 2)
+
+    def test_elf_executable_segments_and_unaligned_address(self):
+        image = elf_image([(0x1001, 5, b'abc' + struct.pack('<II', 0x9100054a, 0x9100096b)),
+                           (0x2000, 4, b'data')])
+        self.assertEqual([bytes(s) for s in aot.elf_executable_segments(image)],
+                         [struct.pack('<II', 0x9100054a, 0x9100096b)])
+
+    def test_elf_segments_never_join_sequences(self):
+        word = struct.pack('<I', 0x9100054a)
+        image = elf_image([(0x1000, 5, word), (0x2000, 5, word),
+                           (0x3000, 5, word * 2 + struct.pack('<I', 0x14000000) + word * 2)])
+        self.assertEqual(list(aot.elf_sequences(image)), [[0x9100054a] * 2] * 2)
+
+    def test_elf_branch_tail_does_not_join_next_block(self):
+        add, branch = 0x9100054a, 0xb400004a
+        image = elf_image([(0x1000, 5, struct.pack('<IIII', add, branch, add, add))])
+        self.assertEqual(list(aot.elf_sequences(image)), [[add, add]])
+        self.assertEqual(list(aot.elf_sequences(image, True)), [[add, branch], [add, add]])
+
+    def test_elf_rejects_invalid_headers_and_segments(self):
+        original = elf_image([(0x1000, 5, b'12345678')])
+        cases = []
+        for offset, fmt, value in ((16, '<H', 1), (18, '<H', 62), (32, '<Q', len(original) - 10),
+                                   (52, '<H', 63), (54, '<H', 55),
+                                   (64 + 32, '<Q', 9), (64 + 40, '<Q', 7),
+                                   (64 + 48, '<Q', 3)):
+            bad = original.copy()
+            struct.pack_into(fmt, bad, offset, value)
+            cases.append(bad)
+        cases.extend((original[:50], original[:-1], elf_image([(0x1000, 4, b'1234')]),
+                      elf_image([(0x1000, 5, b'12345678'), (0x1004, 5, b'1234')])))
+        for bad in cases:
+            with self.subTest(image=bad):
+                with self.assertRaises(ValueError):
+                    aot.elf_executable_segments(bad)
+
+    def test_static_index_collision_lookup_and_pattern_order(self):
+        # Force many collisions, including key zero, then verify that probing
+        # and grouping preserve longest-first precedence for every first word.
+        words = [w for w in range(10000) if aot.index_hash(w) & 15 == 0][:16]
+        selected = [(word, 1, 2, 3) for word in words] + [(word, 9) for word in words]
+        ordered, slots = aot.static_index(selected)
+        self.assertGreaterEqual(len(slots), 2 * len(words))
+        for word in words:
+            position = aot.index_hash(word) & (len(slots) - 1)
+            while slots[position] is not None and slots[position][0] != word:
+                position = (position + 1) & (len(slots) - 1)
+            self.assertIsNotNone(slots[position])
+            _, start, count = slots[position]
+            self.assertEqual(ordered[start:start + count], [(word, 1, 2, 3), (word, 9)])
+
+    def test_reject_control(self):
+        for word in (0x14000000, 0xd65f03c1):
+            with self.subTest(word=hex(word)):
+                self.assertIsNone(aot.decode(word))
+
+    def test_indirect_tail_uses_target_before_call_writes_link(self):
+        for word, kind in ((0xd61f0140, 'branch_indirect'), (0xd65f03c0, 'branch_indirect'),
+                           (0xd63f03c0, 'branch_indirect_call')):
+            with self.subTest(word=hex(word)):
+                self.assertEqual(aot.decode(word)[0], kind)
+                code = '\n'.join(aot.compile_sequence([0x9100054a, word]))
+                self.assertIn('str x0, [x27, #EF_PENDING_PC]', code)
+                self.assertIn('b LIndirectDispatch', code)
+                self.assertLess(code.index('str x0, [x27, #EF_PENDING_PC]'), code.index('b LIndirectDispatch'))
+                if kind == 'branch_indirect_call':
+                    self.assertIn('mov x0, x3', code)
+                    self.assertLess(code.index('mov x0, x3'), code.index('ldr x3, [x28, #OP_IMMEDIATE]'))
+                self.assertIsNone(aot.compile_sequence([0x9100054a, word, 0x9100054a]))
+
+    def test_indirect_candidates_are_independently_opted_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'words': ['0xf9400400', '0xd65f03c0']}]}))
+            for flags, enabled in (([], False), (['--branches'], False), (['--indirect'], True)):
+                output = directory / ('output' + str(len(list(directory.iterdir()))))
+                result = subprocess.run([sys.executable, str(path), '--profile', str(profile), '--output', str(output),
+                                         *flags], capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, enabled, result.stderr)
+                if enabled:
+                    self.assertIn('0xd65f03c0u', (output / 'guest_aot.cpp').read_text())
+            image = elf_image([(0x1000, 5, struct.pack('<II', 0xf9400400, 0xd65f03c0))])
+            self.assertEqual(list(aot.elf_sequences(image)), [])
+            self.assertEqual(list(aot.elf_sequences(image, include_indirect=True)), [[0xf9400400, 0xd65f03c0]])
+
+    def test_trace_preserves_temporaries_and_restarts_at_destination(self):
+        words = [0x9100054a, 0xb400006a, 0xf94000cb, 0x8b0a016c]
+        result = '\n'.join(aot.compile_sequence(words, True, 'Ltrace', 1))
+        hot, cold = result.split('Ltrace_trace_fallback:')
+        self.assertIn('cbz x7, Ltrace_trace_fallback', hot)
+        self.assertIn('cbz x9, Ltrace_trace_fallback', hot)
+        self.assertIn('ldr x28, [x28, #OP_SIZE+OP_TARGET]', hot)
+        self.assertIn('mov x6, x26', hot)
+        self.assertIn('add x12, x11, x9', hot)
+        self.assertIn('add x28, x28, #64\n    DISPATCH', hot)
+        self.assertIn('str x9, [x27, #384]\n    DISPATCH', cold)
+        self.assertIn('Ltrace_memory_2_miss:', cold)
+        self.assertNotIn('add x28, x28, #32\n    mov x9, x0', cold)
+
+    def test_trace_candidates_and_generation(self):
+        fixture = {'schema': 'operit.guest-aot-fixture.v1', 'traces': [
+            {'source': ['0x9100054a', '0xb400006a'],
+             'target': ['0xf94000cb', '0x8b0a016c']}]}
+        self.assertEqual(len(traces.candidates(fixture, 8)), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps(fixture))
+            subprocess.run([sys.executable, str(path.parent / 'generate_guest_traces.py'),
+                            '--profile', str(profile), '--output', str(directory), '--inline-memory'],
+                           check=True, capture_output=True, text=True)
+            self.assertIn('ED_EVENT_GUEST_AOT_TRACE_FALLTHROUGH', (directory / 'guest_traces.inc').read_text())
+            self.assertIn('current->back().target!=target.data()+1', (directory / 'guest_traces.cpp').read_text())
+            self.assertIn('std::sort(result.begin(),result.end())', (directory / 'guest_traces.cpp').read_text())
+
+    def test_multiple_block_boundaries(self):
+        add, branch, load = 0x9100054a, 0xb400006a, 0xf94000cb
+        words = [add, branch, load, add, add, load]
+        edges = [(1, False), (4, True)]
+        asm = '\n'.join(aot.compile_sequence(words, False, 'Llong', trace_edges=edges))
+        self.assertIn('cbz x7, Llong_trace_1_fallback', asm)
+        self.assertIn('cbz x7, Llong_trace_4_fallback', asm)
+        self.assertEqual(asm.count('ED_EVENT_BLOCK_ADMITTED'), 2)
+        self.assertIn('ldr x28, [x28, #OP_SIZE+OP_TARGET]', asm)
+        self.assertIn('ldr x28, [x28, #OP_TARGET]', asm)
+        self.assertIsNone(aot.compile_sequence(words, trace_edges=[(4, True), (1, False)]))
+        self.assertIsNone(aot.compile_sequence(words, trace_edges=[(1, False), (2, True)]))
+        profile = {'schema': 'operit.guest-aot-fixture.v1', 'paths': [
+            {'blocks': [[hex(add), hex(branch)], [hex(load), hex(add)], [hex(add), hex(load)]]}]}
+        choices = traces.long_candidates(profile, 16, 3)
+        self.assertEqual(len(choices), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source = directory / 'profile.json'
+            source.write_text(json.dumps(profile))
+            subprocess.run([sys.executable, str(path.parent / 'generate_guest_traces.py'),
+                            '--profile', str(source), '--output', str(directory),
+                            '--max-blocks', '3', '--max-length', '16'], check=True, capture_output=True)
+            generated = (directory / 'guest_traces.cpp').read_text()
+            self.assertIn('static const uint8_t boundaries[]', generated)
+            self.assertIn('0,2,0,4,0,0,', generated)
+            self.assertIn('current=&target;position=2', generated)
+
+    def test_natural_trace_crosses_single_instruction_block(self):
+        words = [0x9100054a, 0xf94000cb, 0x9100056c]
+        code = '\n'.join(aot.compile_sequence(words, True, 'Lnatural', 1, True))
+        hot, cold = code.split('Lnatural_trace_fallback:')
+        self.assertIn('add x28, x28, #32\n    cbz x7, Lnatural_trace_fallback', hot)
+        self.assertIn('ldr x28, [x28, #OP_TARGET]', hot)
+        self.assertIn('str x9, [x27, #384]', cold)
+        fixture = {'schema': 'operit.guest-aot-fixture.v1', 'traces': [
+            {'source': ['0x9100054a'], 'target': ['0xf94000cb', '0x9100056c']}]}
+        self.assertEqual(len(traces.candidates(fixture, 8)), 1)
+
+    def test_conditional_branches_only_end_sequences(self):
+        for word, expected in ((0x54000040, 'b.eq 3f'), (0xb400004a, 'cbz x9, 3f'),
+                               (0x3700004a, 'tbnz w9, #0, 3f')):
+            with self.subTest(word=hex(word)):
+                code = '\n'.join(aot.compile_sequence([0x9100054a, word]))
+                self.assertIn(expected, code)
+                self.assertIn('    ldr x16, [x28, #OP_SIZE+OP_TARGET]', code)
+                self.assertIsNone(aot.compile_sequence([0x9100054a, word, 0x9100054a]))
+        for cond in (14, 15):
+            code = '\n'.join(aot.compile_sequence([0x9100054a, 0x54000040 | cond]))
+            self.assertNotIn('OP_SIZE+OP_TARGET', code)
+
+    def test_branch_candidates_require_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'words': ['0x9100054a', '0x9100056b', '0xb400004a']}]}))
+            counts = []
+            for flags in ([], ['--branches']):
+                output = directory / ('enabled' if flags else 'disabled')
+                subprocess.run([sys.executable, str(path), '--profile', str(profile), '--output', str(output),
+                                *flags], check=True, capture_output=True, text=True)
+                counts.append((output / 'guest_aot.inc').read_text().count('.globl SYM(operit_guest_aot_'))
+            self.assertEqual(counts, [1, 3])
+
+    def test_folded_windows_require_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'words': ['0x9100054a', '0x8b09014b']}]}))
+            outputs = []
+            for flags in ([], ['--folded']):
+                output = directory / ('enabled' if flags else 'disabled')
+                subprocess.run([sys.executable, str(path), '--profile', str(profile), '--output', str(output),
+                                *flags], check=True, capture_output=True, text=True)
+                outputs.append((output / 'guest_aot.cpp').read_text())
+            self.assertIn('info.node->dead_result || info.node->constant_result ||', outputs[0])
+            self.assertIn('(info.node->constant_result && info.code!=StaticCode::Move)', outputs[1])
+
+    def test_pc_relative_address_uses_live_lowered_immediate(self):
+        for adr in (0x1000004a, 0xb000000a):
+            result = '\n'.join(aot.compile_sequence([adr, 0x9100054b]))
+            self.assertIn('ldr x9, [x28, #8]', result)
+            self.assertIn('add x10, x9, #1', result)
+        result = '\n'.join(aot.compile_sequence([0xf94000cb, 0x1000004a, 0x9100054b]))
+        self.assertIn('ldr x9, [x28, #40]', result)
+        self.assertNotIn('ldr xzr', '\n'.join(aot.compile_sequence([0x1000005f, 0x9100054b])))
+
+    def test_pc_relative_candidates_require_folded_opt_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'words': ['0x1000004a', '0x9100054b', '0x8b09014b']}]}))
+            outputs = []
+            for flags in ([], ['--folded']):
+                output = directory / ('enabled' if flags else 'disabled')
+                subprocess.run([sys.executable, str(path), '--profile', str(profile), '--output', str(output),
+                                *flags], check=True, capture_output=True, text=True)
+                outputs.append((output / 'guest_aot.cpp').read_text())
+            self.assertNotIn('0x1000004au', outputs[0])
+            self.assertIn('0x1000004au', outputs[1])
+
+    def test_flags_are_committed_and_zero_destination_is_not_stack(self):
+        # adds x10,x10,#1; subs xzr,x10,x9; ands w11,w10,#0xff
+        result = '\n'.join(aot.compile_sequence([0xb100054a, 0xeb09015f, 0x72001d4b]))
+        self.assertIn('adds x9, x9, #1\n    mrs x25, nzcv', result)
+        self.assertIn('subs xzr, x9, x10\n    mrs x25, nzcv', result)
+        self.assertIn('.long 0x72001d2b\n    mrs x25, nzcv', result)
+        self.assertNotIn('str x24', result)
+
+    def test_registers_stay_live_and_flush_at_exit(self):
+        result = '\n'.join(aot.compile_sequence([0x9100054a, 0x8b09014b, 0xca0d016c]))
+        self.assertEqual(result.count('ldr x9, [x27, #384]'), 1)
+        self.assertEqual(result.count('str x9, [x27, #384]'), 1)
+        self.assertIn('add x28, x28, #96\n    DISPATCH', result)
+
+    def test_write_before_read_avoids_stale_load(self):
+        # movz x10,#1; add x11,x10,#2
+        result = '\n'.join(aot.compile_sequence([0xd280002a, 0x9100094b]))
+        self.assertNotIn('ldr x9, [x27, #384]', result)
+        self.assertIn('movz x9, #1', result)
+        self.assertIn('str x9, [x27, #384]', result)
+
+    def test_word_register_sp_and_zero(self):
+        # add w10,w10,#1; add wsp,wsp,#16; orr w11,wzr,w10
+        result = '\n'.join(aot.compile_sequence([0x1100054a, 0x110043ff, 0x2a0a03eb]))
+        self.assertIn('add w9, w9, #1', result)
+        self.assertIn('add w24, w24, #16', result)
+        self.assertIn('orr w10, wzr, w9', result)
+        self.assertIn('str x9, [x27, #384]', result)
+
+    def test_movk_reads_old_value_and_shifted_logical(self):
+        # movk x10,#0x1234,lsl #16; eor x11,x10,x9,ror #5
+        result = '\n'.join(aot.compile_sequence([0xf2a2468a, 0xcac9154b]))
+        self.assertIn('ldr x9, [x27, #384]', result)
+        self.assertIn('movk x9, #4660, lsl #16', result)
+        self.assertIn('ror #5', result)
+
+    def test_scratch_exhaustion_flushes_at_instruction_boundary(self):
+        words = [0x91000400 | (n << 5) | n for n in range(9, 17)]
+        result = '\n'.join(aot.compile_sequence(words))
+        self.assertIn('str x15, [x27, #424]\n    ldr x9, [x27, #432]', result)
+        self.assertIn('str x9, [x27, #432]', result)
+
+    def test_memory_flushes_before_guard_and_restores_cursor(self):
+        result = '\n'.join(aot.compile_sequence([0x9100054a, 0xf94000cb, 0x8b0a016c, 0xf90004cc]))
+        self.assertIn('str x9, [x27, #384]\n    add x28, x28, #32', result)
+        self.assertIn('bl Lmemoryguard_0_8', result)
+        self.assertIn('bl Lmemoryguard_1_8', result)
+        self.assertIn('cbz x13, 2f', result)
+        self.assertTrue(result.endswith('add x28, x28, #32\n    DISPATCH'))
+
+    def test_inline_memory_keeps_temporaries_and_publishes_cold_state(self):
+        words = [0x9100054a, 0xf94000cb, 0x8b0a016c, 0xf90004cc]
+        result = '\n'.join(aot.compile_sequence(words, True, 'Ltest'))
+        hot, cold = result.split('Ltest_memory_1_miss:')
+        self.assertIn('ldr x11, [x1]\nLtest_memory_1_resume:', hot)
+        self.assertIn('add x12, x11, x9', hot)
+        self.assertIn('str x12, [x1]', hot)
+        self.assertNotIn('bl Lmemoryguard', hot)
+        self.assertIn('str x9, [x27, #384]\n    add x28, x28, #32\n    mov x9, x0', cold)
+        self.assertIn('ldr x11, [x27, #392]', cold)
+        self.assertIn('sub x28, x28, #32\n    b Ltest_memory_1_resume', cold)
+        self.assertIn('Ltest_memory_3_miss:', cold)
+
+    def test_inline_memory_alias_and_branch_emit_cold_paths(self):
+        # add x10,x10,#1; ldr w10,[x10]; cbz w10,...
+        result = '\n'.join(aot.compile_sequence([0x9100054a, 0xb940014a, 0x3400004a], True, 'Lalias'))
+        self.assertIn('ldr w9, [x1]', result)
+        self.assertIn('cbz w9, 3f', result)
+        self.assertIn('Lalias_memory_1_miss:', result)
+        self.assertIn('str x9, [x27, #384]', result)
+        self.assertIn('ldr x9, [x27, #384]', result)
+
+    def test_unsupported_signed_and_vector_loads(self):
+        self.assertIsNone(aot.decode(0xb98000cb))  # ldrsw
+        self.assertIsNone(aot.decode(0x3dc000c0))  # ldr q0
+
+    def test_pair_checks_whole_access_and_commits_writeback_last(self):
+        result = '\n'.join(aot.compile_sequence([0xa9c130cb, 0xa88130cb]))
+        self.assertIn('add x9, x9, #16', result)
+        self.assertIn('bl Lmemoryguard_0_16', result)
+        self.assertIn('ldp x0, x1, [x11]', result)
+        self.assertIn('bl Lmemoryguard_1_16', result)
+        self.assertIn('stp x0, x1, [x11]', result)
+        self.assertIn('add x9, x9, #16\n    str x9, [x27, #352]', result)
+        self.assertIsNone(aot.decode(0x2d400000))  # vector pair
+        self.assertIsNone(aot.decode(0x69000000))  # reserved signed pair store
+
+    def test_logical_immediate_and_bitfield_register_rewrite(self):
+        # and x10,x11,#0xff; ubfm x11,x10,#8,#63; bfm x12,x11,#0,#7
+        result = '\n'.join(aot.compile_sequence([0x92401d6a, 0xd348fd4b, 0xb3401d6c]))
+        self.assertIn('.long 0x92401d2a', result)
+        self.assertIn('.long 0xd348fd49', result)
+        self.assertIn('ldr x11, [x27, #400]', result)
+        self.assertIn('.long 0xb3401d2b', result)
+
+    def test_invalid_bit_masks_and_out_of_range_words(self):
+        for word in (-1, 0x100000000, 0x12400000, 0x1200fc00,
+                     0x13400000, 0xd3000000, 0x73000000):
+            with self.subTest(word=hex(word)):
+                self.assertIsNone(aot.decode(word))
+
+    def test_logical_immediate_destination_31_is_stack(self):
+        result = '\n'.join(aot.compile_sequence([0x12001d5f, 0x110007eb]))
+        self.assertIn('.long 0x12001d38', result)
+        self.assertIn('add w10, w24, #1', result)
+
+
+if __name__ == '__main__':
+    unittest.main()

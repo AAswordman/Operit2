@@ -148,8 +148,8 @@ int64_t Syscalls::terminal_ioctl(CpuState &cpu) {
                 if (endpoint ? terminals_->output_queued(*endpoint)
                              : terminal::output_queued(state->fd->get()))
                     return {};
-                if (!milliseconds)
-                    return 0;
+                if (!milliseconds || (endpoint && terminals_->software(*endpoint)))
+                    return 0; // PTYs have no physical break condition.
                 check_host(::ioctl(state->fd->get(), TIOCSBRK));
                 state->asserted = true;
                 state->until = TaskClock::now() + std::chrono::milliseconds(milliseconds);
@@ -170,7 +170,10 @@ int64_t Syscalls::terminal_ioctl(CpuState &cpu) {
     }
     case 0x540a: // TCXONC
         control();
-        terminal::flow(entry.host.get(), uint32_t(a[2]));
+        if (endpoint)
+            terminals_->flow(*endpoint, uint32_t(a[2]));
+        else
+            terminal::flow(entry.host.get(), uint32_t(a[2]));
         return 0;
     case 0x540b: // TCFLSH
         control();
@@ -203,7 +206,7 @@ int64_t Syscalls::terminal_ioctl(CpuState &cpu) {
         terminals_->foreground_group(require_endpoint(), pid, load_int());
         return 0;
     case 0x5411: // TIOCOUTQ
-        store_int(terminal::output_queued(entry.host.get()));
+        store_int(endpoint ? terminals_->output_queued(*endpoint) : terminal::output_queued(entry.host.get()));
         return 0;
     case 0x5412: // TIOCSTI: inject through this guest PTY's master, not host TIOCSTI.
         check_buffer(a[2], 1, read_perm);
@@ -258,15 +261,20 @@ int64_t Syscalls::terminal_ioctl(CpuState &cpu) {
         return 0;
     case 0x5423: // TIOCSETD
         control();
-        terminal::line_discipline(entry.host.get(), load_int());
+        if (endpoint && terminals_->software(*endpoint)) {
+            if (load_int() != 0)
+                guest_error(22);
+        } else
+            terminal::line_discipline(entry.host.get(), load_int());
         return 0;
     case 0x5424: // TIOCGETD
-        store_int(terminal::line_discipline(entry.host.get()));
+        store_int(endpoint && terminals_->software(*endpoint) ? 0 : terminal::line_discipline(entry.host.get()));
         return 0;
     case 0x5427: // TIOCSBRK
     case 0x5428: // TIOCCBRK
         control();
-        check_host(::ioctl(entry.host.get(), request == 0x5427 ? TIOCSBRK : TIOCCBRK));
+        if (!endpoint || !terminals_->software(*endpoint))
+            check_host(::ioctl(entry.host.get(), request == 0x5427 ? TIOCSBRK : TIOCCBRK));
         return 0;
     case 0x5429: // TIOCGSID
         store_int(terminals_->session(require_endpoint(), pid));
@@ -353,13 +361,9 @@ int64_t Syscalls::terminal_io(bool writing, uint64_t fd, uint64_t address, uint6
         int64_t result;
         if (writing) {
             memory_.copy_out(address, bytes->data(), capacity);
-            result = host_write(host->get(), bytes->data(), capacity);
+            result = terminals_->write(*endpoint, host->get(), bytes->data(), capacity);
         } else
-            result = ::read(host->get(), bytes->data(), capacity);
-        if (result < 0) {
-            int error = linux_errno(errno);
-            result = -error;
-        }
+            result = terminals_->read(*endpoint, host->get(), bytes->data(), capacity);
         if (writing && result > 0)
             terminals_->written_input(*endpoint, bytes->data(), size_t(result));
         if (!writing) {

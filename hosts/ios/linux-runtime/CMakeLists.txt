@@ -1,6 +1,40 @@
 cmake_minimum_required(VERSION 3.20)
 project(OperitArm64Runtime VERSION 0.1.0 LANGUAGES C CXX ASM)
 
+option(OPERIT_ARM64_GLOBAL_VALUES "Enable native SSA value numbering and global CSE" OFF)
+option(OPERIT_ARM64_MEMORY_SCHEDULING "Schedule independent private-page native loads" OFF)
+option(OPERIT_ARM64_DIRECT_CHAINS "Directly enter known block guards on static edges" OFF)
+option(OPERIT_ARM64_DEFER_CALL_TARGETS "Discover direct call targets on first execution" OFF)
+option(OPERIT_ARM64_RETAIN_LOOP_CALLS "Keep direct calls within discovered backward edges in the same graph" OFF)
+option(OPERIT_ARM64_ADAPTIVE_CALLS "Promote hot cross-graph calls into their caller graph" OFF)
+if(OPERIT_ARM64_RETAIN_LOOP_CALLS AND NOT OPERIT_ARM64_DEFER_CALL_TARGETS)
+    message(FATAL_ERROR "OPERIT_ARM64_RETAIN_LOOP_CALLS requires OPERIT_ARM64_DEFER_CALL_TARGETS")
+endif()
+if(OPERIT_ARM64_ADAPTIVE_CALLS AND (NOT OPERIT_ARM64_DEFER_CALL_TARGETS OR OPERIT_ARM64_RETAIN_LOOP_CALLS OR OPERIT_ARM64_GLOBAL_VALUES))
+    message(FATAL_ERROR "OPERIT_ARM64_ADAPTIVE_CALLS requires deferred calls and excludes loop retention and global values")
+endif()
+set(OPERIT_ARM64_SUPERBLOCK_PROFILE "" CACHE FILEPATH "Diagnostic profile for experimental build-time superblocks")
+option(OPERIT_ARM64_SUPERBLOCK_SPECIALIZE "Specialize profiled operation fields and promote shadow values" OFF)
+set(OPERIT_ARM64_GUEST_AOT_PROFILE "" CACHE FILEPATH "Profile for experimental build-time guest AOT")
+set(OPERIT_ARM64_GUEST_AOT_EXTRA_PROFILES "" CACHE STRING "Additional independent profiles for build-time guest AOT")
+set(OPERIT_ARM64_GUEST_AOT_ELFS "" CACHE STRING "Semicolon-separated ELF images for experimental build-time guest AOT")
+set(OPERIT_ARM64_GUEST_AOT_LIMIT 1024 CACHE STRING "Maximum guest AOT sequences")
+set(OPERIT_ARM64_GUEST_AOT_MAX_LENGTH 8 CACHE STRING "Maximum guest AOT sequence length")
+option(OPERIT_ARM64_GUEST_AOT_SCORE_LENGTH "Rank guest AOT sequences by estimated eliminated dispatches" OFF)
+option(OPERIT_ARM64_GUEST_AOT_BRANCHES "Compile conditional branch tails in experimental guest AOT" OFF)
+option(OPERIT_ARM64_GUEST_AOT_INDIRECT "Compile indirect branch tails in experimental guest AOT" OFF)
+option(OPERIT_ARM64_GUEST_AOT_FOLDED "Allow folded guest operations and PC-relative addresses in guest AOT" OFF)
+option(OPERIT_ARM64_GUEST_AOT_INLINE_MEMORY "Inline serial page-cache checks in guest AOT" OFF)
+option(OPERIT_ARM64_GUEST_AOT_REGISTER_MEMORY "Compile register-offset integer memory operations in guest AOT" OFF)
+option(OPERIT_ARM64_GUEST_AOT_TRACES "Compile profile-guided local fallthrough traces" OFF)
+option(OPERIT_ARM64_GUEST_AOT_TRACE_REGISTER_MEMORY "Allow register-offset memory in guest AOT traces" OFF)
+if(OPERIT_ARM64_GUEST_AOT_TRACE_REGISTER_MEMORY AND
+   (NOT OPERIT_ARM64_GUEST_AOT_TRACES OR NOT OPERIT_ARM64_GUEST_AOT_REGISTER_MEMORY))
+    message(FATAL_ERROR "Register memory traces require guest AOT traces and register memory")
+endif()
+set(OPERIT_ARM64_GUEST_AOT_TRACE_LIMIT 512 CACHE STRING "Maximum profile-guided guest AOT traces")
+set(OPERIT_ARM64_GUEST_AOT_TRACE_MAX_BLOCKS 2 CACHE STRING "Maximum blocks in a profile-guided guest AOT trace")
+
 option(OPERIT_ARM64_WASM "Enable the Apple WebKit Wasm execution backend" OFF)
 
 option(OPERIT_EXECUTION_DIAGNOSTICS "Collect static executor handler, path and sampled cursor diagnostics" OFF)
@@ -45,6 +79,7 @@ add_library(operit_arm64 STATIC
     src/cpu/aarch64/block_graph.cpp
     src/cpu/aarch64/memory_effects.cpp
     src/cpu/aarch64/optimizer.cpp
+    src/cpu/aarch64/global_values.cpp
     src/cpu/aarch64/static_lowering.cpp
     src/cpu/aarch64/wasm_region.cpp
     src/cpu/aarch64/wasm_executor.cpp
@@ -141,6 +176,7 @@ add_library(operit_arm64 STATIC
     src/linux/syscall_virtual.cpp
     src/linux/syscalls.cpp
     src/linux/terminal/manager.cpp
+    src/linux/terminal/software_pty.cpp
     src/linux/terminal/termios.cpp
     src/linux/timers/host_events.cpp
     src/linux/threads/futex_pi.cpp
@@ -165,6 +201,114 @@ add_library(operit_arm64 STATIC
 )
 target_compile_definitions(operit_arm64 PUBLIC OPERIT_EXECUTION_DIAGNOSTICS=$<BOOL:${OPERIT_EXECUTION_DIAGNOSTICS}>)
 target_compile_definitions(operit_arm64 PRIVATE OPERIT_ARM64_WASM=$<BOOL:${OPERIT_ARM64_WASM}>)
+if(OPERIT_ARM64_GUEST_AOT_PROFILE OR OPERIT_ARM64_GUEST_AOT_EXTRA_PROFILES OR OPERIT_ARM64_GUEST_AOT_ELFS)
+    set(OPERIT_GUEST_AOT_RANKING_ARGS)
+    set(OPERIT_GUEST_AOT_INPUT_ARGS)
+    set(OPERIT_GUEST_AOT_INPUT_FILES)
+    if(OPERIT_ARM64_GUEST_AOT_SCORE_LENGTH)
+        list(APPEND OPERIT_GUEST_AOT_RANKING_ARGS --score-length)
+    endif()
+    if(OPERIT_ARM64_GUEST_AOT_BRANCHES)
+        list(APPEND OPERIT_GUEST_AOT_RANKING_ARGS --branches)
+    endif()
+    if(OPERIT_ARM64_GUEST_AOT_INDIRECT)
+        list(APPEND OPERIT_GUEST_AOT_RANKING_ARGS --indirect)
+    endif()
+    if(OPERIT_ARM64_GUEST_AOT_FOLDED)
+        list(APPEND OPERIT_GUEST_AOT_RANKING_ARGS --folded)
+    endif()
+    if(OPERIT_ARM64_GUEST_AOT_INLINE_MEMORY)
+        list(APPEND OPERIT_GUEST_AOT_RANKING_ARGS --inline-memory)
+    endif()
+    if(OPERIT_ARM64_GUEST_AOT_REGISTER_MEMORY)
+        list(APPEND OPERIT_GUEST_AOT_RANKING_ARGS --register-memory)
+    endif()
+    if(OPERIT_ARM64_GLOBAL_VALUES OR OPERIT_ARM64_MEMORY_SCHEDULING)
+        message(FATAL_ERROR "Guest AOT currently requires global values and memory scheduling to be disabled")
+    endif()
+    set(OPERIT_GUEST_AOT_PROFILE_ARGS)
+    set(OPERIT_GUEST_AOT_PROFILES ${OPERIT_ARM64_GUEST_AOT_PROFILE} ${OPERIT_ARM64_GUEST_AOT_EXTRA_PROFILES})
+    list(REMOVE_DUPLICATES OPERIT_GUEST_AOT_PROFILES)
+    foreach(profile IN LISTS OPERIT_GUEST_AOT_PROFILES)
+        if(NOT EXISTS "${profile}")
+            message(FATAL_ERROR "Guest AOT profile does not exist: ${profile}")
+        endif()
+        list(APPEND OPERIT_GUEST_AOT_PROFILE_ARGS --profile "${profile}")
+        list(APPEND OPERIT_GUEST_AOT_INPUT_FILES "${profile}")
+    endforeach()
+    list(APPEND OPERIT_GUEST_AOT_INPUT_ARGS ${OPERIT_GUEST_AOT_PROFILE_ARGS})
+    foreach(elf IN LISTS OPERIT_ARM64_GUEST_AOT_ELFS)
+        if(NOT EXISTS "${elf}")
+            message(FATAL_ERROR "Guest AOT ELF does not exist: ${elf}")
+        endif()
+        list(APPEND OPERIT_GUEST_AOT_INPUT_ARGS --elf "${elf}")
+        list(APPEND OPERIT_GUEST_AOT_INPUT_FILES "${elf}")
+    endforeach()
+    add_custom_command(
+        OUTPUT "${OPERIT_EXECUTOR_GENERATED}/guest_aot.inc" "${OPERIT_EXECUTOR_GENERATED}/guest_aot.cpp"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_guest_aot.py"
+            ${OPERIT_GUEST_AOT_INPUT_ARGS} --output "${OPERIT_EXECUTOR_GENERATED}"
+            --limit "${OPERIT_ARM64_GUEST_AOT_LIMIT}" --max-length "${OPERIT_ARM64_GUEST_AOT_MAX_LENGTH}"
+            ${OPERIT_GUEST_AOT_RANKING_ARGS}
+        DEPENDS tools/generate_guest_aot.py ${OPERIT_GUEST_AOT_INPUT_FILES} VERBATIM)
+    set_property(SOURCE src/cpu/aarch64/static_executor.S APPEND PROPERTY OBJECT_DEPENDS
+        "${OPERIT_EXECUTOR_GENERATED}/guest_aot.inc")
+    target_sources(operit_arm64 PRIVATE "${OPERIT_EXECUTOR_GENERATED}/guest_aot.cpp")
+    target_compile_definitions(operit_arm64 PRIVATE OPERIT_ARM64_GUEST_AOT=1)
+    if(OPERIT_ARM64_GUEST_AOT_TRACES)
+        if(NOT OPERIT_GUEST_AOT_PROFILES)
+            message(FATAL_ERROR "Guest AOT traces require a diagnostic profile")
+        endif()
+        set(OPERIT_GUEST_TRACE_ARGS)
+        if(OPERIT_ARM64_GUEST_AOT_FOLDED)
+            list(APPEND OPERIT_GUEST_TRACE_ARGS --folded)
+        endif()
+        if(OPERIT_ARM64_GUEST_AOT_INLINE_MEMORY)
+            list(APPEND OPERIT_GUEST_TRACE_ARGS --inline-memory)
+        endif()
+        if(OPERIT_ARM64_GUEST_AOT_TRACE_REGISTER_MEMORY)
+            list(APPEND OPERIT_GUEST_TRACE_ARGS --register-memory)
+        endif()
+        add_custom_command(
+            OUTPUT "${OPERIT_EXECUTOR_GENERATED}/guest_traces.inc" "${OPERIT_EXECUTOR_GENERATED}/guest_traces.cpp"
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_guest_traces.py"
+                ${OPERIT_GUEST_AOT_PROFILE_ARGS} --output "${OPERIT_EXECUTOR_GENERATED}"
+                --limit "${OPERIT_ARM64_GUEST_AOT_TRACE_LIMIT}"
+                --max-length "${OPERIT_ARM64_GUEST_AOT_MAX_LENGTH}"
+                --max-blocks "${OPERIT_ARM64_GUEST_AOT_TRACE_MAX_BLOCKS}" ${OPERIT_GUEST_TRACE_ARGS}
+            DEPENDS tools/generate_guest_traces.py tools/generate_guest_aot.py ${OPERIT_GUEST_AOT_INPUT_FILES} VERBATIM)
+        set_property(SOURCE src/cpu/aarch64/static_executor.S APPEND PROPERTY OBJECT_DEPENDS
+            "${OPERIT_EXECUTOR_GENERATED}/guest_traces.inc")
+        target_sources(operit_arm64 PRIVATE "${OPERIT_EXECUTOR_GENERATED}/guest_traces.cpp")
+        target_compile_definitions(operit_arm64 PRIVATE OPERIT_ARM64_GUEST_AOT_TRACES=1)
+    endif()
+endif()
+if(OPERIT_ARM64_SUPERBLOCK_PROFILE)
+    if(NOT EXISTS "${OPERIT_ARM64_SUPERBLOCK_PROFILE}")
+        message(FATAL_ERROR "Superblock profile does not exist: ${OPERIT_ARM64_SUPERBLOCK_PROFILE}")
+    endif()
+    set(OPERIT_PROFILE_SPECIALIZE_ARGS)
+    if(OPERIT_ARM64_SUPERBLOCK_SPECIALIZE)
+        list(APPEND OPERIT_PROFILE_SPECIALIZE_ARGS --specialize)
+    endif()
+    add_custom_command(
+        OUTPUT "${OPERIT_EXECUTOR_GENERATED}/profile_superblocks.inc"
+               "${OPERIT_EXECUTOR_GENERATED}/profile_superblocks.cpp"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_profile_superblocks.py"
+            --profile "${OPERIT_ARM64_SUPERBLOCK_PROFILE}"
+            --handlers "${OPERIT_EXECUTOR_GENERATED}/static_handlers.inc"
+            --output "${OPERIT_EXECUTOR_GENERATED}"
+            ${OPERIT_PROFILE_SPECIALIZE_ARGS}
+        DEPENDS tools/generate_profile_superblocks.py "${OPERIT_ARM64_SUPERBLOCK_PROFILE}"
+                "${OPERIT_EXECUTOR_GENERATED}/static_handlers.inc"
+        VERBATIM)
+    set_property(SOURCE src/cpu/aarch64/static_executor.S APPEND PROPERTY OBJECT_DEPENDS
+        "${OPERIT_EXECUTOR_GENERATED}/profile_superblocks.inc")
+    target_sources(operit_arm64 PRIVATE "${OPERIT_EXECUTOR_GENERATED}/profile_superblocks.cpp")
+    target_compile_definitions(operit_arm64 PRIVATE OPERIT_ARM64_PROFILE_SUPERBLOCKS=1)
+elseif(OPERIT_ARM64_SUPERBLOCK_SPECIALIZE)
+    message(FATAL_ERROR "OPERIT_ARM64_SUPERBLOCK_SPECIALIZE requires OPERIT_ARM64_SUPERBLOCK_PROFILE")
+endif()
 target_compile_features(operit_arm64 PRIVATE cxx_std_17)
 target_include_directories(operit_arm64 PUBLIC include PRIVATE src "${OPERIT_EXECUTOR_GENERATED}")
 if(APPLE AND OPERIT_ARM64_WASM)
@@ -189,6 +333,14 @@ if(OPERIT_ARM64_SANITIZERS)
     target_link_options(operit_arm64 PUBLIC -fsanitize=address,undefined)
 endif()
 
+target_compile_definitions(operit_arm64 PUBLIC
+    OPERIT_ARM64_GLOBAL_VALUES=$<BOOL:${OPERIT_ARM64_GLOBAL_VALUES}>
+    OPERIT_ARM64_MEMORY_SCHEDULING=$<BOOL:${OPERIT_ARM64_MEMORY_SCHEDULING}>
+    OPERIT_ARM64_DIRECT_CHAINS=$<BOOL:${OPERIT_ARM64_DIRECT_CHAINS}>
+    OPERIT_ARM64_DEFER_CALL_TARGETS=$<BOOL:${OPERIT_ARM64_DEFER_CALL_TARGETS}>
+    OPERIT_ARM64_RETAIN_LOOP_CALLS=$<BOOL:${OPERIT_ARM64_RETAIN_LOOP_CALLS}>
+    OPERIT_ARM64_ADAPTIVE_CALLS=$<BOOL:${OPERIT_ARM64_ADAPTIVE_CALLS}>)
+
 option(BUILD_TESTING "Build runtime regression tests" ON)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if(APPLE AND OPERIT_ARM64_WASM)
@@ -211,6 +363,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(operit-arm64-execution-bench PRIVATE src)
     target_link_libraries(operit-arm64-execution-bench PRIVATE operit_arm64)
     target_compile_options(operit-arm64-execution-bench PRIVATE -Wall -Wextra -Werror)
+    add_executable(operit-arm64-global-opt-bench benchmarks/global_optimizer.cpp)
+    target_compile_features(operit-arm64-global-opt-bench PRIVATE cxx_std_17)
+    target_include_directories(operit-arm64-global-opt-bench PRIVATE src)
+    target_link_libraries(operit-arm64-global-opt-bench PRIVATE operit_arm64)
+    target_compile_options(operit-arm64-global-opt-bench PRIVATE -Wall -Wextra -Werror)
     include(CTest)
     if(BUILD_TESTING)
         if(APPLE AND OPERIT_ARM64_WASM)
@@ -243,7 +400,26 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         add_test(NAME arm64-worker-profile-validation
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_worker_profile.py")
         set_tests_properties(arm64-worker-profile-validation PROPERTIES TIMEOUT 10)
+        add_test(NAME arm64-profile-superblock-generator
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_profile_superblocks.py")
+        set_tests_properties(arm64-profile-superblock-generator PROPERTIES TIMEOUT 10)
+        add_test(NAME arm64-guest-aot-generator
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_guest_aot.py")
+        set_tests_properties(arm64-guest-aot-generator PROPERTIES TIMEOUT 10)
         add_runtime_test(operit-arm64-execution-tests tests/execution_backend.cpp arm64-execution)
+        if(OPERIT_ARM64_GUEST_AOT_PROFILE OR OPERIT_ARM64_GUEST_AOT_EXTRA_PROFILES OR OPERIT_ARM64_GUEST_AOT_ELFS)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT=1)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_BRANCHES=$<BOOL:${OPERIT_ARM64_GUEST_AOT_BRANCHES}>)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_INDIRECT=$<BOOL:${OPERIT_ARM64_GUEST_AOT_INDIRECT}>)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_REGISTER_MEMORY=$<BOOL:${OPERIT_ARM64_GUEST_AOT_REGISTER_MEMORY}>)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_TRACE_REGISTER_MEMORY=$<BOOL:${OPERIT_ARM64_GUEST_AOT_TRACE_REGISTER_MEMORY}>)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_TRACES=$<BOOL:${OPERIT_ARM64_GUEST_AOT_TRACES}>)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_TRACE_MAX_BLOCKS=${OPERIT_ARM64_GUEST_AOT_TRACE_MAX_BLOCKS})
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_GUEST_AOT_FOLDED=$<BOOL:${OPERIT_ARM64_GUEST_AOT_FOLDED}>)
+        endif()
+        if(OPERIT_ARM64_SUPERBLOCK_PROFILE)
+            target_compile_definitions(operit-arm64-execution-tests PRIVATE OPERIT_ARM64_PROFILE_SUPERBLOCKS=1)
+        endif()
         add_runtime_test(operit-arm64-memory-code-validation-tests tests/memory_code_validation.cpp arm64-memory-code-validation)
         add_runtime_test(operit-arm64-filesystem-tests tests/filesystem.cpp arm64-filesystem)
         if(APPLE)
@@ -251,6 +427,15 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bind_sandbox.py"
                 --fixture "$<TARGET_FILE:operit-arm64-filesystem-tests>")
             set_tests_properties(arm64-bind-sandbox PROPERTIES TIMEOUT 30)
+        endif()
+        add_runtime_test(operit-arm64-terminal-discipline-tests tests/terminal_discipline.cpp arm64-terminal-discipline)
+        add_runtime_test(operit-arm64-terminal-syscall-tests tests/terminal_syscalls.cpp arm64-terminal-syscalls)
+        if(APPLE)
+            add_test(NAME arm64-terminal-sandbox
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_terminal_sandbox.py"
+                --fixture "$<TARGET_FILE:operit-arm64-terminal-discipline-tests>"
+                --syscalls "$<TARGET_FILE:operit-arm64-terminal-syscall-tests>")
+            set_tests_properties(arm64-terminal-sandbox PROPERTIES TIMEOUT 45)
         endif()
         add_runtime_test(operit-arm64-vfs-tests tests/virtual_filesystem.cpp arm64-virtual-filesystem)
         add_runtime_test(operit-arm64-inotify-tests tests/inotify.cpp arm64-inotify)
@@ -326,6 +511,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         if(OPERIT_ARM64_ROOTFS)
             add_test(NAME arm64-terminal COMMAND operit-arm64-terminal-tests "${OPERIT_ARM64_ROOTFS}")
             set_tests_properties(arm64-terminal PROPERTIES TIMEOUT 45)
+            if(APPLE)
+                add_test(NAME arm64-terminal-shell-sandbox
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_terminal_sandbox.py"
+                    --fixture "$<TARGET_FILE:operit-arm64-terminal-discipline-tests>"
+                    --terminal "$<TARGET_FILE:operit-arm64-terminal-tests>" --root "${OPERIT_ARM64_ROOTFS}")
+                set_tests_properties(arm64-terminal-shell-sandbox PROPERTIES TIMEOUT 60)
+            endif()
             add_test(NAME arm64-alpine COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_alpine.py"
                 --runtime "$<TARGET_FILE:operit-arm64>" --root "${OPERIT_ARM64_ROOTFS}"
                 --fixed-tests "$<TARGET_FILE:operit-arm64-fixed-tests>")

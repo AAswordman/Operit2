@@ -324,7 +324,15 @@ void normalize(Instruction &i) {
             i.encoding = D::ScalarSqrt64;
         else if (move == 0x9e630000)
             i.encoding = D::ScalarUnsignedToDouble64;
-        else if ((r & 0xffe00c00) == 0x1e600800) {
+        else if (move == 0x9e620000)
+            i.encoding = D::ScalarSignedToDouble64;
+        else if (move == 0x1e630000 || move == 0x1e620000) {
+            i.width = 32;
+            i.encoding = move == 0x1e630000 ? D::ScalarUnsignedToDouble32 : D::ScalarSignedToDouble32;
+        } else if (move == 0x1e780000 || move == 0x9e780000) {
+            i.width = (r >> 31) ? 64 : 32;
+            i.encoding = i.width == 64 ? D::ScalarDoubleToSigned64 : D::ScalarDoubleToSigned32;
+        } else if ((r & 0xffe00c00) == 0x1e600800) {
             switch ((r >> 12) & 15) {
             case 0: i.encoding = D::ScalarMultiply64; break;
             case 1: i.encoding = D::ScalarDivide64; break;
@@ -332,7 +340,7 @@ void normalize(Instruction &i) {
             case 3: i.encoding = D::ScalarSubtract64; break;
             default: break;
             }
-        } else if ((r & 0xffe0fc1f) == 0x1e602000)
+        } else if ((r & 0xffe0fc07) == 0x1e602000 && (!(r&8) || !((r>>16)&31)))
             i.encoding = D::ScalarCompare64;
         else if ((r & 0xffe00c00) == 0x1e600c00) {
             i.flags = (r >> 12) & 15;

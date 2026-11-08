@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use operit_host_android_native::{
-    createRuntimeHostManager, AndroidBluetoothHost, AndroidSystemOperationHost, AndroidTerminalHost,
+    createRuntimeHostManager, AndroidBluetoothHost, AndroidFileSystemHost, AndroidSystemOperationHost, AndroidTerminalHost,
 };
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::SystemOperationHost;
@@ -15,8 +15,8 @@ use crate::FlutterHostAdapters::FlutterWebVisitBridge;
 use crate::FlutterOwnerCapabilities::{
     ownerBluetooth, ownerDeviceInfo, ownerGetSystemSetting, ownerLocation,
     ownerModifySystemSetting, ownerNotifications, ownerRecognizeText, ownerScreenshot,
-    ownerSendNotification, FlutterSystemBindings, FlutterSystemOperationBridge,
-    FlutterTtsSynthesisHost,
+    ownerSendNotification, ownerSystemOperation, FlutterSystemBindings,
+    FlutterLocalInferenceHost, FlutterSystemOperationBridge, FlutterTtsSynthesisHost,
 };
 
 /// Creates Android hosts and binds operations owned by the Flutter application.
@@ -39,6 +39,7 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
                 language.clone(),
                 Arc::new(ownerGetSystemSetting),
                 Arc::new(ownerModifySystemSetting),
+                Arc::new(ownerSystemOperation::<serde_json::Value>),
             )),
         )
     } else {
@@ -49,10 +50,20 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
             Arc::new(AndroidSystemOperationHost::new(
                 Arc::new(ownerGetSystemSetting),
                 Arc::new(ownerModifySystemSetting),
+                Arc::new(ownerSystemOperation::<serde_json::Value>),
             )),
         )
     }
     .withTerminalHost(Arc::new(AndroidTerminalHost::new()));
+    context.fileSystemHost = Some(Arc::new(AndroidFileSystemHost::withPresentation(Arc::new(
+        |operation, path, title| crate::FlutterOwnerCapabilities::ownerConfirmed(
+            "android_file_presentation",
+            serde_json::json!({ "operation": operation, "path": path, "title": title }),
+        ),
+    ))));
+    if module.is_some() {
+        context = context.withLocalInferenceHost(Arc::new(FlutterLocalInferenceHost));
+    }
     let system = context
         .systemOperationHost
         .clone()
@@ -81,9 +92,8 @@ pub(crate) fn startup_device_info(
     metadata: &StartupMetadata,
 ) -> Result<LinkDeviceInfo, String> {
     let model = match metadata {
-        StartupMetadata::AndroidDevice { model } | StartupMetadata::AndroidPrivileged { model, .. } => {
-            model
-        }
+        StartupMetadata::AndroidDevice { model }
+        | StartupMetadata::AndroidPrivileged { model, .. } => model,
         _ => return Err("Android startup requires owner-supplied device identity".to_string()),
     };
     if model.trim().is_empty() {

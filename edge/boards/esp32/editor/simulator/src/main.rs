@@ -226,6 +226,7 @@ fn initialize(
         services.peers(),
     )?;
     let profile = operit_edge_sdk::storage::CoreSpaceStore::CoreSpaceDeviceProfile {
+        protocolVersion: None,
         nodeId: nodeId.clone(),
         displayName: deviceInfo.model.clone(),
         userName: String::new(),

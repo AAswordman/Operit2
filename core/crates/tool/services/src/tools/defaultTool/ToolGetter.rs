@@ -48,10 +48,9 @@ impl ToolGetter {
                 .httpHost
                 .clone()
                 .expect("HTTP host must be configured before registering HTTP tools"),
-            context
-                .fileSystemHost
-                .clone()
-                .expect("FileSystemHost must be configured before registering HTTP tools"),
+            Self::getVirtualFileSystem(context),
+            context.runtimeStorageHost.clone()
+                .expect("Runtime storage must be configured before registering HTTP tools"),
         )
     }
 
@@ -60,11 +59,15 @@ impl ToolGetter {
     pub fn getWebVisitTool(context: &HostManager) -> StandardWebVisitTool {
         StandardWebVisitTool::new(
             context.webVisitHost.clone(),
-            context
-                .fileSystemHost
-                .clone()
-                .expect("FileSystemHost must be configured before registering web-visit tools"),
+            Self::getVirtualFileSystem(context),
         )
+    }
+
+    /// Binds file consumers to the owning runtime's VFS and registered mounts.
+    #[allow(non_snake_case)]
+    fn getVirtualFileSystem(context: &HostManager) -> operit_tools::files::VisualFileSystem::VisualFileSystem {
+        operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(context)
+            .expect("Runtime VFS must be configured before registering file consumers")
     }
 
     /// Creates browser automation tools from the browser host capability.

@@ -1479,6 +1479,7 @@ impl ChatServiceCore {
             false,
             currentChatId.clone(),
             &configuration,
+            None,
         )
         .await
         .map_err(|error| error.to_string())

@@ -44,10 +44,16 @@ uuid.workspace = true
 zip.workspace = true
 
 [build-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
 operit-plugin-sdk-codegen = { version = "=2.0.0-preview.17", path = "../../plugin/codegen" }
 
 [dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
 operit-js-bridge = { path = "../../plugin/javascript-bridge" }
+
+[[test]]
+name = "native_filesystem_boundary"
+path = "build_support/native_filesystem.rs"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 operit-host-native-terminal = { path = "../../../../hosts/common/operit-host-native-terminal" }

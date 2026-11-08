@@ -120,3 +120,37 @@ fn paired_device_statuses_follow_active_peer_links_only() {
         Some(&RuntimePairedDeviceStatus::Offline)
     );
 }
+
+fn protocolDevice(id: &str, software: Option<&str>, protocol: Option<u32>) -> RuntimeDeviceSpaceDevice {
+    RuntimeDeviceSpaceDevice {
+        deviceId: id.into(), userName: String::new(), deviceName: id.into(),
+        platform: "test".into(), model: "test".into(), coreVersion: software.map(str::to_owned),
+        protocolVersion: protocol, online: true, relayHops: None, relayPath: None, currentIdentity: None,
+    }
+}
+
+#[test]
+fn software_releases_and_coreless_edge_do_not_change_protocol_compatibility() {
+    let core = protocolDevice("core", Some("2.0.0"), Some(crate::PeerProtocol::VERSION));
+    for peer in [
+        protocolDevice("new-core", Some("9.0.0"), Some(crate::PeerProtocol::VERSION)),
+        protocolDevice("edge", None, Some(crate::PeerProtocol::VERSION)),
+    ] {
+        assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(true)).0,
+            RuntimeDeviceSpaceConnectionStatus::Online);
+    }
+}
+
+#[test]
+fn matching_software_does_not_hide_protocol_mismatch_or_missing_advertisement() {
+    let core = protocolDevice("core", Some("2.0.0"), Some(crate::PeerProtocol::VERSION));
+    let mut peer = protocolDevice("peer", Some("2.0.0"), Some(crate::PeerProtocol::VERSION + 1));
+    assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(true)).0,
+        RuntimeDeviceSpaceConnectionStatus::VersionMismatch);
+    peer.protocolVersion = None;
+    assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(true)).0,
+        RuntimeDeviceSpaceConnectionStatus::Unknown);
+    peer.online = false;
+    assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(true)).0,
+        RuntimeDeviceSpaceConnectionStatus::Offline);
+}

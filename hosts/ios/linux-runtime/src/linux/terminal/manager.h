@@ -49,7 +49,8 @@ struct TerminalHooks {
     // nullopt distinguishes a missing group from a group in another session.
     std::function<std::optional<uint32_t>(uint32_t)> group_session;
 };
-// Native PTYs provide byte queues and a real line discipline. Session ownership,
+// Native PTYs provide the line discipline when allowed by the host sandbox.
+// A socket-backed implementation handles restricted hosts. Session ownership,
 // devpts IDs and foreground groups belong solely to this guest instance.
 class TerminalManager {
     std::map<uint32_t, std::weak_ptr<TerminalState>> terminals_;
@@ -105,6 +106,12 @@ class TerminalManager {
     terminal::Attributes attributes(const TerminalEndpoint &endpoint) const;
     void attributes(const TerminalEndpoint &endpoint, const terminal::Attributes &value, unsigned action = 0);
     void flush(const TerminalEndpoint &endpoint, unsigned action);
+    void flow(const TerminalEndpoint &endpoint, unsigned action);
+    static bool software(const TerminalEndpoint &endpoint);
+    int input_queued(const TerminalEndpoint &endpoint) const;
+    // Both backends return byte counts or negative Linux errno values.
+    int64_t read(const TerminalEndpoint &endpoint, int fd, void *bytes, size_t length);
+    int64_t write(const TerminalEndpoint &endpoint, int fd, const void *bytes, size_t length);
     void opened(const TerminalEndpoint &endpoint, uint32_t pid, bool no_controlling);
     void acquire(const TerminalEndpoint &endpoint, uint32_t pid, bool steal);
     void detach(const TerminalEndpoint &endpoint, uint32_t pid);
@@ -123,7 +130,7 @@ class TerminalManager {
     void inject(const TerminalEndpoint &endpoint, uint32_t pid, uint8_t byte);
     // I/O hooks: before_io enforces guest background job rules; written_input
     // delivers ISIG characters to the guest foreground group after a successful
-    // native master write. read_result translates EOF/packet headers to Linux.
+    // master write. read_result translates EOF/packet headers to Linux.
     void before_io(const TerminalEndpoint &endpoint, uint32_t pid, bool writing);
     void before_control(const TerminalEndpoint &endpoint, uint32_t pid);
     void written_input(const TerminalEndpoint &endpoint, const void *bytes, size_t size);

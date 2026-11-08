@@ -26,10 +26,11 @@ struct InstructionSnapshot {
 struct OperationSnapshot {
     uint64_t cursor,pc,entry,immediate,auxiliary,operands;
     uint16_t index;
+    StaticRecipe recipe;
 };
 struct BlockSnapshot {
     uint64_t graph_pc,pc;
-    std::array<uint8_t,6> gp;
+    std::array<uint8_t,7> gp;
     std::array<uint8_t,8> vectors;
     std::vector<InstructionSnapshot> instructions;
     std::vector<OperationSnapshot> operations;
@@ -51,7 +52,13 @@ void operation_json(std::ostream &out,const OperationSnapshot &op) {
     out<<"{\"cursor\":"<<json_hex(op.cursor)<<",\"pc\":"<<json_hex(op.pc)<<",\"handler\":\""<<handler(op.auxiliary)
        <<"\",\"entry\":"<<json_hex(op.entry)<<",\"prefix\":"<<uint16_t(op.operands>>48)
        <<",\"a\":"<<uint16_t(op.operands)<<",\"b\":"<<uint16_t(op.operands>>16)<<",\"d\":"<<uint16_t(op.operands>>32)
-       <<",\"index\":"<<op.index<<",\"immediate\":"<<json_hex(op.immediate)<<",\"auxiliary\":"<<json_hex(op.auxiliary)<<'}';
+       <<",\"index\":"<<op.index<<",\"immediate\":"<<json_hex(op.immediate)<<",\"auxiliary\":"<<json_hex(op.auxiliary);
+    if(op.recipe.valid) {
+        out<<",\"recipe\":{\"handler\":\""<<execution_diagnostic_static_code_name(uint8_t(op.recipe.code))
+           <<"\",\"bits\":"<<op.recipe.bits<<",\"d\":"<<unsigned(op.recipe.d)<<",\"a\":"<<unsigned(op.recipe.a)
+           <<",\"b\":"<<unsigned(op.recipe.b)<<",\"flags\":"<<unsigned(op.recipe.flags)<<'}';
+    }
+    out<<'}';
 }
 void block_json(std::ostream &out,const BlockSnapshot &block,size_t operation_index) {
     out<<"{\"graph_pc\":"<<json_hex(block.graph_pc)<<",\"block_pc\":"<<json_hex(block.pc)
@@ -86,9 +93,12 @@ constexpr const char *event_names[]={
     "vector_selected_resident_read","vector_selected_spill_read","gp_bridge_spill","gp_bridge_reload",
     "vector_bridge_spill","vector_bridge_reload",
     "lazy_fp_enter","bridge_validate_call","active_fp_host_switch","bridge_fp_guest_restore",
-    "reserved38","native_proof_attempt","native_proof_success"
+    "reserved38","native_proof_attempt","native_proof_success","profile_superblock_entry","guest_aot_entry",
+    "guest_aot_indirect","guest_aot_trace","guest_aot_trace_fallthrough","guest_aot_trace_natural",
+    "guest_aot_scheduled_instructions","guest_aot_register_memory_attempt","guest_aot_register_memory_success",
+    "guest_aot_long_trace_entry","guest_aot_long_trace_edge"
 };
-static_assert(sizeof(event_names)/sizeof(event_names[0])==ED_EVENT_NATIVE_PROOF_SUCCESS+1);
+static_assert(sizeof(event_names)/sizeof(event_names[0])==ED_EVENT_GUEST_AOT_LONG_TRACE_EDGE+1);
 static_assert(sizeof(event_names)/sizeof(event_names[0])<=ED_EVENT_CAPACITY);
 constexpr const char *binding_names[]={"gp_read_resident","gp_read_spill","gp_write_resident","gp_write_spill",
     "vector_read_resident","vector_read_spill","vector_write_resident","vector_write_spill"};
@@ -152,10 +162,12 @@ void execution_diagnostics_observe_graph(ExecutionFrame &frame,const BlockGraph 
             snapshot.instructions.reserve(block->instructions.size());snapshot.operations.reserve(block->code.size());
             for(const auto &node:block->instructions)snapshot.instructions.push_back(
                 {node.pc,node.instruction.raw,unsigned(node.instruction.op),unsigned(node.instruction.encoding)});
-            for(const auto &op:block->code) {
+            for(size_t i=0;i<block->code.size();++i) {
+                const auto &op=block->code[i];
                 const auto info=operation_info(op);
                 snapshot.operations.push_back({pointer_value(&op),info.pc,pointer_value(op.entry),op.immediate,
-                                               info.auxiliary,operands(op,info.prefix),op.index});
+                                               info.auxiliary,operands(op,info.prefix),op.index,
+                                               i<block->recipes.size() ? block->recipes[i]:StaticRecipe{}});
             }
             pending.push_back(std::move(snapshot));
         }

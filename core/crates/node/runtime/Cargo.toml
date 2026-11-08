@@ -41,10 +41,15 @@ serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "sync", "rt"] }
 
 [build-dependencies]
+sha2 = "0.10"
+serde_json = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
+quote = "1"
+syn = { version = "2", features = ["full"] }
+sha2 = "0.10"
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 operit-model = { path = "../../foundation/model" }

@@ -2343,7 +2343,7 @@ pub struct SystemSettingData {
     pub value: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppOperationData {
     pub operationType: String,
     pub packageName: String,
@@ -2351,7 +2351,7 @@ pub struct AppOperationData {
     pub details: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppListData {
     pub includesSystemApps: bool,
     pub packages: Vec<String>,
@@ -2370,7 +2370,7 @@ pub struct NotificationData {
     pub timestamp: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppUsageTimeEntry {
     pub packageName: String,
     pub appName: String,
@@ -2379,7 +2379,7 @@ pub struct AppUsageTimeEntry {
     pub isSystemApp: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppUsageTimeResultData {
     pub startTime: i64,
     pub endTime: i64,
@@ -2975,6 +2975,12 @@ pub trait SystemOperationHost: Send + Sync {
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData>;
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData>;
     fn startApp(&self, packageName: &str) -> HostResult<AppOperationData>;
+    fn startAppWithActivity(&self, packageName: &str, activity: Option<&str>) -> HostResult<AppOperationData> {
+        if activity.is_some() {
+            return Err(HostError::new("Starting a specific activity is not supported by this host"));
+        }
+        self.startApp(packageName)
+    }
     fn stopApp(&self, packageName: &str) -> HostResult<AppOperationData>;
     fn getNotifications(&self, limit: i32, includeOngoing: bool) -> HostResult<NotificationData>;
     fn getAppUsageTime(

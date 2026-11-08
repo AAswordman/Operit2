@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use operit_host_api::{FileSystemHost, WebVisitHost, WebVisitRequest, WebVisitResult};
+use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use url::Url;
 
 use operit_tools::tools::ToolResultDataClasses::{
@@ -16,7 +17,7 @@ use operit_tools::ToolExecutionManager::{
 /// Web visit tool backed by a host-provided page fetcher and extractor.
 pub struct StandardWebVisitTool {
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    fileSystem: VisualFileSystem,
 }
 
 static VISIT_CACHE: OnceLock<Mutex<HashMap<String, VisitWebResultData>>> = OnceLock::new();
@@ -46,11 +47,11 @@ impl StandardWebVisitTool {
     /// Creates a web visit tool from host-provided visit and file services.
     pub fn new(
         webVisitHost: Option<Arc<dyn WebVisitHost>>,
-        fileSystemHost: Arc<dyn FileSystemHost>,
+        fileSystem: VisualFileSystem,
     ) -> Self {
         Self {
             webVisitHost,
-            fileSystemHost,
+            fileSystem,
         }
     }
 
@@ -111,7 +112,7 @@ impl StandardWebVisitTool {
         if resultData.content.len() <= MAX_INLINE_VISIT_CONTENT_CHARS {
             return Ok(resultData);
         }
-        let outputFile = writeVisitResultToFile(self.fileSystemHost.as_ref(), &resultData)?;
+        let outputFile = writeVisitResultToFile(&self.fileSystem, &resultData)?;
         let preview = buildInlineContentPreview(&resultData.content, &outputFile);
         Ok(resultData.copy_with_preview(preview, outputFile))
     }
@@ -245,15 +246,9 @@ impl StandardWebVisitTool {
                 let visitKey = uuid::Uuid::new_v4().to_string();
                 let mut stored = resultData.clone();
                 stored.visitKey = Some(visitKey.clone());
-                let stored = match self.persistVisitContentIfNeeded(stored) {
+                let stored = match self.persistVisitContentIfNeeded(stored.clone()) {
                     Ok(stored) => stored,
-                    Err(error) => {
-                        return toolError(
-                            tool,
-                            String::new(),
-                            format!("Error storing web visit content: {error}"),
-                        )
-                    }
+                    Err(_) => stored,
                 };
                 Self::putCachedVisitResult(stored.clone());
                 toolResultFromVisitWebData(tool, stored)
@@ -342,11 +337,11 @@ fn parseBoolean(raw: Option<&str>) -> bool {
 
 #[allow(non_snake_case)]
 fn writeVisitResultToFile(
-    fileSystemHost: &dyn FileSystemHost,
+    vfs: &VisualFileSystem,
     resultData: &VisitWebResultData,
 ) -> Result<String, String> {
     const VISIT_OUTPUT_DIRECTORY: &str = "/operitapp/data/temp/visit_web";
-    fileSystemHost
+    vfs
         .makeDirectory(VISIT_OUTPUT_DIRECTORY, true)
         .map_err(|error| error.to_string())?;
     let hostRaw = Url::parse(&resultData.url)
@@ -370,7 +365,7 @@ fn writeVisitResultToFile(
         &uuid::Uuid::new_v4().to_string()[..8]
     );
     let text = StandardWebVisitTool::buildFullVisitResultText(resultData);
-    fileSystemHost
+    vfs
         .writeFile(&filePath, &text, false)
         .map_err(|error| error.to_string())?;
     Ok(filePath)
@@ -386,6 +381,33 @@ fn buildInlineContentPreview(fullContent: &str, savedPath: &str) -> String {
         "{preview}\n\n[Content truncated. Full content saved to file: {}]",
         savedPath
     )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod storage_tests {
+    use super::*;
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_tools::files::PathMapper::PathMapper;
+
+    #[test]
+    fn long_visit_is_saved_through_vfs_and_readable_by_virtual_path() {
+        let root = std::env::temp_dir().join(format!("operit-visit-test-{}", uuid::Uuid::new_v4()));
+        let mapper = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
+        let host = Arc::new(PosixFileSystemHost::new());
+        let tool = StandardWebVisitTool::new(None, VisualFileSystem::new(host.clone(), mapper.clone()));
+        let content = "page content ".repeat(2000);
+        let result = webVisitResultToVisitData(WebVisitResult {
+            url: "https://example.com/".into(), title: "Example".into(), content: content.clone(),
+            metadata: vec![], links: vec![], imageLinks: vec![],
+        });
+        let result = tool.persistVisitContentIfNeeded(result).unwrap();
+        let path = result.contentSavedTo.unwrap();
+        assert!(path.starts_with("/operitapp/data/temp/visit_web/"));
+        assert!(result.contentTruncated);
+        let vfs = VisualFileSystem::new(host, mapper);
+        assert!(vfs.readFile(&path).unwrap().contains(&content));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 trait VisitWebResultPreview {

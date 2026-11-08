@@ -29,6 +29,27 @@ void main() {
     );
   });
 
+  test('summary stages expose localized labels and increasing estimates', () {
+    final l10n = AppLocalizationsZh();
+    expect(
+      inputProcessingStatusText(
+        l10n,
+        core_proxy.InputProcessingState.summarizing(
+          message: 'summary_key_files',
+        ),
+      ),
+      '正在整理关键文件与代码...',
+    );
+    expect(
+      summaryStageProgress('summary_key_files'),
+      greaterThan(summaryStageProgress('summary_core_task')),
+    );
+    expect(
+      summaryStageProgress('summary_formatting'),
+      greaterThan(summaryStageProgress('summary_next_steps')),
+    );
+  });
+
   testWidgets('reserves the same status lane height when status is hidden', (
     tester,
   ) async {

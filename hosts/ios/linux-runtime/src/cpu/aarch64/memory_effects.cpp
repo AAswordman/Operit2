@@ -44,7 +44,11 @@ Effects instruction_effects(const Instruction &i) {
         case Encoding::ScalarSqrt64:e.vector_read=uint32_t{1}<<i.rn;e.vector_write=uint32_t{1}<<i.rd;break;
         case Encoding::ScalarCompare64:e.vector_read=uint32_t{1}<<i.rn;if(!(raw&8))e.vector_read|=uint32_t{1}<<i.rm;e.flags_write=true;break;
         case Encoding::ScalarSelect64:e.vector_read=(uint32_t{1}<<i.rn)|(uint32_t{1}<<i.rm);e.vector_write=uint32_t{1}<<i.rd;e.flags_read=true;break;
-        case Encoding::ScalarUnsignedToDouble64:read(i.rn);e.vector_write=uint32_t{1}<<i.rd;break;
+        case Encoding::ScalarUnsignedToDouble64:case Encoding::ScalarSignedToDouble64:
+        case Encoding::ScalarUnsignedToDouble32:case Encoding::ScalarSignedToDouble32:
+            read(i.rn);e.vector_write=uint32_t{1}<<i.rd;break;
+        case Encoding::ScalarDoubleToSigned32:case Encoding::ScalarDoubleToSigned64:
+            e.vector_read=uint32_t{1}<<i.rn;write(i.rd);break;
         case Encoding::VectorImmediate:e.vector_write=uint32_t{1}<<i.rd;break;
         case Encoding::VectorToRegister32:case Encoding::VectorToRegister64:case Encoding::VectorHighToRegister:
             e.vector_read=uint32_t{1}<<i.rn;write(i.rd);break;

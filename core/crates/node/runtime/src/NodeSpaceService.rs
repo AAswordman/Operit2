@@ -25,7 +25,8 @@ pub fn spaceCallError(message: String) -> CoreLinkError {
     let code = message.split(':').next().unwrap_or("");
     if matches!(code, "SPACE_MESSAGE_LIMIT" | "SPACE_PROTOCOL_INCOMPATIBLE"
         | "SPACE_EXPORT_CHANGED" | "SPACE_EXPORT_CURSOR_INVALID"
-        | "SPACE_EXPORT_MIGRATION_REQUIRED" | "SPACE_EXPORT_INVALID") {
+        | "SPACE_EXPORT_MIGRATION_REQUIRED" | "SPACE_EXPORT_INVALID"
+        | "PEER_PROTOCOL_MISMATCH" | "PEER_PROTOCOL_UPGRADE_REQUIRED") {
         CoreLinkError::new(code.to_owned(), message)
     } else { CoreLinkError::internal(message) }
 }
@@ -521,15 +522,20 @@ impl NodeSpaceService {
     }
     /// Initialize the same membership and creator policy, but keep this endpoint
     /// projection node-local rather than registering a business data replica.
-    pub fn initialize(&self, profile: CoreSpaceDeviceProfile) -> Result<(), String> {
+    pub fn initialize(&self, mut profile: CoreSpaceDeviceProfile) -> Result<(), String> {
         if profile.nodeId != self.localNodeId { return Err("Local profile identity mismatch".into()); }
+        profile.protocolVersion = Some(crate::PeerProtocol::VERSION);
         self.space.initialize()?;
         self.control.migrateNodeLocalProjection(self.storage.as_ref())?;
         self.space.pruneNodeLocalProjection()?;
         self.control.pruneNodeLocalProjection()?;
         let existing = self.space.deviceProfiles()?.remove(&self.localNodeId);
+        if let Some(old) = &existing {
+            profile.updatedAt = profile.updatedAt.max(old.updatedAt.saturating_add(1));
+        }
         if !existing.is_some_and(|old| old.displayName == profile.displayName && old.userName == profile.userName
-            && old.platform == profile.platform && old.model == profile.model && old.coreVersion == profile.coreVersion) {
+            && old.platform == profile.platform && old.model == profile.model && old.coreVersion == profile.coreVersion
+            && old.protocolVersion == profile.protocolVersion) {
             self.space.importDeviceProfiles(vec![profile])?;
         }
         self.control.initializeCurrentSpace()?;

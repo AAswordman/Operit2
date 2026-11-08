@@ -216,6 +216,24 @@ impl PathMapper {
         Ok(format!("/{}", segments.join("/")))
     }
 
+    /// Accepts VFS paths, native absolute paths and paths relative to a file directory.
+    /// Native compatibility paths enter the mounted VFS before any host access.
+    #[allow(non_snake_case)]
+    pub fn resolveFileResourcePath(directory: Option<&str>, path: &str) -> Result<String, String> {
+        let path = Self::resolveFileToolPath(directory, path)?;
+        let path = path.replace('\\', "/");
+        if let Some(path) = normalizeWindowsHostWorkspacePath(&path)? {
+            return Ok(path);
+        }
+        let path = normalizeAbsoluteVfsPath(&path)?;
+        let root = path.split('/').find(|part| !part.is_empty());
+        if root.is_none() || VFS_ROOTS.iter().any(|entry| Some(entry.name) == root) {
+            Self::canonicalizeVfsPath(&path)
+        } else {
+            normalizeAbsoluteHostWorkspacePath(&path)
+        }
+    }
+
     /// Normalizes a path relative to an existing VFS root.
     #[allow(non_snake_case)]
     pub fn normalizeRelativePath(path: &str) -> Result<String, String> {

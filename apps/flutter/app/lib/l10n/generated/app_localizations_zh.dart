@@ -167,6 +167,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get summaryGenerating => '正在生成总结...';
 
   @override
+  String get summaryStageCore => '正在整理核心任务...';
+
+  @override
+  String get summaryStageConstraints => '正在整理用户需求与约束...';
+
+  @override
+  String get summaryStageFiles => '正在整理关键文件与代码...';
+
+  @override
+  String get summaryStageErrors => '正在整理错误与修复...';
+
+  @override
+  String get summaryStageInteraction => '正在整理互动与设定...';
+
+  @override
+  String get summaryStageNext => '正在整理下一步...';
+
+  @override
+  String get summaryStageFormatting => '正在调整总结格式...';
+
+  @override
   String get chatCompressingHistory => '正在压缩历史记录...';
 
   @override

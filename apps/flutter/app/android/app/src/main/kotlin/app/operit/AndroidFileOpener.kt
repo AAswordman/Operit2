@@ -15,6 +15,29 @@ internal class AndroidFileOpener(context: Context) {
     private val context = context.applicationContext
 
     fun open(file: File?, tree: String?, documentId: String?) {
+        val (uri, mimeType) = readableUri(file, tree, documentId)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            clipData = ClipData.newRawUri("Opened file", uri)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
+    }
+
+    fun share(file: File?, tree: String?, documentId: String?, title: String) {
+        val (uri, mimeType) = readableUri(file, tree, documentId)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newRawUri("Shared file", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, title.takeIf { it.isNotBlank() }).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        })
+    }
+
+    private fun readableUri(file: File?, tree: String?, documentId: String?): Pair<Uri, String> {
         val uri: Uri
         val mimeType: String
         if (file != null) {
@@ -43,13 +66,7 @@ internal class AndroidFileOpener(context: Context) {
             uri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(tree), documentId)
             mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
         }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mimeType)
-            clipData = ClipData.newRawUri("Opened file", uri)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        // ActivityNotFoundException / SecurityException propagate to the tool result.
-        context.startActivity(intent)
+        return Pair(uri, mimeType)
     }
 }
 

@@ -16,10 +16,11 @@ import java.util.zip.ZipOutputStream
  * Invoked by native runtime workers, never by the UI thread through MethodChannel. */
 class AndroidDocumentFileSystem(
     private val documents: DocumentTreeAccess,
+    private val fileSharer: ((File?, String?, String?, String) -> Unit)? = null,
     private val fileOpener: ((File?, String?, String?) -> Unit)? = null,
 ) {
     constructor(context: Context) : this(
-        ContentResolverDocumentTreeAccess(context), AndroidFileOpener(context)::open,
+        ContentResolverDocumentTreeAccess(context), AndroidFileOpener(context)::share, AndroidFileOpener(context)::open,
     )
     private val prefix = "operit-resource:"
     private class Missing(message: String) : FileNotFoundException(message)
@@ -55,13 +56,19 @@ class AndroidDocumentFileSystem(
                 node(request.getString("path")).output(request.optBoolean("append")).use { it.write(content) }
                 JSONObject.NULL
             }
-            "openFile" -> {
+            "openFile", "shareFile" -> {
                 val target = node(request.getString("path"))
                 require(!target.info().getBoolean("isDirectory")) { "Cannot open a directory as a file" }
                 // Validate the real read capability, including revoked SAF grants.
                 target.input().use { }
-                val opener = fileOpener ?: throw UnsupportedOperationException("File opener is not installed")
-                opener(target.file, target.tree, if (target.file == null) target.documentId() else null)
+                val id = if (target.file == null) target.documentId() else null
+                if (request.getString("operation") == "openFile") {
+                    val opener = fileOpener ?: throw UnsupportedOperationException("File opener is not installed")
+                    opener(target.file, target.tree, id)
+                } else {
+                    val sharer = fileSharer ?: throw UnsupportedOperationException("File sharing is not installed")
+                    sharer(target.file, target.tree, id, request.optString("title", ""))
+                }
                 JSONObject.NULL
             }
             "fileExists" -> node(request.getString("path")).existence()

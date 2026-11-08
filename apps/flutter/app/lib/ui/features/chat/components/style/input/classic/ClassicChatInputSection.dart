@@ -23,6 +23,7 @@ import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatInputEnterShortcuts.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
+import '../common/InputProcessingStatusLane.dart';
 import '../common/PendingQueueMessageItem.dart';
 
 class ClassicChatInputSection extends StatefulWidget {
@@ -1369,7 +1370,7 @@ double _classicProgressFor(core_proxy.InputProcessingState state) {
   return switch (state.kind) {
     'Processing' => 0.3,
     'Connecting' => 0.6,
-    'Summarizing' => 0.05,
+    'Summarizing' => summaryStageProgress(state.message),
     'ToolProgress' => state.progress.clamp(0, 1),
     _ => 1,
   };

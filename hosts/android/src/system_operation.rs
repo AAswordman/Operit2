@@ -10,11 +10,14 @@ pub type AndroidSystemSettingReader =
     Arc<dyn Fn(&str, &str) -> HostResult<SystemSettingData> + Send + Sync>;
 pub type AndroidSystemSettingWriter =
     Arc<dyn Fn(&str, &str, &str) -> HostResult<SystemSettingData> + Send + Sync>;
+pub type AndroidPackageOperation =
+    Arc<dyn Fn(&str, serde_json::Value) -> HostResult<serde_json::Value> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct AndroidSystemOperationHost {
     settingReader: AndroidSystemSettingReader,
     settingWriter: AndroidSystemSettingWriter,
+    packageOperation: AndroidPackageOperation,
     language: Option<String>,
 }
 
@@ -23,10 +26,12 @@ impl AndroidSystemOperationHost {
     pub fn new(
         settingReader: AndroidSystemSettingReader,
         settingWriter: AndroidSystemSettingWriter,
+        packageOperation: AndroidPackageOperation,
     ) -> Self {
         Self {
             settingReader,
             settingWriter,
+            packageOperation,
             language: None,
         }
     }
@@ -36,12 +41,25 @@ impl AndroidSystemOperationHost {
         language: String,
         settingReader: AndroidSystemSettingReader,
         settingWriter: AndroidSystemSettingWriter,
+        packageOperation: AndroidPackageOperation,
     ) -> Self {
         Self {
             settingReader,
             settingWriter,
+            packageOperation,
             language: Some(language),
         }
+    }
+
+    fn packageRequest<T: serde::de::DeserializeOwned>(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> HostResult<T> {
+        let response = (self.packageOperation)(operation, params)?;
+        serde_json::from_value(response).map_err(|error| {
+            HostError::new(format!("Android {operation} response invalid: {error}"))
+        })
     }
 }
 
@@ -84,33 +102,40 @@ impl SystemOperationHost for AndroidSystemOperationHost {
     }
 
     fn installApp(&self, path: &str) -> HostResult<AppOperationData> {
-        Err(HostError::new(format!(
-            "Android install_app requires the Android package host bridge: {path}"
-        )))
+        self.packageRequest("install_app", serde_json::json!({"path": path}))
     }
 
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        Err(HostError::new(format!(
-            "Android uninstall_app requires the Android package host bridge: {packageName}"
-        )))
+        self.packageRequest(
+            "uninstall_app",
+            serde_json::json!({"packageName": packageName}),
+        )
     }
 
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData> {
-        Err(HostError::new(format!(
-            "Android list_installed_apps requires the Android package host bridge, include_system_apps={includeSystemApps}"
-        )))
+        self.packageRequest(
+            "list_installed_apps",
+            serde_json::json!({"includeSystemApps": includeSystemApps}),
+        )
     }
 
     fn startApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        Err(HostError::new(format!(
-            "Android start_app requires the Android package host bridge: {packageName}"
-        )))
+        self.startAppWithActivity(packageName, None)
+    }
+
+    fn startAppWithActivity(
+        &self,
+        packageName: &str,
+        activity: Option<&str>,
+    ) -> HostResult<AppOperationData> {
+        self.packageRequest(
+            "start_app",
+            serde_json::json!({"packageName": packageName, "activity": activity}),
+        )
     }
 
     fn stopApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        Err(HostError::new(format!(
-            "Android stop_app requires the Android package host bridge: {packageName}"
-        )))
+        self.packageRequest("stop_app", serde_json::json!({"packageName": packageName}))
     }
 
     fn getNotifications(&self, limit: i32, includeOngoing: bool) -> HostResult<NotificationData> {
@@ -126,9 +151,7 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         limit: i32,
         includeSystemApps: bool,
     ) -> HostResult<AppUsageTimeResultData> {
-        Err(HostError::new(format!(
-            "Android get_app_usage_time requires the Android usage stats host bridge: package={packageName}, since_hours={sinceHours}, limit={limit}, include_system_apps={includeSystemApps}"
-        )))
+        self.packageRequest("get_app_usage_time", serde_json::json!({"packageName": packageName, "sinceHours": sinceHours, "limit": limit, "includeSystemApps": includeSystemApps}))
     }
 
     fn getDeviceLocation(
@@ -166,5 +189,65 @@ impl SystemOperationHost for AndroidSystemOperationHost {
             language.asHostValue(),
             quality.asHostValue()
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn package_operations_forward_arguments_and_decode_responses() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let host = AndroidSystemOperationHost::new(
+            Arc::new(|_, _| Err(HostError::new("unused"))),
+            Arc::new(|_, _, _| Err(HostError::new("unused"))),
+            Arc::new(move |operation, params| {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push((operation.to_string(), params));
+                Ok(match operation {
+                    "list_installed_apps" => {
+                        serde_json::json!({"includesSystemApps": true, "packages": ["app.example"]})
+                    }
+                    "get_app_usage_time" => {
+                        serde_json::json!({"startTime": 1, "endTime": 2, "sinceHours": 3, "requestedPackageName": null, "includesSystemApps": false, "totalEntries": 0, "entries": []})
+                    }
+                    _ => {
+                        serde_json::json!({"operationType": operation, "packageName": "app.example", "success": true, "details": "requested"})
+                    }
+                })
+            }),
+        );
+        host.installApp("/tmp/example.apk").unwrap();
+        host.uninstallApp("app.example").unwrap();
+        assert_eq!(
+            host.listInstalledApps(true).unwrap().packages,
+            ["app.example"]
+        );
+        host.startAppWithActivity("app.example", Some(".MainActivity"))
+            .unwrap();
+        host.stopApp("app.example").unwrap();
+        assert_eq!(
+            host.getAppUsageTime("", 3, 10, false).unwrap().totalEntries,
+            0
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 6);
+        assert_eq!(calls[3].1["activity"], ".MainActivity");
+        assert_eq!(calls[5].1["sinceHours"], 3);
+    }
+
+    #[test]
+    fn malformed_package_response_is_an_error() {
+        let host = AndroidSystemOperationHost::new(
+            Arc::new(|_, _| Err(HostError::new("unused"))),
+            Arc::new(|_, _, _| Err(HostError::new("unused"))),
+            Arc::new(|_, _| Ok(serde_json::json!({}))),
+        );
+        assert!(host.startApp("app.example").is_err());
     }
 }

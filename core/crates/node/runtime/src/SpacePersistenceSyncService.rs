@@ -544,7 +544,13 @@ impl SpacePersistenceSyncService {
                 "synchronization target is not reachable in the current device space: {targetNodeId}"
             ));
         }
-        if self.storageReplicationAllowed(targetNodeId)? && self.state.nodeRouter.localNodeId().as_str() > targetNodeId {
+        let storageReplicationAllowed = self.storageReplicationAllowed(targetNodeId)?;
+        if storageReplicationAllowed {
+            let protocol: crate::PeerProtocol::PeerProtocol = callRemote(&self.state.nodeRouter,
+                targetNodeId, PeerSyncMethod::Protocol, Value::Null).await?;
+            protocol.requireCompatible().map_err(|error| error.to_string())?;
+        }
+        if storageReplicationAllowed && self.state.nodeRouter.localNodeId().as_str() > targetNodeId {
             let request = callRemote::<PeerSyncStatus>(&self.state.nodeRouter, targetNodeId,
                 PeerSyncMethod::SyncRequest, json!(SyncRequest { limit, force }));
             tokio::pin!(request);

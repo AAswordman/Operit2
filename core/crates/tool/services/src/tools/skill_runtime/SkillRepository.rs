@@ -11,6 +11,7 @@ use operit_host_api::{FileSystemHost, HttpRequestData};
 use url::Url;
 
 pub struct SkillRepository {
+    context: HostManager,
     skillManager: SkillManager,
     fileSystemHost: Arc<dyn FileSystemHost>,
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
@@ -33,6 +34,7 @@ impl SkillRepository {
             .clone()
             .expect("SkillRepository requires a FileSystemHost");
         Self {
+            context: context.clone(),
             skillManager: SkillManager::fromDefaultPaths(fileSystemHost.clone()),
             fileSystemHost,
             runtimeSupport,
@@ -126,7 +128,7 @@ impl SkillRepository {
     /// Imports a skill from a zip archive by searching for SKILL.md.
     #[allow(non_snake_case)]
     pub fn importSkillFromZip(&self, zipFile: &Path) -> String {
-        self.skillManager.importSkillFromZip(zipFile)
+        self.importSkillFromZipWithSubDir(zipFile, None)
     }
 
     /// Imports a skill from a zip archive using an optional subdirectory inside the zip.
@@ -136,8 +138,20 @@ impl SkillRepository {
         zipFile: &Path,
         subDirPathInZip: Option<&str>,
     ) -> String {
-        self.skillManager
-            .importSkillFromZipWithSubDir(zipFile, subDirPathInZip)
+        let archive = (|| -> Result<Vec<u8>, String> {
+            let storage = self.context.runtimeStorageHost.clone().ok_or("Runtime storage is required for skill import")?;
+            let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+            let directory = context.as_ref().map(|context| context.fileDirectory(storage)).transpose()?.flatten();
+            let path = crate::files::PathMapper::PathMapper::resolveFileResourcePath(directory.as_deref(), &zipFile.to_string_lossy())?;
+            let vfs = crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?;
+            vfs.readFileBytes(&path)
+        })();
+        match archive {
+            Ok(bytes) if zipFile.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("zip")) =>
+                self.skillManager.importSkillArchiveBytes(&bytes, zipFile, subDirPathInZip),
+            Ok(_) => "Only .zip files are supported".to_string(),
+            Err(error) => format!("Cannot read skill file: {error}"),
+        }
     }
 
     /// Downloads a GitHub repository zip and imports a skill from it.
@@ -283,9 +297,13 @@ impl SkillRepository {
                 };
                 let safeName =
                     ensureUniqueFileName(&sanitizeAttachmentName(&displayName), &mut usedFileNames);
-                self.fileSystemHost
-                    .copyFile(&hostPath(path), &hostPath(&assetsDir.join(safeName)), false)
-                    .map_err(|error| error.to_string())?;
+                let storage = self.context.runtimeStorageHost.clone().ok_or("Runtime storage is required for skill attachments")?;
+                let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+                let directory = context.as_ref().map(|context| context.fileDirectory(storage)).transpose()?.flatten();
+                let source = crate::files::PathMapper::PathMapper::resolveFileResourcePath(directory.as_deref(), &hostPath(path))?;
+                let destination = crate::files::PathMapper::PathMapper::resolveFileResourcePath(None, &hostPath(&assetsDir.join(safeName)))?;
+                crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?
+                    .copyFile(&source, &destination, false)?;
             }
         }
 

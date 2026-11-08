@@ -23,7 +23,8 @@ enum class StaticCode : uint8_t {
     GpToVector, VectorToGp, VectorImmediate, UnsignedToDouble,
     Jump, Call, Indirect, IndirectCall, Branch, CompareBranch, TestBranch,
     CompareImmediateBranch, ReadTls, WriteTls, ReadFlags, WriteFlags, ConditionalCompare,
-    LoadWriteback, StoreWriteback, SignedLoadWriteback, VectorLoadWriteback, VectorStoreWriteback, FUnary, BlockBody, Count
+    LoadWriteback, StoreWriteback, SignedLoadWriteback, VectorLoadWriteback, VectorStoreWriteback, FUnary, BlockBody, ScheduledLoads, SignedToDouble, DoubleToSigned,
+    SmaddLong, UmaddLong, SmsubLong, UmsubLong, Count
 };
 struct InstructionNode {
     uint64_t pc=0,constant=0;
@@ -31,6 +32,9 @@ struct InstructionNode {
     Instruction instruction;
     Effects effects;
     bool constant_result=false,dead_result=false,discard_flags=false;
+    // A full-width architectural copy selected by value numbering; originals
+    // remain intact for precise prefixes and cold semantic execution.
+    int8_t copy_register=-1;
 };
 // One fixed-size native record. index locates cold metadata; it is never a
 // guest retirement count. Native control edges use b for their retired prefix.
@@ -118,12 +122,24 @@ struct IndirectCache {
 static_assert(offsetof(IndirectCache,metadata)==OP_SIZE);
 static_assert(offsetof(IndirectCache,generation)==48 && offsetof(IndirectCache,source)==64 && offsetof(IndirectCache,targets)==72);
 static_assert(sizeof(IndirectTarget)==16);
+#if OPERIT_EXECUTION_DIAGNOSTICS
+// Build-time AOT tooling needs the exact handler variant chosen by lowering.
+// Diagnostic-only: production records and their assembly ABI remain unchanged.
+struct StaticRecipe {
+    StaticCode code=StaticCode::Block;
+    uint16_t bits=0;
+    uint8_t d=0,a=0,b=0,flags=0;
+    bool valid=false;
+    const void *selected=nullptr;
+};
+#endif
 struct BasicBlock {
     uint64_t pc=0;
     std::vector<InstructionNode> instructions;
     std::vector<uint64_t> successors;
     std::vector<StaticOperation> code;
     std::vector<OperationMetadata> metadata;
+    OPERIT_EXEC_DIAGNOSTIC(std::vector<StaticRecipe> recipes;)
 };
 // Detached records keep their metadata inline in their source-owned plan.
 // Their metadata remains readable even after the guarded destination is evicted.
@@ -165,6 +181,9 @@ struct BlockGraph {
     std::vector<StaticProof> proofs;
     std::unordered_map<uint64_t,const InstructionNode*> source;
     uint64_t eliminated=0,fused=0;
+    uint64_t ssa_constants=0,cse_copies=0,cse_eliminated=0,scheduled_loads=0;
+    // Cross-block facts are valid only after this graph's root entry.
+    bool root_entry_only=false;
     std::unordered_map<const StaticOperation*,std::unique_ptr<BridgePlan>> bridges;
     std::unordered_map<const StaticOperation*,std::unique_ptr<IndirectCache>> indirect_caches;
     OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::State *diagnostics=nullptr;)
@@ -174,7 +193,13 @@ struct BlockGraph {
 static_assert(offsetof(BlockGraph,referenced)==0);
 // Shared decoded CFG and optimization pipeline, before backend-specific lowering.
 std::unique_ptr<BlockGraph> build_instruction_graph(const std::vector<std::pair<uint64_t,uint32_t>> &words,uint64_t pc);
-std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedComponents *intrinsics=nullptr);
+using GraphEntryKnown = bool (*)(const void *context,uint64_t pc);
+using GraphCallHot = bool (*)(const void *context,uint64_t source,uint64_t target);
+enum class GraphDiscoveryPolicy { Eager, DeferCallTargets, DeferNonLoopCalls };
+std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedComponents *intrinsics=nullptr,
+                                       GraphEntryKnown entry_known=nullptr,const void *entry_context=nullptr,
+                                       GraphDiscoveryPolicy policy=GraphDiscoveryPolicy::Eager,
+                                       GraphCallHot call_hot=nullptr,const void *call_context=nullptr);
 void lower_graph(BlockGraph &graph);
 // Table lookup happens during lowering, never to select arithmetic at runtime.
 const void *static_entry(StaticCode code,unsigned bits=64,unsigned d=7,unsigned a=7,unsigned b=7,unsigned flags=0);
