@@ -22,8 +22,8 @@
     {
       "name": "AGNES_BASE_URL",
       "description": {
-        "zh": "Agnes API 站点（必填）。可选值只有两个：https://apihub.agnes-ai.com/v1（国际站）或 https://api.agnes-ai.cn/v1（国内站）。两个站点的 Key 不能通用，必须与你的 Key 归属站点一致。",
-        "en": "Agnes API site (required). Only two values are accepted: https://apihub.agnes-ai.com/v1 (international) or https://api.agnes-ai.cn/v1 (China). Keys are site-specific and must match the site the key was issued for."
+        "zh": "Agnes API 站点（必填，二选一）。必须从以下两个站点中选择一个填入：https://apihub.agnes-ai.com/v1（国际站）或 https://api.agnes-ai.cn/v1（国内站）。不支持其他地址。两个站点的 Key 不能通用，所选站点必须与你的 Key 归属一致。",
+        "en": "Agnes API site (required, choose exactly one). You must pick one of these two sites: https://apihub.agnes-ai.com/v1 (international) or https://api.agnes-ai.cn/v1 (China). Other addresses are not supported. Keys are site-specific, so the chosen site must match where your key was issued."
       },
       "required": true
     },
