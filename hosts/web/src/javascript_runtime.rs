@@ -10,11 +10,12 @@ use operit_host_api::{
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 
 thread_local! {
+    static JAVASCRIPT_INTERRUPT_SIGNALS: RefCell<BTreeMap<u64, js_sys::Int32Array>> = RefCell::new(BTreeMap::new());
     static JAVASCRIPT_STATES: RefCell<BTreeMap<u64, HostJavaScriptRuntimeState>> = RefCell::new(BTreeMap::new());
     static JAVASCRIPT_STATE_LOCKS: RefCell<BTreeMap<u64, Rc<tokio::sync::Mutex<()>>>> = RefCell::new(BTreeMap::new());
     static DESTROYED_JAVASCRIPT_STATES: RefCell<BTreeSet<u64>> = RefCell::new(BTreeSet::new());
@@ -58,37 +59,46 @@ struct WebExecution {
 
 /// Cancellation and transport messages notify the same shared atomic wait word.
 struct WebInterruptController {
-    signal: [AtomicI32; 4],
+    signalId: u64,
     execution: Mutex<WebExecution>,
     owner: Weak<Self>,
 }
 
 impl WebInterruptController {
     fn new() -> Arc<Self> {
+        let signalId = NEXT_JAVASCRIPT_STATE_ID.fetch_add(1, Ordering::Relaxed);
+        let signal = js_sys::Int32Array::new(&js_sys::SharedArrayBuffer::new(16));
+        JAVASCRIPT_INTERRUPT_SIGNALS.with(|signals| signals.borrow_mut().insert(signalId, signal));
         Arc::new_cyclic(|owner| Self {
-            signal: std::array::from_fn(|_| AtomicI32::new(0)),
+            signalId,
             execution: Mutex::new(WebExecution::default()), owner: owner.clone(),
         })
     }
 
     fn signalView(&self) -> js_sys::Int32Array {
-        let memory = wasm_bindgen::memory().unchecked_into::<js_sys::WebAssembly::Memory>();
-        js_sys::Int32Array::new_with_byte_offset_and_length(
-            &memory.buffer(), self.signal.as_ptr() as u32, 4,
-        )
+        JAVASCRIPT_INTERRUPT_SIGNALS.with(|signals| {
+            signals.borrow().get(&self.signalId).expect("Web interrupt signal is owned by this executor").clone()
+        })
     }
 
     fn notify(&self) {
-        self.signal[0].fetch_add(1, Ordering::AcqRel);
-        let _ = js_sys::Atomics::notify(&self.signalView(), 0);
+        let signal = self.signalView();
+        js_sys::Atomics::add(&signal, 0, 1).expect("Web interrupt signal is shared");
+        js_sys::Atomics::notify(&signal, 0).expect("Web interrupt signal is shared");
     }
 
     fn cancel(&self, generation: u64) {
         let execution = self.execution.lock().expect("Web JavaScript execution scope poisoned");
         if execution.generation == generation {
-            self.signal[1].store(1, Ordering::Release);
+            js_sys::Atomics::store(&self.signalView(), 1, 1).expect("Web interrupt signal is shared");
             self.notify();
         }
+    }
+}
+
+impl Drop for WebInterruptController {
+    fn drop(&mut self) {
+        JAVASCRIPT_INTERRUPT_SIGNALS.with(|signals| signals.borrow_mut().remove(&self.signalId));
     }
 }
 
@@ -99,9 +109,10 @@ impl HostJavaScriptInterruptController for WebInterruptController {
         let (generation, previous) = {
             let mut execution = self.execution.lock().expect("Web JavaScript execution scope poisoned");
             execution.generation += 1;
-            self.signal[1].store(0, Ordering::Release);
-            self.signal[2].store(deadline as i32, Ordering::Release);
-            self.signal[3].store((deadline >> 32) as i32, Ordering::Release);
+            let signal = self.signalView();
+            js_sys::Atomics::store(&signal, 1, 0).expect("Web interrupt signal is shared");
+            js_sys::Atomics::store(&signal, 2, deadline as i32).expect("Web interrupt signal is shared");
+            js_sys::Atomics::store(&signal, 3, (deadline >> 32) as i32).expect("Web interrupt signal is shared");
             (execution.generation, std::mem::take(&mut execution.subscriptions))
         };
         drop(previous);
@@ -251,7 +262,7 @@ impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
             .map(|_| ())
     }
 
-    /// Shares event notifications with the browser transport through Wasm memory.
+    /// Shares event notifications through a dedicated browser SharedArrayBuffer.
     fn interruptController(&self) -> Arc<dyn HostJavaScriptInterruptController> {
         self.interrupts.clone()
     }

@@ -36,7 +36,8 @@
     "core/crates/rslink/runtime/src",
     "core/crates/runtime/application/src/services/SyncBlobTransferManager.rs",
     "core/crates/runtime/application/src/core/application/SyncConsistency.rs",
-    "core/crates/node/runtime/build_support/peer_protocol.rs"
+    "core/crates/node/runtime/build_support/peer_protocol.rs",
+    "core/crates/node/runtime/src/host_time.rs"
   ],
   "revisions": [
     {
@@ -54,6 +55,10 @@
     {
       "version": 4,
       "hash": "e1ecf1c5fd21c37f1cf9ab73f9acf199e262be2459ca05d4ce6e7a0f6fd969d1"
+    },
+    {
+      "version": 5,
+      "hash": "7f22d6b26127bf9618811fdfbdcd68468322b82e42e9510781c7d67ac6e8a0b6"
     }
   ],
   "schemaRoots": [

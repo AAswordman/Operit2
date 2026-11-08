@@ -312,8 +312,9 @@ impl Drop for Push {
     fn drop(&mut self) {
         if let Some(channel) = self.channel.take() {
             let pushId = self.id.clone();
+            let scheduler = self.scheduler.clone();
             let _ = self.scheduler.scheduleHostRuntimeAsyncTask("peer-push-close", Box::new(move || Box::pin(async move {
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(10), channel.exchange(
+                let _ = crate::host_time::withScheduler(scheduler.as_ref(), std::time::Duration::from_secs(10), channel.exchange(
                     CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close { pushId }))).await;
             })));
         }

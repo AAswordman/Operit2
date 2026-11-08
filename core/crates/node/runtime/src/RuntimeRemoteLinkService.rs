@@ -201,7 +201,7 @@ impl RuntimeRemoteLinkService {
                 nodeId: info.nodeId.clone(), address: address.clone(),
             }, transport, &invitation.invitationId);
             let result = crate::fault_isolation::link("QR pairing address", async {
-                tokio::time::timeout(std::time::Duration::from_secs(4), attempt).await
+                crate::host_time::timeout(std::time::Duration::from_secs(4), attempt).await
                     .map_err(|_| operit_link::CoreLinkError::new("PAIRING_TIMEOUT", "Connection timed out"))?
             }).await;
             match result {
@@ -474,7 +474,7 @@ impl RuntimeRemoteLinkService {
         // notice needs the first hop that still reaches them.
         let notices = self.captureRemovalNotices()?;
         self.networkControlStore.removeMember(deviceId.clone())?;
-        if tokio::time::timeout(
+        if crate::host_time::timeout(
             REMOVAL_NOTICES_BUDGET,
             self.deliverRemovalNotices(&deviceId, notices),
         )
@@ -563,7 +563,7 @@ impl RuntimeRemoteLinkService {
         let delivery = self
             .nodeRouter
             .sendSpaceEnvelopeAlongHop(firstHop, nodeId, request);
-        match tokio::time::timeout(REMOVAL_NOTICE_TIMEOUT, delivery).await {
+        match crate::host_time::timeout(REMOVAL_NOTICE_TIMEOUT, delivery).await {
             Ok(response) if response.result.is_ok() => {}
             Ok(response) => {
                 operit_util::AppLogger::AppLogger::w(

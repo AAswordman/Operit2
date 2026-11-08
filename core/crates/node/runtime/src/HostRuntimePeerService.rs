@@ -267,6 +267,12 @@ struct State {
 #[derive(Clone)]
 pub struct HostRuntimePeerService { state: Arc<State> }
 impl HostRuntimePeerService {
+    async fn timeout<F: std::future::Future>(&self, duration: std::time::Duration, operation: F) -> operit_host_api::HostResult<F::Output> {
+        let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.as_deref()
+            .ok_or_else(|| operit_host_api::HostError::new("Host scheduler is not installed"))?;
+        crate::host_time::withScheduler(scheduler, duration, operation).await
+    }
+
     /// Creates shared peer services and starts availability checks on the supplied Host scheduler.
     pub fn new<R>(
         host: Arc<HostManager>,
@@ -341,7 +347,7 @@ impl HostRuntimePeerService {
             let raw = self.raw(target.clone(), transport).await?;
             let handshake = self.handshake(raw.clone(), "start", "", None, None, invitationId);
             let result = if transport == PeerTransport::Serial {
-                tokio::time::timeout(std::time::Duration::from_secs(20), handshake).await
+                self.timeout(std::time::Duration::from_secs(20), handshake).await
                     .map_err(|_| error("Serial pairing handshake timed out")).and_then(|result| result)
             } else { handshake.await };
             raw.close().await;
@@ -452,7 +458,7 @@ impl HostRuntimePeerService {
             purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
             invitationId: invitationId.map(str::to_owned),
             pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
-        let reply: HelloReply = rawCall(&raw, "hello", &hello).await?;
+        let reply: HelloReply = rawCall(&self.state.host, &raw, "hello", &hello).await?;
         if !reply.duplex { return Err(error("Peer must support one bidirectional Link channel")); }
         let t = &reply.transcript;
         crate::PeerProtocol::PeerProtocol::requireAdvertised(t.protocol.as_ref())?;
@@ -484,7 +490,7 @@ impl HostRuntimePeerService {
         } else {
             (None, None)
         };
-        let accepted: Authorized = rawCall(&raw, "authorize", &Authorization {
+        let accepted: Authorized = rawCall(&self.state.host, &raw, "authorize", &Authorization {
             keyProof: crypto::proof(&key, &context, b"client"),
             spake: spake.1,
         }).await?;
@@ -582,7 +588,7 @@ impl HostRuntimePeerService {
         let confirmation = self.confirmPairing(&raw, id, code, &pending.root);
         // A USB UART cannot signal EOF after the remote handshake rejects.
         let result = if pending.transport == PeerTransport::Serial {
-            match tokio::time::timeout(std::time::Duration::from_secs(20), confirmation).await {
+            match self.timeout(std::time::Duration::from_secs(20), confirmation).await {
                 Ok(result) => result,
                 Err(_) => Err(error("Serial pairing confirmation timed out")),
             }
@@ -684,7 +690,7 @@ impl HostRuntimePeerService {
 
     /// Serializes one authenticated establishment per peer under its connection deadline.
     async fn establishChannel(&self, node: &str) -> Result<Arc<MultiplexedChannel>, CoreLinkError> {
-        tokio::time::timeout(std::time::Duration::from_millis(CONNECT_DEADLINE_MS), async {
+        self.timeout(std::time::Duration::from_millis(CONNECT_DEADLINE_MS), async {
             let lock = self.connectionLock(node);
             let _connect = lock.lock().await;
             self.requirePeerConnectionAllowed(node)?;
@@ -697,7 +703,7 @@ impl HostRuntimePeerService {
             for (address, transport) in endpoints {
                 let connect = self.raw(PeerEndpoint { nodeId: node.into(), address: address.clone() }, transport);
                 let result = if hasAlternatives {
-                    tokio::time::timeout(std::time::Duration::from_secs(5), connect).await
+                    self.timeout(std::time::Duration::from_secs(5), connect).await
                         .unwrap_or_else(|_| Err(CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Pairing endpoint connection timed out")))
                 } else { connect.await };
                 let raw = match result {
@@ -706,7 +712,7 @@ impl HostRuntimePeerService {
                 };
                 let handshake = self.handshake(raw.clone(), "session", &record.sessionId, Some(&root), None, None);
                 let result = if hasAlternatives {
-                    tokio::time::timeout(std::time::Duration::from_secs(5), handshake).await
+                    self.timeout(std::time::Duration::from_secs(5), handshake).await
                         .unwrap_or_else(|_| Err(CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Pairing endpoint authentication timed out")))
                 } else { handshake.await };
                 let channel = match result {
@@ -950,12 +956,14 @@ async fn readCall(raw: &Arc<dyn PeerConnection>, method: &str) -> Result<CoreCal
         _ => Err(error("Unauthenticated operation is not in the pairing whitelist")),
     }
 }
-async fn rawCall<T: Serialize, R: serde::de::DeserializeOwned>(raw: &Arc<dyn PeerConnection>, method: &str, args: &T) -> Result<R, CoreLinkError> {
+async fn rawCall<T: Serialize, R: serde::de::DeserializeOwned>(host: &HostManager, raw: &Arc<dyn PeerConnection>, method: &str, args: &T) -> Result<R, CoreLinkError> {
     let id = CoreRequestId::new(uuid::Uuid::new_v4().to_string());
     raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(id.0.clone(), HANDSHAKE, method,
         toCoreValue(args).map_err(|e| error(e.to_string()))?)))).await.map_err(error)?;
     let response = if raw.transport() == PeerTransport::Serial {
-        tokio::time::timeout(std::time::Duration::from_secs(5), raw.receive()).await
+        let scheduler = host.hostRuntimeTaskSchedulerHost.as_deref()
+            .ok_or_else(|| error("Host scheduler is not installed"))?;
+        crate::host_time::withScheduler(scheduler, std::time::Duration::from_secs(5), raw.receive()).await
             .map_err(|_| error("Serial pairing response timed out"))?
     } else { raw.receive().await };
     match response.map_err(error)? {
@@ -1436,8 +1444,12 @@ mod serial_response_deadline_tests {
             sends: sends.clone(),
             endpoint: PeerEndpoint { nodeId: "silent-board".into(), address: "test-uart".into() },
         });
+        let host = HostManager {
+            hostRuntimeTaskSchedulerHost: Some(Arc::new(operit_host_native_common::NativeHostRuntimeTaskSchedulerHost)),
+            ..HostManager::default()
+        };
         let response = tokio::time::timeout(std::time::Duration::from_secs(6),
-            rawCall::<_, CoreValue>(&raw, "hello", &CoreValue::Null)).await
+            rawCall::<_, CoreValue>(&host, &raw, "hello", &CoreValue::Null)).await
             .expect("handshake has its own bounded response deadline");
         assert!(response.unwrap_err().message.contains("Serial pairing response timed out"));
         assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1965,18 +1977,18 @@ mod handshake_response_tests {
     }
     #[tokio::test]
     async fn eof_during_pairing_is_a_closed_connection_not_a_correlation_error() {
-        let failure = rawCall::<_, CoreValue>(&peer(Outcome::Closed), "hello", &CoreValue::Null).await.unwrap_err();
+        let failure = rawCall::<_, CoreValue>(&HostManager::default(), &peer(Outcome::Closed), "hello", &CoreValue::Null).await.unwrap_err();
         assert_eq!(failure.code, "PEER_CONNECTION_CLOSED");
         assert!(failureProvesPeerUnavailable(&failure));
     }
     #[tokio::test]
     async fn response_ids_remain_strict_and_authorization_errors_are_preserved() {
-        let failure = rawCall::<_, CoreValue>(&peer(Outcome::WrongId), "hello", &CoreValue::Null).await.unwrap_err();
+        let failure = rawCall::<_, CoreValue>(&HostManager::default(), &peer(Outcome::WrongId), "hello", &CoreValue::Null).await.unwrap_err();
         assert_eq!(failure.code, "PEER_SECURITY");
         assert!(failure.message.contains("correlation mismatch"));
-        let denied = rawCall::<_, CoreValue>(&peer(Outcome::Denied), "hello", &CoreValue::Null).await.unwrap_err();
+        let denied = rawCall::<_, CoreValue>(&HostManager::default(), &peer(Outcome::Denied), "hello", &CoreValue::Null).await.unwrap_err();
         assert_eq!(denied.code, "PEER_REVOKED");
-        assert_eq!(rawCall::<_, CoreValue>(&peer(Outcome::Accepted), "hello", &CoreValue::Null).await.unwrap(), CoreValue::Null);
+        assert_eq!(rawCall::<_, CoreValue>(&HostManager::default(), &peer(Outcome::Accepted), "hello", &CoreValue::Null).await.unwrap(), CoreValue::Null);
     }
 }
 

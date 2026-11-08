@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 pub mod PeerRouter;
+#[cfg(feature = "peer-runtime")]
+mod host_time;
 
 /// Identifies the CoreNode selected by one protocol request.
 #[derive(Clone, Debug, PartialEq, Eq)]

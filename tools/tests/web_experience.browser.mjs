@@ -42,7 +42,8 @@ async function localServer() {
 async function waitForApplication(page) {
   await page.waitForFunction(() => {
     const text = document.body.innerText;
-    return text.includes('Navigation') || text.includes('我知道了');
+    if (text.includes('Operit2 encountered an error')) throw new Error(text);
+    return text.includes('展开输入框') || text.includes('我知道了');
   }, null, { timeout: 120_000 });
   const announcement = page.getByRole('button', { name: /^我知道了/ });
   if (await announcement.count() > 0) {
@@ -50,7 +51,8 @@ async function waitForApplication(page) {
   }
   await page.waitForFunction(() => {
     const text = document.body.innerText;
-    return text.includes('Navigation') && text.includes('展开输入框');
+    if (text.includes('Operit2 encountered an error')) throw new Error(text);
+    return text.includes('新建对话') && text.includes('展开输入框');
   }, null, { timeout: 120_000 });
   await page.keyboard.press('Tab');
 }
@@ -73,7 +75,7 @@ async function main() {
   });
   /** Records page and worker errors as deployment failures. */
   function observe(page) {
-    page.on('pageerror', error => errors.push(String(error)));
+    page.on('pageerror', error => errors.push(error.stack ?? String(error)));
     page.on('console', message => {
       messages.push({ type: message.type(), text: message.text() });
       if (message.text().startsWith('Browser verification RPC:')) console.log(message.text());
@@ -91,11 +93,14 @@ async function main() {
     await page.waitForSelector('flutter-view', { timeout: 60_000 });
     await page.locator('flt-semantics-placeholder').evaluate(element => element.click());
     await page.getByRole('button', { name: '开始', exact: true }).click();
-    await page.getByRole('button', { name: /我已阅读|同意|继续/ }).click({ timeout: 20_000 });
+    await page.waitForFunction(() => document.body.innerText.includes('用户协议与隐私政策'), null, { timeout: 30_000 });
+    await page.getByRole('button', { name: '同意', exact: true }).click({ timeout: 20_000 });
+    console.log('Onboarding agreement accepted; confirming local storage.');
     await page.getByRole('button', { name: '确认', exact: true }).click();
-    for (let index = 0; index < 10; index++) await page.keyboard.press('Tab');
+    console.log('Local storage confirmed; waiting for startup mode.');
     await page.waitForFunction(() => document.body.innerText.includes('启动方式'), null, { timeout: 120_000 });
     await page.getByRole('button', { name: '跳过', exact: true }).click();
+    console.log('Onboarding completed; waiting for the application.');
     await waitForApplication(page);
     console.log('Configured application is interactive; checking the real plugin registry.');
     report.registry = await page.evaluate(async () => {
@@ -183,6 +188,7 @@ async function main() {
     console.log(JSON.stringify({ packages: report.registry.packages, publicApiCount: report.registry.apis.length, characters: report.registry.characters.length, themeReceipt: report.themeReceipt, errors, badResponses, cdnRequests }, null, 2));
   } catch (error) {
     report.failure = String(error);
+    report.failureText = await page.locator('body').innerText().catch(() => '');
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), timeout: 10_000 }).catch(() => {});
     throw error;
   } finally {
