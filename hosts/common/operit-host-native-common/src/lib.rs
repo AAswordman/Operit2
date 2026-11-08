@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
 
+#[cfg(feature = "app-install")]
+pub mod AppInstaller;
+
 pub mod DartPort;
 pub mod SharedBuffer;
 

@@ -2367,8 +2367,31 @@ pub struct SystemSettingData {
     pub value: String,
 }
 
+/// Installation request progress; opening an installer does not mean installation completed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppInstallState {
+    PermissionRequired,
+    InstallerOpened,
+    RestartRequired,
+    Completed,
+}
+
+impl AppInstallState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::PermissionRequired => "permission_required",
+            Self::InstallerOpened => "installer_opened",
+            Self::RestartRequired => "restart_required",
+            Self::Completed => "completed",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppOperationData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installState: Option<AppInstallState>,
     pub operationType: String,
     pub packageName: String,
     pub success: bool,
@@ -3087,6 +3110,21 @@ pub trait FileSystemHost: Send + Sync {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn installation_state_is_optional_for_legacy_results() {
+        let legacy=serde_json::json!({"operationType":"install","packageName":"example","success":true,"details":"requested"});
+        let data: AppOperationData = serde_json::from_value(legacy).unwrap();
+        assert_eq!(data.installState, None);
+        for state in [
+            AppInstallState::PermissionRequired,
+            AppInstallState::InstallerOpened,
+            AppInstallState::RestartRequired,
+            AppInstallState::Completed,
+        ] {
+            assert_eq!(serde_json::to_value(&state).unwrap(), state.as_str());
+        }
+    }
 
     /// Builds a sorted id set from borrowed string ids.
     fn idSet(ids: &[&str]) -> BTreeSet<String> {

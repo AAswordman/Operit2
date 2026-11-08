@@ -4667,40 +4667,26 @@ self.onmessage = (event) => {
       getSystemSetting(namespace: string, setting: string) {
         return { namespace, setting, value: "" };
       },
-      installApp(path: string) {
-        return { operationType: "install", packageName: path, success: false, details: "" };
+      installApp(_path: string) {
+        throw new Error("Browser security does not allow installing native application packages. Download the package and use your system installer.");
       },
-      uninstallApp(packageName: string) {
-        return { operationType: "uninstall", packageName, success: false, details: "" };
+      uninstallApp(_packageName: string) {
+        throw new Error("Browser security does not allow uninstalling native applications. Use your system application settings.");
       },
-      listInstalledApps(includeSystemApps: boolean) {
-        return { includesSystemApps: includeSystemApps, packages: [] as string[] };
+      listInstalledApps(_includeSystemApps: boolean) {
+        throw new Error("Browsers cannot enumerate installed native applications.");
       },
-      startApp(packageName: string) {
-        return { operationType: "start", packageName, success: false, details: "" };
+      startApp(_packageName: string) {
+        throw new Error("Browsers cannot launch arbitrary native application identifiers.");
       },
-      stopApp(packageName: string) {
-        return { operationType: "stop", packageName, success: false, details: "" };
+      stopApp(_packageName: string) {
+        throw new Error("Browsers cannot stop native application processes.");
       },
-      /** Rejects notification history that browsers do not expose to applications. */
       getNotifications() {
         throw new Error("Browsers do not expose other applications' system notifications");
       },
-      getAppUsageTime(
-        packageName: string,
-        sinceHours: number,
-        limit: number,
-        includeSystemApps: boolean,
-      ) {
-        return {
-          startTime: Date.now(),
-          endTime: Date.now(),
-          sinceHours,
-          requestedPackageName: packageName,
-          includesSystemApps: includeSystemApps,
-          totalEntries: 0,
-          entries: [] as string[],
-        };
+      getAppUsageTime(_packageName: string, _sinceHours: number, _limit: number, _includeSystemApps: boolean) {
+        throw new Error("Browsers do not expose native application foreground usage history.");
       },
       /** Acquires a current user-authorized position from the browser. */
       getDeviceLocation(timeout: number, highAccuracy: boolean, includeAddress: boolean) {

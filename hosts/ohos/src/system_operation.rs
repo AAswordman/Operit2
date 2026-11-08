@@ -109,6 +109,12 @@ impl OhosSystemOperationHost {
     /// Parses an app operation response from owner JSON.
     fn appOperation(value: Value) -> HostResult<AppOperationData> {
         Ok(AppOperationData {
+            installState: value
+                .get("installState")
+                .filter(|value| !value.is_null())
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|error| HostError::new(format!("Invalid installation state: {error}")))?,
             operationType: Self::stringField(&value, "operationType")?,
             packageName: Self::stringField(&value, "packageName")?,
             success: Self::boolField(&value, "success")?,

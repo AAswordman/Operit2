@@ -21,12 +21,16 @@ pub fn run_update_command(args: &[String], output: &mut CoreCommandOutput) -> Re
 
 /// Checks for an update and downloads the matching package when available.
 fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    let usage = "usage: operit2 update run <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch>";
-    if args.len() != 5 {
+    let usage = "usage: operit2 update run <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]";
+    if !matches!(args.len(), 5 | 6) {
         return Err(usage.to_string());
     }
     let currentVersion = args.get(1).ok_or_else(|| usage.to_string())?;
     let target = parseTarget(args.get(2), args.get(3), args.get(4), usage)?;
+    let target = match args.get(5) {
+        Some(buildType) => target.withMacosInstaller(buildType)?,
+        None => target,
+    };
     let packageName = target.assetName()?;
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     let channelText = channel.to_string();
@@ -75,12 +79,16 @@ fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(),
 
 /// Checks whether a full update is available.
 fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    let usage = "usage: operit2 update check <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch>";
-    if args.len() != 5 {
+    let usage = "usage: operit2 update check <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]";
+    if !matches!(args.len(), 5 | 6) {
         return Err(usage.to_string());
     }
     let currentVersion = args.get(1).ok_or_else(|| usage.to_string())?;
     let target = parseTarget(args.get(2), args.get(3), args.get(4), usage)?;
+    let target = match args.get(5) {
+        Some(buildType) => target.withMacosInstaller(buildType)?,
+        None => target,
+    };
     let packageName = target.assetName()?;
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     let channelText = channel.to_string();
@@ -100,6 +108,7 @@ fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(
                 "latestVersion": info.version,
                 "package": info.assetName,
                 "downloadUrl": info.downloadUrl,
+                "releaseNotes": info.releaseNotes,
                 "releasePageUrl": info.releasePageUrl,
             }));
         }
@@ -121,11 +130,16 @@ fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(
 
 /// Prints the package target resolved from explicit platform arguments.
 fn run_update_target(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    let usage = "usage: operit2 update target <app|cli> <windows|linux|macos|android|ios|ohos> <arch>";
-    if args.len() != 4 {
+    let usage =
+        "usage: operit2 update target <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]";
+    if !matches!(args.len(), 4 | 5) {
         return Err(usage.to_string());
     }
     let target = parseTarget(args.get(1), args.get(2), args.get(3), usage)?;
+    let target = match args.get(4) {
+        Some(buildType) => target.withMacosInstaller(buildType)?,
+        None => target,
+    };
     let packageName = target.assetName()?;
     output.push_stdout_line(format!("Product: {}", target.product));
     output.push_stdout_line(format!("Platform: {}", target.platform));
@@ -157,9 +171,9 @@ fn parseTarget(
 /// Prints update command usage.
 fn print_update_usage(output: &mut CoreCommandOutput) {
     let lines = vec![
-        "operit2 update run <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch>",
-        "operit2 update check <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch>",
-        "operit2 update target <app|cli> <windows|linux|macos|android|ios|ohos> <arch>",
+        "operit2 update run <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]",
+        "operit2 update check <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]",
+        "operit2 update target <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]",
     ];
     for line in &lines {
         output.push_stdout_line(line);

@@ -15,3 +15,6 @@ pub mod ExtensionCatalogSupport;
 
 #[path = "SyncConsistency.rs"]
 mod SyncConsistency;
+
+#[path = "ApplicationUpdate.rs"]
+pub mod ApplicationUpdate;

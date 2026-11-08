@@ -1274,6 +1274,9 @@ export class OperitRuntimeChannel {
   private async systemInstallApp(params: JsonPayload): Promise<JsonPayload> {
     const path = this.objectString(params, 'path');
     this.requireAccessibleFile(path);
+    if (!path.toLowerCase().endsWith('.hap')) {
+      throw new Error('OpenHarmony installation requires a .hap package');
+    }
     await this.context.startAbility({
       action: wantConstant.Action.ACTION_VIEW_DATA,
       uri: fileUri.getUriFromPath(path),
@@ -1284,7 +1287,8 @@ export class OperitRuntimeChannel {
       operationType: 'install_app',
       packageName: path,
       success: true,
-      details: 'ohos install ability requested'
+      details: 'System HAP installer opened; complete system confirmation. Installation is not yet verified.',
+      installState: 'installer_opened'
     };
   }
 
@@ -1301,7 +1305,7 @@ export class OperitRuntimeChannel {
       operationType: 'uninstall_app',
       packageName: packageName,
       success: true,
-      details: 'ohos application details ability requested'
+      details: 'Application settings opened. The user must choose uninstall and confirm; application removal is not yet verified.'
     };
   }
 
@@ -1317,7 +1321,7 @@ export class OperitRuntimeChannel {
     });
     return {
       includesSystemApps: includeSystemApps,
-      packages: packages
+      packages: packages.sort()
     };
   }
 
@@ -1372,28 +1376,40 @@ export class OperitRuntimeChannel {
     const sinceHours = this.objectNumber(params, 'sinceHours');
     const limit = this.objectNumber(params, 'limit');
     const includeSystemApps = this.objectBool(params, 'includeSystemApps');
-    const endTime = Date.now();
-    const startTime = endTime - Math.max(0, sinceHours) * 60 * 60 * 1000;
-    const events = await bundleState.queryCurrentBundleActiveStates(startTime, endTime);
-    const selfPackage = this.context.abilityInfo.bundleName;
-    if (packageName.length > 0 && packageName !== selfPackage) {
-      throw new Error(`OpenHarmony API9 exposes current-bundle usage only: ${packageName}`);
+    if (sinceHours <= 0 || limit <= 0) {
+      throw new Error('since_hours and limit must be greater than 0');
     }
-    const usedEvents = events.slice(0, Math.max(0, limit));
+    const endTime = Date.now();
+    const startTime = endTime - sinceHours * 60 * 60 * 1000;
+    // Aggregate foreground milliseconds, never event counts. This system API
+    // requires BUNDLE_ACTIVE_INFO; ordinary applications receive the OS error.
+    const stats = await bundleState.queryBundleStateInfos(startTime, endTime);
+    const applications = await bundle.getAllApplicationInfo(0) as Array<OhosApplicationInfo>;
+    const entries: Array<JsonPayload> = [];
+    Object.keys(stats).forEach((key: string) => {
+      const stat = stats[key];
+      const name = stat.bundleName ?? key;
+      if (packageName.length > 0 && name !== packageName) { return; }
+      const app = applications.find((entry: OhosApplicationInfo) => entry.name === name);
+      if (app === undefined || (!includeSystemApps && app.systemApp)) { return; }
+      entries.push({
+        packageName: name,
+        appName: name,
+        totalForegroundTimeMs: stat.abilityInFgTotalTime ?? 0,
+        lastTimeUsed: stat.abilityPrevAccessTime ?? 0,
+        isSystemApp: app.systemApp ?? false
+      });
+    });
+    entries.sort((left: JsonPayload, right: JsonPayload) =>
+      Number(right['totalForegroundTimeMs']) - Number(left['totalForegroundTimeMs']));
     return {
       startTime: startTime,
       endTime: endTime,
       sinceHours: sinceHours,
       requestedPackageName: packageName.length === 0 ? null : packageName,
       includesSystemApps: includeSystemApps,
-      totalEntries: usedEvents.length,
-      entries: [{
-        packageName: selfPackage,
-        appName: selfPackage,
-        totalForegroundTimeMs: usedEvents.length,
-        lastTimeUsed: endTime,
-        isSystemApp: false
-      }]
+      totalEntries: entries.length,
+      entries: entries.slice(0, limit)
     };
   }
 

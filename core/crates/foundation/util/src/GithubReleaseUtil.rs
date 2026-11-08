@@ -36,6 +36,7 @@ pub struct FullUpdateTarget {
     pub product: String,
     pub platform: String,
     pub arch: String,
+    macosInstallerType: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,29 +254,37 @@ impl GithubReleaseUtil {
     where
         F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
     {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = packageUrl;
-            let _ = packageFileName;
-            let _ = workDir;
-            let _ = onEvent;
-            return Err(
-                "full update package download is not available in wasm runtime".to_string(),
-            );
-        }
+        Self::downloadAndPrepareFullUpdateControlled(
+            packageUrl,
+            packageFileName,
+            workDir,
+            HttpDownloadControl::new(),
+            onEvent,
+        )
+        .await
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            runHostBlocking(move || {
-                Self::downloadAndPrepareFullUpdateBlocking(
-                    &packageUrl,
-                    &packageFileName,
-                    &workDir,
-                    onEvent,
-                )
-            })
-            .await?
-        }
+    /// The app, CLI and TUI share host HTTP, cancellation and package validation.
+    pub async fn downloadAndPrepareFullUpdateControlled<F>(
+        packageUrl: String,
+        packageFileName: String,
+        workDir: PathBuf,
+        control: HttpDownloadControl,
+        onEvent: F,
+    ) -> Result<PathBuf, String>
+    where
+        F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
+    {
+        runHostBlocking(move || {
+            Self::downloadAndPrepareFullUpdateControlledBlocking(
+                &packageUrl,
+                &packageFileName,
+                &workDir,
+                control,
+                onEvent,
+            )
+        })
+        .await?
     }
 
     /// Compares two semantic versions.
@@ -388,32 +397,79 @@ impl GithubReleaseUtil {
     where
         F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
     {
+        Self::downloadAndPrepareFullUpdateControlledBlocking(
+            packageUrl,
+            packageFileName,
+            workDir,
+            HttpDownloadControl::new(),
+            onEvent,
+        )
+    }
+
+    /// Creates an isolated attempt directory, removes failed/partial files and only returns a verified package.
+    pub fn downloadAndPrepareFullUpdateControlledBlocking<F>(
+        packageUrl: &str,
+        packageFileName: &str,
+        workDir: &Path,
+        control: HttpDownloadControl,
+        onEvent: F,
+    ) -> Result<PathBuf, String>
+    where
+        F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
+    {
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = packageUrl;
-            let _ = packageFileName;
-            let _ = workDir;
-            let _ = onEvent;
-            return Err(
-                "full update package download is not available in wasm runtime".to_string(),
-            );
+            let _ = (packageUrl, packageFileName, workDir, control, onEvent);
+            Err("Native updates are unavailable in a browser".into())
         }
-
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if workDir.exists() {
-                fs::remove_dir_all(workDir).map_err(|error| error.to_string())?;
+            validateUpdatePackageSource(packageUrl, packageFileName)?;
+            if control.isCancelled() {
+                return Err("UPDATE_CANCELLED".into());
             }
-            fs::create_dir_all(workDir).map_err(|error| error.to_string())?;
-            validatePackageFileName(packageFileName)?;
-            let packageFile = workDir.join(packageFileName);
-            onEvent(FullUpdateProgressEvent::StageChanged {
-                stage: FullUpdateStage::DownloadingPackage,
-                message: "Downloading full update package".to_string(),
-            });
-            let totalBytes = fetchContentLength(packageUrl)?;
-            downloadUpdatePackage(packageUrl, &packageFile, totalBytes, onEvent)?;
-            Ok(packageFile)
+            fs::create_dir_all(workDir).map_err(|e| e.to_string())?;
+            let token = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos();
+            let attempt = workDir.join(format!("{}-{token}", std::process::id()));
+            fs::create_dir(&attempt).map_err(|e| e.to_string())?;
+            let packageFile = attempt.join(packageFileName);
+            let events = Arc::new(onEvent);
+            let result = (|| {
+                events(FullUpdateProgressEvent::StageChanged {
+                    stage: FullUpdateStage::DownloadingPackage,
+                    message: "Downloading full update package".into(),
+                });
+                if control.isCancelled() {
+                    return Err("UPDATE_CANCELLED".into());
+                }
+                let totalBytes = fetchContentLength(packageUrl)?;
+                downloadUpdatePackage(packageUrl, &packageFile, totalBytes, control.clone(), {
+                    let events = events.clone();
+                    move |event| events(event)
+                })?;
+                if control.isCancelled() {
+                    return Err("UPDATE_CANCELLED".into());
+                }
+                if fs::metadata(&packageFile).map_err(|e| e.to_string())?.len() != totalBytes {
+                    return Err("Update package is incomplete".into());
+                }
+                validateDownloadedUpdatePackage(&packageFile, packageFileName)?;
+                events(FullUpdateProgressEvent::StageChanged {
+                    stage: FullUpdateStage::Ready,
+                    message: "Full update package is ready".into(),
+                });
+                Ok(packageFile)
+            })();
+            if result.is_err() || control.isCancelled() {
+                let _ = fs::remove_dir_all(attempt);
+            }
+            if control.isCancelled() {
+                return Err("UPDATE_CANCELLED".into());
+            }
+            result
         }
     }
 }
@@ -427,6 +483,7 @@ impl FullUpdateTarget {
             product: product.to_string(),
             platform: platform.to_string(),
             arch: arch.to_string(),
+            macosInstallerType: None,
         })
     }
 
@@ -435,9 +492,61 @@ impl FullUpdateTarget {
         Self::new("cli", currentDesktopPlatform()?, currentDesktopArch()?)
     }
 
+    /// Resolves the installed app target in Rust; clients never choose platform/ABI/distribution.
+    pub fn appForCurrentHost() -> Result<Option<Self>, String> {
+        if cfg!(target_arch = "wasm32") || cfg!(target_os = "ios") || cfg!(target_env = "ohos") {
+            return Ok(None);
+        }
+        let platform = std::env::consts::OS;
+        if !matches!(platform, "android" | "macos" | "windows" | "linux") {
+            return Ok(None);
+        }
+        let arch = match (platform, std::env::consts::ARCH) {
+            ("android", "aarch64") => "arm64-v8a",
+            ("android", "arm") => "armeabi-v7a",
+            (_, arch) => arch,
+        };
+        let target = Self::app(platform, arch)?;
+        #[cfg(target_os = "macos")]
+        {
+            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+            let contents = executable
+                .parent()
+                .and_then(Path::parent)
+                .ok_or("Application bundle metadata is unavailable")?;
+            let metadata = std::process::Command::new("/usr/bin/plutil")
+                .args(["-extract", "OperitDistributionType", "raw", "-o", "-"])
+                .arg(contents.join("Info.plist"))
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !metadata.status.success() {
+                return Err("Cannot read this macOS application's distribution metadata".into());
+            }
+            return target
+                .withMacosInstaller(String::from_utf8_lossy(&metadata.stdout).trim())
+                .map(Some);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Ok(Some(target))
+        }
+    }
+
     /// Creates an app update target for a platform and architecture.
     pub fn app(platform: &str, arch: &str) -> Result<Self, String> {
         Self::new("app", platform, arch)
+    }
+
+    /// Selects the matching signed macOS installer instead of the legacy ZIP.
+    pub fn withMacosInstaller(mut self, buildType: &str) -> Result<Self, String> {
+        if self.product != "app"
+            || self.platform != "macos"
+            || !matches!(buildType, "sandbox" | "unsandbox")
+        {
+            return Err(format!("Invalid macOS App installer type: {buildType}"));
+        }
+        self.macosInstallerType = Some(buildType.to_string());
+        Ok(self)
     }
 
     /// Builds the release asset name for the installed package version.
@@ -453,6 +562,12 @@ impl FullUpdateTarget {
             ("app", "macos") => "universal",
             _ => self.arch.as_str(),
         };
+        if let Some(buildType) = &self.macosInstallerType {
+            return Ok(format!(
+                "operit2-app-macos-universal-{buildType}-{}.pkg",
+                releaseVersion.trim().trim_start_matches('v'),
+            ));
+        }
         Ok(format!(
             "operit2-{}-{}-{}-{}.{}",
             self.product,
@@ -855,6 +970,47 @@ async fn runHostBlocking<T: Send + 'static>(
         .map_err(|error| format!("full update task stopped: {error}"))
 }
 
+/// Validates the release source before creating a native file. Shared by app and CLI downloads.
+fn validateUpdatePackageSource(url: &str, name: &str) -> Result<(), String> {
+    validatePackageFileName(name)?;
+    let prefix = "https://github.com/AAswordman/Operit2/releases/download/";
+    let path = url
+        .strip_prefix(prefix)
+        .ok_or("Update URL must reference this project's HTTPS release assets")?;
+    let (tag, asset) = path.split_once('/').ok_or("Missing release tag/asset")?;
+    if tag.is_empty() || asset != name || !name.starts_with("operit2-") || name.contains(['?', '#'])
+    {
+        return Err("Invalid update release asset".into());
+    }
+    Ok(())
+}
+
+/// Rejects HTML error pages and mismatched archives before any installer sees them.
+#[cfg(not(target_arch = "wasm32"))]
+fn validateDownloadedUpdatePackage(path: &Path, name: &str) -> Result<(), String> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut prefix = [0; 4];
+    file.read_exact(&mut prefix).map_err(|e| e.to_string())?;
+    let valid = if name.ends_with(".pkg") {
+        prefix == *b"xar!"
+    } else if name.ends_with(".tar.gz") {
+        prefix[..2] == [0x1f, 0x8b]
+    } else if [".zip", ".apk", ".hap", ".ipa"]
+        .iter()
+        .any(|ext| name.ends_with(ext))
+    {
+        prefix == *b"PK\x03\x04"
+    } else {
+        false
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err("Downloaded content is not a valid update package".into())
+    }
+}
+
 /// Builds update network policy once for requests routed through Host HTTP.
 fn updateHttpRequest(url: &str, method: &str) -> HttpRequestData {
     HttpRequestData {
@@ -903,6 +1059,7 @@ fn downloadUpdatePackage<F>(
     url: &str,
     out: &Path,
     totalBytes: u64,
+    control: HttpDownloadControl,
     onEvent: F,
 ) -> Result<(), String>
 where
@@ -938,7 +1095,7 @@ where
                 proxyHost: String::new(),
                 proxyPort: 0,
             },
-            HttpDownloadControl::new(),
+            control,
             Arc::new(move |progress| {
                 let mut clock = clock
                     .lock()
@@ -962,10 +1119,6 @@ where
             }),
         )
         .map_err(|error| error.to_string())?;
-    events(FullUpdateProgressEvent::StageChanged {
-        stage: FullUpdateStage::Ready,
-        message: "Full update package is ready".into(),
-    });
     Ok(())
 }
 
@@ -976,6 +1129,129 @@ mod tests {
         FullUpdateTarget, GitHubRelease, GitHubReleaseAsset, GithubReleaseUtil,
         GITHUB_RELEASE_PAGE_SIZE,
     };
+
+    #[test]
+    fn shared_update_source_validation_rejects_foreign_or_traversing_assets() {
+        let name = "operit2-app-linux-x86_64-2.0.0.tar.gz";
+        assert!(super::validateUpdatePackageSource(
+            &format!("https://github.com/AAswordman/Operit2/releases/download/v2.0.0/{name}"),
+            name
+        )
+        .is_ok());
+        assert!(super::validateUpdatePackageSource("https://evil.example/install", name).is_err());
+        assert!(super::validateUpdatePackageSource(
+            "https://github.com/AAswordman/Operit2/releases/download/v2/a",
+            "../a"
+        )
+        .is_err());
+        assert!(super::validateUpdatePackageSource(
+            "https://github.com/AAswordman/Operit2/releases/download/v2/wrong",
+            name
+        )
+        .is_err());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn shared_package_validation_rejects_html_and_accepts_native_headers() {
+        let path = std::env::temp_dir().join(format!("operit-header-test-{}", std::process::id()));
+        for (name, header) in [
+            ("app.pkg", &b"xar!"[..]),
+            ("cli.tar.gz", &b"\x1f\x8bxx"[..]),
+            ("app.apk", &b"PK\x03\x04"[..]),
+        ] {
+            std::fs::write(&path, b"<html>error</html>").unwrap();
+            assert!(super::validateDownloadedUpdatePackage(&path, name).is_err());
+            std::fs::write(&path, header).unwrap();
+            super::validateDownloadedUpdatePackage(&path, name).unwrap();
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cancelled_attempt_preserves_other_tasks_and_cleans_its_directory() {
+        let root = std::env::temp_dir().join(format!("operit-cancel-test-{}", std::process::id()));
+        let other = root.join("other-task");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("keep"), b"other update").unwrap();
+        let control = operit_host_api::HttpDownloadControl::new();
+        let cancel = control.clone();
+        let name = "operit2-app-linux-x86_64-2.0.0.tar.gz";
+        let result = GithubReleaseUtil::downloadAndPrepareFullUpdateControlledBlocking(
+            &format!("https://github.com/AAswordman/Operit2/releases/download/v2.0.0/{name}"),
+            name,
+            &root,
+            control,
+            move |_| cancel.cancel(),
+        );
+        assert_eq!(result.unwrap_err(), "UPDATE_CANCELLED");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        assert_eq!(std::fs::read(other.join("keep")).unwrap(), b"other update");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn already_cancelled_download_creates_no_files() {
+        let root =
+            std::env::temp_dir().join(format!("operit-precancel-test-{}", std::process::id()));
+        let control = operit_host_api::HttpDownloadControl::new();
+        control.cancel();
+        let name = "operit2-app-linux-x86_64-2.0.0.tar.gz";
+        let result = GithubReleaseUtil::downloadAndPrepareFullUpdateControlledBlocking(
+            &format!("https://github.com/AAswordman/Operit2/releases/download/v2.0.0/{name}"),
+            name,
+            &root,
+            control,
+            |_| {},
+        );
+        assert_eq!(result.unwrap_err(), "UPDATE_CANCELLED");
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn macos_installer_matches_distribution_and_channel() {
+        for buildType in ["sandbox", "unsandbox"] {
+            let target = FullUpdateTarget::app("macos", "aarch64")
+                .unwrap()
+                .withMacosInstaller(buildType)
+                .unwrap();
+            assert_eq!(
+                target.assetNameForVersion("v2.0.0-preview.35").unwrap(),
+                format!("operit2-app-macos-universal-{buildType}-2.0.0-preview.35.pkg")
+            );
+            let other = FullUpdateTarget::app("macos", "aarch64")
+                .unwrap()
+                .withMacosInstaller(if buildType == "sandbox" {
+                    "unsandbox"
+                } else {
+                    "sandbox"
+                })
+                .unwrap();
+            let releases = vec![
+                release_for_target("2.0.0-preview.36", &other),
+                release_for_target("2.0.0-preview.35", &target),
+            ];
+            let selected =
+                selectLatestReleaseInfo(releases.clone(), &target, FullUpdateChannel::Preview)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(selected.version, "2.0.0-preview.35");
+            assert!(
+                selectLatestReleaseInfo(releases, &target, FullUpdateChannel::Stable)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(FullUpdateTarget::cliForCurrentHost()
+            .unwrap()
+            .withMacosInstaller("sandbox")
+            .is_err());
+        assert!(FullUpdateTarget::app("macos", "aarch64")
+            .unwrap()
+            .withMacosInstaller("other")
+            .is_err());
+    }
 
     /// Builds a release containing one exact platform package for discovery tests.
     fn release_for_target(version: &str, target: &FullUpdateTarget) -> GitHubRelease {

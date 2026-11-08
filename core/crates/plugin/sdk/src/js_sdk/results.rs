@@ -976,6 +976,9 @@ pub struct SystemSettingData {
 #[derive(Clone, Serialize, Deserialize)]
 /// Reports the outcome of installing, uninstalling, starting, or stopping an application package.
 pub struct AppOperationData {
+    /// permission_required, installer_opened, restart_required, or completed.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "installState")]
+    pub installState: Option<String>,
     #[serde(rename = "operationType")]
     pub operationType: String,
     #[serde(rename = "packageName")]
@@ -2231,25 +2234,25 @@ impl AppOperationData {
         match self.operationType.as_str() {
             "install" => {
                 format!(
-                    "Successfully installed app: {} {}",
+                    "App installation request: {} {}",
                     self.packageName, self.details
                 )
             }
             "uninstall" => {
                 format!(
-                    "Successfully uninstalled app: {} {}",
+                    "App uninstall request: {} {}",
                     self.packageName, self.details
                 )
             }
             "start" => {
                 format!(
-                    "Successfully started app: {} {}",
+                    "App launch request: {} {}",
                     self.packageName, self.details
                 )
             }
             "stop" => {
                 format!(
-                    "Successfully stopped app: {} {}",
+                    "App stop request: {} {}",
                     self.packageName, self.details
                 )
             }

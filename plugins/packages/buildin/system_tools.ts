@@ -18,29 +18,29 @@
             { "name": "value", "description": { "zh": "设置值。", "en": "Setting value." }, "type": "string", "required": true },
             { "name": "namespace", "description": { "zh": "命名空间。", "en": "Setting namespace." }, "type": "string", "required": false }
         ] },
-        { "name": "install_app", "display": {"label": {"zh": "安装应用", "en": "Install app"}, "icon": "package", "targetParameter": "path"}, "description": { "zh": "安装 APK。", "en": "Install an APK." }, "parameters": [
-            { "name": "path", "description": { "zh": "APK 文件路径。", "en": "APK file path." }, "type": "string", "required": true }
+        { "name": "install_app", "display": {"label": {"zh": "安装应用", "en": "Install app"}, "icon": "package", "targetParameter": "path"}, "description": { "zh": "使用当前平台原生安装器安装应用包，返回授权、安装器打开或完成状态。", "en": "Install an application package through the native host and report permission, installer or completion state." }, "parameters": [
+            { "name": "path", "description": { "zh": "当前设备上的安装包绝对路径。", "en": "Absolute installer package path on this device." }, "type": "string", "required": true }
         ] },
         { "name": "uninstall_app", "display": {"label": {"zh": "卸载应用", "en": "Uninstall app"}, "icon": "delete", "targetParameter": "package_name"}, "description": { "zh": "卸载应用。", "en": "Uninstall an app." }, "parameters": [
-            { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": true },
+            { "name": "package_name", "description": { "zh": "list_installed_apps 返回的应用标识。", "en": "Application identifier returned by list_installed_apps." }, "type": "string", "required": true },
             { "name": "keep_data", "description": { "zh": "保留应用数据。", "en": "Keep application data." }, "type": "boolean", "required": false }
         ] },
-        { "name": "list_installed_apps", "display": {"label": {"zh": "查看已安装应用", "en": "List installed apps"}, "icon": "package"}, "description": { "zh": "列出已安装应用。", "en": "List installed apps." }, "parameters": [
+        { "name": "list_installed_apps", "display": {"label": {"zh": "查看已安装应用", "en": "List installed apps"}, "icon": "package"}, "description": { "zh": "列出可用于启动、停止和卸载的应用标识；受系统可见性权限限制。", "en": "List application IDs usable for launch, stop and uninstall, subject to OS visibility permissions." }, "parameters": [
             { "name": "include_system_apps", "description": { "zh": "包含系统应用。", "en": "Include system apps." }, "type": "boolean", "required": false }
         ] },
         { "name": "start_app", "display": {"label": {"zh": "启动应用", "en": "Start app"}, "icon": "package", "targetParameter": "package_name"}, "description": { "zh": "启动应用。", "en": "Start an app." }, "parameters": [
-            { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": true },
+            { "name": "package_name", "description": { "zh": "list_installed_apps 返回的应用标识。", "en": "Application identifier returned by list_installed_apps." }, "type": "string", "required": true },
             { "name": "activity", "description": { "zh": "可选 Activity。", "en": "Optional activity." }, "type": "string", "required": false }
         ] },
         { "name": "stop_app", "display": {"label": {"zh": "停止应用", "en": "Stop app"}, "icon": "package", "targetParameter": "package_name"}, "description": { "zh": "停止应用。", "en": "Stop an app." }, "parameters": [
-            { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": true }
+            { "name": "package_name", "description": { "zh": "list_installed_apps 返回的应用标识。", "en": "Application identifier returned by list_installed_apps." }, "type": "string", "required": true }
         ] },
         { "name": "get_notifications", "display": {"label": {"zh": "读取通知", "en": "Read notifications"}, "icon": "notification"}, "description": { "zh": "获取设备通知。", "en": "Get device notifications." }, "parameters": [
             { "name": "limit", "description": { "zh": "最大条数。", "en": "Maximum number of entries." }, "type": "number", "required": false },
             { "name": "include_ongoing", "description": { "zh": "包含常驻通知。", "en": "Include ongoing notifications." }, "type": "boolean", "required": false }
         ] },
-        { "name": "get_app_usage_time", "display": {"label": {"zh": "查看应用使用时长", "en": "Read app usage"}, "icon": "time", "targetParameter": "package_name"}, "description": { "zh": "获取应用前台使用时长。", "en": "Get application foreground usage time." }, "parameters": [
-            { "name": "package_name", "description": { "zh": "应用包名。", "en": "Application package name." }, "type": "string", "required": false },
+        { "name": "get_app_usage_time", "display": {"label": {"zh": "查看应用使用时长", "en": "Read app usage"}, "icon": "time", "targetParameter": "package_name"}, "description": { "zh": "查询系统授权可见的前台使用时长；没有记录或权限时返回明确错误。", "en": "Read authorized foreground usage history; report an error when history or permissions are unavailable." }, "parameters": [
+            { "name": "package_name", "description": { "zh": "list_installed_apps 返回的应用标识。", "en": "Application identifier returned by list_installed_apps." }, "type": "string", "required": false },
             { "name": "since_hours", "description": { "zh": "统计时间范围，单位小时。", "en": "Lookback period in hours." }, "type": "number", "required": false },
             { "name": "limit", "description": { "zh": "最大返回条数。", "en": "Maximum number of entries." }, "type": "number", "required": false },
             { "name": "include_system_apps", "description": { "zh": "包含系统应用。", "en": "Include system apps." }, "type": "boolean", "required": false }
@@ -190,16 +190,19 @@ async function modify_system_setting(params: { setting: string; value: string; n
     return { success, message: success ? "成功修改系统设置" : "修改系统设置失败", data: result };
 }
 
-/** Installs an application from an APK path. */
+/** Requests installation through the current platform host. */
 async function install_app(params: { path: string }): Promise<ToolResponse> {
     const result = await Tools.System.installApp(params.path);
-    return { success: result.success, message: result.success ? "应用安装成功" : "应用安装失败", data: result };
+    return { success: result.success, message: result.success ? (result.details || "应用安装请求已受理，请查看安装状态") : "应用安装失败", data: result };
 }
 
 /** Uninstalls an application by package name. */
 async function uninstall_app(params: { package_name: string; keep_data?: boolean }): Promise<ToolResponse> {
+    if (params.keep_data === true) {
+        throw new Error("当前跨平台卸载接口不支持保证保留数据；请使用系统或应用提供的卸载选项。");
+    }
     const result = await Tools.System.uninstallApp(params.package_name);
-    return { success: result.success, message: result.success ? "应用卸载成功" : "应用卸载失败", data: result };
+    return { success: result.success, message: result.success ? (result.details || "应用卸载请求已受理，请完成系统确认") : "应用卸载失败", data: result };
 }
 
 /** Lists installed applications. */
@@ -211,13 +214,13 @@ async function list_installed_apps(params: { include_system_apps?: boolean }): P
 /** Starts an application by package name. */
 async function start_app(params: { package_name: string; activity?: string }): Promise<ToolResponse> {
     const result = await Tools.System.startApp(params.package_name, params.activity);
-    return { success: result.success, message: result.success ? "应用启动成功" : "应用启动失败", data: result };
+    return { success: result.success, message: result.success ? (result.details || "应用启动请求已受理") : "应用启动失败", data: result };
 }
 
 /** Stops an application by package name. */
 async function stop_app(params: { package_name: string }): Promise<ToolResponse> {
     const result = await Tools.System.stopApp(params.package_name);
-    return { success: result.success, message: result.success ? "应用停止成功" : "应用停止失败", data: result };
+    return { success: result.success, message: result.success ? (result.details || "应用停止请求已受理") : "应用停止失败", data: result };
 }
 
 /** Gets device notifications. */

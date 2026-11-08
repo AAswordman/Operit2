@@ -1,3 +1,4 @@
+mod packages;
 use crate::process::background_command;
 
 use std::collections::BTreeMap;
@@ -8,7 +9,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use operit_host_api::{
-    AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
+    AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData,
     HostError, HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage,
     OCRQuality, SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
     SystemSettingData,
@@ -57,64 +58,19 @@ impl SystemOperationHost for WindowsSystemOperationHost {
     }
 
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        request_windows_uninstall_app(packageName)
+        packages::operation(packageName, "uninstall")
     }
 
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData> {
-        let output = background_command("powershell.exe")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg("Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Sort-Object DisplayName -Unique | ForEach-Object { $_.DisplayName }")
-            .output()
-            .map_err(|error| HostError::new(format!("Failed to list installed apps: {error}")))?;
-        if !output.status.success() {
-            return Err(HostError::new(format!(
-                "Failed to list installed apps: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
-        }
-        let packages = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        Ok(AppListData {
-            includesSystemApps: includeSystemApps,
-            packages,
-        })
+        packages::list(includeSystemApps)
     }
 
     fn startApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        Command::new(packageName)
-            .spawn()
-            .map_err(|error| HostError::new(format!("Error starting app: {error}")))?;
-        Ok(AppOperationData {
-            operationType: "start".to_string(),
-            packageName: packageName.to_string(),
-            success: true,
-            details: "Start request sent".to_string(),
-        })
+        packages::operation(packageName, "start")
     }
 
     fn stopApp(&self, packageName: &str) -> HostResult<AppOperationData> {
-        let status = background_command("taskkill")
-            .arg("/IM")
-            .arg(packageName)
-            .arg("/F")
-            .status()
-            .map_err(|error| HostError::new(format!("Error stopping app: {error}")))?;
-        if !status.success() {
-            return Err(HostError::new(format!(
-                "Error stopping app: taskkill exited with {status}"
-            )));
-        }
-        Ok(AppOperationData {
-            operationType: "stop".to_string(),
-            packageName: packageName.to_string(),
-            success: true,
-            details: "Stop request sent".to_string(),
-        })
+        packages::operation(packageName, "stop")
     }
 
     fn getNotifications(&self, limit: i32, _includeOngoing: bool) -> HostResult<NotificationData> {
@@ -598,6 +554,10 @@ fn parse_windows_system_setting(value: Value) -> HostResult<SystemSettingData> {
 }
 
 fn request_windows_install_app(path: &str) -> HostResult<AppOperationData> {
+    if let Some(result) = operit_host_native_common::AppInstaller::installPortableApp(path)? {
+        return Ok(result);
+    }
+
     if path.trim().is_empty() {
         return Err(HostError::new("path is required"));
     }
@@ -609,58 +569,31 @@ if (-not (Test-Path -LiteralPath $path)) {{
     throw "Installer path does not exist: $path"
 }}
 $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+$state = "completed"
+$details = "Package installation completed"
 if ($extension -eq ".msix" -or $extension -eq ".appx" -or $extension -eq ".msixbundle" -or $extension -eq ".appxbundle") {{
     Add-AppxPackage -Path $path
 }} elseif ($extension -eq ".msi") {{
-    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $path) -Wait -PassThru
-    if ($process.ExitCode -ne 0) {{ throw "msiexec exited with $($process.ExitCode)" }}
-}} else {{
+    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList ('/i "' + $path + '"') -Wait -PassThru
+    if ($process.ExitCode -notin @(0, 1641, 3010)) {{ throw "msiexec exited with $($process.ExitCode)" }}
+    if ($process.ExitCode -ne 0) {{ $details = "Installation completed; Windows restart is required" }}
+}} elseif ($extension -eq ".exe") {{
+    $state = "installer_opened"
+    $details = "Installer exited successfully; complete any remaining system prompts. Installation is not yet verified."
     $process = Start-Process -FilePath $path -Wait -PassThru
     if ($null -ne $process.ExitCode -and $process.ExitCode -ne 0) {{ throw "installer exited with $($process.ExitCode)" }}
-}}
+}} else {{ throw "Supported packages: .exe, .msi, .msix, .appx and their bundles" }}
 [pscustomobject]@{{
     operationType = "install"
     packageName = $path
     success = $true
-    details = "Install request completed"
+    details = $details
+    installState = $state
 }} | ConvertTo-Json -Compress
 "#,
         path = ps_string_literal(path),
     );
     parse_app_operation_data(run_powershell_json(&script, "install Windows app")?)
-}
-
-fn request_windows_uninstall_app(packageName: &str) -> HostResult<AppOperationData> {
-    if packageName.trim().is_empty() {
-        return Err(HostError::new("package_name is required"));
-    }
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-$packageName = {packageName}
-if ($packageName -match "^[0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}}$") {{
-    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/x", "{{$packageName}}") -Wait -PassThru
-    if ($process.ExitCode -ne 0) {{ throw "msiexec uninstall exited with $($process.ExitCode)" }}
-}} else {{
-    $appx = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $appx) {{
-        $appx = Get-AppxPackage | Where-Object {{ $_.Name -eq $packageName -or $_.PackageFullName -eq $packageName }} | Select-Object -First 1
-    }}
-    if ($null -eq $appx) {{
-        throw "No Appx/MSIX package matched package_name: $packageName. For MSI uninstall, pass the product code GUID."
-    }}
-    Remove-AppxPackage -Package $appx.PackageFullName
-}}
-[pscustomobject]@{{
-    operationType = "uninstall"
-    packageName = $packageName
-    success = $true
-    details = "Uninstall request completed"
-}} | ConvertTo-Json -Compress
-"#,
-        packageName = ps_string_literal(packageName),
-    );
-    parse_app_operation_data(run_powershell_json(&script, "uninstall Windows app")?)
 }
 
 /// Builds the PowerShell script that reads the Windows notification history.
@@ -822,66 +755,15 @@ fn get_windows_notifications(limit: i32) -> HostResult<NotificationData> {
 }
 
 fn get_windows_app_usage_time(
-    packageName: &str,
+    _packageName: &str,
     sinceHours: i32,
     limit: i32,
-    includeSystemApps: bool,
+    _includeSystemApps: bool,
 ) -> HostResult<AppUsageTimeResultData> {
-    if sinceHours <= 0 {
-        return Err(HostError::new("since_hours must be greater than 0"));
+    if sinceHours <= 0 || limit <= 0 {
+        return Err(HostError::new("since_hours and limit must be greater than 0"));
     }
-    if limit <= 0 {
-        return Err(HostError::new("limit must be greater than 0"));
-    }
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'Stop'
-$requestedName = {packageName}
-$sinceHours = {sinceHours}
-$limit = {limit}
-$includeSystemApps = {includeSystemApps}
-$now = [DateTimeOffset]::UtcNow
-$startWindow = $now.AddHours(-1 * $sinceHours)
-$currentSessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
-$items = @()
-foreach ($process in Get-Process) {{
-    try {{
-        if (-not $includeSystemApps -and $process.SessionId -ne $currentSessionId) {{
-            continue
-        }}
-        $name = [string]$process.ProcessName
-        if ($requestedName -and $requestedName.Trim().Length -gt 0 -and $name -notlike "*$requestedName*") {{
-            continue
-        }}
-        $startTime = [DateTimeOffset]$process.StartTime
-        $effectiveStart = if ($startTime -gt $startWindow) {{ $startTime }} else {{ $startWindow }}
-        $durationMs = [Math]::Max(0, [int64]($now - $effectiveStart).TotalMilliseconds)
-        $items += [pscustomobject]@{{
-            packageName = $name
-            appName = $name
-            totalForegroundTimeMs = $durationMs
-            lastTimeUsed = [long]$now.ToUnixTimeMilliseconds()
-            isSystemApp = [bool]($process.SessionId -eq 0)
-        }}
-    }} catch {{}}
-}}
-$items = $items | Sort-Object -Property totalForegroundTimeMs -Descending | Select-Object -First $limit
-[pscustomobject]@{{
-    startTime = [long]$startWindow.ToUnixTimeMilliseconds()
-    endTime = [long]$now.ToUnixTimeMilliseconds()
-    sinceHours = $sinceHours
-    requestedPackageName = $requestedName
-    includesSystemApps = $includeSystemApps
-    totalEntries = @($items).Count
-    entries = @($items)
-}} | ConvertTo-Json -Depth 8 -Compress
-"#,
-        packageName = ps_string_literal(packageName),
-        sinceHours = sinceHours,
-        limit = limit,
-        includeSystemApps = if includeSystemApps { "$true" } else { "$false" },
-    );
-    parse_app_usage_time(run_powershell_json(&script, "get Windows app usage time")?)
+    Err(HostError::new("Windows does not expose historical foreground usage to this host. No usage recorder is configured; process uptime is not foreground usage."))
 }
 
 fn get_windows_device_location(
@@ -1100,36 +982,16 @@ fn json_string(value: &Value, key: &str) -> HostResult<String> {
 
 fn parse_app_operation_data(value: Value) -> HostResult<AppOperationData> {
     Ok(AppOperationData {
+        installState: value
+            .get("installState")
+            .filter(|value| !value.is_null())
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()
+            .map_err(|error| HostError::new(format!("Invalid installation state: {error}")))?,
         operationType: json_string(&value, "operationType")?,
         packageName: json_string(&value, "packageName")?,
         success: json_bool(&value, "success")?,
         details: json_string(&value, "details")?,
-    })
-}
-
-fn parse_app_usage_time(value: Value) -> HostResult<AppUsageTimeResultData> {
-    let entriesValue = value
-        .get("entries")
-        .and_then(Value::as_array)
-        .ok_or_else(|| HostError::new("Windows app usage data is missing entries array"))?;
-    let mut entries = Vec::new();
-    for entry in entriesValue {
-        entries.push(AppUsageTimeEntry {
-            packageName: json_string(entry, "packageName")?,
-            appName: json_string(entry, "appName")?,
-            totalForegroundTimeMs: json_i64(entry, "totalForegroundTimeMs")?,
-            lastTimeUsed: json_i64(entry, "lastTimeUsed")?,
-            isSystemApp: json_bool(entry, "isSystemApp")?,
-        });
-    }
-    Ok(AppUsageTimeResultData {
-        startTime: json_i64(&value, "startTime")?,
-        endTime: json_i64(&value, "endTime")?,
-        sinceHours: json_i32(&value, "sinceHours")?,
-        requestedPackageName: json_optional_string(&value, "requestedPackageName"),
-        includesSystemApps: json_bool(&value, "includesSystemApps")?,
-        totalEntries: json_i32(&value, "totalEntries")?,
-        entries,
     })
 }
 

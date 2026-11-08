@@ -2505,6 +2505,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "flate2",
  "flume",
  "if-addrs",
  "libc",
@@ -2516,8 +2517,10 @@ dependencies = [
  "operit-host-native-storage",
  "operit-host-native-terminal",
  "serial2",
+ "tar",
  "tokio",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
@@ -3039,6 +3042,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
+ "syn 2.0.117",
  "thiserror 1.0.69",
  "tokio",
  "url",

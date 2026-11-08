@@ -11,6 +11,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../common/OperitLogoMark.dart';
+import '../../features/update/AppUpdateBadge.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../../theme/OperitTheme.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -118,9 +119,11 @@ class CollapsedDrawerContent extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.only(top: topPadding),
                   child: Center(
-                    child: OperitLogoMark(
-                      size: 34,
-                      color: appearance.statusAvailableColor,
+                    child: AppUpdateBadge(
+                      child: OperitLogoMark(
+                        size: 34,
+                        color: appearance.statusAvailableColor,
+                      ),
                     ),
                   ),
                 ),
@@ -267,10 +270,30 @@ class SidebarInfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ThemeSidebarInfoCard(
-      brandName: brandName,
-      appearance: appearance,
-      trailing: trailing,
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(20, 4, 14, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: AppUpdateBadge(
+                child: Text(
+                  brandName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: appearance.titleColor,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
     );
   }
 }

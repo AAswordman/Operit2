@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
+import android.os.Build
 import android.os.Process
+import android.provider.Settings
 import app.operit.core.tools.system.AndroidPrivilegedCommandExecutor
 import app.operit.core.tools.system.AndroidPrivilegedCommandTarget
 import java.io.File
@@ -42,8 +44,16 @@ internal class AndroidPackageOperations(private val context: Context) {
         require(file.isAbsolute && file.isFile && file.canRead()) { "APK is not a readable absolute file: $path" }
         val info = pm.getPackageArchiveInfo(file.absolutePath, 0)
             ?: throw IllegalArgumentException("File is not a valid APK: $path")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !pm.canRequestPackageInstalls()) {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return result("install_app", info.packageName,
+                "请允许 Operit 安装应用，然后返回点击继续安装。安装包已保留，无需重新下载。")
+                .put("installState", "permission_required")
+        }
         AndroidFileOpener(context).open(file, null, null)
-        return result("install_app", info.packageName, "Installation requested; system confirmation is required")
+        return result("install_app", info.packageName, "安装器已打开，请在系统窗口确认安装。")
+            .put("installState", "installer_opened")
     }
 
     private fun uninstall(name: String): JSONObject {

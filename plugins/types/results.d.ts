@@ -567,6 +567,10 @@ export interface SystemSettingData {
  * Reports the outcome of installing, uninstalling, starting, or stopping an application package.
  */
 export interface AppOperationData {
+  /**
+   * permission_required, installer_opened, restart_required, or completed.
+   */
+  installState?: string;
   operationType: string;
   packageName: string;
   success: boolean;

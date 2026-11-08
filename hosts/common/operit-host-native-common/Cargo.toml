@@ -7,6 +7,7 @@ publish = false
 
 [features]
 default = []
+app-install = ["dep:flate2", "dep:tar", "dep:zip"]
 daemon = ["dep:tokio"]
 fs = ["dep:operit-host-native-filesystem"]
 http = ["dep:operit-host-native-http"]
@@ -17,6 +18,9 @@ tcp = ["dep:async-trait", "dep:tokio"]
 serial = ["dep:async-trait", "dep:tokio", "dep:serial2", "dep:libc", "dep:windows-sys"]
 
 [dependencies]
+flate2 = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 bytes = "1"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
 operit-host-native-filesystem = { path = "../operit-host-native-filesystem", optional = true }

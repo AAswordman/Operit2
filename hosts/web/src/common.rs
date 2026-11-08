@@ -542,6 +542,7 @@ pub(crate) fn system_setting_data(value: JsValue) -> HostResult<SystemSettingDat
 
 pub(crate) fn app_operation_data(value: JsValue) -> HostResult<AppOperationData> {
     Ok(AppOperationData {
+        installState: None,
         operationType: read_string_property(&value, "operationType")?,
         packageName: read_string_property(&value, "packageName")?,
         success: read_bool_property(&value, "success")?,
