@@ -31,6 +31,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get fullscreenInput => 'Fullscreen input';
 
   @override
+  String get noticeExpand => 'Expand';
+
+  @override
+  String get noticeCollapse => 'Collapse';
+
+  @override
   String get expandInput => 'Expand input';
 
   @override

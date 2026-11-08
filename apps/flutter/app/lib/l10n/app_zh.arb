@@ -7,6 +7,8 @@
   "askOperitHint": "向 Operit 提问",
   "aiChat": "AI聊天",
   "fullscreenInput": "全屏输入",
+  "noticeExpand": "展开全文",
+  "noticeCollapse": "收起",
   "expandInput": "展开输入框",
   "collapseInput": "收起输入框",
   "settings": "设置",

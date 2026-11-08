@@ -174,6 +174,62 @@ void main() {
     },
   );
 
+  testWidgets(
+    'long notices expand, stay alive, and allow copying the full text',
+    (tester) async {
+      final controller = AppToastController.instance;
+      final message = List.generate(
+        40,
+        (index) => 'Failure detail $index',
+      ).join('\n');
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => AppToastHost(child: child!),
+          home: const Scaffold(body: Text('Application')),
+        ),
+      );
+      controller.show(message, duration: const Duration(seconds: 2));
+      await _pumpNotice(tester);
+      expect(find.text('Expand'), findsOneWidget);
+      expect(find.byType(SelectableText), findsNothing);
+      final collapsedHeight = tester.getSize(find.text(message)).height;
+
+      await tester.tap(find.text('Expand'));
+      await tester.pump();
+      expect(find.text('Collapse'), findsOneWidget);
+      expect(
+        tester.widget<SelectableText>(find.byType(SelectableText)).data,
+        message,
+      );
+      expect(
+        tester.getSize(find.byType(SingleChildScrollView)).height,
+        greaterThan(collapsedHeight),
+      );
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(find.text('Collapse')));
+      await tester.pump();
+      await mouse.moveTo(Offset.zero);
+      await tester.pump(const Duration(seconds: 3));
+      expect(controller.notices.value, hasLength(1));
+
+      await tester.drag(
+        find.byType(SingleChildScrollView),
+        const Offset(0, -2000),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('Collapse'));
+      await tester.pump();
+      expect(find.text('Expand'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      await _pumpNotice(tester);
+      expect(controller.notices.value, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('close tooltip works when the host sits above the navigator', (
     tester,
   ) async {

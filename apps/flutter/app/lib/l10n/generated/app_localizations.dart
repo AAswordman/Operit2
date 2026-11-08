@@ -140,6 +140,18 @@ abstract class AppLocalizations {
   /// **'Fullscreen input'**
   String get fullscreenInput;
 
+  /// No description provided for @noticeExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand'**
+  String get noticeExpand;
+
+  /// No description provided for @noticeCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse'**
+  String get noticeCollapse;
+
   /// No description provided for @expandInput.
   ///
   /// In en, this message translates to:

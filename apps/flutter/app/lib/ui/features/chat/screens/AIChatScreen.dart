@@ -2398,6 +2398,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         StackTrace stackTrace,
       ) {
         debugPrint('Failed to insert summary: $error\n$stackTrace');
+        _showLocalToast('插入总结失败：$error');
         return false;
       }),
     );

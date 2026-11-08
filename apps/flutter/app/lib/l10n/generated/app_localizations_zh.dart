@@ -30,6 +30,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get fullscreenInput => '全屏输入';
 
   @override
+  String get noticeExpand => '展开全文';
+
+  @override
+  String get noticeCollapse => '收起';
+
+  @override
   String get expandInput => '展开输入框';
 
   @override

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../core/host/AppToastController.dart';
+import '../../l10n/generated/app_localizations.dart';
 import 'OperitLogoMark.dart';
 
 /// Presents the process-wide notice stack at the top-right of the window.
@@ -215,6 +216,23 @@ class _MacNoticeTile extends StatefulWidget {
 
 class _MacNoticeTileState extends State<_MacNoticeTile> {
   bool _entered = false;
+  bool _expanded = false;
+  bool _hovered = false;
+
+  /// Keeps a notice alive while its full message is being read.
+  void _setExpanded(bool expanded) {
+    setState(() => _expanded = expanded);
+    _updateLifetime();
+  }
+
+  void _updateLifetime() {
+    final controller = AppToastController.instance;
+    if (_expanded || _hovered) {
+      controller.pause(widget.notice.id);
+    } else {
+      controller.resume(widget.notice.id);
+    }
+  }
 
   /// Schedules the slide-in on the frame after insertion.
   @override
@@ -232,8 +250,14 @@ class _MacNoticeTileState extends State<_MacNoticeTile> {
   Widget build(BuildContext context) {
     final visible = _entered && !widget.leaving;
     return MouseRegion(
-      onEnter: (_) => AppToastController.instance.pause(widget.notice.id),
-      onExit: (_) => AppToastController.instance.resume(widget.notice.id),
+      onEnter: (_) {
+        _hovered = true;
+        _updateLifetime();
+      },
+      onExit: (_) {
+        _hovered = false;
+        _updateLifetime();
+      },
       child: AnimatedSlide(
         offset: visible ? Offset.zero : const Offset(1.08, 0),
         duration: const Duration(milliseconds: 240),
@@ -246,6 +270,8 @@ class _MacNoticeTileState extends State<_MacNoticeTile> {
             child: _MacNoticeCard(
               notice: widget.notice,
               onDismiss: widget.onDismiss,
+              expanded: _expanded,
+              onExpandedChanged: _setExpanded,
             ),
           ),
         ),
@@ -256,10 +282,17 @@ class _MacNoticeTileState extends State<_MacNoticeTile> {
 
 class _MacNoticeCard extends StatelessWidget {
   /// Creates the frosted card for one notice.
-  const _MacNoticeCard({required this.notice, required this.onDismiss});
+  const _MacNoticeCard({
+    required this.notice,
+    required this.onDismiss,
+    required this.expanded,
+    required this.onExpandedChanged,
+  });
 
   final AppNotice notice;
   final VoidCallback onDismiss;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
 
   /// Builds the macOS-style notice card.
   @override
@@ -337,7 +370,12 @@ class _MacNoticeCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        _NoticeBody(notice: notice, style: bodyStyle),
+                        _NoticeBody(
+                          notice: notice,
+                          style: bodyStyle,
+                          expanded: expanded,
+                          onExpandedChanged: onExpandedChanged,
+                        ),
                         if (notice.actionLabel != null)
                           TextButton(
                             onPressed: () {
@@ -382,40 +420,78 @@ class _MacNoticeCard extends StatelessWidget {
 }
 
 class _NoticeBody extends StatelessWidget {
-  /// Creates the wrapping message body for one notice.
-  const _NoticeBody({required this.notice, required this.style});
+  const _NoticeBody({
+    required this.notice,
+    required this.style,
+    required this.expanded,
+    required this.onExpandedChanged,
+  });
 
   final AppNotice notice;
   final TextStyle? style;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
 
-  /// Builds a wrapping message and scrolls it once it passes the card height.
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        return _buildMeasuredBody(context, constraints.maxWidth);
+        final painter = TextPainter(
+          text: TextSpan(text: notice.text, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout(maxWidth: constraints.maxWidth);
+        final needsExpansion = painter.height > _maxBodyHeight;
+        painter.dispose();
+        final text = notice.selectable || expanded
+            ? SelectableText(notice.text, style: style)
+            : Text(notice.text, style: style);
+        if (!needsExpansion) {
+          return text;
+        }
+        final l10n = AppLocalizations.of(context);
+        final useChinese = Localizations.localeOf(context).languageCode == 'zh';
+        final label = expanded
+            ? l10n?.noticeCollapse ?? (useChinese ? '收起' : 'Collapse')
+            : l10n?.noticeExpand ?? (useChinese ? '展开全文' : 'Expand');
+        final expandedHeight = (MediaQuery.sizeOf(context).height * 0.5).clamp(
+          _maxBodyHeight,
+          420.0,
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (expanded)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: expandedHeight),
+                child: SingleChildScrollView(child: text),
+              )
+            else
+              ClipRect(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: _maxBodyHeight),
+                  child: Text(
+                    notice.text,
+                    style: style,
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            TextButton.icon(
+              onPressed: () => onExpandedChanged(!expanded),
+              icon: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+              label: Text(label),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        );
       },
-    );
-  }
-
-  /// Lays the message out and scrolls only when it exceeds the card body.
-  Widget _buildMeasuredBody(BuildContext context, double maxWidth) {
-    final painter = TextPainter(
-      text: TextSpan(text: notice.text, style: style),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout(maxWidth: maxWidth);
-    final exceedsMaxHeight = painter.height > _maxBodyHeight;
-    painter.dispose();
-    final text = notice.selectable
-        ? SelectableText(notice.text, style: style)
-        : Text(notice.text, style: style);
-    if (!exceedsMaxHeight) {
-      return text;
-    }
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: _maxBodyHeight),
-      child: SingleChildScrollView(child: text),
     );
   }
 }

@@ -1426,19 +1426,19 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     pub async fn insertSummary(&mut self, message: ChatMessage) -> bool {
         if message.sender != "user" && message.sender != "ai" {
-            return false;
+            return self.summaryInsertionFailed(None, "只能在用户或 AI 消息处插入总结".to_string());
         }
         let Some(currentChatId) = self.chatHistoryDelegate.currentChatIdFlow.value() else {
-            return false;
+            return self.summaryInsertionFailed(None, "当前没有打开的对话".to_string());
         };
         let Some(mut enhancedAiService) = self.newEnhancedAiServiceForChat(&currentChatId) else {
-            return false;
+            return self.summaryInsertionFailed(Some(currentChatId), "AI 服务尚未就绪".to_string());
         };
         self.messageProcessingDelegate
             .setInputProcessingStateForChat(
                 currentChatId.clone(),
                 InputProcessingState::Summarizing {
-                    message: "chat_summarizing_generating".to_string(),
+                    message: String::new(),
                 },
             );
         let beforeTimestamp = if message.sender == "ai" {
@@ -1458,9 +1458,7 @@ impl ChatServiceCore {
             .filter(|message| message.sender == "user" || message.sender == "ai")
             .collect::<Vec<_>>();
         if messagesToSummarize.is_empty() {
-            self.messageProcessingDelegate
-                .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
-            return false;
+            return self.summaryInsertionFailed(Some(currentChatId), "所选位置之前没有可总结的消息".to_string());
         }
         let configuration = match enhancedAiService.resolveChatConfigurationForOptions(
             &operit_providers::chat::EnhancedAIService::SendMessageOptions {
@@ -1470,12 +1468,7 @@ impl ChatServiceCore {
         ).await {
             Ok(configuration) => configuration,
             Err(error) => {
-                self.messageProcessingDelegate
-                    .setInputProcessingStateForChat(
-                        currentChatId,
-                        InputProcessingState::Error { message: error.to_string() },
-                    );
-                return false;
+                return self.summaryInsertionFailed(Some(currentChatId), error.to_string());
             }
         };
         // Generation must not persist a summary boundary before valid content exists.
@@ -1494,9 +1487,7 @@ impl ChatServiceCore {
             Ok(summaryMessage) => summaryMessage,
             Err(error) => {
                 AppLogger::e("ChatSummary", &format!("Summary insertion failed for {currentChatId}: {error}"));
-                self.messageProcessingDelegate
-                    .setInputProcessingStateForChat(currentChatId, InputProcessingState::Error { message: error });
-                return false;
+                return self.summaryInsertionFailed(Some(currentChatId), error);
             }
         };
 
@@ -1506,11 +1497,7 @@ impl ChatServiceCore {
             afterTimestamp,
             Some(currentChatId.clone()),
         ).is_none() {
-            self.messageProcessingDelegate
-                .setInputProcessingStateForChat(currentChatId, InputProcessingState::Error {
-                    message: "Summary could not be inserted at the selected message".to_string(),
-                });
-            return false;
+            return self.summaryInsertionFailed(Some(currentChatId), "所选位置无法插入总结，请检查相邻位置是否已有总结".to_string());
         }
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
@@ -1530,6 +1517,18 @@ impl ChatServiceCore {
         self.messageProcessingDelegate
             .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);
         true
+    }
+
+    /// Reports manual-summary failures through the application's notice surface.
+    #[allow(non_snake_case)]
+    fn summaryInsertionFailed(&mut self, chatId: Option<String>, reason: String) -> bool {
+        if let Some(chatId) = chatId {
+            self.messageProcessingDelegate
+                .setInputProcessingStateForChat(chatId, InputProcessingState::Idle);
+        }
+        self.messageProcessingDelegate
+            .showToast(format!("插入总结失败：{reason}"));
+        false
     }
 
     /// Returns branch chats that were derived from the requested parent chat.
