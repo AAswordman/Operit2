@@ -547,6 +547,7 @@ const Set<String> _webRuntimeArtifactNames = <String>{
   'browser_system_capabilities.js',
   'browser_file_open.js',
   'browser_http_stream.js',
+  'terminal_9p.js',
   'operit_runtime_worker.js',
   'operit_javascript_runtime.js',
   'operit_javascript_transport.js',

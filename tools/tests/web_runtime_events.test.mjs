@@ -58,3 +58,37 @@ test('both page and worker runtime proxies expose event ingress', () => {
   assert.match(source('apps/flutter/native/operit-flutter-bridge/src/BridgeExports.rs'),
     /pub async fn emitRuntimeEvent[\s\S]*?self\.inner\.emitRuntimeEvent\(eventJson\)\.await/);
 });
+
+/** Ensures transitive TypeScript imports survive the explicit deployment asset list. */
+test('web build stages the complete runtime module dependency graph', async () => {
+  const { stripTypeScriptTypes } = await import('node:module');
+  const runtimeRoot = 'apps/flutter/app/web/runtime/src/';
+  const config = JSON.parse(source(`${runtimeRoot}tsconfig.json`));
+  const hook = source('apps/flutter/app/hook/build.dart');
+  const declaration = hook.match(/const Set<String> _webRuntimeArtifactNames = <String>\{([\s\S]*?)\n\};/);
+  assert.ok(declaration, 'runtime deployment artifact list must be declared');
+  const staged = new Set([...declaration[1].matchAll(/'([^']+)'/g)].map(match => match[1]));
+  const pending = [...config.include];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const filename = pending.pop();
+    if (visited.has(filename)) continue;
+    visited.add(filename);
+    const artifact = filename.replace(/\.ts$/, '.js');
+    assert.ok(staged.has(artifact), `${artifact} is missing from the Web deployment`);
+    const javascript = stripTypeScriptTypes(source(`${runtimeRoot}${filename}`), { mode: 'transform' });
+    const imports = javascript.matchAll(/(?:^|\n)\s*(?:import|export)\s+(?:[^;]*?\bfrom\s+)?["'](\.\/[^"']+\.js)["']/g);
+    for (const [, specifier] of imports) {
+      const dependency = specifier.slice(2);
+      assert.ok(staged.has(dependency), `${artifact} imports unstaged module ${dependency}`);
+      const input = dependency.replace(/\.js$/, '.ts');
+      try {
+        source(`${runtimeRoot}${input}`);
+        pending.push(input);
+      } catch (error) {
+        // MessagePack and wasm-bindgen modules are generated outside TypeScript.
+        if (error.code !== 'ENOENT') throw error;
+      }
+    }
+  }
+});
