@@ -22,10 +22,10 @@
     {
       "name": "AGNES_BASE_URL",
       "description": {
-        "zh": "Agnes API Base URL（可选，默认国际站 https://apihub.agnes-ai.com/v1；中国站请填 https://api.agnes-ai.cn/v1）",
-        "en": "Agnes API base URL (optional; defaults to the international site https://apihub.agnes-ai.com/v1. Use https://api.agnes-ai.cn/v1 for the China site)"
+        "zh": "Agnes API 站点（必填）。可选值只有两个：https://apihub.agnes-ai.com/v1（国际站）或 https://api.agnes-ai.cn/v1（国内站）。两个站点的 Key 不能通用，必须与你的 Key 归属站点一致。",
+        "en": "Agnes API site (required). Only two values are accepted: https://apihub.agnes-ai.com/v1 (international) or https://api.agnes-ai.cn/v1 (China). Keys are site-specific and must match the site the key was issued for."
       },
-      "required": false
+      "required": true
     },
     {
       "name": "AGNES_VIDEO_MODEL",
@@ -89,7 +89,9 @@ const agnesVideo = (function () {
         .writeTimeout(HTTP_TIMEOUT_MS)
         .build();
 
-    const DEFAULT_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    const INTERNATIONAL_BASE_URL = "https://apihub.agnes-ai.com/v1";
+    const CHINA_BASE_URL = "https://api.agnes-ai.cn/v1";
+    const SUPPORTED_BASE_URLS = [INTERNATIONAL_BASE_URL, CHINA_BASE_URL];
     const DEFAULT_MODEL = "agnes-video-2.5";
     const FLASH_MODEL = "agnes-video-2.5-flash";
     const SUPPORTED_MODELS = [DEFAULT_MODEL, FLASH_MODEL];
@@ -107,8 +109,31 @@ const agnesVideo = (function () {
     }
 
     function resolveBaseUrl(): string {
-        const fromEnv = (getEnv("AGNES_BASE_URL") || "").trim();
-        return (fromEnv || DEFAULT_BASE_URL).replace(/\/+$/, "");
+        const raw = (getEnv("AGNES_BASE_URL") || "").trim();
+        if (!raw) {
+            throw new Error(
+                `AGNES_BASE_URL 未配置，请选择 Agnes API 站点：${INTERNATIONAL_BASE_URL}（国际站）或 ${CHINA_BASE_URL}（国内站）。`
+            );
+        }
+
+        const normalized = normalizeBaseUrl(raw);
+        if (SUPPORTED_BASE_URLS.indexOf(normalized) < 0) {
+            throw new Error(
+                `AGNES_BASE_URL 只能是 ${INTERNATIONAL_BASE_URL}（国际站）或 ${CHINA_BASE_URL}（国内站），收到: ${raw}`
+            );
+        }
+        return normalized;
+    }
+
+    function normalizeBaseUrl(raw: string): string {
+        let value = raw.trim();
+        if (!value) return value;
+        if (!/^https?:\/\//i.test(value)) {
+            value = `https://${value}`;
+        }
+        if (/^https?:\/\/apihub\.agnes-ai\.com\/?$/i.test(value)) return INTERNATIONAL_BASE_URL;
+        if (/^https?:\/\/api\.agnes-ai\.cn\/?$/i.test(value)) return CHINA_BASE_URL;
+        return value.replace(/\/+$/, "");
     }
 
     function resolveModel(explicit?: string | null): string {
