@@ -837,9 +837,10 @@ impl AIToolHandler {
             } else if isMcpPackage {
                 self.registerAsyncTool(
                     toolName,
-                    Box::new(MCPToolExecutor::new(MCPManager::getInstance(
-                        context.clone(),
-                    ))),
+                Box::new(MCPToolExecutor::new(
+                    MCPManager::getInstance(context.clone()),
+                    context.clone(),
+                )),
                 );
             } else {
                 self.registerAsyncTool(
