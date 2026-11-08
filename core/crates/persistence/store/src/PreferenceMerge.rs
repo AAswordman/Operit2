@@ -397,7 +397,7 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
             snapshot: Some(Box::new(move || snapshot.syncSnapshot().map_err(|e|e.to_string()))),
             coverage: Box::new(move || coverage.syncSnapshot().map(|snapshot|snapshot.covered).map_err(|e|e.to_string())),
             content_digest: crate::Transaction::Snapshot::content_digest,
-            repair: Some(Box::new(move |expected, source, file| crate::Transaction::preference::repair_file(&repair,expected,source,file).map_err(|e|e.to_string()))),
+            repair: Some(Box::new(move |expected, source, file, _| crate::Transaction::preference::repair_file(&repair,expected,source,file).map_err(|e|e.to_string()))),
         })?;
     }
     Ok(registry)

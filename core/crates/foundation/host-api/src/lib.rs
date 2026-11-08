@@ -1745,6 +1745,11 @@ pub struct TerminalInfo {
     pub types: Vec<TerminalTypeInfo>,
 }
 
+/// Receives output frames, including one final decoder-flush frame.
+pub type TerminalOutputCallback = Box<dyn FnMut(&[u8], bool) -> HostResult<()> + Send>;
+/// Receives the original command receipt after its host execution finishes.
+pub type TerminalCompletionCallback = Box<dyn FnOnce(HostResult<TerminalCommandOutput>) + Send>;
+
 pub trait TerminalHost: Send + Sync {
     /// Resolves a working directory in the exact selected terminal filesystem.
     fn resolveWorkingDirectory(
@@ -1787,6 +1792,7 @@ pub trait TerminalHost: Send + Sync {
     /// Executes in the same session while forwarding raw PTY bytes before completion.
     /// Empty frames allow cancellation checks during quiet commands. A callback error
     /// interrupts the command and leaves the session available for subsequent work.
+    /// A zero timeout disables the execution deadline; callers may stop waiting independently.
     fn executeInSessionStreaming(
         &self,
         _sessionId: &str,
@@ -1795,6 +1801,24 @@ pub trait TerminalHost: Send + Sync {
         _onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
     ) -> HostResult<TerminalCommandOutput> {
         Err(HostError::new("Terminal output streaming is not supported by this host"))
+    }
+    /// Schedules native PTY work independently of the caller's foreground wait.
+    /// Event-loop hosts override this operation to poll without blocking their runtime worker.
+    fn scheduleInSessionStreaming(
+        self: Arc<Self>,
+        scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+        sessionId: String,
+        command: String,
+        timeoutMs: u64,
+        mut onOutput: TerminalOutputCallback,
+        onComplete: TerminalCompletionCallback,
+    ) -> HostResult<()> where Self: 'static {
+        scheduler.scheduleHostRuntimeTask("terminal-command-stream", Box::new(move || {
+            let result = self.executeInSessionStreaming(
+                &sessionId, &command, timeoutMs, &mut |data| onOutput(data, false),
+            ).and_then(|receipt| { onOutput(&[], true)?; Ok(receipt) });
+            onComplete(result);
+        }))
     }
     fn executeHiddenCommand(
         &self,

@@ -608,7 +608,8 @@ impl OpenAIProvider {
         )
     }
 
-    fn apply_token_counts(&self, token_counts: TokenCounts) {
+    /// Applies reported usage to the live counters shared with cancellation and provider wrappers.
+    pub(super) fn apply_token_counts(&self, token_counts: TokenCounts) {
         if let Ok(mut state) = self.state.lock() {
             if token_counts.input > 0 || token_counts.cached_input > 0 {
                 state.tokenCacheManager.update_actual_tokens(
@@ -1349,6 +1350,9 @@ impl OpenAIProvider {
                         output.emit_chunk(chunk.clone());
                         emitter.emit_chunk(&chunk);
                     }
+                    // Keep completion accounting available when this stream is interrupted.
+                    self.set_estimated_output_tokens(&emitter.received_content);
+                    self.apply_token_counts(state.usage.clone());
                     if state.streamEndReceived {
                         break;
                     }

@@ -1573,7 +1573,7 @@ pub struct TerminalCommandResultData {
     ///Actual terminal type used for execution
     #[serde(rename = "terminalType")]
     pub terminalType: TerminalType,
-    ///Whether this execution ended due to timeout. On timeout, the current command is cancelled and the terminal session is kept.
+    ///Whether foreground waiting expired while the original command continues in its session.
     #[serde(rename = "timedOut")]
     pub timedOut: bool,
 }
@@ -2515,7 +2515,7 @@ impl TerminalCommandResultData {
         sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
         sb.push_str(&format!("Exit Code: {}\n", self.exitCode));
         if self.timedOut {
-            sb.push_str("Timed Out: true\n");
+            sb.push_str("Background: true\nCommand is still running and was not canceled. The next command uses a new available session. Use Tools.System.terminal.wait(sessionId, 20000), Tools.System.terminal.screen(sessionId), Tools.System.terminal.input(sessionId, options), or Tools.System.terminal.close(sessionId) to manage this session.\n");
         }
         sb.push_str("\nOutput:\n");
         sb.push_str(&self.output);
@@ -3055,6 +3055,7 @@ pub struct EdgePortResultData {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TerminalObservationResultData {
+    Run { result: TerminalCommandResultData },
     Open { handle: String },
     Next { event: JsNullable<super::system::TerminalExecEvent> },
     Close {},

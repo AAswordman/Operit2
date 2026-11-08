@@ -1,6 +1,6 @@
 [package]
 name = "operit-runtime"
-version = "2.0.0-preview.28"
+version = "2.0.0-preview.29"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true

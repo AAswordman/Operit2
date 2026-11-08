@@ -42,6 +42,7 @@ use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
     ChatGuidanceInbox, EnhancedAIService, SendMessageCallbacks,
 };
+use operit_providers::chat::TurnTokenUsage::{TurnTokenSnapshot, TurnTokenUsage};
 use operit_providers::runtime_support::ChatConfigurationResult;
 use operit_plugin_sdk::js_sdk::results::{ChatCommittedMessage, JsOptional, MessageSendOutcome, MessageSendResultData, MessageSendStatus};
 use tokio::sync::oneshot;
@@ -297,6 +298,7 @@ pub struct ChatRuntime {
     pub executionLease: Option<ChatExecutionLease>,
     pub isCancelling: bool,
     pub activeStreamingAiMessage: Option<ChatMessage>,
+    pub tokenUsage: TurnTokenUsage,
     pub sendJob: Option<String>,
     pub responseStream: Option<SharedAiResponseStream>,
     pub guidanceInbox: Option<ChatGuidanceInbox>,
@@ -319,6 +321,7 @@ impl ChatRuntime {
             executionLease: None,
             isCancelling: false,
             activeStreamingAiMessage: None,
+            tokenUsage: TurnTokenUsage::default(),
             sendJob: None,
             responseStream: None,
             guidanceInbox: None,
@@ -416,6 +419,32 @@ pub struct TurnCancellationSnapshot {
     pub aiMessage: Option<ChatMessage>,
     pub partialContent: String,
     pub turnOptions: ChatTurnOptions,
+    pub tokenSnapshot: TurnTokenSnapshot,
+}
+
+impl TurnCancellationSnapshot {
+    /// Finalizes partial output with the exact turn's settled usage before it is persisted.
+    fn intoPartialMessage(self) -> Option<ChatMessage> {
+        let mut aiMessage = self.aiMessage?;
+        let tokens = self.tokenSnapshot;
+        aiMessage.inputTokens = tokens.inputTokens;
+        aiMessage.outputTokens = tokens.outputTokens;
+        aiMessage.cachedInputTokens = tokens.cachedInputTokens;
+        let mut partStream = AssistantMarkupStreamState::new();
+        partStream.resetToSnapshot(&self.partialContent)
+            .expect("cancelled assistant snapshot must parse into message parts");
+        aiMessage.parts = partStream.finish()
+            .expect("cancelled assistant markup must parse into message parts");
+        if let Some(observer) = &self.turnOptions.outputObserver {
+            observer.snapshot(aiMessage.timestamp, &aiMessage.parts);
+        }
+        aiMessage.contentStream = None;
+        if let Some(presentation) = aiMessage.pluginExtensions.get_mut(PRESENTATION_EXTENSION) {
+            presentation["pending"] = serde_json::Value::Bool(false);
+        }
+        aiMessage.completedAt = messageTimingNow().startedAtMs as i64;
+        Some(aiMessage)
+    }
 }
 
 /// Request data used to construct the user message sent to the chat model.
@@ -1528,30 +1557,14 @@ impl MessageProcessingDelegate {
                 .map(|stream| stream.current_render_content())
                 .unwrap_or_default(),
             turnOptions: runtime.currentTurnOptions.clone(),
+            tokenSnapshot: runtime.tokenUsage.snapshot(),
         })
     }
 
     /// Removes and returns the active streaming AI message for a chat.
     #[allow(non_snake_case)]
     pub fn detachStreamingAiMessage(&mut self, chatId: String) -> Option<ChatMessage> {
-        let snapshot = self.readCurrentTurnCancellationSnapshot(chatId)?;
-        let mut aiMessage = snapshot.aiMessage?;
-        let mut partStream = AssistantMarkupStreamState::new();
-        partStream
-            .resetToSnapshot(&snapshot.partialContent)
-            .expect("cancelled assistant snapshot must parse into message parts");
-        aiMessage.parts = partStream
-            .finish()
-            .expect("cancelled assistant markup must parse into message parts");
-        if let Some(observer) = &snapshot.turnOptions.outputObserver {
-            observer.snapshot(aiMessage.timestamp, &aiMessage.parts);
-        }
-        aiMessage.contentStream = None;
-        if let Some(presentation) = aiMessage.pluginExtensions.get_mut(PRESENTATION_EXTENSION) {
-            presentation["pending"] = serde_json::Value::Bool(false);
-        }
-        aiMessage.completedAt = messageTimingNow().startedAtMs as i64;
-        Some(aiMessage)
+        self.readCurrentTurnCancellationSnapshot(chatId)?.intoPartialMessage()
     }
 
     /// Matches only an admitted native execution while it owns the actual current streaming runtime.
@@ -1568,9 +1581,8 @@ impl MessageProcessingDelegate {
         &mut self,
         chatId: String,
         keepPartialResponse: bool,
-    ) -> Option<ChatMessage> {
+    ) -> Result<Option<ChatMessage>, String> {
         self.cancelMessageInternalForTurn(chatId, keepPartialResponse, None).await
-            .expect("Unscoped cancellation cannot fail generation validation")
     }
 
     /// Cancels only the execution reserved by an exact background-work action.
@@ -1592,13 +1604,13 @@ impl MessageProcessingDelegate {
         };
         let Some((cancelledTurnId, cancellationTurnId, responseStream)) = reservation? else { return Ok(None); };
         if expectedTurnId.is_some() { self.cancelSummaryTasks(Some(&chatId)); }
-        let partialMessage = keepPartialResponse
-            .then(|| self.detachStreamingAiMessage(chatId.clone()))
-            .flatten();
         self.clearCurrentTurnToolInvocationCount(chatId.clone());
         // Cancel the producer first. Closing the stream earlier lets its cleanup task
         // remove the active service before AIMessageManager can invalidate execution.
-        AIMessageManager::cancelOperation(chatId.clone()).await;
+        let usageResult = AIMessageManager::cancelOperation(chatId.clone()).await;
+        let partialMessage = keepPartialResponse
+            .then(|| self.detachStreamingAiMessage(chatId.clone()))
+            .flatten();
         if let Some(responseStream) = responseStream {
             responseStream.close();
         }
@@ -1636,19 +1648,20 @@ impl MessageProcessingDelegate {
             );
             self.finishChatExecution(chatId, InputProcessingState::Idle);
         }
+        usageResult.map_err(|error| error.to_string())?;
         Ok(partialMessage)
     }
 
     /// Cancels an active message turn while preserving partial response content.
     #[allow(non_snake_case)]
-    pub async fn cancelMessage(&mut self, chatId: String) -> Option<ChatMessage> {
+    pub async fn cancelMessage(&mut self, chatId: String) -> Result<Option<ChatMessage>, String> {
         self.cancelMessageInternal(chatId, true).await
     }
 
     /// Cancels an active message turn before destructive history mutation.
     #[allow(non_snake_case)]
-    pub async fn cancelMessageForDestructiveMutation(&mut self, chatId: String) {
-        let _ = self.cancelMessageInternal(chatId, false).await;
+    pub async fn cancelMessageForDestructiveMutation(&mut self, chatId: String) -> Result<(), String> {
+        self.cancelMessageInternal(chatId, false).await.map(|_| ())
     }
 
     /// Returns the observable set of chat ids with active streaming turns.
@@ -2119,6 +2132,7 @@ impl MessageProcessingDelegate {
         }
         self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             runtime.activeStreamingAiMessage = Some(aiMessage.clone());
+            runtime.tokenUsage = request.enhancedAiService.turnTokenUsage();
         });
         AppLogger::v_with_level(
             "ResponseExecutionTrace",
@@ -2138,6 +2152,7 @@ impl MessageProcessingDelegate {
         let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new("")));
         let workerPartStream = Arc::new(Mutex::new(AssistantMarkupStreamState::new()));
         let workerService = request.enhancedAiService.clone();
+        let workerTokenUsage = request.enhancedAiService.turnTokenUsage();
         let workerChatHistoryDelegate =
             Arc::new(Mutex::new(request.chatHistoryDelegate.clone_for_core()));
         let workerMessageProcessingDelegate = Arc::new(Mutex::new(self.clone_for_core()));
@@ -2378,13 +2393,7 @@ impl MessageProcessingDelegate {
                         if !completionMessageProcessingDelegate.lock().expect("worker message processing delegate mutex poisoned")
                             .isCurrentChatTurn(&completionChatId, completionTurnId) { return; }
                         let mut workerService = workerService;
-                        let tokenSnapshot = workerService.getLastTurnTokenSnapshot().unwrap_or(
-                            operit_providers::chat::EnhancedAIService::TurnTokenSnapshot {
-                                inputTokens: 0,
-                                outputTokens: 0,
-                                cachedInputTokens: 0,
-                            },
-                        );
+                        let tokenSnapshot = workerTokenUsage.snapshot();
                         let completedElapsed = messageTimingNow().startedAtMs as i64;
                         let finalMessage = {
                             let parts = {
@@ -3171,6 +3180,29 @@ mod tests {
         Arc,
     };
     use tokio::sync::oneshot;
+
+    /// Persists the paused turn's input, output and cache usage together with its partial reply.
+    #[test]
+    fn paused_message_retains_usage_in_serialized_history() {
+        let mut message = operit_model::ChatMessage::ChatMessage::new("ai".into());
+        message.timestamp = 42;
+        let snapshot = super::TurnCancellationSnapshot {
+            chatId: "chat-a".into(),
+            turnId: 1,
+            aiMessage: Some(message),
+            partialContent: "partial reply".into(),
+            turnOptions: Default::default(),
+            tokenSnapshot: super::TurnTokenSnapshot { inputTokens: 200, outputTokens: 37, cachedInputTokens: 80 },
+        };
+        let partial = snapshot.intoPartialMessage().unwrap();
+        assert_eq!(partial.displayText(), "partial reply");
+        assert!(partial.contentStream.is_none());
+        let saved = serde_json::to_value(&partial).unwrap();
+        assert_eq!(saved["inputTokens"], 200);
+        assert_eq!(saved["outputTokens"], 37);
+        assert_eq!(saved["cachedInputTokens"], 80);
+        assert_eq!(saved["timestamp"], 42);
+    }
 
     /// Closing an observer ends its transform while production and a fresh live subscriber continue.
     #[tokio::test]

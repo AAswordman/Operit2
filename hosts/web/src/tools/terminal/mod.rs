@@ -1,11 +1,13 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use js_sys::Uint8Array;
 use operit_host_api::{
-    HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
-    TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
-    TerminalSessionListEntry, TerminalTypeInfo,
+    HiddenTerminalCommandOutput, HostError, HostResult, HostRuntimeTaskSchedulerHost,
+    TerminalCloseOutput, TerminalCommandOutput, TerminalCompletionCallback, TerminalHost,
+    TerminalInfo, TerminalInputOutput, TerminalOutputCallback, TerminalScreenOutput,
+    TerminalSessionInfo, TerminalSessionListEntry, TerminalTypeInfo,
 };
 use wasm_bindgen::JsValue;
 
@@ -53,14 +55,16 @@ impl TerminalHost for WebTerminalHost {
         resolveHostDirectory: &dyn Fn(&str) -> HostResult<String>,
     ) -> HostResult<String> {
         requireLinuxVmTerminalType(terminal, terminalType)?;
-        operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(
-            workingDir,
-            &|path| {
-                if path == "/" { return Ok("/".to_string()); }
-                let native = resolveHostDirectory(path)?;
-                Ok(format!("/mnt/operit-host/{}", native.trim_start_matches('/')))
-            },
-        )
+        operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(workingDir, &|path| {
+            if path == "/" {
+                return Ok("/".to_string());
+            }
+            let native = resolveHostDirectory(path)?;
+            Ok(format!(
+                "/mnt/operit-host/{}",
+                native.trim_start_matches('/')
+            ))
+        })
     }
 
     /// Describes the Linux VM terminal available in browser builds.
@@ -188,6 +192,7 @@ impl TerminalHost for WebTerminalHost {
         let mut active = Vec::new();
         for (sessionId, session) in entries {
             if self.pollPtyExitCode(&sessionId)?.is_none() {
+                let state = call_terminal("sessionState", &[JsValue::from_str(&sessionId)])?;
                 active.push(TerminalSessionListEntry {
                     sessionId,
                     sessionName: session.sessionName,
@@ -195,8 +200,8 @@ impl TerminalHost for WebTerminalHost {
                     terminal: TERMINAL.to_string(),
                     terminalType: session.terminalType,
                     sessionKind: "linux-vm".to_string(),
-                    workingDir: session.workingDir,
-                    commandRunning: true,
+                    workingDir: read_string_property(&state, "workingDir")?,
+                    commandRunning: read_bool_property(&state, "commandRunning")?,
                 });
             }
         }
@@ -289,6 +294,46 @@ impl TerminalHost for WebTerminalHost {
         })
     }
 
+    /// Polls browser-owned execution while yielding the Rust worker between output frames.
+    fn scheduleInSessionStreaming(
+        self: Arc<Self>,
+        scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+        sessionId: String,
+        command: String,
+        timeoutMs: u64,
+        mut onOutput: TerminalOutputCallback,
+        onComplete: TerminalCompletionCallback,
+    ) -> HostResult<()> {
+        if timeoutMs != 0 {
+            return Err(HostError::new(
+                "Browser scheduled commands require session-owned execution",
+            ));
+        }
+        call_terminal(
+            "startPtyCommand",
+            &[JsValue::from_str(&sessionId), JsValue::from_str(&command)],
+        )?;
+        let delay = scheduler.clone();
+        scheduler.scheduleHostRuntimeAsyncTask(
+            "browser-terminal-command",
+            Box::new(move || {
+                Box::pin(async move {
+                    let result = async {
+                        loop {
+                            let receipt = pollBrowserCommand(&sessionId, &command, &mut onOutput)?;
+                            if let Some(receipt) = receipt {
+                                return Ok(receipt);
+                            }
+                            delay.waitForHostRuntimeDelay(50).await?;
+                        }
+                    }
+                    .await;
+                    onComplete(result);
+                })
+            }),
+        )
+    }
+
     /// Rejects hidden command execution because the Linux guest exposes interactive sessions only.
     fn executeHiddenCommand(
         &self,
@@ -326,12 +371,58 @@ impl TerminalHost for WebTerminalHost {
         })
     }
 
-    /// Rejects terminal screen snapshots because the Flutter terminal owns screen state.
-    fn getSessionScreen(&self, _sessionId: &str) -> HostResult<TerminalScreenOutput> {
-        Err(HostError::new(
-            "browser-local Linux VM terminal screen snapshots are unavailable; consume PTY output",
-        ))
+    /// Renders the retained serial screen independently of the Flutter output consumer.
+    fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
+        let session = TERMINAL_SESSIONS
+            .with(|sessions| sessions.borrow().get(sessionId).cloned())
+            .ok_or_else(|| HostError::new("Terminal session does not exist"))?;
+        let state = call_terminal("sessionState", &[JsValue::from_str(sessionId)])?;
+        let mut screen = vt100::Parser::new(session.rows, session.cols, 0);
+        screen.process(read_string_property(&state, "content")?.as_bytes());
+        Ok(TerminalScreenOutput {
+            sessionId: sessionId.to_string(),
+            platform: PLATFORM.to_string(),
+            terminal: TERMINAL.to_string(),
+            terminalType: session.terminalType,
+            rows: session.rows as usize,
+            cols: session.cols as usize,
+            content: screen.screen().contents(),
+            commandRunning: read_bool_property(&state, "commandRunning")?,
+        })
     }
+}
+
+/// Decodes a synchronous browser poll before the async task yields to its Host scheduler.
+fn pollBrowserCommand(
+    sessionId: &str,
+    command: &str,
+    onOutput: &mut TerminalOutputCallback,
+) -> HostResult<Option<TerminalCommandOutput>> {
+    let state = call_terminal("pollPtyCommand", &[JsValue::from_str(sessionId)])?;
+    let error = js_sys::Reflect::get(&state, &JsValue::from_str("error"))
+        .map_err(crate::common::js_error)?;
+    if let Some(error) = error.as_string() {
+        return Err(HostError::new(error));
+    }
+    let bytes = js_sys::Reflect::get(&state, &JsValue::from_str("output"))
+        .map_err(crate::common::js_error)?;
+    onOutput(&Uint8Array::new(&bytes).to_vec(), false)?;
+    let result = js_sys::Reflect::get(&state, &JsValue::from_str("result"))
+        .map_err(crate::common::js_error)?;
+    if result.is_null() {
+        return Ok(None);
+    }
+    onOutput(&[], true)?;
+    Ok(Some(TerminalCommandOutput {
+        command: command.to_string(),
+        output: read_string_property(&result, "output")?,
+        exitCode: read_i32_property(&result, "exitCode")?,
+        timedOut: false,
+        sessionId: sessionId.to_string(),
+        platform: PLATFORM.to_string(),
+        terminal: TERMINAL.to_string(),
+        terminalType: SHELL_TERMINAL_TYPE.to_string(),
+    }))
 }
 
 /// Allocates one unique browser-local Linux VM terminal session identifier.

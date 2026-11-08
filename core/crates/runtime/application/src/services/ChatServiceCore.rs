@@ -893,7 +893,13 @@ impl ChatServiceCore {
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn cancelMessage(&mut self, chatId: String) -> Result<(), String> {
         let turn = self.messageProcessingDelegate.readCurrentTurnCancellationSnapshot(chatId.clone());
-        let partialMessage = self.messageProcessingDelegate.cancelMessage(chatId.clone()).await;
+        let partialMessage = match self.messageProcessingDelegate.cancelMessage(chatId.clone()).await {
+            Ok(message) => message,
+            Err(error) => {
+                self.messageProcessingDelegate.failTurnReceipt(&chatId, error.clone());
+                return Err(error);
+            }
+        };
         if let (Some(turn), Some(partial)) = (turn, &partialMessage) {
             if turn.turnOptions.persistTurn {
             if let Err(error) = self.chatHistoryDelegate.commitAssistantMessageSegment(chatId.clone(), partial.clone(), None) {
@@ -1253,7 +1259,7 @@ impl ChatServiceCore {
         }
         self.messageProcessingDelegate
             .cancelMessageForDestructiveMutation(chatId.clone())
-            .await;
+            .await?;
         let backupChatId = chatId.clone();
         let backupWorkspacePath = self
             .chatHistoryDelegate
@@ -1283,7 +1289,7 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.prepareChatForDestructiveMutation(chatId.clone());
         self.messageProcessingDelegate
             .cancelMessageForDestructiveMutation(chatId.clone())
-            .await;
+            .await?;
         self.pendingQueueStateFlow().update(|queues| {
             queues.remove(&chatId);
         });

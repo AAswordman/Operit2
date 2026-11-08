@@ -2297,7 +2297,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "operit-cli"
-version = "2.0.0-preview.28"
+version = "2.0.0-preview.29"
 dependencies = [
  "arboard",
  "async-trait",
@@ -2740,6 +2740,7 @@ dependencies = [
  "operit-plugin-sdk-codegen",
  "operit-plugin-sdk-macros",
  "operit-plugin-theme",
+ "operit-util",
  "regex",
  "serde",
  "serde_bytes",
@@ -2815,6 +2816,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "getrandom 0.2.17",
+ "http",
  "json5",
  "operit-host-api",
  "operit-link",
@@ -2824,7 +2826,6 @@ dependencies = [
  "operit-tools",
  "operit-util",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "sha2",
@@ -2942,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.28"
+version = "2.0.0-preview.29"
 dependencies = [
  "aes",
  "async-trait",

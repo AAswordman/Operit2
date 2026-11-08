@@ -361,7 +361,7 @@ async fn generated_proxy_blob_presence_preserves_batch_results() {
         assert_eq!(presence[0], Ok(true));
         assert_eq!(presence[1], Ok(false));
         assert!(presence[2].as_ref().unwrap_err().contains("SHA-256"));
-        assert!(presence[3].is_err());
+        assert_eq!(presence[3], Ok(true));
 
         let empty = CoreLinkSharedClient::call(&proxy, CoreCallRequest::new(
             "empty-blob-presence", "core/application", "syncBlobExists",

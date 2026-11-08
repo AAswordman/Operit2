@@ -390,7 +390,8 @@ impl TerminalHost for AndroidTerminalHost {
     ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, commandOutput) = {
+        let commandLine = crate::terminal_command::posixCommandLine(&normalizedCommand);
+        let (terminalType, commandOutput, writer) = {
             let mut state = self.lockState()?;
             let session = state
                 .ptySessions
@@ -404,32 +405,45 @@ impl TerminalHost for AndroidTerminalHost {
                 ));
             }
             clearAndroidPtyCommandOutput(&session.commandOutput)?;
-            let commandInput = format!("{normalizedCommand}\r");
+            let commandInput = format!("{commandLine}\r");
             writeAndroidPtyBytes(&session.writer, commandInput.as_bytes())?;
             session.commandRunning = true;
-            (session.terminalType.clone(), session.commandOutput.clone())
+            (
+                session.terminalType.clone(),
+                session.commandOutput.clone(),
+                session.writer.clone(),
+            )
         };
         let result = executeAndroidPtyCommandInSession(
-            commandOutput,
-            &normalizedCommand,
+            commandOutput.clone(),
+            &commandLine,
             timeoutMs,
             onOutput,
         );
+        // Keep the session busy until the shell has acknowledged the interrupt.
+        // Waiting outside the registry lock leaves input and close available.
+        let settledDirectory = if result.as_ref().map_or(true, |receipt| receipt.timedOut) {
+            cancelTimedOutAndroidPtyCommand(&writer, &commandOutput).map(Some)
+        } else {
+            Ok(result.as_ref().ok().and_then(|receipt| receipt.workingDir.clone()))
+        };
+        if let Err(error) = settledDirectory {
+            let removed = {
+                let mut state = self.lockState()?;
+                removeAndroidSessionMappings(&mut state, &normalizedSessionId);
+                state.ptySessions.remove(&normalizedSessionId)
+            };
+            drop(removed);
+            return Err(HostError::new(format!(
+                "Terminal session {normalizedSessionId} closed because its command could not be interrupted: {}",
+                error.message,
+            )));
+        }
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                // Release the busy flag even if interrupting a broken PTY fails.
-                // The state lock still excludes new commands during cancellation.
                 session.commandRunning = false;
-                if result.as_ref().map_or(true, |receipt| receipt.timedOut) {
-                    if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
-                        session.workingDir = workingDir;
-                    }
-                } else if let Some(workingDir) = result
-                    .as_ref()
-                    .ok()
-                    .and_then(|receipt| receipt.workingDir.clone())
-                {
+                if let Some(workingDir) = settledDirectory? {
                     session.workingDir = workingDir;
                 }
             }
@@ -639,6 +653,9 @@ fn createAndroidPtySession(
         screenOutput.clone(),
         cursorState,
     )?;
+    if let Some(input) = command.startupInput {
+        writeAndroidPtyBytes(&writer, input.as_bytes())?;
+    }
     if let Err(error) =
         waitForInitialAndroidPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
     {
@@ -875,14 +892,18 @@ fn executeAndroidPtyCommandInSession(
     timeoutMs: u64,
     onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
 ) -> HostResult<AndroidSessionCommandResult> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadline = (timeoutMs != 0).then(|| Instant::now() + Duration::from_millis(timeoutMs));
     let mut collected = Vec::new();
     let mut promptSeenAt = None;
     let quietPeriod = Duration::from_millis(150);
     loop {
         let previousLength = collected.len();
-        let drained = drainAndroidPtyCommandOutput(&output, &mut collected, deadline)?;
+        let waitDeadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_millis(100));
+        let drained = drainAndroidPtyCommandOutput(&output, &mut collected, waitDeadline)?;
         onOutput(&collected[previousLength..])?;
+        if timeoutMs == 0 && collected.len() > PTY_OUTPUT_LIMIT {
+            collected.drain(..collected.len() - PTY_OUTPUT_LIMIT);
+        }
         if drained > 0 {
             promptSeenAt = None;
         }
@@ -891,7 +912,7 @@ fn executeAndroidPtyCommandInSession(
                 promptSeenAt = Some(Instant::now());
             }
             if !promptSeenAt.is_some_and(|seenAt| seenAt.elapsed() >= quietPeriod) {
-                if Instant::now() < deadline {
+                if deadline.map_or(true, |deadline| Instant::now() < deadline) {
                     continue;
                 }
             }
@@ -903,7 +924,7 @@ fn executeAndroidPtyCommandInSession(
                 workingDir: Some(marker.workingDir),
             });
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             let output = androidPtyTimedOutCommandOutputText(&collected, command);
             return Ok(AndroidSessionCommandResult {
                 output,
@@ -915,22 +936,26 @@ fn executeAndroidPtyCommandInSession(
     }
 }
 
-fn cancelTimedOutAndroidPtyCommand(session: &mut AndroidPtySession) -> HostResult<Option<String>> {
-    writeAndroidPtyBytes(&session.writer, b"\x03")?;
+/// Interrupts the foreground job and requires the interactive shell to acknowledge readiness.
+fn cancelTimedOutAndroidPtyCommand(
+    writer: &Arc<Mutex<RawFd>>,
+    output: &AndroidPtyCommandOutput,
+) -> HostResult<String> {
+    writeAndroidPtyBytes(writer, b"\x03")?;
 
     let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
     let mut collected = Vec::new();
     while Instant::now() < deadline {
         let drained =
-            drainAndroidPtyCommandOutput(&session.commandOutput, &mut collected, deadline)?;
+            drainAndroidPtyCommandOutput(output, &mut collected, deadline)?;
         if drained == 0 {
             continue;
         }
         if let Some(marker) = findLastAndroidPtyPromptMarker(&collected)? {
-            return Ok(Some(marker.workingDir));
+            return Ok(marker.workingDir);
         }
     }
-    Ok(None)
+    Err(HostError::new("Timed out waiting for the interrupted Android terminal to become ready"))
 }
 
 fn drainAndroidPtyCommandOutput(
@@ -1562,6 +1587,7 @@ struct AndroidPtyCommand {
     cwd: CString,
     shizuku: bool,
     workingDir: Option<String>,
+    startupInput: Option<String>,
 }
 
 /// Builds the PTY startup command for an Android terminal type.
@@ -1632,6 +1658,7 @@ fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand>
         cwd: cstringPath(&internalRoot)?,
         shizuku: false,
         workingDir: None,
+        startupInput: None,
     })
 }
 
@@ -1680,7 +1707,7 @@ fn buildAndroidSystemShellCommand(
         nativeLibraryDir.to_string_lossy(),
         runtimeDir.to_string_lossy()
     );
-    let commandText = r#"while true; do __operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status"; IFS= read -r __operit_command || exit 0; eval "$__operit_command"; done"#;
+    let commandText = "exec /system/bin/sh -i";
     let shell = Path::new("/system/bin/sh");
     let environment = if transport == ShellTransport::Shizuku {
         vec![
@@ -1752,6 +1779,7 @@ fn buildAndroidSystemShellCommand(
         },
         shizuku: transport == ShellTransport::Shizuku,
         workingDir: Some(workDir),
+        startupInput: Some(include_str!("system_shell_init.sh").to_string()),
     })
 }
 
@@ -2196,6 +2224,7 @@ pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
                 cwd: cstring(cwd)?,
                 shizuku: false,
                 workingDir: None,
+                startupInput: None,
             };
             let rows = u16::try_from(requiredPtyInteger(&request, "rows")?)
                 .map_err(|e| HostError::new(e.to_string()))?;
@@ -2275,8 +2304,8 @@ mod tests {
             ]
         );
         assert!(argv[7].starts_with("[ \"$(/system/bin/id -u)\" = 0 ] || exit 126;"));
-        assert!(argv[7].contains("eval \"$__operit_command\""));
-        assert!(argv[7].contains("OperitPrompt="));
+        assert!(argv[7].ends_with("exec /system/bin/sh -i"));
+        assert!(command.startupInput.as_ref().unwrap().contains("OperitPrompt="));
         assert!(!command.shizuku);
     }
 

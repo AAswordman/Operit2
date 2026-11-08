@@ -220,8 +220,19 @@ pub enum SystemTerminalHostExecTimeoutMs {
 pub struct TerminalExecRequest {
     pub sessionId: String,
     pub command: String,
-    /// Sets the command deadline in milliseconds; omission uses the terminal default.
+    /// Limits foreground waiting in milliseconds; omission uses 20000 and expiry keeps the command running.
     pub timeoutMs: Option<u64>,
+}
+
+/// Runs a command in the newest available named session with an independent foreground wait.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalRunRequest {
+    pub sessionName: String,
+    pub terminalType: TerminalType,
+    pub command: String,
+    /// Limits foreground waiting only; zero returns as soon as execution starts.
+    pub waitMs: u64,
 }
 
 /// Carries live PTY output followed by the complete execution receipt.
@@ -600,8 +611,8 @@ pub trait SystemTerminalHost: Send + Sync {
     ///Execute a command in a terminal session.
     ///@param sessionId The ID of the session.
     ///@param command The command to execute.
-    ///@param timeoutMs Optional timeout in milliseconds. Strongly recommended to always pass explicitly.
-    ///@returns Promise resolving to the command execution result. On timeout, the current command is cancelled, the terminal session is kept, and the returned result has `timedOut === true`.
+    ///@param timeoutMs Optional foreground wait in milliseconds, default 20000.
+    ///@returns The execution receipt. Wait expiry keeps the command running and returns `timedOut === true`; use the returned sessionId with wait, screen, input or close.
     ///
     fn exec(
         &self,
@@ -611,7 +622,7 @@ pub trait SystemTerminalHost: Send + Sync {
     ) -> JsFuture<TerminalCommandResultData>;
     ///
     ///Execute a command in a terminal session and receive incremental output chunks.
-    ///Final resolution still returns the complete terminal command result.
+    ///Resolution returns a completed receipt or a running receipt when the foreground wait expires.
     ///@param sessionId The ID of the session.
     ///@param command The command to execute.
     ///@param options Streaming execution options.
@@ -624,8 +635,14 @@ pub trait SystemTerminalHost: Send + Sync {
         options: Option<SystemTerminalHostExecStreamingOptions>,
     ) -> JsFuture<TerminalCommandResultData>;
     /// Runs one command as a single-consumer async iterable of live output and completion.
-    /// Returning from the iterator interrupts this command while retaining its terminal session.
+    /// Wait expiry or returning from the iterator detaches observation while the command continues.
     fn execStream(&self, request: TerminalExecRequest) -> JsAsyncIterable<TerminalExecEvent>;
+    /// Runs a command under session ownership. Expired foreground waits retain the running command.
+    /// A yielded session is reserved; the next run with this name acquires a new session generation.
+    fn run(&self, request: TerminalRunRequest) -> JsFuture<TerminalCommandResultData>;
+    /// Waits for the original managed command without writing anything to its terminal.
+    /// Expired waits return timedOut=true while the command continues in its original session.
+    fn wait(&self, sessionId: String, waitMs: u64) -> JsFuture<TerminalCommandResultData>;
     ///
     ///Execute a command in a hidden non-PTY executor.
     ///Commands using the same executorKey reuse the same hidden login context and are not shown in the visible terminal UI.

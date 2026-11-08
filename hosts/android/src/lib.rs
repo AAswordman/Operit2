@@ -32,6 +32,8 @@ mod secret_store;
 mod service_discovery;
 mod system_operation;
 mod terminal;
+#[path = "../../common/terminal_command.rs"]
+mod terminal_command;
 mod terminal_privilege;
 #[cfg(target_os = "android")]
 pub use terminal::androidPrivilegedPtyOperation;

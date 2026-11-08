@@ -1222,7 +1222,7 @@ export interface TerminalCommandResultData {
    */
   terminalType: TerminalType;
   /**
-   * Whether this execution ended due to timeout. On timeout, the current command is cancelled and the terminal session is kept.
+   * Whether foreground waiting expired while the original command continues in its session.
    */
   timedOut: boolean;
   /**
@@ -1720,7 +1720,7 @@ export interface EdgePortResultData {
 /**
  * Exchanges one scoped terminal execution observation through the common tool transport.
  */
-export type TerminalObservationResultData = { handle: string; } | { event: TerminalExecEvent | null; } | { };
+export type TerminalObservationResultData = { result: TerminalCommandResultData; } | { handle: string; } | { event: TerminalExecEvent | null; } | { };
 
 /**
  * Reports exactly the requested WebSocket operation.

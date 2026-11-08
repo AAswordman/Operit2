@@ -10,6 +10,28 @@ use crate::chat::llmprovider::ProviderMediaTestSupport::test_runtime_context;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 
+/// Exposes DeepSeek's transport counters when its wrapper has not completed collection.
+#[test]
+fn paused_deepseek_reads_active_parent_usage() {
+    use crate::chat::llmprovider::AIService::{AIService, TokenCounts};
+    let mut provider = DeepseekProvider::new(
+        "https://fixture.invalid/responses".into(), String::new(), "test".into(),
+        "DEEPSEEK".into(), Vec::new(), false, false, false, Vec::new(), true,
+        test_runtime_context(),
+    );
+    let parent = provider.open_ai_parent(true);
+    parent.apply_token_counts(TokenCounts { input: 100, cached_input: 20, output: 17 });
+    let generation = provider.setActiveParent(parent);
+    provider.cancel_streaming();
+    assert_eq!((provider.input_token_count(), provider.cached_input_token_count(), provider.output_token_count()), (120, 20, 17));
+    provider.reset_token_counts();
+    let newer = provider.open_ai_parent(true);
+    newer.apply_token_counts(TokenCounts { input: 200, cached_input: 40, output: 25 });
+    provider.setActiveParent(newer);
+    provider.finishActiveParent(generation, TokenCounts { input: 100, cached_input: 20, output: 17 });
+    assert_eq!((provider.input_token_count(), provider.cached_input_token_count(), provider.output_token_count()), (240, 40, 25));
+}
+
 /// Builds a request carrying one assistant tool call and its result.
 fn tool_continuation_request(reasoning_metadata: &str) -> SendMessageRequest {
     let assistant_content = format!(

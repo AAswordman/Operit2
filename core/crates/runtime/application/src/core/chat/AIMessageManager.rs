@@ -495,7 +495,7 @@ impl AIMessageManager {
                         }),
                     )
                 {
-                    Self::cancelOperationForId(&chatKey, Some(operationId)).await;
+                    Self::cancelOperationForId(&chatKey, Some(operationId)).await?;
                     return Err(AiServiceError::RequestFailed(error.to_string()));
                 }
                 ChainLogger::verbose_with_level(
@@ -1103,27 +1103,27 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
-    pub async fn cancelCurrentOperation() {
+    pub async fn cancelCurrentOperation() -> Result<(), AiServiceError> {
         let lock = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
         let chatKey = lock
             .lock()
             .expect("last active chat key mutex poisoned")
             .clone();
-        Self::cancelOperation(chatKey).await;
+        Self::cancelOperation(chatKey).await
     }
 
     #[allow(non_snake_case)]
-    pub async fn cancelOperation(chatId: String) {
+    pub async fn cancelOperation(chatId: String) -> Result<(), AiServiceError> {
         let chatKey = if chatId.trim().is_empty() {
             DEFAULT_CHAT_KEY.to_string()
         } else {
             chatId
         };
-        Self::cancelOperationForId(&chatKey, None).await;
+        Self::cancelOperationForId(&chatKey, None).await
     }
 
     /// Takes ownership of the service before anything can close the response stream.
-    async fn cancelOperationForId(chatKey: &str, expectedOperationId: Option<u64>) {
+    async fn cancelOperationForId(chatKey: &str, expectedOperationId: Option<u64>) -> Result<(), AiServiceError> {
         let operation = {
             let mut operations = activeChatOperations()
                 .lock()
@@ -1136,7 +1136,7 @@ impl AIMessageManager {
             }
         };
         let Some((operationId, mut operation)) = operation else {
-            return;
+            return Ok(());
         };
         // Close the per-send gate immediately, including a send that has not yet
         // entered the provider or registered its execution context.
@@ -1156,7 +1156,7 @@ impl AIMessageManager {
         if let Some(stream) = operation.responseStream {
             stream.close();
         }
-        operation.enhancedAiService.cancelConversation().await;
+        let usageResult = operation.enhancedAiService.cancelConversation().await;
         ChainLogger::info(
             SEND_CHAIN,
             "send.cancel.done",
@@ -1165,16 +1165,23 @@ impl AIMessageManager {
                 ("operationId", operationId.to_string()),
             ],
         );
+        usageResult
     }
 
     #[allow(non_snake_case)]
-    pub async fn cancelAllOperations() {
+    pub async fn cancelAllOperations() -> Result<(), AiServiceError> {
         let operations = activeChatOperations()
             .lock()
             .expect("active chat operations mutex poisoned")
             .snapshot();
+        let mut errors = Vec::new();
         for (chatKey, operationId) in operations {
-            Self::cancelOperationForId(&chatKey, Some(operationId)).await;
+            if let Err(error) = Self::cancelOperationForId(&chatKey, Some(operationId)).await {
+                errors.push(format!("{chatKey}: {error}"));
+            }
+        }
+        if errors.is_empty() { Ok(()) } else {
+            Err(AiServiceError::RequestFailed(errors.join("; ")))
         }
     }
 }

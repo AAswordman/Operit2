@@ -344,12 +344,7 @@ fn tableSql(table: &StorageTable) -> Result<String, SqliteStoreError> {
             }
             primary = true;
         }
-        let affinity = match column.affinity {
-            StorageColumnType::Text => "TEXT",
-            StorageColumnType::Integer => "INTEGER",
-            StorageColumnType::Real => "REAL",
-            StorageColumnType::Blob => "BLOB",
-        };
+        let affinity = columnType(&column.affinity);
         columns.push(format!(
             "{name} {affinity}{}{}",
             if column.nullable { "" } else { " NOT NULL" },
@@ -362,74 +357,46 @@ fn tableSql(table: &StorageTable) -> Result<String, SqliteStoreError> {
     Ok(format!("CREATE TABLE {name} ({})", columns.join(",")))
 }
 
-/// Installs row-level dirty tracking without encoding or walking unaffected rows.
-fn defineTable(
-    tx: &mut SqliteTransaction<'_>,
-    table: &StorageTable,
-) -> Result<bool, SqliteStoreError> {
+/// Installs new tables or additive nullable columns while retaining newer local declarations.
+fn defineTable(tx: &mut SqliteTransaction<'_>, table: &StorageTable) -> Result<bool, SqliteStoreError> {
     let sql = tableSql(table)?;
     let definition = serde_json::to_string(table).map_err(|e| failure(e.to_string()))?;
-    if let Some(row) = tx.queryOne(
-        "SELECT definition FROM _operit_tables WHERE name=?1",
-        vec![SqliteValue::Text(table.name.clone())],
-    )? {
-        let previous: StorageTable = serde_json::from_str(&row.get::<_, String>(0)?)
-            .map_err(|error| failure(error.to_string()))?;
+    let created = if let Some(row) = tx.queryOne("SELECT definition FROM _operit_tables WHERE name=?1", vec![SqliteValue::Text(table.name.clone())])? {
+        let previous: StorageTable = serde_json::from_str(&row.get::<_, String>(0)?).map_err(|e| failure(e.to_string()))?;
         if previous.primary_key == table.primary_key
-            && table.columns.iter().all(|incoming| {
-                previous.columns.iter().any(|current| current == incoming)
-            })
-        {
+            && table.columns.iter().all(|column| previous.columns.contains(column)) {
             return Ok(false);
         }
+        let additions = table.columns.iter().filter(|column|
+            !previous.columns.iter().any(|old| old.name == column.name)).collect::<Vec<_>>();
         if previous.primary_key != table.primary_key
-            || previous.columns.iter().any(|old| {
-                table.columns.iter().find(|current| current.name == old.name)
-                    != Some(old)
-            })
-            || table.columns.iter().any(|current| {
-                !previous.columns.iter().any(|old| old.name == current.name)
-                    && (!current.nullable || current.name == table.primary_key)
-            })
-        {
+            || previous.columns.iter().any(|old| !table.columns.contains(old))
+            || additions.iter().any(|column| !column.nullable || column.name == table.primary_key) {
             return Err(failure("Table declaration differs from the persisted schema"));
         }
-        for column in &table.columns {
-            if previous.columns.iter().any(|old| old.name == column.name) {
-                continue;
-            }
-            let name = identifier(&table.name)?;
-            let columnName = identifier(&column.name)?;
-            let affinity = match column.affinity {
-                StorageColumnType::Text => "TEXT",
-                StorageColumnType::Integer => "INTEGER",
-                StorageColumnType::Real => "REAL",
-                StorageColumnType::Blob => "BLOB",
-            };
-            tx.execute(
-                &format!("ALTER TABLE {name} ADD COLUMN {columnName} {affinity}"),
-                Vec::new(),
-            )?;
+        for column in additions {
+            tx.execute(&format!("ALTER TABLE {} ADD COLUMN {} {}", identifier(&table.name)?,
+                identifier(&column.name)?, columnType(&column.affinity)), Vec::new())?;
         }
-        tx.execute(
-            "UPDATE _operit_tables SET definition=?1 WHERE name=?2",
-            vec![
-                SqliteValue::Text(definition),
-                SqliteValue::Text(table.name.clone()),
-            ],
-        )?;
-        return Ok(false);
+        false
+    } else {
+        tx.execute(&sql, Vec::new())?;
+        true
+    };
+    tx.execute("INSERT INTO _operit_tables VALUES(?1,?2) ON CONFLICT(name) DO UPDATE SET definition=excluded.definition",
+        vec![SqliteValue::Text(table.name.clone()), SqliteValue::Text(definition)])?;
+    if created { installDirtyTracking(tx, table)?; }
+    Ok(created)
+}
+
+/// Shares SQLite affinity rendering between table creation and additive migration.
+fn columnType(affinity: &StorageColumnType) -> &'static str {
+    match affinity {
+        StorageColumnType::Text => "TEXT",
+        StorageColumnType::Integer => "INTEGER",
+        StorageColumnType::Real => "REAL",
+        StorageColumnType::Blob => "BLOB",
     }
-    tx.execute(&sql, Vec::new())?;
-    tx.execute(
-        "INSERT INTO _operit_tables VALUES(?1,?2)",
-        vec![
-            SqliteValue::Text(table.name.clone()),
-            SqliteValue::Text(definition),
-        ],
-    )?;
-    installDirtyTracking(tx, table)?;
-    Ok(true)
 }
 
 /// Uses explicit UPSERT so an outer statement cannot override the trigger's conflict policy.
@@ -1457,18 +1424,18 @@ fn withSyncDataset<R>(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str,
         .ok_or("Unknown synchronized plugin database")?;
     let store = SqliteStore::openWithHost(host, path).map_err(|e| e.to_string())?;
     let mut tables = vec!["_operit_versions".to_owned(), "_operit_merge_map".into(), "_operit_merge_names".into()];
-    if owned.get::<_, String>(0).map_err(|e| e.to_string())? == "objects" {
-        tables.push("_operit_values".into());
+    tables.extend(if owned.get::<_, String>(0).map_err(|e| e.to_string())? == "objects" {
+        vec!["_operit_values".into()]
     } else {
-        for row in store.queryRows("SELECT name FROM _operit_tables ORDER BY name", vec![]).map_err(|e| e.to_string())? {
-            tables.push(row.get::<_, String>(0).map_err(|e| e.to_string())?);
-        }
-    }
+        store.queryRows("SELECT name FROM _operit_tables ORDER BY name", vec![]).map_err(|e| e.to_string())?.iter()
+            .map(|row| row.get::<_, String>(0).map_err(|e| e.to_string())).collect::<Result<Vec<_>, _>>()?
+    });
     let names = tables.iter().map(String::as_str).collect::<Vec<_>>();
     action(crate::Transaction::SqlDataset { store: &store,
         owner: crate::Transaction::Owner { backend: crate::Transaction::Backend::Sql, path: path.into(), format: 1, layout: 1 },
         node: node.into(), tables: &names,
         cleanup: "DELETE FROM _operit_dirty",
+        restore_schema: Some(restoreSnapshotSchema),
         revisions: "SELECT origin || ':' || sequence,created_at,origin,sequence FROM _operit_log UNION SELECT id,business_time,origin,sequence FROM _operit_compacted" })
 }
 
@@ -1478,35 +1445,63 @@ pub fn snapshotDefinition(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Resul
     let manifest = manifests(host.clone())?.into_iter().find(|m| m.path == path && m.sync)
         .ok_or_else(|| failure("Unknown synchronized plugin database"))?;
     let store = SqliteStore::openWithHost(host, path)?;
-    let tables = store.queryRows("SELECT definition FROM _operit_tables ORDER BY name", vec![])?.iter()
-        .map(|row| serde_json::from_str::<StorageTable>(&row.get::<_, String>(0)?).map_err(|e| failure(e.to_string())))
-        .collect::<Result<Vec<_>, _>>()?;
+    let tables = store.transaction(snapshotTables)?;
     Ok(serde_json::json!({"manifest":manifest,"tables":tables}))
 }
 
-pub fn installSnapshotDefinition(host: Arc<dyn RuntimeSqliteHost>, storage: Arc<dyn RuntimeStorageHost>, path: &str, definition: Value) -> Result<(), SqliteStoreError> {
+/// Captures physical column order, including columns appended by earlier additive migrations.
+fn snapshotTables(tx: &mut SqliteTransaction<'_>) -> Result<Vec<StorageTable>, SqliteStoreError> {
+    tx.queryRows("SELECT definition FROM _operit_tables ORDER BY name", vec![])?.iter().map(|row| {
+        let mut table: StorageTable = serde_json::from_str(&row.get::<_, String>(0)?).map_err(|e| failure(e.to_string()))?;
+        let columns = tx.queryRows(&format!("PRAGMA table_info({})", identifier(&table.name)?), vec![])?.iter()
+            .map(|row| row.get::<_, String>("name")).collect::<Result<Vec<_>, _>>()?;
+        table.columns.sort_by_key(|column| columns.iter().position(|name| name == &column.name));
+        Ok(table)
+    }).collect()
+}
+
+/// Provisions only the database identity; schema and rows are restored atomically after CAS.
+pub fn provisionSnapshotDatabase(host: Arc<dyn RuntimeSqliteHost>, storage: Arc<dyn RuntimeStorageHost>, path: &str, definition: Value) -> Result<(), SqliteStoreError> {
     let manifest = decodeManifest(definition["manifest"].clone())?;
     if manifest.path != path || resolveStoragePath(path).map_err(failure)? != path || !manifest.sync
         || runtimeStorageOwnership(path).map_err(failure)? != RuntimeStorageOwnership::Space
         || storageNamespace(path).map_err(failure)? != manifest.owner {
         return Err(failure("Invalid shared snapshot identity"));
     }
-    let tables: Vec<StorageTable> = serde_json::from_value(definition["tables"].clone()).map_err(|e| failure(e.to_string()))?;
+    openDatabase(host.clone(), &manifest, String::new())?;
+    registerDatabase(host, &manifest)?;
+    registerFile(storage, &manifest)
+}
+
+/// Replaces declared business tables, never internal metadata, within the snapshot transaction.
+fn restoreSnapshotSchema(tx: &mut SqliteTransaction<'_>, definition: &Value) -> Result<(Vec<String>, bool), SqliteStoreError> {
+    let manifest = decodeManifest(definition["manifest"].clone())?;
+    let stored = tx.queryOne("SELECT owner,path,kind,sync FROM _operit_manifest WHERE id=1", vec![])?.ok_or_else(|| failure("Missing database identity"))?;
+    if stored.get::<_, String>(0)? != manifest.owner || stored.get::<_, String>(1)? != manifest.path
+        || stored.get::<_, String>(2)? != kindName(&manifest.kind) || stored.get::<_, i64>(3)? != i64::from(manifest.sync) {
+        return Err(failure("Snapshot database identity differs"));
+    }
+    let mut tables: Vec<StorageTable> = serde_json::from_value(definition["tables"].clone()).map_err(|e| failure(e.to_string()))?;
     if tables.len() > 1000 || manifest.kind != StorageKind::Sqlite && !tables.is_empty() {
         return Err(failure("Invalid snapshot schema"));
     }
     let mut names = BTreeSet::new();
     for table in &tables {
-        if !names.insert(&table.name) { return Err(failure("Duplicate snapshot table")); }
+        if !names.insert(table.name.to_ascii_lowercase()) { return Err(failure("Duplicate snapshot table")); }
         tableSql(table)?;
     }
-    let database = openDatabase(host.clone(), &manifest, String::new())?;
-    database.store.transaction(|tx| {
+    tables.sort_by(|a, b| a.name.cmp(&b.name));
+    let previous = snapshotTables(tx)?;
+    let changed = previous != tables;
+    if changed {
+        for table in previous { tx.execute(&format!("DROP TABLE {}", identifier(&table.name)?), vec![])?; }
+        tx.execute("DELETE FROM _operit_tables", vec![])?;
         for table in &tables { defineTable(tx, table)?; }
-        Ok(())
-    })?;
-    registerDatabase(host, &manifest)?;
-    registerFile(storage, &manifest)
+    }
+    let mut names = vec!["_operit_versions".into(), "_operit_merge_map".into(), "_operit_merge_names".into()];
+    if manifest.kind == StorageKind::Objects { names.push("_operit_values".into()); }
+    names.extend(tables.into_iter().map(|table| table.name));
+    Ok((names, changed))
 }
 
 pub fn syncDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
@@ -1536,9 +1531,9 @@ pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<
     })
 }
 
-pub fn repairSyncedSnapshot(host: Arc<dyn RuntimeSqliteHost>, expected: &str, source: &crate::Transaction::Snapshot, node: &str) -> Result<bool, String> {
-    let definition = snapshotDefinition(host.clone(), &source.data.owner.path).map_err(|e|e.to_string())?;
-    withSyncDataset(host, &source.data.owner.path, node, |dataset| dataset.repair_with(expected, source, Some(definition), |tx,snapshot| {
+/// Restores the source declaration and data as one authoritative baseline.
+pub fn repairSyncedSnapshot(host: Arc<dyn RuntimeSqliteHost>, expected: &str, source: &crate::Transaction::Snapshot, node: &str, definition: &Value) -> Result<bool, String> {
+    withSyncDataset(host, &source.data.owner.path, node, |dataset| dataset.repair_with(expected, source, Some(definition.clone()), |tx,snapshot| {
         reconcileInitialization(tx, snapshot, None)
     }))
 }
@@ -2870,7 +2865,7 @@ pub fn applyOperation(
         if let Some(initialization) = crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)? {
             let path = initialization.data.owner.path.clone();
             let definition = initialization.definition.ok_or_else(||failure("Missing database definition for initialization"))?;
-            installSnapshotDefinition(host.clone(),storage,&path,definition.clone())?;
+            provisionSnapshotDatabase(host.clone(),storage,&path,definition.clone())?;
             let manifest = decodeManifest(definition["manifest"].clone())?;
             let database = openDatabase(host.clone(),&manifest,String::new())?;
             withSyncDataset(host,&path,"",|dataset|dataset.receive_initialization(operation,|tx,snapshot| {

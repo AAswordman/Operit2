@@ -2,7 +2,7 @@ use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_tools::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibility};
 use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_tools::ToolExecutionManager::{ToolCall, ToolExecutionPolicy};
 
 /// Runs tool inspection and execution commands.
 pub async fn run_tool_command(
@@ -103,34 +103,20 @@ fn format_tool_visibility(visibility: Option<ToolRegistrationVisibility>) -> Str
     }
 }
 
+/// Preserves structured CLI arguments through the same invocation pipeline used by the SDK.
 pub async fn exec_tool(
     mut handler: AIToolHandler,
     tool_name: &str,
     params_json: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let tool = AITool {
+    let tool = ToolCall {
         name: tool_name.to_string(),
-        parameters: parse_tool_parameters_json(params_json)?,
+        parameters: serde_json::from_str(params_json).map_err(|error| error.to_string())?,
     };
-    let result = handler.executeTool(tool).await;
-    print_tool_execution_result(&result, output)
-}
-
-/// Parses a JSON object into tool parameters.
-fn parse_tool_parameters_json(value: &str) -> Result<Vec<ToolParameter>, String> {
-    let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(value)
-        .map_err(|error| error.to_string())?;
-    Ok(object
-        .into_iter()
-        .map(|(name, value)| ToolParameter {
-            name,
-            value: match value {
-                serde_json::Value::String(value) => value,
-                other => other.to_string(),
-            },
-        })
-        .collect())
+    let results = handler.executeToolInvocation(&tool, ToolExecutionPolicy::Direct).await?;
+    let result = results.last().ok_or("Tool invocation returned no result")?;
+    print_tool_execution_result(result, output)
 }
 
 /// Prints a tool execution result and records its JSON object.

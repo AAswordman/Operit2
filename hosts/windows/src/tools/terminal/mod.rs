@@ -880,14 +880,18 @@ fn executePtyCommandInSession(
     renderer: TerminalTextRenderer,
     onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
 ) -> HostResult<SessionCommandResult> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadline = (timeoutMs != 0).then(|| Instant::now() + Duration::from_millis(timeoutMs));
     let mut collected = Vec::new();
     let mut promptSeenAt = None;
     let quietPeriod = Duration::from_millis(150);
     loop {
         let previousLength = collected.len();
-        let drained = drainPtyCommandOutput(&output, &mut collected, deadline)?;
+        let waitDeadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_millis(100));
+        let drained = drainPtyCommandOutput(&output, &mut collected, waitDeadline)?;
         onOutput(&collected[previousLength..])?;
+        if timeoutMs == 0 && collected.len() > PTY_OUTPUT_LIMIT {
+            collected.drain(..collected.len() - PTY_OUTPUT_LIMIT);
+        }
         if drained > 0 {
             promptSeenAt = None;
         }
@@ -896,7 +900,7 @@ fn executePtyCommandInSession(
                 promptSeenAt = Some(Instant::now());
             }
             if !promptSeenAt.is_some_and(|seenAt| seenAt.elapsed() >= quietPeriod) {
-                if Instant::now() < deadline {
+                if deadline.map_or(true, |deadline| Instant::now() < deadline) {
                     continue;
                 }
             }
@@ -914,7 +918,7 @@ fn executePtyCommandInSession(
                 workingDir: Some(marker.workingDir),
             });
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             let output = ptyCommandOutputText(&collected, kind, command, None, renderer)?;
             return Ok(SessionCommandResult {
                 output,

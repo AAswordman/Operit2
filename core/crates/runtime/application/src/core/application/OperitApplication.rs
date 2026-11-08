@@ -1225,7 +1225,7 @@ impl OperitApplication {
         })).map_err(|error| error.to_string())
     }
 
-    /// Verifies a page of local blobs, retaining each file's independent failure.
+    /// Checks local blob presence without reading contents, retaining independent failures.
     /// Keep the per-file Result envelopes in JSON: nested Results are not proxyable return types.
     #[allow(non_snake_case)]
     pub fn syncBlobExists(&self, references: serde_json::Value) -> Result<serde_json::Value, String> {

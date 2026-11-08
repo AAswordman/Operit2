@@ -365,13 +365,9 @@ impl RuntimeFileSyncStore {
         Ok(original)
     }
 
-    /// Reports whether a verified content-addressed blob is available locally.
+    /// Checks local blob presence without reading or hashing its contents.
     pub fn hasBlob(&self, reference: &RuntimeFileSyncReference) -> Result<bool, String> {
-        validateBlobReference(reference)?;
-        let path = self.blobPath(&reference.contentHash)?;
-        if !self.storageHost.exists(&path).map_err(|e|e.to_string())? { return Ok(false); }
-        verifyBlob(reference, &self.storageHost.readBytes(&path).map_err(|e|e.to_string())?)?;
-        Ok(true)
+        self.storageHost.exists(&self.blobStoragePath(reference)?).map_err(|e|e.to_string())
     }
 
     /// Reads one bounded range from a verified content-addressed blob.
@@ -746,6 +742,9 @@ mod tests {
         assert_eq!(target.hydrateTransaction(wire.clone()).unwrap(),original);
         let mut forged = wire; forged.createdAt += 1;
         assert!(target.hydrateTransaction(forged).is_err());
+        target.storageHost.writeBytes(&target.blobStoragePath(&reference).unwrap(), &vec![0; reference.size as usize]).unwrap();
+        assert!(target.hasBlob(&reference).unwrap());
+        assert!(target.readBlob(&reference).is_err());
     }
 
 }

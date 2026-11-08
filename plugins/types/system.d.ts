@@ -605,18 +605,18 @@ export namespace System {
      * Execute a command in a terminal session.
      * @param sessionId The ID of the session.
      * @param command The command to execute.
-     * @param timeoutMs Optional timeout in milliseconds. Strongly recommended to always pass explicitly.
-     * @returns Promise resolving to the command execution result. On timeout, the current command is cancelled, the terminal session is kept, and the returned result has `timedOut === true`.
+     * @param timeoutMs Optional foreground wait in milliseconds, default 20000.
+     * @returns The execution receipt. Wait expiry keeps the command running and returns `timedOut === true`; use the returned sessionId with wait, screen, input or close.
      */
     function exec(sessionId: string, command: string, timeoutMs?: System.TerminalHostExecTimeoutMs): Promise<TerminalCommandResultData>;
     /**
      * Runs one command as a single-consumer async iterable of live output and completion.
-     * Returning from the iterator interrupts this command while retaining its terminal session.
+     * Wait expiry or returning from the iterator detaches observation while the command continues.
      */
     function execStream(request: TerminalExecRequest): AsyncIterable<TerminalExecEvent>;
     /**
      * Execute a command in a terminal session and receive incremental output chunks.
-     * Final resolution still returns the complete terminal command result.
+     * Resolution returns a completed receipt or a running receipt when the foreground wait expires.
      * @param sessionId The ID of the session.
      * @param command The command to execute.
      * @param options Streaming execution options.
@@ -647,11 +647,21 @@ export namespace System {
      */
     function input(sessionId: string, options?: System.TerminalHostInputOptions): Promise<string>;
     /**
+     * Runs a command under session ownership. Expired foreground waits retain the running command.
+     * A yielded session is reserved; the next run with this name acquires a new session generation.
+     */
+    function run(request: TerminalRunRequest): Promise<TerminalCommandResultData>;
+    /**
      * Get the current visible terminal screen content for a session (single screen only, no history).
      * @param sessionId The ID of the session.
      * @returns Promise resolving to the current screen snapshot result.
      */
     function screen(sessionId: string): Promise<TerminalSessionScreenResultData>;
+    /**
+     * Waits for the original managed command without writing anything to its terminal.
+     * Expired waits return timedOut=true while the command continues in its original session.
+     */
+    function wait(sessionId: string, waitMs: number): Promise<TerminalCommandResultData>;
   }
 
   /**
@@ -700,9 +710,22 @@ export interface TerminalExecRequest {
   sessionId: string;
   command: string;
   /**
-   * Sets the command deadline in milliseconds; omission uses the terminal default.
+   * Limits foreground waiting in milliseconds; omission uses 20000 and expiry keeps the command running.
    */
   timeoutMs?: number;
+}
+
+/**
+ * Runs a command in the newest available named session with an independent foreground wait.
+ */
+export interface TerminalRunRequest {
+  sessionName: string;
+  terminalType: TerminalType;
+  command: string;
+  /**
+   * Limits foreground waiting only; zero returns as soon as execution starts.
+   */
+  waitMs: number;
 }
 
 /**

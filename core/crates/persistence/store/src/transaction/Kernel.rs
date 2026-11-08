@@ -85,7 +85,7 @@ pub struct Participant<'a> {
     pub coverage: Box<dyn Fn() -> Result<BTreeSet<String>, String> + 'a>,
     /// Owner-defined business equality; snapshot tokens and transfer contents remain complete.
     pub content_digest: fn(&Snapshot) -> Result<String, String>,
-    pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>) -> Result<bool, String> + 'a>>,
+    pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>, Option<&serde_json::Value>) -> Result<bool, String> + 'a>>,
 }
 
 /// Existing SQL business databases expose their originals through the same source contract.
@@ -385,10 +385,10 @@ impl<'a> Registry<'a> {
 
     /// Authority, version checks, CAS and verification are shared by every backend.
     pub fn repair(&self, owner: &Owner, expected: &str, source: &Snapshot) -> Result<bool, String> {
-        self.repair_file(owner, expected, source, None)
+        self.repair_file(owner, expected, source, None, None)
     }
 
-    pub fn repair_file(&self, owner: &Owner, expected: &str, source: &Snapshot, file: Option<&str>) -> Result<bool, String> {
+    pub fn repair_file(&self, owner: &Owner, expected: &str, source: &Snapshot, file: Option<&str>, definition: Option<&serde_json::Value>) -> Result<bool, String> {
         if &source.data.owner != owner { return Err("Snapshot owner differs".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
         if !self.skipped()?.contains_key(&owner.path) { (participant.prepare)().map_err(|e|e.to_string())?; }
@@ -407,7 +407,7 @@ impl<'a> Registry<'a> {
             }
         }
         let repair = participant.repair.as_ref().ok_or("Owner cannot replace files")?;
-        if !repair(expected, source, file)? { return Ok(false); }
+        if !repair(expected, source, file, definition)? { return Ok(false); }
         let verified = capture()?;
         if verified.data != source.data { return Err("Snapshot verification failed after replacement".into()); }
         self.journal.retireCoveredOperations(&pending).map_err(|e|e.to_string())?;

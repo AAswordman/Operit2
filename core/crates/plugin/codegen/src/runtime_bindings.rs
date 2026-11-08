@@ -441,6 +441,8 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             match binding.facade.as_str() {
                 "AsyncIterator" => Ok(format!("function({signature}) {{ if (arguments.length !== 1) throw new Error(\"{namespace}.{method} requires exactly one request\"); return __operitCreateToolStream(\"{}\", {signature}); }}", binding.tool)),
                 "TerminalCallback" => Ok("function(sessionId, command, options) { return __operitExecTerminalStreaming(sessionId, command, options); }".to_string()),
+                "TerminalRun" => Ok("function(request) { if (arguments.length !== 1) throw new TypeError('Terminal run requires one request'); return __operitRunTerminal(request); }".to_string()),
+                "TerminalWait" => Ok("function(sessionId, waitMs) { if (arguments.length !== 2) throw new TypeError('Terminal wait requires sessionId and waitMs'); return __operitWaitTerminal(sessionId, waitMs); }".to_string()),
                 "Promise" | "Storage" => {
                     let validation = if binding.strict_arguments {
                         Some(argument_checks(sdk_src, &namespace, &method)?)

@@ -418,7 +418,7 @@ fn production_registry_verifies_replacement_and_rejects_a_stale_capture() {
         PreferenceMerge::registry(target.host.clone(), &schema, &[], |_, _| true).unwrap();
     let authoritative = source.store().syncSnapshot().unwrap();
     let capture = registry.snapshot(&authoritative.data.owner).unwrap();
-    registry.owners.get_mut(CURRENT).unwrap().repair = Some(Box::new(|_, _, _| Ok(true)));
+    registry.owners.get_mut(CURRENT).unwrap().repair = Some(Box::new(|_, _, _, _| Ok(true)));
     assert!(registry
         .repair(
             &capture.data.owner,

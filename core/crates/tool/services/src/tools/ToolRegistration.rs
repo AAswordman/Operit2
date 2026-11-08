@@ -637,14 +637,27 @@ fn registerSystemOperationTool(
 /// Registers terminal tools with the same host execution and scheduling context.
 #[allow(non_snake_case)]
 fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTerminalTools) {
+    use operit_tools::tools::defaultTool::standard::StandardTerminalStreaming::{
+        TerminalExecutionExecutor, TerminalStreamExecutor,
+    };
+    use operit_tools::ToolExecutionManager::RegisteredToolExecutor;
+    let streams = Arc::new(TerminalStreamExecutor::new(
+        terminalTools.clone(),
+        handler.getContext().hostRuntimeTaskSchedulerHost.clone(),
+    ));
     handler.registerBuiltinTool(
         BuiltinToolName::TerminalObserve,
-        operit_tools::ToolExecutionManager::RegisteredToolExecutor::Shared(Arc::new(
-            operit_tools::tools::defaultTool::standard::StandardTerminalStreaming::TerminalStreamExecutor::new(
-                terminalTools.terminalHost.clone(),
-                handler.getContext().hostRuntimeTaskSchedulerHost.clone(),
-            ),
-        )),
+        RegisteredToolExecutor::Shared(streams.clone()),
+        ToolRegistrationVisibility::PUBLIC,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ExecuteInTerminalSession,
+        RegisteredToolExecutor::Shared(Arc::new(TerminalExecutionExecutor(streams.clone()))),
+        ToolRegistrationVisibility::PUBLIC,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ExecuteInTerminalSessionStreaming,
+        RegisteredToolExecutor::Shared(Arc::new(TerminalExecutionExecutor(streams))),
         ToolRegistrationVisibility::PUBLIC,
     );
     registerTerminalTool(
@@ -658,18 +671,6 @@ fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTer
         &terminalTools,
         BuiltinToolName::CreateTerminalSession,
         TerminalToolOperation::CreateSession,
-    );
-    registerTerminalTool(
-        handler,
-        &terminalTools,
-        BuiltinToolName::ExecuteInTerminalSession,
-        TerminalToolOperation::ExecuteInSession,
-    );
-    registerTerminalTool(
-        handler,
-        &terminalTools,
-        BuiltinToolName::ExecuteInTerminalSessionStreaming,
-        TerminalToolOperation::ExecuteInSessionStreaming,
     );
     registerTerminalTool(
         handler,

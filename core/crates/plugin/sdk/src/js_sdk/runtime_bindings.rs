@@ -25,6 +25,8 @@ pub enum JsToolFacade {
     Promise,
     AsyncIterator,
     TerminalCallback,
+    TerminalRun,
+    TerminalWait,
     Storage,
 }
 
@@ -198,6 +200,8 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "System.terminal", method: "exec", target: BuiltinToolName::ExecuteInTerminalSession, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "execStreaming", target: BuiltinToolName::TerminalObserve, strict_arguments: false, facade: JsToolFacade::TerminalCallback, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "execStream", target: BuiltinToolName::TerminalObserve, strict_arguments: false, facade: JsToolFacade::AsyncIterator, fixed_parameters: &[] },
+    JsToolBinding { namespace: "System.terminal", method: "run", target: BuiltinToolName::TerminalObserve, strict_arguments: true, facade: JsToolFacade::TerminalRun, fixed_parameters: &[] },
+    JsToolBinding { namespace: "System.terminal", method: "wait", target: BuiltinToolName::TerminalObserve, strict_arguments: true, facade: JsToolFacade::TerminalWait, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "hiddenExec", target: BuiltinToolName::ExecuteHiddenTerminalCommand, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "info", target: BuiltinToolName::GetTerminalInfo, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "input", target: BuiltinToolName::InputInTerminalSession, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },

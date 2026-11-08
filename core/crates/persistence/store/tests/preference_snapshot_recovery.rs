@@ -228,7 +228,7 @@ fn a_missing_generic_preference_installs_the_source_format_and_exact_file() {
     let mut schema = PreferenceMergeSchema::default();
     schema.stores.push(schema.owner(path).unwrap().unwrap());
     let registry = PreferenceMerge::registry(target.host.clone(), &schema, [], |_, _| true).unwrap();
-    assert!(registry.repair_file(&snapshot.data.owner, "", &snapshot, Some(&file)).unwrap());
+    assert!(registry.repair_file(&snapshot.data.owner, "", &snapshot, Some(&file), None).unwrap());
     assert_eq!(target.host.readBytes(path).unwrap(), file.as_bytes());
     assert_eq!(registry.snapshot(&snapshot.data.owner).unwrap().data, snapshot.data);
     let reopened = Arc::new(NativeRuntimeStorageHost::new(target.root.join("runtime"), target.root.join("workspaces")));

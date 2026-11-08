@@ -124,6 +124,7 @@ impl SqlChatSyncStore {
             tables: &["chats", "messages", "message_variants", "message_parts", "sync_sql_versions"],
             revisions: "SELECT opId,createdAt,originDeviceId,sequence FROM sync_sql_operations UNION SELECT id,business_time,origin,sequence FROM _operit_compacted",
             cleanup: "",
+            restore_schema: None,
         }
     }
 

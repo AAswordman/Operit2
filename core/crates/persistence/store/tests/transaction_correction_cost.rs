@@ -21,7 +21,7 @@ fn unchanged_sql_correction_updates_only_the_checkpoint_and_still_enforces_cas()
         }).unwrap();
         let dataset = SqlDataset { store: &store, owner: Owner { backend: Backend::Sql,
             path: "runtime/correction.sqlite".into(), format: 1, layout: 1 }, node: "authority".into(),
-            tables: &["business"], revisions: "SELECT 'unused',0,'peer',1 WHERE 0", cleanup: "" };
+            tables: &["business"], revisions: "SELECT 'unused',0,'peer',1 WHERE 0", cleanup: "", restore_schema: None };
         let original = dataset.snapshot().unwrap();
         let mut source = original.clone();
         source.covered.insert("other-history:1".into());

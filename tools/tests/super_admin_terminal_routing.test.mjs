@@ -28,12 +28,13 @@ function rustMethod(text, name) {
 }
 
 /** Loads Super Admin with strict, explicitly typed terminal tools and complete host results. */
-function fixture({ platform = 'android', defaultType = 'bash', implementations = androidImplementations, output = 'ok\n', timedOut = false } = {}) {
+function fixture({ platform = 'android', defaultType = 'bash', implementations = androidImplementations, output = 'ok\n', timedOut = false, closeError } = {}) {
   const sessions = new Map();
   const calls = [];
   const files = new Map();
   const errors = [];
   let chatId = 'chat-a';
+  let sessionSequence = 0;
   const terminalInfo = {
     platform,
     terminal: implementations[defaultType],
@@ -63,6 +64,27 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
       },
       System: {
         terminal: {
+          /** Models session-owned execution through the public managed terminal SDK. */
+          async run(request) {
+            calls.push({ operation: 'observe', observation: { op: 'run', ...structuredClone(request) } });
+            let nameToUse = request.sessionName;
+            for (let generation = 1; sessions.get(`${request.terminalType}:${nameToUse}`)?.commandRunning; generation++) {
+              nameToUse = `${request.sessionName}_generation_${generation}`;
+            }
+            const created = await this.create(nameToUse, request.terminalType);
+            const result = await this.execStreaming(created.sessionId, request.command, { timeoutMs: request.waitMs });
+            result.timedOut = timedOut || request.waitMs === 0;
+            const session = [...sessions.values()].find(value => value.sessionId === created.sessionId);
+            session.commandRunning = result.timedOut;
+            return result;
+          },
+          /** Waits without writing a second command into the running session. */
+          async wait(sessionId, waitMs) {
+            calls.push({ operation: 'observe', observation: { op: 'wait', sessionId, waitMs } });
+            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
+            assert.ok(session);
+            return { ...session, command: 'original command', output, exitCode: 0, timedOut };
+          },
           /** Returns capabilities whose default may differ from the selected session. */
           async info() { return terminalInfo; },
           /** Requires exact interpreter selection and keys reusable sessions by name and type. */
@@ -74,14 +96,34 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
             const key = `${terminalType}:${name}`;
             const isNewSession = !sessions.has(key);
             if (isNewSession) {
-              sessions.set(key, { sessionId: `session-${sessions.size + 1}`, sessionName: name, platform, terminal: implementations[terminalType], terminalType });
+              sessions.set(key, { sessionId: `session-${++sessionSequence}`, sessionName: name, platform, terminal: implementations[terminalType], terminalType });
             }
             return { ...sessions.get(key), isNewSession };
+          },
+          /** Closes only the requested session and preserves host failures. */
+          async close(sessionId) {
+            calls.push({ operation: 'close', sessionId });
+            if (closeError) throw closeError;
+            for (const [key, session] of sessions) {
+              if (session.sessionId === sessionId) {
+                sessions.delete(key);
+                return { sessionId, success: true, message: 'Session closed' };
+              }
+            }
+            throw new Error(`Terminal session not found: ${sessionId}`);
           },
           /** Returns the actual selected session's identity with the command output. */
           async exec(...args) {
             const [sessionId, command] = args;
             calls.push({ operation: 'exec', args });
+            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
+            assert.ok(session, 'Execution must target an explicitly created session');
+            return { ...session, command, output, exitCode: 0, timedOut };
+          },
+          /** Uses the cancellable observation transport for foreground commands. */
+          async execStreaming(...args) {
+            const [sessionId, command] = args;
+            calls.push({ operation: 'execStreaming', args });
             const session = [...sessions.values()].find(value => value.sessionId === sessionId);
             assert.ok(session, 'Execution must target an explicitly created session');
             return { ...session, command, output, exitCode: 0, timedOut };
@@ -108,6 +150,48 @@ function assertEnvironment(result, platform, terminal, terminalType) {
   assert.equal(result.terminalEnvironment.terminalType, terminalType);
 }
 
+/** Verifies every platform inherits the public close tool and its required target. */
+test('close is advertised to every platform with a required session ID', () => {
+  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
+  const close = metadata.tools.find(tool => tool.name === 'close');
+  assert.ok(close);
+  assert.equal(close.display.targetParameter, 'sessionId');
+  assert.deepEqual(close.parameters.map(({ name, type, required }) => ({ name, type, required })), [
+    { name: 'sessionId', type: 'string', required: true },
+  ]);
+  for (const state of metadata.states) assert.equal(state.inheritTools, true, state.id);
+  assert.equal(typeof fixture().tools.close, 'function');
+});
+
+/** Ensures closing a foreground or background session leaves other contexts intact. */
+test('close targets the requested session and subsequent commands acquire a new session', async () => {
+  for (const background of ['false', 'true']) {
+    const f = fixture();
+    const shell = await f.tools.shell({ command: 'pwd', background });
+    const bash = await f.tools.bash({ command: 'pwd' });
+    const result = await f.tools.close({ sessionId: shell.sessionId });
+    assert.deepEqual(result, { sessionId: shell.sessionId, success: true, message: 'Session closed' });
+    assert.deepEqual(f.calls.filter(call => call.operation === 'close'), [
+      { operation: 'close', sessionId: shell.sessionId },
+    ]);
+    assert.equal(f.sessions.size, 1);
+    assert.equal((await f.tools.bash({ command: 'pwd' })).sessionId, bash.sessionId);
+    assert.notEqual((await f.tools.shell({ command: 'pwd' })).sessionId, shell.sessionId);
+    await assert.rejects(f.tools.close({ sessionId: shell.sessionId }), /Terminal session not found/);
+  }
+});
+
+/** Ensures a host close failure reaches the caller without reporting success or executing commands. */
+test('close propagates host failures without modifying another session', async () => {
+  const closeError = new Error('Host refused to close session');
+  const f = fixture({ closeError });
+  const shell = await f.tools.shell({ command: 'pwd' });
+  const before = f.calls.length;
+  await assert.rejects(f.tools.close({ sessionId: shell.sessionId }), error => error === closeError);
+  assert.equal(f.sessions.size, 1);
+  assert.deepEqual(f.calls.slice(before), [{ operation: 'close', sessionId: shell.sessionId }]);
+});
+
 /** Ensures Android shell execution selects the native system shell despite the proot default. */
 test('Android shell explicitly selects android-system and reports the actual environment', async () => {
   const f = fixture();
@@ -117,8 +201,8 @@ test('Android shell explicitly selects android-system and reports the actual env
   const create = f.calls.find(call => call.operation === 'create');
   assert.equal(create.terminalType, 'shell');
   assert.match(create.name, /^super_admin_default_session_shell_chat-a$/);
-  const exec = f.calls.find(call => call.operation === 'exec');
-  assert.deepEqual(exec.args, [result.sessionId, 'id', 3000]);
+  const exec = f.calls.find(call => call.operation === 'execStreaming');
+  assert.deepEqual(structuredClone(exec.args), [result.sessionId, 'id', { timeoutMs: 3000 }]);
 });
 
 /** Ensures switching interpreter tools never shares or changes another interpreter's context. */
@@ -150,8 +234,8 @@ test('background shell and bash retain distinct types and actual environments', 
   const creates = f.calls.filter(call => call.operation === 'create');
   assert.match(creates[0].name, /^super_admin_background_shell_chat-a_\d+$/);
   assert.match(creates[1].name, /^super_admin_background_bash_chat-a_\d+$/);
-  for (const call of f.calls.filter(call => call.operation === 'exec')) {
-    assert.equal(call.args.length, 2, 'Background execution must not introduce a foreground timeout');
+  for (const call of f.calls.filter(call => call.operation === 'observe')) {
+    assert.equal(call.observation.waitMs, 0, 'Background execution must return without a foreground wait');
   }
 });
 
@@ -163,7 +247,7 @@ test('oversized shell output keeps actual terminal metadata alongside its saved 
   assert.equal(result.output, '(saved_to_file)');
   assert.equal(f.files.get(result.output_saved_to), output);
   assertEnvironment(result, 'android', 'android-system', 'shell');
-  assert.equal(result.timeoutMsUsed, 15000);
+  assert.equal(result.timeoutMsUsed, 20000);
 });
 
 /** Ensures an unsupported exact type produces an error without creating a different terminal. */
@@ -171,10 +255,10 @@ test('unsupported explicit interpreters fail without executing any command', asy
   const f = fixture();
   await assert.rejects(f.tools.powershell({ command: 'Get-Location' }), /Unsupported terminal type: powershell/);
   assert.equal(f.sessions.size, 0);
-  assert.deepEqual(f.calls.map(call => call.operation), ['create']);
+  assert.deepEqual(f.calls.map(call => call.operation), ['observe', 'create']);
   await assert.rejects(f.tools.powershell({ command: 'Get-Location', background: 'true' }), /Unsupported terminal type: powershell/);
   assert.equal(f.sessions.size, 0);
-  assert.deepEqual(f.calls.map(call => call.operation), ['create', 'create']);
+  assert.deepEqual(f.calls.map(call => call.operation), ['observe', 'create', 'observe', 'create']);
 });
 
 /** Ensures Windows PowerShell and Git Bash share the same type-aware public API. */
@@ -225,8 +309,8 @@ test('terminal descriptions match platform backends and explain workspace-indepe
   const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
   for (const language of ['zh', 'en']) {
     assert.match(metadata.description[language], /VFS/);
-    assert.match(metadata.description[language], language === 'zh' ? /未绑定/ : /without one/);
-    assert.match(metadata.description[language], language === 'zh' ? /失败会报错/ : /reports failures/);
+    assert.match(metadata.description[language], language === 'zh' ? /未绑定/ : /when unbound/);
+    assert.match(metadata.description[language], language === 'zh' ? /失败则终止/ : /Failure stops execution/);
   }
   const state = id => metadata.states.find(item => item.id === id);
   const tool = (id, name) => state(id).tools.find(item => item.name === name);
@@ -243,15 +327,34 @@ test('terminal descriptions match platform backends and explain workspace-indepe
   assertEnvironment(await f.tools[tool('ohos', 'shell').name]({ command: 'pwd' }), 'ohos', 'qemu-vroot', 'shell');
 });
 
-/** Ensures timeout handling preserves interpreter identity and the reusable chat session. */
-test('timed-out shell commands keep actual environment metadata and their typed session', async () => {
+/** Ensures a yielded command stays in its original session while new work gets an independent shell. */
+test('foreground wait expiry backgrounds the command and rotates the next default session', async () => {
   const f = fixture({ timedOut: true });
   const first = await f.tools.shell({ command: 'sleep 30', timeoutMs: 3000 });
   const second = await f.tools.shell({ command: 'pwd', timeoutMs: 3000 });
   assert.equal(first.timedOut, true);
-  assert.equal(first.context_preserved, false);
+  assert.equal(first.context_preserved, true);
+  assert.equal(first.background, true);
+  assert.equal(first.commandRunning, true);
+  assert.equal(first.exitCode, null);
+  assert.match(first.message, /转入后台继续运行/);
   assertEnvironment(first, 'android', 'android-system', 'shell');
-  assert.equal(first.sessionId, second.sessionId);
+  assert.notEqual(first.sessionId, second.sessionId);
+  assert.equal(f.sessions.size, 2);
+  assert.equal(f.calls.filter(call => call.operation === 'close').length, 0);
+});
+
+/** Waiting observes the original execution instead of submitting a marker into a running command. */
+test('terminal_wait observes the original command without executing a new command', async () => {
+  const f = fixture({ timedOut: true });
+  const command = await f.tools.shell({ command: 'sleep 30' });
+  const executions = f.calls.filter(call => call.operation === 'execStreaming').length;
+  const result = await f.tools.terminal_wait({ sessionId: command.sessionId, timeoutMs: 1000 });
+  assert.equal(result.waitCompleted, false);
+  assert.equal(result.background, true);
+  assert.equal(result.context_preserved, true);
+  assert.equal(f.calls.filter(call => call.operation === 'execStreaming').length, executions);
+  assert.deepEqual(f.calls.at(-1).observation, { op: 'wait', sessionId: command.sessionId, waitMs: 1000 });
 });
 
 /** Ensures the public SDK and standard tool facade actually transmit the explicit interpreter. */
@@ -262,8 +365,6 @@ test('canonical SDK, declarations, and standard tools expose exact typed session
   assert.match(source('plugins/types/system.d.ts'), /function create\(sessionName: string, type\?: TerminalType\)/);
   const facade = rustMethod(source('core/crates/tool/services/src/tools/defaultTool/standard/StandardTerminalTools.rs'), 'createOrGetSession');
   assert.match(facade, /optionalParameterValue\(tool, "type"\)/);
-  assert.match(facade, /Some\(terminalType\) => host\.createOrGetTypedSession\(&sessionName, terminalType\)/);
-  assert.match(facade, /None => host\.createOrGetSession\(&sessionName\)/);
   const bridge = rustMethod(source('apps/flutter/native/operit-flutter-bridge/src/FlutterOwnerCapabilities.rs'), 'createOrGetTypedSession');
   assert.match(bridge, /self\.inner\.createOrGetTypedSession\(sessionName, terminalType\)\?/);
   assert.match(bridge, /self\.publish_sessions\(\)\?/);

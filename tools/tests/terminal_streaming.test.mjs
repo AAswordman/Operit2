@@ -13,6 +13,33 @@ function fixture() {
     settle(index, data) { registry.settle(calls[index].requestId, {success:true, data}, false); }};
 }
 
+test('managed SDK run and wait expose typed receipts without disposing the background command', async () => {
+  const f = fixture();
+  const running = f.run("Tools.System.terminal.run({sessionName:'chat-shell',terminalType:'shell',command:'sleep 30',waitMs:3000})");
+  assert.deepEqual(structuredClone(f.calls[0].parameters), { observation: {
+    op: 'run', sessionName: 'chat-shell', terminalType: 'shell', command: 'sleep 30', waitMs: 3000,
+  }});
+  f.settle(0, { result: { sessionId: 'background', output: 'started', timedOut: true, exitCode: -1 } });
+  assert.equal((await running).timedOut, true);
+  assert.equal(f.calls.length, 1, 'Returning a receipt must not close the background session');
+  const waiting = f.run("Tools.System.terminal.wait('background',1000)");
+  assert.deepEqual(structuredClone(f.calls[1].parameters), { observation: { op: 'wait', sessionId: 'background', waitMs: 1000 } });
+  f.settle(1, { result: { sessionId: 'background', output: 'finished', timedOut: false, exitCode: 7 } });
+  assert.equal((await waiting).exitCode, 7);
+  await turn();
+  assert.equal(f.context.refs, 0);
+  assert.equal(f.calls.length, 2);
+});
+
+test('managed SDK rejects invalid wait budgets before submitting any command', () => {
+  const f = fixture();
+  for (const value of ['-1', 'NaN', 'Infinity', '1.5', "'1000'"]) {
+    assert.throws(() => f.run(`Tools.System.terminal.wait('session',${value})`), /waitMs/);
+    assert.throws(() => f.run(`Tools.System.terminal.run({sessionName:'s',terminalType:'shell',command:'id',waitMs:${value}})`));
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 test('generated v2 terminal iterable opens lazily, yields live output, and closes on completion', async () => {
   const f = fixture();
   f.run("var request={sessionId:'s',command:'printf sample',timeoutMs:5000}; var stream=Tools.System.terminal.execStream(request); request.command='mutated';");

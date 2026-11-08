@@ -2,6 +2,8 @@
 pub mod AIForegroundService;
 #[path = "EnhancedAIService.rs"]
 pub mod EnhancedAIService;
+#[path = "TurnTokenUsage.rs"]
+pub mod TurnTokenUsage;
 pub mod config;
 pub mod enhance;
 pub mod hooks;

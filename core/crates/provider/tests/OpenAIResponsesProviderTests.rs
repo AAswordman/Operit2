@@ -5,6 +5,32 @@ use super::{
 };
 use serde_json::json;
 
+/// Exposes the active parent usage before the wrapper's stream collection has finished.
+#[test]
+fn paused_responses_reads_active_parent_usage() {
+    use super::{OpenAIResponsesProvider, TokenCounts};
+    use crate::chat::llmprovider::AIService::AIService;
+    use crate::chat::llmprovider::ProviderMediaTestSupport::test_runtime_context;
+    let mut provider = OpenAIResponsesProvider::new(
+        "https://fixture.invalid/responses".into(), String::new(), "test".into(),
+        "OPENAI_RESPONSES".into(), Vec::new(), false, false, false, Vec::new(), true,
+        test_runtime_context(),
+    );
+    let parent = provider.parentProvider();
+    parent.apply_token_counts(TokenCounts { input: 100, cached_input: 20, output: 17 });
+    let generation = provider.setActiveParent(parent);
+    provider.cancel_streaming();
+    assert_eq!((provider.input_token_count(), provider.cached_input_token_count(), provider.output_token_count()), (120, 20, 17));
+    provider.reset_token_counts();
+    let newer = provider.parentProvider();
+    newer.apply_token_counts(TokenCounts { input: 200, cached_input: 40, output: 25 });
+    provider.setActiveParent(newer);
+    provider.finishActiveParent(generation, &UsageCounts {
+        totalInputTokens: 120, actualInputTokens: 100, cachedInputTokens: 20, outputTokens: 17,
+    });
+    assert_eq!((provider.input_token_count(), provider.cached_input_token_count(), provider.output_token_count()), (240, 40, 25));
+}
+
 /// Renders search queries, citations, and replay metadata together.
 #[test]
 fn renders_responses_web_search_output() {

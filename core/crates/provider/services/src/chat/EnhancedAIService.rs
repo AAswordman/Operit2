@@ -39,7 +39,9 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
-use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
+use operit_store::repository::UsageStatisticsStore::UsageRequestSource;
+pub use super::TurnTokenUsage::TurnTokenSnapshot;
+use super::TurnTokenUsage::{RequestTokenUsage, TurnTokenUsage};
 use operit_tools::files::PathMapper::{PathMapper, ResolvedVfsPath};
 use operit_tools::runtime_support::{CoreRouteResumeContext, ToolRuntimeSupport};
 use operit_tools::tools::climode::CliToolModeSupport::{
@@ -95,25 +97,18 @@ pub struct EnhancedAIService {
 
 #[derive(Clone, Debug, Default)]
 pub struct EnhancedAISharedState {
-    pub per_request_token_counts: Option<(i64, i64)>,
+    pub turn_token_usage: TurnTokenUsage,
     pub request_window_estimate: Option<i64>,
     pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
     pub next_execution_context_id: i32,
     /// Invalidates sends that are still waiting to register their response task.
     pub execution_generation: u64,
     pub tool_execution_jobs: BTreeMap<String, ToolExecutionJobMirror>,
-    pub accumulated_input_token_count: i64,
-    pub accumulated_output_token_count: i64,
-    pub accumulated_cached_input_token_count: i64,
-    pub current_request_input_token_count: i64,
-    pub current_request_output_token_count: i64,
-    pub current_request_cached_input_token_count: i64,
     pub current_response_callback_registered: bool,
     pub current_complete_callback_registered: bool,
     pub last_reply_content: Option<String>,
     pub last_provider_model: Option<String>,
     pub last_turn_model_identity: Option<TurnModelIdentity>,
-    pub last_turn_token_snapshot: Option<TurnTokenSnapshot>,
     pub last_turn_context_window: Option<i64>,
     pub pendingRouteChange: Option<RouteChangeIntent>,
 }
@@ -178,16 +173,9 @@ impl EnhancedAISharedState {
             modelName: config.modelId.clone(),
         });
         self.last_reply_content = None;
-        self.last_turn_token_snapshot = None;
+        self.turn_token_usage = TurnTokenUsage::default();
         self.last_turn_context_window = None;
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TurnTokenSnapshot {
-    pub inputTokens: i64,
-    pub outputTokens: i64,
-    pub cachedInputTokens: i64,
 }
 
 pub trait SendMessageCallbacks: Send + Sync {
@@ -458,7 +446,6 @@ pub enum SendMessageLifecycleStage {
     SetConnectingState,
     GetModelParametersForFunction,
     GetAIServiceForFunction,
-    ClearPerRequestTokenCounts,
     GetAvailableToolsForFunction,
     BeforeFinalizePromptHook,
     BeforeSendToModelHook,
@@ -1610,12 +1597,6 @@ impl EnhancedAIService {
 
         {
             let mut shared = self.shared_state();
-            shared.accumulated_input_token_count = 0;
-            shared.accumulated_output_token_count = 0;
-            shared.accumulated_cached_input_token_count = 0;
-            shared.current_request_input_token_count = 0;
-            shared.current_request_output_token_count = 0;
-            shared.current_request_cached_input_token_count = 0;
             shared.pendingRouteChange = None;
         }
 
@@ -1700,14 +1681,6 @@ impl EnhancedAIService {
             ),
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
-        lifecycle.push(SendMessageLifecycleStage::ClearPerRequestTokenCounts);
-        {
-            let mut shared = self.shared_state();
-            shared.per_request_token_counts = None;
-            shared.current_request_input_token_count = 0;
-            shared.current_request_output_token_count = 0;
-            shared.current_request_cached_input_token_count = 0;
-        }
         lifecycle.push(SendMessageLifecycleStage::GetAvailableToolsForFunction);
         let availableTools = self.getAvailableToolsForFunction(
             functionType.clone(),
@@ -1885,9 +1858,19 @@ impl EnhancedAIService {
                 None
             }
         };
-        let mut provider_stream = {
+        let (turnUsage, tokenRequest);
+        let providerResult = {
             let mut service = serviceForFunction.lock().await;
-            match service
+            if !self.isExecutionContextActive(&execContext) {
+                self.unregisterExecutionContext(&execContext);
+                return Ok(());
+            }
+            service.reset_token_counts();
+            (turnUsage, tokenRequest) = self.beginRequestTokenUsage(
+                &execContext, serviceForFunction.clone(), functionType.clone(),
+                UsageRequestSource::CHAT_RESPONSE, chatId.clone(),
+            )?;
+            service
                 .send_message(SendMessageRequest {
                     chat_history: requestHistory.clone(),
                     model_parameters: modelParameters.clone(),
@@ -1904,20 +1887,21 @@ impl EnhancedAIService {
                     on_tool_invocation: onToolInvocation.clone(),
                 })
                 .await
-            {
-                Ok(stream) => stream,
-                Err(error) => {
-                    self.invalidateExecutionContext(
-                        &mut execContext,
-                        "sendMessage.provider.error".to_string(),
-                    );
-                    AppLogger::e(TAG, &format!("发送消息时发生错误: {}", error));
-                    if !isSubTask {
-                        self.stopAiService(participantName.clone(), avatarUri.clone());
-                    }
-                    self.unregisterExecutionContext(&execContext);
-                    return Err(error);
+        };
+        let mut provider_stream = match providerResult {
+            Ok(stream) => stream,
+            Err(error) => {
+                turnUsage.finishRequest(&tokenRequest, runtimeSupport.as_ref()).await?;
+                self.invalidateExecutionContext(
+                    &mut execContext,
+                    "sendMessage.provider.error".to_string(),
+                );
+                AppLogger::e(TAG, &format!("发送消息时发生错误: {}", error));
+                if !isSubTask {
+                    self.stopAiService(participantName.clone(), avatarUri.clone());
                 }
+                self.unregisterExecutionContext(&execContext);
+                return Err(error);
             }
         };
         execContext.preparedRequest = Some(PreparedRequestWindow {
@@ -2008,6 +1992,7 @@ impl EnhancedAIService {
                 }
             })
             .await;
+        let tokens = turnUsage.finishRequest(&tokenRequest, runtimeSupport.as_ref()).await?;
         if !self.isExecutionContextActive(&execContext) {
             self.unregisterExecutionContext(&execContext);
             return Ok(());
@@ -2023,14 +2008,8 @@ impl EnhancedAIService {
         }
 
         lifecycle.push(SendMessageLifecycleStage::PersistTokenUsage);
-        let (inputTokens, cachedInputTokens, outputTokens) = {
-            let service = serviceForFunction.lock().await;
-            (
-                service.input_token_count(),
-                service.cached_input_token_count(),
-                service.output_token_count(),
-            )
-        };
+        let (inputTokens, cachedInputTokens, outputTokens) =
+            (tokens.input, tokens.cached_input, tokens.output);
         AppLogger::i(
             TAG,
             &format!(
@@ -2044,38 +2023,9 @@ impl EnhancedAIService {
                 totalChars
             ),
         );
-        {
-            let mut shared = self.shared_state();
-            shared.accumulated_input_token_count += inputTokens;
-            shared.accumulated_output_token_count += outputTokens;
-            shared.accumulated_cached_input_token_count += cachedInputTokens;
-            shared.current_request_input_token_count = 0;
-            shared.current_request_output_token_count = 0;
-            shared.current_request_cached_input_token_count = 0;
-            shared.per_request_token_counts = Some((inputTokens, outputTokens));
-        }
-        persistProviderModelTokenUsage(
-            self.provider_runtime_context.support(),
-            &providerModel,
-            functionType.clone(),
-            UsageRequestSource::CHAT_RESPONSE,
-            chatId.clone(),
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-        )?;
-        let (
-            accumulatedInputTokenCount,
-            accumulatedOutputTokenCount,
-            accumulatedCachedInputTokenCount,
-        ) = {
-            let shared = self.shared_state();
-            (
-                shared.accumulated_input_token_count,
-                shared.accumulated_output_token_count,
-                shared.accumulated_cached_input_token_count,
-            )
-        };
+        let snapshot = turnUsage.snapshot();
+        let (accumulatedInputTokenCount, accumulatedOutputTokenCount, accumulatedCachedInputTokenCount) =
+            (snapshot.inputTokens, snapshot.outputTokens, snapshot.cachedInputTokens);
         AppLogger::v_with_level(
             TAG,
             &format!(
@@ -2220,11 +2170,6 @@ impl EnhancedAIService {
             let mut shared = self.shared_state();
             shared.last_reply_content = Some(execContext.roundManager.getDisplayContent());
             shared.last_turn_context_window = completedContextWindow;
-            shared.last_turn_token_snapshot = Some(TurnTokenSnapshot {
-                inputTokens: shared.accumulated_input_token_count,
-                outputTokens: shared.accumulated_output_token_count,
-                cachedInputTokens: shared.accumulated_cached_input_token_count,
-            });
         }
         let _ = finalProcessedInput;
         let _ = requestHistory;
@@ -2425,11 +2370,9 @@ impl EnhancedAIService {
                         tokenUsageThreshold
                     ),
                 );
-                // Compaction ends this execution before normal completion publishes its metrics.
-                let tokenSnapshot = self.captureCurrentTurnTokenSnapshot();
+                // Compaction retains this request window while request accounting stays on the turn.
                 {
                     let mut shared = self.shared_state();
-                    shared.last_turn_token_snapshot = Some(tokenSnapshot);
                     shared.last_turn_context_window = Some(currentTokens);
                     shared.last_reply_content = Some(context.roundManager.getDisplayContent());
                 }
@@ -2450,14 +2393,6 @@ impl EnhancedAIService {
             }
         }
 
-        {
-            let mut shared = self.shared_state();
-            shared.per_request_token_counts = None;
-            shared.current_request_input_token_count = 0;
-            shared.current_request_output_token_count = 0;
-            shared.current_request_cached_input_token_count = 0;
-        }
-
         AppLogger::v_with_level(
             TAG,
             &format!(
@@ -2471,7 +2406,8 @@ impl EnhancedAIService {
             ),
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
-        let mut response = {
+        let (turnUsage, tokenRequest);
+        let responseResult = {
             let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> =
                 onNonFatalError.map(|callbackFn| {
                     Arc::new(move |error: String| {
@@ -2479,6 +2415,14 @@ impl EnhancedAIService {
                     }) as Arc<dyn Fn(String) + Send + Sync>
                 });
             let mut service = runtime.aiService.lock().await;
+            if !self.isExecutionContextActive(context) {
+                return Ok(false);
+            }
+            service.reset_token_counts();
+            (turnUsage, tokenRequest) = self.beginRequestTokenUsage(
+                context, runtime.aiService.clone(), functionType.clone(),
+                UsageRequestSource::TOOL_RESULT_RESPONSE, chatId.clone(),
+            )?;
             service
                 .send_message(SendMessageRequest {
                     chat_history: currentChatHistory,
@@ -2495,7 +2439,14 @@ impl EnhancedAIService {
                     on_non_fatal_error: providerOnNonFatalError,
                     on_tool_invocation: onToolInvocation.clone(),
                 })
-                .await?
+                .await
+        };
+        let mut response = match responseResult {
+            Ok(response) => response,
+            Err(error) => {
+                turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
+                return Err(error);
+            }
         };
 
         context.preparedRequest = Some(PreparedRequestWindow {
@@ -2504,6 +2455,7 @@ impl EnhancedAIService {
         });
 
         if !self.isExecutionContextActive(context) {
+            turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
             return Ok(false);
         }
 
@@ -2514,6 +2466,7 @@ impl EnhancedAIService {
         }
 
         if !self.isExecutionContextActive(context) {
+            turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
             return Ok(false);
         }
 
@@ -2563,6 +2516,7 @@ impl EnhancedAIService {
                 }
             })
             .await;
+        let tokens = turnUsage.finishRequest(&tokenRequest, self.provider_runtime_context.support()).await?;
         if !self.isExecutionContextActive(context) {
             return Ok(false);
         }
@@ -2580,47 +2534,11 @@ impl EnhancedAIService {
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
 
-        let (providerModel, inputTokens, cachedInputTokens, outputTokens) = {
-            let service = runtime.aiService.lock().await;
-            (
-                service.provider_model(),
-                service.input_token_count(),
-                service.cached_input_token_count(),
-                service.output_token_count(),
-            )
-        };
-        {
-            let mut shared = self.shared_state();
-            shared.accumulated_input_token_count += inputTokens;
-            shared.accumulated_output_token_count += outputTokens;
-            shared.accumulated_cached_input_token_count += cachedInputTokens;
-            shared.current_request_input_token_count = 0;
-            shared.current_request_output_token_count = 0;
-            shared.current_request_cached_input_token_count = 0;
-            shared.per_request_token_counts = Some((inputTokens, outputTokens));
-        }
-        persistProviderModelTokenUsage(
-            self.provider_runtime_context.support(),
-            &providerModel,
-            functionType.clone(),
-            UsageRequestSource::TOOL_RESULT_RESPONSE,
-            chatId.clone(),
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-        )?;
-        let (
-            accumulatedInputTokenCount,
-            accumulatedOutputTokenCount,
-            accumulatedCachedInputTokenCount,
-        ) = {
-            let shared = self.shared_state();
-            (
-                shared.accumulated_input_token_count,
-                shared.accumulated_output_token_count,
-                shared.accumulated_cached_input_token_count,
-            )
-        };
+        let (inputTokens, cachedInputTokens, outputTokens) =
+            (tokens.input, tokens.cached_input, tokens.output);
+        let snapshot = turnUsage.snapshot();
+        let (accumulatedInputTokenCount, accumulatedOutputTokenCount, accumulatedCachedInputTokenCount) =
+            (snapshot.inputTokens, snapshot.outputTokens, snapshot.cachedInputTokens);
         AppLogger::v_with_level(
             TAG,
             &format!(
@@ -3122,28 +3040,25 @@ impl EnhancedAIService {
         self.notifyReplyCompleted(chatId, participantName, avatarUri, notifyReplyOverride);
     }
 
-    /// Cancels the active conversation and tool execution jobs.
-    pub async fn cancelConversation(&mut self) {
+    /// Cancels the producer and settles its request before releasing turn accounting.
+    pub async fn cancelConversation(&mut self) -> Result<(), AiServiceError> {
+        let turnUsage = self.turnTokenUsage();
         self.invalidateAllExecutionContexts("cancelConversation".to_string());
         self.multi_service_manager.cancelAllStreaming().await;
+        let usageResult = turnUsage
+            .finishCurrentRequest(self.provider_runtime_context.support()).await;
         self.input_processing_state
             .set_value(InputProcessingState::Idle);
         AppLogger::v_with_level(TAG, "Conversation canceled", operit_util::AppLogger::VERBOSE_LEVEL_2);
         {
             let mut shared = self.shared_state();
-            shared.per_request_token_counts = None;
             shared.last_turn_context_window = None;
-            shared.accumulated_input_token_count = 0;
-            shared.accumulated_output_token_count = 0;
-            shared.accumulated_cached_input_token_count = 0;
-            shared.current_request_input_token_count = 0;
-            shared.current_request_output_token_count = 0;
-            shared.current_request_cached_input_token_count = 0;
             shared.current_response_callback_registered = false;
             shared.current_complete_callback_registered = false;
         }
         self.stopAiService(None, None);
         AppLogger::v_with_level(TAG, "Conversation cancellation complete", operit_util::AppLogger::VERBOSE_LEVEL_2);
+        usageResult
     }
 
     pub fn cancelAllToolExecutions(&mut self) {
@@ -3152,22 +3067,22 @@ impl EnhancedAIService {
 
     #[allow(non_snake_case)]
     pub fn getCurrentInputTokenCount(&self) -> i64 {
-        self.shared_state().accumulated_input_token_count
+        self.captureCurrentTurnTokenSnapshot().inputTokens
     }
 
     #[allow(non_snake_case)]
     pub fn getCurrentOutputTokenCount(&self) -> i64 {
-        self.shared_state().accumulated_output_token_count
+        self.captureCurrentTurnTokenSnapshot().outputTokens
     }
 
     #[allow(non_snake_case)]
     pub fn getCurrentCachedInputTokenCount(&self) -> i64 {
-        self.shared_state().accumulated_cached_input_token_count
+        self.captureCurrentTurnTokenSnapshot().cachedInputTokens
     }
 
     #[allow(non_snake_case)]
     pub fn getPerRequestTokenCounts(&self) -> Option<(i64, i64)> {
-        self.shared_state().per_request_token_counts
+        self.turnTokenUsage().perRequestTokens()
     }
 
     #[allow(non_snake_case)]
@@ -3186,9 +3101,27 @@ impl EnhancedAIService {
         self.shared_state().last_turn_model_identity.clone()
     }
 
-    #[allow(non_snake_case)]
-    pub fn getLastTurnTokenSnapshot(&self) -> Option<TurnTokenSnapshot> {
-        self.shared_state().last_turn_token_snapshot.clone()
+    /// Shares accounting with the persistence owner for this exact turn.
+    pub fn turnTokenUsage(&self) -> TurnTokenUsage {
+        self.shared_state().turn_token_usage.clone()
+    }
+
+    /// Registers accounting atomically with execution invalidation while the provider is locked.
+    fn beginRequestTokenUsage(
+        &self, context: &MessageExecutionContext, service: SharedAIServiceHandle,
+        functionType: FunctionType, source: UsageRequestSource, chatId: Option<String>,
+    ) -> Result<(TurnTokenUsage, Arc<RequestTokenUsage>), AiServiceError> {
+        let shared = self.shared_state();
+        if !context.isConversationActive
+            || context.cancellationToken.as_ref().is_some_and(MessageCancellationToken::isCancelled)
+            || !shared.active_execution_contexts.get(&context.executionId)
+                .is_some_and(|active| active.isConversationActive)
+        {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        let usage = shared.turn_token_usage.clone();
+        let request = usage.beginRequest(service, functionType, source, chatId);
+        Ok((usage, request))
     }
 
     /// Returns the completed estimate from this turn's actual prepared request.
@@ -3198,20 +3131,10 @@ impl EnhancedAIService {
         self.shared_state().last_turn_context_window
     }
 
+    /// Returns settled request totals for the current turn regardless of terminal outcome.
     #[allow(non_snake_case)]
     pub fn captureCurrentTurnTokenSnapshot(&self) -> TurnTokenSnapshot {
-        let shared = self.shared_state();
-        TurnTokenSnapshot {
-            inputTokens: (shared.accumulated_input_token_count
-                + shared.current_request_input_token_count)
-                .max(0),
-            outputTokens: (shared.accumulated_output_token_count
-                + shared.current_request_output_token_count)
-                .max(0),
-            cachedInputTokens: (shared.accumulated_cached_input_token_count
-                + shared.current_request_cached_input_token_count)
-                .max(0),
-        }
+        self.turnTokenUsage().snapshot()
     }
 
     #[allow(non_snake_case)]
@@ -3221,29 +3144,16 @@ impl EnhancedAIService {
         outputTokens: i64,
         cachedInputTokens: i64,
     ) {
-        let mut shared = self.shared_state();
-        shared.accumulated_input_token_count = inputTokens.max(0);
-        shared.accumulated_output_token_count = outputTokens.max(0);
-        shared.accumulated_cached_input_token_count = cachedInputTokens.max(0);
-        shared.current_request_input_token_count = 0;
-        shared.current_request_output_token_count = 0;
-        shared.current_request_cached_input_token_count = 0;
-        shared.per_request_token_counts = Some((
-            shared.accumulated_input_token_count,
-            shared.accumulated_output_token_count,
-        ));
+        self.turnTokenUsage().setSnapshot(TurnTokenSnapshot {
+            inputTokens: inputTokens.max(0),
+            outputTokens: outputTokens.max(0),
+            cachedInputTokens: cachedInputTokens.max(0),
+        });
     }
 
     #[allow(non_snake_case)]
     pub fn resetTokenCounters(&mut self) {
-        let mut shared = self.shared_state();
-        shared.per_request_token_counts = None;
-        shared.accumulated_input_token_count = 0;
-        shared.accumulated_output_token_count = 0;
-        shared.accumulated_cached_input_token_count = 0;
-        shared.current_request_input_token_count = 0;
-        shared.current_request_output_token_count = 0;
-        shared.current_request_cached_input_token_count = 0;
+        self.turnTokenUsage().reset();
     }
 }
 
@@ -3294,34 +3204,6 @@ fn apply_finalized_current_user_turn(
         metadata: Default::default(),
     });
     history
-}
-
-#[allow(non_snake_case)]
-fn persistProviderModelTokenUsage(
-    runtimeSupport: &dyn ProviderRuntimeSupport,
-    providerModel: &str,
-    functionType: FunctionType,
-    source: UsageRequestSource,
-    chatId: Option<String>,
-    inputTokens: i64,
-    outputTokens: i64,
-    cachedInputTokens: i64,
-) -> Result<(), AiServiceError> {
-    runtimeSupport
-        .updateTokensForProviderModel(providerModel, inputTokens, outputTokens, cachedInputTokens)
-        .map_err(AiServiceError::RequestFailed)?;
-    UsageStatisticsStore::new()
-        .recordProviderModelRequest(
-            providerModel.to_string(),
-            functionType,
-            source,
-            chatId,
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-        )
-        .map(|_| ())
-        .map_err(AiServiceError::RequestFailed)
 }
 
 /// Resolves proxy wrappers to the concrete tool name shown to users and callbacks.
@@ -3919,7 +3801,8 @@ mod model_identity_tests {
         let previous_identity = state.last_turn_model_identity.clone();
         state.last_reply_content = Some("previous reply".into());
         state.last_turn_context_window = Some(1234);
-        state.last_turn_token_snapshot = Some(TurnTokenSnapshot {
+        let previous_usage = state.turn_token_usage.clone();
+        state.turn_token_usage.setSnapshot(TurnTokenSnapshot {
             inputTokens: 100,
             outputTokens: 50,
             cachedInputTokens: 20,
@@ -3940,7 +3823,8 @@ mod model_identity_tests {
         );
         assert_eq!(previous_identity.unwrap().modelName, "model-a");
         assert!(state.last_reply_content.is_none());
-        assert!(state.last_turn_token_snapshot.is_none());
+        assert_eq!(state.turn_token_usage.snapshot(), TurnTokenSnapshot::default());
+        assert_eq!(previous_usage.snapshot().inputTokens, 100);
         assert!(state.last_turn_context_window.is_none());
     }
 }

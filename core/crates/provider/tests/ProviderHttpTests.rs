@@ -285,6 +285,62 @@ async fn cancelling_idle_claude_releases_the_host_stream() {
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
+/// Preserves Anthropic's live usage when pausing before message_stop.
+#[tokio::test]
+async fn paused_claude_keeps_streamed_usage() {
+    let host = ControlledHost::new("");
+    let response = post("https://fixture.invalid").send_with_host(host.clone()).await.unwrap();
+    host.emit(concat!(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"cache_read_input_tokens\":20,\"output_tokens\":1}}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n",
+        "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":17}}\n\n",
+    ));
+    let mut provider = claude();
+    let mut control = provider.clone();
+    let output = output();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    assert!(futures_util::poll!(&mut read).is_pending());
+    control.cancel_streaming();
+    assert_eq!(read.await.unwrap_err(), AiServiceError::RequestCancelled);
+    assert_eq!((control.input_token_count(), control.cached_input_token_count(), control.output_token_count()), (120, 20, 17));
+    assert_eq!(output.current_render_content(), "partial");
+}
+
+/// Preserves Gemini usageMetadata when pausing before finishReason.
+#[tokio::test]
+async fn paused_gemini_keeps_streamed_usage() {
+    let host = ControlledHost::new("");
+    let response = post("https://fixture.invalid").send_with_host(host.clone()).await.unwrap();
+    host.emit("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}],\"usageMetadata\":{\"promptTokenCount\":100,\"cachedContentTokenCount\":20,\"candidatesTokenCount\":17}}\n\n");
+    let mut provider = gemini();
+    let mut control = provider.clone();
+    let output = output();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    assert!(futures_util::poll!(&mut read).is_pending());
+    control.cancel_streaming();
+    assert_eq!(read.await.unwrap_err(), AiServiceError::RequestCancelled);
+    assert_eq!((control.input_token_count(), control.cached_input_token_count(), control.output_token_count()), (80, 20, 17));
+    assert_eq!(output.current_render_content(), "partial");
+}
+
+/// Publishes the existing output estimate before an OpenAI stream ends or reports final usage.
+#[tokio::test]
+async fn paused_openai_keeps_live_output_count() {
+    let host = ControlledHost::new("data: {\"choices\":[{\"delta\":{\"content\":\"partial response with several tokens\"}}]}\n\n");
+    let response = post("https://fixture.invalid").send_with_host(host).await.unwrap();
+    let provider = OpenAIProvider::new("https://fixture.invalid".into(), String::new(), "test".into(), "OPENAI_GENERIC".into(), Vec::new(), true);
+    let mut control = provider.clone();
+    let output = output();
+    let mut emitter = StreamEmitter::new(output.clone());
+    let mut read = Box::pin(provider.read_streaming_response(response, None, &output, &mut emitter));
+    assert!(futures_util::poll!(&mut read).is_pending());
+    let count = control.output_token_count();
+    assert!(count > 0);
+    control.cancel_streaming();
+    assert_eq!(read.await.unwrap_err(), AiServiceError::RequestCancelled);
+    assert_eq!(control.output_token_count(), count);
+}
+
 /// Checks model POSTs and OAuth forms share the exact same Host-owned network policy.
 #[tokio::test]
 async fn model_and_oauth_requests_use_the_host_policy() {

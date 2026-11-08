@@ -203,6 +203,7 @@ fn preference_files_use_the_native_journal_instead_of_whole_file_lww() {
     assert!(!operations.iter().any(|operation|operation.entityId==fixture.path));
     assert!(files.writeBytes(&fixture.path,b"{}").is_err());
     assert!(!PluginStorage::ownsFile(fixture.host.clone(),"runtime/config/preferences/model_configs.preferences.json").unwrap());
+    drop(files);
     fixture.dispose();
 }
 
@@ -532,8 +533,8 @@ fn file_correction_provisions_an_empty_preference_owner_with_an_initializer() {
     drop(registry);
     schema.stores.push(schema.owner(&target.path).unwrap().unwrap());
     let registry = PreferenceMerge::registry(target.host.clone(),&schema,[],|_,_|true).unwrap();
-    assert!(registry.repair_file(&snapshot.data.owner,"",&snapshot,Some(&file)).unwrap());
-    assert!(!registry.repair_file(&snapshot.data.owner,"",&snapshot,Some(&file)).unwrap());
+    assert!(registry.repair_file(&snapshot.data.owner,"",&snapshot,Some(&file),None).unwrap());
+    assert!(!registry.repair_file(&snapshot.data.owner,"",&snapshot,Some(&file),None).unwrap());
     assert_eq!(target.host.readBytes(&target.path).unwrap(),file.as_bytes());
     let history = target.history();
     assert_eq!(history.len(), 1);
@@ -543,6 +544,7 @@ fn file_correction_provisions_an_empty_preference_owner_with_an_initializer() {
     let schema = PreferenceMergeSchema::default();
     let registry = PreferenceMerge::registry(target.host.clone(),&schema,[],|_,_|true).unwrap();
     assert_eq!(registry.snapshot(&snapshot.data.owner).unwrap().data,snapshot.data);
+    drop((registry, store));
     source.dispose(); target.dispose();
 }
 
@@ -560,9 +562,10 @@ fn a_file_created_after_inventory_capture_is_preserved_and_discovered() {
     let store = PreferencesDataStore::newWithStorage(target.host.clone(), &target.path);
     store.edit(|values|values.set(&stringPreferencesKey("local"),"keep")).unwrap();
     let bytes = target.host.readBytes(&target.path).unwrap();
-    assert!(!registry.repair_file(&snapshot.data.owner,"",&snapshot,None).unwrap());
+    assert!(!registry.repair_file(&snapshot.data.owner,"",&snapshot,None,None).unwrap());
     assert_eq!(target.host.readBytes(&target.path).unwrap(),bytes);
     assert_eq!(store.data().unwrap().get(&stringPreferencesKey("local")),Some(&json!("keep")));
+    drop((registry, source_store, store));
     source.dispose(); target.dispose();
 }
 
@@ -662,6 +665,7 @@ fn unknown_portable_schema_is_isolated_to_its_owner() {
     assert!(report.errors.is_empty());
     assert!(registry.skipped().unwrap().contains_key(&receiver.path));
     assert_eq!(PreferencesDataStore::newWithStorage(receiver.host.clone(),healthy).data().unwrap().get(&stringPreferencesKey("value")),Some(&json!(42)));
+    drop(registry);
     source.dispose();receiver.dispose();
 }
 

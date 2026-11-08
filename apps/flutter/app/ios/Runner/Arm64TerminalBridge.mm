@@ -115,6 +115,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @property(nonatomic, strong) NSMutableData *frames;
 @property(nonatomic, strong) dispatch_semaphore_t changed;
 @property(nonatomic, assign) NSUInteger outputCount;
+@property(nonatomic, assign) BOOL boundedOutput;
 @property(nonatomic, assign) BOOL started;
 @property(nonatomic, assign) BOOL done;
 @property(nonatomic, assign) BOOL abandoned;
@@ -293,12 +294,14 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
       [buffer replaceBytesInRange:NSMakeRange(0, buffer.length - ORTOutputCapacity) withBytes:nullptr length:0];
   }
   if (execution && execution.started && !execution.done) {
-    if (data.length > ORTCommandCapacity - execution.outputCount) {
+    if (execution.boundedOutput && data.length > ORTCommandCapacity - execution.outputCount) {
       [self fail:@"ARM64 command output exceeded the 16 MiB capture limit"];
       return;
     }
-    execution.outputCount += data.length;
+    if (execution.boundedOutput) execution.outputCount += data.length;
     [execution.frames appendData:data];
+    if (!execution.boundedOutput && execution.frames.length > ORTOutputCapacity)
+      [execution.frames replaceBytesInRange:NSMakeRange(0, execution.frames.length - ORTOutputCapacity) withBytes:nullptr length:0];
     dispatch_semaphore_signal(execution.changed);
   }
 }
@@ -1081,6 +1084,7 @@ static NSString *ORTWriteCommand(ORTArm64TerminalSession *session, ORTArm64Execu
 static NSDictionary *ORTExecute(ORTArm64TerminalSession *session, NSString *command, uint64_t timeout,
                                 void *context, operit_ios_arm64_terminal_output_callback callback) {
   ORTArm64Execution *execution = [ORTArm64Execution new];
+  execution.boundedOutput = timeout != 0;
   __block NSString *error = nil;
   dispatch_sync(session.queue, ^{
     if (session.failure || session.closed) { error = session.failure ?: @"ARM64 terminal session is not running"; return; }
@@ -1119,6 +1123,8 @@ static NSDictionary *ORTExecute(ORTArm64TerminalSession *session, NSString *comm
       exitCode = execution.exitCode;
     });
     [output appendData:frame];
+    if (timeout == 0 && output.length > ORTOutputCapacity)
+      [output replaceBytesInRange:NSMakeRange(0, output.length - ORTOutputCapacity) withBytes:nullptr length:0];
     // Empty frames poll cancellation while a running command is silent.
     if (callback && (frame.length || (started && !done)) &&
         !callback(context, frame.length ? static_cast<const uint8_t *>(frame.bytes) : nullptr, frame.length)) {
@@ -1131,7 +1137,7 @@ static NSDictionary *ORTExecute(ORTArm64TerminalSession *session, NSString *comm
       return ORTResult(@{ @"sessionId": session.sessionId, @"terminalType": @"shell", @"outputBytes": ORTBytes(output),
                          @"exitCode": @(exitCode), @"timedOut": @NO });
     }
-    if (NSProcessInfo.processInfo.systemUptime >= deadline) {
+    if (timeout != 0 && NSProcessInfo.processInfo.systemUptime >= deadline) {
       __block NSData *lastFrame = nil;
       dispatch_sync(session.queue, ^{
         // Recheck on the owning queue: completion can race the caller deadline.

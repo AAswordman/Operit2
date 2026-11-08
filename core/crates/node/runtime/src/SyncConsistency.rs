@@ -50,7 +50,7 @@ impl SpacePersistenceSyncService {
         let local_receipt = serde_json::from_value(local_clock.clone()).map_err(|e|e.to_string())?;
         let remote_receipt = serde_json::from_value(remote_clock.clone()).map_err(|e|e.to_string())?;
         if !reportsAtExchange(&local, &remote, &local_receipt, &remote_receipt)? {
-            if !local.errors.is_empty() || !remote.errors.is_empty() { return Err("Consistency check has owner errors".into()); }
+            if !local.errors.is_empty() || !remote.errors.is_empty() { return Err(format!("Consistency check has owner errors: local={:?}; remote={:?}", local.errors, remote.errors)); }
             operit_util::AppLogger::AppLogger::trace("CoreSyncTrace",
                 &format!("sync_consistency.retry target={target} reason=new_transactions"));
             return Ok(false);
@@ -219,7 +219,7 @@ fn changedOwners(before: &Report, after: &Report) -> BTreeSet<String> {
 /// Changed owners retry quietly; completion requires equal synchronized contents.
 fn verifyReports(local: &Report, remote: &Report, changed: &BTreeSet<String>) -> Result<bool, String> {
     if !local.errors.is_empty() || !remote.errors.is_empty() {
-        return Err("Consistency check has owner errors".into());
+        return Err(format!("Consistency check has owner errors: local={:?}; remote={:?}", local.errors, remote.errors));
     }
     if local.pendingOwners.union(&remote.pendingOwners).any(|path| !changed.contains(path)) {
         return Err("Consistency check has pending owners".into());
@@ -430,7 +430,7 @@ mod tests {
         remote.pendingOwners.insert("changing".into());
         assert_eq!(super::verifyReports(&local, &remote, &retry), Ok(false));
         remote.errors.push("database is corrupt".into());
-        assert!(super::verifyReports(&local, &remote, &retry).is_err());
+        assert_eq!(super::verifyReports(&local, &remote, &retry).unwrap_err(), "Consistency check has owner errors: local=[]; remote=[\"database is corrupt\"]");
         remote.errors.clear();
         remote.pendingOwners.insert("unrelated".into());
         assert!(super::verifyReports(&local, &remote, &retry).is_err());
@@ -526,7 +526,7 @@ mod tests {
             assert!(verifyReports(&report(&a), &pending).is_err());
             let mut failed = report(&b);
             failed.errors.push("replacement failed".into());
-            assert!(verifyReports(&report(&a), &failed).is_err());
+            assert_eq!(verifyReports(&failed, &report(&a)).unwrap_err(), "Consistency check has owner errors: local=[\"replacement failed\"]; remote=[]");
         }
     }
 }

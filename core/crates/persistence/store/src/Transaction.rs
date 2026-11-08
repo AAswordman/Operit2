@@ -1367,6 +1367,8 @@ pub struct SqlDataset<'a> {
     /// Returns immutable operation identity, business time, origin, sequence in that order.
     pub revisions: &'a str,
     pub cleanup: &'a str,
+    /// Restores an owner-validated declaration inside the same transaction as its rows.
+    pub restore_schema: Option<fn(&mut crate::SqliteStore::SqliteTransaction<'_>, &Value) -> std::result::Result<(Vec<String>, bool), crate::SqliteStore::SqliteStoreError>>,
 }
 
 #[cfg(feature = "full")]
@@ -1506,7 +1508,7 @@ impl SqlDataset<'_> {
             }
         }
         let source = initialization.snapshot(&self.node, current.generation + 1);
-        if !self.commit_snapshot(&current.token()?, &source, None, Some(operation), replay)? {
+        if !self.commit_snapshot(&current.token()?, &source, initialization.definition, Some(operation), replay)? {
             return Err("SQL owner changed while receiving initialization; retry required".into());
         }
         Ok(true)
@@ -1528,20 +1530,26 @@ impl SqlDataset<'_> {
             } else { expected.to_owned() };
             changed = current.data != source.data;
             if !current.replace(&expected, source).map_err(sql_error)? { return Ok(false); }
+            let (names, schema_changed) = match (self.restore_schema, definition.as_ref()) {
+                (Some(restore), Some(definition)) => restore(tx, definition)?,
+                (Some(_), None) => return Err(sql_error("Missing SQL snapshot definition")),
+                (None, _) => (self.tables.iter().map(|name| name.to_string()).collect(), false),
+            };
+            changed |= schema_changed;
             if changed {
                 let mut tables = BTreeMap::new();
-                if current.data.values.len() != self.tables.len() { return Err(sql_error("Unexpected SQL snapshot tables")); }
-                for name in self.tables {
-                    let table: Table = serde_json::from_value(current.data.values.get(*name).cloned().ok_or_else(|| sql_error("Missing SQL snapshot table"))?).map_err(sql_error)?;
+                if current.data.values.len() != names.len() { return Err(sql_error("Unexpected SQL snapshot tables")); }
+                for name in &names {
+                    let table: Table = serde_json::from_value(current.data.values.get(name).cloned().ok_or_else(|| sql_error("Missing SQL snapshot table"))?).map_err(sql_error)?;
                     let expected = tx.queryRows(&format!("PRAGMA table_info({})", sql_identifier(name)), vec![])?.iter()
                         .map(|row| row.get::<_, String>("name")).collect::<std::result::Result<Vec<_>, _>>()?;
                     if table.columns != expected || table.rows.iter().any(|row| row.len() != expected.len()) { return Err(sql_error("SQL snapshot schema mismatch")); }
-                    tables.insert(*name, table);
+                    tables.insert(name.as_str(), table);
                 }
                 tx.execute("PRAGMA defer_foreign_keys = ON", vec![])?;
-                for name in self.tables.iter().rev() { tx.execute(&format!("DELETE FROM {}", sql_identifier(name)), vec![])?; }
-                for name in self.tables {
-                    let table = tables.remove(name).expect("validated snapshot table");
+                for name in names.iter().rev() { tx.execute(&format!("DELETE FROM {}", sql_identifier(name)), vec![])?; }
+                for name in &names {
+                    let table = tables.remove(name.as_str()).expect("validated snapshot table");
                     let query = format!("INSERT INTO {}({}) VALUES({})", sql_identifier(name), table.columns.iter().map(|column| sql_identifier(column)).collect::<Vec<_>>().join(","),
                         (0..table.columns.len()).map(|_| "?").collect::<Vec<_>>().join(","));
                     for row in table.rows { tx.execute(&query, row.into_iter().map(Into::into).collect())?; }
