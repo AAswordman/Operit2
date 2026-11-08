@@ -20,19 +20,26 @@ const LAYOUT: &str = "runtime/sync/contract-layout.preferences.json";
 struct Fixture {
     root: PathBuf,
     host: Arc<NativeRuntimeStorageHost>,
+    open: fn(Arc<dyn RuntimeStorageHost>, &str) -> PreferencesDataStore,
 }
 impl Fixture {
+    /// Creates an owner with the context-dependent migration used by business scenarios.
     fn new() -> Self {
+        Self::with_store(current_store)
+    }
+    /// Creates an owner with the exact store contract required by the scenario.
+    fn with_store(open: fn(Arc<dyn RuntimeStorageHost>, &str) -> PreferencesDataStore) -> Self {
         let root =
             std::env::temp_dir().join(format!("operit-business-contract-{}", uuid::Uuid::new_v4()));
         let host = Arc::new(NativeRuntimeStorageHost::new(
             root.join("runtime"),
             root.join("workspaces"),
         ));
-        Self { root, host }
+        Self { root, host, open }
     }
+    /// Opens the scenario's declared current owner.
     fn store(&self) -> PreferencesDataStore {
-        current_store(self.host.clone(), CURRENT)
+        (self.open)(self.host.clone(), CURRENT)
     }
     fn journal(&self) -> SyncOperationStore {
         SyncOperationStore::new(self.host.clone(), "runtime/sync")
@@ -43,8 +50,11 @@ impl Fixture {
             self.root.join("workspaces"),
         ))
     }
+    /// Applies originals using the same contract as local reads and writes.
     fn apply(&self, originals: &[SyncOperation]) {
-        apply(self.host.clone(), originals);
+        let mut declarations = schema();
+        declarations.stores[0].open = self.open;
+        PreferenceMerge::applyOperations(self.host.clone(), &declarations, &[], originals, |_,_|true).unwrap();
     }
     fn value(&self, key: &str) -> Option<Value> {
         self.store()
@@ -127,6 +137,10 @@ fn migrate(
 }
 fn current_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
     PreferencesDataStore::newWithStorage(host, path).withMigration(2, migrate)
+}
+/// Opens plain preferences without an opaque migration that requires retained history.
+fn plain_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
+    PreferencesDataStore::newWithStorage(host, path)
 }
 fn schema() -> PreferenceMergeSchema {
     PreferenceMergeSchema {
@@ -585,6 +599,7 @@ fn layout_and_format_move_preserve_the_complete_checkpoint_without_reimporting_i
     );
 }
 
+/// Deliberately violates state conversion when a transaction's real source is available.
 fn invalid_migration_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> PreferencesDataStore {
     PreferencesDataStore::newWithStorage(host, path)
         .withMigration(2, |_, context| {
@@ -595,12 +610,15 @@ fn invalid_migration_store(host: Arc<dyn RuntimeStorageHost>, path: &str) -> Pre
         })
 }
 
+/// Rejects an invalid converter with retained source state while unrelated owners continue.
 #[test]
 fn invalid_migration_skips_owner_until_initialization_and_other_owners_continue() {
     let target = Fixture::new();
-    target.apply(&authored(CURRENT, 2, 10, |state| {
+    let mut legacy = schema();
+    legacy.stores[0].open = |host, path| PreferencesDataStore::newWithStorage(host, path).withSchema(1, |_,_|Ok(()));
+    PreferenceMerge::applyOperations(target.host.clone(), &legacy, &[], &authored(CURRENT, 1, 10, |state| {
         state.set(&stringPreferencesKey("x"), "committed")
-    }));
+    }), |_,_|true).unwrap();
     let before = target.store().syncSnapshot().unwrap();
     let bytes = target.host.readBytes(CURRENT).unwrap();
     let invalid = authored(CURRENT, 1, 20, |state| {
@@ -737,6 +755,7 @@ fn resetting_transactions_preserves_current_data_and_exports_only_initialization
     assert_eq!(target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap().len(), 1);
 }
 
+/// Keeps all owner histories intact when a snapshot cannot be captured.
 #[test]
 fn reset_read_failure_keeps_existing_history() {
     let target = Fixture::new();
@@ -748,6 +767,26 @@ fn reset_read_failure_keeps_existing_history() {
     assert!(registry.reset_transactions().is_err());
     assert_eq!(target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap(), before);
     assert_eq!(target.value("x"), Some(json!("current")));
+}
+
+/// Reads later owners' definitions before replacing even the first owner's history.
+#[test]
+fn reset_definition_read_failure_keeps_all_owner_histories() {
+    let target = Fixture::new();
+    target.apply(&authored(CURRENT, 2, 10, |state|state.set(&stringPreferencesKey("x"), "current")));
+    let second = current_store(target.host.clone(), OLD);
+    second.edit(|state|state.set(&stringPreferencesKey("x"), "second")).unwrap();
+    let mut declarations = schema();
+    declarations.stores.push(PreferenceMergeStore::values(OLD, false, current_store));
+    let mut registry = PreferenceMerge::registry(target.host.clone(), &declarations, &[], |_,_|true).unwrap();
+    let before = target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap();
+    let first_snapshot = target.store().syncSnapshot().unwrap();
+    let second_snapshot = second.syncSnapshot().unwrap();
+    registry.owners.get_mut(OLD).unwrap().definition = Some(Box::new(||Err("injected definition read failure".into())));
+    assert_eq!(registry.reset_transactions().unwrap_err(), "injected definition read failure");
+    assert_eq!(target.journal().operationsSince(&SyncReceipt::default(), &[], usize::MAX).unwrap(), before);
+    assert_eq!(target.store().syncSnapshot().unwrap(), first_snapshot);
+    assert_eq!(second.syncSnapshot().unwrap(), second_snapshot);
 }
 
 #[test]
@@ -796,18 +835,19 @@ fn unregistered_preference_is_ignored_without_opening_or_syncing_its_file() {
     assert_eq!(target.host.readBytes(path).unwrap(),b"user file; not preference JSON");
 }
 
-fn old_schema() -> PreferenceMergeSchema {
+/// Declares both physical owners until the layout migration records their shared destination.
+fn layout_schema() -> PreferenceMergeSchema {
     let mut declarations = schema();
-    declarations.stores[0].path = OLD.into();
-    declarations.stores[0].open =
-        |host, path| PreferencesDataStore::newWithStorage(host, path).withSchema(1, |_, _| Ok(()));
+    declarations.stores.push(PreferenceMergeStore::values(OLD, false,
+        |host, path| PreferencesDataStore::newWithStorage(host, path).withSchema(1, |_, _| Ok(()))));
     declarations
 }
 
-fn apply_old(target: &Fixture, operations: &[SyncOperation]) {
+/// Replays pre-layout transactions without retiring the other still-declared owner.
+fn apply_before_layout(target: &Fixture, operations: &[SyncOperation]) {
     PreferenceMerge::applyOperations(
         target.host.clone(),
-        &old_schema(),
+        &layout_schema(),
         &[],
         operations,
         |_, _| true,
@@ -841,8 +881,8 @@ fn layout_with_existing_destination_commutes_with_old_path_transactions() {
     let left = Fixture::new();
     let right = Fixture::new();
     for target in [&left, &right] {
-        apply_old(target, &old);
-        target.apply(&destination);
+        apply_before_layout(target, &old);
+        apply_before_layout(target, &destination);
         let old = PreferencesDataStore::newWithStorage(target.host.clone(), OLD)
             .withSchema(1, |_, _| Ok(()));
         let checkpoint = old.syncSnapshot().unwrap();
@@ -855,7 +895,7 @@ fn layout_with_existing_destination_commutes_with_old_path_transactions() {
             .unwrap();
     }
     // m_L(Apply(A,T)) = Apply(m_L(A),m_L(T)), with both physical owners in A.
-    apply_old(&left, &transaction);
+    apply_before_layout(&left, &transaction);
     move_old(&left);
     move_old(&right);
     right.apply(&transaction);
@@ -909,13 +949,13 @@ fn layout_with_existing_destination_commutes_with_old_path_transactions() {
 fn interrupted_occupied_layout_deduplicates_shared_increments_and_retains_newer_edits() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let target = Fixture::new();
-    apply_old(
+    apply_before_layout(
         &target,
         &authored(OLD, 1, 10, |state| {
             state.set(&stringPreferencesKey("counter"), 10)
         }),
     );
-    apply_old(
+    apply_before_layout(
         &target,
         &authored(OLD, 1, 50, |state| {
             state
@@ -947,7 +987,7 @@ fn interrupted_occupied_layout_deduplicates_shared_increments_and_retains_newer_
         .store()
         .repairSyncedSnapshot(&capture.token().unwrap(), &shared)
         .unwrap();
-    target.apply(&authored(CURRENT, 2, 70, |state| {
+    apply_before_layout(&target, &authored(CURRENT, 2, 70, |state| {
         state
             .incrementInteger(&stringPreferencesKey("counter"), 2)
             .unwrap();
@@ -1035,10 +1075,10 @@ fn occupied_layout_and_routed_object_fields_agree_after_destination_deletion() {
         let left = Fixture::new();
         let right = Fixture::new();
         for target in [&left, &right] {
-            apply_old(target, &source);
-            target.apply(&deletion);
+            apply_before_layout(target, &source);
+            apply_before_layout(target, &deletion);
         }
-        apply_old(&left, &field);
+        apply_before_layout(&left, &field);
         move_old(&left);
         move_old(&right);
         right.apply(&field);
@@ -1296,15 +1336,16 @@ fn independent_preference_histories_with_equal_file_values_need_no_correction() 
     );
 }
 
+/// Retires covered assignments only for an owner whose replay is independent of history.
 #[test]
 fn compaction_retires_only_fully_covered_atomic_preferences_and_keeps_receipts() {
-    let first = authored(CURRENT, 2, 10, |p| {
+    let first = authored(CURRENT, 0, 10, |p| {
         p.set(&stringPreferencesKey("x"), "A");
         p.set(&stringPreferencesKey("y"), 1);
     });
-    let second = authored(CURRENT, 2, 20, |p| p.set(&stringPreferencesKey("x"), "AB"));
-    let third = authored(CURRENT, 2, 30, |p| p.set(&stringPreferencesKey("y"), 2));
-    let compacted = Fixture::new();
+    let second = authored(CURRENT, 0, 20, |p| p.set(&stringPreferencesKey("x"), "AB"));
+    let third = authored(CURRENT, 0, 30, |p| p.set(&stringPreferencesKey("y"), 2));
+    let compacted = Fixture::with_store(plain_store);
     compacted.apply(&first);
     compacted.apply(&second);
     assert_eq!(
@@ -1336,11 +1377,11 @@ fn compaction_retires_only_fully_covered_atomic_preferences_and_keeps_receipts()
         .chain(third)
         .collect::<Vec<_>>();
     for revision in [5, 15, 25, 35] {
-        let external = authored(CURRENT, 2, revision, |p| {
+        let external = authored(CURRENT, 0, revision, |p| {
             p.set(&stringPreferencesKey("x"), "external")
         });
-        let a = Fixture::new();
-        let b = Fixture::new();
+        let a = Fixture::with_store(plain_store);
+        let b = Fixture::with_store(plain_store);
         a.apply(&original);
         a.apply(&external);
         b.apply(&history);
@@ -1352,9 +1393,10 @@ fn compaction_retires_only_fully_covered_atomic_preferences_and_keeps_receipts()
     }
 }
 
+/// Compacts a plain owner's local writes and replays corrections to empty and offline peers.
 #[test]
 fn local_preference_writes_stay_compact_and_initialization_reaches_empty_and_offline_peers() {
-    let source = Fixture::new();
+    let source = Fixture::with_store(plain_store);
     source.apply(&[]); // Register the owner's plain assignment policy before writing.
     for index in 0..50 {
         source
@@ -1364,7 +1406,7 @@ fn local_preference_writes_stay_compact_and_initialization_reaches_empty_and_off
     }
     assert_eq!(source.journal().preferenceHistory().unwrap().len(), 1);
     let before = source.store().syncSnapshot().unwrap();
-    let offline = Fixture::new();
+    let offline = Fixture::with_store(plain_store);
     offline.apply(&source.journal().preferenceHistory().unwrap());
     offline
         .store()
@@ -1384,7 +1426,7 @@ fn local_preference_writes_stay_compact_and_initialization_reaches_empty_and_off
             .unwrap()
             .is_some()
     );
-    let empty = Fixture::new();
+    let empty = Fixture::with_store(plain_store);
     empty.apply(&initialized);
     assert_eq!(empty.store().syncSnapshot().unwrap().data, authority.data);
     offline.apply(&initialized);
@@ -1403,20 +1445,26 @@ fn local_preference_writes_stay_compact_and_initialization_reaches_empty_and_off
         .is_empty());
 }
 
+/// Compacts plain owners while retaining the source history required by opaque migrations.
 #[test]
-fn registering_an_existing_plain_preference_owner_compacts_its_old_sql_payloads() {
-    let fixture = Fixture::new();
-    for index in 0..30 {
-        fixture
-            .store()
-            .edit(|p| p.set(&stringPreferencesKey("x"), index))
-            .unwrap();
+fn compaction_policy_preserves_history_for_opaque_migrations() {
+    for (fixture, retained, after_edit) in [(Fixture::with_store(plain_store), 1, 1), (Fixture::new(), 30, 31)] {
+        for index in 0..30 {
+            fixture.store().edit(|p| p.set(&stringPreferencesKey("x"), index)).unwrap();
+        }
+        let original = fixture.store().syncSnapshot().unwrap().data;
+        let history = fixture.journal().preferenceHistory().unwrap();
+        assert_eq!(history.len(), 30);
+        for _ in 0..2 {
+            fixture.apply(&[]);
+            assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), retained);
+            assert_eq!(fixture.store().syncSnapshot().unwrap().data, original);
+        }
+        let receipt = fixture.journal().receipt().unwrap();
+        assert!(history.iter().all(|op|receipt.containsSequence(&op.originDeviceId, op.sequence)));
+        fixture.store().edit(|p|p.set(&stringPreferencesKey("x"), 30)).unwrap();
+        assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), after_edit);
     }
-    let original = fixture.store().syncSnapshot().unwrap().data;
-    assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), 30);
-    fixture.apply(&[]);
-    assert_eq!(fixture.journal().preferenceHistory().unwrap().len(), 1);
-    assert_eq!(fixture.store().syncSnapshot().unwrap().data, original);
 }
 
 #[test]

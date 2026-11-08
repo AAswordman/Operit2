@@ -50,6 +50,7 @@ impl OperitApplication {
                 Ok(BTreeMap::new())
             }), project: None,
             snapshot: Some(Box::new(move || snapshot.as_ref().map_err(Clone::clone)?.syncSnapshot().map_err(|e|e.to_string()))),
+            definition: None,
             coverage: Box::new(move || coverage.as_ref().map_err(Clone::clone)?.syncCoverage()),
             repair: Some(Box::new(move |expected,source,_,_| repair.as_ref().map_err(Clone::clone)?.repairSyncedSnapshot(expected,source).map_err(|e|e.to_string()))),
         })?;
@@ -73,8 +74,8 @@ impl OperitApplication {
         for operation in operations.iter().filter(|op|op.domain==PLUGIN_STORAGE_SYNC_DOMAIN) { paths.insert(PluginStorage::syncDatasetPath(operation).map_err(|e|e.to_string())?); }
         let node = registry.journal.localDeviceId().map_err(|e|e.to_string())?;
         for path in paths {
-            let (apply,snapshot,coverage,repair,project) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
-            let (snapshot_path,coverage_path,project_path,node_snapshot,node_repair,storage) = (path.clone(),path.clone(),path.clone(),node.clone(),node.clone(),storage.clone());
+            let (apply,snapshot,coverage,repair,project,definition) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
+            let (snapshot_path,coverage_path,project_path,definition_path,node_snapshot,node_repair,storage) = (path.clone(),path.clone(),path.clone(),path.clone(),node.clone(),node.clone(),storage.clone());
             registry.register(Participant { validate: None, path,
                 content_digest: PluginStorage::snapshotContentDigest,
                 prepare: Box::new(||Ok(())),
@@ -84,6 +85,7 @@ impl OperitApplication {
                 }),
                 project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,&project_path,aliases).map_err(|e|e.to_string()))),
                 snapshot: if installed.contains(&snapshot_path) { Some(Box::new(move ||PluginStorage::syncSnapshot(snapshot.clone()?,&snapshot_path,&node_snapshot))) } else { None },
+                definition: Some(Box::new(move ||PluginStorage::snapshotDefinition(definition.clone()?,&definition_path).map_err(|e|e.to_string()))),
                 coverage: if installed.contains(&coverage_path) { Box::new(move || PluginStorage::syncCoverage(coverage.clone()?,&coverage_path)) } else { Box::new(||Ok(Default::default())) },
                 repair: Some(Box::new(move |expected,source,_,definition|PluginStorage::repairSyncedSnapshot(repair.clone()?,expected,source,&node_repair,definition.ok_or("Missing database definition")?))),
             })?;
@@ -96,7 +98,7 @@ impl OperitApplication {
             }
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
-            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
+            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, definition: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
                 apply: Box::new(move |operations,_| (|| {
                     // Every operation in a file owner replaces the whole file; materialize only the winner.
                     let winner = operations.iter().max_by_key(|op| operit_store::Transaction::Revision::fromOperation(op));
@@ -141,16 +143,15 @@ impl OperitApplication {
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
-        let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
+        let registry = self.transactionRegistry(&schema,&pending)?;
+        let snapshot = registry.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
         let content = if owner.backend == operit_store::Transaction::Backend::DataStore {
             let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
             let declaration = schema.owner(&owner.path)?.ok_or("Unknown preference file")?;
             Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
         } else { None };
-        let definition = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH || owner.backend != operit_store::Transaction::Backend::Sql {
-            None
-        } else { Some(PluginStorage::snapshotDefinition(self.pluginSqliteHost()?, &owner.path).map_err(|e|e.to_string())?) };
+        let definition = registry.snapshot_definition(&owner)?;
         let bytes = serde_json::to_vec(&CorrectionFile { snapshot, content, definition }).map_err(|e|e.to_string())?;
         serde_json::to_value(self.runtimeFileSyncStore()?.storeBlob(&bytes)?).map_err(|e|e.to_string())
     }

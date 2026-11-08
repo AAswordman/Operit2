@@ -378,6 +378,71 @@ async fn generated_proxy_blob_presence_preserves_batch_results() {
     }).await;
 }
 
+/// Resets real plugin databases through the application and replays their complete baselines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reset_transactions_preserves_plugin_definitions_and_replay() {
+    let _guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new().run_until(async {
+        use operit_store::{PluginStorage::{self, PluginStorageSession}, SyncOperationStore::SyncClock};
+        let peer = register_test_runtime_roots();
+        let storage = register_test_runtime_roots();
+        let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+        hosts.runtimeStorageHost = Some(storage.clone());
+        hosts.runtimeSqliteHost = Some(storage.clone());
+        hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+        hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+        hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+        let app = OperitApplication::newWithContext(hosts);
+        let session = PluginStorageSession::default();
+        let call = |request: Value| {
+            serde_json::to_value(session.request(storage.clone(), storage.clone(),
+                serde_json::from_value(request).unwrap(), "reset-source").unwrap()).unwrap()
+        };
+        let mut captured = Vec::new();
+        for kind in ["objects", "sqlite"] {
+            let path = format!("runtime/plugin_data/space/reset_test/{kind}.sqlite");
+            let handle = call(json!({"op":"open","path":path,"kind":kind}))["handle"].as_str().unwrap().to_owned();
+            if kind == "objects" {
+                call(json!({"op":"commit","handle":handle,"mutations":[{
+                    "collection":"keys","key":"one","value":{"name":"preserved"},
+                    "deleted":false,"checkVersion":false,"expectedVersion":null
+                }]}));
+            } else {
+                call(json!({"op":"define_table","handle":handle,"table":{
+                    "name":"records","primaryKey":"id","columns":[
+                        {"name":"id","affinity":"text","nullable":false},
+                        {"name":"value","affinity":"integer","nullable":false}
+                    ]
+                }}));
+                call(json!({"op":"execute","handle":handle,"statement":{
+                    "sql":"INSERT INTO records VALUES('one',42)","params":[]
+                }}));
+            }
+            captured.push((path.clone(),
+                PluginStorage::syncSnapshot(storage.clone(), &path, "reset-source").unwrap().data,
+                PluginStorage::snapshotDefinition(storage.clone(), &path).unwrap()));
+        }
+        for _ in 0..2 {
+            let result = app.syncResetTransactions().expect("plugin database definitions must accompany reset baselines");
+            assert!(result["owners"].as_u64().unwrap() >= 2);
+            let exported = PluginStorage::operationsSince(storage.clone(), &SyncClock::empty(), &[], 100).unwrap();
+            assert_eq!(exported.len(), captured.len());
+            for operation in &exported {
+                let initialization = operit_store::Transaction::compaction::Initialization::decode(operation).unwrap().unwrap();
+                let (_, data, definition) = captured.iter().find(|(path,_,_)|path == &initialization.data.owner.path).unwrap();
+                assert_eq!(&initialization.data, data);
+                assert_eq!(initialization.definition.as_ref(), Some(definition));
+                PluginStorage::applyOperation(peer.clone(), peer.clone(), operation, &BTreeMap::new()).unwrap();
+            }
+            for (path, data, definition) in &captured {
+                assert_eq!(&PluginStorage::syncSnapshot(storage.clone(), path, "reset-source").unwrap().data, data);
+                assert_eq!(&PluginStorage::syncSnapshot(peer.clone(), path, "reset-peer").unwrap().data, data);
+                assert_eq!(&PluginStorage::snapshotDefinition(peer.clone(), path).unwrap(), definition);
+            }
+        }
+    }).await;
+}
+
 /// Skipped full files retry the winner, retaining failures until its blob exists.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn skipped_file_states_recover_without_structured_initialization() {

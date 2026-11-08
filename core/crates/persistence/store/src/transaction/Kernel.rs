@@ -79,6 +79,8 @@ pub struct Participant<'a> {
     pub apply: Box<dyn Fn(&[SyncOperation], &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, ApplyError> + 'a>,
     pub project: Option<Box<dyn Fn(&BTreeMap<String,String>) -> Result<(),String> + 'a>>,
     pub snapshot: Option<Box<dyn Fn() -> Result<Snapshot, String> + 'a>>,
+    /// Owner-specific metadata required to reconstruct a database from its snapshot.
+    pub definition: Option<Box<dyn Fn() -> Result<serde_json::Value, String> + 'a>>,
     pub coverage: Box<dyn Fn() -> Result<BTreeSet<String>, String> + 'a>,
     /// Owner-defined business equality; snapshot tokens and transfer contents remain complete.
     pub content_digest: fn(&Snapshot) -> Result<String, String>,
@@ -354,6 +356,12 @@ impl<'a> Registry<'a> {
         Ok(snapshot)
     }
 
+    /// Captures the owner's database definition for initialization and snapshot transfer.
+    pub fn snapshot_definition(&self, owner: &Owner) -> Result<Option<serde_json::Value>, String> {
+        let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
+        participant.definition.as_ref().map(|capture| capture()).transpose()
+    }
+
     /// Replaces business history with current owner initializations; immutable receipts remain sealed.
     pub fn reset_transactions(&self) -> Result<usize, String> {
         let originals = self.journal.withJournal(|journal| journal.headers(None)).map_err(|e|e.to_string())?
@@ -363,13 +371,19 @@ impl<'a> Registry<'a> {
         for operation in self.journal.pendingOperations().map_err(|e|e.to_string())? {
             if let Ok(path) = self.target(&operation) { unapplied.entry(path).or_default().push(operation); }
         }
-        // Capture every owner first. A read failure must precede any history retirement.
-        let snapshots = self.owners.values().filter_map(|owner|owner.snapshot.as_ref())
-            .map(|snapshot|snapshot()).collect::<Result<Vec<_>,_>>()?;
-        for snapshot in &snapshots {
+        // Capture every snapshot and definition before changing any owner's history.
+        let mut snapshots = Vec::new();
+        for owner in self.owners.values() {
+            if let Some(capture) = &owner.snapshot {
+                let snapshot = capture()?;
+                let definition = self.snapshot_definition(&snapshot.data.owner)?;
+                snapshots.push((snapshot, definition));
+            }
+        }
+        for (snapshot, definition) in &snapshots {
             let mut source = snapshot.clone();
             source.covered.extend(unapplied.get(&source.data.owner.path).into_iter().flatten().map(|op|op.opId.clone()));
-            if !self.repair(&source.data.owner, &snapshot.token()?, &source)? {
+            if !self.repair_file(&source.data.owner, &snapshot.token()?, &source, None, definition.as_ref())? {
                 return Err(format!("File changed while resetting transactions: {}", source.data.owner.path));
             }
         }
