@@ -33,38 +33,43 @@ class ExtensionTopBar extends StatefulWidget {
 
 class _ExtensionTopBarState extends State<ExtensionTopBar> {
   TopBarController? _controller;
-  bool _isCurrentScreen = false;
 
+  /// Synchronizes ownership after inherited controller or page changes.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _controller = TopBarScope.of(context);
-    final isCurrentScreen = MainScreenActivityScope.isCurrentScreenOf(context);
-    if (isCurrentScreen == _isCurrentScreen) {
-      return;
-    }
-    _isCurrentScreen = isCurrentScreen;
-    if (isCurrentScreen) {
-      _claim();
-    } else {
-      _release();
-    }
+    _syncOwnership();
   }
 
+  /// Reads current page identity before publishing updated title or actions.
   @override
   void didUpdateWidget(covariant ExtensionTopBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_isCurrentScreen) {
-      _claim();
-    }
+    _syncOwnership();
   }
 
+  /// Releases only the title and actions still owned by this page.
   @override
   void dispose() {
     _release();
     super.dispose();
   }
 
+  /// Resolves inherited state even when widget updates precede dependency updates.
+  void _syncOwnership() {
+    final controller = TopBarScope.of(context);
+    if (!identical(controller, _controller)) {
+      _release();
+      _controller = controller;
+    }
+    if (MainScreenActivityScope.isCurrentScreenOf(context)) {
+      _claim();
+    } else {
+      _release();
+    }
+  }
+
+  /// Publishes the current page's title and actions into the shared shell.
   void _claim() {
     final controller = _controller!;
     final title = widget.title;
@@ -79,11 +84,13 @@ class _ExtensionTopBarState extends State<ExtensionTopBar> {
     );
   }
 
+  /// Removes this page's chrome without clearing another page's contribution.
   void _release() {
     _controller?.clearActions(owner: this);
     _controller?.clearTitleContent(owner: this);
   }
 
+  /// Leaves page layout with the caller while the shell hosts its chrome.
   @override
   Widget build(BuildContext context) => widget.child;
 }

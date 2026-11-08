@@ -44,6 +44,7 @@ impl Initialization {
     }
     pub fn snapshot(&self, node: &str, generation: u64) -> Snapshot {
         Snapshot {
+            damage: None,
             node: node.into(),
             generation,
             data: self.data.clone(),
@@ -244,14 +245,15 @@ pub(crate) fn save_initialization(
     tx: &mut crate::SqliteStore::SqliteTransaction<'_>,
     operation: &SyncOperation,
 ) -> Result<(), crate::SqliteStore::SqliteStoreError> {
-    use crate::SqliteStore::SqliteStoreError;
+    use crate::SqliteStore::{SqliteStoreError, SqliteRowGet};
     let fail = |e: String| SqliteStoreError::Message(e);
     let data = Initialization::decode(operation)
         .map_err(fail)?
         .ok_or_else(|| fail("Missing initialization".into()))?;
-    if let Some(previous) = initialization(tx)? {
-        if previous.opId != operation.opId {
-            seal(tx.raw(), &previous)?;
+    if let Some(row) = tx.queryOne("SELECT operation_id,origin,sequence FROM _operit_transaction_initialization WHERE id=1",vec![])? {
+        let id: String = row.get(0)?;
+        if id != operation.opId {
+            seal_identity(tx.raw(), &id, &row.get::<_,String>(1)?, row.get(2)?, 0, "")?;
         }
     }
     record(tx.raw(), operation, None)?;
@@ -322,17 +324,9 @@ pub(crate) fn observe_id(receipt: &mut crate::SyncOperationStore::SyncReceipt, i
 }
 
 #[cfg(feature = "full")]
+/// Installs every ledger table idempotently, including partially upgraded databases.
 pub(crate) fn prepare(
     store: &crate::SqliteStore::SqliteStore,
 ) -> Result<(), crate::SqliteStore::SqliteStoreError> {
-    if store
-        .queryOne(
-            "SELECT 1 FROM sqlite_master WHERE name='_operit_transaction_initialization'",
-            vec![],
-        )?
-        .is_none()
-    {
-        store.executeBatch(SCHEMA)?;
-    }
-    Ok(())
+    store.executeBatch(SCHEMA)
 }

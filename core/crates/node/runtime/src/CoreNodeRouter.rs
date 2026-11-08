@@ -1971,8 +1971,7 @@ impl CoreNodeRouter {
                         let args: crate::PeerSync::SyncRequest = operit_link::fromCoreValue(request.payload.args).map_err(|e|CoreLinkError::internal(e.to_string()))?;
                         let service = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
                             self.localCore.clone(), self.clone(), self.spaceStore.clone());
-                        let status = service.synchronizeRequestedPeer(request.originNodeId, args.limit, args.force).await
-                            .map_err(CoreLinkError::internal)?;
+                        let status = service.synchronizeRequestedPeer(request.originNodeId, args.limit, args.force).await?;
                         operit_link::toCoreValue(status).map_err(|e|CoreLinkError::internal(e.to_string()))
                     }.await;
                     return CoreCallResponse { requestId, result };

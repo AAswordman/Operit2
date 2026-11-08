@@ -733,7 +733,7 @@ mod tests {
         let target = RuntimeFileSyncStore::new(Arc::new(MemoryStorageHost::default()),RUNTIME_SYNC_DIR_PATH);
         let mut data = Data::empty(Owner {backend:Backend::DataStore,path:"runtime/config/preferences/blob.preferences.json".into(),format:1,layout:1});
         data.values.insert("large".into(),serde_json::json!("content".repeat(20_000)));
-        let original = Initialization::from_snapshot(&Snapshot {node:"a".into(),data,covered:Default::default(),generation:0}).operation("preferences",false).unwrap();
+        let original = Initialization::from_snapshot(&Snapshot {damage:None,node:"a".into(),data,covered:Default::default(),generation:0}).operation("preferences",false).unwrap();
         let wire = source.prepareTransactionForTransport(original.clone()).unwrap();
         assert!(serde_json::to_vec(&wire).unwrap().len() < 1024);
         let reference = RuntimeFileSyncStore::requiredBlob(&wire).unwrap().unwrap();

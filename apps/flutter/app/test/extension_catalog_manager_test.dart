@@ -16,11 +16,159 @@ import 'package:operit2/ui/features/packages/screens/StoreBrowseScreen.dart';
 import 'package:operit2/ui/features/packages/screens/MarketPane.dart';
 import 'package:operit2/ui/features/packages/market/MarketStatsSupport.dart';
 import 'package:operit2/ui/features/packages/screens/PackageManagerScreen.dart';
+import 'package:operit2/ui/features/packages/screens/ExtensionDetailScreen.dart';
+import 'package:operit2/ui/main/MainLayoutController.dart';
 import 'package:operit2/ui/main/TopBarController.dart';
+import 'package:operit2/ui/main/components/AppContent.dart';
+import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/main/navigation/ToolPkgCatalogChangeBus.dart';
+import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
+  for (final kind in <String>['skill', 'toolpkg']) {
+    testWidgets('removing a $kind returns to the searchable package list', (
+      tester,
+    ) async {
+      if (kind == 'toolpkg') {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+      }
+      final bridge = _CatalogBridge()..externalToolpkg = kind == 'toolpkg';
+      final clients = GeneratedCoreProxyClients(bridge);
+      final topBar = TopBarController();
+      final layout = MainLayoutController();
+      final router = AppRouterState(RouteEntry(routeId: 'packages'));
+      addTearDown(topBar.dispose);
+      addTearDown(layout.dispose);
+      addTearDown(router.dispose);
+      addTearDown(AppRouterGateway.clear);
+      AppRouterGateway.install(
+        handler: (routeId, args, source) {
+          router.navigate(routeId: routeId, args: args, source: source);
+          topBar.clear();
+        },
+        reset: (routeId, args, source) {
+          router.resetTo(
+            RouteEntry(routeId: routeId, args: args, source: source),
+          );
+          topBar.clear();
+        },
+      );
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: MainLayoutScope(
+            controller: layout,
+            child: TopBarScope(
+              controller: topBar,
+              child: ListenableBuilder(
+                listenable: router,
+                builder: (context, child) {
+                  final entry = router.currentEntry;
+                  final inList = entry.routeId == 'packages';
+
+                  /// Uses the shell back stack for Navigator.maybePop requests.
+                  void goBack() {
+                    router.pop();
+                    topBar.clear();
+                  }
+
+                  return PopScope(
+                    canPop: false,
+                    onPopInvokedWithResult: (didPop, result) {
+                      if (!didPop) goBack();
+                    },
+                    child: Scaffold(
+                      body: AppContent(
+                        routerState: router,
+                        currentScreen: _CatalogScreen(
+                          inList
+                              ? PackageManagerScreen(clients: clients)
+                              : ExtensionDetailScreen(
+                                  kind: kind,
+                                  id: kind,
+                                  clients: clients,
+                                ),
+                          inList: inList,
+                        ),
+                        currentRouteEntry: entry,
+                        currentRouteTitle: inList ? '包管理' : '扩展详情',
+                        useTabletLayout: false,
+                        isTabletSidebarExpanded: false,
+                        canGoBack: router.canPop,
+                        enableNavigationAnimation: true,
+                        isNavigatingBack: inList,
+                        topBarController: topBar,
+                        appBarEntries: const <NavigationEntrySpec>[],
+                        onGoBack: goBack,
+                        onNavigationButtonPressed: () {},
+                        onAppBarEntrySelected: (_) {},
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('搜索（Ctrl+F）'), findsOneWidget);
+      await tester.tap(find.text('Demo $kind'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('移除扩展'),
+        350,
+        scrollable: find
+            .descendant(
+              of: find.byType(ExtensionDetailScreen),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Scrollable &&
+                    widget.axisDirection == AxisDirection.down,
+              ),
+            )
+            .first,
+      );
+      await tester.ensureVisible(find.text('移除'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('移除'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.widgetWithText(FilledButton, '移除'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '移除'));
+      await tester.pumpAndSettle();
+      expect(
+        kind == 'skill' ? bridge.skillDeleted : bridge.toolpkgDeleted,
+        isTrue,
+      );
+      expect(router.currentEntry.routeId, 'packages');
+      expect(find.byTooltip('搜索（Ctrl+F）'), findsOneWidget);
+      expect(find.byTooltip('更多'), findsOneWidget);
+      await tester.tap(find.byTooltip('搜索（Ctrl+F）'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'demo');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('关闭搜索'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('更多'));
+      await tester.pumpAndSettle();
+      expect(find.text('重新加载目录'), findsOneWidget);
+      await tester.tap(find.text('重新加载目录'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('搜索（Ctrl+F）'), findsOneWidget);
+      expect(find.byTooltip('更多'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('library groups every kind and regroups by status', (
     tester,
   ) async {
@@ -348,6 +496,9 @@ core_proxy.ExtensionCatalogEntry _entry({
 }
 
 class _CatalogBridge extends OperitRuntimeBridge {
+  bool skillDeleted = false;
+  bool externalToolpkg = false;
+  bool toolpkgDeleted = false;
   int snapshotReads = 0;
   final marketPages = <(String, int), List<core_proxy.MarketEntrySummary>>{};
   final marketRequests = <(String, int)>[];
@@ -408,6 +559,18 @@ class _CatalogBridge extends OperitRuntimeBridge {
   @override
   Future<Object?> call(CoreCallRequest request) async {
     switch (request.methodName) {
+      case 'readSkillContent':
+        return '# Demo skill';
+      case 'deleteSkill':
+        skillDeleted = true;
+        return true;
+      case 'getToolPkgContainerRuntimes':
+        return <Object?>[_toolpkgRuntime().toJson()];
+      case 'getToolPkgContainerDetails':
+        return null;
+      case 'deletePackage':
+        toolpkgDeleted = true;
+        return true;
       case 'getExtensionCatalogSnapshot':
         snapshotReads += 1;
         return _snapshot().toJson();
@@ -497,20 +660,21 @@ class _CatalogBridge extends OperitRuntimeBridge {
     final toolpkg = _entry(
       id: 'toolpkg',
       kind: 'toolpkg',
-      source: 'builtin',
+      source: externalToolpkg ? 'manual' : 'builtin',
       enabled: enabled,
     );
     return core_proxy.ExtensionCatalogSnapshot(
       revision: 1,
       installed: <core_proxy.ExtensionCatalogEntry>[
-        toolpkg,
-        _entry(
-          id: 'skill',
-          kind: 'skill',
-          source: 'market',
-          enabled: true,
-          scope: 'space',
-        ),
+        if (!toolpkgDeleted) toolpkg,
+        if (!skillDeleted)
+          _entry(
+            id: 'skill',
+            kind: 'skill',
+            source: 'market',
+            enabled: true,
+            scope: 'space',
+          ),
         _entry(id: 'mcp', kind: 'mcp', source: 'manual', enabled: true),
       ],
       bundledAvailable: const <core_proxy.ExtensionCatalogCandidate>[
@@ -530,4 +694,78 @@ class _CatalogBridge extends OperitRuntimeBridge {
       diagnostics: List<core_proxy.ExtensionCatalogDiagnostic>.of(diagnostics),
     );
   }
+}
+
+/// Supplies complete metadata for the external plugin used by the delete flow.
+core_proxy.ToolPkgContainerRuntime _toolpkgRuntime() =>
+    const core_proxy.ToolPkgContainerRuntime(
+      packageName: 'toolpkg',
+      displayName: core_proxy.LocalizedText(values: {'en': 'Demo toolpkg'}),
+      description: core_proxy.LocalizedText(values: {'en': 'Demo description'}),
+      version: '1.0.0',
+      apiVersion: '2.0.0',
+      publicApi: null,
+      publicApis: [],
+      requires: [],
+      dependencyIssues: [],
+      manifestExtensions: {},
+      author: ['Operit'],
+      mainEntry: 'main.js',
+      themes: [],
+      license: null,
+      sourceType: core_proxy.ToolPkgSourceType.externalValue,
+      sourcePath: '/runtime/extensions/device/packages/demo.toolpkg',
+      subpackages: [],
+      resources: [],
+      wasmModules: [],
+      workflowTemplates: [],
+      workspaceTemplates: [],
+      uiModules: [],
+      uiRoutes: [],
+      chatComposerSlots: [],
+      navigationEntries: [],
+      desktopWidgets: [],
+      appLifecycleHooks: [],
+      messageProcessingPlugins: [],
+      xmlRenderPlugins: [],
+      inputMenuTogglePlugins: [],
+      chatInputHooks: [],
+      chatViewHooks: [],
+      chatMessageHooks: [],
+      chatLifecycleHooks: [],
+      chatMessageMenuItems: [],
+      chatRuntimeHooks: [],
+      chatResponseHooks: [],
+      hostEventHooks: [],
+      toolLifecycleHooks: [],
+      promptInputHooks: [],
+      promptHistoryHooks: [],
+      promptEstimateHistoryHooks: [],
+      systemPromptComposeHooks: [],
+      toolPromptComposeHooks: [],
+      promptFinalizeHooks: [],
+      promptEstimateFinalizeHooks: [],
+      summaryGenerateHooks: [],
+      coreCommands: [],
+      aiProviders: [],
+      manifestExtensionHandlers: [],
+      logoResource: null,
+      marketOrigin: null,
+    );
+
+/// Runs the real package pages inside the retained shell page host.
+class _CatalogScreen extends OperitScreen {
+  const _CatalogScreen(this.child, {required this.inList})
+    : super(routeTypeName: 'Catalog', keepAlive: inList);
+
+  final Widget child;
+  final bool inList;
+
+  /// Keeps one retained page for the package list and one for the detail.
+  @override
+  String stableScreenKey() => inList ? 'packages' : 'detail';
+
+  /// Supplies the page with the test runtime connection.
+  @override
+  Widget build(BuildContext context) => child;
 }

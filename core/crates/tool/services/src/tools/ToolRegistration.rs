@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager};
+use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, SEARCH_TOOL_NAME,
@@ -44,6 +44,8 @@ use operit_tools::tools::ToolResultDataClasses::{
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolEffect, ToolExecutionManager, ToolParameter, ToolValidationResult, RegisteredToolExecutor,
+    PreparedToolInvocation, SharedToolExecutor, ToolAccessSpec, ToolBoundary, ToolCall,
+    ToolInvocationContext,
 };
 
 use crate::tools::defaultTool::standard::{
@@ -108,42 +110,54 @@ pub(crate) fn registerPackageActivationTool(handler: &mut AIToolHandler) {
     );
 }
 
+/// Parses the documented sleep duration and rejects invalid explicit values.
+fn sleepDurationMs(tool: &AITool) -> Result<i32, String> {
+    match tool.parameters.iter().find(|parameter| parameter.name == "duration_ms") {
+        None => Ok(1000),
+        Some(parameter) => parameter.value.parse::<i32>()
+            .ok()
+            .filter(|duration| *duration >= 0)
+            .ok_or_else(|| "duration_ms must be an integer between 0 and 2147483647".to_string()),
+    }
+}
+
+/// Awaits the caller's Host timer before reporting the measured sleep duration.
+async fn executeSleep(tool: &AITool, context: &HostManager) -> ToolResult {
+    let durationMs = match sleepDurationMs(tool) {
+        Ok(duration) => duration,
+        Err(error) => return toolErrorResult(tool, error),
+    };
+    let Some(scheduler) = context.hostRuntimeTaskSchedulerHost.as_ref() else {
+        return toolErrorResult(tool, "HostRuntimeTaskSchedulerHost is required for sleep".to_string());
+    };
+    let started = match scheduler.monotonicTimeMillis() {
+        Ok(time) => time,
+        Err(error) => return toolErrorResult(tool, error.to_string()),
+    };
+    if let Err(error) = scheduler.waitForHostRuntimeDelay(durationMs as u64).await {
+        return toolErrorResult(tool, error.to_string());
+    }
+    let elapsed = match scheduler.monotonicTimeMillis() {
+        Ok(time) => time.saturating_sub(started),
+        Err(error) => return toolErrorResult(tool, error.to_string()),
+    };
+    ToolResult {
+        toolName: tool.name.clone(),
+        success: true,
+        result: ToolResultData::SleepResultData(SleepResultData {
+            requestedMs: durationMs,
+            sleptMs: elapsed.min(i32::MAX as u64) as i32,
+        }),
+        error: None,
+    }
+}
+
+/// Registers the public tools with their explicit execution contracts.
 #[allow(non_snake_case)]
 fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     handler.registerBuiltinTool(
         BuiltinToolName::Sleep,
-        Box::new(FnToolExecutor {
-            effect: ToolEffect::READ,
-            validate: Arc::new(|_| ToolValidationResult {
-                valid: true,
-                errorMessage: String::new(),
-            }),
-            invoke: Arc::new(|tool| {
-                let durationMs = tool
-                    .parameters
-                    .iter()
-                    .find(|parameter| parameter.name == "duration_ms")
-                    .and_then(|parameter| parameter.value.parse::<i32>().ok())
-                    .unwrap_or(1000);
-                let sleptMs = durationMs.max(0);
-                defaultHostRuntimeTaskSchedulerHost()
-                    .scheduleDelayedHostRuntimeTask(
-                        "builtin-tool-sleep",
-                        sleptMs as u64,
-                        Box::new(|| {}),
-                    )
-                    .expect("runtime task scheduler must schedule the sleep tool delay");
-                ToolResult {
-                    toolName: tool.name.clone(),
-                    success: true,
-                    result: ToolResultData::SleepResultData(SleepResultData {
-                        requestedMs: durationMs,
-                        sleptMs,
-                    }),
-                    error: None,
-                }
-            }),
-        }),
+        RegisteredToolExecutor::Shared(Arc::new(SleepToolExecutor)),
         ToolRegistrationVisibility::PUBLIC,
     );
     let coreNodeRuntimeSupport = handler.runtimeSupport();
@@ -1571,6 +1585,109 @@ fn resolveSwitchCoreTarget<'a>(
             "switch_core target is ambiguous: {targetReference}; candidates: {}",
             formatCoreNodeReferenceCandidates(&candidates)
         )),
+    }
+}
+
+/// Allows independent sleep invocations to wait concurrently without a registry lease.
+struct SleepToolExecutor;
+
+impl SharedToolExecutor for SleepToolExecutor {
+    /// Validates the duration before admission and awaits the invocation's own Host timer.
+    fn prepare<'a>(
+        &'a self,
+        request: &'a ToolCall,
+        context: &'a ToolInvocationContext,
+        checkAccess: bool,
+    ) -> Result<PreparedToolInvocation<'a>, String> {
+        let tool = request.toLegacyTool();
+        sleepDurationMs(&tool)?;
+        let host = context.host().getContext();
+        Ok(PreparedToolInvocation {
+            access: checkAccess.then_some(ToolAccessSpec {
+                effect: ToolEffect::READ,
+                boundary: ToolBoundary::None,
+            }),
+            invoke: Box::pin(async move { vec![executeSleep(&tool, &host).await] }),
+        })
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Builds a sleep request without involving global runtime state.
+    fn sleepTool(duration: Option<&str>) -> AITool {
+        AITool {
+            name: "sleep".to_string(),
+            parameters: duration.into_iter().map(|value| ToolParameter {
+                name: "duration_ms".to_string(),
+                value: value.to_string(),
+            }).collect(),
+        }
+    }
+
+    /// Supplies the production native Host timer for elapsed-time assertions.
+    fn sleepContext() -> HostManager {
+        HostManager {
+            hostRuntimeTaskSchedulerHost: Some(Arc::new(
+                operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// Preserves the documented default and rejects malformed, negative or overflowing durations.
+    #[test]
+    fn sleep_duration_validation() {
+        assert_eq!(sleepDurationMs(&sleepTool(None)), Ok(1000));
+        for (value, expected) in [("0", 0), ("37", 37), ("2147483647", i32::MAX)] {
+            assert_eq!(sleepDurationMs(&sleepTool(Some(value))), Ok(expected));
+        }
+        for value in ["", "invalid", "-1", "1.5", "2147483648"] {
+            assert!(sleepDurationMs(&sleepTool(Some(value))).is_err(), "{value}");
+        }
+    }
+
+    /// Requires the sleep future to remain pending and the caller to wait for the requested interval.
+    #[tokio::test]
+    async fn sleep_waits_before_returning_success() {
+        let host = sleepContext();
+        let tool = sleepTool(Some("40"));
+        let started = Instant::now();
+        let mut invocation = Box::pin(executeSleep(&tool, &host));
+        assert!(futures_util::poll!(invocation.as_mut()).is_pending());
+        let result = invocation.await;
+        assert!(result.success, "{:?}", result.error);
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        let ToolResultData::SleepResultData(data) = result.result else {
+            panic!("sleep must return its structured duration result");
+        };
+        assert_eq!(data.requestedMs, 40);
+        assert!(data.sleptMs >= 40);
+    }
+
+    /// Allows an outstanding sleep to be dropped while an independent zero-duration call completes.
+    #[tokio::test]
+    async fn sleep_can_be_cancelled_without_blocking_other_calls() {
+        let host = sleepContext();
+        let longTool = sleepTool(Some("10000"));
+        let mut pending = Box::pin(executeSleep(&longTool, &host));
+        assert!(futures_util::poll!(pending.as_mut()).is_pending());
+        let result = tokio::time::timeout(
+            Duration::from_secs(1), executeSleep(&sleepTool(Some("0")), &host),
+        ).await.expect("independent sleep must complete while the long sleep is pending");
+        assert!(result.success);
+        drop(pending);
+    }
+
+    /// Returns an explicit failure when the caller has no scheduler capability.
+    #[tokio::test]
+    async fn sleep_rejects_missing_host_scheduler() {
+        let result = executeSleep(&sleepTool(Some("0")), &HostManager::default()).await;
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("HostRuntimeTaskSchedulerHost is required for sleep"));
     }
 }
 

@@ -68,7 +68,7 @@ fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format:
     let initializations = history.iter().filter_map(|operation|
         super::compaction::Initialization::decode(operation).transpose().map(|result| result.map(|initialization| (operation, initialization))))
         .collect::<Result<Vec<_>, _>>().map_err(Error::Message)?;
-    let mut snapshot = Snapshot { node:journal(store)?.localDeviceId()?,data:Data::empty(file::preferenceOwner(&store.storagePath,format)),covered:BTreeSet::new(),generation:0 };
+    let mut snapshot = Snapshot { damage: None, node:journal(store)?.localDeviceId()?,data:Data::empty(file::preferenceOwner(&store.storagePath,format)),covered:BTreeSet::new(),generation:0 };
     snapshot.covered = initializations.iter().flat_map(|(operation, initialization)|
         initialization.covered.iter().chain(std::iter::once(&operation.opId)))
         .cloned().collect();
@@ -101,7 +101,7 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
         }
         return Ok(());
     };
-    let mut current = Snapshot {
+    let mut current = Snapshot { damage: None,
         node: journal(store)?.localDeviceId()?,
         data: data(store, values)?,
         covered: commit.covered.clone(),
@@ -224,7 +224,7 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
         return Ok(existing);
     }
     let history = journal(store)?.archivedPreferenceHistory(&store.storagePath)?;
-    let mut baseline = Snapshot {
+    let mut baseline = Snapshot { damage: None,
         node: journal(store)?.localDeviceId()?,
         data: data(store, values)?,
         covered: BTreeSet::new(),
@@ -354,7 +354,19 @@ pub fn prepare(store: &PreferencesDataStore) -> Result<(), Error> {
 /// projection files recover from SQL; an existing file remains visible to CAS.
 fn snapshot_unlocked(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
     let exists = store.storageHost.exists(&store.storagePath)?;
-    let mut values = store.readFromStorage()?;
+    let mut values = match store.readFromStorage() {
+        Ok(values) => values,
+        Err(error @ (Error::Json(_) | Error::Encryption(_) | Error::Message(_))) => {
+            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", store.storagePath));
+            let mut capture = Snapshot { damage: None, node: journal(store)?.localDeviceId()?,
+                data: Data::empty(file::preferenceOwner(&store.storagePath, store.schema.as_ref().map_or(0, |schema|schema.currentVersion))),
+                covered: BTreeSet::new(), generation: 0 };
+            if let Some(owner) = state(store)? { capture = owner.current; }
+            capture.damage = Some(super::digest(&store.storageHost.readBytes(&store.storagePath)?).map_err(Error::Message)?);
+            return Ok(capture);
+        },
+        Err(error) => return Err(error),
+    };
     let mut restored = false;
     if !exists {
         if let Some(owner) = state(store)? {
@@ -451,11 +463,11 @@ pub fn repair_file(store: &PreferencesDataStore, expected: &str, source: &Snapsh
             || store.schema.as_ref().is_some_and(|schema| schema.currentVersion != source.data.owner.format) {
             return Err(Error::Message("Source file format/layout is not supported".into()));
         }
-        Snapshot { node: journal(store)?.localDeviceId()?, data: Data::empty(source.data.owner.clone()),
+        Snapshot { damage: None, node: journal(store)?.localDeviceId()?, data: Data::empty(source.data.owner.clone()),
             covered: BTreeSet::new(), generation: 0 }
     } else { snapshot_unlocked(store)? };
     let expected = if absent { current.token().map_err(Error::Message)? } else { expected.to_owned() };
-    let unchanged = !absent && current.data == source.data && match file {
+    let unchanged = !absent && current.damage.is_none() && current.data == source.data && match file {
         Some(file) => store.storageHost.exists(&store.storagePath)? && store.readPlaintextFile()? == file,
         None => true,
     };
@@ -540,7 +552,7 @@ where
         .filter(|op| op.operation != "initialize" && !covered.contains(&op.opId))
         .collect::<Vec<_>>();
     let (aliases, retired) = rule(&mut values, &uncovered)?;
-    let mut current = Snapshot {
+    let mut current = Snapshot { damage: None,
         node: owner.current.node.clone(),
         data: data(store, &values)?,
         covered,

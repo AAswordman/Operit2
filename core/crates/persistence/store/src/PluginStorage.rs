@@ -61,6 +61,7 @@ END;"#,
 const CATALOG_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS plugin_databases (path TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL, sync INTEGER NOT NULL, merge TEXT);
 "#;
+const BUSINESS_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB '_operit_*' AND name NOT GLOB 'sqlite_*' ORDER BY name";
 
 /// Owns all handles for one authenticated JavaScript execution host.
 #[derive(Clone, Default)]
@@ -1284,25 +1285,21 @@ fn manifests(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<Manifest>, SqliteSt
             Vec::new(),
         )?
         .into_iter()
-        .map(|row| {
-            let kind = match row.get::<_, String>(2)?.as_str() {
-                "sqlite" => StorageKind::Sqlite,
-                "objects" => StorageKind::Objects,
-                _ => return Err(failure("Unknown registered storage kind")),
-            };
-            Ok(Manifest {
-                path: row.get(0)?,
-                owner: row.get(1)?,
-                kind,
-                sync: row.get::<_, i64>(3)? == 1,
-                merge: row
-                    .get::<_, Option<String>>(4)?
-                    .map(|value| serde_json::from_str(&value).map_err(|error| failure(error.to_string())).and_then(decodeMergeDescriptor))
-                    .transpose()
-                    .map_err(|error| failure(error.to_string()))?,
-            })
-        })
+        .map(manifestRow)
         .collect()
+}
+
+/// Decodes one catalog identity without consulting unrelated database entries.
+fn manifestRow(row: crate::SqliteStore::SqliteRow) -> Result<Manifest, SqliteStoreError> {
+    let kind = match row.get::<_, String>(2)?.as_str() {
+        "sqlite" => StorageKind::Sqlite,
+        "objects" => StorageKind::Objects,
+        _ => return Err(failure("Unknown registered storage kind")),
+    };
+    Ok(Manifest { path: row.get(0)?, owner: row.get(1)?, kind, sync: row.get::<_, i64>(3)? == 1,
+        merge: row.get::<_, Option<String>>(4)?.map(|value| serde_json::from_str(&value)
+            .map_err(|error| failure(error.to_string())).and_then(decodeMergeDescriptor)).transpose()?,
+    })
 }
 
 /// Excludes registered databases and exact SQLite sidecars from whole-file replication.
@@ -1372,7 +1369,7 @@ pub fn localClock(host: Arc<dyn RuntimeSqliteHost>) -> Result<SyncClock, SqliteS
     )?;
     for database in databases {
         let path: String = database.get(0)?;
-        let store = SqliteStore::openWithHost(host.clone(), &path)?;
+        let store = openSyncedDatabase(host.clone(), &path)?.store;
             crate::Transaction::compaction::prepare(&store)?;
         for row in store.queryRows(
             "SELECT origin,MAX(sequence) FROM (SELECT origin,sequence FROM _operit_log UNION ALL SELECT origin,sequence FROM _operit_compacted) GROUP BY origin",
@@ -1397,7 +1394,7 @@ pub fn receipt(
     {
         let path: String = row.get(0)?;
         let result = (|| -> Result<(), SqliteStoreError> {
-            let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            let store = openSyncedDatabase(host.clone(), &path)?.store;
             crate::Transaction::compaction::prepare(&store)?;
             for row in store.queryRows(
                 "SELECT origin,sequence FROM _operit_log UNION SELECT origin,sequence FROM _operit_compacted ORDER BY origin,sequence",
@@ -1419,15 +1416,13 @@ pub fn receipt(
 /// Opens a catalog-owned dataset; peer input never becomes an arbitrary SQL path.
 fn withSyncDataset<R>(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str,
     action: impl FnOnce(crate::Transaction::SqlDataset<'_>) -> Result<R, String>) -> Result<R, String> {
-    let owned = catalog(host.clone()).map_err(|e| e.to_string())?
-        .queryOne("SELECT kind FROM plugin_databases WHERE path=?1 AND sync=1", vec![SqliteValue::Text(path.into())]).map_err(|e| e.to_string())?
-        .ok_or("Unknown synchronized plugin database")?;
-    let store = SqliteStore::openWithHost(host, path).map_err(|e| e.to_string())?;
-    let mut tables = vec!["_operit_versions".to_owned(), "_operit_merge_map".into(), "_operit_merge_names".into()];
-    tables.extend(if owned.get::<_, String>(0).map_err(|e| e.to_string())? == "objects" {
+    let database = openSyncedDatabase(host, path).map_err(|e| e.to_string())?;
+    let store = database.store;
+    let mut tables = vec!["_operit_versions".to_owned(), "_operit_merge_map".into(), "_operit_merge_names".into(), "_operit_tables".into()];
+    tables.extend(if database.kind == StorageKind::Objects {
         vec!["_operit_values".into()]
     } else {
-        store.queryRows("SELECT name FROM _operit_tables ORDER BY name", vec![]).map_err(|e| e.to_string())?.iter()
+        store.queryRows(BUSINESS_TABLES, vec![]).map_err(|e| e.to_string())?.iter()
             .map(|row| row.get::<_, String>(0).map_err(|e| e.to_string())).collect::<Result<Vec<_>, _>>()?
     });
     let names = tables.iter().map(String::as_str).collect::<Vec<_>>();
@@ -1439,14 +1434,20 @@ fn withSyncDataset<R>(host: Arc<dyn RuntimeSqliteHost>, path: &str, node: &str,
         revisions: "SELECT origin || ':' || sequence,created_at,origin,sequence FROM _operit_log UNION SELECT id,business_time,origin,sequence FROM _operit_compacted" })
 }
 
+/// Every catalog access performs the same identity checks and internal migrations as a plugin open.
+fn openSyncedDatabase(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<Database, SqliteStoreError> {
+    let row = catalog(host.clone())?.queryOne("SELECT path,owner,kind,sync,merge FROM plugin_databases WHERE path=?1 AND sync=1", vec![SqliteValue::Text(path.into())])?
+        .ok_or_else(|| failure("Unknown synchronized plugin database"))?;
+    let manifest = manifestRow(row)?;
+    openDatabase(host, &manifest, String::new())
+}
+
 /// A complete dataset declaration lets file correction provision an absent peer database.
 /// It carries schema and ownership, without manufacturing a business transaction.
 pub fn snapshotDefinition(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<Value, SqliteStoreError> {
-    let manifest = manifests(host.clone())?.into_iter().find(|m| m.path == path && m.sync)
-        .ok_or_else(|| failure("Unknown synchronized plugin database"))?;
-    let store = SqliteStore::openWithHost(host, path)?;
-    let tables = store.transaction(snapshotTables)?;
-    Ok(serde_json::json!({"manifest":manifest,"tables":tables}))
+    let database = openSyncedDatabase(host, path)?;
+    let tables = database.store.transaction(snapshotTables)?;
+    Ok(serde_json::json!({"manifest":database.manifest(),"tables":tables}))
 }
 
 /// Captures physical column order, including columns appended by earlier additive migrations.
@@ -1473,7 +1474,7 @@ pub fn provisionSnapshotDatabase(host: Arc<dyn RuntimeSqliteHost>, storage: Arc<
     registerFile(storage, &manifest)
 }
 
-/// Replaces declared business tables, never internal metadata, within the snapshot transaction.
+/// Rebuilds the complete synchronized schema while preserving the local identity and transaction ledger.
 fn restoreSnapshotSchema(tx: &mut SqliteTransaction<'_>, definition: &Value) -> Result<(Vec<String>, bool), SqliteStoreError> {
     let manifest = decodeManifest(definition["manifest"].clone())?;
     let stored = tx.queryOne("SELECT owner,path,kind,sync FROM _operit_manifest WHERE id=1", vec![])?.ok_or_else(|| failure("Missing database identity"))?;
@@ -1491,17 +1492,16 @@ fn restoreSnapshotSchema(tx: &mut SqliteTransaction<'_>, definition: &Value) -> 
         tableSql(table)?;
     }
     tables.sort_by(|a, b| a.name.cmp(&b.name));
-    let previous = snapshotTables(tx)?;
-    let changed = previous != tables;
-    if changed {
-        for table in previous { tx.execute(&format!("DROP TABLE {}", identifier(&table.name)?), vec![])?; }
-        tx.execute("DELETE FROM _operit_tables", vec![])?;
-        for table in &tables { defineTable(tx, table)?; }
-    }
-    let mut names = vec!["_operit_versions".into(), "_operit_merge_map".into(), "_operit_merge_names".into()];
+    let mut names = vec!["_operit_versions".to_owned(), "_operit_merge_map".into(), "_operit_merge_names".into(), "_operit_tables".into()];
     if manifest.kind == StorageKind::Objects { names.push("_operit_values".into()); }
+    let previous = tx.queryRows(BUSINESS_TABLES, vec![])?.into_iter()
+        .map(|row| row.get::<_, String>(0)).collect::<Result<Vec<_>, _>>()?;
+    for name in previous.iter().chain(&names) { tx.execute(&format!("DROP TABLE IF EXISTS {}", crate::Transaction::sql_identifier(name)), vec![])?; }
+    for sql in DATABASE_SCHEMA.split(';').filter(|sql| !sql.trim().is_empty()) { tx.execute(sql, vec![])?; }
+    if manifest.kind == StorageKind::Objects { for sql in OBJECT_CHANGE_SCHEMA { tx.execute(sql, vec![])?; } }
+    for table in &tables { defineTable(tx, table)?; }
     names.extend(tables.into_iter().map(|table| table.name));
-    Ok((names, changed))
+    Ok((names, true))
 }
 
 pub fn syncDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
@@ -1521,6 +1521,31 @@ pub fn syncCoverage(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<BTre
 
 /// Compares synchronized plugin records independently of local materialization bookkeeping.
 pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
+    for (name, columns) in [
+        ("_operit_versions", &["collection", "key", "created_at", "origin", "sequence"][..]),
+        ("_operit_merge_map", &["collection", "origin", "remote_key", "canonical_key"][..]),
+        ("_operit_merge_names", &["collection", "key", "name"][..]),
+        ("_operit_tables", &["name", "definition"][..]),
+    ] {
+        if snapshot.data.values.get(name).and_then(|table|table.get("columns")) != Some(&serde_json::json!(columns)) {
+            return Err(format!("Invalid synchronized SQL schema: {name}"));
+        }
+    }
+    let declarations: crate::Transaction::Table = serde_json::from_value(snapshot.data.values["_operit_tables"].clone()).map_err(|e|e.to_string())?;
+    let mut declared = BTreeSet::new();
+    for row in declarations.rows {
+        let table: StorageTable = match row.get(1) { Some(crate::Transaction::Cell::Text(value)) => serde_json::from_str(value).map_err(|e|e.to_string())?, _ => return Err("Invalid SQL table declaration".into()) };
+        declared.insert(table.name.clone());
+        let actual = snapshot.data.values.get(&table.name).ok_or("Missing declared SQL table")?;
+        let expected = table.columns.iter().map(|column| column.name.as_str()).collect::<BTreeSet<_>>();
+        let columns: Vec<String> = serde_json::from_value(actual["columns"].clone()).map_err(|e|e.to_string())?;
+        if columns.iter().map(String::as_str).collect::<BTreeSet<_>>() != expected {
+            return Err(format!("SQL table declaration differs: {}", table.name));
+        }
+    }
+    if snapshot.data.values.keys().filter(|name|!name.starts_with("_operit_")).cloned().collect::<BTreeSet<_>>() != declared {
+        return Err("Synchronized SQL declarations are incomplete".into());
+    }
     snapshot.projected_content_digest(|table, value| match table {
         // Derived reference/name projection may allocate a device-local CAS token.
         "_operit_values" => crate::Transaction::project_sql_table(value, &["version"], None).map(Some),
@@ -1547,7 +1572,7 @@ pub fn operationIdsSince<K: SyncOperationKnowledge>(
     for row in catalog(host.clone())?.queryRows("SELECT path FROM plugin_databases WHERE sync=1", Vec::new())? {
         let path: String = row.get(0)?;
         let result = (|| -> Result<(), SqliteStoreError> {
-            let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            let store = openSyncedDatabase(host.clone(), &path)?.store;
             crate::Transaction::compaction::prepare(&store)?;
             for row in store.queryRows("SELECT origin,sequence FROM _operit_log WHERE outgoing=1", Vec::new())? {
                 let origin: String = row.get(0)?;
@@ -1619,7 +1644,7 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
     )? {
         let path: String = row.get(0)?;
         let result = (|| -> Result<_, SqliteStoreError> {
-            let store = SqliteStore::openWithHost(host.clone(), &path)?;
+            let store = openSyncedDatabase(host.clone(), &path)?.store;
             crate::Transaction::compaction::prepare(&store)?;
             let mut entries = Vec::new();
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? {

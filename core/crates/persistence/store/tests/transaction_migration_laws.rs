@@ -163,7 +163,7 @@ fn collection_split_preserves_namespace_absence_and_late_independent_records() {
             migrated.values,
             BTreeMap::from([("card_a".into(), json!({"id":"a","count":20}))])
         );
-        let mut snapshot = Snapshot {
+        let mut snapshot = Snapshot { damage: None,
             node: "a".into(),
             data: migrated,
             covered: Default::default(),

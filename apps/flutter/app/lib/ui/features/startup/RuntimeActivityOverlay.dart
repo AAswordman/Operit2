@@ -195,6 +195,7 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
   _Activity _syncActivity(core.SpaceSyncProgress item, AppLocalizations l10n) {
     final completed = item.status == core.SpaceSyncStatus.completed;
     final waiting = item.status == core.SpaceSyncStatus.waiting;
+    final failed = waiting && item.error != null && item.retryAt == null;
     final file = item.stage == core.SpaceSyncStage.files && item.fileSize > 0;
     return _Activity(
       icon: completed
@@ -202,7 +203,9 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
           : waiting
           ? Icons.pause_rounded
           : Icons.sync_rounded,
-      title: completed
+      title: failed
+          ? l10n.failed
+          : completed
           ? l10n.runtimeActivitySyncCompleted
           : waiting
           ? l10n.runtimeActivityWaiting

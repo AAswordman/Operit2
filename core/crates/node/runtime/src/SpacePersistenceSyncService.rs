@@ -89,6 +89,8 @@ struct PeerSyncGate {
     nextFullSyncAllowedAt: i64,
     /// Business failures keep receiving new data without arming connection failure backoff.
     pendingWork: bool,
+    /// A deterministic failure is attempted again only after either peer's state changes.
+    failedState: Option<(Result<String, String>, Result<String, String>)>,
 }
 
 impl PeerSyncGate {
@@ -111,6 +113,25 @@ fn peerFullSyncBackoffMs(consecutiveFailures: u32) -> i64 {
 
 static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Weak<SpacePersistenceSyncState>>>> =
     OnceLock::new();
+
+tokio::task_local! { static SYNC_NETWORK_FAILURE: std::cell::Cell<bool>; }
+
+/// Keeps transport failure classification scoped to one asynchronous attempt.
+async fn classifySync<T>(operation: impl std::future::Future<Output = Result<T, String>>) -> (Result<T, String>, bool) {
+    SYNC_NETWORK_FAILURE.scope(std::cell::Cell::new(false), async {
+        let result = operation.await;
+        (result, SYNC_NETWORK_FAILURE.with(std::cell::Cell::get))
+    }).await
+}
+
+/// Retains transport provenance before the existing application API formats the error.
+fn syncLinkError(error: operit_link::CoreLinkError) -> String {
+    if matches!(error.code.as_str(), "CORE_NODE_UNREACHABLE" | "PEER_LINK_CLOSED" | "PEER_RESPONSE_CLOSED"
+        | "PEER_SEND_FAILED" | "PEER_CONNECTION_CLOSED" | "PEER_CONNECT_TIMEOUT" | "PEER_HEARTBEAT_TIMEOUT" | "PEER_SYNC_NETWORK_FAILED") {
+        let _ = SYNC_NETWORK_FAILURE.try_with(|failure| failure.set(true));
+    }
+    error.to_string()
+}
 
 /// Stores the runtime state owned by one CoreNode persistence worker.
 struct SpacePersistenceSyncState {
@@ -408,9 +429,10 @@ impl SpacePersistenceSyncService {
             {
                 continue;
             }
-            if let Err(error) = crate::fault_isolation::operation(&format!("Peer {peerNodeId} Space projection"),
-                self.exchangePairedDeviceSpaceProjection(&peerNodeId)).await {
-                self.recordPeerPassFailed(&peerNodeId);
+            let (projection, networkFailure) = classifySync(crate::fault_isolation::operation(&format!("Peer {peerNodeId} Space projection"),
+                self.exchangePairedDeviceSpaceProjection(&peerNodeId))).await;
+            if let Err(error) = projection {
+                self.recordPeerFailure(&peerNodeId, networkFailure).await;
                 cycleDecisions.insert(peerNodeId.clone(), false);
                 errors.push(format!("CoreNode {peerNodeId} Space projection exchange: {error}"));
                 continue;
@@ -494,10 +516,10 @@ impl SpacePersistenceSyncService {
         self.state.progress.retain(&space.spaceId, &space.members);
         self.state.progress.begin(&targetNodeId, &space.spaceId);
         let context = format!("Peer {targetNodeId} persistence synchronization");
-        let pass = crate::fault_isolation::operation(&context, self.synchronizePeer(&targetNodeId, limit,
-            !matches!(trigger, "change_gate" | "peer_request")));
+        let pass = classifySync(crate::fault_isolation::operation(&context, self.synchronizePeer(&targetNodeId, limit,
+            !matches!(trigger, "change_gate" | "peer_request"))));
         tokio::pin!(pass);
-        let result = if let Some(delayMs) = self.state.progress.revealDelayMs(&targetNodeId) {
+        let (result, networkFailure) = if let Some(delayMs) = self.state.progress.revealDelayMs(&targetNodeId) {
             tokio::select! {
                 biased;
                 result = &mut pass => result,
@@ -522,9 +544,9 @@ impl SpacePersistenceSyncService {
                 }
             }
             Err(error) => {
-                self.recordPeerPassFailed(&targetNodeId);
+                self.recordPeerFailure(&targetNodeId, networkFailure).await;
                 let retryAt = self.state.peerGates.lock().map_err(|error| error.to_string())?
-                    .get(&targetNodeId).map(|gate| gate.nextFullSyncAllowedAt);
+                    .get(&targetNodeId).filter(|gate| gate.consecutiveFailures > 0).map(|gate| gate.nextFullSyncAllowedAt);
                 operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!(
                     "sync_pass.failed target={targetNodeId} trigger={trigger} retryAt={retryAt:?} elapsedMs={} error={error}",
                     currentTimeMillis() - startedAt));
@@ -540,9 +562,9 @@ impl SpacePersistenceSyncService {
     /// Executes authority, preferences and authorized business replication in order.
     async fn synchronizePeer(&self, targetNodeId: &str, limit: usize, force: bool) -> Result<bool, String> {
         if !self.state.nodeRouter.nodeIsReachable(targetNodeId)? {
-            return Err(format!(
+            return Err(syncLinkError(operit_link::CoreLinkError::new("CORE_NODE_UNREACHABLE", format!(
                 "synchronization target is not reachable in the current device space: {targetNodeId}"
-            ));
+            ))));
         }
         let storageReplicationAllowed = self.storageReplicationAllowed(targetNodeId)?;
         if storageReplicationAllowed {
@@ -599,7 +621,9 @@ impl SpacePersistenceSyncService {
                     targetNodeId, 4, protocol.maxMessageBytes)?;
             }
             let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
-            let remote = crate::NodeSpaceService::decodeControlExchange(response.result)?;
+            let remote = crate::NodeSpaceService::decodeControlExchange(response.result.map_err(|error| {
+                syncLinkError(error.clone()); error
+            }))?;
             control.projectPeerControlOperations(targetNodeId, &remote)?;
             self.applyRemovedMemberEffects(&remote)?;
         }
@@ -620,7 +644,7 @@ impl SpacePersistenceSyncService {
                 crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET, "exchangePreferences",
                 serde_json::to_value(preferences).map_err(|e| e.to_string())?)?;
             let response = self.state.nodeRouter.callNode(targetNodeId.to_string(), request).await;
-            let preferences: operit_store::DevicePreferencesStore::DevicePreferences = decodeCoreResponse(response.result.map_err(|e| e.to_string())?)?;
+            let preferences: operit_store::DevicePreferencesStore::DevicePreferences = decodeCoreResponse(response.result.map_err(syncLinkError)?)?;
             if preferences.spaceId != preferenceScope || preferences.nodeId != preferenceNodeId
                 || self.state.spaceStore.space()?.spaceId != preferenceScope
                 || !control.currentState()?.memberNodeIds.iter().any(|node| node == targetNodeId)
@@ -707,8 +731,13 @@ impl SpacePersistenceSyncService {
             reasons.push("authority_only");
             true
         } else {
-            match self.probeRemoteClockSummary(targetNodeId).await {
+            let (probe, networkFailure) = classifySync(self.probeRemoteClockSummary(targetNodeId)).await;
+            match probe {
                 Ok(summary) => {
+                    if gate.failedState.as_ref() == Some(&(Ok(localStateSummary.to_owned()), Ok(summary.clone()))) {
+                        cycleDecisions.insert(targetNodeId.to_string(), false);
+                        return false;
+                    }
                     if gate.lastRemoteClockSummary.is_none() { reasons.push("no_remote_baseline"); }
                     else if gate.lastRemoteClockSummary.as_deref() != Some(summary.as_str()) { reasons.push("remote_clock_changed"); }
                     if gate.lastLocalStateSummary.is_none() { reasons.push("no_local_baseline"); }
@@ -723,11 +752,11 @@ impl SpacePersistenceSyncService {
                 // once the peer answers again, the retry converges and the
                 // gate returns to probing.
                 Err(error) => {
-                    self.recordPeerPassFailed(targetNodeId);
+                    if gate.failedState.as_ref() == Some(&(Ok(localStateSummary.to_owned()), Err(error.clone()))) { return false; }
+                    self.recordPeerFailure(targetNodeId, networkFailure).await;
                     operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!(
-                        "sync_gate.probe_failed target={targetNodeId} failures={} retryDelayMs={} error={error}",
-                        gate.consecutiveFailures.saturating_add(1),
-                        peerFullSyncBackoffMs(gate.consecutiveFailures.saturating_add(1))));
+                        "sync_gate.probe_failed target={targetNodeId} networkFailure={networkFailure} retryDelayMs={} error={error}",
+                        if networkFailure { peerFullSyncBackoffMs(gate.consecutiveFailures.saturating_add(1)) } else { 0 }));
                     false
                 }
             }
@@ -763,17 +792,21 @@ impl SpacePersistenceSyncService {
         if !businessReplication { gate.lastLocalStateSummary = None; gate.lastRemoteClockSummary = None; }
         gate.consecutiveFailures = 0;
         gate.nextFullSyncAllowedAt = 0;
+        gate.failedState = None;
         Ok(())
     }
 
     /// Coalesces an authenticated peer's wakeup on the same pair coordinator and local gate.
-    pub(crate) async fn synchronizeRequestedPeer(&self, target: String, limit: usize, force: bool) -> Result<PeerSyncStatus, String> {
-        if self.state.nodeRouter.localNodeId() >= target { return Err("Synchronization request targets the wrong coordinator".into()); }
-        Box::pin(self.synchronizeReachablePeerForReason(target.clone(), limit,
-            if force { "peer_request_force" } else { "peer_request" })).await?;
-        let gates = self.state.peerGates.lock().map_err(|e|e.to_string())?;
-        let gate = gates.get(&target).ok_or("Synchronization gate missing")?;
-        if gate.consecutiveFailures > 0 { return Err("Peer synchronization is waiting for retry".into()); }
+    pub(crate) async fn synchronizeRequestedPeer(&self, target: String, limit: usize, force: bool) -> Result<PeerSyncStatus, operit_link::CoreLinkError> {
+        use operit_link::CoreLinkError;
+        if self.state.nodeRouter.localNodeId() >= target { return Err(CoreLinkError::internal("Synchronization request targets the wrong coordinator")); }
+        let result = Box::pin(self.synchronizeReachablePeerForReason(target.clone(), limit,
+            if force { "peer_request_force" } else { "peer_request" })).await;
+        let gates = self.state.peerGates.lock().map_err(|e|CoreLinkError::internal(e.to_string()))?;
+        let gate = gates.get(&target).ok_or_else(||CoreLinkError::internal("Synchronization gate missing"))?;
+        if let Err(error) = result { return Err(CoreLinkError::new(if gate.consecutiveFailures > 0 { "PEER_SYNC_NETWORK_FAILED" } else { "PEER_SYNC_CORRECTION_FAILED" }, error)); }
+        if gate.consecutiveFailures > 0 { return Err(CoreLinkError::new("PEER_SYNC_NETWORK_FAILED", "Peer synchronization is waiting for connection")); }
+        if gate.failedState.is_some() { return Err(CoreLinkError::new("PEER_SYNC_CORRECTION_FAILED", "Peer synchronization requires changed data or an explicit request")); }
         Ok(PeerSyncStatus { local: gate.lastLocalStateSummary.clone(), remote: gate.lastRemoteClockSummary.clone(), pending: gate.pendingWork,
             progress: self.peerProgress(&target) })
     }
@@ -785,6 +818,19 @@ impl SpacePersistenceSyncService {
             gate.consecutiveFailures = gate.consecutiveFailures.saturating_add(1);
             gate.nextFullSyncAllowedAt =
                 currentTimeMillis() + peerFullSyncBackoffMs(gate.consecutiveFailures);
+        }
+    }
+
+    /// Only transport faults arm retries; deterministic failures wait for changed state or an explicit request.
+    async fn recordPeerFailure(&self, target: &str, network: bool) {
+        if network { self.recordPeerPassFailed(target); return; }
+        let state = (self.localStateSummary().await, self.probeRemoteClockSummary(target).await);
+        if let Ok(mut gates) = self.state.peerGates.lock() {
+            let gate = gates.entry(target.to_owned()).or_default();
+            gate.failedState = Some(state);
+            gate.pendingWork = false;
+            gate.consecutiveFailures = 0;
+            gate.nextFullSyncAllowedAt = 0;
         }
     }
 
@@ -938,10 +984,15 @@ impl SpacePersistenceSyncService {
                 if operations.is_empty() && !self.applySynchronizedOperationBatch(targetNodeId, &[], &[], &mut deferredOwners).await? {
                     return Ok(false);
                 }
-                let complete = self.synchronizeConsistency(targetNodeId, &localClock, &remoteClock, &deferredOwners).await?;
+                let force = self.state.peerGates.lock().map_err(|e|e.to_string())?.get(targetNodeId).is_some_and(|gate|gate.pendingWork);
+                let complete = self.synchronizeConsistency(targetNodeId, &localClock, &remoteClock, &deferredOwners, force).await?;
+                if !complete && deferredOwners.is_empty() && pages < MAX_SYNC_PAGES_PER_PASS {
+                    pages += 1;
+                    continue;
+                }
                 let mut gates = self.state.peerGates.lock().map_err(|e|e.to_string())?;
                 let gate = gates.entry(targetNodeId.to_owned()).or_default();
-                gate.pendingWork |= !complete || !operations.is_empty();
+                gate.pendingWork = !complete || !operations.is_empty();
                 if complete && operations.is_empty() {
                     gate.lastLocalStateSummary = Some(clockStateSummary(&localClock)?);
                     gate.lastRemoteClockSummary = Some(clockStateSummary(&remoteClock)?);
@@ -1095,7 +1146,7 @@ impl SpacePersistenceSyncService {
                 peerNodeId, 0, protocol.maxMessageBytes)?;
         }
         let response = self.state.nodeRouter.callNode(peerNodeId.to_owned(), request).await;
-        let remoteSpace: CoreSpace = decodeCoreResponse(response.result.map_err(|error| error.to_string())?)?;
+        let remoteSpace: CoreSpace = decodeCoreResponse(response.result.map_err(syncLinkError)?)?;
         Ok(self.state.spaceStore.space()?.spaceId == remoteSpace.spaceId)
     }
 
@@ -1207,7 +1258,7 @@ impl SpacePersistenceSyncService {
         let mut push = if localSource {
             request.target = NODE_SYNC_TARGET.into();
             self.state.nodeRouter.openPushNode(targetNodeId.to_string(), request).await
-                .map_err(|error| error.to_string())?
+                .map_err(syncLinkError)?
         } else {
             self.state.localRuntime.openPush(request).map_err(|error| error.to_string())?
         };
@@ -1229,7 +1280,7 @@ impl SpacePersistenceSyncService {
             }
             self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
                 .map_err(|error| error.to_string())?;
-            push.close().await.map_err(|error| error.to_string())?;
+            push.close().await.map_err(syncLinkError)?;
             let persisted = self.blobPresence(targetNodeId,std::slice::from_ref(reference),!localSource).await?
                 .pop().ok_or("Blob presence response missing")??;
             if !persisted {
@@ -1399,7 +1450,7 @@ async fn sendBlobChunk(
     }
     push.send(toCoreValue(chunk).map_err(|error| error.to_string())?)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(syncLinkError)?;
     Ok(nextOffset)
 }
 
@@ -1446,9 +1497,7 @@ where
     let startedAt = currentTimeMillis();
     let response = nodeRouter.callNode(targetNodeId.to_string(), request).await;
     recordSlowSyncCall(targetNodeId, &methodName, startedAt);
-    decodeCoreResponse(response.result.map_err(|error| {
-        format!("remote {targetNodeId} {methodName}: {error}")
-    })?)
+    decodeCoreResponse(response.result.map_err(syncLinkError)?)
 }
 
 /// Negotiates bounded transport with direct authenticated peers; relayed Core routes use their existing contract.
@@ -1465,7 +1514,9 @@ async fn projectionProtocol(
     let request = serviceCallRequest(router, crate::NodeSpaceService::NODE_SPACE_TARGET,
         "projectionProtocol", json!({"version": crate::NodeSpaceService::space_projection::VERSION}))?;
     let response = router.callNode(peer.to_owned(), request).await;
-    let mut protocol = crate::NodeSpaceService::space_projection::decodeProtocolResponse(peer, response.result)?;
+    let mut protocol = crate::NodeSpaceService::space_projection::decodeProtocolResponse(peer, response.result.map_err(|error| {
+        syncLinkError(error.clone()); error
+    }))?;
     protocol.maxMessageBytes = protocol.maxMessageBytes.min(peers.maxMessageBytes());
     Ok(Some(protocol))
 }
@@ -1486,9 +1537,7 @@ where
     let startedAt = currentTimeMillis();
     let response = nodeRouter.callNode(targetNodeId.to_string(), request).await;
     recordSlowSyncCall(targetNodeId, methodName, startedAt);
-    decodeCoreResponse(response.result.map_err(|error| {
-        format!("remote {targetNodeId} {targetPath}.{methodName}: {error}")
-    })?)
+    decodeCoreResponse(response.result.map_err(syncLinkError)?)
 }
 
 /// Reads exact unapplied identities from the existing receipt and application reports.
@@ -1695,6 +1744,18 @@ fn summarizeSyncOperations(operations: &[Value]) -> String {
 #[cfg(test)]
 mod page_budget_tests {
     use super::*;
+
+    /// Identical messages cannot turn application corruption into a connection retry.
+    #[tokio::test]
+    async fn retry_classification_uses_transport_codes() {
+        for (code, expected) in [("PEER_SEND_FAILED",true), ("PEER_RESPONSE_CLOSED",true),
+            ("PEER_SYNC_NETWORK_FAILED",true), ("INTERNAL_ERROR",false), ("PEER_SYNC_CORRECTION_FAILED",false)] {
+            let (_, network) = classifySync(async {
+                Err::<(),_>(syncLinkError(operit_link::CoreLinkError::new(code,"database is corrupt")))
+            }).await;
+            assert_eq!(network,expected,"{code}");
+        }
+    }
 
     /// Keeps core clocks usable while a plugin clock is explicitly unavailable.
     #[test]

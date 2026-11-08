@@ -11,6 +11,145 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Verifies the shell top bar shows only the current page's title and actions.
 void main() {
+  testWidgets('updating an outgoing bar cannot clear the returning bar', (
+    tester,
+  ) async {
+    final topBar = TopBarController();
+    final showList = ValueNotifier<bool>(false);
+    addTearDown(topBar.dispose);
+    addTearDown(showList.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TopBarScope(
+          controller: topBar,
+          child: Scaffold(
+            appBar: AppBar(
+              title: ListenableBuilder(
+                listenable: topBar,
+                builder: (context, child) =>
+                    topBar.titleContent?.content(context) ?? const SizedBox(),
+              ),
+              actions: <Widget>[
+                ListenableBuilder(
+                  listenable: topBar,
+                  builder: (context, child) =>
+                      Row(children: topBar.actions?.call(context) ?? const []),
+                ),
+              ],
+            ),
+            body: ValueListenableBuilder<bool>(
+              valueListenable: showList,
+              builder: (context, inList, child) => Stack(
+                children: <Widget>[
+                  MainScreenActivityScope(
+                    isCurrentScreen: inList,
+                    child: ExtensionTopBar(
+                      title: (context) => const Text('List title'),
+                      actions: (context) => const <Widget>[
+                        Text('List actions'),
+                      ],
+                      child: const SizedBox(),
+                    ),
+                  ),
+                  MainScreenActivityScope(
+                    isCurrentScreen: !inList,
+                    child: ExtensionTopBar(
+                      title: (context) => const Text('Detail title'),
+                      child: const SizedBox(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Detail title'), findsOneWidget);
+    showList.value = true;
+    await tester.pumpAndSettle();
+    expect(find.text('List title'), findsOneWidget);
+    expect(find.text('List actions'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a parked list reclaims its bar after an immediate transition', (
+    tester,
+  ) async {
+    final topBar = TopBarController();
+    final catalog = ValueNotifier<int>(0);
+    final list = _Location(
+      const _ListScreen(),
+      RouteEntry(instanceId: 'list', routeId: 'List'),
+    );
+    final detail = _Location(
+      _DetailScreen(catalog, crossfade: false),
+      RouteEntry(instanceId: 'detail', routeId: 'Detail'),
+      canGoBack: true,
+    );
+    final location = ValueNotifier<_Location>(list);
+    addTearDown(topBar.dispose);
+    addTearDown(catalog.dispose);
+    addTearDown(location.dispose);
+    await _pumpShell(tester, topBar, location);
+    await tester.pumpAndSettle();
+
+    topBar.clear();
+    location.value = detail;
+    await tester.pumpAndSettle();
+    expect(find.text('Detail title'), findsOneWidget);
+
+    catalog.value += 1;
+    topBar.clear();
+    location.value = _Location(list.screen, list.entry, navigatingBack: true);
+    await tester.pumpAndSettle();
+    expect(find.text('List title'), findsOneWidget);
+    expect(find.byTooltip('Import'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a catalog change in the return frame preserves list actions', (
+    tester,
+  ) async {
+    final topBar = TopBarController();
+    final catalog = ValueNotifier<int>(0);
+    final list = _Location(
+      const _ListScreen(),
+      RouteEntry(instanceId: 'list', routeId: 'List'),
+    );
+    final detail = _Location(
+      _DetailScreen(catalog),
+      RouteEntry(instanceId: 'detail', routeId: 'Detail'),
+      canGoBack: true,
+    );
+    final location = ValueNotifier<_Location>(list);
+    addTearDown(topBar.dispose);
+    addTearDown(catalog.dispose);
+    addTearDown(location.dispose);
+    await _pumpShell(tester, topBar, location);
+    await tester.pumpAndSettle();
+
+    topBar.clear();
+    location.value = detail;
+    await tester.pumpAndSettle();
+    expect(find.text('Detail title'), findsOneWidget);
+
+    // Deletion refreshes the catalog and returns before the next frame.
+    catalog.value += 1;
+    topBar.clear();
+    location.value = _Location(list.screen, list.entry, navigatingBack: true);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('List title'), findsOneWidget);
+    expect(find.byTooltip('Import'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+    expect(find.text('List title'), findsOneWidget);
+    expect(find.byTooltip('Import'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a detail page fading out cannot take the bar from its list', (
     tester,
   ) async {
@@ -152,8 +291,12 @@ class _ListScreen extends OperitScreen {
 /// A detail page that rebuilds on every catalog change, like the extension
 /// detail page.
 class _DetailScreen extends OperitScreen {
-  const _DetailScreen(this.catalog)
-    : super(routeTypeName: 'Detail', title: 'Detail route');
+  const _DetailScreen(this.catalog, {bool crossfade = true})
+    : super(
+        routeTypeName: 'Detail',
+        title: 'Detail route',
+        participatesInCrossfadeTransition: crossfade,
+      );
 
   final ValueNotifier<int> catalog;
 

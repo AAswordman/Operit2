@@ -24,7 +24,7 @@ fn history(transactions: &[Transaction]) -> History {
     h
 }
 fn snapshot(node: &str, data: Data, covered: &[&str]) -> Snapshot {
-    Snapshot { node: node.into(), data, covered: covered.iter().map(|id| id.to_string()).collect(), generation: 0 }
+    Snapshot { damage: None, node: node.into(), data, covered: covered.iter().map(|id| id.to_string()).collect(), generation: 0 }
 }
 
 #[test]

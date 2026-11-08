@@ -91,7 +91,7 @@ impl Fixture {
     /// Applies the source's complete declaration and baseline through the production recovery path.
     fn repair(&self, source: &Fixture, expected: &str, snapshot: &operit_store::Transaction::Snapshot) -> Result<bool, String> {
         let definition = PluginStorage::snapshotDefinition(source.host.clone(), &source.path).unwrap();
-        PluginStorage::provisionSnapshotDatabase(self.host.clone(), self.host.clone(), &self.path, definition.clone()).unwrap();
+        if !self.host.exists(&self.path).unwrap() { PluginStorage::provisionSnapshotDatabase(self.host.clone(), self.host.clone(), &self.path, definition.clone()).unwrap(); }
         PluginStorage::repairSyncedSnapshot(self.host.clone(), expected, snapshot, self.device, &definition)
     }
     /// Releases all database handles before removing only this test's unique temporary directory.
@@ -1637,6 +1637,7 @@ fn unavailable_database_does_not_block_healthy_database_export() {
     )
     .unwrap();
     let brokenPath = format!("{}/broken.sqlite", source.roots[0]);
+    SqliteStore::openWithHost(source.host.clone(), &brokenPath).unwrap().executeBatch("CREATE TABLE unrelated(id INTEGER)").unwrap();
     catalog.execute("INSERT INTO plugin_databases(path,owner,kind,sync,merge) VALUES(?1,'storage_test','objects',1,NULL)", vec![operit_host_api::SqliteValue::Text(brokenPath.clone())]).unwrap();
     let (operations, errors) = PluginStorage::exportWithBudget(
         source.host.clone(),
@@ -1914,6 +1915,51 @@ fn complete_file_correction_restores_plugin_schema_and_history() {
             assert_eq!(PluginStorage::syncSnapshot(offline.host.clone(), &offline.path, offline.device).unwrap().data, file.data);
             source.dispose(); target.dispose(); offline.dispose();
         }
+    }
+}
+
+/// Corruption remains capturable for CAS, selects an intact source, and restores without opening a plugin session.
+#[test]
+fn damaged_plugin_structures_accept_complete_correction_and_forward_the_baseline() {
+    for damage in ["missing-internal", "missing-business", "missing-declarations", "wrong-internal", "wrong-business", "invalid-declaration", "invalid-initialization"] {
+        let source = Fixture::new("source"); let handle = source.open("sqlite");
+        source.call(json!({"op":"define_table","handle":handle,"table":table()})).unwrap();
+        source.call(json!({"op":"execute","handle":handle,"statement":{"sql":"INSERT INTO records VALUES('one',9,X'00ff')","params":[]}})).unwrap();
+        let target = Fixture::new("target"); target.replay(&source.export());
+        if damage == "invalid-initialization" {
+            let file = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+            let capture = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+            assert!(target.repair(&source, &capture.token().unwrap(), &file).unwrap());
+        }
+        let store = SqliteStore::openWithHost(target.host.clone(), &target.path).unwrap();
+        store.executeBatch(match damage {
+            "missing-internal" => "DROP TABLE _operit_merge_map; DROP TABLE _operit_merge_names",
+            "missing-business" => "DROP TABLE records",
+            "missing-declarations" => "DROP TABLE _operit_tables",
+            "wrong-internal" => "DROP TABLE _operit_merge_map; CREATE TABLE _operit_merge_map(broken TEXT)",
+            "wrong-business" => "DROP TABLE records; CREATE TABLE records(id TEXT PRIMARY KEY)",
+            "invalid-declaration" => "UPDATE _operit_tables SET definition='{invalid'",
+            "invalid-initialization" => "UPDATE _operit_transaction_initialization SET original='{invalid'",
+            _ => unreachable!(),
+        }).unwrap();
+        let capture = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+        assert_eq!(PluginStorage::snapshotContentDigest(&capture).is_err(), !matches!(damage,"missing-internal"|"invalid-initialization"), "{damage}");
+        assert_eq!(capture.manifest().unwrap().damaged, damage == "invalid-initialization");
+        let file = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+        assert!(!target.repair(&source, "stale", &file).unwrap(), "{damage}");
+        assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap(), capture);
+        if damage == "missing-business" {
+            let mut invalid = file.clone(); invalid.data.values.get_mut("records").unwrap()["columns"] = json!(["invalid"]);
+            assert!(target.repair(&source, &capture.token().unwrap(), &invalid).is_err());
+            assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap(), capture);
+        }
+        assert!(target.repair(&source, &capture.token().unwrap(), &file).unwrap(), "{damage}");
+        let restored = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+        assert_eq!(restored.data, file.data, "{damage}");
+        assert!(PluginStorage::snapshotContentDigest(&restored).is_ok());
+        let offline = Fixture::new("offline"); offline.replay(&target.export());
+        assert_eq!(PluginStorage::syncSnapshot(offline.host.clone(), &offline.path, offline.device).unwrap().data, file.data);
+        drop(store); source.dispose(); target.dispose(); offline.dispose();
     }
 }
 

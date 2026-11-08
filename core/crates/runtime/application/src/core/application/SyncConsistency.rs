@@ -68,7 +68,7 @@ impl OperitApplication {
                 PluginStorage::operationIdsSince(inventory.clone()?,receipt).map_err(|e|e.to_string())
             }),
         });
-        let installed = plugin.clone().and_then(|host|PluginStorage::syncDatasetPaths(host).map_err(|e|e.to_string())).unwrap_or_default().into_iter().collect::<std::collections::BTreeSet<_>>();
+        let installed = PluginStorage::syncDatasetPaths(plugin.clone()?).map_err(|e|e.to_string())?.into_iter().collect::<std::collections::BTreeSet<_>>();
         let mut paths = installed.clone();
         for operation in operations.iter().filter(|op|op.domain==PLUGIN_STORAGE_SYNC_DOMAIN) { paths.insert(PluginStorage::syncDatasetPath(operation).map_err(|e|e.to_string())?); }
         let node = registry.journal.localDeviceId().map_err(|e|e.to_string())?;

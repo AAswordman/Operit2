@@ -142,6 +142,27 @@ fn a_schema_only_file_can_be_corrected_with_its_observed_token() {
     assert!(history.iter().all(|op|initialization.covered.contains(&op.opId)));
 }
 
+/// A broken projection remains a versioned correction target rather than becoming an authority or blocking prepare.
+#[test]
+fn malformed_preferences_are_force_corrected_with_raw_file_cas() {
+    let f = Fixture::new(); let store = f.store();
+    let source = store.syncSnapshot().unwrap();
+    let file = operit_store::Transaction::preference::file_snapshot(&store, &source.token().unwrap()).unwrap();
+    f.host.native.writeBytes(&f.path, b"{broken").unwrap();
+    let capture = store.syncSnapshot().unwrap();
+    assert!(capture.manifest().unwrap().damaged);
+    let schema = PreferenceMergeSchema::default();
+    let registry = PreferenceMerge::registry(f.host.clone(), &schema, [], |_,_|true).unwrap();
+    assert!(registry.manifests().unwrap().0.iter().any(|manifest|manifest.owner == source.data.owner && manifest.damaged));
+    f.host.native.writeBytes(&f.path, b"{changed").unwrap();
+    assert!(!registry.repair_file(&source.data.owner, &capture.token().unwrap(), &source, Some(&file), None).unwrap());
+    let current = store.syncSnapshot().unwrap();
+    assert!(registry.repair_file(&source.data.owner, &current.token().unwrap(), &source, Some(&file), None).unwrap());
+    assert_eq!(f.host.readBytes(&f.path).unwrap(), file.as_bytes());
+    assert_eq!(store.syncSnapshot().unwrap().data, source.data);
+    assert!(!store.syncSnapshot().unwrap().manifest().unwrap().damaged);
+}
+
 #[test]
 fn correction_rejects_a_changed_file_even_when_the_sql_checkpoint_is_unchanged() {
     let f = Fixture::new();
@@ -262,7 +283,7 @@ fn a_rejected_missing_file_copy_does_not_create_a_placeholder_checkpoint() {
     let f = Fixture::new();
     let path = "runtime/plugin_data/space/com.operit.test/invalid.preferences.json";
     let store = PreferencesDataStore::newWithStorage(f.host.clone(), path);
-    let source = operit_store::Transaction::Snapshot { node: "peer".into(), data: operit_store::Transaction::Data::empty(
+    let source = operit_store::Transaction::Snapshot { damage: None, node: "peer".into(), data: operit_store::Transaction::Data::empty(
         operit_store::Transaction::Owner { backend: operit_store::Transaction::Backend::DataStore, path: path.into(), format: 1, layout: 1 }
     ), covered: Default::default(), generation: 0 };
     assert!(preference::repair_file(&store, "", &source, Some("{} ")).is_err());

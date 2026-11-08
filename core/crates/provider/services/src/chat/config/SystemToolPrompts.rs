@@ -813,11 +813,11 @@ fn basic_tools_en() -> SystemToolPromptCategory {
         vec![
             tool(
                 "sleep",
-                "Demonstration tool that pauses briefly.",
+                "Wait for the specified duration before continuing.",
                 vec![param(
                     "duration_ms",
                     "integer",
-                    "milliseconds, default 1000, >= 0",
+                    "milliseconds, default 1000, integer from 0 to 2147483647",
                     false,
                     Some("1000"),
                 )],
@@ -859,11 +859,11 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
         vec![
             tool(
                 "sleep",
-                "演示工具，短暂暂停。",
+                "等待指定时长后再继续执行。",
                 vec![param(
                     "duration_ms",
                     "integer",
-                    "毫秒，默认1000，>= 0",
+                    "毫秒，默认1000，0 到 2147483647 之间的整数",
                     false,
                     Some("1000"),
                 )],
