@@ -7,8 +7,9 @@ use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 use syn::{
-    Attribute, ExprPath, ImplItemFn, ItemConst, ItemExternCrate, ItemFn, ItemImpl, ItemMod,
-    ItemStatic, ItemUse, Lit, Meta, Path as SynPath, Token, TraitItemFn, TypePath, UseTree,
+    Attribute, ExprBlock, ExprPath, ImplItemFn, ItemConst, ItemExternCrate, ItemFn, ItemImpl,
+    ItemMod, ItemStatic, ItemUse, Lit, Meta, Path as SynPath, Token, TraitItemFn, TypePath,
+    UseTree,
 };
 
 use super::SourceRoot;
@@ -197,6 +198,14 @@ impl<'ast> Visit<'ast> for PlatformApiVisitor<'_> {
         let mut segments = Vec::new();
         collect_use_tree_violations(&item_use.tree, &mut segments, self);
         syn::visit::visit_item_use(self, item_use);
+    }
+
+    /// Skips native-only and test-only expression blocks inside shared functions.
+    fn visit_expr_block(&mut self, expression: &ExprBlock) {
+        if is_excluded_from_wasm(&expression.attrs) {
+            return;
+        }
+        syn::visit::visit_expr_block(self, expression);
     }
 
     /// Rejects direct fully qualified platform API paths.
@@ -417,6 +426,35 @@ mod tests {
         "#
         )
         .is_empty());
+    }
+
+    /// Ignores excluded clock branches while still auditing the active Wasm branch.
+    #[test]
+    fn conditional_expression_blocks_preserve_platform_boundaries() {
+        assert!(violations(
+            r#"
+            fn now() {
+                #[cfg(not(target_arch = "wasm32"))]
+                { let _ = std::time::SystemTime::now(); }
+                #[cfg(test)]
+                { tokio::time::sleep(std::time::Duration::from_secs(1)); }
+            }
+        "#
+        )
+        .is_empty());
+        assert_eq!(
+            violations(
+                r#"
+            fn now() {
+                #[cfg(not(target_arch = "wasm32"))]
+                { std::fs::read("native"); }
+                #[cfg(target_arch = "wasm32")]
+                { let _ = std::time::Instant::now(); }
+            }
+        "#
+            ),
+            vec!["std::time clock"]
+        );
     }
 
     /// Keeps rejecting filesystem APIs inside production implementation blocks.

@@ -1,4 +1,5 @@
 //! Application facade for the shared app/CLI release pipeline. Native paths stay here.
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HttpDownloadControl;
 use operit_plugin_sdk::js_sdk::results::{AppOperationData, ToolResultData};
 use operit_store::PreferencesDataStore::StateFlow;
@@ -10,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 /// Presentation metadata only; the native download URL/path is never sent to the UI.
@@ -46,7 +46,7 @@ impl ApplicationUpdateInstallResult {
 #[derive(Default)]
 struct UpdateState {
     busy: bool,
-    checkedAt: Option<Instant>,
+    checkedAt: Option<u64>,
     release: Option<ReleaseInfo>,
     download: Option<HttpDownloadControl>,
     prepared: Option<PreparedUpdate>,
@@ -96,13 +96,15 @@ impl ApplicationUpdateManager {
         }
     }
     pub(super) async fn check(&self) -> Result<Option<ApplicationUpdateInfo>, String> {
+        let scheduler = defaultHostRuntimeTaskSchedulerHost();
+        let now = scheduler.monotonicTimeMillis().map_err(|e| e.to_string())?;
         {
             let state = self.state.lock().map_err(|e| e.to_string())?;
             if state.busy
                 || state.prepared.is_some()
                 || state
                     .checkedAt
-                    .is_some_and(|at| at.elapsed() < Duration::from_secs(6 * 60 * 60))
+                    .is_some_and(|at| now.saturating_sub(at) < 6 * 60 * 60 * 1000)
             {
                 return Ok(state.release.as_ref().map(Self::info));
             }
@@ -117,7 +119,7 @@ impl ApplicationUpdateManager {
             FullUpdateStatus::Available(info) => Some(info),
             FullUpdateStatus::UpToDate => None,
         };
-        state.checkedAt = Some(Instant::now());
+        state.checkedAt = Some(scheduler.monotonicTimeMillis().map_err(|e| e.to_string())?);
         Ok(state.release.as_ref().map(Self::info))
     }
     pub(super) async fn download(&self, version: String) -> Result<String, String> {
