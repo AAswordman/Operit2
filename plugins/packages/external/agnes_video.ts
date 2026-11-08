@@ -6,8 +6,8 @@
     "en": "Agnes Video"
   },
   "description": {
-    "zh": "使用 Agnes Video 2.5 API 生成视频，支持文生视频、首尾帧控制和多模态参考。非阻塞：提交任务立即返回 video_id，之后用 query_video 查询进度，完成时自动下载到插件私有目录。",
-    "en": "Generate videos via Agnes Video 2.5 API, supporting text-to-video, first/last frame control and multimodal reference. Non-blocking: submit returns video_id immediately; poll with query_video to check progress and auto-download into the plugin private directory."
+    "zh": "使用 Agnes Video 2.5 API 生成视频，支持文生视频、首尾帧控制和多模态参考。非阻塞：提交任务立即返回 video_id，之后用 query_video 查询进度，完成时自动下载到插件私有目录。需在环境变量中二选一填写 AGNES_BASE_URL：apihub.agnes-ai.com（国际站）或 api.agnes-ai.cn（国内站），Key 与站点不能混用。",
+    "en": "Generate videos via Agnes Video 2.5 API, supporting text-to-video, first/last frame control and multimodal reference. Non-blocking: submit returns video_id immediately; poll with query_video to check progress and auto-download into the plugin private directory. Pick one AGNES_BASE_URL in the environment settings: apihub.agnes-ai.com (international) or api.agnes-ai.cn (China); keys and sites cannot be mixed."
   },
   "category": "Media",
   "env": [
@@ -22,16 +22,16 @@
     {
       "name": "AGNES_BASE_URL",
       "description": {
-        "zh": "Agnes API 站点（必填，二选一）。必须从以下两个站点中选择一个填入：https://apihub.agnes-ai.com/v1（国际站）或 https://api.agnes-ai.cn/v1（国内站）。不支持其他地址。两个站点的 Key 不能通用，所选站点必须与你的 Key 归属一致。",
-        "en": "Agnes API site (required, choose exactly one). You must pick one of these two sites: https://apihub.agnes-ai.com/v1 (international) or https://api.agnes-ai.cn/v1 (China). Other addresses are not supported. Keys are site-specific, so the chosen site must match where your key was issued."
+        "zh": "必填，二选一：apihub.agnes-ai.com 或 api.agnes-ai.cn",
+        "en": "Required, one of: apihub.agnes-ai.com or api.agnes-ai.cn"
       },
       "required": true
     },
     {
       "name": "AGNES_VIDEO_MODEL",
       "description": {
-        "zh": "默认视频模型（可选，agnes-video-2.5 或 agnes-video-2.5-flash；不填则为 agnes-video-2.5）",
-        "en": "Default video model (optional: agnes-video-2.5 or agnes-video-2.5-flash; defaults to agnes-video-2.5)"
+        "zh": "可选，agnes-video-2.5 或 -2.5-flash，默认前者",
+        "en": "Optional: agnes-video-2.5 or -2.5-flash, default former"
       },
       "required": false
     }
