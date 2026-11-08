@@ -6,8 +6,8 @@
     "en": "Agnes Video"
   },
   "description": {
-    "zh": "使用 Agnes Video 2.5 API 生成视频，支持文生视频、首尾帧控制和多模态参考。非阻塞：提交任务立即返回 video_id，之后用 query_video 查询进度，完成时自动下载到插件私有目录。需在环境变量中二选一填写 AGNES_BASE_URL：apihub.agnes-ai.com（国际站）或 api.agnes-ai.cn（国内站），Key 与站点不能混用。",
-    "en": "Generate videos via Agnes Video 2.5 API, supporting text-to-video, first/last frame control and multimodal reference. Non-blocking: submit returns video_id immediately; poll with query_video to check progress and auto-download into the plugin private directory. Pick one AGNES_BASE_URL in the environment settings: apihub.agnes-ai.com (international) or api.agnes-ai.cn (China); keys and sites cannot be mixed."
+    "zh": "使用 Agnes Video 2.5 API 生成视频，支持文生视频、首尾帧控制和多模态参考。非阻塞：提交任务立即返回 video_id，之后用 query_video 查询进度，完成时自动下载到 /sdcard/Download/AgnesVideo/（可在 AGNES_OUTPUT_DIR 中自定义）。需在环境变量中二选一填写 AGNES_BASE_URL：apihub.agnes-ai.com（国际站）或 api.agnes-ai.cn（国内站），Key 与站点不能混用。",
+    "en": "Generate videos via Agnes Video 2.5 API, supporting text-to-video, first/last frame control and multimodal reference. Non-blocking: submit returns video_id immediately; poll with query_video to check progress and auto-download into /sdcard/Download/AgnesVideo/ (override with AGNES_OUTPUT_DIR). Pick one AGNES_BASE_URL in the environment settings: apihub.agnes-ai.com (international) or api.agnes-ai.cn (China); keys and sites cannot be mixed."
   },
   "category": "Media",
   "env": [
@@ -32,6 +32,14 @@
       "description": {
         "zh": "可选，agnes-video-2.5 或 -2.5-flash，默认前者",
         "en": "Optional: agnes-video-2.5 or -2.5-flash, default former"
+      },
+      "required": false
+    },
+    {
+      "name": "AGNES_OUTPUT_DIR",
+      "description": {
+        "zh": "可选，保存目录，留空为 /sdcard/Download/AgnesVideo",
+        "en": "Optional: output dir, default /sdcard/Download/AgnesVideo"
       },
       "required": false
     }
@@ -61,8 +69,8 @@
     {
       "name": "query_video",
       "description": {
-        "zh": "根据 video_id 查询任务状态。完成时自动下载视频到插件私有目录并返回本地路径。",
-        "en": "Query task status by video_id. When completed, auto-download the video into the plugin private directory and return the local path."
+        "zh": "根据 video_id 查询任务状态。完成时自动下载视频到 /sdcard/Download/AgnesVideo/ 并返回本地路径。",
+        "en": "Query task status by video_id. When completed, auto-download the video into /sdcard/Download/AgnesVideo/ and return the local path."
       },
       "parameters": [
         { "name": "video_id", "description": { "zh": "提交任务时返回的 video_id（必填）", "en": "The video_id returned by submit_video (required)" }, "type": "string", "required": true },
@@ -98,7 +106,9 @@ const agnesVideo = (function () {
     const SUPPORTED_MODES = ["text", "keyframe", "reference"];
     const SUPPORTED_SIZES = ["720P", "1080P", "1K", "2K"];
 
-    const PLUGIN_DIR = getPluginConfigDir("agnes_video");
+    const DEFAULT_OUTPUT_DIR = "/sdcard/Download/AgnesVideo";
+    const FALLBACK_OUTPUT_DIR = getPluginConfigDir("agnes_video");
+    const OUTPUT_DIR_ENV = "AGNES_OUTPUT_DIR";
 
     function getApiKey(): string {
         const apiKey = getEnv("AGNES_API_KEY");
@@ -169,15 +179,48 @@ const agnesVideo = (function () {
         return safe.substring(0, 80);
     }
 
-    async function ensureDirectory(): Promise<void> {
+    function normalizeOutputDir(raw: string): string {
+        const trimmed = raw.trim();
+        if (!trimmed) return "";
+        return trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+    }
+
+    function requestedOutputDir(): string {
+        const fromEnv = normalizeOutputDir(getEnv(OUTPUT_DIR_ENV) || "");
+        return fromEnv || DEFAULT_OUTPUT_DIR;
+    }
+
+    async function tryEnsureDir(path: string): Promise<boolean> {
         try {
-            const result = await Tools.Files.mkdir(PLUGIN_DIR, true);
+            const result = await Tools.Files.mkdir(path, true);
             if (!result.successful) {
-                console.warn(`创建目录失败(可能已存在): ${PLUGIN_DIR} -> ${result.details}`);
+                console.warn(`创建目录失败: ${path} -> ${result.details}`);
+                return false;
             }
+            return true;
         } catch (e: any) {
-            console.warn(`创建目录异常: ${PLUGIN_DIR} -> ${e?.message || e}`);
+            console.warn(`创建目录异常: ${path} -> ${e?.message || e}`);
+            return false;
         }
+    }
+
+    async function resolveOutputDir(): Promise<string> {
+        const requested = requestedOutputDir();
+        if (await tryEnsureDir(requested)) {
+            return requested;
+        }
+        if (requested === FALLBACK_OUTPUT_DIR) {
+            throw new Error(`无法创建视频保存目录: ${requested}`);
+        }
+        console.warn(
+            `目录 ${requested} 不可用，回落到插件私有目录 ${FALLBACK_OUTPUT_DIR}。`
+        );
+        if (!(await tryEnsureDir(FALLBACK_OUTPUT_DIR))) {
+            throw new Error(
+                `视频保存目录均不可用: ${requested} 与 ${FALLBACK_OUTPUT_DIR}`
+            );
+        }
+        return FALLBACK_OUTPUT_DIR;
     }
 
     function normalizeSeconds(raw?: string | number | null): string | undefined {
@@ -459,7 +502,7 @@ const agnesVideo = (function () {
             throw new Error("参数 prompt 不能为空。");
         }
 
-        await ensureDirectory();
+        const outputDir = await resolveOutputDir();
         const creationResult = await createVideoTask(params);
 
         const hintLines: string[] = [];
@@ -477,7 +520,7 @@ const agnesVideo = (function () {
                 creationResult.model !== DEFAULT_MODEL ? ` 和 model=\"${creationResult.model}\"` : ""
             } 来查询进度。`
         );
-        hintLines.push(`生成完成后会自动下载到插件私有目录 ${PLUGIN_DIR}/。`);
+        hintLines.push(`生成完成后会自动下载到 ${outputDir}/。`);
 
         return {
             video_id: creationResult.video_id,
@@ -486,6 +529,7 @@ const agnesVideo = (function () {
             model: creationResult.model,
             size: creationResult.size,
             seconds: creationResult.seconds,
+            output_dir: outputDir,
             hint: hintLines.join("\n"),
         };
     }
@@ -507,11 +551,11 @@ const agnesVideo = (function () {
                     `任务已完成但响应中缺少视频 url，无法下载。video_id: ${videoId}`
                 );
             }
-            await ensureDirectory();
+            const outputDir = await resolveOutputDir();
             const fileName = params.file_name
                 ? sanitizeFileName(params.file_name)
                 : `agnes_video_${videoId}`;
-            const filePath = `${PLUGIN_DIR}/${fileName}.mp4`;
+            const filePath = `${outputDir}/${fileName}.mp4`;
             await downloadVideo(result.url, filePath);
 
             const hintLines: string[] = [];
@@ -525,6 +569,7 @@ const agnesVideo = (function () {
                 status: "completed",
                 file_path: filePath,
                 file_uri: `file://${filePath}`,
+                output_dir: outputDir,
                 video_url: result.url,
                 video_id: videoId,
                 task_id: result.task_id,
