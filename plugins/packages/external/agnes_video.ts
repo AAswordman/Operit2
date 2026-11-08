@@ -67,8 +67,16 @@
       "parameters": [
         { "name": "video_id", "description": { "zh": "提交任务时返回的 video_id（必填）", "en": "The video_id returned by submit_video (required)" }, "type": "string", "required": true },
         { "name": "model", "description": { "zh": "查询用模型名（可选，须与提交任务时一致；不填则取环境变量 AGNES_VIDEO_MODEL，再退回 agnes-video-2.5）", "en": "Model name used for the query (optional; must match the submit-time model. Falls back to env AGNES_VIDEO_MODEL, then agnes-video-2.5)" }, "type": "string", "required": false },
-        { "name": "file_name", "description": { "zh": "自定义保存文件名（不含路径和扩展名，可选）", "en": "Custom output file name (without path or extension, optional)" }, "type": "string", "required": false }
+        { "name": "file_name", "description": { "zh": "自定义保存文件名（不含路径和扩展名，可选）", "en": "Custom output file name (without path and extension, optional)" }, "type": "string", "required": false }
       ]
+    },
+    {
+      "name": "prompt_guide",
+      "description": {
+        "zh": "返回视频提示词的推荐写法，按主体与场景、动作与变化、镜头语言、视觉风格、声音与节奏、一致性要求六个层次组织。调用 submit_video 之前可先执行本工具，以获得更稳定的结果。",
+        "en": "Return the recommended prompt writing guide for video generation, organised across six layers: subject and scene, action and change, camera language, visual style, sound and rhythm, and consistency requirements. Run this before submit_video for more stable results."
+      },
+      "parameters": []
     }
   ]
 }*/
@@ -560,11 +568,56 @@ const agnesVideo = (function () {
         }
     }
 
+    const PROMPT_GUIDE_STEPS = [
+        "主体与场景：明确人物、物体、环境和时间。",
+        "动作与变化：描述主体如何移动，以及场景如何变化。",
+        "镜头语言：指定推、拉、摇、移、跟拍、固定镜头或景别。",
+        "视觉风格：补充光线、色彩、材质、写实程度和氛围。",
+        "声音与节奏：需要时描述环境声、动作声或引用音频素材。",
+        "一致性要求：说明需要保持不变的主体外观、产品细节或构图。",
+    ];
+
+    function buildPromptGuide(): any {
+        const lines: string[] = [];
+        lines.push("为了获得更稳定的结果，建议按以下顺序描述提示词：");
+        PROMPT_GUIDE_STEPS.forEach((step, index) => {
+            lines.push(`${index + 1}. ${step}`);
+        });
+
+        return {
+            guide: lines.join("\n"),
+            steps: PROMPT_GUIDE_STEPS.map((step, index) => ({
+                order: index + 1,
+                text: step,
+            })),
+        };
+    }
+
+    async function prompt_guide_wrapper(_params: any) {
+        try {
+            const result = buildPromptGuide();
+            complete({
+                success: true,
+                message: result.guide,
+                data: result,
+            });
+        } catch (error: any) {
+            console.error("prompt_guide 执行失败:", error);
+            complete({
+                success: false,
+                message: `获取提示词写法失败: ${error?.message || error}`,
+                error_stack: error?.stack,
+            });
+        }
+    }
+
     return {
         submit_video: submit_video_wrapper,
         query_video: query_video_wrapper,
+        prompt_guide: prompt_guide_wrapper,
     };
 })();
 
 exports.submit_video = agnesVideo.submit_video;
 exports.query_video = agnesVideo.query_video;
+exports.prompt_guide = agnesVideo.prompt_guide;
