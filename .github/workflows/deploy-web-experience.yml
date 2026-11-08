@@ -83,6 +83,9 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
           targets: wasm32-unknown-unknown
 
+      - name: Prepare runtime plugin assets
+        run: python3 plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
+
       - name: Generate Dart proxy artifacts
         run: |
           cargo check --manifest-path core/crates/proxy/local/Cargo.toml --quiet
