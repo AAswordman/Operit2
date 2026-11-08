@@ -1,10 +1,15 @@
 #include "operit/arm64_runtime.h"
+#include "native_descriptor_budget.h"
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -14,13 +19,15 @@ void require(bool condition, const std::string &message) {
 }
 class Terminal {
   public:
-    explicit Terminal(const char *root) : vm_(nullptr, &ort_arm64_destroy) {
+    explicit Terminal(const char *root, const char *workspace = nullptr) : vm_(nullptr, &ort_arm64_destroy) {
         ort_arm64_config config{};
         config.root_directory = root;
         config.resident_memory_limit = uint64_t{256} << 20;
         config.enable_fixed_acceleration = 1;
         vm_.reset(ort_arm64_create(&config));
         require(bool(vm_), ort_arm64_last_error(nullptr));
+        if (workspace)
+            require(ort_arm64_bind(vm_.get(), workspace, "/ort-fd-budget", 0) == 0, error());
         const char *argv[] = {"/bin/sh", "-i", nullptr};
         const char *env[] = {"HOME=/root", "PATH=/usr/bin:/bin:/usr/sbin:/sbin", "TERM=xterm-256color",
                              "PS1=ORT> ", nullptr};
@@ -100,10 +107,41 @@ class Terminal {
     ort_arm64_result result_{};
     std::string output_;
 };
+void descriptor_budget(const char *root) {
+    struct Workspace {
+        std::string path;
+        Workspace() {
+            char pattern[] = "/tmp/operit-terminal-budget-XXXXXX";
+            auto *created = ::mkdtemp(pattern);
+            require(created, "mkdtemp");
+            path = created;
+        }
+        ~Workspace() { std::filesystem::remove_all(path); }
+    } workspace;
+    const std::string deep =
+        "/var/mobile/Containers/Data/Application/77122FF4-test/Library/Application Support/Operit/workspaces/default";
+    std::filesystem::create_directories(workspace.path + deep);
+    std::ofstream(workspace.path + deep + "/message") << "ok";
+    NativeDescriptorBudget budget(64);
+    Terminal terminal(root, workspace.path.c_str());
+    terminal.expect("ORT> ");
+    terminal.write("i=0; while [ \"$i\" -lt 20 ]; do cd '/ort-fd-budget" + deep +
+                   "' && /bin/busybox ls > /dev/null && /bin/busybox date > /dev/null && "
+                   "/bin/busybox cat message | /bin/busybox tr a-z A-Z || break; "
+                   "i=$((i+1)); done; printf '__FD_BUDGET_DONE_%s__\\n' \"$i\"\n");
+    terminal.expect("__FD_BUDGET_DONE_20__\r\n");
+    terminal.exit();
+    std::puts("public terminal API: deep cd, ls/date, pipelines and exit with 64 native FDs spare passed");
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
-        require(argc == 2, "Alpine root argument required");
+        require(argc == 2 || (argc == 3 && std::string(argv[2]) == "--descriptor-budget"),
+                "Alpine root argument required, optionally --descriptor-budget");
+        if (argc == 3) {
+            descriptor_budget(argv[1]);
+            return 0;
+        }
         Terminal terminal(argv[1]);
         terminal.expect("ORT> ");
         terminal.write("stty -echo\n");

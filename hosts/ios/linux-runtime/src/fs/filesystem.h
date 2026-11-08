@@ -10,7 +10,6 @@
 
 namespace operit::arm64 {
 struct DirectoryAnchor;
-struct MountAnchors;
 namespace path_resolution {
 constexpr uint64_t no_xdev = 0x01, no_magiclinks = 0x02, no_symlinks = 0x04;
 constexpr uint64_t beneath = 0x08, in_root = 0x10, cached = 0x20;
@@ -40,24 +39,17 @@ struct Path {
     void require_removable() const;
 };
 class Filesystem {
-    FD root_;
     std::shared_ptr<mounts::Namespace> namespace_ = std::make_shared<mounts::Namespace>();
     std::map<std::string, VirtualNode::Ptr> virtual_contexts_;
-    mutable std::shared_ptr<MountAnchors> mount_anchors_;
     VirtualNode::Ptr virtual_root(const mounts::Source &source) const;
     std::shared_ptr<mounts::Source> mount_source(const Path &path);
     std::shared_ptr<mounts::Point> add_mount(std::shared_ptr<mounts::Source> source,
-                                             const std::string &target, uint64_t parent,
-                                             const std::string &type, const std::string &label,
-                                             uint64_t flags);
+                                             const Path &target, const std::string &type,
+                                             const std::string &label, uint64_t flags);
 
   public:
     enum class ResolveIntent { Lookup, CreateDirectory, CreateFile, CreateExclusive };
     explicit Filesystem(const char *root);
-    Filesystem(const Filesystem &source);
-    Filesystem &operator=(const Filesystem &source);
-    Filesystem(Filesystem &&) noexcept = default;
-    Filesystem &operator=(Filesystem &&) noexcept = default;
     // External roots and directory/file bindings are used in place. Mounted file
     // inodes are pinned independently of the source pathname and open offsets.
     void bind(const std::string &source, const std::string &target, bool read_only);
@@ -84,8 +76,9 @@ class Filesystem {
     std::vector<uint8_t> read_file(const std::string &path, uint64_t limit);
 
   private:
-    void sync_mount_anchors() const;
-    void remember_mount_target(const Path &path) const;
+    void attach_mount(mounts::Point &point, const Path &path) const;
+    void rebase_mount_attachment(mounts::Point &point,
+                                 const std::shared_ptr<mounts::Point> &parent) const;
     std::shared_ptr<mounts::Point> anchored_child_mount(
         const std::shared_ptr<const DirectoryAnchor> &parent, const std::string &component) const;
     std::shared_ptr<mounts::Point> anchored_cover_mount(const std::shared_ptr<mounts::Point> &point) const;

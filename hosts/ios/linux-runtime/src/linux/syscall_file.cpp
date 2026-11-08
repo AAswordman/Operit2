@@ -38,6 +38,13 @@ void create_guest_directory(const Path &path, mode_t mode) {
     path.require_writable();
     check_host(::fchmod(directory.get(), mode));
 }
+std::shared_ptr<Path> pinned_cwd(Path directory) {
+    // The resolved '.' descriptor already pins cwd across rename/unlink. Lookup
+    // ancestry is only needed during resolution, not for the life of the shell.
+    directory.anchor.reset();
+    directory.scope_root.reset();
+    return std::make_shared<Path>(std::move(directory));
+}
 bool same_directory(const Path &first, const Path &second) {
     if (first.mount_id != second.mount_id || first.virtual_path != second.virtual_path)
         return false;
@@ -126,7 +133,7 @@ Path Syscalls::directory_path(uint64_t fd) {
         auto directory = std::atomic_load(&fs_context_->directory);
         if (!directory) {
             auto initial = filesystem_.resolve(fs_context_->cwd);
-            auto candidate = std::make_shared<Path>(filesystem_.resolve_at(".", initial));
+            auto candidate = pinned_cwd(filesystem_.resolve_at(".", initial));
             if (std::atomic_compare_exchange_strong(&fs_context_->directory, &directory, candidate))
                 directory = std::move(candidate);
         }
@@ -365,13 +372,13 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
         auto resolved = resolve_path(uint32_t(-100), memory_.string(a[0]));
         auto directory = filesystem_.resolve_at(".", resolved);
         fs_context_->cwd = directory.guest;
-        std::atomic_store(&fs_context_->directory, std::make_shared<Path>(std::move(directory)));
+        std::atomic_store(&fs_context_->directory, pinned_cwd(std::move(directory)));
         return 0;
     }
     case 50: { // fchdir also accepts an O_PATH directory descriptor.
         auto directory = directory_path(a[0]);
         fs_context_->cwd = directory.guest;
-        std::atomic_store(&fs_context_->directory, std::make_shared<Path>(std::move(directory)));
+        std::atomic_store(&fs_context_->directory, pinned_cwd(std::move(directory)));
         return 0;
     }
     case 56: // openat

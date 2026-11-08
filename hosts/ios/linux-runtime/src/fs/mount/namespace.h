@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+namespace operit::arm64 {
+struct MountAttachment;
+}
+
 namespace operit::arm64::mounts {
 constexpr uint64_t read_only = 1, no_suid = 2, no_devices = 4, no_execute = 8;
 constexpr uint64_t remount = 32, bind = 4096, recursive = 16384, silent = 32768;
@@ -28,6 +32,9 @@ struct Point {
     uint64_t id = 0, parent = 0, flags = 0;
     std::string target, type, label;
     std::shared_ptr<Source> source;
+    // The attachment is established at mount creation and shared with namespace
+    // copies. It pins only the actual parent directory, not a lookup history.
+    std::shared_ptr<const MountAttachment> attachment;
     bool read_only() const {
         return (flags & mounts::read_only) || source->locked_read_only;
     }

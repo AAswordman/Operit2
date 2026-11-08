@@ -422,6 +422,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         endif()
         add_runtime_test(operit-arm64-memory-code-validation-tests tests/memory_code_validation.cpp arm64-memory-code-validation)
         add_runtime_test(operit-arm64-filesystem-tests tests/filesystem.cpp arm64-filesystem)
+        add_runtime_test(operit-arm64-descriptor-budget-tests tests/descriptor_budget.cpp arm64-descriptor-budget)
         if(APPLE)
             add_test(NAME arm64-bind-sandbox
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bind_sandbox.py"
@@ -511,6 +512,9 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         if(OPERIT_ARM64_ROOTFS)
             add_test(NAME arm64-terminal COMMAND operit-arm64-terminal-tests "${OPERIT_ARM64_ROOTFS}")
             set_tests_properties(arm64-terminal PROPERTIES TIMEOUT 45)
+            add_test(NAME arm64-terminal-descriptor-budget
+                COMMAND operit-arm64-terminal-tests "${OPERIT_ARM64_ROOTFS}" --descriptor-budget)
+            set_tests_properties(arm64-terminal-descriptor-budget PROPERTIES TIMEOUT 45)
             if(APPLE)
                 add_test(NAME arm64-terminal-shell-sandbox
                     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_terminal_sandbox.py"

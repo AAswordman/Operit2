@@ -64,17 +64,19 @@ std::shared_ptr<mounts::Source> Filesystem::mount_source(const Path &path) {
     return pinned;
 }
 std::shared_ptr<mounts::Point> Filesystem::add_mount(std::shared_ptr<mounts::Source> source,
-                                                     const std::string &target, uint64_t parent,
-                                                     const std::string &type, const std::string &label,
-                                                     uint64_t flags) {
+                                                     const Path &target, const std::string &type,
+                                                     const std::string &label, uint64_t flags) {
     auto point = std::make_shared<mounts::Point>();
     point->id = namespace_->next_id;
-    point->parent = parent;
+    point->parent = target.mount_id;
     point->flags = flags;
-    point->target = target;
+    point->target = target.guest;
     point->type = type;
     point->label = label;
     point->source = std::move(source);
+    // Register the attachment while the resolved target is still alive. Normal
+    // lookups must not keep directory chains just in case a later mount needs one.
+    attach_mount(*point, target);
     namespace_->points.push_back(point);
     ++namespace_->next_id;
     return point;
@@ -116,7 +118,7 @@ void Filesystem::bind(const std::string &source, const std::string &target, bool
     if (present < 0 && errno != ENOENT)
         guest_error(linux_errno(errno));
     backing->locked_read_only = read_only;
-    add_mount(std::move(backing), destination.guest, destination.mount_id, "hostfs", "hostfs",
+    add_mount(std::move(backing), destination, "hostfs", "hostfs",
               read_only ? mounts::read_only : 0);
 }
 void Filesystem::mount_virtual(const std::string &target, VirtualNode::Ptr root) {
@@ -149,7 +151,7 @@ void Filesystem::mount_virtual(const std::string &target, VirtualNode::Ptr root)
                 backing->context = prefix;
                 backing->node = directory;
                 virtual_contexts_[prefix] = std::move(directory);
-                add_mount(std::move(backing), parent.guest, parent.mount_id, "virtualfs", "virtualfs", 0);
+                add_mount(std::move(backing), parent, "virtualfs", "virtualfs", 0);
                 namespace_->builtins[prefix] = prefix;
             }
         }
@@ -161,7 +163,7 @@ void Filesystem::mount_virtual(const std::string &target, VirtualNode::Ptr root)
     source->node = virtual_contexts_.at(target);
     source->directory = source->node->kind == VirtualNode::Kind::Directory;
     const std::string type = target == "/proc" ? "proc" : target == "/dev" ? "devfs" : "virtualfs";
-    add_mount(std::move(source), destination.guest, destination.mount_id, type, type, 0);
+    add_mount(std::move(source), destination, type, type, 0);
     namespace_->builtins[target] = target;
 }
 } // namespace operit::arm64

@@ -156,15 +156,18 @@ void Filesystem::mount(const std::string &source, const std::string &target, con
         bound->type = origin.mount ? origin.mount->type : "hostfs";
         bound->label = origin.guest;
         bound->source = std::move(backing);
+        attach_mount(*bound, destination);
         staged.push_back(bound);
         for (const auto &point : descendants) {
             auto child = std::make_shared<mounts::Point>(*point);
             child->id = next_id++;
-            child->parent = bound->id;
+            auto parent = bound;
             child->target = graft(destination.guest, relative(point->target, origin.guest));
             for (const auto &ancestor : staged)
                 if (below(child->target, ancestor->target))
-                    child->parent = ancestor->id;
+                    parent = ancestor;
+            child->parent = parent->id;
+            rebase_mount_attachment(*child, parent);
             staged.push_back(std::move(child));
         }
         namespace_->points.reserve(namespace_->points.size() + staged.size());
@@ -193,7 +196,7 @@ void Filesystem::mount(const std::string &source, const std::string &target, con
             virtual_contexts_[backing->context] = backing->node;
     } else
         guest_error(19);
-    add_mount(std::move(backing), destination.guest, destination.mount_id, filesystem_type,
+    add_mount(std::move(backing), destination, filesystem_type,
               source.empty() ? type : source, flags & attributes);
 }
 void Filesystem::unmount(const std::string &target, uint32_t flags, const std::string &base) {

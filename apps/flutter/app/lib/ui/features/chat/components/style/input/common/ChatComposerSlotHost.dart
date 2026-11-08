@@ -36,7 +36,6 @@ class ChatComposerSlotHost extends StatefulWidget {
 class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
   late Future<List<core_proxy.ToolPkgChatComposerSlot>> _slotsFuture =
       _loadSlots();
-  int _contentGeneration = 0;
 
   /// Starts listening for plugin hot-reload notifications.
   @override
@@ -45,15 +44,12 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
     PluginHotReload.revision.addListener(_reloadSlots);
   }
 
-  /// Refreshes slot content when the chat identity or processing state changes.
+  /// Reloads declarations only when the chat identity changes; live inputs update the session.
   @override
   void didUpdateWidget(covariant ChatComposerSlotHost oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.chatId != widget.chatId) {
       _slotsFuture = _loadSlots();
-    }
-    if (oldWidget.isProcessing != widget.isProcessing) {
-      _refreshSlotContent();
     }
   }
 
@@ -69,11 +65,6 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
     setState(() {
       _slotsFuture = _loadSlots();
     });
-  }
-
-  /// Recreates mounted composer content after chat processing changes.
-  void _refreshSlotContent() {
-    _contentGeneration++;
   }
 
   /// Reads host-composed slot declarations for the active chat surface.
@@ -106,7 +97,7 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
                     (contribution) => ToolPkgUiLauncherScreen(
                       key: ValueKey<String>(
                         '${widget.chatId}:${contribution.containerPackageName}:'
-                        '${contribution.contributionId}:$_contentGeneration',
+                        '${contribution.contributionId}',
                       ),
                       clients: widget.viewModel.clients,
                       plugin: contribution.containerRuntime,

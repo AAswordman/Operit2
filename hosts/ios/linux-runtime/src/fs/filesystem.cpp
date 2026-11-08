@@ -5,7 +5,6 @@
 #include <cerrno>
 #include <deque>
 #include <fcntl.h>
-#include <mutex>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -35,19 +34,11 @@ struct DirectoryAnchor {
         return mount_id;
     }
 };
-// Attachments retain the directory inode that was resolved before mount().
-// This keeps a mount on its actual parent when that directory is renamed.
-struct MountAnchors {
-    struct Location {
-        std::shared_ptr<const DirectoryAnchor> parent;
-        std::string component, guest;
-        uint64_t mount_id = 0;
-    };
-    std::mutex mutex;
-    std::weak_ptr<mounts::Namespace> space;
-    uint64_t next_id = 1;
-    std::map<uint64_t, Location> points;
-    std::deque<Location> recent;
+// A mount owns its attachment from creation until detach/destruction. Keeping
+// this on the mount removes the need to cache lookups or repair anchors later.
+struct MountAttachment {
+    std::shared_ptr<const DirectoryAnchor> parent;
+    std::string component;
 };
 namespace {
 FD duplicate(int fd) {
@@ -110,6 +101,19 @@ std::string parent_name(const std::string &path) {
 }
 std::string child_name(const std::string &parent, const std::string &name) {
     return (parent == "/" ? "/" : parent + "/") + name;
+}
+Anchor pin_mount_parent(const Anchor &directory, const std::shared_ptr<mounts::Point> &point,
+                        const std::string &guest) {
+    if (!directory)
+        return {};
+    auto pinned = std::make_shared<DirectoryAnchor>();
+    pinned->set_mount(point);
+    pinned->guest = guest;
+    pinned->node = directory->node;
+    pinned->virtual_components = directory->virtual_components;
+    if (directory->fd.get() >= 0)
+        pinned->fd = duplicate(directory->fd.get());
+    return pinned;
 }
 bool numeric_component(const std::string &value) {
     return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) {
@@ -271,28 +275,16 @@ void Path::require_removable() const {
         guest_error(16);
     require_writable();
 }
-Filesystem::Filesystem(const Filesystem &source)
-    : root_(duplicate(source.root_.get())), namespace_(source.namespace_),
-      virtual_contexts_(source.virtual_contexts_), mount_anchors_(source.mount_anchors_) {}
-Filesystem &Filesystem::operator=(const Filesystem &source) {
-    if (this != &source) {
-        Filesystem copy(source);
-        *this = std::move(copy);
-    }
-    return *this;
-}
-Filesystem::Filesystem(const char *root)
-    : root_(::open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC)),
-      mount_anchors_(std::make_shared<MountAnchors>()) {
-    if (root_.get() < 0)
+Filesystem::Filesystem(const char *root) {
+    FD directory(::open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    if (directory.get() < 0)
         throw Failure("cannot open guest root directory");
     namespace_->root = std::make_shared<mounts::Point>();
     namespace_->root->target = "/";
     namespace_->root->type = "hostfs";
     namespace_->root->label = "rootfs";
     namespace_->root->source = std::make_shared<mounts::Source>();
-    namespace_->root->source->root = duplicate(root_.get());
-    mount_anchors_->space = namespace_;
+    namespace_->root->source->root = std::move(directory);
 }
 VirtualNode::Ptr Filesystem::virtual_root(const mounts::Source &source) const {
     auto found = virtual_contexts_.find(source.context);
@@ -311,147 +303,55 @@ VirtualNode::Ptr Filesystem::virtual_root(const mounts::Source &source) const {
         guest_error(2);
     return root;
 }
-void Filesystem::sync_mount_anchors() const {
-    auto state = mount_anchors_;
-    std::unique_lock<std::mutex> lock(state->mutex);
-    if (state->space.lock() != namespace_) {
-        auto copy = std::make_shared<MountAnchors>();
-        copy->space = namespace_;
-        copy->next_id = state->next_id;
-        copy->points = state->points;
-        copy->recent = state->recent;
-        lock.unlock();
-        mount_anchors_ = std::move(copy);
-        state = mount_anchors_;
-        lock = std::unique_lock<std::mutex>(state->mutex);
+void Filesystem::attach_mount(mounts::Point &point, const Path &path) const {
+    if (path.mount_root) {
+        point.attachment = path.mount->attachment ? path.mount->attachment
+                                                  : std::make_shared<MountAttachment>();
+        return;
     }
-    for (const auto &point : namespace_->points) {
-        if (point->id < state->next_id && state->points.count(point->id))
-            continue;
-        for (auto it = state->recent.rbegin(); it != state->recent.rend(); ++it) {
-            if (it->guest == point->target && it->mount_id == point->parent) {
-                state->points.emplace(point->id, *it);
-                break;
-            }
-        }
-        if (state->points.count(point->id))
-            continue;
-        // A recursive bind creates descendant points without separate target
-        // lookups. Resolve their backing-tree coordinates from the parent
-        // mount's pinned source, not from the current spelling of its target.
-        auto parent_point = namespace_->root;
-        if (point->parent)
-            for (const auto &candidate : namespace_->points)
-                if (candidate->id == point->parent)
-                    parent_point = candidate;
-        if (parent_point->id != point->parent || !parent_point->source->directory)
-            continue;
-        const auto target_names = components(point->target);
-        const auto root_names = components(parent_point->target);
-        if (target_names.size() <= root_names.size() ||
-            !std::equal(root_names.begin(), root_names.end(), target_names.begin()))
-            continue;
-        try {
-            auto cursor = std::make_shared<DirectoryAnchor>();
-            cursor->set_mount(parent_point);
-            cursor->guest = parent_point->target;
-            if (!cursor->source->context.empty() || cursor->source->node) {
-                cursor->node = virtual_root(*cursor->source);
-                cursor->virtual_components = cursor->source->components;
-            } else
-                cursor->fd = duplicate(cursor->source->root.get());
-            for (size_t i = root_names.size(); i + 1 < target_names.size(); ++i) {
-                auto child = std::make_shared<DirectoryAnchor>();
-                child->set_mount(parent_point);
-                child->parent = cursor;
-                child->component = target_names[i];
-                child->guest = child_name(cursor->guest, target_names[i]);
-                if (cursor->node) {
-                    child->node = cursor->node->lookup ? cursor->node->lookup(target_names[i]) : nullptr;
-                    if (!child->node || child->node->kind != VirtualNode::Kind::Directory)
-                        guest_error(2);
-                    child->virtual_components = cursor->virtual_components;
-                    child->virtual_components.push_back(target_names[i]);
-                } else {
-                    child->fd = FD(::openat(cursor->fd.get(), target_names[i].c_str(), directory_flags()));
-                    check_host(child->fd.get());
-                }
-                cursor = std::move(child);
-            }
-            state->points.emplace(point->id, MountAnchors::Location{
-                cursor, target_names.back(), point->target, point->parent});
-        } catch (const GuestError &) {
-            // No unsafe pathname guess: a later lookup can retry revalidation.
-        }
-    }
-    state->next_id = namespace_->next_id;
-    for (auto it = state->points.begin(); it != state->points.end();) {
-        if (std::none_of(namespace_->points.begin(), namespace_->points.end(),
-                         [&](const auto &point) { return point->id == it->first; }))
-            it = state->points.erase(it);
-        else
-            ++it;
-    }
+    auto attachment = std::make_shared<MountAttachment>();
+    auto parent = path.name == "." ? as_directory(resolve_at("..", path)) : path.anchor;
+    attachment->component = point.target.substr(point.target.rfind('/') + 1);
+    attachment->parent = pin_mount_parent(parent, parent->point(), parent_name(point.target));
+    point.attachment = std::move(attachment);
 }
-void Filesystem::remember_mount_target(const Path &path) const {
-    MountAnchors::Location location;
-    location.parent = path.anchor;
-    location.component = path.name;
-    location.guest = path.guest;
-    location.mount_id = path.mount_id;
-    if (location.parent && (path.mount_root || path.name == ".")) {
-        location.component = location.parent->component;
-        location.parent = location.parent->parent;
-    }
-    std::lock_guard<std::mutex> lock(mount_anchors_->mutex);
-    mount_anchors_->recent.push_back(std::move(location));
-    // mount() resolves its target and, for bind mounts, its source. Keeping the
-    // immediately preceding lookups pins a new attachment before it is observed.
-    while (mount_anchors_->recent.size() > 4)
-        mount_anchors_->recent.pop_front();
+void Filesystem::rebase_mount_attachment(mounts::Point &point,
+                                        const std::shared_ptr<mounts::Point> &parent) const {
+    auto attachment = std::make_shared<MountAttachment>(*point.attachment);
+    attachment->parent = pin_mount_parent(attachment->parent, parent, parent_name(point.target));
+    point.attachment = std::move(attachment);
 }
 std::shared_ptr<mounts::Point> Filesystem::anchored_child_mount(
     const std::shared_ptr<const DirectoryAnchor> &parent, const std::string &component) const {
-    std::lock_guard<std::mutex> lock(mount_anchors_->mutex);
     for (auto it = namespace_->points.rbegin(); it != namespace_->points.rend(); ++it) {
         const auto &point = *it;
         if (point->parent != parent->id())
             continue;
-        auto saved = mount_anchors_->points.find(point->id);
-        if (saved != mount_anchors_->points.end()) {
-            const auto &where = saved->second;
-            if (!where.parent || where.component != component || where.parent->id() != parent->id())
-                continue;
-            const bool same = parent->node ? same_virtual_node(parent->node, where.parent->node)
-                : !where.parent->node && same_directory(parent->fd.get(), where.parent->fd.get());
-            if (same)
-                return point;
-        } else if (point->target == child_name(parent->guest, component))
-            guest_error(11);
+        const auto &where = *point->attachment;
+        if (!where.parent || where.component != component || where.parent->id() != parent->id())
+            continue;
+        const bool same = parent->node ? same_virtual_node(parent->node, where.parent->node)
+            : !where.parent->node && same_directory(parent->fd.get(), where.parent->fd.get());
+        if (same)
+            return point;
     }
     return {};
 }
 std::shared_ptr<mounts::Point> Filesystem::anchored_cover_mount(
     const std::shared_ptr<mounts::Point> &point) const {
-    std::lock_guard<std::mutex> lock(mount_anchors_->mutex);
-    const auto covered = mount_anchors_->points.find(point->id);
+    const auto &covered = *point->attachment;
     for (auto it = namespace_->points.rbegin(); it != namespace_->points.rend(); ++it) {
         const auto &candidate = *it;
         if (candidate->parent != point->id)
             continue;
-        const auto overlay = mount_anchors_->points.find(candidate->id);
-        if (covered != mount_anchors_->points.end() && overlay != mount_anchors_->points.end()) {
-            const auto &first = covered->second;
-            const auto &second = overlay->second;
-            if (first.component != second.component || !first.parent || !second.parent ||
-                first.parent->id() != second.parent->id())
-                continue;
-            const bool same = first.parent->node ? same_virtual_node(first.parent->node, second.parent->node)
-                : !second.parent->node && same_directory(first.parent->fd.get(), second.parent->fd.get());
-            if (same)
-                return candidate;
-        } else if (candidate->target == point->target)
-            guest_error(11);
+        const auto &overlay = *candidate->attachment;
+        if (covered.component != overlay.component || !covered.parent || !overlay.parent ||
+            covered.parent->id() != overlay.parent->id())
+            continue;
+        const bool same = covered.parent->node ? same_virtual_node(covered.parent->node, overlay.parent->node)
+            : !overlay.parent->node && same_directory(covered.parent->fd.get(), overlay.parent->fd.get());
+        if (same)
+            return candidate;
     }
     return {};
 }
@@ -467,7 +367,6 @@ Path Filesystem::root_path() const {
 }
 Path Filesystem::resolve(const std::string &path, const std::string &base, bool follow_final,
                          ResolveIntent intent) const {
-    sync_mount_anchors();
     if (path.empty())
         guest_error(2);
     if (path.size() >= max_path || base.size() >= max_path)
@@ -536,7 +435,6 @@ Path Filesystem::directory_anchor(int descriptor, const std::string &guest,
 }
 Path Filesystem::resolve_at(const std::string &path, const Path &directory, uint64_t constraints,
                             bool follow_final, ResolveIntent intent) const {
-    sync_mount_anchors();
     if (constraints & ~path_resolution::known ||
         (constraints & path_resolution::beneath && constraints & path_resolution::in_root))
         guest_error(22);
@@ -588,14 +486,14 @@ Path Filesystem::resolve_anchored(const std::string &path, const Path &base, uin
         result.virtual_components = std::move(virtual_components);
         result.anchor = parent;
         result.scope_root = boundary;
-        remember_mount_target(result);
         return result;
     };
     auto mount_directory = [&](const std::shared_ptr<mounts::Point> &point,
                                const Anchor &parent, const std::string &name, const std::string &guest) {
         auto result = std::make_shared<DirectoryAnchor>();
         result->set_mount(point);
-        result->parent = parent;
+        if (scoped)
+            result->parent = parent;
         result->component = name;
         result->guest = guest;
         result->entered_mount = true;
@@ -643,13 +541,7 @@ Path Filesystem::resolve_anchored(const std::string &path, const Path &base, uin
                 return;
             if (no_xdev)
                 guest_error(18);
-            Anchor attachment;
-            {
-                std::lock_guard<std::mutex> lock(mount_anchors_->mutex);
-                const auto found = mount_anchors_->points.find(point->id);
-                if (found != mount_anchors_->points.end())
-                    attachment = found->second.parent;
-            }
+            const auto attachment = point->attachment ? point->attachment->parent : Anchor{};
             if (attachment) {
                 std::shared_ptr<mounts::Point> parent_point = namespace_->root;
                 for (const auto &active : namespace_->points)
@@ -658,7 +550,7 @@ Path Filesystem::resolve_anchored(const std::string &path, const Path &base, uin
                 directory = as_directory(directory_anchor(attachment->fd.get(), attachment->guest,
                     parent_point, attachment->node, attachment->virtual_components));
             } else
-                directory = as_directory(resolve(parent_name(point->target)));
+                guest_error(11);
             return;
         }
         auto parent = std::make_shared<DirectoryAnchor>();
@@ -812,7 +704,10 @@ Path Filesystem::resolve_anchored(const std::string &path, const Path &base, uin
         }
         auto child = std::make_shared<DirectoryAnchor>();
         child->set_mount(directory->point());
-        child->parent = directory;
+        // Ordinary walks need only the current directory. Scoped openat2
+        // keeps ancestry to revalidate every edge against rename/escape races.
+        if (scoped)
+            child->parent = directory;
         child->component = component;
         child->guest = guest;
         if (node) {

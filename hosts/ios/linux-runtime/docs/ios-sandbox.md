@@ -28,6 +28,35 @@ modem controls are not fully emulated. Poll/epoll hangup behavior for guest PTY
 masters that outlive their last slave also needs further compatibility work.
 The public console API reports drained output as EIO after the last slave closes.
 
+## Native descriptor lifetime
+
+A later report showed `cd: ... No file descriptors available`. With 64 native
+FD slots spare, the simulator reproduced the same `cd` failure and exit code 2.
+The filesystem retained four complete lookup histories, cwd retained another
+history, and filesystem copies duplicated an otherwise unused root FD.
+
+Ordinary path walks now release each previous directory as they advance.
+BENEATH/IN_ROOT walks retain the ancestry required for race revalidation.
+Each mount directly owns its compact attachment from creation, including
+recursive bind copies; the old lookup cache and anchor synchronization/recovery
+machinery have been removed. Cwd owns its leaf descriptor, and the namespace's
+root source owns the root descriptor.
+
+`arm64-descriptor-budget` reads a file 120 directories deep with eight native
+FD slots spare, then checks repeated cwd/file operations, renamed attachments,
+recursive binds, namespace copies and detach. `arm64-terminal-descriptor-budget`
+runs shell cd and BusyBox list/date/pipelines in a deep workspace with 64 slots spare.
+The same lookup probe's sampled open-FD count fell from 55 to 7.
+
+The final source passed 51/51 host CTest cases and both iOS arm64 library builds.
+Native and permission-denied software terminal modes each passed five simulator
+create/close cycles and 50 command sequences with 64 slots spare, returning to
+8–9 open host descriptors after close. Coreutils commands, which load additional
+shared libraries in this rootfs, passed with a separate 128-slot budget. These
+injected limits are targeted resource-pressure tests, not affected-device logs.
+Evidence is retained under
+`$CODEX_HOME/visualizations/2026/11/07/01a1b5e9-91d2-7e33-90b8-39c112696f0c/ios-terminal-diagnostic/fd-2026-11-08/`.
+
 ## Verification
 
 - `arm64-terminal-discipline`: canonical/raw bytes, line boundaries, editing,

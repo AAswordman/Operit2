@@ -3,7 +3,7 @@
 
 use crate::BridgeCodec::*;
 use crate::BridgeExports;
-use crate::BridgeTransport::{BridgeStreams, StreamAction, StreamReply, WATCH_BATCH_CAPACITY};
+use crate::BridgeTransport::{BridgeStreams, StreamAction, StreamSubmission, WATCH_BATCH_CAPACITY};
 use crate::OperitFlutterBridge;
 use futures_util::FutureExt;
 use operit_host_native_common::DartPort::{DartPort, PostCObject};
@@ -161,12 +161,7 @@ impl FfiSession {
                             match stream {
                                 Some(reply) => {
                                     let result = match reply {
-                                        Ok(reply) => reply.await.map_err(|_| {
-                                            CoreLinkError::new(
-                                                "STREAM_CLOSED",
-                                                "Connection stream owner stopped",
-                                            )
-                                        })?,
+                                        Ok(reply) => reply.await,
                                         Err(error) => Err(error),
                                     };
                                     Ok(NativeFrame::result(0, request, result))
@@ -211,7 +206,7 @@ impl FfiSession {
         request: i64,
         bytes: &[u8],
         buffers: Arc<[operit_link::CoreBytes]>,
-    ) -> Result<StreamReply, CoreLinkError> {
+    ) -> Result<StreamSubmission, CoreLinkError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(CoreLinkError::new("FFI_CLOSED", "FFI connection is closed"));
         }
@@ -236,10 +231,11 @@ impl FfiSession {
                 "Unknown stream operation",
             )),
         })?;
-        self.streams
+        Ok(self
+            .streams
             .get()
             .expect("FFI stream session must be attached")
-            .submit(action)
+            .enqueue(action))
     }
 
     /// Executes independent calls and snapshots without blocking the stream owner's mailbox.

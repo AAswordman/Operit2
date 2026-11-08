@@ -363,3 +363,112 @@ async fn bounded_ingress_and_shutdown_release_queued_operations() {
         "STREAM_CLOSED"
     );
 }
+
+/// Native bursts wait outside the bounded mailbox even if reply tasks are polled backwards.
+#[tokio::test]
+async fn native_ingress_waits_for_capacity_without_failing_the_session() {
+    let (client, _events, owner) = BridgeStreams::channel(Arc::new(TestCore::default()));
+    let mut fillers = Vec::new();
+    for index in 0..COMMAND_CAPACITY {
+        fillers.push(
+            client
+                .submit(StreamAction::CloseWatch {
+                    id: index.to_string(),
+                    tag: 1,
+                })
+                .unwrap(),
+        );
+    }
+    let replies = (0..COMMAND_CAPACITY * 16)
+        .map(|index| {
+            client.enqueue(StreamAction::CloseWatch {
+                id: index.to_string(),
+                tag: 1,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut replies = Box::pin(futures_util::future::join_all(replies.into_iter().rev()));
+    assert!(replies.as_mut().now_or_never().is_none());
+    assert_eq!(owner.commands.len(), COMMAND_CAPACITY);
+    drive(owner, async {
+        for reply in replies.await {
+            assert!(reply.unwrap().is_none());
+        }
+        for reply in fillers {
+            reply.await.unwrap().unwrap();
+        }
+        client.close();
+    })
+    .await;
+}
+
+/// Waiting for admission, rather than Core completion, preserves open/close order and cancellation.
+#[tokio::test]
+async fn native_queued_close_cancels_a_pending_open_in_submission_order() {
+    let core = Arc::new(TestCore::default());
+    let _source = core.watch_source("pending");
+    let (client, _events, owner) = BridgeStreams::channel(core);
+    let mut fillers = Vec::new();
+    for index in 0..COMMAND_CAPACITY {
+        fillers.push(
+            client
+                .submit(StreamAction::CloseWatch {
+                    id: index.to_string(),
+                    tag: 1,
+                })
+                .unwrap(),
+        );
+    }
+    let opening = client.enqueue(open_watch("watch", "pending", 7));
+    let closing = client.enqueue(StreamAction::CloseWatch {
+        id: "watch".into(),
+        tag: 7,
+    });
+    drive(owner, async {
+        // The close reply task may run before the open reply task on the Host pool.
+        let (closed, opened) = tokio::join!(closing, opening);
+        closed.unwrap();
+        assert_eq!(opened.unwrap_err().code, "WATCH_CLOSED");
+        for reply in fillers {
+            reply.await.unwrap().unwrap();
+        }
+        client.close();
+    })
+    .await;
+}
+
+/// Shutdown settles deferred admission as well as already admitted requests.
+#[tokio::test]
+async fn native_shutdown_releases_commands_waiting_for_capacity() {
+    let (client, _events, owner) = BridgeStreams::channel(Arc::new(TestCore::default()));
+    let mut fillers = Vec::new();
+    for index in 0..COMMAND_CAPACITY {
+        fillers.push(
+            client
+                .submit(StreamAction::CloseWatch {
+                    id: index.to_string(),
+                    tag: 1,
+                })
+                .unwrap(),
+        );
+    }
+    let replies = (0..2)
+        .map(|index| {
+            client.enqueue(StreamAction::CloseWatch {
+                id: index.to_string(),
+                tag: 1,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut replies = Box::pin(futures_util::future::join_all(replies));
+    assert!(replies.as_mut().now_or_never().is_none());
+    assert_eq!(owner.commands.len(), COMMAND_CAPACITY);
+    client.close();
+    owner.run().await;
+    for reply in replies.await {
+        assert_eq!(reply.unwrap_err().code, "STREAM_CLOSED");
+    }
+    for reply in fillers {
+        assert!(reply.await.is_err());
+    }
+}
