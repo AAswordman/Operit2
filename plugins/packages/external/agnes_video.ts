@@ -22,8 +22,8 @@
     {
       "name": "AGNES_BASE_URL",
       "description": {
-        "zh": "Agnes API Base URL（可选，默认 https://api.agnes-ai.cn/v1）",
-        "en": "Agnes API base URL (optional; defaults to https://api.agnes-ai.cn/v1)"
+        "zh": "Agnes API Base URL（可选，默认国际站 https://apihub.agnes-ai.com/v1；中国站请填 https://api.agnes-ai.cn/v1）",
+        "en": "Agnes API base URL (optional; defaults to the international site https://apihub.agnes-ai.com/v1. Use https://api.agnes-ai.cn/v1 for the China site)"
       },
       "required": false
     },
@@ -89,7 +89,7 @@ const agnesVideo = (function () {
         .writeTimeout(HTTP_TIMEOUT_MS)
         .build();
 
-    const DEFAULT_BASE_URL = "https://api.agnes-ai.cn/v1";
+    const DEFAULT_BASE_URL = "https://apihub.agnes-ai.com/v1";
     const DEFAULT_MODEL = "agnes-video-2.5";
     const FLASH_MODEL = "agnes-video-2.5-flash";
     const SUPPORTED_MODELS = [DEFAULT_MODEL, FLASH_MODEL];
