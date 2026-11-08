@@ -431,6 +431,7 @@ impl ConversationService {
         progress: Option<SummaryProgressCallback>,
     ) -> Result<String, AiServiceError> {
         let useEnglish = false;
+        let previousSummary = previousSummary.map(|summary| ChatMarkupRegex::remove_meta_tags(&summary));
         let mut systemPrompt =
             FunctionalPrompts::buildSummarySystemPrompt(previousSummary.as_deref(), useEnglish);
         let modelParameters =
@@ -441,7 +442,7 @@ impl ConversationService {
             let service = summaryService.lock().await;
             service.provider_model()
         };
-        let mut summaryHistory = stripGeminiThoughtSignatureMetaTurns(messages);
+        let mut summaryHistory = stripSummaryMetaTurns(messages);
         let mut summaryPrompt = FunctionalPrompts::summaryUserMessage(useEnglish).to_string();
         let executionContext = ToolExecutionManager::currentToolRuntimeContext();
         let summaryChatId = executionContext.as_ref().and_then(|context| context.callerChatId.clone());
@@ -534,6 +535,7 @@ impl ConversationService {
             )
         };
 
+        preparedHistory = stripSummaryMetaTurns(preparedHistory);
         if let Some(callback) = &progress { callback("summary_preparing"); }
         let mut summaryStream = {
             let mut service = summaryService.lock().await;
@@ -552,60 +554,9 @@ impl ConversationService {
                 .await?
         };
         let mut content = String::new();
-        let mut stage = 0;
-        summaryStream.collect(&mut |chunk| {
-            content.push_str(&chunk);
-            let next = summaryProgressStage(&content);
-            if next > stage {
-                stage = next;
-                if let Some(callback) = &progress { callback(SUMMARY_STAGES[stage - 1].2); }
-            }
-        }).await;
+        summaryStream.collect(&mut |chunk| content.push_str(&chunk)).await;
         crate::chat::llmprovider::AIService::ensure_response_completed(summaryStream.as_ref())?;
-        let mut summaryContent = removeThinkingContent(content.trim());
-        if !summaryContent.trim().is_empty() && !checkpointTemplateMatches(&summaryContent) {
-            if let Some(callback) = &progress { callback("summary_formatting"); }
-            let nudgeTurn = PromptTurn::new(
-                PromptTurnKind::USER,
-                FunctionalPrompts::boundaryNudge(useEnglish).to_string(),
-            );
-            let nudgedHistory = {
-                let mut history = preparedHistory.clone();
-                let nudge = nudgeTurn.clone();
-                history.push(PromptTurn {
-                    kind: PromptTurnKind::ASSISTANT,
-                    content: summaryContent.clone(),
-                    tool_name: None,
-                    metadata: HashMap::new(),
-                });
-                history.push(nudge);
-                history
-            };
-            let nudgeStream = {
-                let mut service = summaryService.lock().await;
-                service
-                    .send_message(SendMessageRequest {
-                        chat_history: nudgedHistory,
-                        model_parameters: Vec::new(),
-                        thinking: RequestThinking::default(),
-                        stream: true,
-                        available_tools: Vec::new(),
-                        preserve_think_in_history: false,
-                        enable_retry: true,
-                        on_non_fatal_error: None,
-                        on_tool_invocation: None,
-                    })
-                    .await
-            };
-            if let Ok(mut nudgeStream) = nudgeStream {
-                let mut nudgeChunks = Vec::new();
-                nudgeStream.collect(&mut |chunk| nudgeChunks.push(chunk)).await;
-                let nudgedContent = removeThinkingContent(&nudgeChunks.join("").trim().to_string());
-                if crate::chat::llmprovider::AIService::ensure_response_completed(nudgeStream.as_ref()).is_ok() {
-                    summaryContent = selectSummaryAfterNudge(summaryContent, nudgedContent);
-                }
-            }
-        }
+        let mut summaryContent = ChatMarkupRegex::remove_meta_tags(&removeThinkingContent(content.trim()));
         let (summaryInputTokens, summaryCachedInputTokens, summaryOutputTokens) = {
             let service = summaryService.lock().await;
             (
@@ -647,6 +598,7 @@ impl ConversationService {
         summaryContent = afterGenerateContext.summary_result.expect(
             "SummaryHookContext.summary_result must be present after after_generate_summary",
         );
+        summaryContent = ChatMarkupRegex::remove_meta_tags(&summaryContent);
         validateSummaryContent(&summaryContent)?;
         self.runtime_context
             .support()
@@ -919,61 +871,6 @@ fn buildSummaryPreparedHistory(
     prepared
 }
 
-/// Reports whether one summary reply carries the required checkpoint template:
-/// the checkpoint title line plus every bracketed section heading.
-fn checkpointTemplateMatches(reply: &str) -> bool {
-    let title = if reply.contains("==========对话检查点==========") {
-        true
-    } else {
-        reply.contains("==========Conversation Checkpoint==========")
-    };
-    if !title {
-        return false;
-    }
-    let cn_sections = [
-        "【核心任务状态】",
-        "【用户消息与约束】",
-        "【关键文件与代码】",
-        "【错误与修复】",
-        "【互动情节与设定】",
-        "【下一步】",
-    ];
-    let en_sections = [
-        "[Core Task Status]",
-        "[User Messages & Constraints]",
-        "[Key Files & Code]",
-        "[Errors & Fixes]",
-        "[Interaction & Scenario]",
-        "[Next Move]",
-    ];
-    let all_cn = cn_sections.iter().all(|section| reply.contains(section));
-    let all_en = en_sections.iter().all(|section| reply.contains(section));
-    all_cn || all_en
-}
-
-const SUMMARY_STAGES: [(&str, &str, &str); 6] = [
-    ("【核心任务状态】", "[Core Task Status]", "summary_core_task"),
-    ("【用户消息与约束】", "[User Messages & Constraints]", "summary_user_constraints"),
-    ("【关键文件与代码】", "[Key Files & Code]", "summary_key_files"),
-    ("【错误与修复】", "[Errors & Fixes]", "summary_errors"),
-    ("【互动情节与设定】", "[Interaction & Scenario]", "summary_interaction"),
-    ("【下一步】", "[Next Move]", "summary_next_steps"),
-];
-
-fn summaryProgressStage(content: &str) -> usize {
-    SUMMARY_STAGES.iter().rposition(|(cn, en, _)| content.contains(cn) || content.contains(en))
-        .map_or(0, |index| index + 1)
-}
-
-#[allow(non_snake_case)]
-fn selectSummaryAfterNudge(original: String, nudged: String) -> String {
-    if checkpointTemplateMatches(&nudged) {
-        nudged
-    } else {
-        original
-    }
-}
-
 #[allow(non_snake_case)]
 fn validateSummaryContent(summary: &str) -> Result<(), AiServiceError> {
     if summary.trim().is_empty() {
@@ -1019,8 +916,14 @@ fn serializeSummaryHookModelParameters(
 }
 
 #[allow(non_snake_case)]
-fn stripGeminiThoughtSignatureMetaTurns(messages: Vec<PromptTurn>) -> Vec<PromptTurn> {
+fn stripSummaryMetaTurns(messages: Vec<PromptTurn>) -> Vec<PromptTurn> {
     messages
+        .into_iter()
+        .map(|mut turn| {
+            turn.content = ChatMarkupRegex::remove_meta_tags(&turn.content);
+            turn
+        })
+        .collect()
 }
 
 #[allow(non_snake_case)]
@@ -1109,48 +1012,46 @@ fn build_media_intent_prompt(media_type: &str, path: &str, user_intent: Option<&
 }
 
 #[cfg(test)]
-mod summary_checkpoint_tests {
+mod summary_tests {
     use super::*;
 
-    const CN_CHECKPOINT: &str = "==========对话检查点==========\n【核心任务状态】\n任务\n【用户消息与约束】\n要求\n【关键文件与代码】\n无\n【错误与修复】\n无\n【互动情节与设定】\n无\n【下一步】\n继续";
-    const EN_CHECKPOINT: &str = "==========Conversation Checkpoint==========\n[Core Task Status]\nTask\n[User Messages & Constraints]\nRequest\n[Key Files & Code]\nNone\n[Errors & Fixes]\nNone\n[Interaction & Scenario]\nNone\n[Next Move]\nContinue";
-
     #[test]
-    fn accepts_both_checkpoint_templates() {
-        assert!(checkpointTemplateMatches(CN_CHECKPOINT));
-        assert!(checkpointTemplateMatches(EN_CHECKPOINT));
-    }
-
-    #[test]
-    fn progress_detects_split_and_skipped_sections_in_both_languages() {
-        let mut output = String::from("【核心任务");
-        assert_eq!(summaryProgressStage(&output), 0);
-        output.push_str("状态】\n内容\n【下一步】");
-        assert_eq!(summaryProgressStage(&output), 6);
-        assert_eq!(summaryProgressStage("[Key Files & Code]"), 3);
-    }
-
-    #[test]
-    fn keeps_original_summary_when_nudge_is_incomplete_or_empty() {
-        let original = "## 任务状态\n保留的重要上下文";
-        for nudge in ["", "【核心任务状态】\n简短内容"] {
-            assert_eq!(selectSummaryAfterNudge(original.into(), nudge.into()), original);
+    fn missing_template_does_not_reject_nonempty_summary() {
+        for summary in [
+            "A short conversation summary.",
+            "## 进展\n已完成检查，等待用户选择。",
+            "Custom summary from a plugin",
+        ] {
+            assert!(validateSummaryContent(summary).is_ok());
         }
-        assert!(validateSummaryContent(original).is_ok());
-    }
-
-    #[test]
-    fn prefers_a_complete_nudged_checkpoint() {
-        assert_eq!(
-            selectSummaryAfterNudge("original".into(), CN_CHECKPOINT.into()),
-            CN_CHECKPOINT
-        );
-    }
-
-    #[test]
-    fn accepts_custom_hook_output_but_rejects_empty_summary() {
-        assert!(validateSummaryContent("Custom summary from a plugin").is_ok());
         assert!(validateSummaryContent(" \n\t").is_err());
+    }
+
+    #[test]
+    fn summary_prompt_inherits_previous_summary_in_both_languages() {
+        for use_english in [false, true] {
+            let previous = "Important context from the previous conversation.";
+            let prompt = FunctionalPrompts::buildSummarySystemPrompt(Some(previous), use_english);
+            assert!(prompt.starts_with(FunctionalPrompts::summaryPrompt(use_english)));
+            assert_eq!(prompt.matches(previous).count(), 1);
+            assert_eq!(
+                FunctionalPrompts::buildSummarySystemPrompt(Some(" \n"), use_english),
+                FunctionalPrompts::summaryPrompt(use_english)
+            );
+        }
+    }
+
+    #[test]
+    fn removes_protocol_meta_without_changing_turn_identity() {
+        let mut turn = PromptTurn::new(
+            PromptTurnKind::ASSISTANT,
+            r#"before<meta provider="openai:reasoning">SECRET</meta>after"#,
+        );
+        turn.metadata.insert("author".to_string(), json!("participant"));
+        let cleaned = stripSummaryMetaTurns(vec![turn.clone()]);
+        assert_eq!(cleaned[0].content, "before after");
+        assert_eq!(cleaned[0].kind, turn.kind);
+        assert_eq!(cleaned[0].metadata, turn.metadata);
     }
 }
 

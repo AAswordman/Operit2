@@ -1002,24 +1002,24 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Loads messages used when inserting or refreshing conversation summaries.
+    /// Loads visible messages after the latest summary within the insertion target range.
     pub fn loadMessagesForSummaryInsertion(
         &self,
         chatId: String,
         beforeTimestampExclusive: Option<i64>,
         upToTimestampInclusive: Option<i64>,
     ) -> Vec<ChatMessage> {
-        self.getRuntimeChatHistory(chatId)
+        self.chatHistoryManager
+            .loadMessagesAfterLatestSummaryInRange(
+                chatId,
+                beforeTimestampExclusive,
+                upToTimestampInclusive,
+            )
+            .expect("ChatHistoryManager.loadMessagesAfterLatestSummaryInRange must succeed")
             .into_iter()
             .filter(|message| {
-                beforeTimestampExclusive
-                    .map(|ts| message.timestamp < ts)
-                    .unwrap_or(true)
-            })
-            .filter(|message| {
-                upToTimestampInclusive
-                    .map(|ts| message.timestamp <= ts)
-                    .unwrap_or(true)
+                message.displayMode
+                    != operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode::HIDDEN_PLACEHOLDER
             })
             .collect()
     }

@@ -29,6 +29,7 @@ use operit_util::stream::RevisableTextStream::with_event_channel_shared;
 use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 use operit_util::MediaPoolManager::MediaPoolManager;
@@ -1231,7 +1232,7 @@ fn cleanSummarySourceMessage(message: &ChatMessage) -> String {
     } else {
         message.displayText()
     };
-    let mut cleaned = strip_tag_blocks(&source, "memory");
+    let mut cleaned = strip_tag_blocks(&ChatMarkupRegex::remove_meta_tags(&source), "memory");
     if message.sender == "ai" {
         cleaned = remove_thinking_content(&cleaned);
     }
@@ -1253,7 +1254,10 @@ fn summarySpeakerLabel(message: &ChatMessage) -> String {
 fn condenseUserForReview(text: &str) -> String {
     let pruned = strip_tag_blocks(
         &strip_tag_blocks(
-            &strip_tag_blocks(text, "workspace_attachment"),
+            &strip_tag_blocks(
+                &ChatMarkupRegex::remove_meta_tags(text),
+                "workspace_attachment",
+            ),
             "attachment",
         ),
         "reply_to",
@@ -1266,10 +1270,11 @@ fn condenseUserForReview(text: &str) -> String {
 fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
     let mut segments = Vec::<String>::new();
     for part in MessagePartCodec::orderedParts(&message.parts) {
+        let content = ChatMarkupRegex::remove_meta_tags(&part.content);
         let segment = match part.kind {
             MessagePartKind::Markdown | MessagePartKind::Status => {
                 let cleaned = strip_xml_tags(&strip_media_links(&strip_tag_blocks(
-                    &part.content,
+                    &content,
                     "memory",
                 )));
                 let condensed = condense_head_tail(&cleaned, 120, 48);
@@ -1289,7 +1294,11 @@ fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
                         format!(
                             "{}={}",
                             name,
-                            condense_head_tail(&strip_xml_tags(value), 72, 32)
+                            condense_head_tail(
+                                &strip_xml_tags(&ChatMarkupRegex::remove_meta_tags(value)),
+                                72,
+                                32,
+                            )
                         )
                     })
                     .collect::<Vec<_>>();
@@ -1314,7 +1323,7 @@ fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
                         _ => value.as_str(),
                     })
                     .unwrap_or("");
-                let result = condense_head_tail(&strip_xml_tags(&part.content), 140, 56);
+                let result = condense_head_tail(&strip_xml_tags(&content), 140, 56);
                 let status_text = if status.is_empty() {
                     String::new()
                 } else {
@@ -1681,6 +1690,52 @@ mod tests {
             .starts_with("<tool_result name=\"switch_core\""));
         assert_eq!(turns[2].tool_name.as_deref(), Some("switch_core"));
         assert_eq!(turns[3].content, "after");
+    }
+
+    #[test]
+    fn summary_source_and_review_remove_meta_payloads_before_truncation() {
+        let payload = "SECRET".repeat(100);
+        let text = format!("前文<meta provider=\"openai:reasoning\">{payload}</meta>后文");
+        let assistant = ChatMessage::new_with_markdown("ai".to_string(), text.clone());
+        let user = ChatMessage::new_with_markdown("user".to_string(), text.clone());
+        assert_eq!(cleanSummarySourceMessage(&assistant), "前文 后文");
+        assert_eq!(cleanSummarySourceMessage(&user), "前文 后文");
+        assert_eq!(condenseAssistantMessageForReview(&assistant), "前文 后文");
+        assert_eq!(condenseUserForReview(&text), "前文 后文");
+        assert!(assistant.displayText().contains(&payload));
+    }
+
+    #[test]
+    fn summary_review_removes_meta_in_tool_parameters_and_results() {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "query".to_string(),
+            "before<meta>SECRET_PARAM</meta>after".to_string(),
+        );
+        let message = ChatMessage::new_with_parts(
+            "ai".to_string(),
+            vec![
+                MessagePart::toolCall(
+                    "call".to_string(),
+                    0,
+                    "tool".to_string(),
+                    "search".to_string(),
+                    params,
+                ),
+                MessagePart::toolResult(
+                    "result".to_string(),
+                    1,
+                    Some("call".to_string()),
+                    "search".to_string(),
+                    "success".to_string(),
+                    "answer<meta>SECRET_RESULT</meta>done".to_string(),
+                ),
+            ],
+        );
+        let review = condenseAssistantMessageForReview(&message);
+        assert!(review.contains("query=before after"));
+        assert!(review.contains("answer done"));
+        assert!(!review.contains("SECRET"));
     }
 
     /// Verifies summary review condenses structured tool results instead of dumping payloads.

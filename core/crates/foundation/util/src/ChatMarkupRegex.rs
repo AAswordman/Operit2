@@ -142,6 +142,19 @@ impl ChatMarkupRegex {
         last
     }
 
+    /// Removes hidden protocol metadata, including its payload, from summary text.
+    pub fn remove_meta_tags(content: &str) -> String {
+        let mut output = String::new();
+        let mut cursor = 0;
+        for (start, end) in tag_ranges(content, "meta") {
+            output.push_str(&content[cursor..start]);
+            output.push(' ');
+            cursor = end;
+        }
+        output.push_str(&content[cursor..]);
+        output
+    }
+
     /// Removes Gemini thought-signature metadata tags from content.
     pub fn remove_gemini_thought_signature_meta(content: &str) -> String {
         let mut out = String::new();
@@ -397,6 +410,24 @@ fn is_attr_name_byte(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{attr_value, tag_body, ChatMarkupRegex};
+
+    #[test]
+    fn summary_meta_cleanup_removes_all_providers_without_touching_other_tags() {
+        let text = r#"正文<meta provider="gemini:thought_signature">SECRET_A</meta><META provider="openai:reasoning">SECRET_B</META><meta provider="other"/>后文<metadata>keep</metadata>"#;
+        assert_eq!(
+            ChatMarkupRegex::remove_meta_tags(text),
+            "正文   后文<metadata>keep</metadata>"
+        );
+        assert_eq!(ChatMarkupRegex::remove_meta_tags("plain text"), "plain text");
+    }
+
+    #[test]
+    fn summary_meta_cleanup_discards_interrupted_payloads() {
+        assert_eq!(
+            ChatMarkupRegex::remove_meta_tags(r#"正文<meta provider="openai:reasoning">SECRET"#),
+            "正文 "
+        );
+    }
 
     #[test]
     fn attachment_ranges_keep_adjacent_self_closing_and_paired_tags_separate() {
