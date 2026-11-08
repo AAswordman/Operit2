@@ -10,23 +10,43 @@ const add = Atomics.add;
 const Bytes = Uint8Array;
 const encode = MessagePack.encode;
 const decode = MessagePack.decode;
+const now = Date.now;
 export class JavaScriptTransport {
     buffer;
+    control;
     header;
     bytes;
     seen = 0;
-    constructor(buffer) {
+    constructor(buffer, control) {
         this.buffer = buffer;
+        this.control = control;
         this.header = new Int32Array(buffer, 0, headerBytes / 4);
         this.bytes = new Bytes(buffer, headerBytes);
     }
-    static create() {
-        return new JavaScriptTransport(new SharedArrayBuffer(headerBytes + frameBytes));
+    static create(control) {
+        return new JavaScriptTransport(new SharedArrayBuffer(headerBytes + frameBytes), control);
     }
-    send(kind, value, check) {
+    signal() {
+        add(this.control, 0, 1);
+        notify(this.control, 0);
+    }
+    until(ready) {
+        for (;;) {
+            const version = load(this.control, 0);
+            if (load(this.control, 1) !== 0)
+                throw new Error("JavaScript execution was interrupted");
+            const deadline = (load(this.control, 2) >>> 0) + (load(this.control, 3) >>> 0) * 0x1_0000_0000;
+            const remaining = deadline === 0 ? Infinity : deadline - now();
+            if (remaining <= 0)
+                throw new Error("JavaScript execution deadline expired");
+            if (ready())
+                return;
+            wait(this.control, 0, version, remaining);
+        }
+    }
+    send(kind, value) {
         const encoded = encode(value);
         for (let offset = 0; offset < encoded.byteLength; offset += frameBytes) {
-            check();
             const chunk = encoded.subarray(offset, offset + frameBytes);
             this.bytes.set(chunk);
             store(this.header, 0, kind);
@@ -35,22 +55,16 @@ export class JavaScriptTransport {
             const sequence = add(this.header, 5, 1) + 1;
             this.seen = sequence;
             store(this.header, 3, sequence);
-            notify(this.header, 3);
-            while (load(this.header, 4) !== sequence) {
-                check();
-                wait(this.header, 4, load(this.header, 4), 5);
-            }
+            this.signal();
+            this.until(() => load(this.header, 4) === sequence);
         }
     }
-    receive(check) {
+    receive() {
         const chunks = [];
         let length = 0;
         let kind = 0;
         for (;;) {
-            while (load(this.header, 3) === this.seen) {
-                check();
-                wait(this.header, 3, this.seen, 5);
-            }
+            this.until(() => load(this.header, 3) !== this.seen);
             const sequence = load(this.header, 3);
             const nextKind = load(this.header, 0);
             const byteLength = load(this.header, 1);
@@ -63,7 +77,7 @@ export class JavaScriptTransport {
             length += byteLength;
             this.seen = sequence;
             store(this.header, 4, sequence);
-            notify(this.header, 4);
+            this.signal();
             if (final)
                 break;
         }

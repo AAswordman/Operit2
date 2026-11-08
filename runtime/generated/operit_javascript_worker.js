@@ -15,8 +15,8 @@ function checkActiveTransport() {
 function callHost(name, args) {
     checkActiveTransport();
     const transport = activeTransport;
-    transport.send(javascriptFrame.hostCall, [name, args], checkActiveTransport);
-    const response = transport.receive(checkActiveTransport);
+    transport.send(javascriptFrame.hostCall, [name, args]);
+    const response = transport.receive();
     if (response.kind !== javascriptFrame.hostResult)
         throw new Error("Expected JavaScript host result");
     const result = response.value;
@@ -68,7 +68,7 @@ function execute(command) {
     }
 }
 globalThis.addEventListener("message", (event) => {
-    const transport = new JavaScriptTransport(event.data.buffer);
+    const transport = new JavaScriptTransport(event.data.buffer, event.data.control);
     activeTransport = transport;
     let value;
     let failed = false;
@@ -80,7 +80,7 @@ globalThis.addEventListener("message", (event) => {
         value = error instanceof Error ? error.stack : NativeString(error);
     }
     defer(() => {
-        transport.send(failed ? javascriptFrame.error : javascriptFrame.result, value, checkActiveTransport);
+        transport.send(failed ? javascriptFrame.error : javascriptFrame.result, value);
         activeTransport = null;
     }, 0);
 });

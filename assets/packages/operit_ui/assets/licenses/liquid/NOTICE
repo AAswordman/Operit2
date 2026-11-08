@@ -1,0 +1,16 @@
+Liquid optical shader
+Copyright 2025, Colin McKee
+SPDX-License-Identifier: Apache-2.0
+
+Upstream: https://github.com/FletchMcKee/liquid
+Version: 1.1.1
+Source: liquid/src/commonMain/kotlin/io/github/fletchmckee/liquid/internal/LiquidShader.kt
+
+The rounded-rectangle signed distance field, analytical normals, spherical lens
+profile, cubic RGB dispersion, saturation/contrast adjustment and edge lighting
+are adapted in shaders/liquid_glass.frag. The Flutter adaptation adds shared
+background capture and affine coordinate mapping. Optical normal-field radii
+cover the refraction band to remove diagonal creases in small-corner bubbles;
+the visible shape retains its configured radii. Source UVs account for the
+bottom-up render-target textures used by Impeller GLES. Source samples stay clear.
+Out-of-shape and transparent-pixel resampling branches were not carried over.

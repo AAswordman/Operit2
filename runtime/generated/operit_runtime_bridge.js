@@ -1,3 +1,4 @@
+import { createTerminal9p } from "./terminal_9p.js";
 import { createBrowserJavaScriptHost } from "./operit_javascript_runtime.js";
 import { createBrowserHttpStreamHost } from "./browser_http_stream.js";
 import { openBrowserFile } from "./browser_file_open.js";
@@ -62,6 +63,42 @@ function createRandomUuid() {
     function registerMainHostModule(module) {
         mainHostModules.add(module);
         return module;
+    }
+    let terminalFilesystemBuffer = null;
+    let terminalFilesystemControl = null;
+    let notifyTerminalFilesystemWorker = null;
+    async function callTerminalFilesystem(method, args) {
+        const buffer = terminalFilesystemBuffer;
+        if (buffer === null)
+            throw new Error("Terminal filesystem owner is unavailable");
+        const header = new Int32Array(buffer, 0, 2), payload = new Uint8Array(buffer, 8);
+        while (Atomics.compareExchange(header, 0, 0, 4) !== 0) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+        }
+        try {
+            const request = MessagePack.encode([method, args]);
+            if (request.length > payload.length)
+                throw new Error("Terminal filesystem request exceeds channel capacity");
+            payload.set(request);
+            Atomics.store(header, 1, request.length);
+            Atomics.store(header, 0, 1);
+            const control = terminalFilesystemControl;
+            if (control !== null) {
+                Atomics.compareExchange(control, 0, 0, 3);
+                Atomics.notify(control, 0);
+            }
+            notifyTerminalFilesystemWorker?.();
+            while (Atomics.load(header, 0) !== 2) {
+                await new Promise(resolve => setTimeout(resolve, 1));
+            }
+            const response = MessagePack.decode(payload.slice(0, Atomics.load(header, 1)));
+            if (!Array.isArray(response) || response[0] !== 0)
+                throw new Error(String(response[1]));
+            return response[1];
+        }
+        finally {
+            Atomics.store(header, 0, 0);
+        }
     }
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
@@ -2360,11 +2397,16 @@ self.onmessage = (event) => {
         return session;
     }
     function appendLinuxVmOutput(session, bytes) {
-        const requiredLength = session.outputLength + bytes.length;
-        if (requiredLength > linuxVmOutputLimit) {
-            failLinuxVmSession(session, new Error("Linux VM terminal output exceeded 4 MiB"));
-            return;
+        for (const byte of bytes)
+            session.screen.push(byte);
+        if (session.screen.length > 65536)
+            session.screen.splice(0, 32768);
+        if (session.outputLength + bytes.length > linuxVmOutputLimit) {
+            const drop = Math.max(linuxVmOutputLimit / 2, session.outputLength + bytes.length - linuxVmOutputLimit);
+            session.output.copyWithin(0, drop, session.outputLength);
+            session.outputLength -= drop;
         }
+        const requiredLength = session.outputLength + bytes.length;
         if (requiredLength > session.output.length) {
             const nextLength = Math.min(linuxVmOutputLimit, Math.max(requiredLength, session.output.length * 2));
             const expanded = new Uint8Array(nextLength);
@@ -2375,10 +2417,11 @@ self.onmessage = (event) => {
         session.outputLength = requiredLength;
     }
     function appendLinuxVmCommandOutput(command, byte) {
-        const requiredLength = command.outputLength + 1;
-        if (requiredLength > linuxVmOutputLimit) {
-            throw new Error("Linux VM command output exceeded 4 MiB");
+        if (command.outputLength === linuxVmOutputLimit) {
+            command.output.copyWithin(0, linuxVmOutputLimit / 2);
+            command.outputLength = linuxVmOutputLimit / 2;
         }
+        const requiredLength = command.outputLength + 1;
         if (requiredLength > command.output.length) {
             const expanded = new Uint8Array(Math.min(linuxVmOutputLimit, Math.max(requiredLength, command.output.length * 2)));
             expanded.set(command.output.subarray(0, command.outputLength));
@@ -2391,6 +2434,12 @@ self.onmessage = (event) => {
         appendLinuxVmOutput(session, Uint8Array.of(byte));
         if (command.collectingOutput) {
             appendLinuxVmCommandOutput(command, byte);
+            const execution = session.managedExecution;
+            if (execution !== null) {
+                execution.output.push(byte);
+                if (execution.output.length >= 1048576)
+                    execution.output.splice(0, 524288);
+            }
         }
     }
     function parseLinuxVmCommandMarker(command, bytes) {
@@ -2423,6 +2472,7 @@ self.onmessage = (event) => {
         }
         clearTimeout(command.timeoutHandle);
         session.activeCommand = null;
+        session.workingDir = result.workingDir;
         command.resolve(result);
         startNextLinuxVmCommand(session);
     }
@@ -2521,8 +2571,8 @@ self.onmessage = (event) => {
         if (typeof command !== "string" || command.trim().length === 0) {
             throw new Error("Linux VM terminal command must not be blank");
         }
-        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
-            throw new Error("Linux VM terminal timeout must be a positive integer");
+        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
+            throw new Error("Linux VM terminal timeout must be a nonnegative integer");
         }
         if (session.state === "failed" || session.state === "closed") {
             throw new Error(`Linux VM terminal is not running: ${sessionId}`);
@@ -2532,7 +2582,7 @@ self.onmessage = (event) => {
             const commandState = {
                 token,
                 command,
-                timeoutHandle: globalThis.setTimeout(() => {
+                timeoutHandle: timeoutMs === 0 ? 0 : globalThis.setTimeout(() => {
                     if (session.activeCommand !== commandState) {
                         return;
                     }
@@ -2646,6 +2696,7 @@ self.onmessage = (event) => {
             }
             renderLinuxVmProgress(session, "Downloading runtime");
             const emulator = new module.V86({
+                filesystem: { handle9p: createTerminal9p({ call: callTerminalFilesystem }) },
                 wasm_path: v86AssetUrl("v86.wasm"),
                 memory_size: 512 * 1024 * 1024,
                 vga_memory_size: 2 * 1024 * 1024,
@@ -2728,6 +2779,9 @@ self.onmessage = (event) => {
             progressVisible: false,
             activeCommand: null,
             pendingCommands: [],
+            managedExecution: null,
+            screen: [],
+            workingDir: "/",
         };
         linuxVmSessions.set(sessionId, session);
         void startLinuxVm(session);
@@ -2814,8 +2868,18 @@ self.onmessage = (event) => {
     runtimeGlobal.__operitHost = {
         javaScriptRuntime: registerMainHostModule(createBrowserJavaScriptHost()),
         terminal: registerMainHostModule({
-            startPty(sessionId, rows, cols) {
+            async startPty(sessionId, rows, cols) {
                 startLinuxVmSession(sessionId, rows, cols);
+                try {
+                    const result = await executeLinuxVmCommand(sessionId, "mkdir -p /mnt/operit-host && mount -t 9p -o trans=virtio,version=9p2000,cache=none,msize=65536 host9p /mnt/operit-host", 120000);
+                    if (result.timedOut || result.exitCode !== 0) {
+                        throw new Error(`Cannot mount browser workspace: ${result.output}`);
+                    }
+                }
+                catch (error) {
+                    closeLinuxVmPty(sessionId);
+                    throw error;
+                }
             },
             readPty(sessionId) {
                 return readLinuxVmPty(sessionId);
@@ -2825,6 +2889,27 @@ self.onmessage = (event) => {
             },
             executePtyCommand(sessionId, command, timeoutMs) {
                 return executeLinuxVmCommand(sessionId, command, timeoutMs);
+            },
+            startPtyCommand(sessionId, command) {
+                const session = linuxVmSession(sessionId);
+                if (session.activeCommand !== null || session.pendingCommands.length > 0)
+                    throw new Error("Terminal session is busy");
+                const execution = { output: [], result: null, error: null };
+                session.managedExecution = execution;
+                void executeLinuxVmCommand(sessionId, command, 0).then(result => { execution.result = result; }, error => { execution.error = String(error); });
+            },
+            pollPtyCommand(sessionId) {
+                const session = linuxVmSession(sessionId);
+                const execution = session.managedExecution;
+                if (execution === null)
+                    throw new Error("Terminal has no managed command");
+                const output = Uint8Array.from(execution.output.splice(0, 65536));
+                return { output, result: execution.output.length === 0 ? execution.result : null, error: execution.error };
+            },
+            sessionState(sessionId) {
+                const session = linuxVmSession(sessionId);
+                return { commandRunning: session.activeCommand !== null || session.pendingCommands.length > 0,
+                    workingDir: session.workingDir, content: textDecoder.decode(Uint8Array.from(session.screen)) };
             },
             resizePty(sessionId, rows, cols) {
                 resizeLinuxVmPty(sessionId, rows, cols);
@@ -2837,6 +2922,20 @@ self.onmessage = (event) => {
             },
         }),
         runtimeStorage: registerWorkerHostModule({
+            modifiedAt(path) {
+                const address = workerStorageAddress(runtimePrefix, path);
+                if (!runtimeGlobal.__operitRuntimeWorkerStorage) {
+                    throw new Error("runtime worker OPFS storage is not installed");
+                }
+                return runtimeGlobal.__operitRuntimeWorkerStorage.modifiedAt(address.prefix, address.path);
+            },
+            setModifiedAt(path, modifiedAt) {
+                const address = workerStorageAddress(runtimePrefix, path);
+                if (!runtimeGlobal.__operitRuntimeWorkerStorage) {
+                    throw new Error("runtime worker OPFS storage is not installed");
+                }
+                runtimeGlobal.__operitRuntimeWorkerStorage.setModifiedAt(address.prefix, address.path, modifiedAt);
+            },
             readBytes(path) {
                 return storageRead(runtimePrefix, path);
             },
@@ -2848,6 +2947,13 @@ self.onmessage = (event) => {
             },
             appendBytes(path, content) {
                 storageAppend(runtimePrefix, path, content);
+            },
+            flushFile(path) {
+                const storage = runtimeGlobal.__operitRuntimeWorkerStorage;
+                if (storage === undefined) {
+                    throw new Error("runtime worker OPFS storage is not installed");
+                }
+                storage.flush(runtimePrefix, path);
             },
             delete(path, recursive) {
                 storageDelete(runtimePrefix, path, recursive);
@@ -3093,6 +3199,55 @@ self.onmessage = (event) => {
                 sqliteTransactions.delete(id);
             },
         }),
+        terminalFilesystem: registerWorkerHostModule({
+            stat(path) {
+                const isFile = storageHasFile(filePrefix, path);
+                if (!isFile && path !== "" && !fileDirectoryExists(path))
+                    throw new Error("No such file or directory");
+                return { isDirectory: !isFile, size: isFile ? storageRead(filePrefix, path).length : 0 };
+            },
+            list(path) {
+                return listFileDirectory(path).map(entry => ({
+                    name: entry.path.split("/").pop() || entry.path, isDirectory: entry.isDirectory, size: entry.size,
+                }));
+            },
+            read(path, offset, count) {
+                return storageReadRange(filePrefix, path, offset, count);
+            },
+            write(path, offset, content) {
+                const previous = storageRead(filePrefix, path);
+                const bytes = new Uint8Array(Math.max(previous.length, offset + content.length));
+                bytes.set(previous);
+                bytes.set(content, offset);
+                storageWrite(filePrefix, path, bytes);
+            },
+            truncate(path, size) {
+                const previous = storageRead(filePrefix, path), bytes = new Uint8Array(size);
+                bytes.set(previous.subarray(0, size));
+                storageWrite(filePrefix, path, bytes);
+            },
+            create(path) {
+                if (storageExists(filePrefix, path) || fileDirectoryExists(path))
+                    throw new Error("File exists");
+                storageWrite(filePrefix, path, new Uint8Array());
+            },
+            mkdir(path) {
+                if (storageExists(filePrefix, path) || fileDirectoryExists(path))
+                    throw new Error("File exists");
+                makeFileDirectory(path, false);
+            },
+            remove(path) {
+                if (fileDirectoryExists(path) && listFileDirectory(path).length)
+                    throw new Error("Directory not empty");
+                storageDelete(filePrefix, path, false);
+                deleteFileDirectory(path, false);
+            },
+            rename(source, target) {
+                copyFileSystemEntry(source, target, true);
+                storageDelete(filePrefix, source, true);
+                deleteFileDirectory(source, true);
+            },
+        }),
         fileSystem: registerWorkerHostModule({
             validatePath() { },
             listFiles(path) {
@@ -3121,6 +3276,9 @@ self.onmessage = (event) => {
             },
             writeFileBytes(path, content) {
                 storageWrite(filePrefix, path, content);
+            },
+            appendFileBytes(path, content) {
+                storageAppend(filePrefix, path, content);
             },
             deleteFile(path, recursive) {
                 storageDelete(filePrefix, path, recursive);
@@ -3306,6 +3464,13 @@ self.onmessage = (event) => {
             toast(message) {
                 console.info("[Operit toast]", message);
             },
+            setClipboardText(text) {
+                if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                    throw new Error("Browser Clipboard API is unavailable");
+                }
+                void navigator.clipboard.writeText(text);
+                return { text };
+            },
             sendNotification(title, message, activationJson) {
                 if (!("Notification" in globalThis)) {
                     throw new Error("Browser Notification API is unavailable");
@@ -3330,34 +3495,26 @@ self.onmessage = (event) => {
             getSystemSetting(namespace, setting) {
                 return { namespace, setting, value: "" };
             },
-            installApp(path) {
-                return { operationType: "install", packageName: path, success: false, details: "" };
+            installApp(_path) {
+                throw new Error("Browser security does not allow installing native application packages. Download the package and use your system installer.");
             },
-            uninstallApp(packageName) {
-                return { operationType: "uninstall", packageName, success: false, details: "" };
+            uninstallApp(_packageName) {
+                throw new Error("Browser security does not allow uninstalling native applications. Use your system application settings.");
             },
-            listInstalledApps(includeSystemApps) {
-                return { includesSystemApps: includeSystemApps, packages: [] };
+            listInstalledApps(_includeSystemApps) {
+                throw new Error("Browsers cannot enumerate installed native applications.");
             },
-            startApp(packageName) {
-                return { operationType: "start", packageName, success: false, details: "" };
+            startApp(_packageName) {
+                throw new Error("Browsers cannot launch arbitrary native application identifiers.");
             },
-            stopApp(packageName) {
-                return { operationType: "stop", packageName, success: false, details: "" };
+            stopApp(_packageName) {
+                throw new Error("Browsers cannot stop native application processes.");
             },
             getNotifications() {
                 throw new Error("Browsers do not expose other applications' system notifications");
             },
-            getAppUsageTime(packageName, sinceHours, limit, includeSystemApps) {
-                return {
-                    startTime: Date.now(),
-                    endTime: Date.now(),
-                    sinceHours,
-                    requestedPackageName: packageName,
-                    includesSystemApps: includeSystemApps,
-                    totalEntries: 0,
-                    entries: [],
-                };
+            getAppUsageTime(_packageName, _sinceHours, _limit, _includeSystemApps) {
+                throw new Error("Browsers do not expose native application foreground usage history.");
             },
             getDeviceLocation(timeout, highAccuracy, includeAddress) {
                 return readBrowserLocation(timeout, highAccuracy, includeAddress);
@@ -3793,6 +3950,12 @@ self.onmessage = (event) => {
         const leaderWatchRequestIds = new Map();
         const leaderHostCalls = new Map();
         const disconnectedHostPayloads = new Map();
+        notifyTerminalFilesystemWorker = () => {
+            if (runtimeWorker !== null)
+                runtimeWorker.postMessage({ type: "terminalFilesystemWake" });
+            else
+                coordinator.postMessage({ type: "terminalFilesystemWake" });
+        };
         coordinator.addEventListener("message", event => handleCoordinatorMessage(event.data));
         runtimeGlobal.addEventListener("pagehide", disconnectRuntimeWorker);
         void locks.request(runtimeOwnerLockName, { mode: "exclusive" }, runRuntimeLeadership).catch(rejectRuntimeRequests);
@@ -3832,6 +3995,10 @@ self.onmessage = (event) => {
         }
         function handleCoordinatorMessage(value) {
             if (typeof value !== "object" || value === null) {
+                return;
+            }
+            if (Reflect.get(value, "type") === "terminalFilesystemWake") {
+                runtimeWorker?.postMessage({ type: "terminalFilesystemWake" });
                 return;
             }
             if (isLeaderCoreRequest(value)) {
@@ -4238,6 +4405,10 @@ self.onmessage = (event) => {
         };
     }
     async function handleRuntimeWorkerHostCall(message, hostPayloads) {
+        if (message.filesystem instanceof SharedArrayBuffer) {
+            terminalFilesystemBuffer = message.filesystem;
+            terminalFilesystemControl = new Int32Array(message.control);
+        }
         let encoded;
         try {
             const host = runtimeGlobal.__operitHost;

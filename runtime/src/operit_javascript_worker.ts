@@ -28,8 +28,8 @@ function checkActiveTransport(): void {
 function callHost(name: string, args: unknown[]): unknown {
   checkActiveTransport();
   const transport = activeTransport!;
-  transport.send(javascriptFrame.hostCall, [name, args], checkActiveTransport);
-  const response = transport.receive(checkActiveTransport);
+  transport.send(javascriptFrame.hostCall, [name, args]);
+  const response = transport.receive();
   if (response.kind !== javascriptFrame.hostResult) throw new Error("Expected JavaScript host result");
   const result = response.value as { ok: boolean; value: unknown };
   if (!result.ok) throw new Error(NativeString(result.value));
@@ -84,8 +84,8 @@ function execute(command: JavaScriptCommand): unknown {
 }
 
 /** Processes commands serially and lets the browser drain microtasks before acknowledging completion. */
-globalThis.addEventListener("message", (event: MessageEvent<{ command: JavaScriptCommand; buffer: SharedArrayBuffer }>): void => {
-  const transport = new JavaScriptTransport(event.data.buffer);
+globalThis.addEventListener("message", (event: MessageEvent<{ command: JavaScriptCommand; buffer: SharedArrayBuffer; control: Int32Array }>): void => {
+  const transport = new JavaScriptTransport(event.data.buffer, event.data.control);
   activeTransport = transport;
   let value: unknown;
   let failed = false;
@@ -97,7 +97,7 @@ globalThis.addEventListener("message", (event: MessageEvent<{ command: JavaScrip
   }
   /** Completes this command after all native Promise continuations in its task have run. */
   defer((): void => {
-    transport.send(failed ? javascriptFrame.error : javascriptFrame.result, value, checkActiveTransport);
+    transport.send(failed ? javascriptFrame.error : javascriptFrame.result, value);
     activeTransport = null;
   }, 0);
 });

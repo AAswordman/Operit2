@@ -31,11 +31,11 @@ export function createBrowserJavaScriptHost() {
             workers.set(id, worker);
             return id;
         },
-        postCommand(id, command, buffer) {
+        postCommand(id, command, buffer, control) {
             const worker = workers.get(id);
             if (worker === undefined)
                 throw new Error("JavaScript runtime has been destroyed");
-            worker.postMessage({ command, buffer });
+            worker.postMessage({ command, buffer, control });
         },
         dispose(id) {
             const worker = workers.get(id);
@@ -54,25 +54,14 @@ class BrowserJavaScriptRuntime {
         this.host = globalThis.__operitHost.javaScriptRuntime;
         this.id = this.host.create();
     }
-    execute(command, callback, interrupted) {
+    execute(command, callback, control) {
         if (this.disposed)
             throw new Error("JavaScript runtime has been destroyed");
-        const transport = JavaScriptTransport.create();
-        const started = performance.now();
-        const check = () => {
-            if (interrupted()) {
-                this.dispose();
-                throw new Error("JavaScript execution was interrupted");
-            }
-            if (performance.now() - started > 120_000) {
-                this.dispose();
-                throw new Error("JavaScript worker did not complete its command within 120 seconds");
-            }
-        };
-        this.host.postCommand(this.id, command, transport.buffer);
+        const transport = JavaScriptTransport.create(control);
+        this.host.postCommand(this.id, command, transport.buffer, control);
         try {
             for (;;) {
-                const response = transport.receive(check);
+                const response = transport.receive();
                 switch (response.kind) {
                     case javascriptFrame.hostCall: {
                         const [name, args] = response.value;
@@ -83,7 +72,7 @@ class BrowserJavaScriptRuntime {
                         catch (error) {
                             result = { ok: false, value: String(error) };
                         }
-                        transport.send(javascriptFrame.hostResult, result, check);
+                        transport.send(javascriptFrame.hostResult, result);
                         break;
                     }
                     case javascriptFrame.result:

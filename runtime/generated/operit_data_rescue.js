@@ -3,6 +3,8 @@ const globals = globalThis;
 let runtimeAccess = null;
 let maintenanceWorker = null;
 let nextRequest = 0;
+let nextJob = 0;
+let job = null;
 const pending = new Map();
 export function isDataRescuePage() {
     const url = new URL(location.href);
@@ -65,6 +67,11 @@ function worker() {
     const created = new Worker(new URL('./operit_data_rescue_worker.js', import.meta.url), { type: 'module', name: 'operit-data-rescue' });
     created.onmessage = event => {
         const message = event.data;
+        if (message.progress !== undefined) {
+            if (job !== null && message.id === job.requestId)
+                job.progress = message.progress;
+            return;
+        }
         const request = pending.get(message.id);
         if (request === undefined)
             return;
@@ -91,6 +98,8 @@ function worker() {
 function send(request) {
     const target = worker();
     const id = ++nextRequest;
+    if (job !== null)
+        job.requestId = id;
     const response = new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); target.postMessage({ id, request, localStorage: localSnapshot() }); });
     return response.catch(error => {
         target.terminate();
@@ -103,10 +112,37 @@ function publishLocalStorage(values) {
     for (const key of Object.keys(values))
         if (!key.startsWith('operit2.') || typeof values[key] !== 'string')
             throw new Error('Invalid browser record');
-    for (const key of Object.keys(localSnapshot()))
+    const previous = Object.keys(localSnapshot());
+    const entries = Object.entries(values);
+    let completed = 0;
+    const total = previous.length + entries.length;
+    if (job !== null)
+        job.progress = { phase: 'publishSettings', completed, total, unit: 'items' };
+    for (const key of previous) {
         localStorage.removeItem(key);
-    for (const [key, value] of Object.entries(values))
+        completed += 1;
+    }
+    for (const [key, value] of entries) {
         localStorage.setItem(key, value);
+        completed += 1;
+    }
+    if (job !== null)
+        job.progress = { phase: 'publishSettings', completed, total, unit: 'items' };
+}
+async function executeWorker(request) {
+    let response = await send(request);
+    if (response.ok === true && typeof response.value === 'object' && response.value !== null) {
+        const result = response.value;
+        if (result.requiresLocalStorageCommit === true) {
+            publishLocalStorage(result.localStorage);
+            response = await send({ operation: 'finishPublication' });
+        }
+    }
+    if (request.operation === 'close' && response.ok === true) {
+        maintenanceWorker?.terminate();
+        maintenanceWorker = null;
+    }
+    return response;
 }
 async function execute(encoded) {
     try {
@@ -119,19 +155,45 @@ async function execute(encoded) {
         }
         if (!isDataRescuePage())
             throw new Error('请通过独立数据救援页面打开维护功能。');
-        let response = await send(request);
-        if (response.ok === true && typeof response.value === 'object' && response.value !== null) {
-            const result = response.value;
-            if (result.requiresLocalStorageCommit === true) {
-                publishLocalStorage(result.localStorage);
-                response = await send({ operation: 'finishPublication' });
+        if (request.operation === 'close') {
+            const active = job;
+            if (active !== null) {
+                await active.completion;
+                if (job === active)
+                    job = null;
             }
+            if (maintenanceWorker === null)
+                return JSON.stringify({ ok: true, value: null });
+            return JSON.stringify(await executeWorker(request));
         }
-        if (request.operation === 'close' && response.ok === true) {
-            maintenanceWorker?.terminate();
-            maintenanceWorker = null;
+        if (request.operation === 'poll') {
+            if (job === null || request.jobId !== job.id)
+                throw new Error('Unknown maintenance job');
+            if (!job.done)
+                return JSON.stringify({ ok: true, value: { done: false, progress: job.progress } });
+            const completed = job;
+            job = null;
+            if (completed.response?.ok !== true)
+                return JSON.stringify(completed.response);
+            return JSON.stringify({ ok: true, value: { done: true, progress: completed.progress, value: completed.response.value } });
         }
-        return JSON.stringify(response);
+        if (job !== null)
+            throw new Error('A maintenance job is already active');
+        if (request.operation === 'start') {
+            const operation = request.request;
+            if (!['export', 'inspect', 'restore', 'resumeRestore', 'configureAutomatic'].includes(operation.operation))
+                throw new Error('Unsupported background maintenance operation');
+            let complete;
+            const completion = new Promise(resolve => { complete = resolve; });
+            const started = { id: ++nextJob, requestId: 0, progress: null, done: false, completion };
+            job = started;
+            void executeWorker(operation).then(response => { started.response = response; started.done = true; }, error => {
+                started.response = { ok: false, error: String(error) };
+                started.done = true;
+            }).finally(complete);
+            return JSON.stringify({ ok: true, value: { jobId: started.id } });
+        }
+        return JSON.stringify(await executeWorker(request));
     }
     catch (error) {
         return JSON.stringify({ ok: false, error: String(error) });

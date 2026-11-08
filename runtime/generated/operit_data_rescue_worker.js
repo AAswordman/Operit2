@@ -1,6 +1,7 @@
 const scope = globalThis;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
+const metadataLimit = 16 * 1024 * 1024;
 const sources = new Map();
 const staged = new Map();
 const archives = new Map();
@@ -18,6 +19,21 @@ let journalStarted = false;
 let readingStaged = false;
 let queue = Promise.resolve();
 let ready = null;
+let progressRequest = 0;
+let lastProgressPhase = '';
+let lastProgressTime = 0;
+function reportProgress(progress) {
+    const now = performance.now();
+    if (progress.phase === lastProgressPhase && progress.completed !== progress.total && now - lastProgressTime < 50)
+        return;
+    lastProgressPhase = progress.phase;
+    lastProgressTime = now;
+    scope.postMessage({ id: progressRequest, progress });
+}
+function advance(progress, amount) {
+    progress.completed += amount;
+    reportProgress(progress);
+}
 function segments(path) {
     const parts = path.split('/');
     if (parts.some(part => part.length === 0 || part === '.' || part === '..' || /[\\:\0]/.test(part)))
@@ -41,7 +57,7 @@ function write(handle, offset, bytes) {
     if (handle.write(bytes, { at: offset }) !== bytes.byteLength)
         throw new Error('Incomplete OPFS maintenance write');
 }
-async function copy(source, target) {
+async function copy(source, target, progress) {
     const output = await target.createSyncAccessHandle();
     try {
         output.truncate(0);
@@ -51,6 +67,7 @@ async function copy(source, target) {
             if (bytes.length !== count)
                 throw new Error('Truncated browser publication source');
             write(output, offset, bytes);
+            advance(progress, bytes.length);
         }
         output.flush();
     }
@@ -59,14 +76,20 @@ async function copy(source, target) {
     }
 }
 async function collect(base, prefix, result) {
+    const segments = prefix.split('/');
+    const identityRoot = segments.length === 3 && segments[0] === 'runtime' && segments[1] === 'identities';
     for await (const [name, entry] of base.entries()) {
+        if (identityRoot && (name === 'operit_archive_staging.data' || name === 'snapshot_exports'))
+            continue;
         if (prefix === '' && name === 'data-rescue')
             continue;
         const path = prefix === '' ? name : `${prefix}/${name}`;
         if (entry.kind === 'directory')
             await collect(entry, path, result);
-        else
+        else {
             result.set(`opfs/${path}`, { file: entry, handle: await entry.createSyncAccessHandle() });
+            reportProgress({ phase: 'scan', completed: result.size, total: null, unit: 'files' });
+        }
     }
 }
 function requested(request) {
@@ -80,14 +103,20 @@ function completed(transaction) {
     return new Promise((resolve, reject) => { transaction.oncomplete = () => resolve(); transaction.onabort = () => reject(transaction.error); transaction.onerror = () => reject(transaction.error); });
 }
 async function snapshotBytes(path, bytes) {
+    const size = bytes instanceof Blob ? bytes.size : bytes.byteLength;
+    const metadata = path === 'browser/local-storage.json' || path === 'browser/catalog.json' || path.startsWith('browser/records/') || path.endsWith('/operit_runtime_storage.index');
+    if (metadata && size > metadataLimit)
+        throw new Error('Rescue metadata exceeds 16 MiB');
     const file = await resource(snapshot, path, true);
     const handle = await file.createSyncAccessHandle();
     try {
         handle.truncate(0);
-        const size = bytes instanceof Blob ? bytes.size : bytes.byteLength;
+        const progress = { phase: "snapshotBytes", completed: 0, total: size, unit: "bytes" };
+        reportProgress(progress);
         for (let offset = 0; offset < size; offset += 65536) {
             const chunk = bytes instanceof Blob ? new Uint8Array(await bytes.slice(offset, offset + 65536).arrayBuffer()) : bytes.subarray(offset, offset + 65536);
             write(handle, offset, chunk);
+            advance(progress, chunk.length);
         }
         handle.flush();
     }
@@ -116,28 +145,78 @@ async function encode(value) {
         return { type: 'binary', kind: value instanceof File ? 'File' : value instanceof Blob ? 'Blob' : value instanceof ArrayBuffer ? 'ArrayBuffer' : value.constructor.name,
             path, mime: value instanceof Blob ? value.type : '', name: value instanceof File ? value.name : '', lastModified: value instanceof File ? value.lastModified : 0 };
     }
-    if (Array.isArray(value))
-        return { type: 'array', value: await Promise.all(value.map(encode)) };
-    if (value instanceof Map)
-        return { type: 'map', value: await Promise.all([...value].map(async ([key, item]) => [await encode(key), await encode(item)])) };
-    if (value instanceof Set)
-        return { type: 'set', value: await Promise.all([...value].map(encode)) };
+    if (Array.isArray(value)) {
+        const items = [];
+        for (const item of value)
+            items.push(await encode(item));
+        return { type: 'array', value: items };
+    }
+    if (value instanceof Map) {
+        const items = [];
+        for (const [key, item] of value)
+            items.push([await encode(key), await encode(item)]);
+        return { type: 'map', value: items };
+    }
+    if (value instanceof Set) {
+        const items = [];
+        for (const item of value)
+            items.push(await encode(item));
+        return { type: 'set', value: items };
+    }
     if (value instanceof RegExp)
         return { type: 'regexp', source: value.source, flags: value.flags };
-    if (typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype)
-        return { type: 'object', value: await Promise.all(Object.entries(value).map(async ([key, item]) => [key, await encode(item)])) };
+    if (typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+        const items = [];
+        for (const [key, item] of Object.entries(value))
+            items.push([key, await encode(item)]);
+        return { type: 'object', value: items };
+    }
     throw new Error('Unsupported database structured value in data rescue');
 }
-function allBytes(path) {
-    const source = staged.get(path);
-    if (source === undefined)
-        throw new Error(`Missing staged browser resource: ${path}`);
-    const bytes = new Uint8Array(source.handle.getSize());
-    for (let offset = 0; offset < bytes.length; offset += 65536)
-        bytes.set(read(source, offset, Math.min(65536, bytes.length - offset)), offset);
+function metadataBytes(source) {
+    const size = source.handle.getSize();
+    if (size > metadataLimit)
+        throw new Error('Rescue metadata exceeds 16 MiB');
+    const bytes = new Uint8Array(size);
+    for (let offset = 0; offset < size; offset += 65536) {
+        const count = Math.min(65536, size - offset);
+        const chunk = read(source, offset, count);
+        if (chunk.length !== count)
+            throw new Error('Truncated rescue metadata');
+        bytes.set(chunk, offset);
+    }
     return bytes;
 }
-function decode(value) {
+function stagedMetadata(path) {
+    return metadataBytes(requireStaged(path));
+}
+async function stagedBlob(path) {
+    const source = requireStaged(path);
+    source.handle.close();
+    try {
+        return await source.file.getFile();
+    }
+    finally {
+        source.handle = await source.file.createSyncAccessHandle();
+    }
+}
+function stagedTypedBytes(path) {
+    const source = requireStaged(path);
+    const size = source.handle.getSize();
+    const bytes = new Uint8Array(size);
+    const progress = { phase: 'decodeRecord', completed: 0, total: size, unit: 'bytes' };
+    reportProgress(progress);
+    for (let offset = 0; offset < size; offset += 65536) {
+        const count = Math.min(65536, size - offset);
+        const chunk = read(source, offset, count);
+        if (chunk.length !== count)
+            throw new Error('Truncated IndexedDB binary value');
+        bytes.set(chunk, offset);
+        advance(progress, count);
+    }
+    return bytes;
+}
+async function decode(value) {
     if (value === null || typeof value !== 'object')
         return value;
     if (Array.isArray(value))
@@ -148,15 +227,39 @@ function decode(value) {
         case 'number': return Number(value.value);
         case 'date': return new Date(value.value);
         case 'regexp': return new RegExp(value.source, value.flags);
-        case 'array': return value.value.map(decode);
-        case 'set': return new Set(value.value.map(decode));
-        case 'map': return new Map(value.value.map(pair => [decode(pair[0]), decode(pair[1])]));
-        case 'object': return Object.fromEntries(value.value.map(pair => [pair[0], decode(pair[1])]));
+        case 'array': {
+            const items = [];
+            for (const item of value.value)
+                items.push(await decode(item));
+            return items;
+        }
+        case 'set': {
+            const items = new Set();
+            for (const item of value.value)
+                items.add(await decode(item));
+            return items;
+        }
+        case 'map': {
+            const items = new Map();
+            for (const pair of value.value)
+                items.set(await decode(pair[0]), await decode(pair[1]));
+            return items;
+        }
+        case 'object': {
+            const items = [];
+            for (const pair of value.value)
+                items.push([pair[0], await decode(pair[1])]);
+            return Object.fromEntries(items);
+        }
         case 'binary': {
-            const bytes = allBytes(value.path);
+            if (value.kind === 'Blob' || value.kind === 'File') {
+                const file = await stagedBlob(value.path);
+                if (value.kind === 'Blob')
+                    return new Blob([file], { type: value.mime });
+                return new File([file], value.name, { type: value.mime, lastModified: value.lastModified });
+            }
+            const bytes = stagedTypedBytes(value.path);
             switch (value.kind) {
-                case 'Blob': return new Blob([bytes], { type: value.mime });
-                case 'File': return new File([bytes], value.name, { type: value.mime, lastModified: value.lastModified });
                 case 'ArrayBuffer': return bytes.buffer;
                 case 'Uint8Array': return bytes;
                 case 'Uint8ClampedArray': return new Uint8ClampedArray(bytes.buffer);
@@ -243,16 +346,18 @@ function collectBinaryReferences(value, paths) {
 async function validateImport() {
     if (publication === null)
         throw new Error('No browser import publication exists');
+    const progress = { phase: 'validateBrowser', completed: 0, total: null, unit: 'items' };
+    reportProgress(progress);
     const paths = new Set(publication.manifest.files.map(file => file.path));
     if (!paths.has('browser/local-storage.json') || !paths.has('browser/catalog.json'))
         throw new Error('Browser archive is missing required storage catalogs');
-    const local = JSON.parse(decoder.decode(allBytes('browser/local-storage.json')));
+    const local = JSON.parse(decoder.decode(stagedMetadata('browser/local-storage.json')));
     if (local === null || typeof local !== 'object' || Array.isArray(local))
         throw new Error('Invalid browser local-storage catalog');
     for (const [key, value] of Object.entries(local))
         if (!key.startsWith('operit2.') || typeof value !== 'string')
             throw new Error(`Invalid browser local-storage record: ${key}`);
-    const catalog = JSON.parse(decoder.decode(allBytes('browser/catalog.json')));
+    const catalog = JSON.parse(decoder.decode(stagedMetadata('browser/catalog.json')));
     if (!Array.isArray(catalog))
         throw new Error('Invalid IndexedDB catalog');
     const databases = new Set();
@@ -279,12 +384,13 @@ async function validateImport() {
                 if (typeof path !== 'string' || !path.startsWith('browser/records/') || records.has(path) || !paths.has(path))
                     throw new Error(`Invalid IndexedDB record reference: ${path}`);
                 records.add(path);
-                const record = JSON.parse(decoder.decode(allBytes(path)));
+                const record = JSON.parse(decoder.decode(stagedMetadata(path)));
                 if (!Object.prototype.hasOwnProperty.call(record, 'key') || !Object.prototype.hasOwnProperty.call(record, 'value'))
                     throw new Error(`Invalid IndexedDB record: ${path}`);
-                const key = decode(record.key);
-                const value = decode(record.value);
+                const key = await decode(record.key);
+                const value = await decode(record.value);
                 collectBinaryReferences(record.value, binaryReferences);
+                advance(progress, 1);
                 if (!validDatabaseKey(key))
                     throw new Error(`Invalid IndexedDB key: ${path}`);
                 if (store.keyPath === null) {
@@ -316,7 +422,113 @@ async function validateImport() {
         if (path.startsWith('browser/binary/') && !binaryReferences.has(path))
             throw new Error(`Unreferenced browser binary payload: ${path}`);
 }
-async function snapshotDatabases() {
+function preferenceCodec(operation, fields) {
+    const response = JSON.parse(wasm.operitDataRescue(JSON.stringify({ operation, ...fields })));
+    if (response.ok !== true)
+        throw new Error(response.error);
+    return response.value;
+}
+function preferenceStoragePath(key) {
+    if (typeof key !== 'string' || !key.startsWith('operit2.runtime.'))
+        return null;
+    const path = key.slice('operit2.runtime.'.length);
+    return preferenceCodec('preferencesExportPath', { path }) === true ? path : null;
+}
+function portablePreferences(path, bytes, identity) {
+    if (bytes.length > metadataLimit)
+        throw new Error(`Preferences exceed 16 MiB: ${path}`);
+    const encoded = startupLocal[`operit2.identities.${identity}.secrets.operit.preferences.encryption_key.v1`];
+    const key = encoded === undefined ? null : Array.from(atob(encoded), character => character.charCodeAt(0));
+    return Uint8Array.from(preferenceCodec('exportPreferences', { path, bytes: [...bytes], key }));
+}
+async function snapshotPortableRuntime() {
+    for (const [indexPath, indexSource] of [...sources]) {
+        const segments = indexPath.split('/');
+        if (segments.length !== 5 || segments[0] !== 'opfs' || segments[1] !== 'runtime' || segments[2] !== 'identities' || segments[4] !== 'operit_runtime_storage.index')
+            continue;
+        const dataPath = `${segments.slice(0, 4).join('/')}/operit_runtime_storage.data`;
+        const dataSource = sources.get(dataPath);
+        if (dataSource === undefined)
+            throw new Error(`Missing runtime OPFS data: ${dataPath}`);
+        const indexBytes = metadataBytes(indexSource);
+        const parsed = indexBytes.length === 0 ? { records: [] } : JSON.parse(decoder.decode(indexBytes));
+        if (!Array.isArray(parsed.records))
+            throw new Error(`Invalid runtime OPFS index: ${indexPath}`);
+        let total = 0;
+        for (const entry of parsed.records) {
+            if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || entry[1] === null || typeof entry[1] !== 'object')
+                throw new Error(`Invalid runtime OPFS entry: ${indexPath}`);
+            const [key, record] = entry;
+            if (!Number.isSafeInteger(record.offset) || !Number.isSafeInteger(record.byteLength) || record.offset < 0 || record.byteLength < 0 || record.offset + record.byteLength > dataSource.handle.getSize())
+                throw new Error(`Invalid runtime OPFS range: ${key}`);
+            total += record.byteLength;
+            if (!Number.isSafeInteger(total))
+                throw new Error('Runtime OPFS size overflow');
+        }
+        const outputFile = await resource(snapshot, dataPath, true);
+        const output = await outputFile.createSyncAccessHandle();
+        const records = [];
+        const seen = new Set();
+        const progress = { phase: 'snapshotRuntime', completed: 0, total, unit: 'bytes' };
+        reportProgress(progress);
+        let next = 0;
+        try {
+            output.truncate(0);
+            for (const entry of parsed.records) {
+                if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || entry[1] === null || typeof entry[1] !== 'object')
+                    throw new Error(`Invalid runtime OPFS entry: ${indexPath}`);
+                const [key, record] = entry;
+                if (seen.has(key) || !Number.isSafeInteger(record.offset) || !Number.isSafeInteger(record.byteLength) || record.offset < 0 || record.byteLength < 0 || record.offset + record.byteLength > dataSource.handle.getSize())
+                    throw new Error(`Invalid runtime OPFS range: ${key}`);
+                seen.add(key);
+                const start = next;
+                const path = preferenceStoragePath(key);
+                if (path !== null) {
+                    if (record.byteLength > metadataLimit)
+                        throw new Error(`Preferences exceed 16 MiB: ${path}`);
+                    const content = new Uint8Array(record.byteLength);
+                    for (let offset = 0; offset < record.byteLength; offset += 65536) {
+                        const count = Math.min(65536, record.byteLength - offset);
+                        const chunk = read(dataSource, record.offset + offset, count);
+                        if (chunk.length !== count)
+                            throw new Error(`Truncated preferences: ${path}`);
+                        content.set(chunk, offset);
+                    }
+                    if (content.length !== record.byteLength)
+                        throw new Error(`Truncated preferences: ${path}`);
+                    const plaintext = portablePreferences(path, content, segments[3]);
+                    for (let offset = 0; offset < plaintext.length; offset += 65536)
+                        write(output, next + offset, plaintext.subarray(offset, offset + 65536));
+                    next += plaintext.length;
+                    advance(progress, record.byteLength);
+                }
+                else {
+                    for (let offset = 0; offset < record.byteLength; offset += 65536) {
+                        const length = Math.min(65536, record.byteLength - offset);
+                        const bytes = read(dataSource, record.offset + offset, length);
+                        if (bytes.length !== length)
+                            throw new Error(`Truncated runtime OPFS record: ${key}`);
+                        write(output, next, bytes);
+                        next += bytes.length;
+                        advance(progress, bytes.length);
+                    }
+                }
+                records.push([key, { offset: start, byteLength: next - start }]);
+            }
+            output.flush();
+        }
+        catch (error) {
+            output.close();
+            throw error;
+        }
+        dataSource.handle.close();
+        sources.set(dataPath, { file: outputFile, handle: output });
+        indexSource.handle.close();
+        sources.delete(indexPath);
+        await snapshotBytes(indexPath, encoder.encode(JSON.stringify({ records })));
+    }
+}
+async function snapshotDatabases(portable) {
     const catalog = [];
     for (const info of await indexedDB.databases()) {
         if (info.name === undefined || !info.name.startsWith('operit2.'))
@@ -332,6 +544,8 @@ async function snapshotDatabases() {
                     const index = store.index(indexName);
                     definition.indexes.push({ name: indexName, keyPath: index.keyPath, unique: index.unique, multiEntry: index.multiEntry });
                 }
+                const progress = { phase: 'snapshotDatabase', completed: 0, total: await requested(store.count()), unit: 'items' };
+                reportProgress(progress);
                 let after;
                 for (;;) {
                     const reading = database.transaction(name, 'readonly');
@@ -343,9 +557,21 @@ async function snapshotDatabases() {
                     }
                     const record = { key: cursor.key, value: cursor.value };
                     await done;
+                    if (portable && name === 'entries') {
+                        const path = preferenceStoragePath(record.key);
+                        if (path !== null) {
+                            const match = /^operit2\.identities\.([^.]+)\.host\.storage$/.exec(database.name);
+                            if (match === null)
+                                throw new Error(`Invalid runtime storage database: ${database.name}`);
+                            if (!(record.value instanceof Uint8Array))
+                                throw new Error(`Invalid preference storage value: ${path}`);
+                            record.value = portablePreferences(path, record.value, match[1]);
+                        }
+                    }
                     const path = `browser/records/${crypto.randomUUID()}.json`;
                     await snapshotBytes(path, encoder.encode(JSON.stringify({ key: await encode(record.key), value: await encode(record.value) })));
                     definition.records.push(path);
+                    advance(progress, 1);
                     after = record.key;
                 }
                 schema.stores.push(definition);
@@ -358,13 +584,15 @@ async function snapshotDatabases() {
     }
     await snapshotBytes('browser/catalog.json', encoder.encode(JSON.stringify(catalog)));
 }
-async function createSnapshot() {
+async function createSnapshot(portable) {
     await releaseSnapshot();
     snapshotName = `snapshot-${crypto.randomUUID()}`;
     snapshot = await maintenance.getDirectoryHandle(snapshotName, { create: true });
     await collect(root, '', sources);
+    if (portable)
+        await snapshotPortableRuntime();
     await snapshotBytes('browser/local-storage.json', encoder.encode(JSON.stringify(startupLocal)));
-    await snapshotDatabases();
+    await snapshotDatabases(portable);
 }
 async function releaseSnapshot() {
     for (const source of sources.values())
@@ -402,6 +630,7 @@ function installHost() {
     scope.__operitHost = {
         dataRescue: {
             startup,
+            reportProgress: (encoded) => { reportProgress(JSON.parse(encoded)); return result(); },
             describe: () => result({ layout: 'operit.browser.v1', sourceFiles: sources.size, commitPending: publication !== null }),
             listFiles: () => {
                 if (publication !== null)
@@ -533,6 +762,8 @@ async function prepareImport(manifest) {
     staged.clear();
     preparedId = null;
     const directory = await maintenance.getDirectoryHandle('prepared', { create: true });
+    const progress = { phase: 'prepareRestore', completed: 0, total: manifest.files.length, unit: 'files' };
+    reportProgress(progress);
     for (const file of manifest.files) {
         segments(file.path);
         if (!file.path.startsWith('opfs/') && !file.path.startsWith('browser/'))
@@ -543,6 +774,7 @@ async function prepareImport(manifest) {
         const handle = await resourceFile.createSyncAccessHandle();
         handle.truncate(0);
         staged.set(file.path, { file: resourceFile, handle });
+        advance(progress, 1);
     }
 }
 async function discardUncommittedImport() {
@@ -597,7 +829,9 @@ async function openPendingStaging() {
     }
 }
 async function publishDatabases() {
-    const catalog = JSON.parse(decoder.decode(allBytes('browser/catalog.json')));
+    const catalog = JSON.parse(decoder.decode(stagedMetadata('browser/catalog.json')));
+    const progress = { phase: 'publishDatabase', completed: 0, total: catalog.reduce((sum, item) => sum + item.stores.reduce((count, store) => count + store.records.length, 0), 0), unit: 'items' };
+    reportProgress(progress);
     for (const item of catalog) {
         if (!item.name.startsWith('operit2.') || !Number.isSafeInteger(item.version) || item.version < 1)
             throw new Error('Invalid database catalog');
@@ -614,9 +848,9 @@ async function publishDatabases() {
         try {
             for (const definition of item.stores) {
                 for (const path of definition.records) {
-                    const record = JSON.parse(decoder.decode(allBytes(path)));
-                    const key = decode(record.key);
-                    const value = decode(record.value);
+                    const record = JSON.parse(decoder.decode(stagedMetadata(path)));
+                    const key = await decode(record.key);
+                    const value = await decode(record.value);
                     const transaction = database.transaction(definition.name, 'readwrite');
                     const done = completed(transaction);
                     const store = transaction.objectStore(definition.name);
@@ -632,6 +866,7 @@ async function publishDatabases() {
                         store.put(value);
                     }
                     await done;
+                    advance(progress, 1);
                 }
             }
         }
@@ -650,8 +885,10 @@ async function publish() {
     await saveJournal();
     if (publication.phase === 'prepared') {
         const retained = await maintenance.getDirectoryHandle(`retained-${publication.id}`, { create: true });
+        const progress = { phase: 'retain', completed: 0, total: [...sources.values()].reduce((sum, source) => sum + source.handle.getSize(), 0), unit: 'bytes' };
+        reportProgress(progress);
         for (const [path, source] of sources)
-            await copy(source, await resource(retained, path, true));
+            await copy(source, await resource(retained, path, true), progress);
         for (const source of sources.values())
             source.handle.close();
         sources.clear();
@@ -660,9 +897,11 @@ async function publish() {
     }
     if (publication.phase === 'retained') {
         const desired = new Set(publication.manifest.files.filter(file => file.path.startsWith('opfs/')).map(file => file.path));
+        const progress = { phase: 'publish', completed: 0, total: [...staged].filter(([path]) => path.startsWith('opfs/')).reduce((sum, [, source]) => sum + source.handle.getSize(), 0), unit: 'bytes' };
+        reportProgress(progress);
         for (const [path, source] of staged)
             if (path.startsWith('opfs/'))
-                await copy(source, await resource(root, path.slice(5), true));
+                await copy(source, await resource(root, path.slice(5), true), progress);
         const current = new Map();
         await collect(root, '', current);
         for (const [path, source] of current) {
@@ -683,7 +922,7 @@ async function publish() {
         publication.phase = 'databasesPublished';
         await saveJournal();
     }
-    return { requiresLocalStorageCommit: true, localStorage: JSON.parse(decoder.decode(allBytes('browser/local-storage.json'))), retainedData: `OPFS/data-rescue/retained-${publication.id}` };
+    return { requiresLocalStorageCommit: true, localStorage: JSON.parse(decoder.decode(stagedMetadata('browser/local-storage.json'))), retainedData: `OPFS/data-rescue/retained-${publication.id}` };
 }
 async function execute(request, local) {
     startupLocal = local;
@@ -705,7 +944,7 @@ async function execute(request, local) {
         return { ok: true, value: { restored: true, retainedData: `OPFS/data-rescue/retained-${id}` } };
     }
     if (request.operation === 'export')
-        await createSnapshot();
+        await createSnapshot(true);
     if (request.operation === 'export' || request.operation === 'beginUpload') {
         const directory = await maintenance.getDirectoryHandle('archives', { create: true });
         const name = crypto.randomUUID();
@@ -723,12 +962,12 @@ async function execute(request, local) {
         const preview = JSON.parse(wasm.operitDataRescue(JSON.stringify({ ...request, operation: 'inspect' })));
         if (preview.ok !== true)
             throw new Error(preview.error);
-        await createSnapshot();
+        await createSnapshot(false);
         await prepareImport(preview.value);
     }
     if (request.operation === 'resumeRestore') {
         if (publication?.phase === 'prepared')
-            await createSnapshot();
+            await createSnapshot(false);
         await openPendingStaging();
     }
     const response = JSON.parse(wasm.operitDataRescue(JSON.stringify(request)));
@@ -784,6 +1023,8 @@ scope.addEventListener('message', (event) => {
     const message = event.data;
     queue = queue.then(async () => {
         try {
+            progressRequest = message.id;
+            lastProgressPhase = "";
             const value = await execute(message.request, message.localStorage);
             if (message.request.operation === 'export')
                 await releaseSnapshot();

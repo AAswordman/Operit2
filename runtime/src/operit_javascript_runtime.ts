@@ -8,14 +8,14 @@ class JavaScriptGuestError extends Error {}
 
 interface BrowserJavaScriptHost {
   create(): number;
-  postCommand(id: number, command: unknown, buffer: SharedArrayBuffer): void;
+  postCommand(id: number, command: unknown, buffer: SharedArrayBuffer, control: Int32Array): void;
   dispose(id: number): void;
 }
 
 /** Starts execution workers on their browser owner before Core begins synchronous waiting. */
 export function createBrowserJavaScriptHost(): {
   create(): Promise<number>;
-  postCommand(id: number, command: unknown, buffer: SharedArrayBuffer): void;
+  postCommand(id: number, command: unknown, buffer: SharedArrayBuffer, control: Int32Array): void;
   dispose(id: number): void;
 } {
   const workers = new Map<number, Worker>();
@@ -49,10 +49,10 @@ export function createBrowserJavaScriptHost(): {
       return id;
     },
     /** Sends a command only to an initialized, host-owned execution worker. */
-    postCommand(id: number, command: unknown, buffer: SharedArrayBuffer): void {
+    postCommand(id: number, command: unknown, buffer: SharedArrayBuffer, control: Int32Array): void {
       const worker = workers.get(id);
       if (worker === undefined) throw new Error("JavaScript runtime has been destroyed");
-      worker.postMessage({ command, buffer });
+      worker.postMessage({ command, buffer, control });
     },
     /** Releases an execution worker and its host ownership entry. */
     dispose(id: number): void {
@@ -78,25 +78,13 @@ class BrowserJavaScriptRuntime {
   }
 
   /** Runs one finite operation and preserves synchronous host callbacks across workers. */
-  execute(command: unknown, callback: JavaScriptHostCallback, interrupted: () => boolean): unknown {
+  execute(command: unknown, callback: JavaScriptHostCallback, control: Int32Array): unknown {
     if (this.disposed) throw new Error("JavaScript runtime has been destroyed");
-    const transport = JavaScriptTransport.create();
-    const started = performance.now();
-    /** Enforces the Rust execution predicate and bounds an unresponsive worker startup. */
-    const check = (): void => {
-      if (interrupted()) {
-        this.dispose();
-        throw new Error("JavaScript execution was interrupted");
-      }
-      if (performance.now() - started > 120_000) {
-        this.dispose();
-        throw new Error("JavaScript worker did not complete its command within 120 seconds");
-      }
-    };
-    this.host.postCommand(this.id, command, transport.buffer);
+    const transport = JavaScriptTransport.create(control);
+    this.host.postCommand(this.id, command, transport.buffer, control);
     try {
       for (;;) {
-        const response = transport.receive(check);
+        const response = transport.receive();
         switch (response.kind) {
           case javascriptFrame.hostCall: {
             const [name, args] = response.value as [string, unknown[]];
@@ -106,7 +94,7 @@ class BrowserJavaScriptRuntime {
             } catch (error) {
               result = { ok: false, value: String(error) };
             }
-            transport.send(javascriptFrame.hostResult, result, check);
+            transport.send(javascriptFrame.hostResult, result);
             break;
           }
           case javascriptFrame.result:

@@ -1,40 +1,5 @@
 /* tslint:disable */
 /* eslint-disable */
-/**
- * The `ReadableStreamType` enum.
- *
- * *This API requires the following crate features to be activated: `ReadableStreamType`*
- */
-
-export type ReadableStreamType = "bytes";
-
-export class IntoUnderlyingByteSource {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    cancel(): void;
-    pull(controller: ReadableByteStreamController): Promise<any>;
-    start(controller: ReadableByteStreamController): void;
-    readonly autoAllocateChunkSize: number;
-    readonly type: ReadableStreamType;
-}
-
-export class IntoUnderlyingSink {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    abort(reason: any): Promise<any>;
-    close(): Promise<any>;
-    write(chunk: any): Promise<any>;
-}
-
-export class IntoUnderlyingSource {
-    private constructor();
-    free(): void;
-    [Symbol.dispose](): void;
-    cancel(): void;
-    pull(controller: ReadableStreamDefaultController): Promise<any>;
-}
 
 export class OperitFlutterBridgeWasm {
     free(): void;
@@ -79,12 +44,10 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_operitflutterbridgewasm_free: (a: number, b: number) => void;
     readonly operitDataRescue: (a: number, b: number) => [number, number];
-    readonly operit_flutter_bridge_close_watch_stream: (a: number, b: number, c: number) => void;
     readonly operit_flutter_bridge_create: () => number;
     readonly operit_flutter_bridge_create_error: () => number;
     readonly operit_flutter_bridge_create_with_storage_roots: (a: number, b: number) => number;
     readonly operit_flutter_bridge_destroy: (a: number) => void;
-    readonly operit_flutter_bridge_free_bytes: (a: number) => void;
     readonly operit_flutter_bridge_free_string: (a: number) => void;
     readonly operitflutterbridgewasm_call: (a: number, b: number, c: number) => any;
     readonly operitflutterbridgewasm_closeWatchStream: (a: number, b: number, c: number) => [number, number];
@@ -95,31 +58,15 @@ export interface InitOutput {
     readonly operitflutterbridgewasm_pushOpen: (a: number, b: number, c: number) => any;
     readonly operitflutterbridgewasm_watchSnapshot: (a: number, b: number, c: number) => any;
     readonly operitflutterbridgewasm_watchStream: (a: number, b: number, c: number, d: any) => any;
-    readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
-    readonly intounderlyingsource_cancel: (a: number) => void;
-    readonly intounderlyingsource_pull: (a: number, b: any) => any;
-    readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
-    readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
-    readonly intounderlyingbytesource_autoAllocateChunkSize: (a: number) => number;
-    readonly intounderlyingbytesource_cancel: (a: number) => void;
-    readonly intounderlyingbytesource_pull: (a: number, b: any) => any;
-    readonly intounderlyingbytesource_start: (a: number, b: any) => void;
-    readonly intounderlyingbytesource_type: (a: number) => number;
-    readonly intounderlyingsink_abort: (a: number, b: any) => any;
-    readonly intounderlyingsink_close: (a: number) => any;
-    readonly intounderlyingsink_write: (a: number, b: any) => any;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h53406515088c9d43: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
+    readonly wasm_bindgen__convert__closures_____invoke__h28ac359012e8a723: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
     readonly wasm_bindgen__convert__closures_____invoke__h23695230caa1583e: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen__convert__closures_____invoke__h22ac2df73405c9b5: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__he27900793f25c31c: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h0b22a1486eb59ede: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h0b22a1486eb59ede_3: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h0b22a1486eb59ede_4: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h0b22a1486eb59ede_5: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h9d21f180502235d6: (a: number, b: number) => number;
-    readonly wasm_bindgen__convert__closures_____invoke__haf93522e2dbec25a: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hcda227c5a0afa830: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h2884b473af3fabfe: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h2884b473af3fabfe_2: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h2884b473af3fabfe_3: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h2884b473af3fabfe_4: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h153a1c0d73961aa4: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

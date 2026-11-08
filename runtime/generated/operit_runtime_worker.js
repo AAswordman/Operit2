@@ -16,6 +16,9 @@ function createRandomUuid() {
 const workerGlobal = globalThis;
 const controlStateIndex = 0;
 const controlLengthIndex = 1;
+const terminalFilesystemBuffer = new SharedArrayBuffer(1024 * 1024 + 8);
+const terminalFilesystemHeader = new Int32Array(terminalFilesystemBuffer, 0, 2);
+const terminalFilesystemPayload = new Uint8Array(terminalFilesystemBuffer, 8);
 const controlReady = 1;
 const controlPayloadReady = 2;
 const runtimeStorageDataFileName = "operit_runtime_storage.data";
@@ -56,6 +59,10 @@ function importWorkerScript(path) {
 function handleWorkerMessage(event) {
     const message = event.data;
     if (typeof message !== "object" || message === null) {
+        return;
+    }
+    if (Reflect.get(message, "type") === "terminalFilesystemWake") {
+        serviceTerminalFilesystem();
         return;
     }
     const type = Reflect.get(message, "type");
@@ -197,15 +204,15 @@ const workerCoreOperationRegistrations = new Map([
     ["call", { execution: "serialized", invoke: (runtime, message) => runtime.call(requireBytesPayload(message)) }],
     ["emitRuntimeEvent", { execution: "serialized", invoke: async (runtime, message) => new TextEncoder().encode(await runtime.emitRuntimeEvent(requireStringPayload(message))) }],
     ["controlCall", { execution: "parallel", invoke: (runtime, message) => runtime.controlCall(requireBytesPayload(message)) }],
-    ["pushOpen", { execution: "serialized", invoke: (runtime, message) => runtime.pushOpen(requireBytesPayload(message)) }],
-    ["pushItem", { execution: "serialized", invoke: (runtime, message) => runtime.pushItem(requireBytesPayload(message)) }],
-    ["pushClose", { execution: "serialized", invoke: (runtime, message) => runtime.pushClose(requireStringPayload(message)) }],
-    ["watchSnapshot", { execution: "serialized", invoke: (runtime, message) => runtime.watchSnapshot(requireBytesPayload(message)) }],
-    ["watchStream", { execution: "serialized", invoke: (runtime, message) => runtime.watchStream(requireBytesPayload(message), event => {
+    ["pushOpen", { execution: "parallel", invoke: (runtime, message) => runtime.pushOpen(requireBytesPayload(message)) }],
+    ["pushItem", { execution: "parallel", invoke: (runtime, message) => runtime.pushItem(requireBytesPayload(message)) }],
+    ["pushClose", { execution: "parallel", invoke: (runtime, message) => runtime.pushClose(requireStringPayload(message)) }],
+    ["watchSnapshot", { execution: "parallel", invoke: (runtime, message) => runtime.watchSnapshot(requireBytesPayload(message)) }],
+    ["watchStream", { execution: "parallel", invoke: (runtime, message) => runtime.watchStream(requireBytesPayload(message), event => {
                 const copiedEvent = Uint8Array.from(event);
                 postWorkerMessage({ type: "coreWatchEvent", id: message.id, event: copiedEvent, clientId: message.clientId }, [copiedEvent.buffer]);
             }) }],
-    ["closeWatchStream", { execution: "serialized", invoke: (runtime, message) => runtime.closeWatchStream(requireStringPayload(message)) }],
+    ["closeWatchStream", { execution: "parallel", invoke: (runtime, message) => runtime.closeWatchStream(requireStringPayload(message)) }],
 ]);
 function requireBytesPayload(message) {
     if (!(message.payload instanceof Uint8Array)) {
@@ -268,6 +275,42 @@ function mainHostModule(module) {
     mainHostModules.set(module, proxy);
     return proxy;
 }
+function serviceTerminalFilesystem() {
+    if (Atomics.compareExchange(terminalFilesystemHeader, 0, 1, 3) !== 1)
+        return;
+    let encoded;
+    try {
+        const length = Atomics.load(terminalFilesystemHeader, 1);
+        if (length <= 0 || length > terminalFilesystemPayload.length)
+            throw new Error("Invalid terminal filesystem request");
+        const request = MessagePack.decode(terminalFilesystemPayload.slice(0, length));
+        if (!Array.isArray(request) || typeof request[0] !== "string" || !Array.isArray(request[1])) {
+            throw new Error("Invalid terminal filesystem operation");
+        }
+        const host = workerGlobal.__operitHost;
+        const module = host.terminalFilesystem;
+        const method = module?.[request[0]];
+        if (typeof method !== "function" || !Object.hasOwn(module, request[0]))
+            throw new Error("Unknown terminal filesystem operation");
+        encoded = MessagePack.encode([0, method.apply(module, request[1])]);
+        if (encoded.length > terminalFilesystemPayload.length)
+            throw new Error("Terminal filesystem response exceeds channel capacity");
+    }
+    catch (error) {
+        encoded = MessagePack.encode([1, errorMessage(error)]);
+    }
+    terminalFilesystemPayload.set(encoded);
+    Atomics.store(terminalFilesystemHeader, 1, encoded.length);
+    Atomics.store(terminalFilesystemHeader, 0, 2);
+    Atomics.notify(terminalFilesystemHeader, 0);
+}
+function waitForMainHost(control) {
+    while (Atomics.load(control, controlStateIndex) === 0 || Atomics.load(control, controlStateIndex) === 3) {
+        Atomics.compareExchange(control, controlStateIndex, 3, 0);
+        serviceTerminalFilesystem();
+        Atomics.wait(control, controlStateIndex, 0, 20);
+    }
+}
 function callMainHost(module, method, args) {
     if (activeHostClientId === null) {
         throw new Error("runtime worker host call has no client identity");
@@ -281,10 +324,11 @@ function callMainHost(module, method, args) {
         module,
         method,
         args,
+        filesystem: terminalFilesystemBuffer,
         control: controlBuffer,
         clientId: activeHostClientId,
     });
-    Atomics.wait(control, controlStateIndex, 0);
+    waitForMainHost(control);
     if (Atomics.load(control, controlStateIndex) !== controlReady) {
         throw new Error("main-thread host did not provide response metadata");
     }
@@ -301,7 +345,7 @@ function callMainHost(module, method, args) {
         control: controlBuffer,
         clientId: activeHostClientId,
     });
-    Atomics.wait(control, controlStateIndex, 0);
+    waitForMainHost(control);
     if (Atomics.load(control, controlStateIndex) !== controlPayloadReady) {
         throw new Error("main-thread host did not provide response payload");
     }
@@ -397,6 +441,12 @@ function requiredArchiveStaging() {
 }
 function runtimeStorageBridge() {
     return {
+        modifiedAt(prefix, path) {
+            return requiredRuntimeStorage().modifiedAt(storageKey(prefix, path));
+        },
+        setModifiedAt(prefix, path, modifiedAt) {
+            requiredRuntimeStorage().setModifiedAt(storageKey(prefix, path), modifiedAt);
+        },
         read(prefix, path) {
             return requiredRuntimeStorage().read(storageKey(prefix, path));
         },
@@ -408,6 +458,9 @@ function runtimeStorageBridge() {
         },
         append(prefix, path, content) {
             requiredRuntimeStorage().append(storageKey(prefix, path), content);
+        },
+        flush(prefix, path) {
+            requiredRuntimeStorage().flush(storageKey(prefix, path));
         },
         hasFile(prefix, path) {
             return requiredRuntimeStorage().hasFile(storageKey(prefix, path));
@@ -482,9 +535,15 @@ class RuntimeWorkerStorage {
         let index = null;
         try {
             data = await openSyncAccessHandle(root, runtimeStorageDataFileName);
-            index = await openSyncAccessHandle(root, runtimeStorageIndexFileName);
-            const loaded = readRuntimeStorageIndex(index, data.getSize());
-            return new RuntimeWorkerStorage(data, index, loaded.records);
+            const indexFile = await root.getFileHandle(runtimeStorageIndexFileName, { create: true });
+            const indexModifiedAt = (await indexFile.getFile()).lastModified * 1000;
+            index = await indexFile.createSyncAccessHandle();
+            const loaded = readRuntimeStorageIndex(index, data.getSize(), indexModifiedAt);
+            const storage = new RuntimeWorkerStorage(data, index, loaded.records);
+            if (loaded.migrated) {
+                storage.persistIndex();
+            }
+            return storage;
         }
         catch (error) {
             index?.close();
@@ -495,6 +554,24 @@ class RuntimeWorkerStorage {
     close() {
         this.index.close();
         this.data.close();
+    }
+    modifiedAt(itemKey) {
+        const record = this.records.get(itemKey);
+        if (record === undefined) {
+            throw new Error("runtime OPFS file does not exist");
+        }
+        return record.modifiedAt;
+    }
+    setModifiedAt(itemKey, modifiedAt) {
+        if (!Number.isSafeInteger(modifiedAt) || modifiedAt < 0) {
+            throw new Error("invalid file modification time");
+        }
+        const record = this.records.get(itemKey);
+        if (record === undefined) {
+            throw new Error("runtime OPFS file does not exist");
+        }
+        record.modifiedAt = modifiedAt;
+        this.persistIndex();
     }
     read(itemKey) {
         const record = this.records.get(itemKey);
@@ -528,8 +605,16 @@ class RuntimeWorkerStorage {
         this.records.set(itemKey, {
             offset,
             byteLength: (previous?.byteLength ?? 0) + content.byteLength,
+            modifiedAt: Math.max(Date.now() * 1000, (previous?.modifiedAt ?? 0) + 1),
         });
         this.persistIndex();
+    }
+    flush(itemKey) {
+        if (!this.records.has(itemKey)) {
+            throw new Error(`Runtime storage record does not exist: ${itemKey}`);
+        }
+        this.data.flush();
+        this.index.flush();
     }
     exists(itemKey) {
         if (this.records.has(itemKey)) {
@@ -593,6 +678,7 @@ class RuntimeWorkerStorage {
         this.records.set(session.key, {
             offset: session.offset,
             byteLength: session.byteLength,
+            modifiedAt: Math.max(Date.now() * 1000, (this.records.get(session.key)?.modifiedAt ?? 0) + 1),
         });
         this.sessions.delete(sessionId);
         this.persistIndex();
@@ -606,7 +692,7 @@ class RuntimeWorkerStorage {
         const offset = this.data.getSize();
         writeExact(this.data, content, offset);
         this.data.flush();
-        this.records.set(itemKey, { offset, byteLength: content.byteLength });
+        this.records.set(itemKey, { offset, byteLength: content.byteLength, modifiedAt: Math.max(Date.now() * 1000, (this.records.get(itemKey)?.modifiedAt ?? 0) + 1) });
         if (persist) {
             this.persistIndex();
         }
@@ -620,6 +706,7 @@ class RuntimeWorkerStorage {
     }
     persistIndex() {
         const serialized = textEncoder.encode(JSON.stringify({
+            version: 2,
             records: Array.from(this.records.entries()),
         }));
         this.index.truncate(0);
@@ -779,10 +866,10 @@ async function openSyncAccessHandle(root, fileName) {
     const handle = await root.getFileHandle(fileName, { create: true });
     return handle.createSyncAccessHandle();
 }
-function readRuntimeStorageIndex(handle, dataSize) {
+function readRuntimeStorageIndex(handle, dataSize, indexModifiedAt) {
     const indexSize = handle.getSize();
     if (indexSize === 0) {
-        return { records: new Map() };
+        return { records: new Map(), migrated: false };
     }
     const bytes = new Uint8Array(indexSize);
     if (handle.read(bytes, { at: 0 }) !== indexSize) {
@@ -791,6 +878,9 @@ function readRuntimeStorageIndex(handle, dataSize) {
     const parsed = JSON.parse(textDecoder.decode(bytes));
     if (!Array.isArray(parsed.records)) {
         throw new Error("runtime OPFS index is invalid");
+    }
+    if (parsed.version !== undefined && parsed.version !== 2) {
+        throw new Error("runtime OPFS index version is unsupported");
     }
     const records = new Map();
     for (const entry of parsed.records) {
@@ -801,9 +891,15 @@ function readRuntimeStorageIndex(handle, dataSize) {
         if (!isValidStorageRecord(record, dataSize)) {
             throw new Error("runtime OPFS index record is invalid");
         }
-        records.set(entry[0], { offset: record.offset, byteLength: record.byteLength });
+        if (parsed.version === undefined) {
+            record.modifiedAt = indexModifiedAt;
+        }
+        if (!Number.isSafeInteger(record.modifiedAt) || record.modifiedAt < 0) {
+            throw new Error("runtime OPFS index file metadata is invalid");
+        }
+        records.set(entry[0], { offset: record.offset, byteLength: record.byteLength, modifiedAt: record.modifiedAt });
     }
-    return { records };
+    return { records, migrated: parsed.version === undefined };
 }
 function isValidStorageRecord(value, dataSize) {
     return Number.isSafeInteger(value.offset) &&

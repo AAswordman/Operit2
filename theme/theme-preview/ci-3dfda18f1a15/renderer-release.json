@@ -1,21 +1,21 @@
 {
-  "coreCommit": "ef089d9ee6dc08a3d4be8684d62b7e6f90c1af6a",
+  "coreCommit": "3dfda18f1a15951a297241f9fcbd847fb4ba570f",
   "engineRevision": "42d3d75a56efe1a2e9902f52dc8006099c45d937",
   "files": [
     {
       "bytes": 32,
       "path": ".last_build_id",
-      "sha256": "f839196d7906f7ea35c39f5488ffc9432feefff53a81264513084d452953e9c6"
+      "sha256": "9403a55cdb4179ce5117decb8c89fe0126f2bcbb01cd109baa546ac719fd0194"
     },
     {
-      "bytes": 1270,
+      "bytes": 1597,
       "path": "assets/AssetManifest.bin",
-      "sha256": "f5811b458052138a3f4053b5a9a5cd8ae8e4bba1ca51d771f1d43da24e1f8624"
+      "sha256": "88ad5c2d286187af7b96c90c3f506103c3080fb81afc7283dd0b10276f2f312f"
     },
     {
-      "bytes": 1698,
+      "bytes": 2134,
       "path": "assets/AssetManifest.bin.json",
-      "sha256": "37a4cefbf39006242551da010d8bb594b85f30235a6f47d3db846c401b790bfe"
+      "sha256": "0c7c50021465af476f4040a50b0c8721c487222d45c997138c0689d1a5c19b63"
     },
     {
       "bytes": 82,
@@ -23,14 +23,14 @@
       "sha256": "28b1eb2b3d2e1ad60b8c8b0f9100b1ccbf492f7fa97f5bebb51ea97e73926e7d"
     },
     {
-      "bytes": 1337313,
+      "bytes": 1349704,
       "path": "assets/NOTICES",
-      "sha256": "651e2c41131e1875777c0469d3c21ee4d57db94deca8e638baf5fc2611607c0e"
+      "sha256": "4d80af41f9c5828e776a98b9753b001a142606aa7bf194ff346d5547db3bb9c6"
     },
     {
-      "bytes": 10820,
+      "bytes": 10660,
       "path": "assets/fonts/MaterialIcons-Regular.otf",
-      "sha256": "7b92457e38b3b51d41e819877134cb5bc7925fe6970053d7ab74f37ac02f8b03"
+      "sha256": "ec95d6e7eb41967952fa96141083ae1da4ec520f09d9d99bc017e22041579525"
     },
     {
       "bytes": 8671,
@@ -78,9 +78,24 @@
       "sha256": "96d6ea024172aaaa67686eda7e9c6ce5d577b20b45bc80631114fa2b52a27f94"
     },
     {
+      "bytes": 11357,
+      "path": "assets/packages/operit_ui/assets/licenses/liquid/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "bytes": 870,
+      "path": "assets/packages/operit_ui/assets/licenses/liquid/NOTICE",
+      "sha256": "5b129e5d7f98b462a63b894813d1a40b59f2dd8fb77830b17dc721b8a5724e79"
+    },
+    {
       "bytes": 4788,
       "path": "assets/packages/operit_ui/assets/licenses/noto-sans-sc.txt",
       "sha256": "8b29d392042aee124c91d0bcf3bf8c16bc3ed804a419ff73b5139cb8e0346b31"
+    },
+    {
+      "bytes": 6616,
+      "path": "assets/packages/operit_ui/shaders/liquid_glass.frag",
+      "sha256": "8ba57fb1b38de6e6a5e0a14b3b519dc64682df061b4028474e358ae30b145fb9"
     },
     {
       "bytes": 86859,
@@ -3815,12 +3830,12 @@
     {
       "bytes": 841,
       "path": "index.html",
-      "sha256": "8e9726a57d4eb71cab37724dd8098857fdf2947ac6ffbf6fffc8b8d69565bd0b"
+      "sha256": "b03d50b418b9e3e00dbbe88b6e621fa51c0ae0d56f8190c01a27f8ef59ce3c73"
     },
     {
-      "bytes": 2805442,
+      "bytes": 2801261,
       "path": "main.dart.js",
-      "sha256": "1c4529bf3c0c73d56e933d6a72a04542a450426594dcbef8f54a7314ba51e850"
+      "sha256": "ca85d23b28a75c745f055d3623aa7a521c39486bc06208b4d35dc2f4477c7787"
     },
     {
       "bytes": 5707,
@@ -3858,9 +3873,9 @@
       "sha256": "b7c63d6bf9bfafa9afac3995d328213600e5d34a4dbc395785398a80af5facd1"
     }
   ],
-  "fixtureSourceSha256": "f3ca944dcd8a089eeac96c6ec9fb8b7b58510857c680c76ca57f711868369ec2",
-  "flutterRevision": "71107f9b0c7303f49107294f1bc1025d42a28ac0",
-  "rendererReleaseId": "ci-ef089d9ee6dc",
+  "fixtureSourceSha256": "1f94566dc06e379d5edf0168676675b6e3456ea22db32b62f413a27a3b219f5a",
+  "flutterRevision": "c48664483a01f334b36b48d3978f42f14345c079",
+  "rendererReleaseId": "ci-3dfda18f1a15",
   "sourceDirty": false,
   "validatorVersion": 1
 }
