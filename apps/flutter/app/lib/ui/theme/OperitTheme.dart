@@ -1404,7 +1404,7 @@ Future<Map<String, String>> _prepareCustomFonts(
       );
     }
     if (families.containsKey(path)) continue;
-    final bytes = await ThemeAssetStore().readBytes(path);
+    final bytes = await ThemeAssetStore().readFontBytes(path);
     final prepared = await _customFontRegistry.registerBytes(
       reference: path,
       bytes: bytes,

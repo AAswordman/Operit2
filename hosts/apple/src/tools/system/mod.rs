@@ -1,3 +1,4 @@
+mod battery;
 #[cfg(target_os = "macos")]
 mod packages;
 use std::collections::BTreeMap;
@@ -17,6 +18,12 @@ use uuid::Uuid;
 pub struct AppleSystemOperationHost;
 
 impl AppleSystemOperationHost {
+    /// Retains current UIKit battery readings delivered by the iOS owner event channel.
+    #[cfg(target_os = "ios")]
+    pub fn observeBatteryEventJson(encoded: &str) {
+        battery::observe_ios_event(encoded);
+    }
+
     pub fn new() -> Self {
         Self
     }
@@ -420,6 +427,7 @@ fn get_apple_device_info() -> HostResult<DeviceInfoData> {
     let mut additionalInfo = BTreeMap::new();
     additionalInfo.insert("Platform".to_string(), apple_platform_name().to_string());
     additionalInfo.insert("Host name".to_string(), hostName.clone());
+    let (batteryLevel, batteryCharging) = battery::current_battery();
     Ok(DeviceInfoData {
         deviceId: hostName,
         model: model.clone(),
@@ -432,8 +440,8 @@ fn get_apple_device_info() -> HostResult<DeviceInfoData> {
         availableMemory: String::new(),
         totalStorage: String::new(),
         availableStorage: String::new(),
-        batteryLevel: 0,
-        batteryCharging: false,
+        batteryLevel,
+        batteryCharging,
         cpuInfo: model,
         networkType: String::new(),
         additionalInfo,

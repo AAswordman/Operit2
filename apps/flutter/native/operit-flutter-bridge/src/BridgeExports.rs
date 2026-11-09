@@ -371,6 +371,8 @@ pub unsafe extern "C" fn operit_flutter_bridge_emit_runtime_event(
             );
         }
     };
+    #[cfg(target_os = "ios")]
+    operit_host_ios_native::IosSystemOperationHost::observeBatteryEventJson(eventJson);
     string_to_ptr((*handle).emitRuntimeEvent(eventJson))
 }
 

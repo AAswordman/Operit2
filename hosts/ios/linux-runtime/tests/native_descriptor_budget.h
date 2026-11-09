@@ -7,6 +7,17 @@
 // Leave only a small amount of native FD capacity, as in an app that also has
 // framework, network and database descriptors. Never change the guest limit.
 struct NativeDescriptorBudget {
+    // Probe without opening another descriptor, including under a tight limit.
+    static size_t count() {
+        struct rlimit limit{};
+        if (::getrlimit(RLIMIT_NOFILE, &limit) < 0)
+            throw std::runtime_error("getrlimit");
+        size_t result = 0;
+        for (rlim_t fd = 0; fd < std::min<rlim_t>(limit.rlim_cur, 65536); ++fd)
+            if (::fcntl(int(fd), F_GETFD) >= 0)
+                ++result;
+        return result;
+    }
     struct rlimit original{};
     explicit NativeDescriptorBudget(rlim_t spare) {
         if (::getrlimit(RLIMIT_NOFILE, &original) < 0)

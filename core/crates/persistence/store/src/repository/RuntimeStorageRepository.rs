@@ -2,12 +2,16 @@ use crate::RuntimeFileSyncStore::RuntimeFileSyncStore;
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use operit_util::stream::ReverseStream::ReverseStream;
 
 use operit_util::OperitPaths;
 use operit_util::RuntimeStorageLayout::{
     runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_APPLICATION_ZOOM_PATH,
     RUNTIME_SYNC_DIR_PATH,
 };
+
+const STORAGE_CHUNK_BYTES: usize = 1024 * 1024;
+const STORAGE_STREAM_MAX_BYTES: usize = 256 * 1024 * 1024;
 
 pub struct RuntimeStorageRepository;
 
@@ -43,6 +47,67 @@ impl RuntimeStorageRepository {
             .readBytes(&path)
             .map_err(|error| error.message)?;
         Ok(Some(STANDARD.encode(bytes)))
+    }
+
+    #[allow(non_snake_case)]
+    /// Reads a bounded storage range so large assets never require one large Link frame.
+    pub fn readBase64Chunk(
+        &self,
+        path: String,
+        offset: i64,
+        length: i64,
+    ) -> Result<Option<String>, String> {
+        if offset < 0 || length <= 0 || length > STORAGE_CHUNK_BYTES as i64 {
+            return Err("Runtime storage range is outside its chunk bounds".into());
+        }
+        let storageHost = defaultRuntimeStorageHost();
+        if !storageHost.exists(&path).map_err(|error| error.message)? {
+            return Ok(None);
+        }
+        let bytes = storageHost
+            .readBytesRange(&path, offset as u64, length as usize)
+            .map_err(|error| error.message)?;
+        Ok(Some(STANDARD.encode(bytes)))
+    }
+
+    #[allow(non_snake_case)]
+    /// Receives bounded binary frames and publishes only a complete, size-checked object.
+    pub async fn writeBytesStream(
+        &self,
+        path: String,
+        expectedByteLength: i64,
+        mut bytes: ReverseStream<Vec<u8>>,
+    ) -> Result<(), String> {
+        if expectedByteLength < 0 || expectedByteLength > STORAGE_STREAM_MAX_BYTES as i64 {
+            return Err("Runtime storage stream byte length is outside its bounds".into());
+        }
+        let ownership = runtimeStorageOwnership(&path)?;
+        let mut content = Vec::new();
+        while let Some(chunk) = bytes.recv().await {
+            if chunk.len() > STORAGE_CHUNK_BYTES
+                || chunk.len() > expectedByteLength as usize - content.len()
+            {
+                return Err(
+                    "Runtime storage stream exceeds its chunk or declared byte length".into(),
+                );
+            }
+            content
+                .try_reserve(chunk.len())
+                .map_err(|error| error.to_string())?;
+            content.extend_from_slice(&chunk);
+        }
+        if content.len() != expectedByteLength as usize {
+            return Err("Runtime storage stream byte length does not match its declaration".into());
+        }
+        let storageHost = defaultRuntimeStorageHost();
+        match ownership {
+            RuntimeStorageOwnership::Space => {
+                runtimeFileSyncStore(storageHost).writeBytes(&path, &content)
+            }
+            RuntimeStorageOwnership::CoreNode | RuntimeStorageOwnership::Ephemeral => storageHost
+                .writeBytes(&path, &content)
+                .map_err(|error| error.message),
+        }
     }
 
     #[allow(non_snake_case)]

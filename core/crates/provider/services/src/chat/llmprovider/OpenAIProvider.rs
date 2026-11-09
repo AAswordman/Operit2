@@ -1261,9 +1261,6 @@ impl OpenAIProvider {
                     let mut message = Map::new();
                     message.insert("role".to_string(), json!(role));
                     message.insert("content".to_string(), json!(turn.content));
-                    if let Some(tool_name) = &turn.tool_name {
-                        message.insert("name".to_string(), json!(tool_name));
-                    }
                     Value::Object(message)
                 })
                 .collect(),

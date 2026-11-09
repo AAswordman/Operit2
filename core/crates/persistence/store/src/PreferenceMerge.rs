@@ -377,12 +377,11 @@ where F: Fn(&str,&str)->bool + Copy + 'a {
                     if initialization.data.owner.backend != crate::Transaction::Backend::DataStore {
                         return Err(ApplyError::Capability("Preference initialization requires DataStore data".into()));
                     }
-                    if operation.payload["encrypted"] != owner.encrypted { return Err(ApplyError::Capability("Conflicting preference encryption policy".into())); }
                     if initialization.data.owner.format > validation.syncSchemaVersion().map_err(ApplyError::from)? { return Err(ApplyError::Retry("Future preference initialization format".into())); }
                     return Ok(());
                 }
                 let entry = PreferencesSyncedEntry::fromOperation(operation).map_err(ApplyError::from)?;
-                if entry.encrypted() != owner.encrypted { return Err(ApplyError::Capability("Conflicting preference encryption policy".into())); }
+                // Encryption describes the source's storage format; the local owner chooses how to write.
                 entry.requireSchemaVersion(validation.syncSchemaVersion().map_err(ApplyError::from)?).map_err(ApplyError::from)?;
                 if owner.merge.catalog.is_some() { declaredAliases(schema, std::slice::from_ref(&entry)).map(|_| ()).map_err(ApplyError::Capability) }
                 else { Ok(()) }
@@ -516,7 +515,7 @@ where F: Fn(&str,&str)->bool {
         }
         store.migrateSyncedEntries(version, preferences, &mut entries)?;
         let schema = &owner;
-        if entries.iter().any(|entry| entry.storagePath() != path || entry.encrypted() != encrypted)
+        if entries.iter().any(|entry| entry.storagePath() != path)
             || schema.stores.iter().any(|store| store.path != path || store.encrypted != encrypted) {
             return Err(PreferencesDataStoreError::Message("Conflicting preference dataset or encryption policy".into()));
         }

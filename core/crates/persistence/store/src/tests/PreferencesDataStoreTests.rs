@@ -1,4 +1,5 @@
 use crate::SyncOperationStore::SyncOperationKnowledge;
+use crate::transaction_test_host::MemorySecretStore;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -10,14 +11,17 @@ use operit_host_api::{HostError, HostSecretStore, RuntimeStorageEntry, RuntimeSt
 use serde_json::{json, Value};
 
 use crate::PreferencesEncryption::tests::{
-    loadOrCreateWithSecretStoreForTest, ENCRYPTION_HOST_SECRET_KEY_FOR_TEST,
+    loadExistingWithSecretStoreForTest, loadOrCreateWithSecretStoreForTest, ENCRYPTION_HOST_SECRET_KEY_FOR_TEST,
 };
 use crate::SyncOperationStore::{SyncClock, SyncOperationStore};
 use crate::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_util::RuntimeStorageLayout::{
     CONFIG_PREFERENCES_DIR_PATH, GITHUB_AUTH_PREFERENCES_PATH, MODEL_CONFIGS_PREFERENCES_PATH,
-    PREFERENCES_ENCRYPTION_KEY_PATH, RUNTIME_LINK_ACCESS_IDENTITY_PATH, RUNTIME_SYNC_DIR_PATH,
+    RUNTIME_LINK_ACCESS_IDENTITY_PATH, RUNTIME_SYNC_DIR_PATH,
 };
+
+// This obsolete path is only a regression fixture; production code must never consult it.
+const OBSOLETE_KEY_FILE: &str = "secure/preferences_encryption_key.json";
 
 use super::{
     combine2, combine5, mutableStateFlow, stringPreferencesKey, CoreNodeSecretStore, Preferences,
@@ -202,10 +206,6 @@ impl MemoryStorageHost {
     }
 }
 
-#[derive(Clone, Default)]
-struct MemorySecretStore {
-    secrets: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
-}
 
 impl RuntimeStorageHost for MemoryStorageHost {
     fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
@@ -351,36 +351,6 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 }
 
-impl HostSecretStore for MemorySecretStore {
-    /// Reads secret bytes from the in-memory test secret store.
-    fn readSecret(&self, key: &str) -> operit_host_api::HostResult<Option<Vec<u8>>> {
-        let secrets = self
-            .secrets
-            .lock()
-            .map_err(|error| HostError::new(error.to_string()))?;
-        Ok(secrets.get(key).cloned())
-    }
-
-    /// Writes secret bytes into the in-memory test secret store.
-    fn writeSecret(&self, key: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
-        let mut secrets = self
-            .secrets
-            .lock()
-            .map_err(|error| HostError::new(error.to_string()))?;
-        secrets.insert(key.to_string(), content.to_vec());
-        Ok(())
-    }
-
-    /// Deletes secret bytes from the in-memory test secret store.
-    fn deleteSecret(&self, key: &str) -> operit_host_api::HostResult<()> {
-        let mut secrets = self
-            .secrets
-            .lock()
-            .map_err(|error| HostError::new(error.to_string()))?;
-        secrets.remove(key);
-        Ok(())
-    }
-}
 
 #[test]
 /// Verifies legacy preferences run each migration once and persist only the final snapshot.
@@ -740,43 +710,20 @@ fn preferences_schema_rejects_newer_version() {
 }
 
 #[test]
-/// Verifies that legacy encrypted preferences keys move into host secrets.
-fn preferences_encryption_migrates_old_secure_key_into_host_secret_store() {
+fn preferences_encryption_ignores_ordinary_key_files() {
     let host = MemoryStorageHost::default();
-    let secretStore = MemorySecretStore::default();
-    let legacyKey = br#"{
-  "format": "operit.preferences.encryption.key",
-  "version": 1,
-  "algorithm": "XChaCha20Poly1305",
-  "keyId": "legacy-key-id",
-  "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-}"#;
-
-    host.writeBytes(PREFERENCES_ENCRYPTION_KEY_PATH, legacyKey)
-        .expect("legacy key write");
-
-    let encryption = loadOrCreateWithSecretStoreForTest(&host, Some(&secretStore))
-        .expect("migrated encryption key");
-    let migrationPath = format!("{CONFIG_PREFERENCES_DIR_PATH}/migration_test.json");
-    let encrypted = encryption
-        .encrypt(&migrationPath, b"secret preferences")
-        .expect("encrypted bytes");
-    let decrypted = encryption
-        .decrypt(&migrationPath, &encrypted)
-        .expect("decrypted bytes");
-
-    assert_eq!(decrypted, b"secret preferences");
-    assert_eq!(
-        secretStore
-            .readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST)
-            .expect("host secret read"),
-        Some(legacyKey.to_vec())
-    );
-    assert_eq!(
-        host.exists(PREFERENCES_ENCRYPTION_KEY_PATH)
-            .expect("legacy key exists check"),
-        false
-    );
+    let secrets = MemorySecretStore::default();
+    host.writeBytes(OBSOLETE_KEY_FILE, b"unused ordinary key").unwrap();
+    let reads = host.readCount();
+    let writes = host.writeCount();
+    let encryption = loadOrCreateWithSecretStoreForTest(Some(&secrets)).unwrap();
+    assert_eq!(host.readCount(), reads, "key loading must not read ordinary files");
+    assert_eq!(host.writeCount(), writes, "key creation must not write ordinary files");
+    let key = secrets.readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST).unwrap().unwrap();
+    let decoded = crate::PreferencesEncryption::PreferencesEncryption::decodeKeyBytes(&key).unwrap();
+    let encrypted = encryption.encrypt("host-key", b"secret preferences").unwrap();
+    assert_eq!(decoded.decrypt("host-key", &encrypted).unwrap(), b"secret preferences");
+    assert_eq!(host.readBytes(OBSOLETE_KEY_FILE).unwrap(), b"unused ordinary key");
 }
 
 #[test]
@@ -879,7 +826,7 @@ fn encrypted_store_round_trips_without_plaintext_file() {
 }
 
 #[test]
-/// Verifies encrypted stores migrate legacy plaintext preference maps in place.
+/// Verifies encrypted stores defer legacy plaintext conversion until a successful write.
 fn encrypted_store_migrates_legacy_plaintext_preferences() {
     let host = Arc::new(MemoryStorageHost::default());
     let storagePath = format!("{CONFIG_PREFERENCES_DIR_PATH}/legacy_encrypted.preferences.json");
@@ -901,6 +848,9 @@ fn encrypted_store_migrates_legacy_plaintext_preferences() {
     let loaded = store.data().expect("migrated preferences read");
 
     assert_eq!(loaded, legacyPreferences);
+    assert_eq!(host.readBytes(&storagePath).unwrap(), plaintext);
+    assert!(!host.exists(OBSOLETE_KEY_FILE).unwrap());
+    store.edit(|values| values.set(&stringPreferencesKey("updated"), true)).unwrap();
     let stored = host
         .readBytes(&storagePath)
         .expect("migrated encrypted preferences");
@@ -1486,9 +1436,9 @@ fn preference_sync_replay_skips_unchanged_files_and_notifications() {
     assert_eq!(*store.changeSignal.version.lock().unwrap(), version);
 }
 
-/// An encryption mismatch rejects that operation while the declared owner can still commit.
+/// Historical encrypted operations remain replayable after the owner switches to plaintext.
 #[test]
-fn preference_sync_isolates_an_operation_with_conflicting_encryption() {
+fn preference_sync_accepts_operations_from_both_storage_formats() {
     let host = Arc::new(MemoryStorageHost::default());
     let plain = nativePreferenceOperation(MODEL_CONFIGS_PREFERENCES_PATH,
         vec![("setting", json!("synced-value"))], 1);
@@ -1496,7 +1446,7 @@ fn preference_sync_isolates_an_operation_with_conflicting_encryption() {
         vec![("setting", json!("synced-value"))], 2);
     encrypted.payload["encrypted"] = json!(true);
     crate::PreferenceMerge::applyOperations(host.clone(), &fixture_merge_schema(&[MODEL_CONFIGS_PREFERENCES_PATH]),
-        &[], &[plain, encrypted], |_, _| true).expect_err("a preferences file must have one encryption policy");
+        &[], &[plain, encrypted], |_, _| true).expect("the local owner chooses its write format");
     assert_eq!(PreferencesDataStore::newWithStorage(host, MODEL_CONFIGS_PREFERENCES_PATH)
         .data().unwrap().get(&stringPreferencesKey("setting")), Some(&json!("synced-value")));
 }
@@ -3025,7 +2975,7 @@ fn constrained_whole_replace_preserves_replication_and_atomic_failure_semantics(
 }
 
 #[test]
-fn constrained_encrypted_whole_replace_keeps_secrets_encrypted() {
+fn constrained_secret_whole_replace_writes_plaintext() {
     let host = Arc::new(MemoryStorageHost { releasePreferencesCache: true, ..Default::default() });
     let path = "runtime/compact-secret-replace.json";
     let make = || CoreNodeSecretStore::newWithStorage(host.clone(), path);
@@ -3036,8 +2986,8 @@ fn constrained_encrypted_whole_replace_keeps_secrets_encrypted() {
         assert_eq!(make().data().unwrap().get(&stringPreferencesKey("token")), Some(&json!(token)));
         let bytes = host.readBytes(path).unwrap();
         let encoded = std::str::from_utf8(&bytes).unwrap();
-        assert!(encoded.contains("operit.preferences.encrypted"));
-        assert!(!encoded.contains(token));
+        assert!(!encoded.contains("operit.preferences.encrypted"));
+        assert!(encoded.contains(token));
     }
 }
 
@@ -3296,4 +3246,236 @@ fn pending_initialization_envelopes_do_not_block_the_synchronization_registry() 
     );
     assert_eq!(journal.pendingOperationCount().unwrap(), 0);
     assert_eq!(journal.skippedOperations().unwrap().len(), 1);
+}
+
+/// Cross-format reads preserve bytes; the next write uses the selected policy, including on constrained Hosts.
+#[test]
+fn preferences_storage_formats_interoperate_in_both_directions() {
+    let path = "runtime/node_preferences/storage-format-test.json";
+    for releaseCache in [false, true] {
+        for sourceEncrypted in [false, true] {
+            for targetEncrypted in [false, true] {
+                let host = Arc::new(MemoryStorageHost { releasePreferencesCache: releaseCache, ..Default::default() });
+                let source = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, sourceEncrypted);
+                source.edit(|p| p.set(&stringPreferencesKey("original"), "kept")).unwrap();
+                drop(source);
+                let restarted = Arc::new((*host).clone());
+                let target = PreferencesDataStore::newNodeLocalWithStorage(restarted.clone(), path, targetEncrypted);
+                let before = host.readBytes(path).unwrap();
+                let writes = host.writeCount();
+                assert_eq!(target.data().unwrap().get(&stringPreferencesKey("original")), Some(&json!("kept")));
+                assert_eq!(target.readPlaintextFile().unwrap().contains("kept"), true);
+                assert_eq!(host.readBytes(path).unwrap(), before);
+                assert_eq!(host.writeCount(), writes, "reads must not migrate storage");
+                target.edit(|p| p.set(&stringPreferencesKey("updated"), 42)).unwrap();
+                let written: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
+                assert_eq!(written["format"] == "operit.preferences.encrypted", targetEncrypted);
+                let reader = CoreNodeSecretStore::newWithStorage(Arc::new((*host).clone()), path);
+                let loaded = reader.data().unwrap();
+                assert_eq!(loaded.get(&stringPreferencesKey("original")), Some(&json!("kept")));
+                assert_eq!(loaded.get(&stringPreferencesKey("updated")), Some(&json!(42)));
+            }
+        }
+    }
+}
+
+#[test]
+fn preferences_noop_write_also_converts_the_storage_format() {
+    for useReplace in [false, true] {
+        for sourceEncrypted in [false, true] {
+            let host = Arc::new(MemoryStorageHost::default());
+            let path = "runtime/node_preferences/noop-format.json";
+            let source = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, sourceEncrypted);
+            source.edit(|p| p.set(&stringPreferencesKey("value"), 7)).unwrap();
+            drop(source);
+            let target = PreferencesDataStore::newNodeLocalWithStorage(Arc::new((*host).clone()), path, !sourceEncrypted);
+            if useReplace { target.replace(target.data().unwrap()).unwrap(); }
+            else { target.edit(|_| {}).unwrap(); }
+            let raw: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
+            assert_eq!(raw["format"] == "operit.preferences.encrypted", !sourceEncrypted);
+        }
+    }
+}
+
+#[test]
+fn preferences_missing_legacy_key_preserves_ciphertext_and_does_not_create_a_key() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/node_preferences/missing-legacy-key.json";
+    let otherSecrets = MemorySecretStore::default();
+    let originalKey = loadOrCreateWithSecretStoreForTest(Some(&otherSecrets)).unwrap();
+    let original = originalKey.encrypt(path, br#"{"value":"old-secret"}"#).unwrap();
+    host.writeBytes(path, &original).unwrap();
+    for targetEncrypted in [false, true] {
+        let target = PreferencesDataStore::newNodeLocalWithStorage(Arc::new((*host).clone()), path, targetEncrypted);
+        assert!(matches!(target.data(), Err(PreferencesDataStoreError::Encryption(_))));
+        assert!(target.edit(|p| p.set(&stringPreferencesKey("value"), "replacement")).is_err());
+        assert!(target.replace(Preferences::default()).is_err());
+        assert_eq!(host.readBytes(path).unwrap(), original);
+        assert!(!host.exists(OBSOLETE_KEY_FILE).unwrap());
+    }
+    let healthy = CoreNodeSecretStore::newWithStorage(host.clone(), "runtime/node_preferences/healthy.json");
+    healthy.edit(|p| p.set(&stringPreferencesKey("ready"), true)).unwrap();
+    assert!(!host.exists(OBSOLETE_KEY_FILE).unwrap());
+}
+
+#[test]
+fn preferences_plaintext_reads_do_not_require_an_encryption_key() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/node_preferences/plaintext-no-key.json";
+    let store = CoreNodeSecretStore::newWithStorage(host.clone(), path);
+    store.edit(|p| p.set(&stringPreferencesKey("value"), "plaintext")).unwrap();
+    host.writeBytes(OBSOLETE_KEY_FILE, b"unreadable old key").unwrap();
+    let encrypted = PreferencesDataStore::newNodeLocalWithStorage(Arc::new((*host).clone()), path, true);
+    assert_eq!(encrypted.data().unwrap().get(&stringPreferencesKey("value")), Some(&json!("plaintext")));
+    encrypted.edit(|p| p.set(&stringPreferencesKey("next"), true)).unwrap();
+    assert_eq!(encrypted.data().unwrap().get(&stringPreferencesKey("next")), Some(&json!(true)));
+    assert_eq!(host.readBytes(OBSOLETE_KEY_FILE).unwrap(), b"unreadable old key");
+    let missing = PreferencesDataStore::newEncryptedWithStorage(host.clone(), "runtime/config/preferences/new-empty.json");
+    assert_eq!(missing.data().unwrap(), Preferences::default());
+}
+
+#[test]
+fn preferences_failed_format_conversion_keeps_the_original_record() {
+    for sourceEncrypted in [false, true] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let path = "runtime/node_preferences/failed-format-write.json";
+        let source = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, sourceEncrypted);
+        source.edit(|p| p.set(&stringPreferencesKey("value"), "original")).unwrap();
+        let original = host.readBytes(path).unwrap();
+        drop(source);
+        let target = PreferencesDataStore::newNodeLocalWithStorage(Arc::new((*host).clone()), path, !sourceEncrypted);
+        host.failedWrites.lock().unwrap().insert(path.into());
+        assert!(target.edit(|p| p.set(&stringPreferencesKey("value"), "changed")).is_err());
+        assert_eq!(host.readBytes(path).unwrap(), original);
+        assert_eq!(target.data().unwrap().get(&stringPreferencesKey("value")), Some(&json!("original")));
+        host.failedWrites.lock().unwrap().clear();
+        target.edit(|p| p.set(&stringPreferencesKey("value"), "changed")).unwrap();
+        assert_eq!(target.data().unwrap().get(&stringPreferencesKey("value")), Some(&json!("changed")));
+    }
+}
+
+#[test]
+fn preferences_broken_host_key_never_falls_back_to_an_ordinary_file() {
+    struct BrokenSecretStore;
+    impl HostSecretStore for BrokenSecretStore {
+        fn readSecret(&self, _: &str) -> operit_host_api::HostResult<Option<Vec<u8>>> {
+            Err(HostError::new("keystore verification failed"))
+        }
+        fn writeSecret(&self, _: &str, _: &[u8]) -> operit_host_api::HostResult<()> { panic!("must preserve original key") }
+        fn deleteSecret(&self, _: &str) -> operit_host_api::HostResult<()> { panic!("must preserve original key") }
+    }
+    let host = MemoryStorageHost::default();
+    let secrets = MemorySecretStore::default();
+    loadOrCreateWithSecretStoreForTest(Some(&secrets)).unwrap();
+    let bytes = secrets.readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST).unwrap().unwrap();
+    host.writeBytes(OBSOLETE_KEY_FILE, &bytes).unwrap();
+    let reads = host.readCount();
+    let writes = host.writeCount();
+    assert!(loadExistingWithSecretStoreForTest(Some(&BrokenSecretStore)).is_err());
+    assert!(loadOrCreateWithSecretStoreForTest(Some(&BrokenSecretStore)).is_err());
+    assert!(crate::PreferencesExport::readPreferencesExportKey(Some(&BrokenSecretStore)).is_err());
+    assert_eq!(host.readCount(), reads);
+    assert_eq!(host.writeCount(), writes);
+}
+
+/// Changing a replicated file's policy must update its registry without rewriting old operations.
+#[test]
+fn preferences_synced_files_can_switch_write_formats_and_publish_their_outboxes() {
+    for sourceEncrypted in [false, true] {
+        let host = Arc::new(MemoryStorageHost::default());
+        let path = MODEL_CONFIGS_PREFERENCES_PATH;
+        let open = |encrypted| if encrypted {
+            PreferencesDataStore::newEncryptedWithStorage(host.clone(), path)
+        } else {
+            PreferencesDataStore::newWithStorage(host.clone(), path)
+        };
+        let original = open(sourceEncrypted);
+        original.edit(|p| p.set(&stringPreferencesKey("original"), "kept")).unwrap();
+        let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+        let firstHistory = journal.preferenceHistory().unwrap();
+        let switched = open(!sourceEncrypted);
+        switched.edit(|p| p.set(&stringPreferencesKey("next"), "updated")).unwrap();
+        assert!(journal.publishPreferenceOutboxes().unwrap().is_empty());
+        let raw: Value = serde_json::from_slice(&host.readBytes(path).unwrap()).unwrap();
+        assert_eq!(raw["format"] == "operit.preferences.encrypted", !sourceEncrypted);
+        assert_eq!(journal.preferenceDatasets().unwrap()[path], !sourceEncrypted);
+        let history = journal.preferenceHistory().unwrap();
+        assert!(firstHistory.iter().all(|operation| history.contains(operation)));
+        assert_eq!(switched.data().unwrap().get(&stringPreferencesKey("original")), Some(&json!("kept")));
+        original.edit(|p| p.set(&stringPreferencesKey("last"), true)).unwrap();
+        assert!(journal.publishPreferenceOutboxes().unwrap().is_empty());
+        assert_eq!(journal.preferenceDatasets().unwrap()[path], sourceEncrypted);
+        assert_eq!(switched.data().unwrap().get(&stringPreferencesKey("last")), Some(&json!(true)));
+    }
+}
+
+/// Existing host keys must be reused without copying them into ordinary storage.
+#[test]
+fn preferences_existing_host_keys_are_reused_without_file_migration() {
+    let host = MemoryStorageHost::default();
+    let secrets = MemorySecretStore::default();
+    let original = loadOrCreateWithSecretStoreForTest(Some(&secrets)).unwrap();
+    let bytes = secrets.readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST).unwrap().unwrap();
+    let encrypted = original.encrypt("host-key", b"original value").unwrap();
+    for encryption in [
+        loadExistingWithSecretStoreForTest(Some(&secrets)).unwrap(),
+        loadOrCreateWithSecretStoreForTest(Some(&secrets)).unwrap(),
+    ] {
+        assert_eq!(encryption.decrypt("host-key", &encrypted).unwrap(), b"original value");
+    }
+    assert_eq!(crate::PreferencesExport::readPreferencesExportKey(Some(&secrets)).unwrap(), bytes);
+    assert_eq!(secrets.readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST).unwrap(), Some(bytes));
+    assert_eq!(secrets.writeCount(), 1);
+    assert_eq!(host.writeCount(), 0);
+}
+
+#[test]
+fn preferences_missing_host_keys_are_not_replaced_during_reads() {
+    let host = MemoryStorageHost::default();
+    let secrets = MemorySecretStore::default();
+    assert!(loadExistingWithSecretStoreForTest(Some(&secrets)).is_err());
+    assert!(crate::PreferencesExport::readPreferencesExportKey(Some(&secrets)).is_err());
+    assert_eq!(secrets.writeCount(), 0);
+    assert_eq!(host.writeCount(), 0);
+}
+
+#[test]
+fn preferences_without_host_secret_storage_never_use_ordinary_key_files() {
+    let host = MemoryStorageHost::default();
+    host.writeBytes(OBSOLETE_KEY_FILE, b"unused ordinary key").unwrap();
+    let reads = host.readCount();
+    let writes = host.writeCount();
+    assert!(loadExistingWithSecretStoreForTest(None).is_err());
+    assert!(loadOrCreateWithSecretStoreForTest(None).is_err());
+    assert!(crate::PreferencesExport::readPreferencesExportKey(None).is_err());
+    assert_eq!(host.readCount(), reads);
+    assert_eq!(host.writeCount(), writes);
+}
+
+/// Concurrent first writes must all use the single key persisted through the host interface.
+#[test]
+fn preferences_concurrent_first_writes_share_one_host_key() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let secrets = Arc::new(MemorySecretStore::default());
+    let start = Arc::new(std::sync::Barrier::new(16));
+    let writers: Vec<_> = (0..16).map(|index| {
+        let host = Arc::clone(&host);
+        let secrets = Arc::clone(&secrets);
+        let start = Arc::clone(&start);
+        thread::spawn(move || {
+            start.wait();
+            let encryption = loadOrCreateWithSecretStoreForTest(Some(secrets.as_ref())).unwrap();
+            let path = format!("concurrent-preferences-{index}");
+            let bytes = encryption.encrypt(&path, b"correct value").unwrap();
+            (path, bytes)
+        })
+    }).collect();
+    let encrypted: Vec<_> = writers.into_iter().map(|writer| writer.join().unwrap()).collect();
+    assert_eq!(secrets.writeCount(), 1, "only one host key may be persisted");
+    assert_eq!(host.writeCount(), 0, "ordinary files must never receive a key");
+    let key = secrets.readSecret(ENCRYPTION_HOST_SECRET_KEY_FOR_TEST).unwrap().unwrap();
+    let encryption = crate::PreferencesEncryption::PreferencesEncryption::decodeKeyBytes(&key).unwrap();
+    for (path, bytes) in encrypted {
+        assert_eq!(encryption.decrypt(&path, &bytes).unwrap(), b"correct value");
+    }
 }

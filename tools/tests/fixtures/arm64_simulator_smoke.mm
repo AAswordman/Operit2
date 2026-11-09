@@ -1,5 +1,6 @@
 #import "Arm64TerminalBridge.mm"
 #include <stdexcept>
+#include "../../../hosts/ios/linux-runtime/tests/native_descriptor_budget.h"
 
 static void Check(bool condition, NSString *message) {
   if (!condition) throw std::runtime_error(message.UTF8String ?: "ARM64 simulator check failed");
@@ -89,6 +90,11 @@ int main(int argc, const char **argv) {
       Execute(session, @"uname -m; printf '__ARM64_ROOT_READY__\\n'", 0, @"aarch64");
       Execute(session, @"sh -c 'exit 7'", 7, nil);
       Execute(session, @"python3 -c \"import sqlite3; print('PYTHON_SQLITE_OK', sqlite3.connect(':memory:').execute('select 42').fetchone()[0])\"", 0, @"PYTHON_SQLITE_OK 42");
+      const auto idleDescriptors = NativeDescriptorBudget::count();
+      for (unsigned repeat = 0; repeat < 4; ++repeat) {
+        Execute(session, @"python3 -c 'import json, ssl, asyncio, subprocess; subprocess.run([\"/bin/echo\", \"PYTHON_FD_OK\"], check=True)'", 0, @"PYTHON_FD_OK");
+        Check(NativeDescriptorBudget::count() == idleDescriptors, @"Completed Python guest retained native descriptors");
+      }
       Execute(session, @"node -e \"console.log('NODE_OK', process.arch)\"", 0, @"NODE_OK arm64");
       Execute(session, @"npm --version", 0, nil);
       Execute(session, @"seq 1 3000; printf '__LARGE_OUTPUT_OK__\\n'", 0, @"__LARGE_OUTPUT_OK__");

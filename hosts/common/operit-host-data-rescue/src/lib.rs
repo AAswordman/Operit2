@@ -652,13 +652,12 @@ impl RescueHost for NativeRescueHost {
         File::open(source).map_err(text)?.take(MAX_PREFERENCES_EXPORT_BYTES as u64 + 1).read_to_end(&mut content).map_err(text)?;
         if content.len() > MAX_PREFERENCES_EXPORT_BYTES { return Err(format!("Preferences exceed 16 MiB: {path}")); }
         let profile_secrets = NativeFileSecretStore(root.join("secrets"));
-        let storage = NativeRuntimeStorageHost::new(root, self.roots["workspaces"].clone());
         let secrets = if self.profile_file_secrets {
             Some(&profile_secrets as &dyn HostSecretStore)
         } else {
             self.secrets.as_deref()
         };
-        exportPreferences(&storage_path, content, || readPreferencesExportKey(&storage, secrets))
+        exportPreferences(&storage_path, content, || readPreferencesExportKey(secrets))
             .map(Some).map_err(|error| format!("{path}: {error}"))
     }
 

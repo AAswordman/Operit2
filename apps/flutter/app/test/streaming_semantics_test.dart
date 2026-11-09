@@ -150,7 +150,13 @@ void main() {
     ) async {
       final semantics = tester.ensureSemantics();
       try {
-        final source = semanticMarkdownFixtures.first['source'] as String;
+        final source =
+            semanticMarkdownFixtures.singleWhere(
+                  (fixture) => (fixture['source'] as String).contains(
+                    '[链接](https://example.com/a_(b))',
+                  ),
+                )['source']
+                as String;
         final stream = StreamController<Object>.broadcast();
         addTearDown(stream.close);
         final extent = ChatMessageExtent();

@@ -192,7 +192,7 @@ class _AppearanceThemeEditor extends StatelessWidget {
                   FilledButton.tonalIcon(
                     style: SettingsControlStyles.sectionTextButton(),
                     onPressed: () {
-                      unawaited(_pickCustomFont(themeController));
+                      unawaited(_pickCustomFont(context, themeController));
                     },
                     icon: const Icon(Icons.folder_open_outlined, size: 16),
                     label: Text(l10n.settingsAppearanceChooseCustomFont),
@@ -1579,20 +1579,38 @@ Rect _themeImageCropRect(
 }
 
 /// Imports and saves a selected font as the active custom font asset.
-Future<void> _pickCustomFont(OperitThemeController themeController) async {
+Future<void> _pickCustomFont(
+  BuildContext context,
+  OperitThemeController themeController,
+) async {
+  try {
+    final imported = await _selectThemeFont();
+    if (imported == null || !context.mounted) return;
+    await themeController.saveThemeSettings(
+      useCustomFont: true,
+      fontType: UserPreferencesManager.FONT_TYPE_FILE,
+      customFontPath: imported.storagePath,
+    );
+  } catch (error) {
+    _showFontImportError(context, error);
+  }
+}
+
+Future<ThemeAssetImport?> _selectThemeFont() async {
   const fontGroup = XTypeGroup(
     label: 'font',
     extensions: <String>['ttf', 'otf', 'ttc'],
+    uniformTypeIdentifiers: <String>['public.font'],
   );
   final file = await openFile(acceptedTypeGroups: <XTypeGroup>[fontGroup]);
-  if (file == null) {
-    return;
-  }
-  final imported = await ThemeAssetStore().importFile(file);
-  await themeController.saveThemeSettings(
-    useCustomFont: true,
-    fontType: UserPreferencesManager.FONT_TYPE_FILE,
-    customFontPath: imported.storagePath,
+  return file == null ? null : ThemeAssetStore().importFontFile(file);
+}
+
+void _showFontImportError(BuildContext context, Object error) {
+  if (!context.mounted) return;
+  final l10n = AppLocalizations.of(context)!;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(l10n.settingsAppearanceThemeConfigFailed('$error'))),
   );
 }
 
@@ -1623,22 +1641,17 @@ Future<void> _showBubbleFontDialog(
       return StatefulBuilder(
         builder: (context, setDialogState) {
           Future<void> pickFontFile() async {
-            const fontGroup = XTypeGroup(
-              label: 'font',
-              extensions: <String>['ttf', 'otf', 'ttc'],
-            );
-            final file = await openFile(
-              acceptedTypeGroups: <XTypeGroup>[fontGroup],
-            );
-            if (file == null) {
-              return;
+            try {
+              final imported = await _selectThemeFont();
+              if (imported == null || !context.mounted) return;
+              setDialogState(() {
+                useCustomFont = true;
+                fontType = UserPreferencesManager.FONT_TYPE_FILE;
+                customFontPath = imported.storagePath;
+              });
+            } catch (error) {
+              _showFontImportError(context, error);
             }
-            final imported = await ThemeAssetStore().importFile(file);
-            setDialogState(() {
-              useCustomFont = true;
-              fontType = UserPreferencesManager.FONT_TYPE_FILE;
-              customFontPath = imported.storagePath;
-            });
           }
 
           return OperitDialogScaffold(

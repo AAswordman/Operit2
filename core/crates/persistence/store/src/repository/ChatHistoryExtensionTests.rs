@@ -556,8 +556,10 @@ fn assistant_presentation_survives_reload_and_final_commit() {
         PRESENTATION_EXTENSION.into(),
         serde_json::to_value(&presentation).unwrap(),
     );
+    message.inputTokens = 10;
+    message.outputTokens = 20;
     manager
-        .commitAssistantMessageSegment("extensions-chat".into(), message, Some((10, 20, 30)))
+        .commitAssistantMessageSegment("extensions-chat".into(), message, Some(30))
         .unwrap();
     let reloaded = manager
         .loadChatMessageVariant("extensions-chat", 42, 0)

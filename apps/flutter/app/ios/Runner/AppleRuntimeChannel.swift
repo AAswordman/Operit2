@@ -225,6 +225,13 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
     UIDevice.current.isBatteryMonitoringEnabled = true
     hostEventObservers.append(
       NotificationCenter.default.addObserver(
+        forName: UIApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in self?.emitIosBatteryState() }
+    )
+    hostEventObservers.append(
+      NotificationCenter.default.addObserver(
         forName: UIDevice.batteryLevelDidChangeNotification,
         object: nil,
         queue: nil

@@ -32,7 +32,10 @@ GN_OPTIONS = {
     "ios_enable_code_signing": False,
     "treat_warnings_as_errors": False,
     "v8_jitless": True,
-    "v8_enable_webassembly": False,
+    "v8_enable_webassembly": True,
+    "v8_enable_drumbrake": True,
+    # Explicit bounds checks avoid signal traps and 8 GiB Wasm memory guards on iOS.
+    "v8_drumbrake_bounds_checks": True,
     "v8_enable_sparkplug": False,
     "v8_enable_maglev": False,
     "v8_enable_turbofan": False,
@@ -62,10 +65,28 @@ def version_from_lock(lock=BRIDGE_LOCK):
 
 def configuration(version, target):
     environment, cpu = TARGETS[target]
-    return {"recipe": 1, "version": version, "target": target,
+    return {"recipe": 2, "version": version, "target": target,
+            "interpreter_patch_sha256": digest(interpreter_patch(version)),
             "gn": {**GN_OPTIONS, "target_environment": environment, "target_cpu": cpu,
                    "use_custom_libcxx": True, "v8_enable_sandbox": False,
                    "v8_enable_pointer_compression": False, "v8_enable_v8_checks": False}}
+
+
+def interpreter_patch(version):
+    patch = REPO_ROOT / "tools/build_scripts/patches" / f"v8-{version}-ios-wasm-interpreter.patch"
+    if not patch.is_file():
+        raise RuntimeError(f"No reviewed jitless Wasm source patch for V8 {version}")
+    return patch
+
+
+def apply_interpreter_patch(source, patch):
+    """Apply exactly the reviewed engine patch, or verify it is already present."""
+    command = ["git", "apply", "--check", str(patch)]
+    if subprocess.run(command, cwd=source, capture_output=True).returncode == 0:
+        run(["git", "apply", str(patch)], cwd=source)
+    elif subprocess.run(command[:3] + ["--reverse", str(patch)],
+                        cwd=source, capture_output=True).returncode != 0:
+        raise RuntimeError("V8 Wasm interpreter source differs from the reviewed patch")
 
 
 def digest(path):
@@ -200,6 +221,7 @@ def build(cache, config):
     metadata = json.loads(output(["cargo", "metadata", "--manifest-path", probe / "Cargo.toml",
                                   "--format-version", "1"]))
     source = Path(next(p["manifest_path"] for p in metadata["packages"] if p["name"] == "v8")).parent
+    apply_interpreter_patch(source, interpreter_patch(config["version"]))
     prepare_icu(source)
     clang, libclang, lld = prepare_toolchain(cache)
     env = os.environ.copy()

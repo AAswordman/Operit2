@@ -768,38 +768,12 @@ impl MessageCoordinationDelegate {
                 return Err(error.to_string());
             }
         };
-        self.tokenStatisticsDelegate
-            .updateCumulativeStatistics(Some(chatId.clone()), Some(enhancedAiService));
-        let (inputTokens, outputTokens) = self
-            .tokenStatisticsDelegate
-            .getCumulativeTokenCounts(Some(chatId.clone()));
-        let windowSize = result.nextWindowSize.unwrap_or_else(|| {
-            self.tokenStatisticsDelegate
-                .getLastCurrentWindowSize(Some(chatId.clone()))
-        });
-        self.tokenStatisticsDelegate.setTokenCounts(
-            Some(chatId.clone()),
-            inputTokens,
-            outputTokens,
-            windowSize,
-        );
-        if turnOptions.persistTurn {
-            self.chatHistoryDelegate.saveCurrentChat(
-                inputTokens,
-                outputTokens,
-                windowSize,
-                Some(chatId.clone()),
-            );
-        }
+        // Usage is committed with the terminal assistant segment. Dispatch returns before
+        // streaming settles and must not overwrite persisted totals from a previous turn.
         ChainLogger::verbose_with_level(
             SEND_CHAIN,
             "send.dispatch.accepted",
-            &[
-                ("chatId", chatId.clone()),
-                ("inputTokens", inputTokens.to_string()),
-                ("outputTokens", outputTokens.to_string()),
-                ("windowSize", windowSize.to_string()),
-            ],
+            &[("chatId", chatId.clone())],
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         Ok(result.completion)

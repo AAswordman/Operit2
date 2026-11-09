@@ -22,6 +22,19 @@ fn jniHostError(action: &str, error: impl std::fmt::Display) -> HostError {
     ))
 }
 
+/// Converts a Java callback failure and clears its pending exception before returning to Rust.
+fn jniSecretCallError(env: &mut jni::JNIEnv<'_>, action: &str, error: jni::errors::Error) -> HostError {
+    let exception = env.exception_occurred().ok();
+    let _ = env.exception_clear();
+    let detail = exception.filter(|exception| !exception.is_null()).and_then(|exception| {
+        let message = env.call_method(exception, "toString", "()Ljava/lang/String;", &[]).ok()?.l().ok()?;
+        let message = JString::from(message);
+        env.get_string(&message).ok().map(String::from)
+    });
+    let _ = env.exception_clear();
+    jniHostError(action, detail.unwrap_or_else(|| error.to_string()))
+}
+
 /// Registers the Java host used by Android host secret store calls.
 pub fn setAndroidHostSecretStoreBridge(vm: JavaVM, host: GlobalRef) -> HostResult<()> {
     let mut guard = androidHostSecretStoreBridgeSlot()
@@ -98,7 +111,7 @@ impl AndroidHostSecretStoreBridge {
                 "(Ljava/lang/String;)[B",
                 &[JValue::Object(&keyObject)],
             )
-            .map_err(|error| jniHostError("reading secret", error))?;
+            .map_err(|error| jniSecretCallError(&mut env, "reading secret", error))?;
         let object = value
             .l()
             .map_err(|error| jniHostError("reading secret result", error))?;
@@ -129,7 +142,7 @@ impl AndroidHostSecretStoreBridge {
             "(Ljava/lang/String;[B)V",
             &[JValue::Object(&keyObject), JValue::Object(&contentObject)],
         )
-        .map_err(|error| jniHostError("writing secret", error))?;
+        .map_err(|error| jniSecretCallError(&mut env, "writing secret", error))?;
         Ok(())
     }
 
@@ -147,7 +160,7 @@ impl AndroidHostSecretStoreBridge {
             "(Ljava/lang/String;)V",
             &[JValue::Object(&keyObject)],
         )
-        .map_err(|error| jniHostError("deleting secret", error))?;
+        .map_err(|error| jniSecretCallError(&mut env, "deleting secret", error))?;
         Ok(())
     }
 

@@ -728,8 +728,17 @@ function buildCombinedAttachmentFileName(timestampMs: number): string {
   return `${COMBINED_ATTACHMENT_FILE_NAME_PREFIX}${displayTime}`;
 }
 
-function buildBatteryContent(): string {
-  return "";
+async function buildBatteryContent(): Promise<string> {
+  const info = await Tools.System.getDeviceInfo();
+  if (!Number.isFinite(info.batteryLevel) || info.batteryLevel < 0 || info.batteryLevel > 100) {
+    throw new Error("Battery information is unavailable on this device");
+  }
+  const text = resolveExtraInfoI18n();
+  return [
+    text.attachmentBatteryTitle,
+    `${text.batteryLevelLabel}: ${Math.round(info.batteryLevel)}%`,
+    `${text.batteryStatusLabel}: ${info.batteryCharging ? (info.batteryLevel >= 100 ? text.batteryFull : text.batteryCharging) : text.batteryNotCharging}`,
+  ].join("\n");
 }
 
 function buildErrorContent(title: string, error: unknown): string {

@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import "OperitFlutterBridge.h"
 #include <stdexcept>
+#include "../../../hosts/ios/linux-runtime/tests/native_descriptor_budget.h"
 
 // Isolate Foundation's Application Support lookup without changing production
 // root preparation or touching the developer's installed application data.
@@ -105,6 +106,11 @@ int main(int argc, const char **argv) {
       Execute(session, @"export OPERIT_SMOKE=persistent; cd /tmp", @"");
       Execute(session, @"printf '%s:%s' \"$OPERIT_SMOKE\" \"$PWD\"", @"persistent:/tmp");
       Execute(session, @"python3 -c 'print(6 * 7)'", @"42");
+      const auto idleDescriptors = NativeDescriptorBudget::count();
+      for (unsigned repeat = 0; repeat < 4; ++repeat) {
+        Execute(session, @"python3 -c 'import json, ssl, asyncio, subprocess; subprocess.run([\"/bin/echo\", \"PYTHON_FD_OK\"], check=True)'", @"PYTHON_FD_OK");
+        Check(NativeDescriptorBudget::count() == idleDescriptors, @"Completed Python guest retained native descriptors");
+      }
       Execute(session, @"test ! -d /Users && printf NO_HOST_MOUNTS", @"NO_HOST_MOUNTS");
       Call(@"terminalResize", @{ @"sessionId": session, @"rows": @40, @"cols": @100 });
       Execute(session, @"stty size", @"40 100");

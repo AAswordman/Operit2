@@ -139,6 +139,9 @@ fn preserveLiveMessageStreams(
         let Some(previousMessage) = liveMessages.get(&message.timestamp) else {
             continue;
         };
+        if previousMessage.selectedVariantIndex != message.selectedVariantIndex {
+            continue;
+        }
         message.contentStream = previousMessage.contentStream.clone();
         message.parts = previousMessage.parts.clone();
         message.completedAt = previousMessage.completedAt;
@@ -1846,7 +1849,7 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .selectMessageVariant(chatId.clone(), timestamp, selectedVariantIndex)
             .expect("ChatHistoryManager.selectMessageVariant must select the requested variant");
-        self.reloadCurrentChatDisplayHistory(chatId);
+        self.reloadCurrentChatDisplayHistoryWithInvalidatedRevision(chatId, Some(timestamp));
     }
 
     #[allow(non_snake_case)]
@@ -1870,7 +1873,10 @@ impl ChatHistoryDelegate {
             .expect("The newly persisted exact variant must be readable");
         ToolPkgChatMessageHookBridge::dispatchMessagePersisted(&chatId, &persistedVariant);
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-            self.reloadCurrentChatDisplayHistory(chatId.clone());
+            self.reloadCurrentChatDisplayHistoryWithInvalidatedRevision(
+                chatId.clone(),
+                Some(timestamp),
+            );
         }
         ChainLogger::verbose(
             MESSAGE_STORE_CHAIN,
@@ -2390,20 +2396,20 @@ impl ChatHistoryDelegate {
         &mut self,
         chatId: String,
         message: ChatMessage,
-        chatMetrics: Option<(i64, i64, i64)>,
+        currentWindowSize: Option<i64>,
     ) -> Result<SyncClock, String> {
         AppLogger::trace(
             "ChatFlowTrace",
             &format!(
-                "commit_assistant.start chatId={} metricsSet={} {}",
+                "commit_assistant.start chatId={} windowSizeSet={} {}",
                 chatId,
-                chatMetrics.is_some(),
+                currentWindowSize.is_some(),
                 chat_message_trace_summary(&message)
             ),
         );
         let clock = self
             .chatHistoryManager
-            .commitAssistantMessageSegment(chatId.clone(), message.clone(), chatMetrics)
+            .commitAssistantMessageSegment(chatId.clone(), message.clone(), currentWindowSize)
             .map_err(|error| error.to_string())?;
         let mut persistedMessage = self
             .chatHistoryManager

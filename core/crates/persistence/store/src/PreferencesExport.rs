@@ -1,9 +1,7 @@
 //! Converts stored preferences into portable plaintext without changing live storage.
 use crate::PreferencesEncryption::PreferencesEncryption;
 use operit_host_api::{HostSecretStore, RuntimeStorageHost};
-use operit_util::RuntimeStorageLayout::{
-    CONFIG_PREFERENCES_DIR_PATH, PREFERENCES_ENCRYPTION_KEY_PATH,
-};
+use operit_util::RuntimeStorageLayout::CONFIG_PREFERENCES_DIR_PATH;
 
 /// Bounds the JSON document required to decode one preferences envelope.
 pub const MAX_PREFERENCES_EXPORT_BYTES: usize = 16 * 1024 * 1024;
@@ -42,23 +40,15 @@ pub fn isPreferencesPath(path: &str) -> bool {
     inDirectory(CONFIG_PREFERENCES_DIR_PATH) || inDirectory("runtime/node_preferences")
 }
 
-/// Reads an existing key from the selected Host secret contract without creating one.
+/// Reads the existing host key without creating one or consulting ordinary key files.
 #[allow(non_snake_case)]
 pub fn readPreferencesExportKey(
-    storage: &dyn RuntimeStorageHost,
     secrets: Option<&dyn HostSecretStore>,
 ) -> Result<Vec<u8>, String> {
-    match secrets {
-        Some(secrets) => secrets
-            .readSecret("operit.preferences.encryption_key.v1")
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| {
-                "Preferences encryption key is missing from the Host secret store".to_string()
-            }),
-        None => storage
-            .readBytes(PREFERENCES_ENCRYPTION_KEY_PATH)
-            .map_err(|error| error.to_string()),
-    }
+    PreferencesEncryption::readExistingKeyBytes(secrets).map_err(|error| match error {
+        crate::PreferencesDataStore::PreferencesDataStoreError::Encryption(message) => message,
+        error => error.to_string(),
+    })
 }
 
 /// Decodes an explicit encrypted envelope and preserves plaintext preference maps exactly.

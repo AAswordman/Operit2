@@ -1,4 +1,5 @@
 #include "operit/arm64_runtime.h"
+#include "native_descriptor_budget.h"
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -13,6 +14,7 @@ void require(bool value, const char *message) {
 struct Output {
     std::string text;
     bool bad_count = false;
+    bool input_ready = false;
 };
 int64_t capture(void *context, int fd, void *bytes, size_t size) {
     auto &output = *static_cast<Output *>(context);
@@ -35,10 +37,63 @@ VM create(const char *root, Output &output) {
     require(ort_arm64_load(vm.get(), "/hello", argv, env) == 0, ort_arm64_last_error(vm.get()));
     return vm;
 }
+// Keep the parent VM alive and blocked after its mapped-file child exits.
+// Releasing resources only on VM destruction would hide this regression.
+void parallel_descriptor_lifecycle(const char *root) {
+    NativeDescriptorBudget budget(64);
+    const auto baseline = NativeDescriptorBudget::count();
+    for (unsigned cycle = 0; cycle < 4; ++cycle) {
+        {
+            Output output;
+            ort_arm64_config config{};
+            config.root_directory = root;
+            config.execution_threads = 2;
+            config.write = capture;
+            config.read = [](void *context, int, void *bytes, size_t) -> int64_t {
+                auto &output = *static_cast<Output *>(context);
+                if (!output.input_ready)
+                    return -11;
+                output.input_ready = false;
+                *static_cast<char *>(bytes) = 1;
+                return 1;
+            };
+            config.io_context = &output;
+            VM vm(ort_arm64_create(&config), &ort_arm64_destroy);
+            require(bool(vm), ort_arm64_last_error(nullptr));
+            const char *args[] = {"/parallel_lifecycle", nullptr};
+            require(ort_arm64_load(vm.get(), args[0], args, nullptr) == 0,
+                    ort_arm64_last_error(vm.get()));
+            ort_arm64_result result{};
+            unsigned slices = 0;
+            do {
+                result = ort_arm64_run(vm.get(), 1000000);
+                require(result.status == ORT_ARM64_BUDGET || result.status == ORT_ARM64_WAITING,
+                        ort_arm64_last_error(vm.get()));
+                require(++slices < 100, "parallel lifecycle startup stalled");
+            } while (result.status != ORT_ARM64_WAITING);
+            require(output.text == "parallel-parent-ready\n", "parallel lifecycle parent not ready");
+            // Both observations include the parent's blocked stdin operation.
+            const auto idle = NativeDescriptorBudget::count();
+            output.text.clear();
+            output.input_ready = true;
+            do {
+                result = ort_arm64_run(vm.get(), 1000000);
+                require(result.status == ORT_ARM64_BUDGET || result.status == ORT_ARM64_WAITING,
+                        ort_arm64_last_error(vm.get()));
+                require(++slices < 100, "parallel lifecycle fixture stalled");
+            } while (output.text != "parallel-child-reaped\n" || result.status != ORT_ARM64_WAITING);
+            require(result.maximum_parallel_tasks >= 2, "lifecycle fixture did not execute in parallel");
+            require(NativeDescriptorBudget::count() == idle,
+                    "exited parallel guest retained native file descriptors");
+        }
+        require(NativeDescriptorBudget::count() == baseline, "destroyed VM retained native descriptors");
+    }
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
         require(argc == 2, "root argument required");
+        parallel_descriptor_lifecycle(argv[1]);
         Output a, b;
         auto first = create(argv[1], a), second = create(argv[1], b);
         ort_arm64_result x{}, y{};

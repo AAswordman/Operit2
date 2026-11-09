@@ -144,6 +144,23 @@ impl RuntimeStorageHost for TestRuntimeHost {
         Ok(self.resolve(path)?.exists())
     }
 
+    fn modifiedAt(&self, path: &str) -> HostResult<i64> {
+        let modified = fs::metadata(self.resolve(path)?)?.modified()?;
+        let elapsed = modified.duration_since(UNIX_EPOCH)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        i64::try_from(elapsed.as_micros()).map_err(|error| HostError::new(error.to_string()))
+    }
+
+    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> {
+        let micros = u64::try_from(modifiedAt)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let file = fs::OpenOptions::new().write(true).open(self.resolve(path)?)?;
+        file.set_times(fs::FileTimes::new().set_modified(
+            UNIX_EPOCH + std::time::Duration::from_micros(micros),
+        ))?;
+        Ok(())
+    }
+
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
         let directory = self.resolve(prefix)?;
         let mut entries = Vec::new();
@@ -678,11 +695,26 @@ fn assistant_segment_commit_is_atomic_and_synchronizable() {
     completedMessage.completedExecutionGeneration = 1;
     completedMessage.inputTokens = 11;
     completedMessage.outputTokens = 13;
+    // Caller snapshots cannot supply authoritative totals; the transaction owns accounting.
+    let mut staleChat = completedChat.clone();
+    staleChat.inputTokens = 999;
+    staleChat.outputTokens = 888;
+    staleChat.currentWindowSize = 123;
     let committedClock = sourceSyncStore
         .commitAssistantMessageSegment(
-            completedChat.clone(),
+            staleChat.clone(),
             completedMessage.clone(),
             vec![messagePart(chatId, timestamp, "complete")],
+            Some(4_096),
+        )
+        .unwrap();
+    // Replaying a segment also preserves the latest persisted context window.
+    sourceSyncStore
+        .commitAssistantMessageSegment(
+            staleChat,
+            completedMessage.clone(),
+            vec![messagePart(chatId, timestamp, "complete")],
+            None,
         )
         .unwrap();
     assert!(committedClock.sequenceFor(&sourceSyncStore.originDeviceId) > 0);
@@ -746,6 +778,8 @@ fn assistant_segment_commit_is_atomic_and_synchronizable() {
             .currentWindowSize,
         4_096
     );
+    let synchronizedChat = targetDatabase.chatDao().getChatById(chatId).unwrap().unwrap();
+    assert_eq!((synchronizedChat.inputTokens, synchronizedChat.outputTokens), (11, 13));
     AppDatabase::closeDatabase();
 }
 

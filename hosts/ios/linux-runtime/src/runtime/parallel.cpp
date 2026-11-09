@@ -45,6 +45,23 @@ struct BatchTask {
 };
 } // namespace
 
+void Machine::collect_thread_executions() {
+    // Call only between execution batches, after every worker has joined.
+    // Cached engines own address spaces and their file mappings. An exited
+    // task (or an image replaced by exec) must not keep those handles alive
+    // until another parallel batch happens to run.
+    for (auto it = thread_executions_.begin(); it != thread_executions_.end();) {
+        const auto *task = scheduler_.lookup(it->first);
+        const auto *process = task ? find_process(task->pid) : nullptr;
+        if (!process || task->state == Task::State::Exited ||
+            process->state != Process::State::Running ||
+            it->second.memory != process->image.memory ||
+            it->second.source != process->image.acceleration.get())
+            it = thread_executions_.erase(it);
+        else
+            ++it;
+    }
+}
 bool Machine::run_parallel(uint64_t &budget) {
     // Ptrace operates on coordinated CPU and memory snapshots. Keep traced VMs
     // serial until the parallel executor can stop individual jobs at a trap.
@@ -229,13 +246,7 @@ bool Machine::run_parallel(uint64_t &budget) {
             ++task.involuntary_switches;
         }
     }
-    for (auto it = thread_executions_.begin(); it != thread_executions_.end();) {
-        const auto *task = scheduler_.lookup(it->first);
-        if (!task || task->state == Task::State::Exited)
-            it = thread_executions_.erase(it);
-        else
-            ++it;
-    }
+    collect_thread_executions();
     quantum_remaining_ = 262144;
     schedule_pending_ = !main_exited_;
     return true;

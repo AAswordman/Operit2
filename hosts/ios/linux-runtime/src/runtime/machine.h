@@ -32,6 +32,7 @@ class Machine final : public ProcessController {
     };
     std::map<uint32_t, ThreadExecution> thread_executions_;
     bool run_parallel(uint64_t &budget);
+    void collect_thread_executions();
     bool load_attempted_ = false, loaded_ = false, started_ = false, failed_ = false;
     bool schedule_pending_ = false, main_exited_ = false;
     int main_exit_code_ = 0;

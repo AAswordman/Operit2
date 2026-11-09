@@ -27,7 +27,7 @@ pub(crate) fn schema() -> PreferenceMergeSchema {
                 let path = operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH;
                 PreferenceMergeStore {
                     path: path.to_string(),
-                    encrypted: true,
+                    encrypted: false,
                     open: |storage, path| ModelConfigManager::preferenceStore(storage, path),
                     merge: StoragePreferencesMergeDescriptor {
                         version: 1,
@@ -48,7 +48,7 @@ pub(crate) fn schema() -> PreferenceMergeSchema {
                 let path = operit_util::RuntimeStorageLayout::TTS_CONFIGS_PREFERENCES_PATH;
                 PreferenceMergeStore {
                     path: path.to_string(),
-                    encrypted: true,
+                    encrypted: false,
                     open: |storage, path| TtsConfigManager::preferenceStore(storage, path),
                     merge: StoragePreferencesMergeDescriptor {
                         version: 1,
@@ -73,7 +73,7 @@ pub(crate) fn schema() -> PreferenceMergeSchema {
                 let path = operit_util::RuntimeStorageLayout::STT_CONFIGS_PREFERENCES_PATH;
                 PreferenceMergeStore {
                     path: path.to_string(),
-                    encrypted: true,
+                    encrypted: false,
                     open: |storage, path| SttConfigManager::preferenceStore(storage, path),
                     merge: StoragePreferencesMergeDescriptor {
                         version: 1,
@@ -269,6 +269,7 @@ mod tests {
     impl Fixture {
         /// Opens a real storage host in an isolated directory for owner-contract replay checks.
         fn new() -> Self {
+            super::installTestHostSecrets();
             let root = std::env::temp_dir().join(format!(
                 "operit-preference-contract-{}",
                 uuid::Uuid::new_v4()
@@ -1169,6 +1170,28 @@ mod tests {
         assert!(Transaction::compare(&source_store.syncSnapshot().unwrap(),&target_store.syncSnapshot().unwrap()).unwrap().is_none());
     }
 
+}
+
+/// Supplies a stable host secret interface for legacy encrypted owner fixtures.
+#[cfg(test)]
+fn installTestHostSecrets() {
+    struct TestSecrets;
+    impl operit_host_api::HostSecretStore for TestSecrets {
+        fn readSecret(&self, key: &str) -> operit_host_api::HostResult<Option<Vec<u8>>> {
+            if key != "operit.preferences.encryption_key.v1" {
+                return Err(operit_host_api::HostError::new("unexpected test secret key"));
+            }
+            Ok(Some(br#"{"format":"operit.preferences.encryption.key","version":1,"algorithm":"XChaCha20Poly1305","keyId":"owner-fixture","key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#.to_vec()))
+        }
+        fn writeSecret(&self, _: &str, _: &[u8]) -> operit_host_api::HostResult<()> {
+            panic!("existing fixture key must not be replaced")
+        }
+        fn deleteSecret(&self, _: &str) -> operit_host_api::HostResult<()> {
+            panic!("existing fixture key must not be deleted")
+        }
+    }
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| operit_store::setDefaultHostSecretStore(Arc::new(TestSecrets)));
 }
 
 #[cfg(test)]

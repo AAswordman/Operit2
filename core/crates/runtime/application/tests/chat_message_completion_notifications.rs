@@ -113,6 +113,8 @@ fn streaming_checkpoints_persist_without_scheduling_message_hooks() {
 
     let completed = ChatMessage {
         completedAt: 456,
+        inputTokens: 13,
+        outputTokens: 7,
         ..snapshot
     };
     history
@@ -126,6 +128,12 @@ fn streaming_checkpoints_persist_without_scheduling_message_hooks() {
             .unwrap()
             .completedAt,
         456
+    );
+    let chat = database.chatDao().getChatById("chat").unwrap().unwrap();
+    assert_eq!(
+        (chat.inputTokens, chat.outputTokens, chat.currentWindowSize),
+        (13, 7, 0),
+        "terminal commits must account for usage even without a window estimate"
     );
     let tasks = scheduler.tasks.lock().unwrap();
     assert_eq!(

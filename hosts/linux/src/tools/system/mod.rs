@@ -739,9 +739,8 @@ fn linux_battery_info() -> HostResult<(i32, bool)> {
             return Ok((level, charging));
         }
     }
-    // Battery-less machines (desktops) expose no Battery entry; report the
-    // same 0/false default as the Windows host instead of failing device info.
-    Ok((0, false))
+    // Unknown/absent batteries must not be presented as an empty battery.
+    Ok((-1, false))
 }
 
 fn linux_network_type() -> HostResult<String> {

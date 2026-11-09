@@ -2379,6 +2379,7 @@ name = "operit-proxy-local"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "operit-command-core",
  "operit-edge-contract",
  "operit-host-api",
@@ -2404,6 +2405,7 @@ dependencies = [
  "operit-util",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "wasm-bindgen-futures",
  "zip",

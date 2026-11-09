@@ -267,11 +267,15 @@ The plugin owns per-turn memory recall through its `before_process` input hook
 participant, it strips host markup from the authored input and queries that
 participant's primary
 memory owner with a per-chat snapshot for owner-scoped deduplication, and
-appends the configured number of matches as a `<memory_context>` block before
-the host commits the user message. The block persists with that user message
+appends the configured number of matches as an inline `<attachment>` with
+`id="character_memory_recall"`, `filename="相关记忆"`, and `type="text/plain"`
+before the host commits the user message. Its XML-escaped text is recognized
+by the Dart UI as supplementary information. The block persists with that user message
 and is reused in later history and regeneration requests, preserving the
 previous prompt prefix for model caching. Input that already contains the
-block skips retrieval, including after a plugin restart. An empty result
+block skips retrieval, including after a plugin restart. Legacy
+`<memory_context source="character-memory">` blocks also skip retrieval to
+preserve stored prompts. An empty result
 injects nothing. Retrieval exceptions are logged and skip injection; host hook
 timeouts still follow the shared pre-hook timeout policy. Group `record_only`
 submissions and their empty-input continuations bypass this input hook; the

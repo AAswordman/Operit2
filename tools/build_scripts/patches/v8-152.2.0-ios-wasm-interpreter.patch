@@ -1,0 +1,105 @@
+--- a/v8/gni/v8.gni
++++ b/v8/gni/v8.gni
+@@ -353,7 +353,7 @@
+ # The Wasm interpreter is currently supported only on arm64 and x64, on
+ # Windows, Linux, MacOS and tvOS.
+ is_drumbrake_supported =
+-    v8_enable_webassembly && v8_enable_pointer_compression &&
++    v8_enable_webassembly &&
+     (v8_current_cpu == "x64" || v8_current_cpu == "arm64" ||
+      v8_current_cpu == "riscv64") &&
+     (target_os == "win" || target_os == "linux" || target_os == "mac" ||
+--- a/v8/src/flags/flag-definitions.h
++++ b/v8/src/flags/flag-definitions.h
+@@ -2339,8 +2339,8 @@
+ // DrumBrake flags.
+ DEFINE_EXPERIMENTAL_FEATURE(wasm_jitless,
+                             "Execute all wasm code in the Wasm interpreter")
+-#ifdef V8_OS_TVOS
+-// Enable wasm_jitless on tvOS where jit is not available.
++#if defined(V8_OS_TVOS) || defined(V8_OS_IOS)
++// Apple mobile embedders execute Wasm in the interpreter without JIT.
+ DEFINE_IMPLICATION(jitless, wasm_jitless)
+ #endif
+ DEFINE_BOOL(wasm_jitless_if_available_for_testing, false,
+--- a/v8/src/wasm/interpreter/wasm-interpreter.cc
++++ b/v8/src/wasm/interpreter/wasm-interpreter.cc
+@@ -5998,9 +5998,12 @@
+                                  WriteBarrierMode mode) {
+     DCHECK_EQ(dst_addr, host.ptr() + offset - kHeapObjectTag);
+ 
+-    // Only stores the lower 32-bit.
++#ifdef V8_COMPRESS_POINTERS
+     base::WriteUnalignedValue<Tagged_t>(
+         dst_addr, V8HeapCompressionScheme::CompressObject(value.ptr()));
++#else
++    base::WriteUnalignedValue<Tagged_t>(dst_addr, value.ptr());
++#endif
+ 
+     // Need to generate a GC write barrier.
+     CONDITIONAL_WRITE_BARRIER(host, offset, value, mode);
+@@ -6178,11 +6181,14 @@
+     DCHECK(IsWasmStruct(*struct_obj));
+     int offset = Read<int32_t>(code);
+     Address field_addr = (*struct_obj).ptr() + offset;
+-    // DrumBrake expects pointer compression.
+-    Tagged_t ref_tagged = base::ReadUnalignedValue<uint32_t>(field_addr);
++    Tagged_t ref_tagged = base::ReadUnalignedValue<Tagged_t>(field_addr);
+     Isolate* isolate = Isolate::Current();
++#ifdef V8_COMPRESS_POINTERS
+     Tagged<Object> ref_uncompressed(
+         V8HeapCompressionScheme::DecompressTagged(ref_tagged));
++#else
++    Tagged<Object> ref_uncompressed(ref_tagged);
++#endif
+     WasmRef ref_handle = handle(ref_uncompressed, isolate);
+     push<WasmRef>(sp, code, wasm_runtime, ref_handle);
+ 
+@@ -6782,9 +6788,6 @@
+   INSTRUCTION_HANDLER_FUNC s2s_RefArrayFill(
+       const uint8_t* code, uint32_t* sp, WasmInterpreterRuntime* wasm_runtime,
+       int64_t r0, double fp0) {
+-    // DrumBrake currently only works with pointer compression.
+-    static_assert(COMPRESS_POINTERS_BOOL);
+-
+     uint32_t size = pop<uint32_t>(sp, code, wasm_runtime);
+     WasmRef value = pop<WasmRef>(sp, code, wasm_runtime);
+     Tagged<Object> tagged_value = *value;
+--- a/v8/src/wasm/interpreter/wasm-interpreter-runtime.cc
++++ b/v8/src/wasm/interpreter/wasm-interpreter-runtime.cc
+@@ -2595,13 +2595,9 @@
+             break;
+           case kRef:
+           case kRefNull: {
+-#ifdef V8_COMPRESS_POINTERS
+             Address address = packer.Pop<Address>();
+             ref_returns.push_back(
+                 DirectHandle<Object>(Tagged<Object>(address), isolate_));
+-#else
+-            CHECK(false);  // Not supported.
+-#endif  // V8_COMPRESS_POINTERS
+             break;
+           }
+           case kS128:
+--- a/v8/src/wasm/interpreter/arm64/interpreter-builtins-arm64.cc
++++ b/v8/src/wasm/interpreter/arm64/interpreter-builtins-arm64.cc
+@@ -944,7 +944,7 @@
+   // x1: return_count as Smi.
+   // x27 (cp): context.
+   __ Ldr(x1, MemOperand(fp, kReturnCountOffset));
+-  __ Add(x1, x1, x1);
++  __ SmiTag(x1);
+ 
+   // Two tagged objects at the top of the stack (the context and the result,
+   // which we store at the place of the function object we called).
+--- a/v8/src/wasm/interpreter/x64/interpreter-builtins-x64.cc
++++ b/v8/src/wasm/interpreter/x64/interpreter-builtins-x64.cc
+@@ -765,7 +765,7 @@
+   // rbx: return_count as Smi.
+   // rsi: context.
+   __ movq(rbx, MemOperand(rbp, kReturnCountOffset));
+-  __ addq(rbx, rbx);
++  __ SmiTag(rbx);
+   __ pushq(return_reg);  // result
+   __ pushq(context);
+ 

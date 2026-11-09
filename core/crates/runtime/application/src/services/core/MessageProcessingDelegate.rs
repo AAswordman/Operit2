@@ -2514,22 +2514,6 @@ impl MessageProcessingDelegate {
                         let mut workerChatHistoryDelegate = completionChatHistoryDelegate
                             .lock()
                             .expect("worker chat history mutex poisoned");
-                        let chatMetrics = nextWindowSize.map(|windowSize| {
-                            let previousTokens = workerChatHistoryDelegate
-                                .chatHistoriesFlow()
-                                .value()
-                                .into_iter()
-                                .find(|history| history.id == completionChatId)
-                                .map(|history| (history.inputTokens, history.outputTokens));
-                            let (inputTokens, outputTokens) = match previousTokens {
-                                Some((inputTokens, outputTokens)) => (
-                                    inputTokens + finalMessage.inputTokens,
-                                    outputTokens + finalMessage.outputTokens,
-                                ),
-                                None => (finalMessage.inputTokens, finalMessage.outputTokens),
-                            };
-                            (inputTokens, outputTokens, windowSize)
-                        });
                         if workerTurnOptions.persistTurn {
                             if !completionMessageProcessingDelegate
                                 .lock()
@@ -2546,7 +2530,7 @@ impl MessageProcessingDelegate {
                                 .commitAssistantMessageSegment(
                                     completionChatId.clone(),
                                     completedMessage.clone(),
-                                    chatMetrics,
+                                    nextWindowSize,
                                 );
                             if let Err(error) = commitResult {
                                 drop(workerChatHistoryDelegate);

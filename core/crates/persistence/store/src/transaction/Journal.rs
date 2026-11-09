@@ -314,14 +314,13 @@ impl Journal {
         self.0.query("SELECT path,encrypted FROM transaction_files ORDER BY path", vec![])?.iter()
             .map(|row| Ok((row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()? != 0))).collect()
     }
+    /// Tracks the latest local write policy; historical operations retain their original format.
     pub(crate) fn register_file(&mut self, path: &str, encrypted: bool) -> Result<(), Error> {
         self.transaction(|tx| {
-            let rows = tx.query("SELECT encrypted FROM transaction_files WHERE path=?1",vec![text(path)])?;
-            if let Some(row) = rows.first() {
-                if (row.valueAt(0)?.asI64()? != 0) != encrypted { return Err(Error::Message("Conflicting preference encryption policy".into())); }
-                return Ok(());
-            }
-            tx.execute("INSERT INTO transaction_files VALUES(?1,?2)",vec![text(path), SqliteValue::Integer(i64::from(encrypted))])?;
+            tx.execute(
+                "INSERT INTO transaction_files VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET encrypted=excluded.encrypted WHERE encrypted<>excluded.encrypted",
+                vec![text(path), SqliteValue::Integer(i64::from(encrypted))],
+            )?;
             Ok(())
         })
     }

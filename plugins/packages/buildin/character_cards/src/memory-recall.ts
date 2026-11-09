@@ -2,8 +2,9 @@ import type { MemoryQueryResult } from "./api";
 import { dispatch } from "./service-runtime";
 import { memoryRecallQuery } from "./public-api";
 
-/** Bounds every injected memory summary; the persisted limit shares the same validated range. */
-const MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
+/** Uses the attachment shape recognized as supplementary context by the Dart UI. */
+const MEMORY_RECALL_MARKER = '<attachment id="character_memory_recall"';
+const LEGACY_MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
 const MODEL_PARTICIPANT_ID = "model:chat";
 
 /** Collapses structured whitespace so one memory stays one readable block. */
@@ -37,10 +38,16 @@ function executionParticipant(payload: ToolPkg.PromptInputHookEvent["eventPayloa
   return { chatId, participantId };
 }
 
+/** Keeps recalled text inside the attachment body, including literal host markup. */
+function escapeXml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
 /** Formats typed matches into the injected block; an empty result injects nothing. */
 function memoryBlock(result: MemoryQueryResult): string | null {
   if (result.memories.length === 0) return null;
-  const lines: string[] = [MEMORY_RECALL_MARKER, "【相关记忆】", `命中数量: ${result.memories.length}`];
+  const lines: string[] = ["【相关记忆】", `命中数量: ${result.memories.length}`];
   result.memories.forEach((memory, index) => {
     lines.push(
       `#${index + 1}`,
@@ -51,8 +58,8 @@ function memoryBlock(result: MemoryQueryResult): string | null {
     if (memory.tags.length > 0) lines.push(`标签: ${memory.tags.map(tag => collapse(tag, 40)).join(", ")}`);
     if (memory.chunkInfo !== null) lines.push(`分块: ${collapse(memory.chunkInfo, 80)}`);
   });
-  lines.push("</memory_context>");
-  return lines.join("\n");
+  const content = lines.join("\n");
+  return `${MEMORY_RECALL_MARKER} filename="相关记忆" type="text/plain" size="${content.length}">${escapeXml(content)}</attachment>`;
 }
 
 /** Adds participant-scoped memories before the host commits the user message to history. */
@@ -62,7 +69,7 @@ export async function onMemoryRecallPromptInput(event: ToolPkg.PromptInputHookEv
   const participant = executionParticipant(event.eventPayload);
   if (participant === null) return null;
   const processedInput = String(event.eventPayload.processedInput ?? event.eventPayload.rawInput ?? "");
-  if (processedInput.includes(MEMORY_RECALL_MARKER)) return null;
+  if (processedInput.includes(MEMORY_RECALL_MARKER) || processedInput.includes(LEGACY_MEMORY_RECALL_MARKER)) return null;
   const query = searchQuery(processedInput);
   if (query === "") return null;
   try {

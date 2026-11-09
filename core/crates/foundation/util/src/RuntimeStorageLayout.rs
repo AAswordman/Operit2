@@ -88,7 +88,6 @@ pub const WORKSPACE_DIR_PATH: &str = "workspaces";
 pub const WORKSPACE_ROOT_PATH_PREFIX: &str = "workspaces/";
 pub const SECURE_ROOT_DIR_PATH: &str = "secure";
 pub const SECURE_ROOT_PATH_PREFIX: &str = "secure/";
-pub const PREFERENCES_ENCRYPTION_KEY_PATH: &str = "secure/preferences_encryption_key.json";
 
 pub const CONFIG_PREFERENCES_DIR_PATH: &str = "runtime/config/preferences";
 

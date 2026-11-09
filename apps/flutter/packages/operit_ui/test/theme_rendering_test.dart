@@ -137,6 +137,61 @@ void main() {
     },
   );
 
+  test('private font loading and rendering accept more than 32 MiB', () async {
+    final source = await rootBundle.load(
+      'packages/operit_ui/assets/fonts/noto-sans-sc.ttf',
+    );
+    // Keep the complete bundled font, with valid zero padding past the old cap.
+    final bytes = Uint8List(33 * 1024 * 1024)
+      ..setAll(
+        0,
+        source.buffer.asUint8List(source.offsetInBytes, source.lengthInBytes),
+      );
+    final prepared = await ThemeFontRegistry().registerBytes(
+      reference: 'runtime/data/user_assets/theme/large.ttf',
+      bytes: bytes,
+    );
+    expect(prepared.bytes, bytes.length);
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '中文字体 Large font 123',
+        style: TextStyle(fontFamily: prepared.family, fontSize: 24),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    expect(painter.width, greaterThan(0));
+    expect(painter.height, greaterThan(0));
+    final original = await ThemeFontRegistry().registerBytes(
+      reference: 'original.ttf',
+      bytes: source.buffer.asUint8List(
+        source.offsetInBytes,
+        source.lengthInBytes,
+      ),
+    );
+    final expected = TextPainter(
+      text: TextSpan(
+        text: '中文字体 Large font 123',
+        style: TextStyle(fontFamily: original.family, fontSize: 24),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    expect(painter.width, closeTo(expected.width, 0.01));
+    expect(painter.height, closeTo(expected.height, 0.01));
+    // FontLoader can finish even if an engine cannot use the font. Require the
+    // loaded metrics to differ from Flutter tests' default Ahem font as well.
+    final defaultFont = TextPainter(
+      text: const TextSpan(
+        text: '中文字体 Large font 123',
+        style: TextStyle(fontFamily: 'Ahem', fontSize: 24),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    expect(painter.width, isNot(closeTo(defaultFont.width, 0.01)));
+    defaultFont.dispose();
+    expected.dispose();
+    painter.dispose();
+  });
+
   test(
     'pinned builtin fonts are static, licensed, and cover the probe corpus',
     () async {

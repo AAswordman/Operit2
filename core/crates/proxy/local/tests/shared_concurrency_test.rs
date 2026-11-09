@@ -1480,3 +1480,9 @@ mod failed_package_tests;
 
 #[path = "support/relative_terminal_tests.rs"]
 mod relative_terminal_tests;
+
+#[path = "support/market_update_tests.rs"]
+mod market_update_tests;
+
+#[path = "support/font_storage_stream_tests.rs"]
+mod font_storage_stream_tests;

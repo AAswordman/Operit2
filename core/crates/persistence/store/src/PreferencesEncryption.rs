@@ -2,9 +2,8 @@ use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use operit_host_api::RuntimeStorageHost;
-use operit_util::RuntimeStorageLayout::PREFERENCES_ENCRYPTION_KEY_PATH;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 use crate::PreferencesDataStore::PreferencesDataStoreError;
 use crate::RuntimeStorageHost::defaultHostSecretStoreOption;
@@ -17,6 +16,9 @@ const ENCRYPTED_PREFERENCES_VERSION: u32 = 1;
 const ENCRYPTION_ALGORITHM: &str = "XChaCha20Poly1305";
 const KEY_LENGTH: usize = 32;
 const NONCE_LENGTH: usize = 24;
+
+// Different preference files may reach their first encrypted write concurrently.
+static KEY_INITIALIZATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone)]
 /// XChaCha20-Poly1305 encryption helper for encrypted preferences files.
@@ -48,52 +50,63 @@ struct EncryptedPreferencesEnvelope {
 
 impl PreferencesEncryption {
     /// Loads the existing preferences encryption key or creates and stores a new one.
-    pub fn load_or_create(
-        storageHost: &dyn RuntimeStorageHost,
-    ) -> Result<Self, PreferencesDataStoreError> {
-        Self::loadOrCreateWithSecretStore(storageHost, defaultHostSecretStoreOption().as_deref())
+    pub fn load_or_create() -> Result<Self, PreferencesDataStoreError> {
+        Self::loadOrCreateWithSecretStore(defaultHostSecretStoreOption().as_deref())
     }
 
-    /// Loads or creates the encryption key using the supplied secret store.
-    fn loadOrCreateWithSecretStore(
-        storageHost: &dyn RuntimeStorageHost,
+    /// Reads only the existing host secret; reads never create a replacement key.
+    pub fn load_existing() -> Result<Self, PreferencesDataStoreError> {
+        Self::loadExistingWithSecretStore(defaultHostSecretStoreOption().as_deref())
+    }
+
+    fn loadExistingWithSecretStore(
         secretStore: Option<&dyn operit_host_api::HostSecretStore>,
     ) -> Result<Self, PreferencesDataStoreError> {
-        if let Some(secretStore) = secretStore {
-            return Self::loadOrCreateFromHostSecret(storageHost, secretStore);
-        }
-        if storageHost.exists(PREFERENCES_ENCRYPTION_KEY_PATH)? {
-            return Self::load(storageHost);
-        }
-        Self::create(storageHost)
+        let content = Self::readExistingKeyBytes(secretStore)?;
+        Self::decodeKeyBytes(&content)
     }
 
-    /// Loads the key from host secrets, migrates an old stored key, or creates a host secret key.
-    fn loadOrCreateFromHostSecret(
-        storageHost: &dyn RuntimeStorageHost,
-        secretStore: &dyn operit_host_api::HostSecretStore,
+    /// Reads the host key for normal access and exports, without consulting ordinary files.
+    pub fn readExistingKeyBytes(
+        secretStore: Option<&dyn operit_host_api::HostSecretStore>,
+    ) -> Result<Vec<u8>, PreferencesDataStoreError> {
+        let secretStore = Self::requireSecretStore(secretStore)?;
+        Self::readHostKeyBytes(secretStore)?.ok_or_else(|| PreferencesDataStoreError::Encryption(
+            "Preferences encryption key is missing from the Host secret store".into(),
+        ))
+    }
+
+    /// Explicit encrypted writes keep their key in the host secret store on every platform.
+    fn loadOrCreateWithSecretStore(
+        secretStore: Option<&dyn operit_host_api::HostSecretStore>,
     ) -> Result<Self, PreferencesDataStoreError> {
-        if let Some(content) = secretStore
-            .readSecret(ENCRYPTION_HOST_SECRET_KEY)
-            .map_err(|error| PreferencesDataStoreError::Encryption(error.to_string()))?
-        {
+        let _guard = KEY_INITIALIZATION_LOCK.lock().map_err(|_| {
+            PreferencesDataStoreError::Encryption("preferences key initialization lock is poisoned".into())
+        })?;
+        let secretStore = Self::requireSecretStore(secretStore)?;
+        if let Some(content) = Self::readHostKeyBytes(secretStore)? {
             return Self::decodeKeyBytes(&content);
-        }
-        if storageHost.exists(PREFERENCES_ENCRYPTION_KEY_PATH)? {
-            let content = storageHost.readBytes(PREFERENCES_ENCRYPTION_KEY_PATH)?;
-            let encryption = Self::decodeKeyBytes(&content)?;
-            secretStore
-                .writeSecret(ENCRYPTION_HOST_SECRET_KEY, &content)
-                .map_err(|error| PreferencesDataStoreError::Encryption(error.to_string()))?;
-            storageHost.delete(PREFERENCES_ENCRYPTION_KEY_PATH, false)?;
-            return Ok(encryption);
         }
         Self::createWithHostSecret(secretStore)
     }
 
-    fn load(storageHost: &dyn RuntimeStorageHost) -> Result<Self, PreferencesDataStoreError> {
-        let content = storageHost.readBytes(PREFERENCES_ENCRYPTION_KEY_PATH)?;
-        Self::decodeKeyBytes(&content)
+    fn requireSecretStore(
+        secretStore: Option<&dyn operit_host_api::HostSecretStore>,
+    ) -> Result<&dyn operit_host_api::HostSecretStore, PreferencesDataStoreError> {
+        secretStore.ok_or_else(|| PreferencesDataStoreError::Encryption(
+            "host secret storage is unavailable; encrypted preferences require a host secret store".into(),
+        ))
+    }
+
+    /// A failed host read must never be treated as an absent key.
+    fn readHostKeyBytes(
+        secretStore: &dyn operit_host_api::HostSecretStore,
+    ) -> Result<Option<Vec<u8>>, PreferencesDataStoreError> {
+        secretStore.readSecret(ENCRYPTION_HOST_SECRET_KEY).map_err(|error| {
+            PreferencesDataStoreError::Encryption(format!(
+                "cannot read the existing preferences key: {error}; encrypted data was preserved"
+            ))
+        })
     }
 
     /// Decodes an existing key without creating secrets or changing storage.
@@ -136,19 +149,8 @@ impl PreferencesEncryption {
     ) -> Result<Self, PreferencesDataStoreError> {
         let stored = Self::newStoredKey()?;
         let content = serde_json::to_vec_pretty(&stored)?;
-        secretStore
-            .writeSecret(ENCRYPTION_HOST_SECRET_KEY, &content)
+        secretStore.writeSecret(ENCRYPTION_HOST_SECRET_KEY, &content)
             .map_err(|error| PreferencesDataStoreError::Encryption(error.to_string()))?;
-        Ok(Self {
-            keyId: stored.keyId,
-            key: decodeStoredKey(&stored.key)?,
-        })
-    }
-
-    fn create(storageHost: &dyn RuntimeStorageHost) -> Result<Self, PreferencesDataStoreError> {
-        let stored = Self::newStoredKey()?;
-        let content = serde_json::to_vec_pretty(&stored)?;
-        storageHost.writeBytes(PREFERENCES_ENCRYPTION_KEY_PATH, &content)?;
         Ok(Self {
             keyId: stored.keyId,
             key: decodeStoredKey(&stored.key)?,
@@ -270,12 +272,17 @@ fn decodeStoredKey(value: &str) -> Result<[u8; KEY_LENGTH], PreferencesDataStore
 pub(crate) mod tests {
     pub(crate) const ENCRYPTION_HOST_SECRET_KEY_FOR_TEST: &str = super::ENCRYPTION_HOST_SECRET_KEY;
 
+    pub(crate) fn loadExistingWithSecretStoreForTest(
+        secretStore: Option<&dyn operit_host_api::HostSecretStore>,
+    ) -> Result<super::PreferencesEncryption, crate::PreferencesDataStore::PreferencesDataStoreError> {
+        super::PreferencesEncryption::loadExistingWithSecretStore(secretStore)
+    }
+
     /// Loads or creates preferences encryption with an explicit secret store for tests.
     pub(crate) fn loadOrCreateWithSecretStoreForTest(
-        storageHost: &dyn operit_host_api::RuntimeStorageHost,
         secretStore: Option<&dyn operit_host_api::HostSecretStore>,
     ) -> Result<super::PreferencesEncryption, crate::PreferencesDataStore::PreferencesDataStoreError>
     {
-        super::PreferencesEncryption::loadOrCreateWithSecretStore(storageHost, secretStore)
+        super::PreferencesEncryption::loadOrCreateWithSecretStore(secretStore)
     }
 }

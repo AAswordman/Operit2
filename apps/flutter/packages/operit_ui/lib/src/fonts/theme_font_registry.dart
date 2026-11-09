@@ -7,7 +7,13 @@ import '../assets/theme_asset_resolver.dart';
 
 const String kNotoSansScFontId = 'noto-sans-sc';
 const String kCascadiaMonoFontId = 'cascadia-mono';
+
+/// Public v1 theme archives have a separate, fixed validation budget.
 const int themeFontMaxBytes = 32 * 1024 * 1024;
+
+/// Local fonts include large CJK fonts and font collections. This limit applies
+/// both when importing and when loading an already saved private appearance.
+const int themePrivateFontMaxBytes = 256 * 1024 * 1024;
 
 final RegExp _fontAssetReferencePattern = RegExp(
   r'^assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\.ttf$',
@@ -100,7 +106,7 @@ class ThemeFontRegistry {
     String? expectedSha256,
   }) async {
     if (reference.isEmpty) throw ArgumentError('Font reference is empty');
-    if (bytes.isEmpty || bytes.length > themeFontMaxBytes) {
+    if (bytes.isEmpty || bytes.length > themePrivateFontMaxBytes) {
       throw StateError('Theme font byte budget exceeded: $reference');
     }
     if (expectedSha256 != null) themeFontFamilyForSha256(expectedSha256);

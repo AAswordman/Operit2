@@ -523,8 +523,17 @@ function buildCombinedAttachmentFileName(timestampMs) {
     const displayTime = `${pad2(date.getHours())}:${pad2(date.getMinutes())} ${pad2(date.getDate())}/${date.getFullYear()}/${date.getMonth() + 1}`;
     return `${COMBINED_ATTACHMENT_FILE_NAME_PREFIX}${displayTime}`;
 }
-function buildBatteryContent() {
-    return "";
+async function buildBatteryContent() {
+    const info = await Tools.System.getDeviceInfo();
+    if (!Number.isFinite(info.batteryLevel) || info.batteryLevel < 0 || info.batteryLevel > 100) {
+        throw new Error("Battery information is unavailable on this device");
+    }
+    const text = resolveExtraInfoI18n();
+    return [
+        text.attachmentBatteryTitle,
+        `${text.batteryLevelLabel}: ${Math.round(info.batteryLevel)}%`,
+        `${text.batteryStatusLabel}: ${info.batteryCharging ? (info.batteryLevel >= 100 ? text.batteryFull : text.batteryCharging) : text.batteryNotCharging}`,
+    ].join("\n");
 }
 function buildErrorContent(title, error) {
     const text = resolveExtraInfoI18n();

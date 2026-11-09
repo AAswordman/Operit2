@@ -88,7 +88,7 @@ impl ModelConfigManager {
         storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
         path: impl Into<String>,
     ) -> PreferencesDataStore {
-        PreferencesDataStore::newEncryptedWithStorage(storage, path)
+        PreferencesDataStore::newWithStorage(storage, path)
             .withMigration(Self::PREFERENCES_VERSION, |from,context| {
                 if from == 3 {
                     operit_store::Transaction::Rule::DropKey {key:"provider_list".into()}.apply(context).map_err(PreferencesDataStoreError::Message)?;

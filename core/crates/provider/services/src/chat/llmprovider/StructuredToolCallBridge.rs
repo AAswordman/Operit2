@@ -511,7 +511,6 @@ impl StructuredToolCallBridge {
                 messagesArray.push(json!({
                     "role": "tool",
                     "tool_call_id": openToolCall.id,
-                    "name": openToolCall.function_name,
                     "content": StructuredToolCallBridge::unmatchedToolResultContent(
                         reason,
                         &openToolCall.matching_name,
@@ -667,10 +666,6 @@ impl StructuredToolCallBridge {
                             toolMessage.insert("role".to_string(), json!("tool"));
                             toolMessage
                                 .insert("tool_call_id".to_string(), json!(matchedCall.call.id));
-                            toolMessage.insert(
-                                "name".to_string(),
-                                json!(matchedCall.call.function_name),
-                            );
                             toolMessage.insert(
                                 "content".to_string(),
                                 json!(Self::nonEmptyContent(&result.content)),
@@ -1413,10 +1408,7 @@ mod tests {
             messages[1].get("tool_call_id").and_then(Value::as_str),
             Some(call_id)
         );
-        assert_eq!(
-            messages[1].get("name").and_then(Value::as_str),
-            Some("package_proxy")
-        );
+        assert!(messages[1].get("name").is_none());
         assert!(!messages[1]
             .get("content")
             .and_then(Value::as_str)
@@ -1469,17 +1461,17 @@ mod tests {
                 StructuredToolCallBridge::buildMessagesValueForProvider(&history, true, true);
             assert_eq!(messages.as_array().unwrap().len(), 2, "{stored_name}");
             assert_eq!(messages[0]["tool_calls"][0]["function"]["name"], wire_name);
-            assert_eq!(messages[1]["name"], wire_name, "{stored_name}");
+            assert!(messages[1].get("name").is_none(), "{stored_name}");
             assert_eq!(
                 messages[1]["tool_call_id"],
                 messages[0]["tool_calls"][0]["id"]
             );
             assert_eq!(messages[1]["content"], "done");
 
-            // A missing execution result must also reply under the original function name.
+            // Missing results must still refer to the original call ID without a name field.
             let missing =
                 StructuredToolCallBridge::buildMessagesValueForProvider(&history[..1], true, true);
-            assert_eq!(missing[1]["name"], wire_name, "{stored_name}");
+            assert!(missing[1].get("name").is_none(), "{stored_name}");
             assert_eq!(
                 missing[1]["tool_call_id"],
                 missing[0]["tool_calls"][0]["id"]
@@ -1516,7 +1508,7 @@ mod tests {
             (2, 0, "created first"),
             (3, 2, "created second"),
         ] {
-            assert_eq!(messages[result_index]["name"], "package_proxy");
+            assert!(messages[result_index].get("name").is_none());
             assert_eq!(
                 messages[result_index]["tool_call_id"],
                 messages[0]["tool_calls"][call_index]["id"]

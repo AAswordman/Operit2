@@ -1841,7 +1841,7 @@ pub struct PreferencesDataStore {
     pub(crate) path: PathBuf,
     pub(crate) storagePath: String,
     pub(crate) storageHost: Arc<dyn RuntimeStorageHost>,
-    pub(crate) encryption: Option<PreferencesEncryption>,
+    pub(crate) encryption: Option<Arc<OnceLock<PreferencesEncryption>>>,
     pub(crate) syncOperationStore: Option<SyncOperationStore>,
     pub(crate) syncDescriptor: Option<PreferencesSyncDescriptor>,
     changeSignal: Arc<PreferencesDataStoreChangeSignal>,
@@ -2346,7 +2346,7 @@ impl std::ops::Deref for CoreNodeStateStore {
 }
 
 #[derive(Clone)]
-/// Stores encrypted credentials and secrets owned by one CoreNode.
+/// Stores node-local credentials and secrets, accepting legacy encrypted files.
 pub struct CoreNodeSecretStore {
     inner: PreferencesDataStore,
 }
@@ -2364,7 +2364,7 @@ impl CoreNodeSecretStore {
         self
     }
 
-    /// Opens encrypted node-local secrets through the default runtime storage host.
+    /// Opens plaintext node-local secrets through the default runtime storage host.
     pub fn new(path: PathBuf) -> Self {
         let storageHost = defaultRuntimeStorageHost();
         let storagePath = runtimeStoragePath(&path);
@@ -2373,19 +2373,19 @@ impl CoreNodeSecretStore {
                 storageHost,
                 path,
                 storagePath,
-                true,
+                false,
             ),
         }
     }
 
-    /// Opens encrypted node-local secrets through an explicit runtime storage host.
+    /// Opens plaintext node-local secrets through an explicit runtime storage host.
     #[allow(non_snake_case)]
     pub fn newWithStorage(
         storageHost: Arc<dyn RuntimeStorageHost>,
         storagePath: impl Into<String>,
     ) -> Self {
         Self {
-            inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, true),
+            inner: PreferencesDataStore::newNodeLocalWithStorage(storageHost, storagePath, false),
         }
     }
 }
@@ -2892,11 +2892,6 @@ impl Hash for PreferencesDataStoreRegistryKey {
     }
 }
 
-enum StoredEncryptedPreferences {
-    LegacyPlaintext(Preferences),
-    EncryptedEnvelope(Vec<u8>),
-}
-
 impl Drop for PreferencesDataStoreFlowSubscription {
     fn drop(&mut self) {
         let Some(signal) = self.signal.upgrade() else {
@@ -2957,10 +2952,7 @@ impl PreferencesDataStore {
     ) -> Self {
         let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &storagePath);
         let sharedState = preferencesDataStoreSharedState(&storageHost, &storagePath);
-        let encryption = encrypted.then(|| {
-            PreferencesEncryption::load_or_create(storageHost.as_ref())
-                .expect("preferences encryption key must be available")
-        });
+        let encryption = encrypted.then(|| Arc::new(OnceLock::new()));
         let syncDescriptor = PreferencesSyncDescriptor::forStoragePath(&storagePath);
         Self {
             path,
@@ -3000,10 +2992,7 @@ impl PreferencesDataStore {
     ) -> Self {
         let changeSignal = preferencesDataStoreChangeSignal(&storageHost, &storagePath);
         let sharedState = preferencesDataStoreSharedState(&storageHost, &storagePath);
-        let encryption = encrypted.then(|| {
-            PreferencesEncryption::load_or_create(storageHost.as_ref())
-                .expect("preferences encryption key must be available")
-        });
+        let encryption = encrypted.then(|| Arc::new(OnceLock::new()));
         Self {
             path,
             storagePath,
@@ -3244,46 +3233,58 @@ impl PreferencesDataStore {
         stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
     }
 
+    /// Reads by the on-disk format, independently of the next-write policy.
+    /// Reading never rewrites a file or creates a replacement decryption key.
+    fn decodeStoredContent<'a>(
+        &self,
+        stored: &'a [u8],
+    ) -> Result<std::borrow::Cow<'a, [u8]>, PreferencesDataStoreError> {
+        if stored.iter().all(u8::is_ascii_whitespace) {
+            return Ok(std::borrow::Cow::Borrowed(stored));
+        }
+        if storedPreferencesAreEncrypted(stored)? {
+            let encryption = PreferencesEncryption::load_existing()?;
+            return Ok(std::borrow::Cow::Owned(encryption.decrypt(&self.storagePath, stored)?));
+        }
+        Ok(std::borrow::Cow::Borrowed(stored))
+    }
+
+    /// Resolves encryption only for an explicitly encrypted write.
+    fn encryptionForWrite(&self) -> Result<Option<PreferencesEncryption>, PreferencesDataStoreError> {
+        let Some(slot) = &self.encryption else { return Ok(None); };
+        if let Some(encryption) = slot.get() { return Ok(Some(encryption.clone())); }
+        let encryption = PreferencesEncryption::load_or_create()?;
+        let _ = slot.set(encryption);
+        Ok(slot.get().cloned())
+    }
+
+    /// Allows a no-op edit to finish a pending format conversion on its next write.
+    fn storedFormatMatchesWritePolicy(&self) -> Result<bool, PreferencesDataStoreError> {
+        if !self.storageHost.exists(&self.storagePath)? { return Ok(true); }
+        let stored = self.storageHost.readBytes(&self.storagePath)?;
+        if stored.iter().all(u8::is_ascii_whitespace) { return Ok(self.encryption.is_none()); }
+        let encrypted = storedPreferencesAreEncrypted(&stored)?;
+        Ok(encrypted == self.encryption.is_some())
+    }
+
     pub(crate) fn readFromStorage(&self) -> Result<Preferences, PreferencesDataStoreError> {
         if !self.storageHost.exists(&self.storagePath)? {
             return Ok(emptyPreferences());
         }
-        let storedContent = self.storageHost.readBytes(&self.storagePath)?;
-        let contentBytes = match &self.encryption {
-            Some(encryption) => match classifyStoredEncryptedPreferences(&storedContent)? {
-                StoredEncryptedPreferences::LegacyPlaintext(preferences) => {
-                    let encrypted = encryption.encrypt(&self.storagePath, &storedContent)?;
-                    self.storageHost.writeBytes(&self.storagePath, &encrypted)?;
-                    return Ok(preferences);
-                }
-                StoredEncryptedPreferences::EncryptedEnvelope(content) => {
-                    encryption.decrypt(&self.storagePath, &content)?
-                }
-            },
-            None => storedContent,
-        };
-        let content = String::from_utf8(contentBytes)
-            .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
-        if content.trim().is_empty() {
-            return Ok(emptyPreferences());
-        }
-        Ok(serde_json::from_str(&content)?)
+        let stored = self.storageHost.readBytes(&self.storagePath)?;
+        let bytes = self.decodeStoredContent(&stored)?;
+        if bytes.iter().all(u8::is_ascii_whitespace) { return Ok(emptyPreferences()); }
+        Ok(serde_json::from_slice(&bytes)?)
     }
 
     pub(crate) fn readPlaintextFile(&self) -> Result<String, PreferencesDataStoreError> {
         let stored = self.storageHost.readBytes(&self.storagePath)?;
-        let bytes = match &self.encryption {
-            Some(encryption) => match classifyStoredEncryptedPreferences(&stored)? {
-                StoredEncryptedPreferences::LegacyPlaintext(_) => stored,
-                StoredEncryptedPreferences::EncryptedEnvelope(content) => encryption.decrypt(&self.storagePath, &content)?,
-            },
-            None => stored,
-        };
+        let bytes = self.decodeStoredContent(&stored)?.into_owned();
         String::from_utf8(bytes).map_err(|e| PreferencesDataStoreError::Message(e.to_string()))
     }
 
     pub(crate) fn writePlaintextFile(&self, content: &str) -> Result<(), PreferencesDataStoreError> {
-        let bytes = match &self.encryption {
+        let bytes = match self.encryptionForWrite()? {
             Some(encryption) => encryption.encrypt(&self.storagePath, content.as_bytes())?,
             None => content.as_bytes().to_vec(),
         };
@@ -3404,7 +3405,7 @@ impl PreferencesDataStore {
         preferences.pendingMutations.clear();
         let result = transform(&mut preferences)?;
         if !migrated && (Arc::ptr_eq(&preferences.values, &currentPreferences.values)
-            || preferences == currentPreferences) {
+            || preferences == currentPreferences) && self.storedFormatMatchesWritePolicy().map_err(E::from)? {
             self.releaseNodeLocalCacheUnlocked();
             return Ok(result);
         }
@@ -3438,9 +3439,10 @@ impl PreferencesDataStore {
             let bytes = if self.storageHost.exists(&self.storagePath)? {
                 self.storageHost.readBytes(&self.storagePath)?
             } else { Vec::new() };
-            let entries: BTreeMap<String, &serde_json::value::RawValue> = if bytes.iter().all(u8::is_ascii_whitespace) {
+            let plaintext = self.decodeStoredContent(&bytes)?;
+            let entries: BTreeMap<String, &serde_json::value::RawValue> = if plaintext.iter().all(u8::is_ascii_whitespace) {
                 BTreeMap::new()
-            } else { serde_json::from_slice(&bytes)? };
+            } else { serde_json::from_slice(&plaintext)? };
             let mut probe = emptyPreferences();
             if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
                 probe.set(&Self::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
@@ -3451,6 +3453,7 @@ impl PreferencesDataStore {
                 }
 
                 drop(entries);
+                drop(plaintext);
                 let content = self.encodeStoredPreferences(&preferences)?;
                 if content == bytes { return Ok(()); }
                 drop(bytes);
@@ -3468,7 +3471,7 @@ impl PreferencesDataStore {
         if let Some(schema) = &self.schema {
             preferences.set(&Self::schemaVersionKey(), schema.currentVersion);
         }
-        if !migrated && currentPreferences == preferences {
+        if !migrated && currentPreferences == preferences && self.storedFormatMatchesWritePolicy()? {
             self.releaseNodeLocalCacheUnlocked();
             return Ok(());
         }
@@ -3534,7 +3537,7 @@ impl PreferencesDataStore {
             content.countOnly = false;
         }
         encode(&mut content)?;
-        let storedContent = match &self.encryption {
+        let storedContent = match self.encryptionForWrite()? {
             Some(encryption) => encryption.encrypt(&self.storagePath, &content.bytes)?,
             None => content.bytes,
         };
@@ -3588,19 +3591,15 @@ impl PreferencesDataStore {
     }
 }
 
-/// Classifies encrypted-store bytes as a legacy plaintext preferences map or an envelope.
-fn classifyStoredEncryptedPreferences(
-    content: &[u8],
-) -> Result<StoredEncryptedPreferences, PreferencesDataStoreError> {
-    let value: serde_json::Value = serde_json::from_slice(content)?;
-    if value.get("format").and_then(Value::as_str) == Some("operit.preferences.encrypted") {
-        return Ok(StoredEncryptedPreferences::EncryptedEnvelope(
-            content.to_vec(),
-        ));
+/// Identifies the envelope without allocating an entire parsed plaintext dataset.
+fn storedPreferencesAreEncrypted(content: &[u8]) -> Result<bool, PreferencesDataStoreError> {
+    #[derive(Deserialize)]
+    struct Format {
+        #[serde(default)]
+        format: Value,
     }
-    Ok(StoredEncryptedPreferences::LegacyPlaintext(
-        serde_json::from_value(value)?,
-    ))
+    let marker: Format = serde_json::from_slice(content)?;
+    Ok(marker.format.as_str() == Some("operit.preferences.encrypted"))
 }
 
 /// Decodes one validated wire payload into its exact in-memory mutation.

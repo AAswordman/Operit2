@@ -305,6 +305,9 @@ ort_arm64_result Machine::run(uint64_t budget) {
         status = failure_status_ = ORT_ARM64_FAULT;
         accounting_pid_ = accounting_tid_ = 0;
     }
+    // WAITING, EXITED and failure returns may never enter another parallel
+    // batch. Release retired worker images before handing control to the host.
+    collect_thread_executions();
     auto result = retired_;
     result.status = status;
     result.execution_threads = execution_threads_;

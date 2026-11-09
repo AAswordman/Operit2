@@ -906,7 +906,7 @@ $battery = Get-CimInstance Win32_Battery | Select-Object -First 1
 $network = Get-CimInstance Win32_NetworkAdapter -Filter "NetEnabled=True" | Select-Object -First 1
 $buildNumber = 0
 [int]::TryParse([string]$os.BuildNumber, [ref]$buildNumber) > $null
-$batteryLevel = 0
+$batteryLevel = -1
 $batteryCharging = $false
 if ($null -ne $battery) {
     $batteryLevel = [int]$battery.EstimatedChargeRemaining

@@ -223,12 +223,13 @@ impl SqlChatSyncStore {
         Ok(())
     }
 
-    /// Atomically commits one assistant segment together with chat metadata and sync state.
+    /// Commits an assistant segment and its usage delta against transaction-local chat totals.
     pub fn commitAssistantMessageSegment(
         &self,
         chat: ChatEntity,
         message: MessageEntity,
         baseParts: Vec<MessagePartEntity>,
+        currentWindowSize: Option<i64>,
     ) -> Result<SyncClock, SqlChatSyncStoreError> {
         if message.chatId != chat.id {
             return Err(SqlChatSyncStoreError::Message(format!(
@@ -267,11 +268,16 @@ impl SqlChatSyncStore {
             partRows.extend(baseParts);
 
             let mut chat = chat.clone();
-            let chatRow = transaction.queryOne("SELECT pluginExtensions FROM chats WHERE id = ?1", sqliteParams![chat.id])?.ok_or_else(|| SqliteStoreError::Message(format!("Chat does not exist: {}", chat.id)))?;
+            let chatRow = transaction.queryOne("SELECT pluginExtensions, inputTokens, outputTokens, currentWindowSize FROM chats WHERE id = ?1", sqliteParams![chat.id])?.ok_or_else(|| SqliteStoreError::Message(format!("Chat does not exist: {}", chat.id)))?;
             chat.pluginExtensions = decodePluginExtensions(&chatRow.get::<_, String>(0)?)?;
             let mut message = message.clone();
-            let messageRow = transaction.queryOne("SELECT pluginExtensions FROM messages WHERE chatId = ?1 AND timestamp = ?2", sqliteParams![message.chatId, message.timestamp])?.ok_or_else(|| SqliteStoreError::Message("Assistant base record does not exist".to_string()))?;
+            let messageRow = transaction.queryOne("SELECT pluginExtensions, inputTokens, outputTokens FROM messages WHERE chatId = ?1 AND timestamp = ?2", sqliteParams![message.chatId, message.timestamp])?.ok_or_else(|| SqliteStoreError::Message("Assistant base record does not exist".to_string()))?;
             message.pluginExtensions = decodePluginExtensions(&messageRow.get::<_, String>(0)?)?;
+            // Repeated presentation/final commits must account only for newly persisted usage.
+            // Read both sides under this transaction so stale runtime snapshots cannot reset totals.
+            chat.inputTokens = chatRow.get::<_, i64>(1)? + message.inputTokens - messageRow.get::<_, i64>(1)?;
+            chat.outputTokens = chatRow.get::<_, i64>(2)? + message.outputTokens - messageRow.get::<_, i64>(2)?;
+            chat.currentWindowSize = currentWindowSize.unwrap_or(chatRow.get::<_, i64>(3)?);
             if let Some(presentation) = &presentation {
                 message.pluginExtensions.insert(PRESENTATION_EXTENSION.to_string(),
                     serde_json::to_value(presentation).map_err(|error| SqliteStoreError::Message(error.to_string()))?);

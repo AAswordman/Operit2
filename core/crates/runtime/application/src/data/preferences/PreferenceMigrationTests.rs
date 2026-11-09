@@ -15,6 +15,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        super::installTestHostSecrets();
         let root =
             std::env::temp_dir().join(format!("operit-owner-migration-{}", uuid::Uuid::new_v4()));
         let host = Arc::new(NativeRuntimeStorageHost::new(

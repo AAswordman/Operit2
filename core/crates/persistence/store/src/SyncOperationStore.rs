@@ -1213,7 +1213,7 @@ impl SyncOperationStore {
         if !encryptedPreferenceSyncOperation(operation) {
             return Ok(operation.clone());
         }
-        let encryption = PreferencesEncryption::load_or_create(self.storageHost.as_ref())
+        let encryption = PreferencesEncryption::load_or_create()
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
         self.encodeOperationPayloadWithEncryption(operation, Some(&encryption))
     }
@@ -1253,7 +1253,7 @@ impl SyncOperationStore {
         if !storedEncryptedSyncPayload(&operation.payload) {
             return Ok(operation);
         }
-        let encryption = PreferencesEncryption::load_or_create(self.storageHost.as_ref())
+        let encryption = PreferencesEncryption::load_existing()
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
         let storedPayload: StoredEncryptedSyncPayload =
             serde_json::from_value(operation.payload.clone())?;

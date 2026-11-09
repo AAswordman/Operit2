@@ -1,6 +1,7 @@
 """Prevent mixing V8 snapshots, bindings, platform configurations and cached archives."""
 from pathlib import Path
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -78,6 +79,57 @@ class IOSV8BuildTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "source build failed"):
                 v8.prepare(self.config["target"], env_file, self.cache)
         self.assertFalse(env_file.exists())
+
+    def test_wasm_interpreter_does_not_reenable_jit_or_address_space_cages(self):
+        for target in v8.TARGETS:
+            config = v8.configuration("152.2.0", target)
+            self.assertTrue(config["gn"]["v8_enable_webassembly"])
+            self.assertTrue(config["gn"]["v8_enable_drumbrake"])
+            self.assertTrue(config["gn"]["v8_drumbrake_bounds_checks"])
+            self.assertTrue(config["gn"]["v8_jitless"])
+            for key in ("v8_enable_pointer_compression", "cppgc_enable_caged_heap", "v8_enable_sandbox"):
+                self.assertFalse(config["gn"][key])
+            self.assertEqual(config["interpreter_patch_sha256"], v8.digest(v8.interpreter_patch("152.2.0")))
+        with self.assertRaisesRegex(RuntimeError, "No reviewed"):
+            v8.configuration("153.0.0", "aarch64-apple-ios")
+
+    def test_source_patch_digest_is_part_of_artifact_identity(self):
+        self.store()
+        changed = {**self.config, "interpreter_patch_sha256": "0" * 64}
+        self.assertFalse(v8.cache_valid(self.directory, changed))
+
+    def test_reviewed_source_patch_is_idempotent_and_rejects_partial_changes(self):
+        source = self.root / "source"
+        # Reconstruct the original hunk lines at their real offsets, without
+        # copying the complete V8 source tree into a unit-test fixture.
+        files = {}
+        current = None
+        for line in v8.interpreter_patch("152.2.0").read_text().splitlines(keepends=True):
+            if line.startswith("--- a/"):
+                current = line[len("--- a/"):].strip()
+                files[current] = []
+            elif line.startswith("@@"):
+                start = int(re.match(r"@@ -(\d+)", line).group(1))
+                files[current].extend(["\n"] * (start - 1 - len(files[current])))
+            elif line.startswith((" ", "-")) and current:
+                files[current].append(line[1:])
+        for name, lines in files.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("".join(lines))
+        patch = v8.interpreter_patch("152.2.0")
+        v8.apply_interpreter_patch(source, patch)
+        expected = {name: (source / name).read_bytes() for name in files}
+        v8.apply_interpreter_patch(source, patch)
+        self.assertEqual(expected, {name: (source / name).read_bytes() for name in files})
+        implementation = source / "v8/src/wasm/interpreter/wasm-interpreter.cc"
+        self.assertIn("ReadUnalignedValue<Tagged_t>", implementation.read_text())
+        self.assertNotIn("static_assert(COMPRESS_POINTERS_BOOL)", implementation.read_text())
+        self.assertIn("__ SmiTag(x1);", (source / "v8/src/wasm/interpreter/arm64/interpreter-builtins-arm64.cc").read_text())
+        self.assertIn("__ SmiTag(rbx);", (source / "v8/src/wasm/interpreter/x64/interpreter-builtins-x64.cc").read_text())
+        implementation.write_text(implementation.read_text().replace("value.ptr()", "unexpected_source_change()"))
+        with self.assertRaisesRegex(RuntimeError, "differs from the reviewed patch"):
+            v8.apply_interpreter_patch(source, patch)
 
     def test_version_is_taken_from_the_app_lockfile(self):
         lock = self.root / "Cargo.lock"

@@ -28,13 +28,81 @@ class ThemeAssetStore implements ThemeAssetResolver {
   /// Creates a store backed by the runtime storage repository.
   ThemeAssetStore({
     GeneratedRepositoryRuntimeStorageRepositoryCoreProxy? runtimeStorage,
-  }) : _runtimeStorage =
+    ThemeFontRegistry? fontRegistry,
+  }) : _fontRegistry = fontRegistry ?? ThemeFontRegistry(),
+       _runtimeStorage =
            runtimeStorage ??
            const GeneratedCoreProxyClients(
              ProxyCoreRuntimeBridge(),
            ).repositoryRuntimeStorageRepository;
 
   final GeneratedRepositoryRuntimeStorageRepositoryCoreProxy _runtimeStorage;
+
+  final ThemeFontRegistry _fontRegistry;
+
+  /// Prepares fonts before persisting a path that appearance will activate.
+  Future<ThemeAssetImport> importFontFile(XFile file) async {
+    if (await file.length() > themePrivateFontMaxBytes) {
+      throw StateError(
+        'Theme font exceeds the ${themePrivateFontMaxBytes ~/ (1024 * 1024)} MiB limit',
+      );
+    }
+    final bytes = await file.readAsBytes();
+    await _fontRegistry.registerBytes(
+      reference: _themeAssetFileName(file),
+      bytes: bytes,
+    );
+    final fileName = _themeAssetFileName(file);
+    final directory = await _runtimeStorage.themeAssetsDirPath();
+    final digest = sha256.convert(bytes).toString().substring(0, 16);
+    final storagePath = '$directory/$digest.${_themeAssetExtension(fileName)}';
+    await _runtimeStorage.writeBytesStream(
+      path: storagePath,
+      expectedByteLength: bytes.length,
+      bytes: Stream<Uint8List>.fromIterable(_chunks(bytes)),
+    );
+    return ThemeAssetImport(
+      storagePath: storagePath,
+      bytes: bytes,
+      fileName: fileName,
+    );
+  }
+
+  /// Reads saved fonts in bounded frames, including fonts imported before this version.
+  Future<Uint8List> readFontBytes(String storagePath) async {
+    final content = BytesBuilder(copy: false);
+    while (true) {
+      final chunk = await _runtimeStorage.readBase64Chunk(
+        path: storagePath,
+        offset: content.length,
+        length: _chunkBytes,
+      );
+      if (chunk == null) {
+        throw StateError('theme asset is missing: $storagePath');
+      }
+      if (chunk.isEmpty) break;
+      final bytes = base64Decode(chunk);
+      if (bytes.length > _chunkBytes ||
+          content.length + bytes.length > themePrivateFontMaxBytes) {
+        throw StateError('Theme font byte budget exceeded: $storagePath');
+      }
+      content.add(bytes);
+    }
+    return content.takeBytes();
+  }
+
+  static const int _chunkBytes = 1024 * 1024;
+
+  static Iterable<Uint8List> _chunks(Uint8List bytes) sync* {
+    for (var offset = 0; offset < bytes.length; offset += _chunkBytes) {
+      final end = offset + _chunkBytes;
+      yield Uint8List.sublistView(
+        bytes,
+        offset,
+        end < bytes.length ? end : bytes.length,
+      );
+    }
+  }
 
   /// Imports one selected file into the runtime theme asset pool.
   Future<ThemeAssetImport> importFile(XFile file) async {

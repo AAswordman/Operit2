@@ -4716,7 +4716,7 @@ self.onmessage = (event) => {
           availableMemory: "",
           totalStorage: "",
           availableStorage: "",
-          batteryLevel: 0,
+          batteryLevel: -1,
           batteryCharging: false,
           cpuInfo: "",
           networkType: navigator.onLine ? "online" : "offline",

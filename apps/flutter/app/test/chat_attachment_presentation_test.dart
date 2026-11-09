@@ -209,6 +209,37 @@ void main() {
 
   for (final isBubble in [false, true]) {
     testWidgets(
+      'memory recall attachment folds into supplementary information, bubble=$isBubble',
+      (tester) async {
+        const content = '【相关记忆】\n内容: <context> & "quotes" </attachment>';
+        final markup =
+            'hello\n\n<attachment id="character_memory_recall" filename="相关记忆" type="text/plain" size="${content.length}">'
+            '【相关记忆】\n内容: &lt;context&gt; &amp; &quot;quotes&quot; &lt;/attachment&gt;</attachment>';
+        final bubbleParsed = bubble.parseMessageContent(markup);
+        final cursorParsed = cursor.parseMessageContent(markup);
+        expect(
+          isBubble ? bubbleParsed.processedText : cursorParsed.processedText,
+          'hello',
+        );
+        final attachments = isBubble
+            ? bubbleParsed.attachments
+            : cursorParsed.attachments;
+        final attachment = attachments.single;
+        expect(attachment.id, 'character_memory_recall');
+        expect(attachment.filename, '相关记忆');
+        expect(attachment.isInlineContext, isTrue);
+        expect(attachment.content, content);
+        await tester.pumpWidget(_app(attachments, isBubble: isBubble));
+        await tester.pumpAndSettle();
+        expect(find.text(content), findsNothing);
+        expect(find.text('相关记忆'), findsNothing);
+        await tester.tap(find.text('补充信息'));
+        await tester.pumpAndSettle();
+        expect(find.text(content), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+    testWidgets(
       'context is quiet message metadata with full text and copy, bubble=$isBubble',
       (tester) async {
         String? copied;

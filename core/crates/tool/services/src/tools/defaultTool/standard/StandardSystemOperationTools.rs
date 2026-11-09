@@ -857,8 +857,12 @@ fn deviceInfoDataToString(data: &DeviceInfoResultData) -> String {
     text.push_str(&format!("Available Memory: {}\n", data.availableMemory));
     text.push_str(&format!("Total Storage: {}\n", data.totalStorage));
     text.push_str(&format!("Available Storage: {}\n", data.availableStorage));
-    text.push_str(&format!("Battery Level: {}%\n", data.batteryLevel));
-    text.push_str(&format!("Battery Charging: {}\n", data.batteryCharging));
+    if (0..=100).contains(&data.batteryLevel) {
+        text.push_str(&format!("Battery Level: {}%\n", data.batteryLevel));
+        text.push_str(&format!("Battery Charging: {}\n", data.batteryCharging));
+    } else {
+        text.push_str("Battery: unavailable\n");
+    }
     text.push_str(&format!("CPU Info: {}\n", data.cpuInfo));
     text.push_str(&format!("Network Type: {}\n", data.networkType));
     if !data.additionalInfo.is_empty() {

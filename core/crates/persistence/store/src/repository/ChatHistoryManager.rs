@@ -1127,12 +1127,12 @@ impl ChatHistoryManager {
         Ok(())
     }
 
-    /// Atomically commits one assistant segment, chat metrics, and its sync operation.
+    /// Atomically commits an assistant segment, its usage delta, optional context window, and sync state.
     pub fn commitAssistantMessageSegment(
         &self,
         chatId: String,
         mut message: ChatMessage,
-        chatMetrics: Option<(i64, i64, i64)>,
+        currentWindowSize: Option<i64>,
     ) -> ChatHistoryManagerResult<crate::SyncOperationStore::SyncClock> {
         if message.sender != "ai" {
             return Err(ChatHistoryManagerError::IllegalArgument(format!(
@@ -1157,11 +1157,6 @@ impl ChatHistoryManager {
             ChatHistoryManagerError::IllegalArgument(format!("Chat does not exist: {chatId}"))
         })?;
         chat.updatedAt = currentTimeMillis();
-        if let Some((inputTokens, outputTokens, currentWindowSize)) = chatMetrics {
-            chat.inputTokens = inputTokens;
-            chat.outputTokens = outputTokens;
-            chat.currentWindowSize = currentWindowSize;
-        }
         self.bindMessageFileContext(&chatId, &mut message)?;
         let timestamp = message.timestamp;
         let parts = message.parts.clone();
@@ -1174,7 +1169,7 @@ impl ChatHistoryManager {
         let partEntities = messagePartEntities(&chatId, timestamp, 0, &parts);
         Ok(self
             .syncStore
-            .commitAssistantMessageSegment(chat, messageEntity, partEntities)?)
+            .commitAssistantMessageSegment(chat, messageEntity, partEntities, currentWindowSize)?)
     }
 
     /// Updates favorite state for a message and its selected variant.

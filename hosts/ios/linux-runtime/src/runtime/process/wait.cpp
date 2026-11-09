@@ -126,6 +126,7 @@ void Machine::collect_reaped() {
         retired_.accelerated_bytes += process.acceleration_bytes;
         it = processes_.erase(it);
     }
+    collect_thread_executions();
 }
 uint32_t Machine::parent_pid(uint32_t pid) const {
     return require_process(pid).parent;

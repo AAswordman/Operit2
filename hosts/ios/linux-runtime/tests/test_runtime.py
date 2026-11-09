@@ -54,7 +54,7 @@ class RuntimeTests(unittest.TestCase):
             return subprocess.run(flags + ['-static', '-no-pie', '-Wl,-Ttext=0x100004000', *sources,
                                    '-o', str(cls.root / name)], capture_output=True, timeout=30)
         with ThreadPoolExecutor(max_workers=2) as pool:
-            compilations = list(pool.map(compile_fixture, ['hello', 'workload', 'alu', 'floating', 'threads', 'parallel', 'timers', 'inotify', 'resources', 'events', 'futex_requeue_pi', 'futex2', 'scheduling', 'rseq', 'shm_lifecycle', 'sysv_msg_lifecycle', 'sysv_sem_lifecycle', 'posix_mq_lifecycle', 'ipc_lifecycle', 'seccomp_lifecycle', 'io_uring_lifecycle']))
+            compilations = list(pool.map(compile_fixture, ['hello', 'workload', 'alu', 'floating', 'threads', 'parallel', 'parallel_lifecycle', 'timers', 'inotify', 'resources', 'events', 'futex_requeue_pi', 'futex2', 'scheduling', 'rseq', 'shm_lifecycle', 'sysv_msg_lifecycle', 'sysv_sem_lifecycle', 'posix_mq_lifecycle', 'ipc_lifecycle', 'seccomp_lifecycle', 'io_uring_lifecycle']))
         failures = [result.stderr.decode() for result in compilations if result.returncode]
         if failures:
             raise RuntimeError('\n'.join(failures))

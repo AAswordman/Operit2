@@ -290,3 +290,32 @@ fn audio_and_video_links_are_converted_to_openai_multimodal_parts() {
     assert_eq!(content[2]["text"], "Analyze media");
     assert!(!body.to_string().contains("<link"));
 }
+
+/// Tool results are identified by call IDs, including results synthesized for interrupted calls.
+#[test]
+fn tool_result_wire_messages_omit_unsupported_name_fields() {
+    for with_result in [false, true] {
+        let mut history = vec![PromptTurn::new(
+            PromptTurnKind::ASSISTANT,
+            r#"<tool name="package_proxy"><param name="tool_name">files:read</param><param name="params">{}</param></tool>"#.to_string(),
+        )];
+        if with_result {
+            history.push(PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                r#"<tool_result name="files:read"><content>file contents</content></tool_result>"#.to_string(),
+            ));
+        }
+        let mut request = send_request(history);
+        request.available_tools = vec![ToolPrompt::new(
+            "package_proxy".to_string(), "Execute a package tool".to_string(),
+        )];
+        let body = provider(false).create_request_body(&request).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let call = messages.iter().find(|message| message.get("tool_calls").is_some()).unwrap();
+        let result = messages.iter().find(|message| message["role"] == "tool").unwrap();
+        assert_eq!(call["tool_calls"][0]["function"]["name"], "package_proxy");
+        assert_eq!(result["tool_call_id"], call["tool_calls"][0]["id"]);
+        assert!(messages.iter().all(|message| message.get("name").is_none()), "{body}");
+        if with_result { assert_eq!(result["content"], "file contents"); }
+    }
+}

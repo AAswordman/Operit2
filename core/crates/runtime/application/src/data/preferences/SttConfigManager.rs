@@ -27,7 +27,7 @@ impl SttConfigManager {
         storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
         path: impl Into<String>,
     ) -> PreferencesDataStore {
-        PreferencesDataStore::newEncryptedWithStorage(storage, path)
+        PreferencesDataStore::newWithStorage(storage, path)
             .withMigration(Self::PREFERENCES_VERSION, Self::migration)
     }
 

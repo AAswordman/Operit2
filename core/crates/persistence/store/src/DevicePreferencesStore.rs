@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(f.store.read("space", "esp").unwrap(), original);
     }
     #[test]
-    fn device_and_space_scopes_are_isolated_and_secrets_are_encrypted() {
+    fn device_and_space_scopes_are_isolated_and_credentials_use_plaintext() {
         let f = Fixture::new();
         let state = f
             .store
@@ -321,7 +321,7 @@ mod tests {
         let directory = f.root.join("runtime/node_preferences");
         for file in std::fs::read_dir(directory).unwrap() {
             let content = std::fs::read_to_string(file.unwrap().path()).unwrap();
-            assert!(!content.contains("private-token"));
+            assert!(content.contains("private-token"));
         }
         assert!(!f.root.join("runtime/sync").exists());
         assert!(!f.root.join("runtime/chat").exists());

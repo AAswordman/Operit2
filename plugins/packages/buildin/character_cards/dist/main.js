@@ -10687,7 +10687,8 @@ function registerDomainApis() {
 }
 
 // src/memory-recall.ts
-var MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
+var MEMORY_RECALL_MARKER = '<attachment id="character_memory_recall"';
+var LEGACY_MEMORY_RECALL_MARKER = '<memory_context source="character-memory">';
 var MODEL_PARTICIPANT_ID = "model:chat";
 function collapse(value, maxLength) {
   const normalized = String(value ?? "").replace(/\s+/gu, " ").trim();
@@ -10705,9 +10706,12 @@ function executionParticipant(payload) {
   if (chatId === "" || participantId === "" || participantId === MODEL_PARTICIPANT_ID) return null;
   return { chatId, participantId };
 }
+function escapeXml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
 function memoryBlock(result2) {
   if (result2.memories.length === 0) return null;
-  const lines2 = [MEMORY_RECALL_MARKER, "\u3010\u76F8\u5173\u8BB0\u5FC6\u3011", `\u547D\u4E2D\u6570\u91CF: ${result2.memories.length}`];
+  const lines2 = ["\u3010\u76F8\u5173\u8BB0\u5FC6\u3011", `\u547D\u4E2D\u6570\u91CF: ${result2.memories.length}`];
   result2.memories.forEach((memory, index) => {
     lines2.push(
       `#${index + 1}`,
@@ -10718,8 +10722,8 @@ function memoryBlock(result2) {
     if (memory.tags.length > 0) lines2.push(`\u6807\u7B7E: ${memory.tags.map((tag) => collapse(tag, 40)).join(", ")}`);
     if (memory.chunkInfo !== null) lines2.push(`\u5206\u5757: ${collapse(memory.chunkInfo, 80)}`);
   });
-  lines2.push("</memory_context>");
-  return lines2.join("\n");
+  const content = lines2.join("\n");
+  return `${MEMORY_RECALL_MARKER} filename="\u76F8\u5173\u8BB0\u5FC6" type="text/plain" size="${content.length}">${escapeXml(content)}</attachment>`;
 }
 function onMemoryRecallPromptInput(event) {
   return __async(this, null, function* () {
@@ -10728,7 +10732,7 @@ function onMemoryRecallPromptInput(event) {
     const participant = executionParticipant(event.eventPayload);
     if (participant === null) return null;
     const processedInput = String(event.eventPayload.processedInput ?? event.eventPayload.rawInput ?? "");
-    if (processedInput.includes(MEMORY_RECALL_MARKER)) return null;
+    if (processedInput.includes(MEMORY_RECALL_MARKER) || processedInput.includes(LEGACY_MEMORY_RECALL_MARKER)) return null;
     const query = searchQuery(processedInput);
     if (query === "") return null;
     try {

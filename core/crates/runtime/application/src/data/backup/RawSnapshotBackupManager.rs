@@ -180,7 +180,7 @@ impl RawSnapshotBackupManager {
                 return Err(format!("Preferences changed while exporting: {path}"));
             }
             let plaintext = exportPreferences(path, bytes, || {
-                readPreferencesExportKey(self.storageHost.as_ref(), self.secretStore.as_deref())
+                readPreferencesExportKey(self.secretStore.as_deref())
             })?;
             zip.write_all(&plaintext)
                 .map_err(|error| error.to_string())?;
@@ -314,10 +314,10 @@ mod tests {
             .unwrap()
             .encrypt(path, plaintext)
             .unwrap();
-        host.writeBytes(RuntimeStorageLayout::PREFERENCES_ENCRYPTION_KEY_PATH, &key)
-            .unwrap();
+        let secrets = Arc::new(operit_host_native_storage::NativeFileSecretStore(root.join("secrets")));
+        secrets.writeSecret("operit.preferences.encryption_key.v1", &key).unwrap();
         host.writeBytes(path, &encrypted).unwrap();
-        let manager = RawSnapshotBackupManager::new(host.clone(), host.clone(), None);
+        let manager = RawSnapshotBackupManager::new(host.clone(), host.clone(), Some(secrets));
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         zip.start_file(format!("payload/{path}"), SimpleFileOptions::default())
             .unwrap();

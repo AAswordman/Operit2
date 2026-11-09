@@ -111,6 +111,10 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
                 continue;
             };
             let construct_object = match &object.access {
+                ObjectAccess::NewConstruct => format!(
+                    "                let object = Ok::<{}, operit_link::CoreLinkError>({}::new());\n",
+                    object.full_type, object.full_type
+                ),
                 ObjectAccess::ContextRefGetInstanceConstruct => format!(
                     "                let object = Ok::<{}, operit_link::CoreLinkError>({}::getInstance(&hostManager));\n",
                     object.full_type, object.full_type
@@ -356,6 +360,7 @@ mod reverse_stream_target_tests {
     #[test]
     fn reverse_stream_recognition_and_dispatch_use_same_unquoted_target() {
         for (schema, method, access) in [
+            ("repository.runtimeStorageRepository", "writeBytesStream", ObjectAccess::NewConstruct),
             ("services.syncBlobTransferManager", "syncReceiveBlob", ObjectAccess::ResultContextRefGetInstanceConstruct),
             ("services.archiveTransferManager", "writeArchiveUpload", ObjectAccess::ResultContextRefGetInstanceConstruct),
             ("services.runtimeBrowserService", "submitBrowserInteractions", ObjectAccess::ContextRefGetInstanceConstruct),
@@ -380,6 +385,9 @@ mod reverse_stream_target_tests {
             };
             let generated = render_reverse_stream_dispatch(&[object]);
             let pattern = format!("({target:?}, {method:?})");
+            if schema == "repository.runtimeStorageRepository" {
+                assert!(generated.contains("Ok::<TestService, operit_link::CoreLinkError>(TestService::new())"));
+            }
             if schema == "chatRuntimeHolderMain" {
                 assert!(generated.contains("proxy.chatRuntimeHolderMain.lock().await"));
                 assert!(generated.contains("holder.coreForInstanceId(instance_id)"));
