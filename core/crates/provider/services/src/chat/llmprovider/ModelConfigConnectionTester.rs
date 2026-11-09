@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::chat::llmprovider::AIService::{ensure_response_completed, AIService, SendMessageRequest};
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::runtime_support::ProviderRuntimeContext;
-use operit_model::ModelConfigData::ResolvedModelConfig;
+use operit_model::ModelConfigData::{ApiProviderType, ResolvedModelConfig};
+use operit_model::ModelParameter::{ModelParameter, ParameterCategory, ParameterValueType};
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
@@ -48,6 +50,44 @@ pub struct ModelConnectionTestReport {
 pub struct ModelConfigConnectionTester;
 
 impl ModelConfigConnectionTester {
+    const TEST_OUTPUT_TOKEN_LIMIT: i64 = 1024;
+
+    /// Connection probes have their own output budget. Keep the configured
+    /// sampling parameters, but send exactly one protocol-appropriate token limit.
+    fn testParameters(
+        providerType: &ApiProviderType,
+        parameters: Vec<ModelParameter<Value>>,
+    ) -> Vec<ModelParameter<Value>> {
+        let apiName = match providerType {
+            ApiProviderType::OPENAI => "max_completion_tokens",
+            ApiProviderType::OPENAI_RESPONSES
+            | ApiProviderType::OPENAI_RESPONSES_GENERIC
+            | ApiProviderType::OPENAI_CODEX => "max_output_tokens",
+            _ => "max_tokens",
+        };
+        let mut parameters = parameters
+            .into_iter()
+            .filter(|parameter| {
+                !matches!(
+                    parameter.apiName.as_str(),
+                    "max_tokens" | "max_completion_tokens" | "max_output_tokens" | "maxOutputTokens"
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut limit = ModelParameter::new(
+            "connection_test_output_limit".to_string(),
+            "Connection test output limit".to_string(),
+            apiName.to_string(),
+            json!(Self::TEST_OUTPUT_TOKEN_LIMIT),
+            json!(Self::TEST_OUTPUT_TOKEN_LIMIT),
+            true,
+            ParameterValueType::INT,
+        );
+        limit.category = ParameterCategory::GENERATION;
+        parameters.push(limit);
+        parameters
+    }
+
     /// Runs model connection checks with an explicit provider runtime context.
     pub async fn run(
         rootDir: PathBuf,
@@ -75,6 +115,7 @@ impl ModelConfigConnectionTester {
                 return Ok(Self::report(config, items));
             }
         };
+        let parameters = Self::testParameters(&configForTest.apiProviderType, parameters);
 
         {
             let mut service = serviceHandle;
