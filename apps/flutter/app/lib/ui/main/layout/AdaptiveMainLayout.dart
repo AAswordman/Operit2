@@ -66,7 +66,6 @@ class _AdaptiveMainLayoutState extends State<AdaptiveMainLayout> {
         selectedRouteId: widget.selectedRouteId,
         drawerConversationState: widget.drawerConversationState,
         isTabletSidebarExpanded: widget.isTabletSidebarExpanded,
-        tabletSidebarWidth: 280,
         collapsedTabletSidebarWidth: 56,
         onNavigationEntrySelected: widget.onNavigationEntrySelected,
         onConversationActivated: widget.onConversationActivated,

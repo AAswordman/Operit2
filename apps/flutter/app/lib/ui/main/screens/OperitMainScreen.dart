@@ -806,7 +806,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                             selectedRouteId: currentRouteEntry.routeId,
                             drawerConversationState: _drawerConversationState,
                             isTabletSidebarExpanded: _isTabletSidebarExpanded,
-                            tabletSidebarWidth: 280,
                             collapsedTabletSidebarWidth: 56,
                             onNavigationEntrySelected:
                                 _navigateToNavigationEntry,
