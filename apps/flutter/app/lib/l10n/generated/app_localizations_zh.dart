@@ -2031,6 +2031,15 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String settingsModelTestSummaryWithRestricted(
+    int passed,
+    int failed,
+    int restricted,
+  ) {
+    return '$passed 个通过，$failed 个失败，$restricted 个受限';
+  }
+
+  @override
   String settingsModelTestAllPassed(int count) {
     return '$count 个全部通过';
   }
@@ -2086,6 +2095,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelConnectionTestFailed => '存在失败项';
+
+  @override
+  String get settingsModelConnectionTestRestricted => '检测受限';
+
+  @override
+  String get settingsModelTestCreditRestricted => '账户额度或输出预算受限';
+
+  @override
+  String get settingsModelTestRateRestricted => '上游限流或冷却中';
 
   @override
   String get settingsModelCapabilitiesApplied => '已按测试结果更新模型能力开关。';

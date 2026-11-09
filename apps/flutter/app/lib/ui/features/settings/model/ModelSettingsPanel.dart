@@ -2672,7 +2672,7 @@ class _ProviderDetailScreen extends StatefulWidget {
 }
 
 /// How far one model's connection test has got.
-enum _ModelTestPhase { queued, testing, passed, failed }
+enum _ModelTestPhase { queued, testing, passed, failed, restricted }
 
 /// The latest connection test of one model in the list.
 class _ModelTestResult {
@@ -2688,23 +2688,46 @@ class _ModelTestResult {
     core_proxy.ModelConnectionTestReport report, {
     String? note,
   }) {
+    final restricted =
+        connectionTestHasRestrictions(report) &&
+        !connectionTestHasFailures(report);
     return _ModelTestResult._(
-      report.success ? _ModelTestPhase.passed : _ModelTestPhase.failed,
+      report.success
+          ? _ModelTestPhase.passed
+          : restricted
+          ? _ModelTestPhase.restricted
+          : _ModelTestPhase.failed,
       report: report,
       note: note,
     );
   }
 
   /// A test that could not run at all.
-  const _ModelTestResult.crashed(String error)
-    : this._(_ModelTestPhase.failed, error: error);
+  factory _ModelTestResult.crashed(String error) {
+    return _ModelTestResult._(
+      connectionTestRestriction(error) == null
+          ? _ModelTestPhase.failed
+          : _ModelTestPhase.restricted,
+      error: error,
+    );
+  }
+
+  factory _ModelTestResult.saved(core_proxy.ModelConnectionTestResult result) {
+    final report = result.report;
+    if (report != null) {
+      return _ModelTestResult.finished(report);
+    }
+    return _ModelTestResult.crashed(result.error!);
+  }
 
   final _ModelTestPhase phase;
   final core_proxy.ModelConnectionTestReport? report;
 
   /// Whether the test has an outcome to show, rather than still being waited on or run.
   bool get isFinished =>
-      phase == _ModelTestPhase.passed || phase == _ModelTestPhase.failed;
+      phase == _ModelTestPhase.passed ||
+      phase == _ModelTestPhase.failed ||
+      phase == _ModelTestPhase.restricted;
 
   /// Why the test could not run, when it could not.
   final String? error;
@@ -2714,8 +2737,8 @@ class _ModelTestResult {
 }
 
 class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
-  /// Models a batch tests at once; a provider's models share its rate limit.
-  static const int _batchConcurrency = 3;
+  /// Maximum number of models tested concurrently in one batch.
+  static const int _batchConcurrency = 32;
 
   late ModelSettingsData _data = widget.initialData;
   String? _expandedModelId;
@@ -2732,6 +2755,39 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
   int _batchDone = 0;
   int _batchTotal = 0;
   final GlobalKey<_DialogToastState> _toastKey = GlobalKey<_DialogToastState>();
+  late final Future<void> _testsLoaded;
+
+  @override
+  void initState() {
+    super.initState();
+    _testsLoaded = _restoreTests();
+  }
+
+  Future<Map<String, _ModelTestResult>> _loadSavedTests() async {
+    final results = await widget.clients.preferencesModelConfigManager
+        .getModelConnectionTestResults(providerId: widget.providerId);
+    return <String, _ModelTestResult>{
+      for (final result in results)
+        _modelTestKey(result.providerId, result.modelId):
+            _ModelTestResult.saved(result),
+    };
+  }
+
+  Future<void> _restoreTests() async {
+    try {
+      final tests = await _loadSavedTests();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tests.addAll(tests);
+      });
+    } catch (error) {
+      if (mounted) {
+        _notify(_errorMessage(error), error: true);
+      }
+    }
+  }
 
   void _toggleModelSettings(String modelId) {
     setState(() {
@@ -2755,6 +2811,7 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
 
   Future<void> _refresh() async {
     try {
+      await _testsLoaded;
       final data = await widget.reload();
       if (!mounted) {
         return;
@@ -2773,14 +2830,27 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
       final testKeys = modelIds
           .map((modelId) => _modelTestKey(widget.providerId, modelId))
           .toSet();
+      final savedTests = await _loadSavedTests();
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _data = data;
         // Checks and results of models deleted meanwhile go with them.
         _checkedModelIds.retainWhere(modelIds.contains);
-        _tests.removeWhere((key, _) => !testKeys.contains(key));
+        _tests.removeWhere(
+          (key, result) =>
+              !testKeys.contains(key) ||
+              (result.isFinished && !savedTests.containsKey(key)),
+        );
+        for (final entry in savedTests.entries) {
+          _tests.putIfAbsent(entry.key, () => entry.value);
+        }
       });
-    } catch (_) {
-      // Keep showing the last snapshot if a background refresh fails.
+    } catch (error) {
+      if (mounted) {
+        _notify(_errorMessage(error), error: true);
+      }
     }
   }
 
@@ -2849,6 +2919,10 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
     core_proxy.ModelProfile model,
     core_proxy.ModelCapabilities capabilities,
   ) async {
+    await _testsLoaded;
+    if (!mounted) {
+      return null;
+    }
     final key = _modelTestKey(provider.id, model.id);
     final current = _tests[key];
     if (current != null && !current.isFinished) {
@@ -2894,6 +2968,9 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
       );
     } catch (error) {
       result = _ModelTestResult.crashed(_errorMessage(error));
+      if (mounted) {
+        _notify(_errorMessage(error), error: true);
+      }
     }
     if (!mounted) {
       return found;
@@ -2918,6 +2995,9 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
       );
       return _ModelTestResult.finished(report);
     } catch (error) {
+      if (mounted) {
+        _notify(_errorMessage(error), error: true);
+      }
       return _ModelTestResult.crashed(_errorMessage(error));
     }
   }
@@ -2928,7 +3008,8 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
     core_proxy.ProviderProfile provider,
     List<core_proxy.ModelProfile> models,
   ) async {
-    if (_batchRunning || models.isEmpty) {
+    await _testsLoaded;
+    if (!mounted || _batchRunning || models.isEmpty) {
       return;
     }
     final l10n = AppLocalizations.of(context)!;
@@ -2945,6 +3026,7 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
     var next = 0;
     var passed = 0;
     var failed = 0;
+    var restricted = 0;
     Future<void> worker() async {
       while (next < models.length && !_batchStopping && mounted) {
         final model = models[next];
@@ -2960,6 +3042,8 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
         }
         if (result.phase == _ModelTestPhase.passed) {
           passed += 1;
+        } else if (result.phase == _ModelTestPhase.restricted) {
+          restricted += 1;
         } else {
           failed += 1;
         }
@@ -2980,18 +3064,28 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
       return;
     }
     setState(() {
-      // A stop leaves the rest untested, so they show nothing again.
+      // Discard queued markers; refresh restores their last completed checks.
       for (final model in models.skip(next)) {
         _tests.remove(_modelTestKey(provider.id, model.id));
       }
       _batchRunning = false;
       _batchStopping = false;
     });
-    if (passed + failed == 0) {
+    await _refresh();
+    if (!mounted) {
+      return;
+    }
+    if (passed + failed + restricted == 0) {
       return;
     }
     _notify(
-      failed == 0
+      restricted > 0
+          ? l10n.settingsModelTestSummaryWithRestricted(
+              passed,
+              failed,
+              restricted,
+            )
+          : failed == 0
           ? l10n.settingsModelTestAllPassed(passed)
           : l10n.settingsModelTestSummary(passed, failed),
       error: failed > 0,
@@ -3285,6 +3379,11 @@ String _errorMessage(Object error) {
 /// The green that marks a passed check, legible on the panel's surfaces.
 Color _testPassedColor(bool isDark) {
   return isDark ? const Color(0xFF5CC98A) : const Color(0xFF1E8F52);
+}
+
+/// Marks a check blocked by credit or upstream limits, separately from failure.
+Color _testRestrictedColor(bool isDark) {
+  return isDark ? const Color(0xFFE9BB62) : const Color(0xFF986600);
 }
 
 /// The actions over a provider's models: test them all, or check some to test or delete.
@@ -4072,14 +4171,12 @@ class _TestStatusDot extends StatefulWidget {
 class _TestStatusDotState extends State<_TestStatusDot>
     with SingleTickerProviderStateMixin {
   final OverlayPortalController _portal = OverlayPortalController();
-  final LayerLink _link = LayerLink();
   final Object _tapGroup = Object();
   late final AnimationController _motion;
   late final CurvedAnimation _curve;
   Timer? _hideTimer;
   bool _pinned = false;
   bool _hovered = false;
-  bool _opensBelow = true;
 
   bool get _finished => widget.result?.isFinished ?? false;
 
@@ -4132,11 +4229,6 @@ class _TestStatusDotState extends State<_TestStatusDot>
 
   void _show({bool linger = false}) {
     _hideTimer?.cancel();
-    final box = context.findRenderObject() as RenderBox?;
-    if (box != null && box.hasSize) {
-      final top = box.localToGlobal(Offset.zero).dy;
-      _opensBelow = top + 240 < MediaQuery.sizeOf(context).height;
-    }
     if (!_portal.isShowing) {
       _portal.show();
     }
@@ -4232,66 +4324,62 @@ class _TestStatusDotState extends State<_TestStatusDot>
       case _ModelTestPhase.failed:
         mark = _dot(colorScheme.error);
         label = l10n.settingsModelConnectionTestFailed;
+      case _ModelTestPhase.restricted:
+        mark = _dot(_testRestrictedColor(theme.brightness == Brightness.dark));
+        label = l10n.settingsModelConnectionTestRestricted;
     }
     return Semantics(
       label: label,
       button: _finished,
-      child: OverlayPortal(
+      // The copy button's Tooltip also lays out an overlay. Its ancestors must
+      // establish their transforms during layout, before either overlay paints.
+      child: OverlayPortal.overlayChildLayoutBuilder(
         controller: _portal,
         overlayChildBuilder: _buildBubble,
-        child: CompositedTransformTarget(
-          link: _link,
-          child: TapRegion(
-            groupId: _tapGroup,
-            onTapOutside: (_) {
-              if (_portal.isShowing) {
-                _hide();
-              }
-            },
-            child: CallbackShortcuts(
-              bindings: <ShortcutActivator, VoidCallback>{
-                const SingleActivator(LogicalKeyboardKey.escape): () {
-                  if (_portal.isShowing) {
-                    _hide();
-                  }
-                },
+        child: TapRegion(
+          groupId: _tapGroup,
+          onTapOutside: (_) {
+            if (_portal.isShowing) {
+              _hide();
+            }
+          },
+          child: CallbackShortcuts(
+            bindings: <ShortcutActivator, VoidCallback>{
+              const SingleActivator(LogicalKeyboardKey.escape): () {
+                if (_portal.isShowing) {
+                  _hide();
+                }
               },
-              child: MouseRegion(
-                cursor: _finished
-                    ? SystemMouseCursors.click
-                    : MouseCursor.defer,
-                onEnter: (_) {
-                  _hovered = true;
-                  if (_finished) {
-                    _show();
-                  }
-                },
-                onExit: (_) {
-                  _hovered = false;
-                  _hideSoon();
-                },
-                child: InkResponse(
-                  onTap: _finished ? _toggle : null,
-                  radius: 14,
-                  child: SizedBox.square(
-                    dimension: 18,
-                    child: Center(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOutBack,
-                        switchOutCurve: Curves.easeInCubic,
-                        transitionBuilder: (child, animation) =>
-                            ScaleTransition(
-                              scale: animation,
-                              child: FadeTransition(
-                                opacity: animation,
-                                child: child,
-                              ),
-                            ),
-                        child: KeyedSubtree(
-                          key: ValueKey<_ModelTestPhase?>(result?.phase),
-                          child: mark,
-                        ),
+            },
+            child: MouseRegion(
+              cursor: _finished ? SystemMouseCursors.click : MouseCursor.defer,
+              onEnter: (_) {
+                _hovered = true;
+                if (_finished) {
+                  _show();
+                }
+              },
+              onExit: (_) {
+                _hovered = false;
+                _hideSoon();
+              },
+              child: InkResponse(
+                onTap: _finished ? _toggle : null,
+                radius: 14,
+                child: SizedBox.square(
+                  dimension: 18,
+                  child: Center(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      switchInCurve: Curves.easeOutBack,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) => ScaleTransition(
+                        scale: animation,
+                        child: FadeTransition(opacity: animation, child: child),
+                      ),
+                      child: KeyedSubtree(
+                        key: ValueKey<_ModelTestPhase?>(result?.phase),
+                        child: mark,
                       ),
                     ),
                   ),
@@ -4312,53 +4400,47 @@ class _TestStatusDotState extends State<_TestStatusDot>
     );
   }
 
-  Widget _buildBubble(BuildContext context) {
+  Widget _buildBubble(BuildContext context, OverlayChildLayoutInfo info) {
     final result = widget.result;
     if (result == null || !result.isFinished) {
       return const SizedBox.shrink();
     }
-    final below = _opensBelow;
+    final target = MatrixUtils.transformRect(
+      info.childPaintTransform,
+      Offset.zero & info.childSize,
+    );
+    final direction = Directionality.of(context);
+    final below = target.top + 240 < info.overlaySize.height;
     return Positioned(
-      left: 0,
-      top: 0,
-      child: CompositedTransformFollower(
-        link: _link,
-        showWhenUnlinked: false,
-        targetAnchor: below
-            ? AlignmentDirectional.bottomStart.resolve(
-                Directionality.of(context),
-              )
-            : AlignmentDirectional.topStart.resolve(Directionality.of(context)),
-        followerAnchor: below
-            ? AlignmentDirectional.topStart.resolve(Directionality.of(context))
-            : AlignmentDirectional.bottomStart.resolve(
-                Directionality.of(context),
-              ),
-        offset: Offset(-6, below ? 6 : -6),
-        child: TapRegion(
-          groupId: _tapGroup,
-          child: MouseRegion(
-            onEnter: (_) {
-              _hovered = true;
-              _hideTimer?.cancel();
-            },
-            onExit: (_) {
-              _hovered = false;
-              _hideSoon();
-            },
-            child: FadeTransition(
-              opacity: _curve,
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 0.9, end: 1).animate(_curve),
-                alignment: below
-                    ? AlignmentDirectional.topStart.resolve(
-                        Directionality.of(context),
-                      )
-                    : AlignmentDirectional.bottomStart.resolve(
-                        Directionality.of(context),
-                      ),
-                child: _TestResultBubble(result: result),
-              ),
+      left: direction == TextDirection.ltr ? target.left - 6 : null,
+      right: direction == TextDirection.rtl
+          ? info.overlaySize.width - target.right + 6
+          : null,
+      top: below ? target.bottom + 6 : null,
+      bottom: below ? null : info.overlaySize.height - target.top + 6,
+      child: TapRegion(
+        groupId: _tapGroup,
+        child: MouseRegion(
+          onEnter: (_) {
+            _hovered = true;
+            _hideTimer?.cancel();
+          },
+          onExit: (_) {
+            _hovered = false;
+            _hideSoon();
+          },
+          child: FadeTransition(
+            opacity: _curve,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.9, end: 1).animate(_curve),
+              alignment: below
+                  ? AlignmentDirectional.topStart.resolve(
+                      Directionality.of(context),
+                    )
+                  : AlignmentDirectional.bottomStart.resolve(
+                      Directionality.of(context),
+                    ),
+              child: _TestResultBubble(result: result),
             ),
           ),
         ),
@@ -4414,7 +4496,12 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
     final result = widget.result;
     final report = result.report;
     final passed = result.phase == _ModelTestPhase.passed;
-    final statusColor = passed ? _testPassedColor(isDark) : colorScheme.error;
+    final restricted = result.phase == _ModelTestPhase.restricted;
+    final statusColor = passed
+        ? _testPassedColor(isDark)
+        : restricted
+        ? _testRestrictedColor(isDark)
+        : colorScheme.error;
     final failures = <String>[
       if (result.error != null) result.error!,
       if (report != null)
@@ -4424,6 +4511,8 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
     ];
     final title = passed
         ? l10n.settingsModelConnectionTestPassed
+        : restricted
+        ? l10n.settingsModelConnectionTestRestricted
         : (report == null
               ? l10n.settingsModelTestCouldNotRun
               : l10n.settingsModelConnectionTestFailed);
@@ -4463,7 +4552,11 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
             Row(
               children: <Widget>[
                 Icon(
-                  passed ? Icons.check_circle_rounded : Icons.error_rounded,
+                  passed
+                      ? Icons.check_circle_rounded
+                      : restricted
+                      ? Icons.pause_circle_outline_rounded
+                      : Icons.error_rounded,
                   size: 15,
                   color: statusColor,
                 ),
@@ -4516,10 +4609,14 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
                         child: Icon(
                           item.success
                               ? Icons.check_rounded
+                              : connectionTestRestriction(item.error) != null
+                              ? Icons.pause_rounded
                               : Icons.close_rounded,
                           size: 13,
                           color: item.success
                               ? _testPassedColor(isDark)
+                              : connectionTestRestriction(item.error) != null
+                              ? _testRestrictedColor(isDark)
                               : colorScheme.error,
                         ),
                       ),
@@ -4529,7 +4626,11 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
                             Text(
-                              _connectionTestTypeLabel(l10n, item.type),
+                              _connectionTestItemLabel(
+                                l10n,
+                                item.type,
+                                item.success ? null : item.error,
+                              ),
                               style: theme.textTheme.bodySmall?.copyWith(
                                 fontSize: 11.5,
                                 color: colorScheme.onSurface,
@@ -7991,6 +8092,21 @@ core_proxy.ProviderModelSummary? _summaryForModelOrNull(
     }
   }
   return null;
+}
+
+String _connectionTestItemLabel(
+  AppLocalizations l10n,
+  core_proxy.ModelConnectionTestType type,
+  String? error,
+) {
+  final label = _connectionTestTypeLabel(l10n, type);
+  return switch (connectionTestRestriction(error)) {
+    ModelConnectionTestRestriction.credits =>
+      '$label · ${l10n.settingsModelTestCreditRestricted}',
+    ModelConnectionTestRestriction.rateLimit =>
+      '$label · ${l10n.settingsModelTestRateRestricted}',
+    null => label,
+  };
 }
 
 String _connectionTestTypeLabel(

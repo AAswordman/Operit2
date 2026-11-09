@@ -19,6 +19,143 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
   setUp(ClientLogger.initialize);
+  for (final success in [true, false]) {
+    testWidgets(
+      'completed ${success ? 'passed' : 'failed'} connection checks restore after reopening settings',
+      (tester) async {
+        final bridge = _ModelSettingsBridge()..connectionTestSucceeds = success;
+        var panelKey = GlobalKey<ModelSettingsPanelState>();
+        await _pumpModelSettings(tester, bridge, panelKey);
+        final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+        final closeTooltip = MaterialLocalizations.of(
+          panelKey.currentContext!,
+        ).closeButtonTooltip;
+        final statusLabel = success
+            ? l10n.settingsModelConnectionTestPassed
+            : l10n.settingsModelConnectionTestFailed;
+        final status = find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics && widget.properties.label == statusLabel,
+        );
+
+        await tester.tap(find.text('Test Provider'));
+        await tester.pumpAndSettle();
+        expect(status, findsNothing);
+        await tester.tap(find.text(l10n.settingsModelTestAll));
+        await tester.pumpAndSettle();
+        expect(status, findsOneWidget);
+        expect(bridge.connectionTestCalls, 1);
+        await tester.tap(find.byTooltip(closeTooltip).last);
+        await tester.pumpAndSettle();
+
+        panelKey = GlobalKey<ModelSettingsPanelState>();
+        await _pumpModelSettings(tester, bridge, panelKey);
+        await tester.tap(find.text('Test Provider'));
+        await tester.pumpAndSettle();
+        expect(status, findsOneWidget);
+        expect(bridge.connectionTestCalls, 1);
+        if (!success) {
+          await tester.tap(status);
+          await tester.pumpAndSettle();
+          expect(find.text('HTTP 503'), findsOneWidget);
+          // A tooltip inside the result bubble must be able to resolve its
+          // anchor during layout, before the bubble is painted.
+          final copyTooltip = tester.state<TooltipState>(
+            find.byTooltip(l10n.settingsModelCopyError),
+          );
+          expect(copyTooltip.ensureTooltipVisible(), isTrue);
+          await tester.pumpAndSettle();
+          expect(find.text(l10n.settingsModelCopyError), findsOneWidget);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final statusCode in [402, 429]) {
+    testWidgets(
+      'restricted $statusCode results persist without counting as failures',
+      (tester) async {
+        final bridge = _ModelSettingsBridge()
+          ..connectionTestSucceeds = false
+          ..connectionTestError =
+              'request failed: $statusCode: upstream restriction';
+        final panelKey = GlobalKey<ModelSettingsPanelState>();
+        await _pumpModelSettings(tester, bridge, panelKey);
+        final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+        final closeTooltip = MaterialLocalizations.of(
+          panelKey.currentContext!,
+        ).closeButtonTooltip;
+        final restricted = find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.label ==
+                  l10n.settingsModelConnectionTestRestricted,
+        );
+        await tester.tap(find.text('Test Provider'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(l10n.settingsModelTestAll));
+        await tester.pumpAndSettle();
+        expect(restricted, findsOneWidget);
+        expect(
+          find.text(l10n.settingsModelTestSummaryWithRestricted(0, 0, 1)),
+          findsOneWidget,
+        );
+        expect(bridge.connectionTestCalls, 1);
+        await tester.tap(find.byTooltip(closeTooltip).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Test Provider'));
+        await tester.pumpAndSettle();
+        expect(restricted, findsOneWidget);
+        expect(bridge.connectionTestCalls, 1);
+        await tester.tap(restricted);
+        await tester.pumpAndSettle();
+        final reason = statusCode == 402
+            ? l10n.settingsModelTestCreditRestricted
+            : l10n.settingsModelTestRateRestricted;
+        expect(
+          find.text('${l10n.settingsModelTestItemChat} · $reason'),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('checks completed after closing the dialog restore on reopen', (
+    tester,
+  ) async {
+    final gate = Completer<void>();
+    final bridge = _ModelSettingsBridge()..connectionTestGate = gate;
+    final panelKey = GlobalKey<ModelSettingsPanelState>();
+    await _pumpModelSettings(tester, bridge, panelKey);
+    final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+    final closeTooltip = MaterialLocalizations.of(
+      panelKey.currentContext!,
+    ).closeButtonTooltip;
+    await tester.tap(find.text('Test Provider'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(l10n.settingsModelTestAll));
+    await tester.pump();
+    expect(bridge.connectionTestCalls, 1);
+    await tester.tap(find.byTooltip(closeTooltip).last);
+    await tester.pumpAndSettle();
+    gate.complete();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test Provider'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.label == l10n.settingsModelConnectionTestPassed,
+      ),
+      findsOneWidget,
+    );
+    expect(bridge.connectionTestCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'inline capability saves refresh the outer function model snapshot',
     (tester) async {
@@ -238,6 +375,11 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   String modelId = binding.modelId;
   String? resolutionError;
   int resolutionCalls = 0;
+  bool connectionTestSucceeds = true;
+  String connectionTestError = 'HTTP 503';
+  int connectionTestCalls = 0;
+  Completer<void>? connectionTestGate;
+  List<Map<String, Object?>> savedConnectionTests = [];
   core.ModelCapabilities capabilities = const core.ModelCapabilities(
     directImage: false,
     directAudio: false,
@@ -406,6 +548,34 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
       case 'updateSummaryForModel':
       case 'updateBuiltinToolsForModel':
         result = model.toJson();
+      case 'getModelConnectionTestResults':
+        result = savedConnectionTests;
+      case 'testModelConnection':
+        connectionTestCalls++;
+        await connectionTestGate?.future;
+        final report = <String, Object?>{
+          'providerId': provider.id,
+          'modelId': modelId,
+          'providerName': provider.name,
+          'providerType': provider.providerTypeId,
+          'success': connectionTestSucceeds,
+          'items': [
+            {
+              'type': 'CHAT',
+              'success': connectionTestSucceeds,
+              'error': connectionTestSucceeds ? null : connectionTestError,
+            },
+          ],
+        };
+        savedConnectionTests = [
+          {
+            'providerId': provider.id,
+            'modelId': modelId,
+            'report': report,
+            'error': null,
+          },
+        ];
+        result = report;
       case 'getAllTtsConfigs':
       case 'getAllSttConfigs':
         result = <Object?>[];

@@ -1002,6 +1002,20 @@
       }
     }
   },
+  "settingsModelTestSummaryWithRestricted": "{passed} passed, {failed} failed, {restricted} restricted",
+  "@settingsModelTestSummaryWithRestricted": {
+    "placeholders": {
+      "passed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "restricted": {
+        "type": "int"
+      }
+    }
+  },
   "settingsModelTestAllPassed": "All {count} passed",
   "@settingsModelTestAllPassed": {
     "placeholders": {
@@ -1062,6 +1076,9 @@
   "settingsModelTestedModel": "Tested model",
   "settingsModelConnectionTestPassed": "All checks passed",
   "settingsModelConnectionTestFailed": "Some checks failed",
+  "settingsModelConnectionTestRestricted": "Test restricted",
+  "settingsModelTestCreditRestricted": "Credit or output budget limit",
+  "settingsModelTestRateRestricted": "Upstream rate limit or cooldown",
   "settingsModelCapabilitiesApplied": "Model capability switches were updated from the test result.",
   "settingsModelCapabilitiesNeedChat": "Chat test did not pass, so model capability switches were not updated.",
   "settingsModelConnectionTestError": "Connection test failed: {error}",

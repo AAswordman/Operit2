@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use std::collections::HashSet;
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::data::preferences::ApiPreferences::ApiPreferences;
@@ -30,7 +31,8 @@ use operit_providers::chat::llmprovider::ModelListFetcher::ModelListFetcher;
 use operit_providers::chat::llmprovider::ThinkingDialect::ThinkingDialect;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, CoreNodeStateStore, Flow, Preferences, PreferencesDataStore,
+    PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -75,11 +77,28 @@ pub struct ModelConfigImportResult {
     pub total: i32,
 }
 
+/// The last completed connection check, including errors that prevented it from running.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[allow(non_snake_case)]
+pub struct ModelConnectionTestResult {
+    pub providerId: String,
+    pub modelId: String,
+    pub report: Option<ModelConnectionTestReport>,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredModelConnectionTest {
+    fingerprint: String,
+    result: ModelConnectionTestResult,
+}
+
 /// Stores provider profiles, model profiles, and resolved model configuration.
 #[derive(Clone)]
 pub struct ModelConfigManager {
     runtimeRoot: PathBuf,
     modelConfigDataStore: PreferencesDataStore,
+    connectionTestDataStore: CoreNodeStateStore,
 }
 
 impl ModelConfigManager {
@@ -116,9 +135,18 @@ impl ModelConfigManager {
             operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
             operit_store::RuntimeStorageHost::runtimeStoragePath(&path),
         );
+        let connectionTestPath = RuntimeStorePaths::runtime_storage_path_from_root(
+            &root_dir,
+            operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH,
+        );
+        let connectionTestDataStore = CoreNodeStateStore::newWithStorage(
+            operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+            operit_store::RuntimeStorageHost::runtimeStoragePath(&connectionTestPath),
+        );
         Self {
             runtimeRoot: root_dir,
             modelConfigDataStore,
+            connectionTestDataStore,
         }
     }
 
@@ -303,6 +331,14 @@ impl ModelConfigManager {
             preferences.remove(&providerKey);
             Ok::<(), ModelConfigError>(())
         })?;
+        for (key, stored) in self
+            .connectionTestDataStore
+            .typedEntries::<StoredModelConnectionTest>()?
+        {
+            if stored.result.providerId == providerId {
+                self.connectionTestDataStore.removeEntry(&key)?;
+            }
+        }
         Ok(())
     }
 
@@ -420,6 +456,8 @@ impl ModelConfigManager {
             provider.models.retain(|model| model.id != modelId);
             provider
         })?;
+        self.connectionTestDataStore
+            .removeEntry(&Self::connectionTestKey(providerId, modelId))?;
         Ok(())
     }
 
@@ -623,21 +661,108 @@ impl ModelConfigManager {
         self.getThinkingSettingsForModel(providerId, modelId)
     }
 
-    /// Tests connectivity for one provider/model configuration.
+    /// Reads completed checks whose connection settings still match this node's configuration.
+    pub fn getModelConnectionTestResults(
+        &self,
+        providerId: &str,
+    ) -> Result<Vec<ModelConnectionTestResult>, ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        let mut results = Vec::new();
+        for (_, stored) in self
+            .connectionTestDataStore
+            .typedEntries::<StoredModelConnectionTest>()?
+        {
+            if stored.result.providerId != providerId {
+                continue;
+            }
+            let Some(model) = provider
+                .models
+                .iter()
+                .find(|model| model.id == stored.result.modelId)
+            else {
+                continue;
+            };
+            if stored.fingerprint == Self::connectionTestFingerprint(&provider, model)? {
+                results.push(stored.result);
+            }
+        }
+        Ok(results)
+    }
+
+    fn connectionTestKey(providerId: &str, modelId: &str) -> String {
+        let identity = format!("{}:{providerId}{modelId}", providerId.len());
+        format!("{:x}", Sha256::digest(identity.as_bytes()))
+    }
+
+    /// Hash credentials without copying them into the diagnostic record. Key usage
+    /// counters and rotation position are deliberately excluded from configuration identity.
+    fn connectionTestFingerprint(
+        provider: &ProviderProfile,
+        model: &ModelProfile,
+    ) -> Result<String, ModelConfigError> {
+        let keys = provider
+            .apiKeyPool
+            .iter()
+            .map(|key| (&key.key, key.isEnabled))
+            .collect::<Vec<_>>();
+        let connection = serde_json::json!({
+            "providerTypeId": provider.providerTypeId,
+            "providerType": provider.providerType,
+            "endpoint": provider.endpoint,
+            "apiKey": provider.apiKey,
+            "useMultipleApiKeys": provider.useMultipleApiKeys,
+            "apiKeyPool": keys,
+            "keyRotationMode": provider.keyRotationMode,
+            "customHeaders": provider.customHeaders,
+            "requestLimitPerMinute": provider.requestLimitPerMinute,
+            "maxConcurrentRequests": provider.maxConcurrentRequests,
+            "modelId": model.id,
+            "request": model.requestOverride,
+            "parameters": model.parameters,
+            "localRuntime": model.localRuntime,
+        });
+        Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(&connection)?)))
+    }
+
+    fn saveConnectionTestResult(
+        &self,
+        provider: &ProviderProfile,
+        model: &ModelProfile,
+        outcome: &Result<ModelConnectionTestReport, String>,
+    ) -> Result<(), ModelConfigError> {
+        let stored = StoredModelConnectionTest {
+            fingerprint: Self::connectionTestFingerprint(provider, model)?,
+            result: ModelConnectionTestResult {
+                providerId: provider.id.clone(),
+                modelId: model.id.clone(),
+                report: outcome.as_ref().ok().cloned(),
+                error: outcome.as_ref().err().cloned(),
+            },
+        };
+        self.connectionTestDataStore.setTypedEntry(
+            &Self::connectionTestKey(&provider.id, &model.id),
+            &stored,
+        )?;
+        Ok(())
+    }
+
+    /// Tests connectivity and commits the outcome before returning to any client.
     pub async fn testModelConnection(
         &self,
         providerId: &str,
         modelId: &str,
         providerRuntimeContext: ProviderRuntimeContext,
     ) -> Result<ModelConnectionTestReport, ModelConfigError> {
-        ModelConfigConnectionTester::run(
+        let (provider, model) = self.findModel(providerId, modelId)?;
+        let outcome = ModelConfigConnectionTester::run(
             self.runtimeRoot.clone(),
             providerId,
             modelId,
             providerRuntimeContext,
         )
-        .await
-        .map_err(ModelConfigError::ConnectionTest)
+        .await;
+        self.saveConnectionTestResult(&provider, &model, &outcome)?;
+        outcome.map_err(ModelConfigError::ConnectionTest)
     }
 
     /// Exports all provider profiles as formatted JSON.
@@ -1362,6 +1487,181 @@ mod tests {
     use std::path::{Component, Path, PathBuf};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn completed_connection_tests_survive_reopen_and_follow_model_lifecycle() {
+        use operit_model::ModelConfigData::{ModelProfile, ProviderProfile};
+        use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
+            ModelConnectionTestItem, ModelConnectionTestReport, ModelConnectionTestType,
+        };
+
+        let root = unique_test_root("connection_results");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::new(root.clone());
+        let mut provider = ProviderProfile::new(
+            "provider-a".into(),
+            "Provider A".into(),
+            ApiProviderType::OPENAI,
+            "https://example.test/v1".into(),
+        );
+        provider.apiKey = "test-key-not-for-diagnostic-storage".into();
+        provider.models = vec![
+            ModelProfile::new("model/a".into()),
+            ModelProfile::new("model-b".into()),
+        ];
+        manager.saveProviderToDataStore(&provider).unwrap();
+        let mut other = provider.clone();
+        other.id = "provider-b".into();
+        other.name = "Provider B".into();
+        manager.saveProviderToDataStore(&other).unwrap();
+        let report = |provider: &ProviderProfile, success| ModelConnectionTestReport {
+            providerId: provider.id.clone(),
+            providerName: provider.name.clone(),
+            providerType: provider.providerTypeId.clone(),
+            modelId: provider.models[0].id.clone(),
+            success,
+            items: vec![ModelConnectionTestItem {
+                r#type: ModelConnectionTestType::CHAT,
+                success,
+                error: if success {
+                    None
+                } else {
+                    Some("HTTP 503".into())
+                },
+            }],
+        };
+        let passed = report(&provider, true);
+        let failed = report(&other, false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                manager
+                    .saveConnectionTestResult(&provider, &provider.models[0], &Ok(passed.clone()))
+                    .unwrap();
+            });
+            scope.spawn(|| {
+                manager
+                    .saveConnectionTestResult(
+                        &provider,
+                        &provider.models[1],
+                        &Err("Request could not start".into()),
+                    )
+                    .unwrap();
+            });
+            scope.spawn(|| {
+                manager
+                    .saveConnectionTestResult(&other, &other.models[0], &Ok(failed.clone()))
+                    .unwrap();
+            });
+        });
+        let encoded = fs::read_to_string(
+            root.join(operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH),
+        )
+        .unwrap();
+        assert!(!encoded.contains(&provider.apiKey));
+        drop(manager);
+
+        let manager = ModelConfigManager::new(root.clone());
+        let results = manager
+            .getModelConnectionTestResults(&provider.id)
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .any(|result| result.report.as_ref() == Some(&passed)));
+        assert!(results.iter().any(|result| result.modelId == "model-b"
+            && result.error.as_deref() == Some("Request could not start")));
+        assert_eq!(
+            manager.getModelConnectionTestResults(&other.id).unwrap()[0]
+                .report,
+            Some(failed),
+        );
+
+        let failed = report(&provider, false);
+        manager
+            .saveConnectionTestResult(&provider, &provider.models[0], &Ok(failed.clone()))
+            .unwrap();
+        let results = manager
+            .getModelConnectionTestResults(&provider.id)
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .any(|result| result.report.as_ref() == Some(&failed)));
+
+        provider.models[0].localRuntime.llamaThreadCount += 1;
+        manager.saveProviderToDataStore(&provider).unwrap();
+        let results = manager
+            .getModelConnectionTestResults(&provider.id)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].modelId, "model-b");
+        provider.endpoint = "https://changed.example.test/v1".into();
+        manager.saveProviderToDataStore(&provider).unwrap();
+        assert!(manager
+            .getModelConnectionTestResults(&provider.id)
+            .unwrap()
+            .is_empty());
+
+        manager.deleteModel(&provider.id, "model-b").unwrap();
+        manager
+            .createProviderModel(&provider.id, "model-b".into())
+            .unwrap();
+        assert!(manager
+            .getModelConnectionTestResults(&provider.id)
+            .unwrap()
+            .is_empty());
+        manager.deleteProvider(&other.id).unwrap();
+        assert!(manager
+            .connectionTestDataStore
+            .typedEntries::<super::StoredModelConnectionTest>()
+            .unwrap()
+            .iter()
+            .all(|(_, stored)| stored.result.providerId != other.id));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn connection_test_identity_ignores_key_usage_and_applied_capabilities() {
+        use operit_model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
+        use operit_model::ModelConfigData::{ModelProfile, ProviderProfile};
+
+        let mut provider = ProviderProfile::new(
+            "provider".into(),
+            "Provider".into(),
+            ApiProviderType::OPENAI,
+            "https://example.test/v1".into(),
+        );
+        provider.apiKeyPool = vec![ApiKeyInfo::new("key-id".into(), "secret".into())];
+        let mut model = ModelProfile::new("model".into());
+        let original = ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap();
+        provider.name = "Renamed".into();
+        provider.currentKeyIndex = 1;
+        provider.apiKeyPool[0].usageCount = 5;
+        provider.apiKeyPool[0].lastUsed = 123;
+        provider.apiKeyPool[0].errorCount = 2;
+        provider.apiKeyPool[0].availabilityStatus = ApiKeyAvailabilityStatus::AVAILABLE;
+        model.capabilitiesOverride.directImage = Some(true);
+        model.summary.enableSummary = false;
+        assert_eq!(
+            original,
+            ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap(),
+        );
+        provider.apiKeyPool[0].key = "changed-secret".into();
+        assert_ne!(
+            original,
+            ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap(),
+        );
+        provider.apiKeyPool[0].key = "secret".into();
+        provider.apiKeyPool[0].isEnabled = false;
+        assert_ne!(
+            original,
+            ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap(),
+        );
+        assert_ne!(
+            ModelConfigManager::connectionTestKey("a:b", "c"),
+            ModelConfigManager::connectionTestKey("a", "b:c"),
+        );
+    }
 
     /// Starts a persisted version-three file at its appended migration and preserves unindexed providers.
     #[test]
