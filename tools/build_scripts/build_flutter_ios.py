@@ -21,10 +21,28 @@ from prepare_apple_sherpa import prepare_apple_sherpa
 
 
 IOS_RELEASE_APP_DIR = FLUTTER_APP_DIR / "build" / "ios" / "iphoneos" / "Runner.app"
+
+
+def validate_ios_runtime_frameworks(app_dir: Path) -> None:
+    """Reject bundles that would fail when the FFI video backend initializes."""
+    if not app_dir.is_dir():
+        raise RuntimeError(f"iOS app bundle was not produced: {app_dir}")
+    missing = []
+    for name in ("fvp", "mdk"):
+        binary = app_dir / "Frameworks" / f"{name}.framework" / name
+        if not binary.is_file() or binary.stat().st_size == 0:
+            missing.append(f"{name}.framework/{name}")
+    if missing:
+        raise RuntimeError(
+            "iOS app is missing required video playback frameworks: "
+            + ", ".join(missing)
+            + ". Reinstall iOS pods with dynamic framework linkage and rebuild."
+        )
+
+
 # Packages the unsigned iOS app bundle produced by Flutter.
 def package_ios_app(archive_path: Path) -> Path:
-    if not IOS_RELEASE_APP_DIR.is_dir():
-        raise RuntimeError(f"iOS app bundle was not produced: {IOS_RELEASE_APP_DIR}")
+    validate_ios_runtime_frameworks(IOS_RELEASE_APP_DIR)
     if archive_path.exists():
         archive_path.unlink()
     archive_path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,6 +84,7 @@ def main() -> int:
         command.extend(["--build-number", args.build_number])
     command.append("-v")
     run(command, cwd=FLUTTER_APP_DIR)
+    validate_ios_runtime_frameworks(IOS_RELEASE_APP_DIR)
 
     if not args.skip_package:
         archive_path = package_ios_app(args.archive_path)

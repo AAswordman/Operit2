@@ -43,6 +43,11 @@ final class StubViewPresenterProvider: ViewPresenterProvider {
   }
 
   @Test func returnsPickedFiles() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let urls = ["file1.txt", "file2.js"].map { directory.appendingPathComponent($0) }
+    for url in urls { try Data([1, 2, 3]).write(to: url) }
     let plugin = FileSelectorPlugin(
       viewPresenterProvider: StubViewPresenterProvider(viewPresenter: TestViewPresenter()))
     let picker = UIDocumentPickerViewController(documentTypes: [], in: UIDocumentPickerMode.import)
@@ -54,7 +59,7 @@ final class StubViewPresenterProvider: ViewPresenterProvider {
       ) { result in
         switch result {
         case .success(let paths):
-          #expect(paths == ["/file1.txt", "/file2.txt"])
+          #expect(paths == urls.map { $0.path })
         case .failure(let error):
           Issue.record("\(error)")
         }
@@ -63,7 +68,7 @@ final class StubViewPresenterProvider: ViewPresenterProvider {
       let pendingCompletion = try #require(plugin.pendingCompletions.first)
       pendingCompletion.documentPicker(
         picker,
-        didPickDocumentsAt: [URL(string: "file:///file1.txt")!, URL(string: "file:///file2.txt")!])
+        didPickDocumentsAt: urls)
     }
     #expect(plugin.pendingCompletions.isEmpty)
   }

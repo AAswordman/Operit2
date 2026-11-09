@@ -307,6 +307,8 @@ class FileSelectorIOS extends FileSelectorPlatform {
 
   static String _utiForExtension(String extension) {
     switch (extension.toLowerCase()) {
+      case 'toolpkg':
+        return 'app.operit.toolpkg';
       case 'json':
         return 'public.json';
       case 'zip':

@@ -86,7 +86,7 @@ void main() {
         listEquals(api.passedConfig?.utis, <String>[
           'public.json',
           'public.zip-archive',
-          'public.data',
+          'app.operit.toolpkg',
         ]),
         isTrue,
       );

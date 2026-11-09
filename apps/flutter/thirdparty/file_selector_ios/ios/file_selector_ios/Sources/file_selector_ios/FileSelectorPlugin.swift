@@ -30,7 +30,7 @@ class PickerCompletionBridge: NSObject, UIDocumentPickerDelegate {
   ) {
     if scoped {
       do {
-        sendResult(try urls.map { try IOSFolderAccessStore.shared.rememberSelection($0).path })
+        sendResult(try urls.map { try IOSFolderAccessStore.shared.rememberSelection($0, persist: false).path })
       } catch {
         completion(.failure(error))
         owner.pendingCompletions.remove(self)
@@ -388,47 +388,6 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
     }
     pendingDirectoryCompletions.insert(bridge)
     presenter.present(picker, animated: true, completion: nil)
-  }
-
-}
-
-/// Keeps iOS security-scoped directory access active while the app process runs.
-final class IOSFolderAccessStore {
-  static let shared = IOSFolderAccessStore()
-  private var activeURLs: [String: URL] = [:]
-  private let bookmarkKey = "operit.selectedResourceBookmarks"
-
-  private init() {
-    let saved = UserDefaults.standard.dictionary(forKey: bookmarkKey) as? [String: Data] ?? [:]
-    for (_, data) in saved {
-      var stale = false
-      if let url = try? URL(resolvingBookmarkData: data, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale),
-         url.startAccessingSecurityScopedResource() { activeURLs[url.standardizedFileURL.path] = url }
-    }
-  }
-
-  func rememberSelection(_ inputURL: URL) throws -> URL {
-    let url = inputURL.standardizedFileURL
-    let path = url.path
-    if activeURLs[path] != nil { return url }
-    guard url.startAccessingSecurityScopedResource() else {
-      throw NSError(
-        domain: "file_selector_ios",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "iOS did not grant access to the selected folder: \(path)"]
-      )
-    }
-    do {
-      let data = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-      var saved = UserDefaults.standard.dictionary(forKey: bookmarkKey) as? [String: Data] ?? [:]
-      saved[path] = data
-      UserDefaults.standard.set(saved, forKey: bookmarkKey)
-      activeURLs[path] = url
-      return url
-    } catch {
-      url.stopAccessingSecurityScopedResource()
-      throw error
-    }
   }
 
 }
