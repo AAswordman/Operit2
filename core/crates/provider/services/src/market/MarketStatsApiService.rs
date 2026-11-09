@@ -1069,13 +1069,18 @@ impl MarketStatsApiService {
     }
 
     /// Streams a marketplace asset to a caller-owned file without buffering it in the UI.
-    pub fn download_asset_to_file(&self, asset_id: &str, target_path: &str) -> Result<u64, String> {
+    pub fn download_asset_to_file(
+        &self,
+        asset_id: &str,
+        target_path: &str,
+        file_system: &operit_tools::files::VisualFileSystem::VisualFileSystem,
+    ) -> Result<u64, String> {
         let asset_id = asset_id.trim();
         if asset_id.is_empty() {
             return Err("asset id is empty".to_string());
         }
         let url = self.v2_url(&["assets", asset_id, "download"])?;
-        let result = self.http_host.downloadToFile(HttpRequestData {
+        file_system.downloadFile(self.http_host.as_ref(), HttpRequestData {
             url: url.to_string(),
             method: "GET".to_string(),
             headers: vec![("User-Agent".to_string(), USER_AGENT.to_string())],
@@ -1088,8 +1093,7 @@ impl MarketStatsApiService {
             ignoreSsl: false,
             proxyHost: String::new(),
             proxyPort: 0,
-        }, target_path.to_string()).map_err(|error| error.to_string())?;
-        Ok(result.downloadedBytes)
+        }, target_path)
     }
 
     // ── Internal: HTTP helpers ─────────────────────────────

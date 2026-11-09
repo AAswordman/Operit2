@@ -21,13 +21,24 @@
     <Property Id="ARPCOMMENTS" Value="Operit2 $(var.ReleaseVersion) · AI 工作空间" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="OPERIT_RELEASE_VERSION" Value="$(var.ReleaseVersion)" />
+    <Property Id="OPERIT_DELETE_USER_DATA" Secure="yes" />
+    <Property Id="OPERIT_CLEANUP_PLAN" Hidden="yes" />
     <Property Id="INSTALLFOLDER">
       <RegistrySearch Id="PreviousInstallFolder" Root="HKCU" Key="Software\Operit\Operit2\Installer"
                       Name="InstallLocation" Type="raw" />
     </Property>
     <CustomAction Id="OperitInstallCompleted" Property="OPERIT_INSTALL_COMPLETE" Value="1" />
+    <Binary Id="OperitCleanupActions" SourceFile="$(var.CleanupActions)" />
+    <CustomAction Id="OperitPrepareRemoval" BinaryRef="OperitCleanupActions" DllEntry="PrepareRemoval" Return="check" />
+    <CustomAction Id="OperitFinishRemoval" BinaryRef="OperitCleanupActions" DllEntry="FinishRemoval" Return="check" />
+    <CustomAction Id="OperitRegisterShellEntries" BinaryRef="OperitCleanupActions" DllEntry="RegisterShellEntries" Return="check" />
     <InstallExecuteSequence>
-      <Custom Action="OperitInstallCompleted" After="InstallFinalize" />
+      <Custom Action="OperitPrepareRemoval" Before="InstallInitialize"
+              Condition="Installed AND REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="OperitFinishRemoval" After="InstallFinalize"
+              Condition="Installed AND REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="OperitRegisterShellEntries" After="OperitFinishRemoval" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="OperitInstallCompleted" After="OperitRegisterShellEntries" />
     </InstallExecuteSequence>
 
     <StandardDirectory Id="LocalAppDataFolder">
@@ -35,17 +46,8 @@
         <Directory Id="INSTALLFOLDER" Name="Operit2" />
       </Directory>
     </StandardDirectory>
-    <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="OperitMenuFolder" Name="Operit2" />
-    </StandardDirectory>
-    <StandardDirectory Id="DesktopFolder" />
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="AppShortcuts" Guid="10A66797-E4E2-43EC-BF44-8B128EFD8FF9">
-        <Shortcut Id="StartMenuShortcut" Directory="OperitMenuFolder" Name="Operit2"
-                  Target="[#AppExecutable]" WorkingDirectory="INSTALLFOLDER" Icon="OperitIcon" />
-        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="Operit2"
-                  Target="[#AppExecutable]" WorkingDirectory="INSTALLFOLDER" Icon="OperitIcon" />
-        <RemoveFolder Id="RemoveOperitMenu" Directory="OperitMenuFolder" On="uninstall" />
         <RemoveFolder Id="RemoveEmptyProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
         <RegistryValue Root="HKCU" Key="Software\Operit\Operit2\Installer" Name="Shortcuts"
                        Type="integer" Value="1" KeyPath="yes" />

@@ -226,10 +226,7 @@ impl RuntimeFileSyncStore {
     /// Tracks VFS mutations using declared storage ownership, without knowledge of file consumers.
     /// Capturing before the operation preserves tombstones for recursive deletion and moves.
     pub fn trackChanges<T>(&self, paths: &[String], change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        // One outer scanner lock covers managed paths, including mutations of their
-        // ancestors. The inner capture deliberately skips them to avoid duplicate
-        // snapshots and bypassing their policy.
-        crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone()).track(|| {
+        let tracked = || {
             let before = self.captureFiles(paths)?;
             let result = change();
             let after = self.captureFiles(paths)?;
@@ -240,7 +237,15 @@ impl RuntimeFileSyncStore {
             }
             for path in before.keys().filter(|path| !after.contains_key(*path)) { self.recordDeletion(path)?; }
             result
-        })
+        };
+        // Only edits intersecting managed roots acquire their scanner lock and
+        // recover pending workspace operations. Unrelated local files must not
+        // depend on the availability or recovery state of shared workspaces.
+        if paths.iter().any(|path| crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::affectedBy(path)) {
+            crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone()).track(tracked)
+        } else {
+            tracked()
+        }
     }
 
     /// Captures metadata for registered files under the requested VFS paths.

@@ -7,9 +7,6 @@ use std::sync::Arc;
 
 #[cfg(target_os = "android")]
 use operit_host_api::HostManager::HostManager;
-#[cfg(target_os = "android")]
-use operit_host_api::RuntimeStorageHost;
-
 mod audio_playback;
 mod bluetooth;
 mod document_filesystem;
@@ -78,6 +75,7 @@ mod plugin_sdk_ipc;
 pub fn createRuntimeHostManager(
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
+    archiveRuntimeRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost>,
 ) -> HostManager {
@@ -88,6 +86,7 @@ pub fn createRuntimeHostManager(
     createBaseRuntimeHostManager(
         runtimeRoot,
         workspaceRoot,
+        archiveRuntimeRoot,
         webVisitHost,
         systemOperationHost,
     )
@@ -112,8 +111,9 @@ pub fn createPrivilegedRuntimeHostManager(
     systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost>,
 ) -> HostManager {
     createBaseRuntimeHostManager(
-        runtimeRoot,
+        runtimeRoot.clone(),
         workspaceRoot,
+        runtimeRoot,
         webVisitHost,
         systemOperationHost,
     )
@@ -130,6 +130,7 @@ pub fn createPrivilegedRuntimeHostManager(
 fn createBaseRuntimeHostManager(
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
+    archiveRuntimeRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     systemOperationHost: Arc<dyn operit_host_api::SystemOperationHost>,
 ) -> HostManager {
@@ -141,10 +142,11 @@ fn createBaseRuntimeHostManager(
         ));
     let runtimeStorageHost = Arc::new(AndroidRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
     let runtimeSqliteHost = runtimeStorageHost.clone();
+    // Android shared storage rejects flock with ENOSYS. Archive payloads and their
+    // cross-process leases belong to the owner's private storage, even when user
+    // data lives in a selected shared directory. Module runtime roots are private.
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
-        runtimeStorageHost
-            .runtimeRootDir()
-            .expect("Android runtime storage root must be configured"),
+        archiveRuntimeRoot,
     ));
     HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         Arc::new(AndroidFileSystemHost::new()),

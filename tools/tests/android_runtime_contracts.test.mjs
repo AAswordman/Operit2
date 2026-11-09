@@ -127,16 +127,16 @@ test('Android settings writes check permission and provider success before readb
 /** Supplies only required startup identity before FFI and owner subscriptions become available. */
 test('Android startup receives the device model without querying the owner', () => {
   const kotlin = source(`${android}src/main/kotlin/app/operit/AndroidRuntimeHost.kt`);
-  assert.match(kotlin, /OperitRuntimeNative.create\(\s*paths.runtimeRoot.absolutePath,\s*paths.workspaceRoot.absolutePath,\s*Build.MODEL,\s*this,/);
+  assert.match(kotlin, /OperitRuntimeNative.create\(\s*paths.runtimeRoot.absolutePath,\s*paths.workspaceRoot.absolutePath,\s*defaultRuntimeRootPath\(\),\s*Build.MODEL,\s*this,/);
   const native = source(`${android}src/main/kotlin/app/operit/OperitRuntimeNative.kt`);
-  assert.match(native, /external fun create\(\s*runtimeRoot: String,\s*workspaceRoot: String,\s*deviceModel: String,\s*host: AndroidRuntimeHost,/);
+  assert.match(native, /external fun create\(\s*runtimeRoot: String,\s*workspaceRoot: String,\s*archiveRuntimeRoot: String,\s*deviceModel: String,\s*host: AndroidRuntimeHost,/);
   const jni = source('apps/flutter/native/operit-flutter-bridge/src/AndroidJni.rs');
-  assert.match(jni, /workspace_root: JString,\s*device_model: JString,\s*host: JObject,/);
+  assert.match(jni, /workspace_root: JString,\s*archive_runtime_root: JString,\s*device_model: JString,\s*host: JObject,/);
   assert.match(jni, /device_model.trim\(\).is_empty\(\)/);
-  assert.match(jni, /new_with_storage_roots\(runtime_root, workspace_root, device_model\)/);
+  assert.match(jni, /new_with_storage_roots\(runtime_root, workspace_root, archive_runtime_root, device_model\)/);
   const factory = source('apps/flutter/native/operit-flutter-bridge/src/PlatformRuntimeFactory.rs');
   const androidPlatform = source('apps/flutter/native/operit-flutter-bridge/src/platform_runtime/android.rs');
-  assert.match(androidPlatform, /StartupMetadata::AndroidDevice \{ model \}/);
+  assert.match(androidPlatform, /StartupMetadata::AndroidDevice \{ model, archiveRuntimeRoot \}/);
   assert.match(androidPlatform, /model.trim\(\).is_empty\(\)/);
   assert.match(androidPlatform, /model: model.clone\(\)/);
   assert.doesNotMatch(androidPlatform, /requestOwner|\.unwrap_or|\.or_else|getDeviceInfo/);
@@ -144,6 +144,21 @@ test('Android startup receives the device model without querying the owner', () 
   const bridge = source('apps/flutter/native/operit-flutter-bridge/src/BridgeRuntime.rs');
   assert.match(bridge, /CoreApplication::startWithSharedLocalClient/);
   assert.doesNotMatch(bridge, /target_os|target_arch|target_env/);
+});
+
+/** Keeps archive locks on private storage when the user moves runtime data onto Android FUSE. */
+test('Android archive staging follows the application private root through the native host boundary', () => {
+  const kotlin = source(`${android}src/main/kotlin/app/operit/AndroidRuntimeHost.kt`);
+  assert.match(kotlin, /fun defaultRuntimeRootPath\(\): String\s*\{\s*return File\(applicationContext.filesDir, "runtime"\).absolutePath/);
+  const jni = source('apps/flutter/native/operit-flutter-bridge/src/AndroidJni.rs');
+  assert.match(jni, /env.get_string\(&archive_runtime_root\)/);
+  assert.match(jni, /!archive_runtime_root.is_absolute\(\)/);
+  const platform = source('apps/flutter/native/operit-flutter-bridge/src/platform_runtime/android.rs');
+  assert.match(platform, /createRuntimeHostManager\(\s*startup.runtimeRoot.clone\(\),\s*startup.workspaceRoot.clone\(\),\s*archiveRuntimeRoot.clone\(\),/);
+  const host = source('hosts/android/src/lib.rs');
+  assert.match(host, /createBaseRuntimeHostManager\(\s*runtimeRoot,\s*workspaceRoot,\s*archiveRuntimeRoot,/);
+  assert.match(host, /NativeArchiveStagingHost::new\(\s*archiveRuntimeRoot,\s*\)/);
+  assert.doesNotMatch(host, /NativeArchiveStagingHost::new\(\s*runtimeStorageHost|runtimeStorageHost\s*\.runtimeRootDir/);
 });
 
 /** Keeps C-host startup separate from Android's model-bearing JNI constructor. */

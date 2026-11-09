@@ -13,10 +13,11 @@ object OperitRuntimeNative {
         System.loadLibrary("operit_flutter_bridge")
     }
 
-    /** Creates the Android-owned runtime with its required startup device model. */
+    /** Creates the runtime with private archive storage independent of user-selected data roots. */
     @JvmStatic external fun create(
         runtimeRoot: String,
         workspaceRoot: String,
+        archiveRuntimeRoot: String,
         deviceModel: String,
         host: AndroidRuntimeHost,
     ): Long

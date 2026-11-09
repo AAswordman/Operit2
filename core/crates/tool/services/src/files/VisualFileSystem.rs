@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use operit_host_api::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
-    GrepCodeResult, GrepFileMatch, HostError,
+    GrepCodeResult, GrepFileMatch, HostError, HttpHost, HttpRequestData,
 };
 
 use operit_tools::files::PathMapper::{PathMapper, ResolvedVfsPath};
@@ -39,6 +39,20 @@ impl VisualFileSystem {
     #[allow(non_snake_case)]
     pub fn resolvePath(&self, path: &str) -> Result<ResolvedVfsPath, String> {
         self.mapper.resolve(path)
+    }
+
+    /// Returns the VFS address of a declared runtime storage entry.
+    #[allow(non_snake_case)]
+    pub fn runtimePath(storagePath: &str) -> Result<String, String> {
+        PathMapper::runtimeDataPath(storagePath)
+    }
+
+    /// Downloads into a VFS destination while keeping host locators inside this boundary.
+    #[allow(non_snake_case)]
+    pub fn downloadFile(&self, http: &dyn HttpHost, request: HttpRequestData, path: &str) -> Result<u64, String> {
+        let resolved = self.resolvePath(path)?;
+        let result = http.downloadToFile(request, resolved.physicalPath).map_err(hostErrorMessage)?;
+        Ok(result.downloadedBytes)
     }
 
     /// Lists child entries for a virtual directory.
@@ -286,9 +300,63 @@ fn virtualDirectoryInfo(path: String) -> FileInfo {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use operit_host_api::{HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
+        HttpDownloadResult, HttpFileDownloadResult, HttpImageDelivery, HttpResponseData, HttpStreamHost,
+        HttpStreamOpenedCallback, HttpStreamChunkCallback, HttpStreamClosedCallback};
     use operit_host_native_filesystem::PosixFileSystemHost;
     use operit_host_native_storage::NativeRuntimeStorageHost;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct DownloadHost { calls: AtomicUsize }
+
+    impl HttpStreamHost for DownloadHost {
+        /// Rejects stream operations outside this download boundary test.
+        fn openHttpByteStream(&self, _: String, _: HttpRequestData, _: HttpStreamOpenedCallback,
+            _: HttpStreamChunkCallback, _: HttpStreamClosedCallback) -> HostResult<()> { unreachable!() }
+        /// Rejects stream cancellation outside this download boundary test.
+        fn closeHttpByteStream(&self, _: &str) -> HostResult<()> { unreachable!() }
+    }
+
+    impl HttpHost for DownloadHost {
+        /// Declares the test host's ordinary byte delivery capability.
+        fn imageDelivery(&self) -> HttpImageDelivery { HttpImageDelivery::Bytes }
+        /// Rejects buffered requests so a download cannot silently change transport.
+        fn executeHttpRequest(&self, _: HttpRequestData) -> HostResult<HttpResponseData> { unreachable!() }
+        /// Writes only the physical destination delivered at the VFS boundary.
+        fn downloadToFile(&self, request: HttpRequestData, targetPath: String) -> HostResult<HttpFileDownloadResult> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if request.method != "GET" { return Err(HostError::new("original download failure")); }
+            std::fs::write(&targetPath, b"downloaded through VFS").map_err(|error| HostError::new(error.to_string()))?;
+            Ok(HttpFileDownloadResult { finalUrl: request.url, targetPath, downloadedBytes: 22 })
+        }
+        /// Rejects unrelated batch downloads.
+        fn downloadFiles(&self, _: HttpDownloadRequest, _: HttpDownloadControl,
+            _: HttpDownloadProgressCallback) -> HostResult<HttpDownloadResult> { unreachable!() }
+    }
+
+    /// Verifies downloads, ordinary reads and cleanup share the same VFS identity and error boundary.
+    #[test]
+    fn downloads_share_file_io_paths_and_preserve_host_errors() {
+        let (vfs, root) = vfs();
+        let http = DownloadHost { calls: AtomicUsize::new(0) };
+        let directory = VisualFileSystem::runtimePath("runtime/cache/toolpkg/download-test").unwrap();
+        vfs.makeDirectory(&directory, true).unwrap();
+        let path = PathMapper::joinVfsPath(&directory, "plugin.toolpkg").unwrap();
+        let request = HttpRequestData { url: "https://market.test/asset".into(), method: "GET".into(),
+            headers: vec![], body: vec![], formFields: vec![], fileParts: vec![], connectTimeoutSeconds: 1,
+            readTimeoutSeconds: 1, followRedirects: true, ignoreSsl: false, proxyHost: String::new(), proxyPort: 0 };
+        let bytes = vfs.downloadFile(&http, request.clone(), &path).unwrap();
+        assert_eq!(bytes as usize, vfs.readFileBytes(&path).unwrap().len());
+        assert_eq!(vfs.readFile(&path).unwrap(), "downloaded through VFS");
+        assert!(vfs.downloadFile(&http, request.clone(), "/unknown/download").is_err());
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        let mut failed = request; failed.method = "FAIL".into();
+        assert_eq!(vfs.downloadFile(&http, failed, &path).unwrap_err(), "original download failure");
+        vfs.deleteFile(&directory, true).unwrap();
+        assert!(!vfs.fileExists(&path).unwrap().exists);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn vfs() -> (VisualFileSystem, PathBuf) {
         let root = std::env::temp_dir()

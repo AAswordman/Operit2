@@ -187,6 +187,40 @@ test("bulk memory import commits bounded host transactions and retains every rec
   assert.equal(new Set(retained.map(value => value.uuid)).size, 1005);
 });
 
+/** Preserves document chunks and relationship endpoints across all three merge strategies. */
+test("memory import indexes retain skip, update and copy semantics for document records", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk);
+  const ownerKey = "character:default", space = await syntheticSpace(owner, 2);
+  space.memories[0].isDocumentNode = true; space.memories[0].documentPath = "document.txt";
+  space.chunks = [{ id: "chunk-1", memoryUuid: space.memories[0].uuid, chunkIndex: 0, content: "original chunk" }];
+  space.links = [{ id: "link-1", sourceMemoryId: space.memories[0].id, targetMemoryId: space.memories[1].id, type_: "related", description: "original link", weight: 1 }];
+  await owner.run(session => session.importMemorySpace(ownerKey, space, "SKIP"));
+  const changed = structuredClone(space);
+  changed.memories[0].content = "updated source"; changed.chunks[0].content = "updated chunk"; changed.links[0].description = "updated link";
+  const skipped = await owner.run(session => session.importMemorySpace(ownerKey, changed, "SKIP"));
+  assert.equal(skipped.skippedMemories, 2);
+  let stored = plain(await owner.run(session => session.readMemorySpace(ownerKey)));
+  assert.equal(stored.chunks[0].content, "original chunk"); assert.equal(stored.links[0].description, "original link");
+  const updated = await owner.run(session => session.importMemorySpace(ownerKey, changed, "UPDATE"));
+  assert.equal(updated.updatedMemories, 2);
+  stored = plain(await owner.run(session => session.readMemorySpace(ownerKey)));
+  assert.equal(stored.chunks.length, 1); assert.equal(stored.chunks[0].content, "updated chunk"); assert.equal(stored.links[0].description, "updated link");
+  const copied = await owner.run(session => session.importMemorySpace(ownerKey, changed, "CREATE_NEW"));
+  assert.equal(copied.newMemories, 2); assert.equal(copied.newLinks, 1);
+  stored = plain(await owner.run(session => session.readMemorySpace(ownerKey)));
+  assert.equal(stored.memories.length, 4); assert.equal(stored.chunks.length, 2); assert.equal(stored.links.length, 2);
+  const copy = stored.chunks.find(chunk => chunk.id !== "chunk-1");
+  const document = stored.memories.find(memory => memory.uuid === copy.memoryUuid);
+  assert.notEqual(document.uuid, space.memories[0].uuid);
+  const link = stored.links.find(link => link.id !== "link-1");
+  assert.equal(link.sourceMemoryId, document.id); assert.notEqual(link.targetMemoryId, space.memories[1].id);
+  const collision = structuredClone(space);
+  collision.memories[0].id = "other-document"; collision.memories[0].uuid = "other-uuid";
+  collision.chunks[0].memoryUuid = "other-uuid"; collision.links[0].sourceMemoryId = "other-document";
+  await assert.rejects(owner.run(session => session.importMemorySpace(ownerKey, collision, "UPDATE")), /Imported chunk id is occupied/);
+  assert.equal((await owner.run(session => session.listMemories(ownerKey))).length, 4);
+});
+
 /** Verifies full-record export reads every memory beyond one host page without truncation. */
 test("memory export retains records beyond one host page", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), owner = await open(disk), space = await syntheticSpace(owner, 1005);

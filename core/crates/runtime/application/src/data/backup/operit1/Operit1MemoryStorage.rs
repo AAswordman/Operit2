@@ -184,14 +184,8 @@ fn buildOperit1PluginMemoryRecords(
             (6, 4) if !bytes.is_empty() => {
                 let table = FlatObjectBoxTable::new(bytes)?;
                 let id = table.requiredI64(0, "Memory.id")?;
-                let document = table
-                    .optionalString(12)?
-                    .map(|path| plan.rewritePath(&path))
-                    .transpose()?;
-                let index = table
-                    .optionalString(14)?
-                    .map(|path| plan.rewritePath(&path))
-                    .transpose()?;
+                let document = plan.rewriteMemoryAttachmentPath(table.optionalString(12)?.as_deref())?;
+                let index = plan.rewriteMemoryAttachmentPath(table.optionalString(14)?.as_deref())?;
                 let value = serde_json::json!({"id":id,"uuid":table.requiredString(1,"Memory.uuid")?,
                     "title":table.requiredString(2,"Memory.title")?,"content":table.requiredString(3,"Memory.content")?,
                     "contentType":table.requiredString(4,"Memory.contentType")?,"source":table.requiredString(5,"Memory.source")?,

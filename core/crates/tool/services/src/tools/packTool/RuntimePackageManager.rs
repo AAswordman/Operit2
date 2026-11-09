@@ -4256,38 +4256,23 @@ impl RuntimePackageManager {
                 "market_artifact",
             );
         }
-        if let Err(error) = self.storePaths.ensure_packages_dir() {
-            return self.recordAndReturnPackageError(
-                &fileName,
-                "market_import_failed",
-                &format!("Error importing market artifact: {error}"),
-                "market_artifact",
-            );
-        }
-        let temporaryDirectory = self.storePaths.toolpkg_cache_dir().join(format!(
-            ".market-download-{}-{normalizedSha256}",
-            currentTimeMillis()
-        ));
-        if let Err(error) = self
-            .fileSystemHost
-            .makeDirectory(&hostPath(&temporaryDirectory), true)
-        {
-            return self.recordAndReturnPackageError(
+        let (vfs, download) = match self.prepareMarketArtifactDownload(fileName).and_then(
+            /** Keeps staging writes in the same VFS used by package validation. */
+            |path| self.resolveInputFile(&path),
+        ) {
+            Ok(download) => download,
+            Err(error) => return self.recordAndReturnPackageError(
                 fileName,
                 "market_import_failed",
-                &format!("Error preparing market artifact download: {error}"),
+                &error,
                 "market_artifact",
-            );
-        }
+            ),
+        };
+        let temporaryDirectory = Path::new(&download).parent().expect("artifact staging directory")
+            .to_string_lossy().into_owned();
         // Keep staging outside scanned packages and preserve the final archive name.
-        let temporaryFile = temporaryDirectory.join(fileName);
-        if let Err(error) = self
-            .fileSystemHost
-            .writeFileBytes(&hostPath(&temporaryFile), &bytes)
-        {
-            let _ = self
-                .fileSystemHost
-                .deleteFile(&hostPath(&temporaryDirectory), true);
+        if let Err(error) = vfs.writeFileBytes(&download, &bytes) {
+            let _ = vfs.deleteFile(&temporaryDirectory, true);
             return self.recordAndReturnPackageError(
                 &fileName,
                 "market_import_failed",
@@ -4296,13 +4281,13 @@ impl RuntimePackageManager {
             );
         }
         let result = self.addMarketArtifactFile(
-            temporaryFile.to_string_lossy().into_owned(), normalizedSha256,
+            download, normalizedSha256,
         );
-        let _ = self.fileSystemHost.deleteFile(&hostPath(&temporaryDirectory), true);
+        let _ = vfs.deleteFile(&temporaryDirectory, true);
         result
     }
 
-    /// Creates a package-manager-owned staging path for one market artifact.
+    /// Allocates marketplace staging entirely through the runtime VFS.
     #[allow(non_snake_case)]
     pub fn prepareMarketArtifactDownload(&self, fileName: &str) -> Result<String, String> {
         let fileName = fileName.trim();
@@ -4314,14 +4299,17 @@ impl RuntimePackageManager {
         {
             return Err("Market artifact file name is invalid".to_string());
         }
-        let directory = self
-            .storePaths
-            .toolpkg_cache_dir()
-            .join(format!(".market-download-{}", currentTimeMillis()));
-        self.fileSystemHost
-            .makeDirectory(&hostPath(&directory), true)
+        let cache = crate::files::VisualFileSystem::VisualFileSystem::runtimePath(
+            operit_util::RuntimeStorageLayout::RUNTIME_TOOLPKG_CACHE_DIR_PATH,
+        )?;
+        let directory = crate::files::PathMapper::PathMapper::joinVfsPath(
+            &cache, &format!(".market-download-{}", currentTimeMillis()),
+        )?;
+        let path = crate::files::PathMapper::PathMapper::joinVfsPath(&directory, fileName)?;
+        let vfs = crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?;
+        vfs.makeDirectory(&directory, true)
             .map_err(|error| format!("Error preparing market artifact download: {error}"))?;
-        Ok(directory.join(fileName).to_string_lossy().to_string())
+        Ok(path)
     }
 
     /// Imports a downloaded market artifact after checking its declared SHA-256.

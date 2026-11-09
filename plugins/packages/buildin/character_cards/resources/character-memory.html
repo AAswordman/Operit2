@@ -553,7 +553,7 @@
 
   // web/features/characters/transfers.ts
   function createCharactersTransfersFeature(context) {
-    const { state, topDialog, pushDialog, popDialog, request, renderMain, toast, owningGraph } = context;
+    const { state, topDialog, pushDialog, popDialog, request, renderMain, renderDialogs, toast, owningGraph } = context;
     async function handleAction(action, _element) {
       switch (action) {
         case "save-export": {
@@ -566,7 +566,7 @@
         }
         case "import-card":
         case "import-group":
-          pushDialog({ type: "import", target: action === "import-card" ? "card" : "group", ownerKey: null, format: "operit", strategy: "SKIP", content: "" });
+          pushDialog({ type: "import", target: action === "import-card" ? "card" : "group", ownerKey: null, format: "operit", strategy: "SKIP", content: "", stage: "" });
           return;
         case "read-import": {
           const dialog = topDialog("import");
@@ -574,19 +574,32 @@
           else if (dialog.target === "group") state.snapshot = await request({ action: "importGroup", content: dialog.content });
           else {
             if (dialog.ownerKey === null) throw new Error("\u7F3A\u5C11\u5BFC\u5165\u8BB0\u5FC6\u5E93\u6807\u8BC6");
-            const file = await host().readImportFile();
-            if (file.cancelled) return;
-            const imported = await request({ action: "importMemory", ownerKey: dialog.ownerKey, content: file.content, strategy: dialog.strategy });
-            const graph = owningGraph(dialog.ownerKey);
-            graph.data = await request({ action: "graph", ownerKey: dialog.ownerKey });
-            graph.searchIds = null;
-            graph.query = "";
-            graph.appliedQuery = "";
-            graph.selected = null;
-            graph.selectedEdge = null;
-            popDialog();
-            toast(`\u8BB0\u5FC6\u5BFC\u5165\u5B8C\u6210\uFF1A\u65B0\u589E ${imported.result.newMemories}\uFF0C\u66F4\u65B0 ${imported.result.updatedMemories}\uFF0C\u8DF3\u8FC7 ${imported.result.skippedMemories}\uFF0C\u5173\u7CFB ${imported.result.newLinks}`);
-            return;
+            dialog.busy = true;
+            try {
+              dialog.stage = "\u6B63\u5728\u9009\u62E9\u5E76\u8BFB\u53D6 JSON \u6587\u4EF6\u2026";
+              renderDialogs();
+              const file = await host().readImportFile();
+              if (file.cancelled) return;
+              dialog.stage = "\u6B63\u5728\u5BFC\u5165\u8BB0\u5FC6\uFF1B\u5907\u4EFD\u542F\u7528\u4E91\u7AEF\u5411\u91CF\u65F6\uFF0C\u9700\u8981\u7B49\u5F85\u5411\u91CF\u751F\u6210\u2026";
+              renderDialogs();
+              const imported = await request({ action: "importMemory", ownerKey: dialog.ownerKey, content: file.content, strategy: dialog.strategy }, { background: true });
+              dialog.stage = "\u8BB0\u5FC6\u5DF2\u5BFC\u5165\uFF0C\u6B63\u5728\u5237\u65B0\u56FE\u8C31\u2026";
+              renderDialogs();
+              const graph = owningGraph(dialog.ownerKey);
+              graph.data = await request({ action: "graph", ownerKey: dialog.ownerKey }, { background: true });
+              graph.searchIds = null;
+              graph.query = "";
+              graph.appliedQuery = "";
+              graph.selected = null;
+              graph.selectedEdge = null;
+              popDialog();
+              toast(`\u8BB0\u5FC6\u5BFC\u5165\u5B8C\u6210\uFF1A\u65B0\u589E ${imported.result.newMemories}\uFF0C\u66F4\u65B0 ${imported.result.updatedMemories}\uFF0C\u8DF3\u8FC7 ${imported.result.skippedMemories}\uFF0C\u5173\u7CFB ${imported.result.newLinks}`);
+              return;
+            } finally {
+              dialog.busy = false;
+              dialog.stage = "";
+              renderDialogs();
+            }
           }
           popDialog();
           renderMain();
@@ -892,7 +905,7 @@
         }
         case "import-graph": {
           const graph = topDialog("graph");
-          pushDialog({ type: "import", target: "memory", ownerKey: graph.ownerKey, format: "operit", strategy: "SKIP", content: "" });
+          pushDialog({ type: "import", target: "memory", ownerKey: graph.ownerKey, format: "operit", strategy: "SKIP", content: "", stage: "" });
           return;
         }
         default:
@@ -1822,7 +1835,7 @@
       title: "\u5BFC\u5165\u8BB0\u5FC6 JSON",
       style: "compact",
       tabs: [],
-      body: selectField("\u76F8\u540C UUID \u8BB0\u5FC6\u5904\u7406", "strategy", dialog.strategy, [{ id: "SKIP", label: "\u8DF3\u8FC7" }, { id: "UPDATE", label: "\u66F4\u65B0" }, { id: "CREATE_NEW", label: "\u521B\u5EFA\u65B0\u8BB0\u5FC6" }], false) + notice("\u9009\u62E9\u8BB0\u5FC6\u5E93\u5BFC\u51FA\u7684 JSON \u5907\u4EFD\u6587\u4EF6\uFF0C\u5BFC\u5165\u5B8C\u6574\u8BB0\u5FC6\u3001\u5173\u7CFB\u3001\u6587\u6863\u5206\u5757\u53CA USER.md\u3002\u5BFC\u5165\u524D\u5EFA\u8BAE\u5148\u5BFC\u51FA\u5907\u4EFD\uFF1B\u53EA\u4FEE\u6539\u5F53\u524D\u8BB0\u5FC6\u5E93\u3002"),
+      body: selectField("\u76F8\u540C UUID \u8BB0\u5FC6\u5904\u7406", "strategy", dialog.strategy, [{ id: "SKIP", label: "\u8DF3\u8FC7" }, { id: "UPDATE", label: "\u66F4\u65B0" }, { id: "CREATE_NEW", label: "\u521B\u5EFA\u65B0\u8BB0\u5FC6" }], false) + notice("\u9009\u62E9\u8BB0\u5FC6\u5E93\u5BFC\u51FA\u7684 JSON \u5907\u4EFD\u6587\u4EF6\uFF0C\u5BFC\u5165\u5B8C\u6574\u8BB0\u5FC6\u3001\u5173\u7CFB\u3001\u6587\u6863\u5206\u5757\u53CA USER.md\u3002\u5BFC\u5165\u524D\u5EFA\u8BAE\u5148\u5BFC\u51FA\u5907\u4EFD\uFF1B\u53EA\u4FEE\u6539\u5F53\u524D\u8BB0\u5FC6\u5E93\u3002") + (dialog.stage === "" ? "" : `<p role="status" aria-live="polite">${escapeHtml(dialog.stage)}</p>`),
       footer: button("close-dialog", "\u53D6\u6D88", "") + button("read-import", "\u9009\u62E9 JSON \u6587\u4EF6\u5E76\u5BFC\u5165", "upload", "", "filled")
     };
     const format = dialog.target === "card" ? selectField("\u89D2\u8272\u683C\u5F0F", "format", dialog.format, [{ id: "operit", label: "Operit JSON" }, { id: "tavern", label: "Tavern JSON" }], false) : "";

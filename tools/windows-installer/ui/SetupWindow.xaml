@@ -114,7 +114,11 @@
                   <TextBox x:Name="LocationText" FontSize="12" IsReadOnly="True" Margin="0,7,0,0" AutomationProperties.Name="安装位置" />
                 </StackPanel>
               </Border>
-              <TextBlock x:Name="InstallHint" Text="仅为当前用户安装，无需管理员权限。&#10;自动创建桌面和开始菜单快捷方式。" FontSize="12" Foreground="#8B98A9" LineHeight="22" Margin="2,13,0,0" />
+              <TextBlock x:Name="InstallHint" Text="仅为当前用户安装，无需管理员权限。&#10;自动创建桌面和开始菜单快捷方式。" FontSize="12" Foreground="#8B98A9" LineHeight="22" Margin="2,13,0,0" TextWrapping="Wrap" />
+              <CheckBox x:Name="DeleteUserData" Content="同时永久删除本机用户数据" Visibility="Collapsed"
+                        Margin="2,10,0,0" Checked="CleanupChoiceChanged" Unchecked="CleanupChoiceChanged" />
+              <Button x:Name="CleanupDetailsButton" Content="查看将删除的数据目录与共享影响" Visibility="Collapsed"
+                      HorizontalAlignment="Left" Padding="2,6" Foreground="#36618E" Click="ShowCleanupDetails" />
             </StackPanel>
             <StackPanel x:Name="ProgressPanel" Visibility="Collapsed" VerticalAlignment="Center">
               <DockPanel Margin="0,0,0,14"><TextBlock x:Name="PercentText" DockPanel.Dock="Right" Text="0%" Foreground="#36618E" /><TextBlock x:Name="ProgressText" Text="正在准备…" Foreground="#728299" /></DockPanel>

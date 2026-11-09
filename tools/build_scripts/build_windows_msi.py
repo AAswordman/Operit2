@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import re
+import shutil
 import sys
 import uuid
 import xml.etree.ElementTree as ET
@@ -22,6 +23,7 @@ REQUIRED_FILES = (
     "operit2.exe", "flutter_windows.dll", "operit_flutter_bridge.dll",
     "operit_local_llm.dll", "msvcp140.dll", "vcruntime140.dll",
     "data/icudtl.dat", "data/app.so", "data/flutter_assets/AssetManifest.bin",
+    "Operit2DataCleanup.exe", "README-Windows.txt",
 )
 
 
@@ -101,10 +103,16 @@ def build_windows_msi(release_dir: Path, destination: Path) -> Path:
     version = release_version()
     windows_version = msi_version(version)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
+    dotnet = require_command("dotnet")
+    run([dotnet, "build", INSTALLER_DIR / "cleanup/Operit2DataCleanup.csproj", "-c", "Release",
+         "--nologo", "-p:RestoreLockedMode=true"], cwd=INSTALLER_DIR)
+    shutil.copy2(INSTALLER_DIR / "build/cleanup/bin/Release/net472/Operit2DataCleanup.exe", release_dir)
+    shutil.copy2(INSTALLER_DIR / "README-Windows.txt", release_dir)
     payload = WORK_DIR / "Payload.wxs"
     write_payload(release_dir.resolve(), payload)
-    dotnet = require_command("dotnet")
     run([dotnet, "build", INSTALLER_DIR / "ui/OperitInstaller.csproj", "-c", "Release",
+         "--nologo", "-p:RestoreLockedMode=true"], cwd=INSTALLER_DIR)
+    run([dotnet, "build", INSTALLER_DIR / "actions/OperitCleanupActions.csproj", "-c", "Release",
          "--nologo", "-p:RestoreLockedMode=true"], cwd=INSTALLER_DIR)
     run([dotnet, "tool", "restore"], cwd=INSTALLER_DIR)
     wix = [dotnet, "tool", "run", "wix", "--"]
@@ -115,6 +123,7 @@ def build_windows_msi(release_dir: Path, destination: Path) -> Path:
          "-d", f"MsiVersion={windows_version}", "-d", f"ReleaseVersion={version}",
          "-d", f"AppIcon={FLUTTER_APP_DIR / 'windows/runner/resources/app_icon.ico'}",
          "-d", f"EmbeddedUI={WORK_DIR / 'ui/bin/x64/Release/net472/OperitInstaller.CA.dll'}",
+         "-d", f"CleanupActions={WORK_DIR / 'actions/bin/x64/Release/net472/OperitCleanupActions.CA.dll'}",
          "-intermediatefolder", WORK_DIR / "obj",
          "-pdbtype", "none", "-out", destination], cwd=INSTALLER_DIR)
     print(f"Windows installer: {destination} (MSI version {windows_version})", flush=True)

@@ -110,6 +110,17 @@ impl SnapshotFileImportPlan {
         Ok(value.to_string())
     }
 
+    /// Retires source-app document grants whose bytes and permissions are not part of a raw snapshot.
+    fn rewriteMemoryAttachmentPath(&self, value: Option<&str>) -> Result<Option<String>, String> {
+        let Some(path) = value else {
+            return Ok(None);
+        };
+        if path.starts_with("content://") {
+            return Ok(None);
+        }
+        self.rewritePath(path).map(Some)
+    }
+
     #[allow(non_snake_case)]
     fn rewriteWorkspacePath(&self, workspace: &str) -> Result<String, String> {
         let pathText = workspace.trim().replace('\\', "/");

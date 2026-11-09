@@ -17,6 +17,7 @@ use crate::RuntimeFileSyncStore::{
 use crate::SyncOperationStore::{SyncOperation, SyncOperationStore};
 
 type Inventory = BTreeMap<String, FileStamp>;
+const MANAGED_ROOTS: [&str; 3] = ["workspaces", RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH];
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct FileStamp {
@@ -78,8 +79,14 @@ impl WorkspaceFileSyncStore {
 
     /// Shared roots use one scanner, policy evaluator and transport protocol.
     pub fn manages(path: &str) -> bool {
-        ["workspaces", RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH].iter()
+        MANAGED_ROOTS.iter()
             .any(|root| path.starts_with(&format!("{root}/")))
+    }
+
+    /// Includes managed descendants and ancestors whose mutation can change managed files.
+    pub fn affectedBy(path: &str) -> bool {
+        Self::manages(path) || MANAGED_ROOTS.iter()
+            .any(|root| path == *root || root.starts_with(&format!("{path}/")))
     }
 
     /// Scans only the managed root; mounted VFS directories are not consulted.
@@ -163,7 +170,7 @@ impl WorkspaceFileSyncStore {
         }
         let mut current = Inventory::new();
         let mut large = Inventory::new();
-        for root in ["workspaces", RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH] {
+        for root in MANAGED_ROOTS {
             let Some(exists) = self.scanRead(self.host.exists(root), root, &mut skipped)? else { continue; };
             if !exists {
                 if state.files.keys().any(|path| path.starts_with(&format!("{root}/"))) {
@@ -540,7 +547,7 @@ fn preserveSkipped(current: &mut Inventory, previous: &Inventory, skipped: &[Str
 
 /// Returns the stable app-managed directory owning one file.
 pub fn managedDirectory(path: &str) -> Result<String, String> {
-    for root in ["workspaces", RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH] {
+    for root in MANAGED_ROOTS {
         if let Some(relative) = path.strip_prefix(&format!("{root}/")) {
             let name = relative.split('/').next().filter(|s| !s.is_empty()).ok_or("Missing managed directory")?;
             return Ok(format!("{root}/{name}"));

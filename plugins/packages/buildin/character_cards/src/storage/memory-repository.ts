@@ -485,59 +485,62 @@ export class DatabaseMemoryRepository {
     assertMemorySpace(imported);
     const space = await this.readMemorySpace(ownerKey), result = { newMemories: 0, updatedMemories: 0, skippedMemories: 0, newLinks: 0 };
     const idMapping = new Map<string, string>();
+    const memoriesByUuid = new Map(space.memories.map(/** Indexes existing memories once for UUID conflict handling. */ memory => [memory.uuid, memory]));
+    const memoryIds = new Set(space.memories.map(/** Tracks occupied target identities independently of UUIDs. */ memory => memory.id));
+    const chunks = new Map(space.chunks.map(/** Preserves target chunk order and detects identity collisions. */ chunk => [chunk.id, chunk]));
+    const targetChunks = new Map<string, Set<string>>(), importedChunks = new Map<string, MemorySpace["chunks"]>();
+    for (const chunk of space.chunks) {
+      let ids = targetChunks.get(chunk.memoryUuid);
+      if (ids === undefined) { ids = new Set(); targetChunks.set(chunk.memoryUuid, ids); }
+      ids.add(chunk.id);
+    }
+    for (const chunk of imported.chunks) {
+      let records = importedChunks.get(chunk.memoryUuid);
+      if (records === undefined) { records = []; importedChunks.set(chunk.memoryUuid, records); }
+      records.push(chunk);
+    }
     for (const memory of imported.memories) {
-      const existing = space.memories.find(
-        /** Matches the import's actual UUID, not a guessed title. */
-        item => item.uuid === memory.uuid,
-      );
+      const existing = memoriesByUuid.get(memory.uuid);
       if (existing !== undefined && strategy === "SKIP") { result.skippedMemories += 1; idMapping.set(memory.id, existing.id); continue; }
       const value = clone(memory);
       if (existing !== undefined && strategy === "UPDATE") { value.id = existing.id; Object.assign(existing, value); result.updatedMemories += 1; }
       else {
         if (strategy === "CREATE_NEW") { const identity = uuid(); value.id = identity; value.uuid = identity; }
         else {
-          if (space.memories.some(
-            /** Rejects an occupied imported identity instead of remapping it silently. */
-            item => item.id === value.id,
-          )) throw new Error("Imported memory id is occupied: " + value.id);
+          if (memoryIds.has(value.id)) throw new Error("Imported memory id is occupied: " + value.id);
         }
         space.memories.push(value); result.newMemories += 1;
+        memoriesByUuid.set(value.uuid, value); memoryIds.add(value.id);
       }
       idMapping.set(memory.id, value.id);
-      space.chunks = space.chunks.filter(
-        /** Replaces only the explicit updated document's prior chunks. */
-        chunk => chunk.memoryUuid !== value.uuid,
-      );
-      for (const chunk of imported.chunks) if (chunk.memoryUuid === memory.uuid) {
+      const previousChunks = targetChunks.get(value.uuid);
+      if (previousChunks !== undefined) for (const id of previousChunks) chunks.delete(id);
+      const nextChunks = new Set<string>(); targetChunks.set(value.uuid, nextChunks);
+      const documentChunks = importedChunks.get(memory.uuid);
+      if (documentChunks !== undefined) for (const chunk of documentChunks) {
         const incoming = { ...clone(chunk), memoryUuid: value.uuid, id: strategy === "CREATE_NEW" ? uuid() : chunk.id };
-        if (space.chunks.some(
-          /** Rejects duplicate chunk identities in the target space. */
-          record => record.id === incoming.id,
-        )) throw new Error("Imported chunk id is occupied: " + incoming.id);
-        space.chunks.push(incoming);
+        if (chunks.has(incoming.id)) throw new Error("Imported chunk id is occupied: " + incoming.id);
+        chunks.set(incoming.id, incoming); nextChunks.add(incoming.id);
       }
     }
+    space.chunks = [...chunks.values()];
+    const linksById = new Map(space.links.map(/** Indexes relationships by their persisted identity. */ link => [link.id, link]));
     for (const link of imported.links) {
       const source = idMapping.get(link.sourceMemoryId), target = idMapping.get(link.targetMemoryId);
       if (source === undefined || target === undefined) throw new Error("Imported link has no mapped endpoint");
-      const existing = space.links.find(
-        /** Resolves only a matching relationship identity in non-copy imports. */
-        record => record.id === link.id,
-      );
+      const existing = linksById.get(link.id);
       if (existing !== undefined && strategy === "SKIP") continue;
       const incoming = { ...clone(link), sourceMemoryId: source, targetMemoryId: target, id: strategy === "CREATE_NEW" ? uuid() : link.id };
       if (existing !== undefined && strategy === "UPDATE") Object.assign(existing, incoming);
-      else { space.links.push(incoming); result.newLinks += 1; }
+      else { space.links.push(incoming); linksById.set(incoming.id, incoming); result.newLinks += 1; }
     }
     space.settings = clone(imported.settings); space.searchConfig = clone(imported.searchConfig);
     space.rebuildProgress = clone(imported.rebuildProgress); space.rebuildTask = clone(imported.rebuildTask); space.embeddings = [];
+    const candidatesById = new Map(space.candidates.map(/** Indexes pending work without rescanning earlier imports. */ candidate => [candidate.id, candidate]));
     for (const candidate of imported.candidates) {
       const incoming = { ...clone(candidate), id: strategy === "CREATE_NEW" ? uuid() : candidate.id };
-      const existing = space.candidates.find(
-        /** Resolves a candidate's actual persistent identity. */
-        record => record.id === incoming.id,
-      );
-      if (existing === undefined) space.candidates.push(incoming);
+      const existing = candidatesById.get(incoming.id);
+      if (existing === undefined) { space.candidates.push(incoming); candidatesById.set(incoming.id, incoming); }
       else if (strategy === "UPDATE") Object.assign(existing, incoming);
     }
     await this.writeMemorySpace(ownerKey, space);

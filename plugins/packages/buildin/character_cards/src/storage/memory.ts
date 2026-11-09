@@ -63,15 +63,6 @@ export class CharacterMemoryDatabase {
     }
   }
 
-  /** Removes the retired text cache after schema imports without reading vector payloads. */
-  async retireLegacyEmbeddings(): Promise<void> {
-    for (;;) {
-      const rows = await this.query("SELECT key,version FROM plugin_objects WHERE collection='embeddings' ORDER BY key LIMIT 100");
-      if (rows.length === 0) return;
-      await this.commit(rows.map(/** Deletes only exact cache versions selected by this migration. */ row => ({ op: "delete", collection: "embeddings", key: String(row.key), expectedVersion: String(row.version) })));
-    }
-  }
-
   /** Reads one exact record and its host-issued concurrency version. */
   get<T = Storage.Value>(collection: string, key: string): Promise<Storage.Entry<T> | null> {
     return this.database.collection<T>(collection).get(key);

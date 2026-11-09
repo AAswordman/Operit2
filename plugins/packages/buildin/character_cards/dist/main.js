@@ -1957,7 +1957,7 @@ var extractionTemplate = '\u4F60\u8981\u4ECE\u5BF9\u8BDD\u4E2D\u6784\u5EFA\u957F
 var meta_schema_default = {
   version: 1,
   steps: [
-    [{ op: "set_object_field", key: "state", field: "legacyImportPending", value: true }]
+    []
   ]
 };
 
@@ -2809,382 +2809,23 @@ function decodeStateFromRecords(metadata, rows) {
   return state;
 }
 
-// src/storage/migrations/legacy-to-v1.ts
-function assertMigrationPlan(value) {
-  assertObject(value, "character schema migration");
-  if (value.from !== "released" || value.to !== 1) throw new Error("Unsupported pending character schema migration");
-  if (!["files", "authors", "records", "verify", "cleanup"].some((phase) => phase === value.phase)) throw new Error("Invalid character migration phase");
-  assertInteger(value.cursor, "character migration cursor", 0);
-  assertObject(value.identities, "character migration identities");
-  for (const field of ["files", "directories", "authors", "changes"])
-    if (!Array.isArray(value[field])) throw new Error("Invalid character migration work: " + field);
-  for (const directory of value.directories) {
-    assertObject(directory, "character migration directory");
-    for (const field of ["source", "destination"])
-      if (typeof directory[field] !== "string" || !/^owners\/(?:character|shared)%3A[^/]+$/u.test(directory[field]))
-        throw new Error("Invalid character migration owner directory");
-    if (directory.source === directory.destination) throw new Error("Character migration owner directory must change");
-  }
-  for (const file of value.files) {
-    assertObject(file, "character migration file");
-    if (typeof file.source !== "string" || typeof file.destination !== "string") throw new Error("Invalid character migration file path");
-    const source = file.source, destination = file.destination;
-    if (!value.directories.some((directory) => source.startsWith(directory.source + "/") && destination === directory.destination + source.slice(directory.source.length)))
-      throw new Error("Character migration file is outside its owner directory");
-  }
-  for (const group of value.changes)
-    if (!Array.isArray(group) || group.length < 1 || group.length > 2) throw new Error("Invalid atomic character migration record change");
-  const lengths = { files: value.files.length, authors: value.authors.length, records: value.changes.length, verify: 0, cleanup: value.directories.length };
-  if (value.cursor > lengths[value.phase]) throw new Error("Character migration cursor exceeds its work");
-}
-function completed(result2) {
-  if (!result2.successful) throw new Error(result2.details);
-}
-function absolute(directory, relative) {
-  if (relative.split("/").some((part) => part === "" || part === "." || part === ".." || /[\\:\u0000-\u001f]/u.test(part)))
-    throw new Error("Invalid character migration resource path: " + relative);
-  return directory + "/" + relative;
-}
-function ownerFiles(directory, source, destination) {
+// src/storage/operit1-import-repair.ts
+function finishOperit1Import(storage) {
   return __async(this, null, function* () {
-    const path = absolute(directory, source);
-    if (!(yield Tools.Files.exists(path)).exists) return [];
-    const listing = yield Tools.Files.list(path);
-    const result2 = [];
-    for (const entry of listing.entries) {
-      if (entry.name === "." || entry.name === ".." || /[/\\:\u0000-\u001f]/u.test(entry.name))
-        throw new Error("Invalid owner resource entry: " + entry.name);
-      const from = source + "/" + entry.name, to = destination + "/" + entry.name;
-      if (entry.isDirectory) result2.push(...yield ownerFiles(directory, from, to));
-      else result2.push({ source: from, destination: to });
-    }
-    return result2;
-  });
-}
-function removeDeletedReferences(state) {
-  const tags = new Set(state.tags.map((tag) => tag.id));
-  const stores = new Set(state.stores.map((store) => store.id));
-  const cards = new Set(state.cards.map((card) => card.id));
-  for (const card of state.cards) {
-    card.attachedTagIds = card.attachedTagIds.filter((id2) => tags.has(id2));
-    card.sharedMemoryMounts = card.sharedMemoryMounts.filter((mount2) => stores.has(mount2.sharedMemoryId));
-  }
-  for (const group of state.groups) group.members = group.members.filter((member2) => cards.has(member2.characterCardId));
-  for (const owner2 of state.owners) {
-    const memories = new Set(owner2.memories.map((memory) => memory.id));
-    const documents2 = new Set(owner2.memories.filter((memory) => memory.isDocumentNode).map((memory) => memory.uuid));
-    owner2.links = owner2.links.filter((link2) => memories.has(link2.sourceMemoryId) && memories.has(link2.targetMemoryId));
-    owner2.chunks = owner2.chunks.filter((chunk) => documents2.has(chunk.memoryUuid));
-  }
-}
-function prepareVersionOne(storage, metadata, directory) {
-  return __async(this, null, function* () {
-    const rows = yield migrationRecords(storage);
-    const input = clone(rows);
-    for (const row of input) {
-      if (row.collection === "cards") {
-        assertObject(row.value, "legacy card");
-        delete row.value.isDefault;
-      }
-    }
-    const inputMetadata = { ...clone(metadata), version: 1 };
-    delete inputMetadata.legacyImportPending;
-    const state = decodeStateFromRecords(inputMetadata, input);
-    removeDeletedReferences(state);
-    const before = records(state), identities2 = {};
-    function identity3(scope, value) {
-      requireId(value, scope + " identity");
-      const key2 = JSON.stringify([scope, value]);
-      if (!Object.prototype.hasOwnProperty.call(identities2, key2)) identities2[key2] = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value) ? value : uuid();
-      return identities2[key2];
-    }
-    function reference(scope, value) {
-      const key2 = JSON.stringify([scope, value]);
-      if (!Object.prototype.hasOwnProperty.call(identities2, key2)) throw new Error("Missing migration reference: " + key2);
-      return identities2[key2];
-    }
-    const sourceStoreIds = new Set(state.stores.map((store) => store.id));
-    const sourceCardIds = new Set(state.cards.map((card) => card.id));
-    const sourceGroupIds = new Set(state.groups.map((group) => group.id));
-    for (const collection of configurationNames)
-      for (const record2 of state[collection]) record2.id = identity3(collection, record2.id);
-    function selection(value) {
-      const parsed = parseChatSelection(value);
-      if (parsed.kind === "card" && sourceCardIds.has(parsed.id)) value = "card:" + reference("cards", parsed.id);
-      if (parsed.kind === "group" && sourceGroupIds.has(parsed.id)) value = "group:" + reference("groups", parsed.id);
-      return value;
-    }
-    for (const card of state.cards) {
-      card.attachedTagIds = card.attachedTagIds.map((id2) => reference("tags", id2));
-      if (card.sharedMemoryId !== null && sourceStoreIds.has(card.sharedMemoryId)) card.sharedMemoryId = reference("stores", card.sharedMemoryId);
-      for (const mount2 of card.sharedMemoryMounts) mount2.sharedMemoryId = reference("stores", mount2.sharedMemoryId);
-    }
-    for (const group of state.groups)
-      for (const member2 of group.members) member2.characterCardId = reference("cards", member2.characterCardId);
-    for (const group of state.conversationGroups) {
-      if (group.ownerSelection !== null && /^(card|group):/u.test(group.ownerSelection)) group.ownerSelection = selection(group.ownerSelection);
-    }
-    if ("CharacterCard" in state.active && sourceCardIds.has(state.active.CharacterCard.id)) state.active.CharacterCard.id = reference("cards", state.active.CharacterCard.id);
-    if ("CharacterGroup" in state.active && sourceGroupIds.has(state.active.CharacterGroup.id)) state.active.CharacterGroup.id = reference("groups", state.active.CharacterGroup.id);
-    const directories2 = [];
-    for (const owner2 of state.owners) {
-      const old = owner2.ownerKey;
-      if (old.startsWith("character:")) owner2.ownerKey = "character:" + reference("cards", old.slice(10));
-      else if (old.startsWith("shared:")) owner2.ownerKey = "shared:" + reference("stores", old.slice(7));
-      else throw new Error("Invalid migration owner: " + old);
-      owner2.userDocumentPath = userDocumentPath(owner2.ownerKey);
-      if (old !== owner2.ownerKey) directories2.push({ source: "owners/" + encodeURIComponent(old), destination: "owners/" + encodeURIComponent(owner2.ownerKey) });
-      const scope = owner2.ownerKey;
-      for (const collection of ["memories", "links", "chunks", "candidates", "embeddings"])
-        for (const record2 of owner2[collection]) record2.id = identity3(scope + "/" + collection, record2.id);
-      for (const memory of owner2.memories) {
-        memory.uuid = identity3(scope + "/memoryUuid", memory.uuid);
-        for (const tag of memory.tags) tag.id = identity3(scope + "/memoryTags", tag.id);
-        for (const property2 of memory.properties) property2.id = identity3(scope + "/memoryProperties", property2.id);
-      }
-      for (const link2 of owner2.links) {
-        link2.sourceMemoryId = reference(scope + "/memories", link2.sourceMemoryId);
-        link2.targetMemoryId = reference(scope + "/memories", link2.targetMemoryId);
-      }
-      for (const chunk of owner2.chunks) chunk.memoryUuid = reference(scope + "/memoryUuid", chunk.memoryUuid);
-      if (owner2.rebuildTask !== null) owner2.rebuildTask.id = identity3(scope + "/rebuildTask", owner2.rebuildTask.id);
-    }
-    const resourceMoves = [];
-    for (const move of directories2) {
-      resourceMoves.push(move, { source: absolute(directory, move.source), destination: absolute(directory, move.destination) });
-    }
-    for (const owner2 of state.owners) for (const memory of owner2.memories)
-      for (const field of ["documentPath", "chunkIndexFilePath"]) {
-        const path = memory[field];
-        if (path === null) continue;
-        const source = path.startsWith("owners/") ? absolute(directory, path) : path;
-        if (!(yield Tools.Files.exists(source)).exists) {
-          memory[field] = null;
-          continue;
-        }
-        for (const move of resourceMoves) if (path.startsWith(move.source + "/")) {
-          memory[field] = move.destination + path.slice(move.source.length);
-          break;
-        }
-      }
-    const after = records(state), changes2 = [];
-    const original = new Map(rows.map((row) => [JSON.stringify([row.collection, row.key]), row]));
-    const targets = /* @__PURE__ */ new Set();
-    for (let index = 0; index < after.length; index += 1) {
-      const from = before[index], to = after[index], key2 = JSON.stringify([to.collection, to.key]);
-      if (targets.has(key2)) throw new Error("Duplicate migration destination: " + key2);
-      targets.add(key2);
-      const source = original.get(JSON.stringify([from.collection, from.key]));
-      if (source === void 0) throw new Error("Missing migration source record");
-      if (from.key === to.key) {
-        if (!equal(source.value, to.value)) changes2.push([{ op: "put", collection: to.collection, key: to.key, value: to.value, expectedValue: source.value }]);
-      } else {
-        if (original.has(key2)) throw new Error("Occupied migration destination: " + key2);
-        changes2.push([
-          { op: "put", collection: to.collection, key: to.key, value: to.value, expectedValue: null },
-          { op: "delete", collection: from.collection, key: from.key, expectedValue: source.value }
-        ]);
-      }
-    }
-    const retained3 = new Set(before.map((row) => JSON.stringify([row.collection, row.key])));
-    for (const row of rows) if (!retained3.has(JSON.stringify([row.collection, row.key])))
-      changes2.push([{ op: "delete", collection: row.collection, key: row.key, expectedValue: row.value }]);
-    for (const [key2, originalValue] of (yield storage.chats.data()).entries()) {
-      const collection = key2.startsWith("binding_") ? "chat_bindings" : key2.startsWith("draft_") ? "chat_drafts" : null;
-      if (collection === null) throw new Error("Unsupported chat preference during migration: " + key2);
-      const id2 = key2.slice(collection === "chat_bindings" ? 8 : 6);
-      assertObject(originalValue, collection);
-      const value = clone(originalValue);
-      value.selection = selection(requireId(value.selection, "stored selection"));
-      if (!equal(value, originalValue)) changes2.push([{ op: "put", collection, key: id2, value, expectedValue: originalValue }]);
-    }
-    const files = [];
-    for (const move of directories2) {
-      const entries = yield ownerFiles(directory, move.source, move.destination);
-      files.push(...entries);
-    }
-    const authors = [];
-    const cardIds = new Map(before.filter((row) => row.collection === "cards").map((row) => [row.key, reference("cards", row.key)]));
-    if ([...cardIds].some(([old, next]) => old !== next)) {
-      const chats = yield Tools.Chat.listAll();
-      for (const chat of chats.chats) for (let start = 0; start < chat.messageCount; start += 100) {
-        const page = yield Tools.Chat.getMessagesRange(chat.id, { order: "asc", start, end: Math.min(chat.messageCount - 1, start + 99) });
-        for (const message of page.messages) for (let variantIndex = 0; variantIndex < message.variantCount; variantIndex += 1) {
-          const target = { kind: "message", chatId: chat.id, messageTimestamp: message.timestamp, variantIndex };
-          const { extension } = yield Tools.Chat.readExtension(target);
-          if (extension === null) continue;
-          assertObject(extension, "legacy message author");
-          if (Object.keys(extension).length !== 1) throw new Error("Invalid legacy message author");
-          const participant = requireId(extension.participantId, "legacy participant id"), next = cardIds.get(participant);
-          if (next !== void 0 && next !== participant) authors.push({ target, before: participant, after: next });
-        }
-      }
-    }
-    return { from: "released", to: 1, phase: "files", cursor: 0, active: storedValue(state.active), identities: identities2, files, directories: directories2, authors, changes: changes2 };
-  });
-}
-function verifyFile(directory, file) {
-  return __async(this, null, function* () {
-    const source = yield Tools.Files.readBinary(absolute(directory, file.source));
-    const target = yield Tools.Files.readBinary(absolute(directory, file.destination));
-    if (source.size !== target.size || source.contentBase64 !== target.contentBase64)
-      throw new Error("Character migration resource verification failed: " + file.destination);
-  });
-}
-function migrationRecords(storage) {
-  return __async(this, null, function* () {
-    const rows = [], configuration = yield storage.data();
-    for (const name of configurationNames) for (const [key2, value] of configuration[name].entries()) {
-      if (!key2.startsWith(recordPrefix)) throw new Error("Unknown character preference during migration: " + key2);
-      rows.push({ collection: name, key: key2.slice(recordPrefix.length), value, version: null });
-    }
-    for (const collection of ["owners", "memories", "links", "chunks", "candidates", "embeddings"])
-      for (const entry of yield storage.memory.read(collection)) rows.push({ collection, ...entry });
-    return rows;
-  });
-}
-function applyChanges(storage, changes2) {
-  return __async(this, null, function* () {
-    const first = changes2[0];
-    if (first === void 0) throw new Error("Empty character migration unit");
-    if (changes2.some((change) => change.collection !== first.collection)) throw new Error("Migration unit spans storage owners");
-    const collection = first.collection;
-    const name = configurationNames.find((name2) => name2 === collection);
-    const store = name === void 0 ? collection === "chat_bindings" || collection === "chat_drafts" ? storage.chats : null : storage.configuration[name];
-    if (store !== null) {
-      yield store.edit((preferences) => {
-        const prefix = collection === "chat_bindings" ? "binding_" : collection === "chat_drafts" ? "draft_" : recordPrefix;
-        for (const change of changes2) {
-          const key2 = prefix + change.key, value = preferences.get(key2);
-          if (change.op === "put" && equal(value, change.value) || change.op === "delete" && value === void 0) continue;
-          if (change.expectedValue === null ? value !== void 0 : !equal(value, change.expectedValue)) throw new Error("Character migration source changed: " + collection + "/" + change.key);
-          if (change.op === "put") preferences.set(key2, change.value);
-          else preferences.remove(key2);
-        }
-      });
-      return;
-    }
-    const mutations = [];
-    for (const change of changes2) {
-      const entry = yield storage.memory.get(collection, change.key);
-      if (change.op === "put" && entry !== null && equal(entry.value, change.value) || change.op === "delete" && entry === null) continue;
-      if (change.expectedValue === null ? entry !== null : entry === null || !equal(entry.value, change.expectedValue)) throw new Error("Character memory migration source changed: " + change.key);
-      mutations.push(change.op === "put" ? { op: "put", collection, key: change.key, value: change.value, expectedVersion: entry === null ? null : entry.version } : { op: "delete", collection, key: change.key, expectedVersion: entry === null ? null : entry.version });
-    }
-    if (mutations.length !== 0) yield storage.memory.commit(mutations);
-  });
-}
-function migrateCharacterStorage(storage, directory) {
-  return __async(this, null, function* () {
-    const source = clone((yield storage.metadata.data()).get("state"));
-    const persisted = (yield storage.migration.data()).get("plan");
-    if (persisted === void 0 && (source === void 0 || source.legacyImportPending !== true)) return;
-    assertObject(source, "character schema metadata");
-    if (source.migrationStatus === "writing") throw new Error("Character migration has not completed: legacy import is still writing");
-    if (source.version !== 1) throw new Error("Unsupported character schema version: " + source.version);
-    let plan;
-    if (persisted === void 0) plan = yield prepareVersionOne(storage, clone(source), directory);
-    else {
-      assertMigrationPlan(persisted);
-      plan = clone(persisted);
-    }
-    let previous = persisted === void 0 ? void 0 : storedValue(persisted);
-    function publish() {
-      return __async(this, null, function* () {
-        yield storage.migration.edit((work) => {
-          if (!equal(work.get("plan"), previous)) throw new Error("Character migration plan changed concurrently");
-          work.set("plan", storedValue(clone(plan)));
-        });
-        previous = storedValue(clone(plan));
-      });
-    }
-    if (persisted === void 0) yield publish();
-    while (true) {
-      switch (plan.phase) {
-        case "files":
-          for (; plan.cursor < plan.files.length; ) {
-            const file = plan.files[plan.cursor], destination = absolute(directory, file.destination);
-            const exists = yield Tools.Files.exists(destination);
-            if (!exists.exists) {
-              completed(yield Tools.Files.mkdir(destination.slice(0, destination.lastIndexOf("/")), true));
-              completed(yield Tools.Files.copy(absolute(directory, file.source), destination, false));
-            } else yield verifyFile(directory, file);
-            plan.cursor += 1;
-            yield publish();
-          }
-          for (const move of plan.directories) {
-            const document2 = absolute(directory, move.destination + "/USER.md");
-            if (!(yield Tools.Files.exists(document2)).exists) {
-              completed(yield Tools.Files.mkdir(document2.slice(0, document2.lastIndexOf("/")), true));
-              completed((yield Tools.Files.write(document2, "")).operation);
-            }
-          }
-          plan.phase = "authors";
-          plan.cursor = 0;
-          yield publish();
-          break;
-        case "authors":
-          for (; plan.cursor < plan.authors.length; ) {
-            const author = plan.authors[plan.cursor], { extension } = yield Tools.Chat.readExtension(author.target);
-            if (extension === null || Object.keys(extension).length !== 1 || extension.participantId !== author.before && extension.participantId !== author.after)
-              throw new Error("Message author changed during character migration");
-            if (extension.participantId === author.before) yield Tools.Chat.writeExtension(author.target, { participantId: author.after });
-            plan.cursor += 1;
-            yield publish();
-          }
-          plan.phase = "records";
-          plan.cursor = 0;
-          yield publish();
-          break;
-        case "records":
-          while (plan.cursor < plan.changes.length) {
-            const batch = [], collection = plan.changes[plan.cursor][0].collection;
-            let cursor = plan.cursor;
-            while (cursor < plan.changes.length && plan.changes[cursor][0].collection === collection && batch.length + plan.changes[cursor].length <= 1e3) {
-              batch.push(...plan.changes[cursor]);
-              cursor += 1;
-            }
-            yield applyChanges(storage, batch);
-            plan.cursor = cursor;
-            yield publish();
-          }
-          plan.phase = "cleanup";
-          plan.cursor = 0;
-          yield publish();
-          break;
-        // Retains the persisted phase name so interrupted released migrations can continue.
-        case "verify":
-          plan.phase = "cleanup";
-          plan.cursor = 0;
-          yield publish();
-          break;
-        case "cleanup":
-          yield storage.metadata.edit((preferences) => {
-            const current = preferences.get("state");
-            assertObject(current, "character schema metadata");
-            if (current.version !== 1 || !equal(current.active, source.active) && !equal(current.active, plan.active))
-              throw new Error("Character migration metadata changed during conversion");
-            const completed3 = { ...current, version: 1, active: plan.active };
-            delete completed3.legacyImportPending;
-            if (!equal(current, completed3)) preferences.set("state", completed3);
-          });
-          for (; plan.cursor < plan.directories.length; ) {
-            const sourceDirectory = absolute(directory, plan.directories[plan.cursor].source);
-            if ((yield Tools.Files.exists(sourceDirectory)).exists) {
-              completed(yield Tools.Files.deleteFile(sourceDirectory, true));
-            }
-            plan.cursor += 1;
-            yield publish();
-          }
-          yield storage.migration.edit((preferences) => {
-            if (!equal(preferences.get("plan"), previous)) throw new Error("Character migration plan changed concurrently");
-            preferences.remove("plan");
-          });
-          return;
-        default:
-          throw new Error("Invalid character migration phase");
-      }
-    }
+    const source = (yield storage.metadata.data()).get("state");
+    if (source === void 0 || source.legacyImportPending !== true) return;
+    if (source.migrationStatus === "writing") throw new Error("Operit1 import is still writing");
+    if (typeof source.migrationSource !== "string" || !source.migrationSource.startsWith("operit1:"))
+      throw new Error("Unsupported retired character migration; import the Operit1 snapshot directly");
+    yield storage.metadata.edit((preferences) => {
+      const current = preferences.get("state");
+      assertObject(current, "Operit1 import metadata");
+      if (current.migrationSource !== source.migrationSource || current.migrationStatus === "writing")
+        throw new Error("Operit1 import changed during completion");
+      const repaired = clone(current);
+      delete repaired.legacyImportPending;
+      preferences.set("state", repaired);
+    });
   });
 }
 
@@ -3444,19 +3085,6 @@ var CharacterMemoryDatabase = class _CharacterMemoryDatabase {
       }
     });
   }
-  /** Removes the retired text cache after schema imports without reading vector payloads. */
-  retireLegacyEmbeddings() {
-    return __async(this, null, function* () {
-      for (; ; ) {
-        const rows = yield this.query("SELECT key,version FROM plugin_objects WHERE collection='embeddings' ORDER BY key LIMIT 100");
-        if (rows.length === 0) return;
-        yield this.commit(rows.map(
-          /** Deletes only exact cache versions selected by this migration. */
-          (row) => ({ op: "delete", collection: "embeddings", key: String(row.key), expectedVersion: String(row.version) })
-        ));
-      }
-    });
-  }
   /** Reads one exact record and its host-issued concurrency version. */
   get(collection, key2) {
     return this.database.collection(collection).get(key2);
@@ -3483,11 +3111,10 @@ function document(preferences, id2) {
 }
 var CharacterStorage = class _CharacterStorage {
   /** Retains explicit storage owners without emulating a cross-engine transaction. */
-  constructor(configuration, metadata, chats, migration, memory) {
+  constructor(configuration, metadata, chats, memory) {
     this.configuration = configuration;
     this.metadata = metadata;
     this.chats = chats;
-    this.migration = migration;
     this.memory = memory;
   }
   /** Opens the real owners for explicit inspection without migrating or initializing business data. */
@@ -3508,10 +3135,8 @@ var CharacterStorage = class _CharacterStorage {
         const configuration = {};
         for (const name of configurationNames) configuration[name] = yield open(name);
         const metadata = yield open("meta"), chats = yield open("chats");
-        const migration = yield Tools.Storage.dataStore.open({ path: ToolPkg.getLocalDataDir() + "/migration.preferences.json" });
-        handles.push(migration);
         memory = yield CharacterMemoryDatabase.open();
-        return new _CharacterStorage(configuration, metadata, chats, migration, memory);
+        return new _CharacterStorage(configuration, metadata, chats, memory);
       } catch (error) {
         const closed = yield Promise.allSettled([...handles.map((handle) => handle.close()), ...memory === void 0 ? [] : [memory.close()]]);
         const failures = closed.filter((result2) => result2.status === "rejected").map((result2) => result2.reason);
@@ -3520,15 +3145,14 @@ var CharacterStorage = class _CharacterStorage {
       }
     });
   }
-  /** Opens JSON configuration owners and upgrades the plugin schema before business reads. */
+  /** Opens current storage without scanning or converting imported memory libraries. */
   static open() {
     return __async(this, null, function* () {
       const storage = yield _CharacterStorage.openForRecovery();
       try {
         storage.metadata.withSchema(meta_schema_default.version, meta_schema_default.steps);
         yield storage.metadata.data();
-        yield migrateCharacterStorage(storage, ToolPkg.getSpaceDataDir());
-        yield storage.memory.retireLegacyEmbeddings();
+        yield finishOperit1Import(storage);
         return storage;
       } catch (error) {
         try {
@@ -3555,7 +3179,6 @@ var CharacterStorage = class _CharacterStorage {
         ...Object.values(this.configuration).map((handle) => handle.close()),
         this.metadata.close(),
         this.chats.close(),
-        this.migration.close(),
         this.memory.close()
       ]);
       const failures = closed.filter((result2) => result2.status === "rejected").map((result2) => result2.reason);
@@ -4422,11 +4045,37 @@ var DatabaseMemoryRepository = class {
       assertMemorySpace(imported);
       const space = yield this.readMemorySpace(ownerKey), result2 = { newMemories: 0, updatedMemories: 0, skippedMemories: 0, newLinks: 0 };
       const idMapping = /* @__PURE__ */ new Map();
+      const memoriesByUuid = new Map(space.memories.map(
+        /** Indexes existing memories once for UUID conflict handling. */
+        (memory) => [memory.uuid, memory]
+      ));
+      const memoryIds = new Set(space.memories.map(
+        /** Tracks occupied target identities independently of UUIDs. */
+        (memory) => memory.id
+      ));
+      const chunks = new Map(space.chunks.map(
+        /** Preserves target chunk order and detects identity collisions. */
+        (chunk) => [chunk.id, chunk]
+      ));
+      const targetChunks = /* @__PURE__ */ new Map(), importedChunks = /* @__PURE__ */ new Map();
+      for (const chunk of space.chunks) {
+        let ids = targetChunks.get(chunk.memoryUuid);
+        if (ids === void 0) {
+          ids = /* @__PURE__ */ new Set();
+          targetChunks.set(chunk.memoryUuid, ids);
+        }
+        ids.add(chunk.id);
+      }
+      for (const chunk of imported.chunks) {
+        let records2 = importedChunks.get(chunk.memoryUuid);
+        if (records2 === void 0) {
+          records2 = [];
+          importedChunks.set(chunk.memoryUuid, records2);
+        }
+        records2.push(chunk);
+      }
       for (const memory of imported.memories) {
-        const existing = space.memories.find(
-          /** Matches the import's actual UUID, not a guessed title. */
-          (item) => item.uuid === memory.uuid
-        );
+        const existing = memoriesByUuid.get(memory.uuid);
         if (existing !== void 0 && strategy === "SKIP") {
           result2.skippedMemories += 1;
           idMapping.set(memory.id, existing.id);
@@ -4443,40 +4092,41 @@ var DatabaseMemoryRepository = class {
             value.id = identity3;
             value.uuid = identity3;
           } else {
-            if (space.memories.some(
-              /** Rejects an occupied imported identity instead of remapping it silently. */
-              (item) => item.id === value.id
-            )) throw new Error("Imported memory id is occupied: " + value.id);
+            if (memoryIds.has(value.id)) throw new Error("Imported memory id is occupied: " + value.id);
           }
           space.memories.push(value);
           result2.newMemories += 1;
+          memoriesByUuid.set(value.uuid, value);
+          memoryIds.add(value.id);
         }
         idMapping.set(memory.id, value.id);
-        space.chunks = space.chunks.filter(
-          /** Replaces only the explicit updated document's prior chunks. */
-          (chunk) => chunk.memoryUuid !== value.uuid
-        );
-        for (const chunk of imported.chunks) if (chunk.memoryUuid === memory.uuid) {
+        const previousChunks = targetChunks.get(value.uuid);
+        if (previousChunks !== void 0) for (const id2 of previousChunks) chunks.delete(id2);
+        const nextChunks = /* @__PURE__ */ new Set();
+        targetChunks.set(value.uuid, nextChunks);
+        const documentChunks = importedChunks.get(memory.uuid);
+        if (documentChunks !== void 0) for (const chunk of documentChunks) {
           const incoming = { ...clone(chunk), memoryUuid: value.uuid, id: strategy === "CREATE_NEW" ? uuid() : chunk.id };
-          if (space.chunks.some(
-            /** Rejects duplicate chunk identities in the target space. */
-            (record2) => record2.id === incoming.id
-          )) throw new Error("Imported chunk id is occupied: " + incoming.id);
-          space.chunks.push(incoming);
+          if (chunks.has(incoming.id)) throw new Error("Imported chunk id is occupied: " + incoming.id);
+          chunks.set(incoming.id, incoming);
+          nextChunks.add(incoming.id);
         }
       }
+      space.chunks = [...chunks.values()];
+      const linksById = new Map(space.links.map(
+        /** Indexes relationships by their persisted identity. */
+        (link2) => [link2.id, link2]
+      ));
       for (const link2 of imported.links) {
         const source = idMapping.get(link2.sourceMemoryId), target = idMapping.get(link2.targetMemoryId);
         if (source === void 0 || target === void 0) throw new Error("Imported link has no mapped endpoint");
-        const existing = space.links.find(
-          /** Resolves only a matching relationship identity in non-copy imports. */
-          (record2) => record2.id === link2.id
-        );
+        const existing = linksById.get(link2.id);
         if (existing !== void 0 && strategy === "SKIP") continue;
         const incoming = { ...clone(link2), sourceMemoryId: source, targetMemoryId: target, id: strategy === "CREATE_NEW" ? uuid() : link2.id };
         if (existing !== void 0 && strategy === "UPDATE") Object.assign(existing, incoming);
         else {
           space.links.push(incoming);
+          linksById.set(incoming.id, incoming);
           result2.newLinks += 1;
         }
       }
@@ -4485,14 +4135,17 @@ var DatabaseMemoryRepository = class {
       space.rebuildProgress = clone(imported.rebuildProgress);
       space.rebuildTask = clone(imported.rebuildTask);
       space.embeddings = [];
+      const candidatesById = new Map(space.candidates.map(
+        /** Indexes pending work without rescanning earlier imports. */
+        (candidate) => [candidate.id, candidate]
+      ));
       for (const candidate of imported.candidates) {
         const incoming = { ...clone(candidate), id: strategy === "CREATE_NEW" ? uuid() : candidate.id };
-        const existing = space.candidates.find(
-          /** Resolves a candidate's actual persistent identity. */
-          (record2) => record2.id === incoming.id
-        );
-        if (existing === void 0) space.candidates.push(incoming);
-        else if (strategy === "UPDATE") Object.assign(existing, incoming);
+        const existing = candidatesById.get(incoming.id);
+        if (existing === void 0) {
+          space.candidates.push(incoming);
+          candidatesById.set(incoming.id, incoming);
+        } else if (strategy === "UPDATE") Object.assign(existing, incoming);
       }
       yield this.writeMemorySpace(ownerKey, space);
       return result2;
@@ -5132,7 +4785,7 @@ function initializeCharacterStorage(storage, directory) {
 }
 
 // src/storage/database.ts
-function completed2(result2) {
+function completed(result2) {
   if (!result2.successful) throw new Error(result2.details);
 }
 var HOST_OBJECT_COMMIT_LIMIT = 1e3;
@@ -5485,7 +5138,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
             throw new Error(
               "New owner document path is already occupied: " + document2.path
             );
-          completed2(
+          completed(
             yield Tools.Files.mkdir(
               document2.path.slice(0, document2.path.lastIndexOf("/")),
               true
@@ -5493,7 +5146,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
           );
         }
         const stagedPath = document2.path + ".pending";
-        completed2((yield Tools.Files.write(stagedPath, document2.content, false)).operation);
+        completed((yield Tools.Files.write(stagedPath, document2.content, false)).operation);
         stagedDocuments.push({ path: document2.path, stagedPath });
       }
       for (const name of configurationNames) {
@@ -5516,10 +5169,10 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
         preferences.set("state", nextMetadata);
       });
       for (const document2 of stagedDocuments)
-        completed2(yield Tools.Files.move(document2.stagedPath, document2.path));
+        completed(yield Tools.Files.move(document2.stagedPath, document2.path));
       for (const path of removed) {
         if (!(yield Tools.Files.exists(path)).exists) continue;
-        completed2(yield Tools.Files.deleteFile(path, true));
+        completed(yield Tools.Files.deleteFile(path, true));
       }
     });
   }
@@ -6418,9 +6071,9 @@ function processCandidates(ownerKey, candidates, owner2) {
               excludedTimestamps.add(candidate.triggerMessageTimestamp);
             }
           }
-          const completed3 = /* @__PURE__ */ new Set();
+          const completed2 = /* @__PURE__ */ new Set();
           for (const candidate of valid) {
-            completed3.add(candidate.id);
+            completed2.add(candidate.id);
             excludedTimestamps.delete(candidate.triggerMessageTimestamp);
           }
           if (valid.length !== 0) {
@@ -6448,7 +6101,7 @@ function processCandidates(ownerKey, candidates, owner2) {
           }
           space.candidates = space.candidates.filter(
             /** Deletes only candidates included in the committed extraction. */
-            (candidate) => !completed3.has(candidate.id)
+            (candidate) => !completed2.has(candidate.id)
           );
           yield repository2.writeMemoryJobState(ownerKey, space);
         })
@@ -6895,12 +6548,12 @@ function describeConfirmed(steps) {
 }
 var SelectionApplicationFailure = class extends Error {
   /** Exposes confirmed progress and the unverified failed write on the same visible selector error. */
-  constructor(completed3, failedStep, cause) {
+  constructor(completed2, failedStep, cause) {
     const label = failedStep.type === "theme" ? "\u4E3B\u9898" : "TTS";
-    super(describeConfirmed(completed3) + "\uFF1B" + label + "\u5E94\u7528\u5931\u8D25\uFF08" + failedStep.id + "\uFF09\uFF0C\u8BE5\u914D\u7F6E\u7684\u5B9E\u9645\u5B58\u50A8\u72B6\u6001\u5F85\u6838\u5BF9\u3002\u672A\u81EA\u52A8\u64A4\u9500\u6216\u91CD\u8BD5\u3002\u539F\u59CB\u9519\u8BEF\uFF1A" + String(cause));
+    super(describeConfirmed(completed2) + "\uFF1B" + label + "\u5E94\u7528\u5931\u8D25\uFF08" + failedStep.id + "\uFF09\uFF0C\u8BE5\u914D\u7F6E\u7684\u5B9E\u9645\u5B58\u50A8\u72B6\u6001\u5F85\u6838\u5BF9\u3002\u672A\u81EA\u52A8\u64A4\u9500\u6216\u91CD\u8BD5\u3002\u539F\u59CB\u9519\u8BEF\uFF1A" + String(cause));
     this.name = "SelectionApplicationFailure";
     this.cause = cause;
-    this.completed = Object.freeze(completed3.map(
+    this.completed = Object.freeze(completed2.map(
       /** Copies acknowledgement metadata so a caught error cannot rewrite the recorded application history. */
       (step) => Object.freeze({ ...step })
     ));
@@ -6909,24 +6562,24 @@ var SelectionApplicationFailure = class extends Error {
 };
 function applyConfigurations(references, access) {
   return __async(this, null, function* () {
-    const completed3 = [{ type: "selection", selection: references.selection }];
+    const completed2 = [{ type: "selection", selection: references.selection }];
     if (references.themeConfigId !== null) {
       const id2 = references.themeConfigId;
       try {
         yield access.applyTheme(id2);
       } catch (failure2) {
-        throw new SelectionApplicationFailure(completed3, { type: "theme", id: id2 }, failure2);
+        throw new SelectionApplicationFailure(completed2, { type: "theme", id: id2 }, failure2);
       }
-      completed3.push({ type: "theme", id: id2 });
+      completed2.push({ type: "theme", id: id2 });
     }
     if (references.ttsConfigId !== null) {
       const id2 = references.ttsConfigId;
       try {
         yield access.applyTts(id2);
       } catch (failure2) {
-        throw new SelectionApplicationFailure(completed3, { type: "tts", id: id2 }, failure2);
+        throw new SelectionApplicationFailure(completed2, { type: "tts", id: id2 }, failure2);
       }
-      completed3.push({ type: "tts", id: id2 });
+      completed2.push({ type: "tts", id: id2 });
     }
   });
 }

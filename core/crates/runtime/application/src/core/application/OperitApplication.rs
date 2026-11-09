@@ -1,9 +1,6 @@
 use crate::core::application::ApplicationUpdate::{
     ApplicationUpdateInfo, ApplicationUpdateInstallResult, ApplicationUpdateProgress,
 };
-use crate::data::backup::CharacterPluginMigration::{
-    isRetiredCharacterOperation, isRetiredCharacterPreferenceKey,
-};
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
@@ -370,9 +367,6 @@ impl OperitApplication {
         self.initAndroidPermissionPreferences();
         operit_store::db::AppDatabase::AppDatabase::getDatabase(RuntimeStorePaths::default())
             .map_err(|error| error.to_string())?;
-        crate::data::backup::CharacterPluginMigration::migrateLegacyCharacters(
-            RuntimeStorePaths::default(),
-        )?;
         crate::data::preferences::ThemeAppearanceMigration::migrate(
             self.hostManager.runtimeStorageHost.clone().unwrap_or_else(
                 operit_store::RuntimeStorageHost::defaultRuntimeStorageHost,
@@ -788,21 +782,20 @@ impl OperitApplication {
             .lock()
             .map_err(|error| error.to_string())?
             .prepareMarketArtifactDownload(&fileName)?;
+        let vfs = operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(&self.hostManager)?;
         let directory = std::path::Path::new(&targetPath)
             .parent()
             .map(|path| path.to_string_lossy().to_string());
         let result = (|| {
             operit_providers::market::MarketStatsApiService::MarketStatsApiService::new()
-                .download_asset_to_file(&assetId, &targetPath)?;
+                .download_asset_to_file(&assetId, &targetPath, &vfs)?;
             Ok(packageManager
                 .lock()
                 .map_err(|error| error.to_string())?
                 .addMarketArtifactFile(targetPath.clone(), normalizedSha256))
         })();
         if let Some(directory) = directory {
-            if let Some(fileSystem) = self.hostManager.fileSystemHost.as_ref() {
-                let _ = fileSystem.deleteFile(&directory, true);
-            }
+            let _ = vfs.deleteFile(&directory, true);
         }
         result
     }

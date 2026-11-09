@@ -137,6 +137,14 @@ impl PathMapper {
         normalizeAbsoluteVfsPath(path)
     }
 
+    /// Addresses a declared runtime storage entry through the application data namespace.
+    #[allow(non_snake_case)]
+    pub fn runtimeDataPath(storagePath: &str) -> Result<String, String> {
+        let relative = storagePath.strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
+            .ok_or("Runtime storage paths must belong to runtime/")?;
+        Self::joinVfsPath("/operitapp/data", relative)
+    }
+
     /// Converts legacy shared-storage aliases into identity-owned plugin storage paths.
     #[allow(non_snake_case)]
     pub fn canonicalizeVfsPath(path: &str) -> Result<String, String> {
@@ -153,9 +161,7 @@ impl PathMapper {
                 (EXTENSIONS_PLUGIN_DATA_DIR_PATH, relative),
             relative => (EXTENSIONS_PLUGIN_DATA_DIR_PATH, relative),
         };
-        let root = storageRoot.strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
-            .expect("plugin storage must belong to runtime");
-        let root = Self::joinVfsPath("/operitapp/data", root)?;
+        let root = Self::runtimeDataPath(storageRoot)?;
         Self::joinVfsPath(&root, &relative.join("/"))
     }
 
@@ -870,6 +876,7 @@ mod tests {
         for runtimeRoot in [
             "/Users/test/Library/Containers/app.operit/Data/Library/Application Support/Operit2/runtime data/identities/identity-a",
             "/Volumes/External Disk/custom runtime/identities/identity-b",
+            "/private/var/mobile/Containers/Data/Application/test/Library/Application Support/Operit2/runtime/identities/identity-c",
         ] {
             let mapper = PathMapper::builtinOnly(
                 PathBuf::from(runtimeRoot),
@@ -880,11 +887,20 @@ mod tests {
                 let resolved = mapper.resolve(&vfsPath).unwrap();
                 assert_eq!(resolved.vfsPath, vfsPath);
                 assert_eq!(resolved.physicalPath, format!("{runtimeRoot}/{relative}"));
+                assert_eq!(PathMapper::runtimeDataPath(&format!("runtime/{relative}")).unwrap(), vfsPath);
             }
             // Do not make arbitrary host paths valid VFS roots to mask a bad
             // caller: all operations must retain the existing mapping contract.
             let hostPath = format!("{runtimeRoot}/temp/clean_on_exit");
             assert!(mapper.resolve(&hostPath).unwrap_err().contains("Unknown VFS root"));
+        }
+    }
+
+    /// Rejects undeclared roots and traversal at the shared runtime-to-VFS namespace boundary.
+    #[test]
+    fn runtime_data_paths_require_the_runtime_namespace() {
+        for path in ["runtime-other/cache", "/runtime/cache", "workspaces/cache", "runtime/../outside"] {
+            assert!(PathMapper::runtimeDataPath(path).is_err(), "{path}");
         }
     }
 

@@ -27,6 +27,7 @@ pub(crate) enum StartupMetadata {
     HostProvided,
     AndroidDevice {
         model: String,
+        archiveRuntimeRoot: PathBuf,
     },
     AndroidPrivileged {
         model: String,

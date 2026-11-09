@@ -38,10 +38,10 @@ def main() -> int:
     run(command, cwd=FLUTTER_APP_DIR)
     release_dir = FLUTTER_APP_DIR / "build" / "windows" / "x64" / "runner" / "Release"
     archive_path = args.archive_path or DIST_DIR / release_asset_name("app", "windows", "x86_64", "zip")
-    compress_zip(release_dir, archive_path)
-    print(f"Windows archive: {archive_path}", flush=True)
     installer_path = args.installer_path or archive_path.with_suffix(".msi")
     build_windows_msi(release_dir, installer_path)
+    compress_zip(release_dir, archive_path)
+    print(f"Windows archive: {archive_path}", flush=True)
     return 0
 
 

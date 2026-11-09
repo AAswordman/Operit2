@@ -10,6 +10,10 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../shared/UserDataCleanup.cs" Link="UserDataCleanup.cs" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Web" />
+    <Reference Include="Microsoft.CSharp" />
     <PackageReference Include="WixToolset.Dtf.CustomAction" Version="4.0.6" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <Content Include="EmbeddedUI.config" CopyToOutputDirectory="PreserveNewest" />

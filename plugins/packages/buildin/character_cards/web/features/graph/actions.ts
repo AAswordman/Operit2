@@ -90,7 +90,7 @@ export function createGraphActionsFeature(context: EditorContext) {
       }
       case "import-graph": {
         const graph = topDialog("graph");
-        pushDialog({ type: "import", target: "memory", ownerKey: graph.ownerKey, format: "operit", strategy: "SKIP", content: "" }); return;
+        pushDialog({ type: "import", target: "memory", ownerKey: graph.ownerKey, format: "operit", strategy: "SKIP", content: "", stage: "" }); return;
       }
       default: throw new Error(`Unknown graph/actions action: ${action}`);
     }

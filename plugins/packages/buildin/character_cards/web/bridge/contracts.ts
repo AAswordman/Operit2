@@ -64,7 +64,7 @@ export interface LinkEditDialog extends DialogState { type: "link-edit"; ownerKe
 export type DeleteRequest = WebRequest<"deleteStore" | "deleteMemory" | "deleteLink">;
 export interface ConfirmDialog extends DialogState { type: "confirm"; title: string; message: string; operation: DeleteRequest; closeParent: boolean }
 export interface ExportDialog extends DialogState { type: "export"; name: string; content: string; typeName: "character" | "group" | "memory" }
-export interface ImportDialog extends DialogState { type: "import"; target: "card" | "group" | "memory"; ownerKey: string | null; format: "operit" | "tavern"; strategy: "SKIP" | "UPDATE" | "CREATE_NEW"; content: string }
+export interface ImportDialog extends DialogState { type: "import"; target: "card" | "group" | "memory"; ownerKey: string | null; format: "operit" | "tavern"; strategy: "SKIP" | "UPDATE" | "CREATE_NEW"; content: string; stage: string }
 export interface InfoDialog extends DialogState { type: "info"; title: string; content: string }
 export type EditableDialog = StoreDialog | MemoryEditDialog | LinkDialog | LinkEditDialog | UserDialog | ImportDialog | ExportDialog | OwnerSettingsDialog;
 export interface TextDialog extends DialogState { type: "text"; key: string; value: string; label: string; parent: EditableDialog }

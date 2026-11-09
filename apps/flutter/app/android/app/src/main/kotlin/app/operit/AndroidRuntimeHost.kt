@@ -144,6 +144,7 @@ class AndroidRuntimeHost(context: Context) {
                 val createdHandle = OperitRuntimeNative.create(
                     paths.runtimeRoot.absolutePath,
                     paths.workspaceRoot.absolutePath,
+                    defaultRuntimeRootPath(),
                     Build.MODEL,
                     this,
                 )

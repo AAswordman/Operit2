@@ -752,6 +752,11 @@ impl Operit1SnapshotImportManager {
             )?;
             let (memoryCount, linkCount) = self.importCharactersAndMemory(parsed, fileImportPlan, &archive)?;
             resolveOperit1ArchiveBindings(&mut archive, self.sqliteHost.clone(), self.storageHost.clone())?;
+            let importedChatIds = archive
+                .chats
+                .iter()
+                .map(|chat| chat.id.clone())
+                .collect::<Vec<_>>();
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
@@ -787,7 +792,11 @@ impl Operit1SnapshotImportManager {
                     }
                 })
                 .map_err(|error| error.to_string())?;
-            crate::data::backup::CharacterPluginMigration::migrateLegacyCharacters(self.paths.clone())?;
+            publishOperit1ArchiveBindings(
+                &importedChatIds,
+                self.sqliteHost.clone(),
+                self.storageHost.clone(),
+            )?;
             if chatCount == 0 {
                 publishOperit1SnapshotCountedProgress(
                     "chats",

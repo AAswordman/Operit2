@@ -16,9 +16,12 @@ namespace Operit.Installer
         private bool running;
         private bool finished;
         private bool succeeded;
+        private bool finalizing;
         public bool CancelRequested { get; private set; }
         public string InstallFolder { get; private set; }
         public SetupOperation Operation { get; private set; }
+        public CleanupPlan DataCleanupPlan { get; private set; }
+        public bool DeleteData => Operation == SetupOperation.Remove && DeleteUserData.IsChecked == true;
 
         /// <summary>Creates the custom install, maintenance, or uninstall screen.</summary>
         public SetupWindow(string version, string folder, bool installed, bool removing, ManualResetEvent start)
@@ -37,7 +40,11 @@ namespace Operit.Installer
                 SecondaryButton.Content = removing ? "取消" : "卸载应用";
                 LocationText.IsEnabled = false;
                 ChangeLocationButton.Visibility = Visibility.Collapsed;
-                InstallHint.Text = "修复会恢复应用所需的文件。\n卸载会保留你的聊天记录和个人设置。";
+                InstallHint.Text = removing
+                    ? "默认保留数据。勾选后会删除聊天、设置、插件、工作区和密钥，\n并影响本机共用这些数据的其他副本。"
+                    : "修复会恢复应用所需的文件。\n卸载会保留你的聊天记录和个人设置。";
+                DeleteUserData.Visibility = removing ? Visibility.Visible : Visibility.Collapsed;
+                CleanupDetailsButton.Visibility = removing ? Visibility.Visible : Visibility.Collapsed;
             }
         }
 
@@ -58,8 +65,16 @@ namespace Operit.Installer
                 InstallFolder = Path.GetFullPath(LocationText.Text);
                 if (InstallFolder.TrimEnd('\\').Length < 4)
                     throw new ArgumentException("请选择一个应用文件夹，不要直接安装到磁盘根目录。");
+                if (DeleteData)
+                {
+                    var cleanup = new UserDataCleanup(InstallFolder);
+                    DataCleanupPlan = cleanup.CreatePlan();
+                    cleanup.ValidatePlan(DataCleanupPlan);
+                    if (MessageBox.Show(this, DataCleanupPlan.Describe(), "确认永久删除本机用户数据",
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+                }
             }
-            catch (Exception error) when (error is ArgumentException || error is NotSupportedException || error is PathTooLongException)
+            catch (Exception error)
             {
                 Description.Text = error.Message;
                 return;
@@ -85,9 +100,26 @@ namespace Operit.Installer
                 Description.Text = "移除应用，保留你的聊天记录和个人设置。";
                 MainButton.Content = "确认卸载";
                 SecondaryButton.Content = "取消";
+                DeleteUserData.Visibility = Visibility.Visible;
+                CleanupDetailsButton.Visibility = Visibility.Visible;
+                InstallHint.Text = "默认保留数据。勾选后会删除聊天、设置、插件、工作区和密钥，\n并影响本机共用这些数据的其他副本。";
                 return;
             }
             Close();
+        }
+
+        /// <summary>Explains the shared data scope when permanent removal is selected.</summary>
+        private void CleanupChoiceChanged(object sender, RoutedEventArgs args)
+        {
+            Description.Text = DeleteUserData.IsChecked == true
+                ? "移除应用，并永久清理本机共用的用户数据。" : "移除应用，保留你的聊天记录和个人设置。";
+        }
+
+        /// <summary>Displays configured roots without changing or deleting any data.</summary>
+        private void ShowCleanupDetails(object sender, RoutedEventArgs args)
+        {
+            try { MessageBox.Show(this, new UserDataCleanup(InstallFolder).CreatePlan().Describe(), "用户数据清理范围"); }
+            catch (Exception error) { MessageBox.Show(this, error.Message, "无法确定清理范围"); }
         }
 
         /// <summary>Turns an in-progress close into an MSI cancellation request.</summary>
@@ -95,10 +127,20 @@ namespace Operit.Installer
         {
             if (!running) return;
             e.Cancel = true;
+            if (finalizing) return;
             CancelRequested = true;
             ProgressText.Text = "正在取消，请稍候…";
             SecondaryButton.IsEnabled = false;
             CloseButton.IsEnabled = false;
+        }
+
+        /// <summary>Disables cancellation while completing work after the MSI transaction has committed.</summary>
+        public void BeginFinalization()
+        {
+            finalizing = true;
+            SecondaryButton.IsEnabled = false;
+            CloseButton.IsEnabled = false;
+            SecondaryButton.Content = "正在完成…";
         }
 
         /// <summary>Enables direct editing of the installation directory.</summary>
@@ -146,7 +188,9 @@ namespace Operit.Installer
             {
                 Heading.Text = Operation == SetupOperation.Remove ? "卸载完成" : "一切就绪";
                 Description.Text = Operation == SetupOperation.Remove ? "期待与你再次相见。" : "你的 AI 工作空间，已准备就绪。";
-                ResultText.Text = Operation == SetupOperation.Remove ? "聊天记录和个人设置已保留。" : "你可以从桌面或开始菜单打开 Operit2。\n\n让下一个想法，从这里开始。";
+                ResultText.Text = Operation == SetupOperation.Remove
+                    ? DeleteData ? "本机用户数据和 Operit2 凭据已删除。其他设备与云端的数据未被修改。" : "聊天记录和个人设置已保留。"
+                    : "你可以从桌面或开始菜单打开 Operit2。\n\n让下一个想法，从这里开始。";
                 MainButton.Content = Operation == SetupOperation.Remove ? "完成" : "打开 Operit2";
             }
             else

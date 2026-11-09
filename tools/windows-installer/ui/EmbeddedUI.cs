@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Windows;
+using System.Web.Script.Serialization;
 using Microsoft.Win32;
 using WixToolset.Dtf.WindowsInstaller;
 
@@ -15,6 +16,7 @@ namespace Operit.Installer
         private SetupWindow window;
         private Exception startupError;
         private bool committed;
+        private bool finalizing;
         private string lastError = "安装未完成。请重新运行安装程序并检查 Windows Installer 日志。";
         private long total;
         private long completed;
@@ -50,6 +52,9 @@ namespace Operit.Installer
                 session["REINSTALLMODE"] = "amus";
             }
             if (window.Operation == SetupOperation.Remove) session["REMOVE"] = "ALL";
+            session["OPERIT_DELETE_USER_DATA"] = window.DeleteData ? "1" : "";
+            session["OPERIT_CLEANUP_INTERACTIVE"] = window.DeleteData ? "1" : "";
+            if (window.DeleteData) session["OPERIT_CLEANUP_PLAN"] = new JavaScriptSerializer().Serialize(window.DataCleanupPlan);
             internalUILevel = InstallUIOptions.Silent;
             return true;
         }
@@ -89,8 +94,14 @@ namespace Operit.Installer
             {
                 actionData = false;
                 string action = record.GetString(1);
+                if (action == "OperitFinishRemoval" || action == "OperitRegisterShellEntries")
+                {
+                    finalizing = true;
+                    window.Dispatcher.Invoke(new Action(window.BeginFinalization));
+                }
                 if (action == "OperitInstallCompleted") committed = true;
                 string label = null;
+                if (action == "OperitFinishRemoval") label = "正在清理应用入口及所选用户数据…";
                 if (action == "InstallFiles") label = "正在安装应用文件…";
                 if (action == "CreateShortcuts") label = "正在创建快捷方式…";
                 if (action == "RemoveFiles") label = "正在移除应用文件…";
@@ -123,14 +134,17 @@ namespace Operit.Installer
                 UpdateProgress(null);
             }
             if (messageType == InstallMessage.Error || messageType == InstallMessage.FatalExit)
+            {
+                committed = false;
                 lastError = record?.ToString();
+            }
             if (messageType == InstallMessage.FilesInUse || messageType == InstallMessage.RMFilesInUse)
             {
                 lastError = "Operit2 或相关文件正在使用中。请关闭 Operit2 后重新运行安装程序。";
                 return MessageResult.Cancel;
             }
             bool canceled = (bool)window.Dispatcher.Invoke(new Func<bool>(() => window.CancelRequested));
-            return canceled && !committed ? MessageResult.Cancel : MessageResult.OK;
+            return canceled && !committed && !finalizing ? MessageResult.Cancel : MessageResult.OK;
         }
 
         /// <summary>Converts MSI planning and execution ticks into a stable visible progress value.</summary>

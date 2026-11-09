@@ -1,13 +1,6 @@
-//! Released character and memory formats used exclusively by the removable migration boundary.
+//! Source character and memory formats projected by the Operit1 snapshot importer.
 //! This module contains source records and readers, with no business repositories or writers.
-use operit_host_api::RuntimeStorageHost;
-use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
-use operit_util::RuntimeStorageLayout::{
-    DATA_MEMORY_CHARACTERS_DIR_PATH, DATA_MEMORY_SHARED_DIR_PATH,
-};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use std::sync::Arc;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct CharacterCardToolAccessConfig {
@@ -280,31 +273,6 @@ impl MemorySearchConfig {
     }
 }
 
-/// Represents optional settings fields as declared by the released preference schema.
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyOwnerSettings {
-    memory_settings: MemorySettings,
-    memory_search_config: MemorySearchConfig,
-}
-
-/// Maps the released owner key to its exact Host storage directory.
-pub fn legacyMemoryRoot(owner: &str) -> Result<String, String> {
-    let (kind, id) = owner
-        .split_once(':')
-        .ok_or_else(|| format!("Invalid legacy memory owner: {owner}"))?;
-    let id = id.trim();
-    if id.is_empty() {
-        return Err(format!("Empty legacy memory owner: {owner}"));
-    }
-    let root = match kind {
-        "character" => DATA_MEMORY_CHARACTERS_DIR_PATH,
-        "shared" => DATA_MEMORY_SHARED_DIR_PATH,
-        other => return Err(format!("Unknown legacy memory owner kind: {other}")),
-    };
-    Ok(format!("{root}/{}", sanitizeMemoryOwnerId(id)))
-}
-
 /// Encodes a source owner identifier with the released directory naming scheme.
 pub fn sanitizeMemoryOwnerId(value: &str) -> String {
     value
@@ -317,51 +285,4 @@ pub fn sanitizeMemoryOwnerId(value: &str) -> String {
             }
         })
         .collect()
-}
-
-/// Reads optional settings with source-schema defaults while propagating all malformed field errors.
-pub fn readLegacyMemorySettings(
-    storage: Arc<dyn RuntimeStorageHost>,
-    owner: &str,
-) -> Result<(MemorySettings, MemorySearchConfig), String> {
-    let path = format!(
-        "{}/settings/memory_search_settings.preferences.json",
-        legacyMemoryRoot(owner)?
-    );
-    let preferences = PreferencesDataStore::newWithStorage(storage, path)
-        .data()
-        .map_err(|error| error.to_string())?;
-    let mut fields = Map::new();
-    for field in ["memory_settings", "memory_search_config"] {
-        if let Some(encoded) = preferences.get(&stringPreferencesKey(field)) {
-            fields.insert(
-                field.to_string(),
-                serde_json::from_str(&serde_json::from_value::<String>(encoded.clone()).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?,
-            );
-        }
-    }
-    let settings: LegacyOwnerSettings =
-        serde_json::from_value(Value::Object(fields)).map_err(|error| error.to_string())?;
-    Ok((
-        settings.memory_settings.normalized(),
-        settings.memory_search_config.normalized(),
-    ))
-}
-
-/// Reads the optional released USER.md without creating or rewriting any source file.
-pub fn readLegacyUserMarkdown(
-    storage: &dyn RuntimeStorageHost,
-    owner: &str,
-) -> Result<Vec<u8>, String> {
-    let path = format!("{}/USER.md", legacyMemoryRoot(owner)?);
-    match storage.exists(&path).map_err(|error| error.to_string())? {
-        true => {
-            let bytes = storage
-                .readBytes(&path)
-                .map_err(|error| error.to_string())?;
-            std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
-            Ok(bytes)
-        }
-        false => Ok(b"# USER\n\n".to_vec()), // The released reader materializes this exact initial profile.
-    }
 }

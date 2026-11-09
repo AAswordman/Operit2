@@ -356,6 +356,61 @@ fn generic_file_tracking_only_publishes_changed_files_and_recursive_tombstones()
     assert!(ops.iter().all(|op| op.operation == "delete"));
 }
 
+/// Keeps local file edits independent of an invalid shared recovery entry without bypassing shared validation.
+#[test]
+fn local_log_writes_do_not_recover_unrelated_workspace_operations() {
+    let source = host();
+    let log = operit_util::RuntimeStorageLayout::OPERIT_LOG_PATH;
+    let inventory = format!("{RUNTIME_SYNC_DIR_PATH}/workspace_inventory.json");
+    let recovery = serde_json::to_vec(&json!({"files": {}, "pending": [log, null]})).unwrap();
+    source.writeBytes(&inventory, &recovery).unwrap();
+    let files = RuntimeFileSyncStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH);
+    for path in [log, "runtime/logs/client.log", "runtime/cache/download.part", "runtime/data/chat_outputs-other/file.txt", "workspaces-other/file.txt"] {
+        files.trackChanges(&[path.into()], || source.writeBytes(path, b"local bytes").map_err(|e| e.to_string())).unwrap();
+        files.trackChanges(&[path.into()], || source.appendBytes(path, b" appended").map_err(|e| e.to_string())).unwrap();
+        assert_eq!(source.readBytes(path).unwrap(), b"local bytes appended");
+    }
+    assert_eq!(source.readBytes(&inventory).unwrap(), recovery);
+    assert!(operations(&source, &SyncClock::empty()).is_empty());
+
+    for path in ["workspaces", "workspaces/demo/file.txt", "runtime", "runtime/data", "runtime/data/chat_outputs", "runtime/data/chat_outputs/chat/file.txt", "runtime/data/chat_attachments/chat/file.txt"] {
+        let result = files.trackChanges(&[log.into(), path.into()], || Err::<(), _>("mutation must not run".into()));
+        assert_eq!(result.unwrap_err(), format!("Workspace path {log}: Not a managed shared path: {log}"), "{path}");
+    }
+}
+
+/// Preserves managed snapshots and tombstones when an edit includes a root ancestor and a local log.
+#[test]
+fn managed_file_tracking_captures_ancestor_edits_and_mixed_local_paths() {
+    for (ancestor, path) in [
+        ("workspaces", "workspaces/demo/file.txt"),
+        ("runtime", "runtime/data/chat_outputs/chat/file.txt"),
+        ("runtime/data", "runtime/data/chat_attachments/chat/file.txt"),
+    ] {
+        let source = host();
+        // The mock infers directories from files; keep the collection root present after deletion.
+        let directory = crate::WorkspaceFileSyncStore::managedDirectory(path).unwrap();
+        let collection = directory.rsplit_once('/').unwrap().0;
+        source.writeBytes(&format!("{collection}/.keep"), b"").unwrap();
+        let files = RuntimeFileSyncStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH);
+        let log = operit_util::RuntimeStorageLayout::OPERIT_LOG_PATH;
+        files.trackChanges(&[ancestor.into(), log.into()], || {
+            source.writeBytes(log, b"local log").map_err(|e| e.to_string())?;
+            source.writeBytes(path, b"shared file").map_err(|e| e.to_string())
+        }).unwrap();
+        let ops = operations(&source, &SyncClock::empty());
+        assert_eq!(ops.len(), 1, "{ancestor}");
+        assert_eq!(ops[0].entityId, path);
+        assert_eq!(ops[0].operation, "upsert");
+        let before_delete = clock(&source);
+        files.trackChanges(&[ancestor.into()], || source.delete(path, false).map_err(|e| e.to_string())).unwrap();
+        let ops = operations(&source, &before_delete);
+        assert_eq!(ops.len(), 1, "{ancestor}");
+        assert_eq!(ops[0].entityId, path);
+        assert_eq!(ops[0].operation, "delete");
+    }
+}
+
 #[test]
 fn legacy_bundle_upgrade_retries_actual_files_without_overwriting_local_edits() {
     let source = host();
