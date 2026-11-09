@@ -100,50 +100,63 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    OverflowBar(
-                      alignment: MainAxisAlignment.spaceBetween,
-                      overflowAlignment: OverflowBarAlignment.start,
-                      spacing: 12,
-                      overflowSpacing: 12,
-                      children: [
-                        Text(
-                          l10n.settingsAppearanceThemeLibrary,
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        FilledButton.icon(
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final createButton = FilledButton.icon(
                           key: const ValueKey('theme-config-create'),
                           onPressed: _busy ? null : _create,
                           icon: const Icon(Icons.add, size: 18),
                           label: Text(l10n.settingsAppearanceThemeNew),
-                        ),
-                      ],
+                        );
+                        if (activeSnapshot == null) {
+                          return Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: createButton,
+                          );
+                        }
+                        final modeControls = _ThemeModeQuickControls(
+                          value: activeSnapshot.themeMode,
+                          onChanged: (mode) {
+                            if (!_busy && mode != activeSnapshot.themeMode) {
+                              _run(() async {
+                                await _manager.patchAppearance(
+                                  initialSnapshot: activeSnapshot.toJson(),
+                                  values: {'theme_mode': mode.name},
+                                  removeKeys: const [],
+                                );
+                                await widget.onAppearanceChanged?.call();
+                              });
+                            }
+                          },
+                        );
+                        if (constraints.maxWidth >= 640 &&
+                            MediaQuery.textScalerOf(context).scale(14) <= 20) {
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: Align(
+                                  alignment: AlignmentDirectional.centerStart,
+                                  child: modeControls,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              createButton,
+                            ],
+                          );
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            modeControls,
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: createButton,
+                            ),
+                          ],
+                        );
+                      },
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      l10n.settingsAppearanceThemeLibraryHint,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    if (activeSnapshot != null)
-                      _ThemeModeQuickControls(
-                        value: activeSnapshot.themeMode,
-                        onChanged: (mode) {
-                          if (!_busy && mode != activeSnapshot.themeMode) {
-                            _run(() async {
-                              await _manager.patchAppearance(
-                                initialSnapshot: activeSnapshot.toJson(),
-                                values: {'theme_mode': mode.name},
-                                removeKeys: const [],
-                              );
-                              await widget.onAppearanceChanged?.call();
-                            });
-                          }
-                        },
-                      ),
                     const SizedBox(height: 16),
                     Text(
                       l10n.settingsAppearanceThemeConfigEditingHint,
