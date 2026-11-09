@@ -28,7 +28,7 @@ function searchQuery(processedInput: string): string {
 }
 
 /** Resolves the exact character execution participant of this model request. */
-function executionParticipant(payload: ToolPkg.PromptFinalizeHookEvent["eventPayload"]): { chatId: string; participantId: string } | null {
+function executionParticipant(payload: ToolPkg.PromptInputHookEvent["eventPayload"]): { chatId: string; participantId: string } | null {
   const context = payload.metadata?.executionContext;
   if (context === undefined || context === null) return null;
   const chatId = String(context.chatId ?? "").trim();
@@ -55,10 +55,10 @@ function memoryBlock(result: MemoryQueryResult): string | null {
   return lines.join("\n");
 }
 
-/** Injects participant-scoped memory matches into the final model request without persisting them. */
-export async function onMemoryRecallPromptFinalize(event: ToolPkg.PromptFinalizeHookEvent): Promise<string | null> {
+/** Adds participant-scoped memories before the host commits the user message to history. */
+export async function onMemoryRecallPromptInput(event: ToolPkg.PromptInputHookEvent): Promise<string | null> {
   const stage = String(event.eventPayload.stage ?? event.eventName ?? "");
-  if (stage !== "before_send_to_model") return null;
+  if (stage !== "before_process") return null;
   const participant = executionParticipant(event.eventPayload);
   if (participant === null) return null;
   const processedInput = String(event.eventPayload.processedInput ?? event.eventPayload.rawInput ?? "");
@@ -80,5 +80,5 @@ export async function onMemoryRecallPromptFinalize(event: ToolPkg.PromptFinalize
 
 /** Registers the built-in recall hook without opening storage during package registration. */
 export function registerMemoryRecallHook(): void {
-  ToolPkg.registerPromptFinalizeHook({ id: "character-memory-recall", function: onMemoryRecallPromptFinalize });
+  ToolPkg.registerPromptInputHook({ id: "character-memory-recall", function: onMemoryRecallPromptInput });
 }

@@ -51,8 +51,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return ThemeConfigurationControl(
       clients: clients,
-      themeMode: OperitTheme.of(context).themeMode,
-      onThemeModeChanged: OperitTheme.of(context).setThemeMode,
+      onAppearanceChanged: OperitTheme.of(context).reloadTheme,
       onEdit: (name) => Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (context) => Scaffold(

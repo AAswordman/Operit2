@@ -59,44 +59,51 @@ class _ThemeMoodPreview extends StatelessWidget {
       muteVideo: true,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final padding = constraints.maxWidth < 150 ? 12.0 : 20.0;
-          return Padding(
-            padding: EdgeInsets.all(padding),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FractionallySizedBox(
-                    widthFactor: .46,
-                    child: Container(
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: userColor == null
-                            ? scheme.primaryContainer
-                            : Color(userColor),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                    ),
+          final width = constraints.maxWidth;
+          final height = constraints.maxHeight;
+          final padding = (width * .08)
+              .clamp(0.0, height * .14)
+              .clamp(0.0, 20.0);
+          final contentWidth = (width - padding * 2).clamp(0.0, width);
+          final dotSize = (contentWidth / 6)
+              .clamp(0.0, height * .10)
+              .clamp(0.0, 10.0);
+          return Stack(
+            children: [
+              Positioned(
+                top: padding,
+                right: padding,
+                width: contentWidth * .46,
+                height: (height * .15).clamp(0.0, 14.0),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: userColor == null
+                        ? scheme.primaryContainer
+                        : Color(userColor),
+                    borderRadius: BorderRadius.circular(5),
                   ),
                 ),
-                const SizedBox(height: 8),
-                FractionallySizedBox(
-                  widthFactor: .64,
-                  child: Container(
-                    height: 22,
-                    decoration: BoxDecoration(
-                      color:
-                          (aiColor == null
-                                  ? scheme.surfaceContainerHighest
-                                  : Color(aiColor))
-                              .withValues(alpha: .88),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
+              ),
+              Positioned(
+                top: height * .38,
+                left: padding,
+                width: contentWidth * .64,
+                height: (height * .22).clamp(0.0, 22.0),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color:
+                        (aiColor == null
+                                ? scheme.surfaceContainerHighest
+                                : Color(aiColor))
+                            .withValues(alpha: .88),
+                    borderRadius: BorderRadius.circular(5),
                   ),
                 ),
-                const Spacer(),
-                Row(
+              ),
+              Positioned(
+                bottom: padding,
+                left: padding,
+                child: Row(
                   children: [
                     for (final color in [
                       scheme.primary,
@@ -104,10 +111,10 @@ class _ThemeMoodPreview extends StatelessWidget {
                       scheme.surface,
                     ])
                       Padding(
-                        padding: const EdgeInsets.only(right: 5),
+                        padding: EdgeInsets.only(right: dotSize * .5),
                         child: Container(
-                          width: 10,
-                          height: 10,
+                          width: dotSize,
+                          height: dotSize,
                           decoration: BoxDecoration(
                             color: color,
                             shape: BoxShape.circle,
@@ -121,8 +128,8 @@ class _ThemeMoodPreview extends StatelessWidget {
                       ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),

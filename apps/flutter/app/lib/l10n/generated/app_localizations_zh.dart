@@ -4276,7 +4276,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceThemeConfigEditingHint =>
-      '点击卡片即可切换主题；进入编辑后，修改会自动保存。';
+      '点击卡片切换主题；上方明暗切换仅修改当前主题。编辑后自动保存。';
 
   @override
   String settingsAppearanceThemeConfigFailed(String detail) {

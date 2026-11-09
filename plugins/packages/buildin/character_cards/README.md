@@ -262,14 +262,20 @@ owner-scoped deduplication across calls.
 
 ## Built-in memory recall
 
-The plugin owns per-turn memory recall through its prompt finalize hook
-(`src/memory-recall.ts`). On every main character or group turn it strips host
-markup from the authored input, queries the speaking participant's primary
+The plugin owns per-turn memory recall through its `before_process` input hook
+(`src/memory-recall.ts`). When preprocessing input with an explicit character
+participant, it strips host markup from the authored input and queries that
+participant's primary
 memory owner with a per-chat snapshot for owner-scoped deduplication, and
-appends the configured number of matches as a transient `<memory_context>`
-block to the final model request. Injections never persist into chat history,
-an empty result injects nothing, and provider failures fail closed without
-blocking the send.
+appends the configured number of matches as a `<memory_context>` block before
+the host commits the user message. The block persists with that user message
+and is reused in later history and regeneration requests, preserving the
+previous prompt prefix for model caching. Input that already contains the
+block skips retrieval, including after a plugin restart. An empty result
+injects nothing. Retrieval exceptions are logged and skip injection; host hook
+timeouts still follow the shared pre-hook timeout policy. Group `record_only`
+submissions and their empty-input continuations bypass this input hook; the
+previous finalize hook also skipped these empty-input continuation requests.
 
 The memory menu's expanded section controls the persisted `memoryRecall` state
 field: the 自动检索注入记忆 switch, a numeric input for the per-turn injection

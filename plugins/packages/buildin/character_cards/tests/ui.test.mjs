@@ -761,7 +761,7 @@ function plain(value) { return JSON.parse(JSON.stringify(value)); }
 /** Runs the current main bundle with native file IO and explicit readonly directory fixtures, never fixture storage. */
 async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = null) {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), readonly = fixture(), native = createNativeChatHost(new Map([["chat-dom", { extension: null }]])), hostCalls = native.calls, records = native.records;
-  const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], chatViewHooks = [], toolLifecycleHooks = [], toolPromptHooks = [], promptFinalizeHooks = [];
+  const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], chatViewHooks = [], toolLifecycleHooks = [], toolPromptHooks = [], promptInputHooks = [], promptFinalizeHooks = [];
   const tools = { Files: disk.files, Storage: disk.storage, Models: {
     /** Supplies only the explicitly labelled readonly model directory required by the actual service. */
     async listSummaries() { return { models: plain(readonly.snapshot.models) }; }
@@ -811,7 +811,9 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
     registerToolLifecycleHook(value) { toolLifecycleHooks.push(value); },
     /** Captures the real model-visible-tool policy without synthesizing descriptors or responses. */
     registerToolPromptComposeHook(value) { toolPromptHooks.push(value); },
-    /** Captures the actual memory recall hook without running a model request during registration. */
+    /** Captures the actual persisted recall hook without processing input during registration. */
+    registerPromptInputHook(value) { promptInputHooks.push(value); },
+    /** Records transient hooks to ensure recall is not injected again during finalization. */
     registerPromptFinalizeHook(value) { promptFinalizeHooks.push(value); },
     /** Resolves only a real manifest-declared resource, including the native selector's packaged default avatar. */
     async readResource(key, name) {
@@ -853,8 +855,9 @@ async function fileBackedPlugin(t, bundle, uiScripts = undefined, settings = nul
   assert.equal(toolLifecycleHooks[0].function, module.exports.toolCallPolicy);
   assert.equal(toolPromptHooks.length, 1); assert.equal(toolPromptHooks[0].id, "participant-tool-visibility");
   assert.equal(toolPromptHooks[0].function, module.exports.toolPromptPolicy);
-  assert.equal(promptFinalizeHooks.length, 1); assert.equal(promptFinalizeHooks[0].id, "character-memory-recall");
-  assert.equal(promptFinalizeHooks[0].function, module.exports.onMemoryRecallPromptFinalize);
+  assert.equal(promptInputHooks.length, 1); assert.equal(promptInputHooks[0].id, "character-memory-recall");
+  assert.equal(promptInputHooks[0].function, module.exports.onMemoryRecallPromptInput);
+  assert.equal(promptFinalizeHooks.length, 0);
   return { disk, readonly, routes, navigation, main: module.exports,
     /** Gives each page its own runtime, retaining only the explicit main IPC transport. */
     openComposeRoute(id) {

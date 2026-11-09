@@ -38,6 +38,8 @@ pub mod RemoteAnnouncementPreferences;
 pub mod SkillVisibilityPreferences;
 #[path = "SttConfigManager.rs"]
 pub mod SttConfigManager;
+#[path = "ThemeAppearanceMigration.rs"]
+pub(crate) mod ThemeAppearanceMigration;
 #[path = "ThemeConfigManager.rs"]
 pub mod ThemeConfigManager;
 #[path = "ThemePreferenceSnapshot.rs"]

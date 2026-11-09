@@ -7901,7 +7901,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsAppearanceThemeConfigEditingHint.
   ///
   /// In en, this message translates to:
-  /// **'Tap a card to switch themes. Choose Edit to customize; changes are saved automatically.'**
+  /// **'Tap a card to switch themes. Mode shortcuts change only the current theme. Edits save automatically.'**
   String get settingsAppearanceThemeConfigEditingHint;
 
   /// No description provided for @settingsAppearanceThemeConfigFailed.

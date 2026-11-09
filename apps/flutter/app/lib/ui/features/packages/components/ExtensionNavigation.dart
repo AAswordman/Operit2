@@ -56,6 +56,10 @@ void openMarketBrowse({
   );
 }
 
+void openOfficialExtensions() {
+  openExtensionScreen(const OfficialExtensionsScreenRoute());
+}
+
 void openMarketCreator() {
   openExtensionScreen(const MarketCreatorScreenRoute());
 }

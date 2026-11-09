@@ -12,6 +12,7 @@ import '../../features/packages/screens/ExtensionDetailScreen.dart';
 import '../../features/packages/screens/MarketCreatorScreen.dart';
 import '../../features/packages/screens/MarketEntryDetailScreen.dart';
 import '../../features/packages/screens/PackageManagerScreen.dart';
+import '../../features/packages/screens/OfficialExtensionsScreen.dart';
 import '../../features/packages/screens/StoreBrowseScreen.dart';
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../../features/settings/models/SettingsModels.dart';
@@ -195,6 +196,18 @@ class MarketBrowseScreenRoute extends OperitScreen {
       initialSort: sort,
     );
   }
+}
+
+/// Complete list of the official extensions bundled with the app.
+class OfficialExtensionsScreenRoute extends OperitScreen {
+  const OfficialExtensionsScreenRoute()
+    : super(routeTypeName: 'OfficialExtensions', title: '官方扩展');
+
+  @override
+  String? stableScreenKey() => 'OfficialExtensions';
+
+  @override
+  Widget build(BuildContext context) => const OfficialExtensionsScreen();
 }
 
 class MarketCreatorScreenRoute extends OperitScreen {

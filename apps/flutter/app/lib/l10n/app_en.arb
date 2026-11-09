@@ -2357,7 +2357,7 @@
   "settingsAppearanceThemeConfigName": "Theme name",
   "settingsAppearanceThemeConfigNameRequired": "Enter a theme name",
   "settingsAppearanceThemeConfigCustomHint": "Create a theme to save your appearance. Tap a card to switch; choose Edit to customize.",
-  "settingsAppearanceThemeConfigEditingHint": "Tap a card to switch themes. Choose Edit to customize; changes are saved automatically.",
+  "settingsAppearanceThemeConfigEditingHint": "Tap a card to switch themes. Mode shortcuts change only the current theme. Edits save automatically.",
   "settingsAppearanceThemeConfigFailed": "Theme operation failed: {detail}",
   "@settingsAppearanceThemeConfigFailed": {
     "placeholders": {

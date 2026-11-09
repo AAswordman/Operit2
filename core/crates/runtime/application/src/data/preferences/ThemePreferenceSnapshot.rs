@@ -680,8 +680,15 @@ pub(crate) fn readLegacyCharacterThemeSnapshot(
             avatar.clone(),
         );
     }
-    // These are the released resolver's declared initial fields, independent of current global appearance.
-    let initial: BTreeMap<String, Value> = serde_json::from_str(
+    Ok((
+        readThemePreferenceSnapshot(&scoped, &migrationThemeDefaults()?)?,
+        source_entries,
+    ))
+}
+
+/// Frozen released defaults used only when migrating missing legacy preference fields.
+pub(crate) fn migrationThemeDefaults() -> Result<BTreeMap<String, Value>, PreferencesDataStoreError> {
+    Ok(serde_json::from_str(
         r#"{
   "themeMode": "system",
   "useCustomColors": false,
@@ -761,12 +768,8 @@ pub(crate) fn readLegacyCharacterThemeSnapshot(
   "showMessageTimingStats": false,
   "showMessageTimestamp": false,
   "showInputProcessingStatus": true
-}"#,
-    )?;
-    Ok((
-        readThemePreferenceSnapshot(&scoped, &initial)?,
-        source_entries,
-    ))
+}"#
+    )?)
 }
 
 /// Validates exact ordinary appearance keys before staging a partial configuration edit.

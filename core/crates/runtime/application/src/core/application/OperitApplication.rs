@@ -373,6 +373,12 @@ impl OperitApplication {
         crate::data::backup::CharacterPluginMigration::migrateLegacyCharacters(
             RuntimeStorePaths::default(),
         )?;
+        crate::data::preferences::ThemeAppearanceMigration::migrate(
+            self.hostManager.runtimeStorageHost.clone().unwrap_or_else(
+                operit_store::RuntimeStorageHost::defaultRuntimeStorageHost,
+            ),
+        )
+        .map_err(|error| error.to_string())?;
         self.preloadDatabase();
         AppLogger::v(
             "OperitApplication",

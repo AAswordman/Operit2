@@ -48,6 +48,7 @@ class ScreenRouteRegistry {
         _HostScreenDefinition(screen: market, factory: _buildMarketScreen),
         _HostScreenDefinition(screen: settings, factory: _buildSettingsScreen),
         const _HostScreenDefinition(screen: marketCreator),
+        const _HostScreenDefinition(screen: OfficialExtensionsScreenRoute()),
         _HostScreenDefinition.parameterized(
           prototype: const ExtensionDetailScreenRoute(kind: '', id: ''),
           factory: _buildExtensionDetailScreen,

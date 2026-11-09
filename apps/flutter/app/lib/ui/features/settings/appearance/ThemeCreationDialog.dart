@@ -42,6 +42,9 @@ class ThemeCreationDialog extends StatefulWidget {
 
 class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
   final _form = GlobalKey<FormState>();
+  final _detailsScroll = ScrollController();
+  final _sourcesScroll = ScrollController();
+  final _narrowScroll = ScrollController();
   late String _source = widget.initialSource;
   String _name = '';
   PreparedThemeVisual? _visual;
@@ -99,6 +102,9 @@ class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
   @override
   void dispose() {
     _revision++;
+    _detailsScroll.dispose();
+    _sourcesScroll.dispose();
+    _narrowScroll.dispose();
     _visual?.dispose();
     super.dispose();
   }
@@ -141,6 +147,11 @@ class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
                   : null,
             ),
           );
+          final wide = constraints.maxWidth >= 680;
+          final previewHeight = (constraints.maxHeight * .7).clamp(
+            160.0,
+            wide ? 360.0 : 196.0,
+          );
           final preview = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -151,7 +162,7 @@ class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
               const SizedBox(height: 12),
               SizedBox(
                 key: const ValueKey('theme-creation-preview'),
-                height: constraints.maxWidth >= 680 ? 360 : 196,
+                height: previewHeight,
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
                     : _error != null
@@ -164,34 +175,40 @@ class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
                         snapshot: _snapshot,
                         assets: widget.assets,
                         visual: _visual,
-                        thumbnail: constraints.maxWidth < 680,
+                        thumbnail: !wide,
                       ),
               ),
             ],
           );
           final sources = _sources(context);
-          if (constraints.maxWidth >= 680) {
+          if (wide) {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [preview, const SizedBox(height: 20), name],
+                  child: _scrollPane(
+                    key: const ValueKey('theme-creation-details-scroll'),
+                    controller: _detailsScroll,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [name, const SizedBox(height: 20), preview],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 28),
                 Expanded(
-                  child: SingleChildScrollView(
+                  child: _scrollPane(
                     key: const ValueKey('theme-creation-scroll'),
+                    controller: _sourcesScroll,
                     child: sources,
                   ),
                 ),
               ],
             );
           }
-          return SingleChildScrollView(
+          return _scrollPane(
             key: const ValueKey('theme-creation-scroll'),
+            controller: _narrowScroll,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -207,6 +224,21 @@ class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
       ),
     );
   }
+
+  Widget _scrollPane({
+    required Key key,
+    required ScrollController controller,
+    required Widget child,
+  }) => Scrollbar(
+    controller: controller,
+    thumbVisibility: true,
+    child: SingleChildScrollView(
+      key: key,
+      controller: controller,
+      primary: false,
+      child: child,
+    ),
+  );
 
   Widget _sources(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -239,66 +271,72 @@ class _ThemeCreationDialogState extends State<ThemeCreationDialog> {
               onTap: () => _select(source),
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    if (snapshot != null)
-                      SizedBox(
-                        width: 76,
-                        height: 58,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: FittedBox(
-                            fit: BoxFit.cover,
-                            child: SizedBox(
-                              width: 280,
-                              height: 196,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 220;
+                    final thumbnail = SizedBox(
+                      width: compact ? 60 : 76,
+                      height: compact ? 44 : 58,
+                      child: snapshot == null
+                          ? Icon(
+                              Icons.extension_outlined,
+                              color: scheme.primary,
+                            )
+                          : ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
                               child: ThemeAppearancePreview(
                                 snapshot: snapshot,
                                 assets: widget.assets,
                               ),
                             ),
-                          ),
+                    );
+                    final description = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
                         ),
-                      )
-                    else
-                      SizedBox(
-                        width: 76,
-                        height: 58,
-                        child: Icon(
-                          Icons.extension_outlined,
-                          color: scheme.primary,
-                        ),
-                      ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                        if (subtitle != null) ...[
+                          const SizedBox(height: 4),
                           Text(
-                            title,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(fontWeight: FontWeight.w600),
+                            subtitle,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
                           ),
-                          if (subtitle != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              subtitle,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                          ],
                         ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
+                      ],
+                    );
+                    final selectedIcon = Icon(
                       selected
                           ? Icons.check_circle
                           : Icons.radio_button_unchecked,
                       size: 18,
                       color: selected ? scheme.primary : scheme.outline,
-                    ),
-                  ],
+                    );
+                    if (compact) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [thumbnail, const Spacer(), selectedIcon],
+                          ),
+                          const SizedBox(height: 8),
+                          description,
+                        ],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        thumbnail,
+                        const SizedBox(width: 12),
+                        Expanded(child: description),
+                        const SizedBox(width: 8),
+                        selectedIcon,
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

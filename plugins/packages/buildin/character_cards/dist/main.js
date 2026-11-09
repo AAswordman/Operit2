@@ -141,7 +141,7 @@ __export(main_exports, {
   onMemoryCommand: () => onMemoryCommand,
   onMemoryInterval: () => onMemoryInterval,
   onMemoryMessagePersisted: () => onMemoryMessagePersisted,
-  onMemoryRecallPromptFinalize: () => onMemoryRecallPromptFinalize,
+  onMemoryRecallPromptInput: () => onMemoryRecallPromptInput,
   onServiceInitialize: () => onServiceInitialize,
   onTagCommand: () => onTagCommand,
   parseActivePromptCommand: () => parseActivePromptCommand,
@@ -10721,10 +10721,10 @@ function memoryBlock(result2) {
   lines2.push("</memory_context>");
   return lines2.join("\n");
 }
-function onMemoryRecallPromptFinalize(event) {
+function onMemoryRecallPromptInput(event) {
   return __async(this, null, function* () {
     const stage = String(event.eventPayload.stage ?? event.eventName ?? "");
-    if (stage !== "before_send_to_model") return null;
+    if (stage !== "before_process") return null;
     const participant = executionParticipant(event.eventPayload);
     if (participant === null) return null;
     const processedInput = String(event.eventPayload.processedInput ?? event.eventPayload.rawInput ?? "");
@@ -10747,7 +10747,7 @@ ${block}`;
   });
 }
 function registerMemoryRecallHook() {
-  ToolPkg.registerPromptFinalizeHook({ id: "character-memory-recall", function: onMemoryRecallPromptFinalize });
+  ToolPkg.registerPromptInputHook({ id: "character-memory-recall", function: onMemoryRecallPromptInput });
 }
 
 // src/chat-lifecycle.ts

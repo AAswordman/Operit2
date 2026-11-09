@@ -4454,7 +4454,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAppearanceThemeConfigEditingHint =>
-      'Tap a card to switch themes. Choose Edit to customize; changes are saved automatically.';
+      'Tap a card to switch themes. Mode shortcuts change only the current theme. Edits save automatically.';
 
   @override
   String settingsAppearanceThemeConfigFailed(String detail) {

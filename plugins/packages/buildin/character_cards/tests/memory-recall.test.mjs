@@ -23,20 +23,20 @@ async function environment(t) {
   return { disk, client };
 }
 
-/** Captures the built-in prompt finalize hook from its real registration call. */
+/** Captures the built-in prompt input hook from its real registration call. */
 function recallHook(disk) {
   let registered = null;
   const module = loadModule("src/memory-recall.ts", { ...disk.globals, ToolPkg: { ...disk.globals.ToolPkg,
-    registerPromptFinalizeHook(definition) { registered = definition; },
+    registerPromptInputHook(definition) { registered = definition; },
   } });
   module.registerMemoryRecallHook();
   assert.equal(registered.id, "character-memory-recall");
   return registered.function;
 }
 
-/** Builds one finalize event with the exact generic execution context the host supplies. */
-function finalizeEvent(payload) {
-  return { eventName: "prompt_finalize", eventPayload: { stage: "before_send_to_model", ...payload } };
+/** Builds one input event with the exact generic execution context the host supplies. */
+function inputEvent(payload) {
+  return { eventName: "before_process", eventPayload: { stage: "before_process", ...payload } };
 }
 
 const RECALL_EVENT = {
@@ -45,14 +45,16 @@ const RECALL_EVENT = {
 };
 
 /** Requires structural skips to stay free of any business storage or provider call. */
-test("prompt finalize hook skips non-character requests without touching storage", async t => {
+test("prompt input hook skips non-character requests without touching storage", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" });
   const hook = recallHook(disk), before = disk.stateBytes();
-  assert.equal(await hook(finalizeEvent({ stage: "before_finalize_prompt", ...RECALL_EVENT })), null);
-  assert.equal(await hook(finalizeEvent({ processedInput: "hello", metadata: { executionContext: { chatId: "chat-1", participantId: null } } })), null);
-  assert.equal(await hook(finalizeEvent({ processedInput: "hello", metadata: { executionContext: { chatId: "chat-1", participantId: "model:chat" } } })), null);
-  assert.equal(await hook(finalizeEvent({ processedInput: "", ...RECALL_EVENT })), null);
-  assert.equal(await hook(finalizeEvent({ processedInput: '<memory_context source="character-memory">kept</memory_context>', ...RECALL_EVENT })), null);
+  for (const stage of ["after_process", "before_finalize_prompt", "before_send_to_model"]) {
+    assert.equal(await hook(inputEvent({ ...RECALL_EVENT, stage })), null);
+  }
+  assert.equal(await hook(inputEvent({ processedInput: "hello", metadata: { executionContext: { chatId: "chat-1", participantId: null } } })), null);
+  assert.equal(await hook(inputEvent({ processedInput: "hello", metadata: { executionContext: { chatId: "chat-1", participantId: "model:chat" } } })), null);
+  assert.equal(await hook(inputEvent({ ...RECALL_EVENT, processedInput: "" })), null);
+  assert.equal(await hook(inputEvent({ ...RECALL_EVENT, processedInput: '<memory_context source="character-memory">kept</memory_context>' })), null);
   assert.deepEqual(disk.stateBytes(), before);
 });
 
@@ -62,16 +64,33 @@ test("recall injects matched participant memories once per chat snapshot", async
   // The lexical channel ranks titles (and document chunks), matching the Kotlin reference behavior.
   await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
   const hook = recallHook(env.disk);
-  const first = await hook(finalizeEvent(RECALL_EVENT));
+  const first = await hook(inputEvent(RECALL_EVENT));
   assert.match(first, /<memory_context source="character-memory">/);
   assert.match(first, /Known durable knowledge/);
   assert.match(first, /标题: Stable fact/);
   assert.ok(first.startsWith("What is the stable fact?"));
-  assert.equal(await hook(finalizeEvent(RECALL_EVENT)), null);
-  const otherChat = await hook(finalizeEvent({ ...RECALL_EVENT, metadata: { executionContext: { chatId: "chat-other", participantId: "default" } } }));
+  assert.equal(await hook(inputEvent(RECALL_EVENT)), null);
+  const otherChat = await hook(inputEvent({ ...RECALL_EVENT, metadata: { executionContext: { chatId: "chat-other", participantId: "default" } } }));
   assert.match(otherChat, /Known durable knowledge/);
-  const unknownParticipant = await hook(finalizeEvent({ ...RECALL_EVENT, metadata: { executionContext: { chatId: "chat-recall", participantId: "missing-participant" } } }));
+  const unknownParticipant = await hook(inputEvent({ ...RECALL_EVENT, metadata: { executionContext: { chatId: "chat-recall", participantId: "missing-participant" } } }));
   assert.equal(unknownParticipant, null);
+});
+
+/** Reuses a stored user message verbatim even when runtime deduplication was lost or repeats are allowed. */
+test("replayed user input retains its memory context across runtime restarts without querying again", async t => {
+  const env = await environment(t);
+  await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
+  env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 3, allowRepeated: true } });
+  const first = await recallHook(env.disk)(inputEvent(RECALL_EVENT));
+  assert.match(first, /Known durable knowledge/);
+  const restartedHook = recallHook(env.disk);
+  const before = env.disk.calls.length;
+  // A null mutation preserves the complete stored message through both input hook stages.
+  assert.equal(await restartedHook(inputEvent({ ...RECALL_EVENT, processedInput: first })), null);
+  assert.equal(await restartedHook(inputEvent({ ...RECALL_EVENT, processedInput: first, stage: "after_process" })), null);
+  assert.equal(env.disk.calls.length, before);
+  // A new user turn can still recall normally; the stored prefix is never rewritten.
+  assert.match(await restartedHook(inputEvent(RECALL_EVENT)), /Known durable knowledge/);
 });
 
 /** Requires the persisted switch to gate injection before any retrieval happens. */
@@ -80,7 +99,7 @@ test("disabled recall settings stop injection without any memory query", async t
   await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
   env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: false } });
   const hook = recallHook(env.disk);
-  assert.equal(await hook(finalizeEvent(RECALL_EVENT)), null);
+  assert.equal(await hook(inputEvent(RECALL_EVENT)), null);
 });
 
 /** Requires the configured count to bound one turn and to feed the next turn from the same snapshot. */
@@ -89,12 +108,12 @@ test("recall limit bounds one turn and repeats deliver the remaining memories", 
   for (const title of ["Stable fact", "Other fact"]) await env.client.memory.create({ ownerKey: "character:default", values: { title, content: "Known durable " + title } });
   env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 1 } });
   const hook = recallHook(env.disk);
-  const first = await hook(finalizeEvent(RECALL_EVENT));
+  const first = await hook(inputEvent(RECALL_EVENT));
   assert.match(first, /Known durable Stable fact/);
   assert.doesNotMatch(first, /Other fact/);
-  const second = await hook(finalizeEvent(RECALL_EVENT));
+  const second = await hook(inputEvent(RECALL_EVENT));
   assert.match(second, /Known durable Other fact/);
-  assert.equal(await hook(finalizeEvent(RECALL_EVENT)), null);
+  assert.equal(await hook(inputEvent(RECALL_EVENT)), null);
 });
 
 /** Requires repeated hits to bypass the per-chat snapshot exclusion. */
@@ -103,8 +122,8 @@ test("allowRepeated recall settings deliver the same memory again", async t => {
   await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
   env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 3, allowRepeated: true } });
   const hook = recallHook(env.disk);
-  assert.match(await hook(finalizeEvent(RECALL_EVENT)), /Known durable knowledge/);
-  assert.match(await hook(finalizeEvent(RECALL_EVENT)), /Known durable knowledge/);
+  assert.match(await hook(inputEvent(RECALL_EVENT)), /Known durable knowledge/);
+  assert.match(await hook(inputEvent(RECALL_EVENT)), /Known durable knowledge/);
 });
 
 /** Verifies the transactional state path persists the settings and released states default to enabled. */
@@ -131,6 +150,6 @@ test("vector weight degrades to zero when cloud embedding is unconfigured", asyn
   state.owners[0].settings.cloudEmbeddingEnabled = false;
   env.disk.replaceState(state);
   const hook = recallHook(env.disk);
-  const injected = await hook(finalizeEvent(RECALL_EVENT));
+  const injected = await hook(inputEvent(RECALL_EVENT));
   assert.match(injected, /Known durable knowledge/);
 });

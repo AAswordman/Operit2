@@ -21,14 +21,12 @@ class ThemeConfigurationControl extends StatefulWidget {
     super.key,
     this.clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()),
     this.onEdit,
-    this.themeMode = ThemeMode.system,
-    this.onThemeModeChanged,
+    this.onAppearanceChanged,
   });
 
   final GeneratedCoreProxyClients clients;
   final Future<void> Function(String name)? onEdit;
-  final ThemeMode themeMode;
-  final Future<void> Function(ThemeMode mode)? onThemeModeChanged;
+  final Future<void> Function()? onAppearanceChanged;
 
   /// Creates the catalog observer and explicit configuration action state.
   @override
@@ -87,6 +85,12 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
         final state = snapshot.data;
         if (state == null) return const LinearProgressIndicator();
         final theme = Theme.of(context);
+        final activeConfig = state.configs
+            .where((config) => config.id == state.activeThemeConfigId)
+            .firstOrNull;
+        final activeSnapshot = activeConfig == null
+            ? null
+            : ThemePreferenceSnapshot.fromJson(activeConfig.snapshot);
         return CustomScrollView(
           key: const PageStorageKey('theme-library-scroll'),
           slivers: [
@@ -96,17 +100,18 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    OverflowBar(
+                      alignment: MainAxisAlignment.spaceBetween,
+                      overflowAlignment: OverflowBarAlignment.start,
+                      spacing: 12,
+                      overflowSpacing: 12,
                       children: [
-                        Expanded(
-                          child: Text(
-                            l10n.settingsAppearanceThemeLibrary,
-                            style: theme.textTheme.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                        Text(
+                          l10n.settingsAppearanceThemeLibrary,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(width: 12),
                         FilledButton.icon(
                           key: const ValueKey('theme-config-create'),
                           onPressed: _busy ? null : _create,
@@ -123,39 +128,25 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    SettingsSegmentedSelector<ThemeMode>(
-                      value: widget.themeMode,
-                      onChanged: (mode) {
-                        if (!_busy && widget.onThemeModeChanged != null) {
-                          _run(() => widget.onThemeModeChanged!(mode));
-                        }
-                      },
-                      segments: [
-                        ButtonSegment(
-                          value: ThemeMode.system,
-                          icon: const Icon(
-                            Icons.brightness_auto_outlined,
-                            size: 18,
-                          ),
-                          label: Text(l10n.settingsAppearanceThemeSystem),
-                        ),
-                        ButtonSegment(
-                          value: ThemeMode.light,
-                          icon: const Icon(Icons.light_mode_outlined, size: 18),
-                          label: Text(l10n.settingsAppearanceThemeLight),
-                        ),
-                        ButtonSegment(
-                          value: ThemeMode.dark,
-                          icon: const Icon(Icons.dark_mode_outlined, size: 18),
-                          label: Text(l10n.settingsAppearanceThemeDark),
-                        ),
-                      ],
-                    ),
+                    if (activeSnapshot != null)
+                      _ThemeModeQuickControls(
+                        value: activeSnapshot.themeMode,
+                        onChanged: (mode) {
+                          if (!_busy && mode != activeSnapshot.themeMode) {
+                            _run(() async {
+                              await _manager.patchAppearance(
+                                initialSnapshot: activeSnapshot.toJson(),
+                                values: {'theme_mode': mode.name},
+                                removeKeys: const [],
+                              );
+                              await widget.onAppearanceChanged?.call();
+                            });
+                          }
+                        },
+                      ),
                     const SizedBox(height: 16),
                     Text(
-                      state.activeThemeConfigId == null
-                          ? l10n.settingsAppearanceThemeConfigCustomHint
-                          : l10n.settingsAppearanceThemeConfigEditingHint,
+                      l10n.settingsAppearanceThemeConfigEditingHint,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -179,13 +170,6 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  if (index == state.configs.length) {
-                    return _UnboundAppearanceCard(
-                      active: state.activeThemeConfigId == null,
-                      busy: _busy,
-                      onEdit: () => _editCustom(),
-                    );
-                  }
                   final config = state.configs[index];
                   final active = config.id == state.activeThemeConfigId;
                   return Padding(
@@ -207,7 +191,7 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
                       onDelete: active ? null : () => _delete(config),
                     ),
                   );
-                }, childCount: state.configs.length + 1),
+                }, childCount: state.configs.length),
               ),
             ),
           ],
@@ -246,20 +230,6 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
       applied = true;
     });
     if (applied && mounted) await widget.onEdit?.call(config.name);
-  }
-
-  Future<void> _editCustom() async {
-    var applied = false;
-    await _run(() async {
-      final current = await _preferences.resolveThemePreferenceSnapshot();
-      await _manager.useCustomAppearance(snapshot: current.toJson());
-      applied = true;
-    });
-    if (applied && mounted) {
-      await widget.onEdit?.call(
-        AppLocalizations.of(context)!.settingsAppearanceThemeConfigCustom,
-      );
-    }
   }
 
   Future<void> _preview(
@@ -510,7 +480,9 @@ class _ThemeCard extends StatelessWidget {
                 child: Row(
                   children: [
                     SizedBox(
-                      width: compact ? 112 : 196,
+                      width: compact
+                          ? (constraints.maxWidth * .32).clamp(56.0, 112.0)
+                          : 196,
                       height: compact ? 104 : 112,
                       child: ThemeAppearancePreview(
                         key: ValueKey('theme-thumbnail:${config.id}'),
@@ -649,62 +621,57 @@ class _ThemeCard extends StatelessWidget {
   }
 }
 
-class _UnboundAppearanceCard extends StatelessWidget {
-  const _UnboundAppearanceCard({
-    required this.active,
-    required this.busy,
-    required this.onEdit,
-  });
-  final bool active;
-  final bool busy;
-  final VoidCallback onEdit;
+/// Keeps every shortcut reachable when a sidebar, zoom or large text narrows the pane.
+class _ThemeModeQuickControls extends StatelessWidget {
+  const _ThemeModeQuickControls({required this.value, required this.onChanged});
+  final ThemeMode value;
+  final ValueChanged<ThemeMode> onChanged;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: active ? scheme.primary : scheme.outlineVariant,
-        ),
+    final segments = [
+      ButtonSegment(
+        value: ThemeMode.system,
+        icon: const Icon(Icons.brightness_auto_outlined, size: 18),
+        label: Text(l10n.settingsAppearanceThemeSystem),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: const ValueKey('theme-config-custom'),
-        onTap: busy ? null : onEdit,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          child: Row(
-            children: [
-              Icon(Icons.tune, color: scheme.primary),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.settingsAppearanceThemeConfigCustom,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      l10n.settingsAppearanceThemeConfigCustomHint,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
+      ButtonSegment(
+        value: ThemeMode.light,
+        icon: const Icon(Icons.light_mode_outlined, size: 18),
+        label: Text(l10n.settingsAppearanceThemeLight),
+      ),
+      ButtonSegment(
+        value: ThemeMode.dark,
+        icon: const Icon(Icons.dark_mode_outlined, size: 18),
+        label: Text(l10n.settingsAppearanceThemeDark),
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 420 &&
+            MediaQuery.textScalerOf(context).scale(14) <= 20) {
+          return SettingsSegmentedSelector<ThemeMode>(
+            value: value,
+            onChanged: onChanged,
+            segments: segments,
+          );
+        }
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final segment in segments)
+              ChoiceChip(
+                selected: value == segment.value,
+                showCheckmark: false,
+                avatar: segment.icon,
+                label: segment.label!,
+                onSelected: (_) => onChanged(segment.value),
               ),
-              const SizedBox(width: 8),
-              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
-            ],
-          ),
-        ),
-      ),
+          ],
+        );
+      },
     );
   }
 }

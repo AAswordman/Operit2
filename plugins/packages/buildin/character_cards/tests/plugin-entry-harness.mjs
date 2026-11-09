@@ -3,7 +3,7 @@ import { packageRuntime } from "./package-runtime.mjs";
 
 /** Captures existing SDK registrations and loops only the package's real IPC callback; it supplies no business data. */
 export function openPlugin(disk) {
-  const commands = new Map(), apis = new Map(), channels = new Map(), routes = [], navigation = [], lifecycle = [], chatMessageHooks = [], hostEventHooks = [], chatLifecycleHooks = [], chatViewHooks = [], chatInputHooks = [], toolLifecycleHooks = [], toolPromptHooks = [], promptFinalizeHooks = [];
+  const commands = new Map(), apis = new Map(), channels = new Map(), routes = [], navigation = [], lifecycle = [], chatMessageHooks = [], hostEventHooks = [], chatLifecycleHooks = [], chatViewHooks = [], chatInputHooks = [], toolLifecycleHooks = [], toolPromptHooks = [], promptInputHooks = [], promptFinalizeHooks = [];
   const registry = {
     ...disk.globals.ToolPkg,
     /** Records an actual command provider and rejects duplicate test registration. */
@@ -36,7 +36,9 @@ export function openPlugin(disk) {
     registerToolLifecycleHook(definition) { toolLifecycleHooks.push(definition); },
     /** Captures the real prompt policy without manufacturing model-visible tool descriptors. */
     registerToolPromptComposeHook(definition) { toolPromptHooks.push(definition); },
-    /** Captures the built-in recall finalize hook without injecting memories during tests. */
+    /** Captures the persisted memory recall hook without processing input during registration. */
+    registerPromptInputHook(definition) { promptInputHooks.push(definition); },
+    /** Records any transient hooks so registration tests can detect duplicate recall injection. */
     registerPromptFinalizeHook(definition) { promptFinalizeHooks.push(definition); },
     ipc: {
       /** Retains the real package request handler under its exact channel name. */
@@ -56,7 +58,7 @@ export function openPlugin(disk) {
   const main = loadModule("src/main.ts", { ...disk.globals, ToolPkg: registry });
   if (main.registerToolPkg() !== true) throw new Error("Actual plugin registration did not succeed");
   return {
-    main, commands, apis, routes, navigation, lifecycle, chatMessageHooks, hostEventHooks, chatLifecycleHooks, chatViewHooks, chatInputHooks, toolLifecycleHooks, toolPromptHooks, promptFinalizeHooks,
+    main, commands, apis, routes, navigation, lifecycle, chatMessageHooks, hostEventHooks, chatLifecycleHooks, chatViewHooks, chatInputHooks, toolLifecycleHooks, toolPromptHooks, promptInputHooks, promptFinalizeHooks,
     ...(disk.composeModules === undefined ? {} : {
       /** Opens the packaged executable in its own SDK realm while retaining the real main IPC provider. */
       openComposeRoute(routeId) {

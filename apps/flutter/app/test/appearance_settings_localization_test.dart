@@ -15,7 +15,7 @@ void main() {
         l10n.settingsAppearanceThemeApply,
         l10n.settingsAppearanceThemeMore,
         l10n.settingsAppearanceThemeDuplicate,
-        l10n.settingsAppearanceThemeUnboundHint,
+        l10n.settingsAppearanceThemeConfigEditingHint,
         l10n.settingsAppearanceThemeDeleteTitle,
         l10n.settingsAppearanceThemeDeleteConfirm('Example'),
         l10n.settingsAppearancePreviewExpand,

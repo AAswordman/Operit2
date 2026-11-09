@@ -16,6 +16,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/settings/appearance/ThemeConfigurationControl.dart';
+import 'package:operit2/ui/features/settings/appearance/ThemeAppearancePreview.dart';
 import 'package:operit2/ui/features/settings/appearance/ChatAppearancePreview.dart';
 import 'package:operit2/ui/features/settings/appearance/AppearanceSettingsPanel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
@@ -126,6 +127,174 @@ void main() {
   );
 
   testWidgets(
+    'creation reflows and scrolls through short wide windows, narrow panes and keyboard insets',
+    (tester) async {
+      final bridge = _ThemeBridge();
+      await _mount(tester, bridge, size: const Size(1100, 500));
+      await tester.tap(find.byKey(const ValueKey('theme-config-create')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('theme-creation-details-scroll')),
+        findsOneWidget,
+      );
+      expect(find.byType(TextFormField).hitTestable(), findsOneWidget);
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.enterText(find.byType(TextFormField), 'Responsive theme');
+      for (final size in [
+        const Size(1100, 360),
+        const Size(700, 420),
+        const Size(280, 500),
+        const Size(240, 360),
+        const Size(520, 320),
+        const Size(1100, 500),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.binding.setSurfaceSize(size);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: 'dialog at $size');
+        if (size == const Size(1100, 360)) {
+          final details = find.byKey(
+            const ValueKey('theme-creation-details-scroll'),
+          );
+          final pane = tester.widget<SingleChildScrollView>(details);
+          expect(pane.controller!.position.maxScrollExtent, greaterThan(0));
+          await tester.drag(details, const Offset(0, -100));
+          await tester.pumpAndSettle();
+          expect(pane.controller!.offset, greaterThan(0));
+        }
+        expect(find.text('Create').hitTestable(), findsOneWidget);
+        expect(find.text('Cancel').hitTestable(), findsOneWidget);
+        await tester.ensureVisible(find.byType(TextFormField));
+        await tester.pumpAndSettle();
+        expect(find.byType(TextFormField).hitTestable(), findsOneWidget);
+        expect(
+          find.widgetWithText(TextFormField, 'Responsive theme'),
+          findsOneWidget,
+        );
+      }
+      tester.view.viewInsets = const FakeViewPadding(bottom: 220);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Create').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      expect(bridge.configs.last.name, 'Responsive theme');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'migrated theme shows its background without writes when opening the library',
+    (tester) async {
+      final bridge = _ThemeBridge()
+        ..configs.clear()
+        ..active = null;
+      bridge.assets['theme-media/current.png'] = (await tester.runAsync(
+        _landscapeBackground,
+      ))!;
+      final current = ThemePreferenceSnapshot.fromJson({
+        ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+        'useBackgroundImage': true,
+        'backgroundImageUri': 'theme-media/current.png',
+        'backgroundImageOpacity': 1.0,
+        'customPrimaryColor': 0xFF32775C,
+      });
+      bridge.configs.add(
+        core.CoreDataPreferencesThemeConfigManagerThemeConfig(
+          id: 'migrated',
+          name: 'Default theme',
+          snapshot: current.toJson(),
+          createdAt: 0,
+          updatedAt: 0,
+        ),
+      );
+      bridge.active = 'migrated';
+      await _mount(
+        tester,
+        bridge,
+        currentSnapshot: current,
+        size: const Size(1000, 600),
+      );
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      final preview = tester.widget<ThemeAppearancePreview>(
+        find.byKey(const ValueKey('theme-thumbnail:migrated')),
+      );
+      expect(preview.snapshot.toJson(), current.toJson());
+      expect(find.byType(RawImage), findsOneWidget);
+      expect(
+        bridge.calls
+            .where((call) => call.methodName == 'readBase64')
+            .single
+            .args,
+        {'path': 'theme-media/current.png'},
+      );
+      expect(bridge.active, 'migrated');
+      expect(bridge.configs.single.snapshot, current.toJson());
+      expect(find.byKey(const ValueKey('theme-edit:migrated')), findsOneWidget);
+      expect(find.byKey(const ValueKey('theme-menu:migrated')), findsOneWidget);
+      expect(find.byKey(const ValueKey('theme-edit:night')), findsNothing);
+      // Outer appearance changes cannot replace the mode stored in a saved theme.
+      await _mount(
+        tester,
+        bridge,
+        currentSnapshot: ThemePreferenceSnapshot.fromJson({
+          ...current.toJson(),
+          'themeMode': 'dark',
+          'useBackgroundImage': false,
+        }),
+      );
+      expect(
+        tester
+            .widget<ThemeAppearancePreview>(
+              find.byKey(const ValueKey('theme-thumbnail:migrated')),
+            )
+            .snapshot
+            .toJson(),
+        current.toJson(),
+      );
+      expect(
+        bridge.calls.where(
+          (call) => !{
+            'readBase64',
+            'list',
+            'getPreferences',
+          }.contains(call.methodName),
+        ),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final size in [
+    const Size(240, 360),
+    const Size(320, 260),
+    const Size(560, 340),
+  ]) {
+    testWidgets('library reflows with large text at $size', (tester) async {
+      await _mount(tester, _ThemeBridge(), size: size, textScale: 1.5);
+      expect(tester.takeException(), isNull);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('theme-edit:night')),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('theme-edit:night')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
     'saved theme selection follows acknowledged catalog state and shows apply failures',
     (tester) async {
       final bridge = _ThemeBridge();
@@ -162,40 +331,36 @@ void main() {
     },
   );
 
-  testWidgets(
-    'creating the first theme uses the declared initial appearance and selects its actual ID',
-    (tester) async {
-      final bridge = _ThemeBridge()
-        ..configs.clear()
-        ..active = null;
-      await _mount(tester, bridge);
-      expect(find.byKey(const ValueKey('theme-config-custom')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('theme-config-create')));
-      await tester.pumpAndSettle();
-      expect(
-        find.descendant(
-          of: find.byType(Dialog),
-          matching: find.text('New theme configuration'),
-        ),
-        findsOneWidget,
-      );
-      await tester.enterText(find.byType(TextFormField), 'My theme');
-      await tester.tap(find.text('Create'));
-      await tester.pumpAndSettle();
-      final create = bridge.calls.singleWhere(
-        (call) => call.methodName == 'create',
-      );
-      final args = create.args as Map;
-      expect(args['name'], 'My theme');
-      expect(
-        args['snapshot'],
-        UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
-      );
-      expect(bridge.active, 'created');
-      expect(find.text('My theme'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('creating a theme from defaults selects its actual ID', (
+    tester,
+  ) async {
+    final bridge = _ThemeBridge();
+    await _mount(tester, bridge);
+    await tester.tap(find.byKey(const ValueKey('theme-config-create')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.text('New theme configuration'),
+      ),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byType(TextFormField), 'My theme');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    final create = bridge.calls.singleWhere(
+      (call) => call.methodName == 'create',
+    );
+    final args = create.args as Map;
+    expect(args['name'], 'My theme');
+    expect(
+      args['snapshot'],
+      UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+    );
+    expect(bridge.active, 'created');
+    expect(find.text('My theme'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'new themes start from defaults and preserve the existing named appearance',
@@ -311,22 +476,22 @@ void main() {
   );
 
   testWidgets(
-    'custom appearance explicitly detaches a named theme without resetting ordinary settings',
+    'saved themes share one card layout without an extra appearance entry',
     (tester) async {
       final bridge = _ThemeBridge();
       await _mount(tester, bridge);
-      await tester.tap(find.byKey(const ValueKey('theme-config-custom')));
-      await tester.pumpAndSettle();
-      expect(bridge.active, isNull);
-      final call = bridge.calls.singleWhere(
-        (call) => call.methodName == 'useCustomAppearance',
+      expect(find.byKey(const ValueKey('theme-config-custom')), findsNothing);
+      expect(find.byKey(const ValueKey('theme-card:day')), findsOneWidget);
+      expect(find.byKey(const ValueKey('theme-card:night')), findsOneWidget);
+      expect(
+        bridge.calls.where(
+          (call) =>
+              {'create', 'apply', 'patchAppearance'}.contains(call.methodName),
+        ),
+        isEmpty,
       );
       expect(
-        (call.args as Map)['snapshot'],
-        UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
-      );
-      expect(
-        bridge.calls.where((call) => call.methodName == 'delete'),
+        bridge.calls.where((call) => call.methodName == 'useCustomAppearance'),
         isEmpty,
       );
     },
@@ -491,40 +656,49 @@ void main() {
   );
 
   testWidgets(
-    'quick mode controls persist through the appearance owner and retain selection on failure',
+    'mode shortcut follows each theme snapshot and edits only the active theme',
     (tester) async {
       final bridge = _ThemeBridge();
-      final controller = OperitThemeController(
-        onChanged: () {},
-        preferencesManager: UserPreferencesManager(
-          clients: GeneratedCoreProxyClients(bridge),
-        ),
-        saveStartupThemeMode: (_) async {},
+      final night = Map<String, Object?>.from(bridge.configs.last.snapshot);
+      await _mount(
+        tester,
+        bridge,
+        currentSnapshot: ThemePreferenceSnapshot.fromJson({
+          ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+          'themeMode': 'dark',
+        }),
       );
-      addTearDown(controller.dispose);
-      await _mount(tester, bridge, themeController: controller);
-      await tester.tap(find.text('Dark').first);
-      await tester.pumpAndSettle();
-      expect(controller.themeMode, ThemeMode.dark);
-      expect(bridge.preferences['theme_mode'], 'dark');
-      expect(
-        bridge.calls
-            .where((call) => call.methodName == 'patchAppearance')
-            .single
-            .args,
-        containsPair('values', {'theme_mode': 'dark'}),
-      );
-      expect(bridge.active, 'day');
-      bridge.failure = StateError('Mode save failed');
-      await tester.tap(find.text('Light').first);
-      await tester.pumpAndSettle();
-      expect(controller.themeMode, ThemeMode.dark);
-      expect(find.textContaining('Mode save failed'), findsOneWidget);
-      bridge.failure = null;
+      Set<ThemeMode> selected() => tester
+          .widget<SegmentedButton<ThemeMode>>(
+            find.byType(SegmentedButton<ThemeMode>),
+          )
+          .selected;
+      expect(selected(), {ThemeMode.light});
       await tester.tap(find.text('System').first);
       await tester.pumpAndSettle();
-      expect(controller.themeMode, ThemeMode.system);
-      expect(bridge.preferences['theme_mode'], 'system');
+      expect(selected(), {ThemeMode.system});
+      expect(bridge.configs.first.snapshot['themeMode'], 'system');
+      expect(bridge.configs.last.snapshot, night);
+      final firstSaved = Map<String, Object?>.from(
+        bridge.configs.first.snapshot,
+      );
+      await tester.tap(find.byKey(const ValueKey('theme-apply:night')));
+      await tester.pumpAndSettle();
+      expect(selected(), {ThemeMode.dark});
+      await tester.tap(find.text('Light').first);
+      await tester.pumpAndSettle();
+      expect(selected(), {ThemeMode.light});
+      expect(bridge.configs.last.snapshot['themeMode'], 'light');
+      expect(bridge.configs.first.snapshot, firstSaved);
+      await tester.tap(find.byKey(const ValueKey('theme-apply:day')));
+      await tester.pumpAndSettle();
+      expect(selected(), {ThemeMode.system});
+      bridge.failure = StateError('Mode save failed');
+      await tester.tap(find.text('Dark').first);
+      await tester.pumpAndSettle();
+      expect(selected(), {ThemeMode.system});
+      expect(bridge.configs.first.snapshot, firstSaved);
+      expect(find.textContaining('Mode save failed'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -616,25 +790,25 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       await tester.binding.setSurfaceSize(const Size(1200, 980));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        RepaintBoundary(
-          key: boundary,
-          child: OperitTheme(
-            initialThemePreferenceSnapshot: ThemePreferenceSnapshot.fromJson(
-              bridge.configs.first.snapshot,
-            ),
-            initialThemeIsReady: false,
-            unconfiguredChildEnabled: true,
-            hostInteractionHostsEnabled: false,
-            child: Scaffold(
-              appBar: AppBar(title: const Text('主题与外观')),
-              body: AppearanceSettingsPanel(
-                clients: GeneratedCoreProxyClients(bridge),
-              ),
+      Widget appearance() => RepaintBoundary(
+        key: boundary,
+        child: OperitTheme(
+          key: ValueKey('render-appearance:${bridge.active}'),
+          initialThemePreferenceSnapshot: ThemePreferenceSnapshot.fromJson(
+            bridge.configs.first.snapshot,
+          ),
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: Scaffold(
+            appBar: AppBar(title: const Text('主题与外观')),
+            body: AppearanceSettingsPanel(
+              clients: GeneratedCoreProxyClients(bridge),
             ),
           ),
         ),
       );
+      await tester.pumpWidget(appearance());
       await tester.pumpAndSettle();
       Future<void> capture(String name) async {
         // Asset decoding uses the engine; let it finish before painting the capture.
@@ -687,6 +861,37 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('theme-edit:day')));
       await tester.pumpAndSettle();
       await capture('05-theme-editor-mobile');
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(1100, 500);
+      await tester.binding.setSurfaceSize(const Size(1100, 500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('theme-config-create')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), '自适应主题');
+      await capture('06-create-theme-short-window');
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      bridge.configs
+        ..clear()
+        ..add(
+          sample('migrated', '默认主题', {
+            'themeMode': 'dark',
+            'useBackgroundImage': true,
+            'backgroundImageUri': 'theme-media/forest.png',
+            'backgroundImageOpacity': 1.0,
+            'useCustomColors': true,
+            'customPrimaryColor': 0xFF32775C,
+          }),
+        );
+      bridge.active = 'migrated';
+      bridge._publish();
+      tester.view.physicalSize = const Size(1000, 600);
+      await tester.binding.setSurfaceSize(const Size(1000, 600));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(appearance());
+      await tester.pumpAndSettle();
+      await capture('07-default-theme-from-current-appearance');
       await tester.pumpWidget(const SizedBox.shrink());
     });
   }
@@ -699,8 +904,13 @@ Future<void> _mount(
   Size size = const Size(1000, 800),
   Locale locale = const Locale('en'),
   Future<void> Function(String)? onEdit,
-  OperitThemeController? themeController,
+  ThemePreferenceSnapshot? currentSnapshot,
+  double textScale = 1,
 }) async {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = size;
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.view.resetPhysicalSize);
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
@@ -708,9 +918,16 @@ Future<void> _mount(
       locale: locale,
       theme: buildOperitThemeData(
         ColorScheme.fromSeed(seedColor: const Color(0xFFBBDEFB)),
-        UserPreferencesManager.defaultThemePreferenceSnapshot,
+        currentSnapshot ??
+            UserPreferencesManager.defaultThemePreferenceSnapshot,
         fontFamily: 'Aptos',
         fontFamilyFallback: const <String>[],
+      ),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
       ),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -719,13 +936,6 @@ Future<void> _mount(
           builder: (context, update) => ThemeConfigurationControl(
             clients: GeneratedCoreProxyClients(bridge),
             onEdit: onEdit,
-            themeMode: themeController?.themeMode ?? ThemeMode.system,
-            onThemeModeChanged: themeController == null
-                ? null
-                : (mode) async {
-                    await themeController.setThemeMode(mode);
-                    update(() {});
-                  },
           ),
         ),
       ),
@@ -765,7 +975,20 @@ class _ThemeBridge extends OperitRuntimeBridge {
       case 'patchAppearance':
         if (failure case final Object error) throw error;
         preferences.addAll(Map<String, Object?>.from(args['values'] as Map));
-        result = null;
+        final index = configs.indexWhere((config) => config.id == active);
+        final old = configs[index];
+        configs[index] = core.CoreDataPreferencesThemeConfigManagerThemeConfig(
+          id: old.id,
+          name: old.name,
+          createdAt: old.createdAt,
+          updatedAt: 2,
+          snapshot: {
+            ...old.snapshot,
+            'themeMode': (args['values'] as Map)['theme_mode'],
+          },
+        );
+        result = configs[index].toJson();
+        _publish();
       case 'readBase64':
         result = base64Encode(assets[args['path']]!);
       case 'apply':
@@ -805,10 +1028,6 @@ class _ThemeBridge extends OperitRuntimeBridge {
           throw StateError('Cannot delete active configuration');
         }
         configs.removeWhere((config) => config.id == args['id']);
-        result = null;
-        _publish();
-      case 'useCustomAppearance':
-        active = null;
         result = null;
         _publish();
       default:

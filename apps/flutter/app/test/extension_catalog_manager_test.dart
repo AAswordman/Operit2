@@ -14,6 +14,7 @@ import 'package:operit2/ui/features/packages/components/StoreVisuals.dart';
 import 'package:operit2/ui/features/packages/components/StoreCards.dart';
 import 'package:operit2/ui/features/packages/screens/StoreBrowseScreen.dart';
 import 'package:operit2/ui/features/packages/screens/MarketPane.dart';
+import 'package:operit2/ui/features/packages/screens/OfficialExtensionsScreen.dart';
 import 'package:operit2/ui/features/packages/market/MarketStatsSupport.dart';
 import 'package:operit2/ui/features/packages/screens/PackageManagerScreen.dart';
 import 'package:operit2/ui/features/packages/screens/ExtensionDetailScreen.dart';
@@ -231,6 +232,48 @@ void main() {
     await tester.tap(install);
     await tester.pumpAndSettle();
 
+    expect(bridge.imports, <String>['official_extra']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('official see all opens an offline list with install actions', (
+    tester,
+  ) async {
+    final bridge = _CatalogBridge();
+    String? openedRoute;
+    AppRouterGateway.install(
+      handler: (routeId, args, source) => openedRoute = routeId,
+      reset: (routeId, args, source) => openedRoute = routeId,
+    );
+    addTearDown(AppRouterGateway.clear);
+    await tester.pumpWidget(_manager(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('市场'));
+    await tester.pumpAndSettle();
+
+    final seeAll = find.descendant(
+      of: _sectionHeader('官方扩展'),
+      matching: find.byType(StoreSeeAllButton),
+    );
+    expect(seeAll, findsOneWidget);
+    await tester.ensureVisible(seeAll);
+    await tester.tap(seeAll);
+    expect(openedRoute, 'native.official_extensions');
+
+    bridge.marketRequests.clear();
+    await tester.pumpWidget(
+      _manager(
+        bridge,
+        child: OfficialExtensionsScreen(
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Official Extra'), findsOneWidget);
+    expect(bridge.marketRequests, isEmpty);
+    await tester.tap(find.text('获取'));
+    await tester.pumpAndSettle();
     expect(bridge.imports, <String>['official_extra']);
     expect(tester.takeException(), isNull);
   });
