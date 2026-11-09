@@ -2,6 +2,7 @@
 import argparse
 import sys
 from pathlib import Path
+from build_windows_msi import build_windows_msi
 
 from common import (
     DIST_DIR,
@@ -10,7 +11,6 @@ from common import (
     compress_zip,
     flutter_command,
     flutter_pub_get,
-    host_arch,
     run,
 )
 
@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-name")
     parser.add_argument("--build-number")
     parser.add_argument("--archive-path", type=Path)
+    parser.add_argument("--installer-path", type=Path)
     parser.add_argument("--enforce-lockfile", action="store_true")
     return parser.parse_args()
 
@@ -36,9 +37,11 @@ def main() -> int:
         command.extend(["--build-number", args.build_number])
     run(command, cwd=FLUTTER_APP_DIR)
     release_dir = FLUTTER_APP_DIR / "build" / "windows" / "x64" / "runner" / "Release"
-    archive_path = args.archive_path or DIST_DIR / release_asset_name("app", "windows", host_arch(), "zip")
+    archive_path = args.archive_path or DIST_DIR / release_asset_name("app", "windows", "x86_64", "zip")
     compress_zip(release_dir, archive_path)
     print(f"Windows archive: {archive_path}", flush=True)
+    installer_path = args.installer_path or archive_path.with_suffix(".msi")
+    build_windows_msi(release_dir, installer_path)
     return 0
 
 

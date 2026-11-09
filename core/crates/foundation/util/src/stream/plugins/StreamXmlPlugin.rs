@@ -7,6 +7,7 @@ pub struct StreamXmlPlugin {
     state: PluginState,
     candidate: String,
     active_tag_name: Option<String>,
+    opening_tag: bool,
     closing_candidate: String,
     allow_start_after_end_tag: bool,
     allow_start_after_punctuation: bool,
@@ -20,12 +21,14 @@ impl Default for StreamXmlPlugin {
 }
 
 impl StreamXmlPlugin {
+    /// Creates an XML plugin that optionally emits its outer tag delimiters.
     pub fn new(include_tags_in_output: bool) -> Self {
         Self {
             include_tags_in_output,
             state: PluginState::Idle,
             candidate: String::new(),
             active_tag_name: None,
+            opening_tag: false,
             closing_candidate: String::new(),
             allow_start_after_end_tag: false,
             allow_start_after_punctuation: false,
@@ -67,8 +70,18 @@ impl StreamPlugin for StreamXmlPlugin {
         self.state
     }
 
+    /// Claims recognized XML at its first attribute assignment or opening delimiter.
     fn process_char(&mut self, c: char, at_start_of_line: bool) -> bool {
         if self.state == PluginState::Processing {
+            if self.opening_tag {
+                if c == '>' {
+                    self.opening_tag = false;
+                    if self.last_char == '/' {
+                        self.reset();
+                    }
+                }
+                return self.finish(c, self.include_tags_in_output);
+            }
             self.closing_candidate.push(c);
             let end_tag = format!("</{}>", self.active_tag_name.as_deref().unwrap_or(""));
             if end_tag.starts_with(&self.closing_candidate) {
@@ -106,7 +119,7 @@ impl StreamPlugin for StreamXmlPlugin {
             return self.finish(c, result);
         }
 
-        if !self.candidate.contains('>') {
+        if c != '>' && c != '=' {
             self.state = PluginState::Trying;
             return self.finish(c, self.include_tags_in_output);
         }
@@ -126,12 +139,13 @@ impl StreamPlugin for StreamXmlPlugin {
                 self.reset();
                 return self.finish(c, true);
             }
-            if self.last_char == '/' || self.candidate.trim_end().ends_with("/>") {
+            if c == '>' && self.last_char == '/' {
                 self.reset();
                 return self.finish(c, true);
             }
             self.state = PluginState::Processing;
             self.active_tag_name = Some(tag_name);
+            self.opening_tag = c != '>';
             self.closing_candidate.clear();
             self.candidate.clear();
             self.allow_start_after_end_tag = false;
@@ -150,10 +164,12 @@ impl StreamPlugin for StreamXmlPlugin {
 
     fn destroy(&mut self) {}
 
+    /// Clears the current XML token while retaining permitted start boundaries.
     fn reset(&mut self) {
         self.state = PluginState::Idle;
         self.candidate.clear();
         self.active_tag_name = None;
+        self.opening_tag = false;
         self.closing_candidate.clear();
         self.last_char = '\0';
     }

@@ -70,6 +70,12 @@ jobs:
         shell: pwsh
         run: choco install llvm --no-progress --limit-output --yes
 
+      - name: Install .NET SDK for MSI packaging
+        if: inputs.products != 'cli'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
       - name: Check build environment
         shell: pwsh
         run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
@@ -89,7 +95,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-windows-app-${{ github.sha }}
-          path: tools/release/dist/operit2-app-windows-x86_64-*.zip
+          path: tools/release/dist/operit2-app-windows-x86_64-*.*
           if-no-files-found: error
           retention-days: 14
 

@@ -35,6 +35,7 @@ import publish_dist
 TARGETS = (
     ("app", "windows", "x86_64", "zip"),
     ("app", "windows", "aarch64", "zip"),
+    ("app", "windows", "x86_64", "msi"),
     ("app", "linux", "x86_64", "tar.gz"),
     ("app", "linux", "aarch64", "tar.gz"),
     ("app", "macos", "universal", "zip"),
@@ -282,6 +283,7 @@ class ReleaseArtifactTests(unittest.TestCase):
             ("android-flutter-build.yml", "app", "android", "arm64-v8a", "apk"),
             ("android-flutter-build.yml", "module", "android", "arm64-v8a", "zip"),
             ("windows-release-build.yml", "app", "windows", "x86_64", "zip"),
+            ("windows-release-build.yml", "app", "windows", "x86_64", "msi"),
             ("windows-release-build.yml", "cli", "windows", "aarch64", "zip"),
             ("linux-release-build.yml", "app", "linux", "x86_64", "tar.gz"),
             ("linux-release-build.yml", "cli", "linux", "aarch64", "tar.gz"),

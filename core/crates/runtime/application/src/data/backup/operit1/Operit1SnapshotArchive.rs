@@ -6,6 +6,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use zip::ZipArchive;
 
+use operit_util::AppLogger::AppLogger;
+
 use crate::data::archive::ArchiveSource::{ArchiveSource, ArchiveSourceReader};
 
 const FORMAT_VERSION: i32 = 1;
@@ -73,7 +75,13 @@ impl Operit1SnapshotArchive {
                 continue;
             }
             let name = file.name().to_string();
-            validateSnapshotEntryPath(&name)?;
+            if let Err(error) = validateSnapshotEntryPath(&name) {
+                AppLogger::w(
+                    "Operit1SnapshotImport",
+                    &format!("Skipping snapshot entry: {error}"),
+                );
+                continue;
+            }
             let entry = Operit1SnapshotEntry {
                 uncompressedSize: file.size(),
                 compressedSize: file.compressed_size(),
@@ -295,6 +303,11 @@ mod archive_tests {
 
     /// Builds a valid small snapshot containing one caller-specified resource path.
     fn snapshotFixture(resourcePath: &str) -> Arc<CountingSnapshotSource> {
+        snapshotFixtureWithResources(&[(resourcePath, b"test resource")])
+    }
+
+    /// Builds a valid snapshot with independently supplied resource names and contents.
+    fn snapshotFixtureWithResources(resources: &[(&str, &[u8])]) -> Arc<CountingSnapshotSource> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -311,10 +324,13 @@ mod archive_tests {
                 ENTRY_FUNCTIONAL_CONFIGS,
                 stringPreferences(&[("function_config_mapping", "{\"CHAT\":{}}")]),
             ),
-            (resourcePath, b"test resource".to_vec()),
         ] {
             writer.start_file(name, options).unwrap();
             writer.write_all(&bytes).unwrap();
+        }
+        for (name, bytes) in resources {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
         }
         Arc::new(CountingSnapshotSource {
             bytes: writer.finish().unwrap().into_inner(),
@@ -353,10 +369,46 @@ mod archive_tests {
             .is_err());
     }
 
-    /// Preserves path traversal rejection while scanning through cached source blocks.
+    /// Excludes unsafe resource entries while retaining metadata and safe resource copies.
     #[test]
-    fn cached_snapshot_scan_still_rejects_invalid_paths() {
-        let source = snapshotFixture("payload/files/../invalid.txt");
-        assert!(Operit1SnapshotArchive::fromSource(source).is_err());
+    fn invalid_resource_paths_do_not_abort_snapshot_inspection() {
+        let invalidPaths = [
+            r#"payload/external_files/tide_bpm_now.json,{"bpm":80,"ts":1789306692035}"#,
+            "payload/files/../invalid.txt",
+            "payload/files//invalid.txt",
+            "/payload/files/absolute.txt",
+            "C:/payload/files/drive.txt",
+        ];
+        for invalidPath in invalidPaths {
+            let validPath = "payload/external_files/document.txt";
+            let source = snapshotFixtureWithResources(&[
+                (invalidPath, b"excluded resource"),
+                (validPath, b"preserved resource"),
+            ]);
+            let archive = Operit1SnapshotArchive::fromSource(source).unwrap();
+            assert_eq!(archive.entries.len(), 4);
+            assert_eq!(archive.modelConfigJsons.len(), 1);
+            assert!(archive
+                .datastorePreferences
+                .contains_key(ENTRY_FUNCTIONAL_CONFIGS));
+            assert!(!archive.hasEntry(invalidPath));
+            assert!(archive.copyEntryTo(invalidPath, &mut Vec::new()).is_err());
+            let mut bytes = Vec::new();
+            archive.copyEntryTo(validPath, &mut bytes).unwrap();
+            assert_eq!(bytes, b"preserved resource");
+        }
+    }
+
+    /// Keeps JSON file contents separate from the ZIP entry name during inspection and copying.
+    #[test]
+    fn json_resource_contents_are_not_interpreted_as_paths() {
+        let path = "payload/external_files/tide_bpm_now.json";
+        let contents = br#"{"bpm":80,"ts":1789306692035}"#;
+        let source = snapshotFixtureWithResources(&[(path, contents)]);
+        let archive = Operit1SnapshotArchive::fromSource(source).unwrap();
+        assert!(archive.hasEntry(path));
+        let mut bytes = Vec::new();
+        archive.copyEntryTo(path, &mut bytes).unwrap();
+        assert_eq!(bytes, contents);
     }
 }

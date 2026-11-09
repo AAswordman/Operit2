@@ -102,6 +102,7 @@ operit2-app-android-arm64-v8a-2.0.0-preview.16.apk
 operit2-module-android-arm64-v8a-2.0.0-preview.16.zip
 operit2-app-ohos-arm64-2.0.0-preview.16.hap
 operit2-app-windows-x86_64-2.0.0-preview.16.zip
+operit2-app-windows-x86_64-2.0.0-preview.16.msi
 operit2-app-linux-x86_64-2.0.0-preview.16.tar.gz
 operit2-app-macos-universal-2.0.0-preview.16.zip
 operit2-app-ios-arm64-2.0.0-preview.16.zip
@@ -111,6 +112,38 @@ operit2-firmware-esp32-2432s028-2.0.0-preview.16.zip
 
 Release packages are published without separate checksum files. CLI archives
 contain the executable, installer script, uninstaller script, and README.
+
+Windows App builds produce both a portable ZIP and a Chinese MSI installer from
+the same Flutter release directory. The MSI installs for the current user under
+`%LOCALAPPDATA%\Programs\Operit2`, creates desktop and Start menu shortcuts, and
+registers repair/uninstall in Windows Settings. Upgrades replace the application
+files and preserve the separate user data directory. The ZIP remains the updater's
+download format. Both packages include the Visual C++ runtime DLLs from the build
+toolchain so users do not need to install a separate redistributable.
+
+MSI packaging requires the .NET 8 SDK or newer. The build restores the pinned WiX
+4.0.6 tool and the DTF custom UI dependency from NuGet. The MSI embeds a WPF
+interface with a custom title bar; Windows 10 1809 x64 or newer includes its .NET
+Framework 4.7.2 runtime. Silent MSI installs continue to use `/qn` without opening
+the interface. Run the normal Windows build to produce both formats:
+
+```powershell
+.\.venv\Scripts\python.exe tools/build_scripts/build_flutter_windows.py --enforce-lockfile
+```
+
+To package an already-built, current-version release directory without recompiling:
+
+```powershell
+.\.venv\Scripts\python.exe tools/build_scripts/build_windows_msi.py
+```
+
+Installer sources and branding live in `tools/windows-installer`; the accessible,
+vector UI is implemented in WPF under `ui/`. MSI's three-number version encodes
+`major.minor.(patch * 1000 + revision)`.
+Revisions use dev 1–199, preview 201–399, rc 401–599, and stable 999. Counters above
+199, unsupported prerelease identifiers, and MSI field overflow fail explicitly.
+The MSI's description and release filename retain the full SemVer. Major upgrades
+block downgrades; rebuilding the same release can replace its previous MSI install.
 
 The filename version matches the Git tag without its leading `v`. The updater
 builds the exact filename from each release's own tag and the requested product,

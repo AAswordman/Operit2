@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platform>x64</Platform>
+    <AssemblyName>OperitInstaller</AssemblyName>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Dtf.CustomAction" Version="4.0.6" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Content Include="EmbeddedUI.config" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="../../../apps/flutter/app/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png" Link="Assets/Logo.png" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Operit2" Manufacturer="Operit" Language="2052" Codepage="65001"
+           Version="$(var.MsiVersion)" UpgradeCode="A60B4E40-8A60-4BCD-AB33-DA7D939E436D"
+           Scope="perUser" InstallerVersion="500" Compressed="yes">
+    <SummaryInformation Codepage="936" Description="Operit2 $(var.ReleaseVersion) Windows 安装程序" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="已安装更新版本的 Operit2，请使用更新的安装包。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Property Id="OPERIT_WINDOWS_BUILD">
+      <RegistrySearch Id="WindowsBuildNumber" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR (VersionNT64 AND OPERIT_WINDOWS_BUILD &gt;= 17763)"
+            Message="Operit2 需要 Windows 10 1809 或更新版本的 64 位 Windows。" />
+
+    <Icon Id="OperitIcon" SourceFile="$(var.AppIcon)" />
+    <Property Id="ARPPRODUCTICON" Value="OperitIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/AAswordman/Operit2" />
+    <Property Id="ARPURLINFOABOUT" Value="https://operit.app" />
+    <Property Id="ARPCOMMENTS" Value="Operit2 $(var.ReleaseVersion) · AI 工作空间" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="OPERIT_RELEASE_VERSION" Value="$(var.ReleaseVersion)" />
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallFolder" Root="HKCU" Key="Software\Operit\Operit2\Installer"
+                      Name="InstallLocation" Type="raw" />
+    </Property>
+    <CustomAction Id="OperitInstallCompleted" Property="OPERIT_INSTALL_COMPLETE" Value="1" />
+    <InstallExecuteSequence>
+      <Custom Action="OperitInstallCompleted" After="InstallFinalize" />
+    </InstallExecuteSequence>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Operit2" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="OperitMenuFolder" Name="Operit2" />
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="AppShortcuts" Guid="10A66797-E4E2-43EC-BF44-8B128EFD8FF9">
+        <Shortcut Id="StartMenuShortcut" Directory="OperitMenuFolder" Name="Operit2"
+                  Target="[#AppExecutable]" WorkingDirectory="INSTALLFOLDER" Icon="OperitIcon" />
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="Operit2"
+                  Target="[#AppExecutable]" WorkingDirectory="INSTALLFOLDER" Icon="OperitIcon" />
+        <RemoveFolder Id="RemoveOperitMenu" Directory="OperitMenuFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveEmptyProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\Operit\Operit2\Installer" Name="Shortcuts"
+                       Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Operit\Operit2\Installer" Name="InstallLocation"
+                       Type="string" Value="[INSTALLFOLDER]" />
+      </Component>
+    </DirectoryRef>
+    <Feature Id="Complete" Title="Operit2" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="AppShortcuts" />
+    </Feature>
+    <UI><EmbeddedUI SourceFile="$(var.EmbeddedUI)" /></UI>
+  </Package>
+</Wix>

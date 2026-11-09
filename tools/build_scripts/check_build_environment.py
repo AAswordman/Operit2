@@ -198,6 +198,7 @@ def check_native_app_tools(include_ios: bool) -> list[CheckResult]:
     if platform_name == "windows":
         vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
         results.append(check_file("Visual Studio locator", vswhere))
+        results.append(check_command("dotnet", ["--list-sdks"]))
     elif platform_name == "linux":
         results.extend(
             [

@@ -900,6 +900,70 @@ mod tests {
         blocks
     }
 
+    /// XML plugins must retain attribute syntax through the ordinary shared dispatcher.
+    #[test]
+    fn xml_attributes_keep_image_markers_at_every_stream_split() {
+        for tag in ["tool_result", "details", "custom_plugin"] {
+            let value = "{&quot;diffContent&quot;:&quot;assert.ok(!result.includes('!['));&quot;}";
+            let source = format!("<{tag} data=\"{value}\"><content>written</content></{tag}>");
+            for split in source
+                .char_indices()
+                .map(|(index, _)| index)
+                .chain([source.len()])
+            {
+                let mut stream = MarkdownRenderEventStream::new("attributes".to_string());
+                let mut events = stream.pushChunk(&source[..split]);
+                events.extend(stream.pushChunk(&source[split..]));
+                events.extend(stream.finish());
+                assert_eq!(
+                    block_bodies(&events),
+                    vec![(Some("XmlBlock".to_string()), source.clone())],
+                    "tag={tag}, split={split}"
+                );
+                let xml = events
+                    .iter()
+                    .find(|event| event.eventType == "markdownBlockEnd")
+                    .and_then(|event| event.xml.as_ref())
+                    .expect("the XML plugin must finish its block");
+                assert_eq!(xml.tagName.as_deref(), Some(tag));
+                assert_eq!(xml.isClosed, Some(true));
+                assert_eq!(xml.children[0].bodyChunk.as_deref(), Some("written"));
+                assert_eq!(
+                    xml.attributes
+                        .as_ref()
+                        .unwrap()
+                        .get("data")
+                        .map(String::as_str),
+                    Some(value)
+                );
+            }
+        }
+    }
+
+    /// XML attribute recognition must preserve ordinary image and HTML-break dispatch.
+    #[test]
+    fn xml_attribute_state_preserves_other_block_plugins() {
+        for source in ["<br>", "<br/>", "<br />", "![image](asset.png)"] {
+            let expected_type = if source.starts_with('!') {
+                "Image"
+            } else {
+                "HtmlBreak"
+            };
+            for split in 0..=source.len() {
+                let mut stream = MarkdownRenderEventStream::new("dispatch".to_string());
+                let mut events = stream.pushChunk(&source[..split]);
+                events.extend(stream.pushChunk(&source[split..]));
+                events.extend(stream.finish());
+                let types = events
+                    .iter()
+                    .filter(|event| event.eventType == "markdownBlockStart")
+                    .filter_map(|event| event.nodeType.as_deref())
+                    .collect::<Vec<_>>();
+                assert_eq!(types, vec![expected_type], "source={source}, split={split}");
+            }
+        }
+    }
+
     #[test]
     fn image_blocks_preserve_markdown_at_every_stream_split() {
         for image in [

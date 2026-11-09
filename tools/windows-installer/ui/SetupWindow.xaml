@@ -1,0 +1,134 @@
+<Window x:Class="Operit.Installer.SetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Operit2 安装" Width="900" Height="570" WindowStartupLocation="CenterScreen"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
+        FontFamily="Microsoft YaHei UI" FontSize="13" Foreground="#1C3048"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" Closing="OnClosing"
+        Icon="/OperitInstaller;component/Assets/Logo.png">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="#55677D" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Padding" Value="12,8" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonSurface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="1" CornerRadius="9" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.75" /></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.55" /></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.4" /></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#82ACD9" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Background" Value="#36618E" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Height" Value="46" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Foreground" Value="#52667E" />
+      <Setter Property="Padding" Value="0,4" />
+      <Setter Property="SelectionBrush" Value="#B6D4F4" />
+    </Style>
+  </Window.Resources>
+  <Border Margin="14" CornerRadius="20" Background="White" BorderBrush="#E3E9F1" BorderThickness="1">
+    <Border.Effect><DropShadowEffect BlurRadius="20" ShadowDepth="3" Opacity="0.14" Color="#183653" /></Border.Effect>
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="54" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+      <Border Background="White" CornerRadius="20,20,0,0" MouseLeftButtonDown="DragTitleBar">
+        <Grid>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="24,0">
+            <Image Source="/OperitInstaller;component/Assets/Logo.png" Width="25" Height="25" />
+            <TextBlock Text="Operit2" FontFamily="Segoe UI" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" Margin="9,0,0,0" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0">
+            <Button Width="36" Height="32" Click="Minimize" AutomationProperties.Name="最小化">
+              <Path Data="M 0,0 L 11,0" Stroke="#6D7D90" StrokeThickness="1.3" />
+            </Button>
+            <Button x:Name="CloseButton" Width="36" Height="32" Click="RequestClose" AutomationProperties.Name="关闭">
+              <Path Data="M 0,0 L 10,10 M 10,0 L 0,10" Stroke="#6D7D90" StrokeThickness="1.3" />
+            </Button>
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="326" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+        <Border CornerRadius="0,0,0,20">
+          <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#F1F6FD" Offset="0" /><GradientStop Color="#DFECFA" Offset="1" /></LinearGradientBrush></Border.Background>
+          <Grid Margin="32,35,30,28">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <TextBlock Text="让想法，&#10;开始行动。" FontSize="31" FontWeight="SemiBold" LineHeight="46" />
+            <TextBlock Grid.Row="1" Text="你的 AI 工作空间" Foreground="#6A819B" Margin="1,15,0,0" FontSize="14" />
+            <Grid Grid.Row="2" Margin="0,30,0,22" VerticalAlignment="Center">
+              <Border Margin="14,10,-9,-10" CornerRadius="15" Background="#CBDDF1" Opacity="0.65" />
+              <Border CornerRadius="15" Background="#FAFCFF" BorderBrush="#FFFFFF" BorderThickness="1" Padding="20">
+                <StackPanel>
+                  <StackPanel Orientation="Horizontal">
+                    <Border CornerRadius="7" Background="#DFEBF9" Width="28" Height="28"><TextBlock Text="✦" Foreground="#36618E" VerticalAlignment="Center" HorizontalAlignment="Center" FontSize="18" /></Border>
+                    <TextBlock Text="从一个想法开始" Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" Foreground="#55708D" />
+                  </StackPanel>
+                  <Border Height="6" CornerRadius="3" Background="#DCE6F2" Margin="0,19,0,0" />
+                  <Border Height="6" CornerRadius="3" Background="#E8EEF6" Margin="0,10,37,0" />
+                  <Border Height="6" CornerRadius="3" Background="#E8EEF6" Margin="0,10,16,0" />
+                  <Border CornerRadius="8" Background="#ECF3FC" Margin="0,19,0,0" Padding="12,9">
+                    <TextBlock Text="对话  ·  工具  ·  自动化" Foreground="#47739E" FontSize="11" />
+                  </Border>
+                </StackPanel>
+              </Border>
+            </Grid>
+            <TextBlock Grid.Row="3" Text="更自由地探索，更从容地创造。" Foreground="#6F87A0" FontSize="12" />
+          </Grid>
+        </Border>
+        <Grid Grid.Column="1" Margin="38,32,38,29">
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <StackPanel Orientation="Horizontal">
+            <Border Background="#EFF4FB" CornerRadius="5" Padding="8,4"><TextBlock Text="WINDOWS 安装" FontSize="11" Foreground="#53749A" /></Border>
+            <TextBlock x:Name="VersionText" Foreground="#8B98A9" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center" />
+          </StackPanel>
+          <StackPanel Grid.Row="1" Margin="0,23,0,0">
+            <TextBlock x:Name="Heading" Text="安装 Operit2" FontSize="26" FontWeight="SemiBold" />
+            <TextBlock x:Name="Description" Text="只需一步，开启你的 AI 工作空间。" Foreground="#7A889B" Margin="0,12,0,0" LineHeight="23" TextWrapping="Wrap" />
+          </StackPanel>
+          <Grid Grid.Row="2" Margin="0,28,0,18">
+            <StackPanel x:Name="LocationPanel" VerticalAlignment="Top">
+              <Border Background="#F7F9FC" BorderBrush="#E7ECF3" BorderThickness="1" CornerRadius="11" Padding="15,12">
+                <StackPanel>
+                  <DockPanel>
+                    <Button x:Name="ChangeLocationButton" DockPanel.Dock="Right" Content="更改" Padding="3,0" Foreground="#36618E" Click="EditLocation" />
+                    <TextBlock Text="安装位置" Foreground="#8492A5" FontSize="12" VerticalAlignment="Center" />
+                  </DockPanel>
+                  <TextBox x:Name="LocationText" FontSize="12" IsReadOnly="True" Margin="0,7,0,0" AutomationProperties.Name="安装位置" />
+                </StackPanel>
+              </Border>
+              <TextBlock x:Name="InstallHint" Text="仅为当前用户安装，无需管理员权限。&#10;自动创建桌面和开始菜单快捷方式。" FontSize="12" Foreground="#8B98A9" LineHeight="22" Margin="2,13,0,0" />
+            </StackPanel>
+            <StackPanel x:Name="ProgressPanel" Visibility="Collapsed" VerticalAlignment="Center">
+              <DockPanel Margin="0,0,0,14"><TextBlock x:Name="PercentText" DockPanel.Dock="Right" Text="0%" Foreground="#36618E" /><TextBlock x:Name="ProgressText" Text="正在准备…" Foreground="#728299" /></DockPanel>
+              <ProgressBar x:Name="Progress" Height="6" Minimum="0" Maximum="100" BorderThickness="0" Foreground="#36618E" Background="#E9EFF7" />
+              <TextBlock Text="请稍候，安装程序正在完成所需操作。" FontSize="12" Foreground="#8B98A9" Margin="0,14,0,0" />
+            </StackPanel>
+            <TextBox x:Name="ResultText" Visibility="Collapsed" TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto" FontSize="12" />
+          </Grid>
+          <StackPanel Grid.Row="3">
+            <Button x:Name="MainButton" Content="安装 Operit2" Style="{StaticResource PrimaryButton}" Click="PrimaryAction" IsDefault="True" />
+            <Button x:Name="SecondaryButton" Content="稍后再说" Click="SecondaryAction" HorizontalAlignment="Center" Margin="0,9,0,0" FontSize="12" />
+          </StackPanel>
+        </Grid>
+      </Grid>
+    </Grid>
+  </Border>
+</Window>

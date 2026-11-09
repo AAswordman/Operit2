@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -8,6 +9,71 @@ import 'package:operit2/core/runtime/RuntimeBootstrapManager.dart';
 /// Verifies that first-launch logs cannot open FFI before roots are installed.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'pending or denied storage authorization cannot configure Core',
+    () async {
+      const channel = MethodChannel('operit/runtime');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final storageRequested = Completer<void>();
+      final authorization = Completer<void>();
+      final persistedConfirmations = <bool>[];
+      var coreConnections = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case 'runtimeBootstrapRead':
+            return jsonEncode({'ok': true, 'value': null});
+          case 'runtimeBootstrapWrite':
+            final config = jsonDecode(call.arguments as String) as Map;
+            persistedConfirmations.add(config['confirmed'] as bool);
+            return jsonEncode({'ok': true});
+          case 'localRuntimeStoragePaths':
+            return call.arguments;
+          case 'setLocalRuntimeStorage':
+            storageRequested.complete();
+            await authorization.future;
+            return null;
+          case 'connectCoreFfi':
+            coreConnections++;
+            throw PlatformException(code: 'TEST_CONNECTION_BOUNDARY');
+          default:
+            throw StateError('Unexpected host method: ${call.method}');
+        }
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+      await ClientLogger.initialize();
+      final manager = RuntimeBootstrapManager.instance;
+      await manager.initialize();
+      final confirmation = manager.confirmLocalRuntimeStorage(
+        '/storage/emulated/0/Operit/runtime',
+        '/storage/emulated/0/Operit/workspaces',
+      );
+      await storageRequested.future;
+      expect(manager.runtimeConfigured, isFalse);
+      expect(persistedConfirmations, <bool>[false]);
+      expect(coreConnections, 0);
+
+      final rejected = expectLater(
+        confirmation,
+        throwsA(
+          isA<PlatformException>().having(
+            (error) => error.code,
+            'code',
+            'STORAGE_PERMISSION_REQUIRED',
+          ),
+        ),
+      );
+      authorization.completeError(
+        PlatformException(code: 'STORAGE_PERMISSION_REQUIRED'),
+      );
+      await rejected;
+      expect(manager.runtimeConfigured, isFalse);
+      expect(persistedConfirmations, <bool>[false]);
+      expect(coreConnections, 0);
+    },
+  );
 
   test('bootstrap attaches logging only after storage confirmation', () async {
     const channel = MethodChannel('operit/runtime');
