@@ -36,6 +36,9 @@ use operit_util::MediaPoolManager::MediaPoolManager;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
 const MESSAGE_PROCESS_TIMING_TAG: &str = "MessageProcessTiming";
+/// Bounds the appended review independently of the model-generated summary.
+const MAX_CONVERSATION_REVIEW_ENTRIES: usize = 100;
+const CONVERSATION_REVIEW_HEAD_ENTRIES: usize = 30;
 
 pub struct AIMessageManager;
 
@@ -581,16 +584,8 @@ impl AIMessageManager {
         }
 
         let mut summaryWithQuotes = summary.trim().to_string();
-        if !conversationReviewEntries.is_empty() {
-            summaryWithQuotes.push_str("\n\n【对话回顾】\n");
-            for (speaker, content) in conversationReviewEntries {
-                summaryWithQuotes.push_str("- ");
-                summaryWithQuotes.push_str(&speaker);
-                summaryWithQuotes.push_str(": ");
-                summaryWithQuotes.push_str(&content);
-                summaryWithQuotes.push('\n');
-            }
-        }
+        // Keep the review in the same language as the summary prompt.
+        appendConversationReview(&mut summaryWithQuotes, &conversationReviewEntries, false);
 
         let finalSummary = if autoContinue {
             format!(
@@ -1225,6 +1220,43 @@ fn remove_status_tags(input: &str) -> String {
         .to_string()
 }
 
+/// Keeps the earliest context and the latest exchanges, omitting the middle of long reviews.
+#[allow(non_snake_case)]
+fn appendConversationReview(summary: &mut String, entries: &[(String, String)], useEnglish: bool) {
+    if entries.is_empty() {
+        return;
+    }
+    summary.push_str(if useEnglish {
+        "\n\n【Conversation Review】\n"
+    } else {
+        "\n\n【对话回顾】\n"
+    });
+    let appendEntries = |summary: &mut String, entries: &[(String, String)]| {
+        for (speaker, content) in entries {
+            summary.push_str("- ");
+            summary.push_str(speaker);
+            summary.push_str(": ");
+            summary.push_str(content);
+            summary.push('\n');
+        }
+    };
+    if entries.len() <= MAX_CONVERSATION_REVIEW_ENTRIES {
+        appendEntries(summary, entries);
+        return;
+    }
+    let tailCount = MAX_CONVERSATION_REVIEW_ENTRIES - CONVERSATION_REVIEW_HEAD_ENTRIES;
+    appendEntries(summary, &entries[..CONVERSATION_REVIEW_HEAD_ENTRIES]);
+    let omittedCount = entries.len() - MAX_CONVERSATION_REVIEW_ENTRIES;
+    if useEnglish {
+        summary.push_str(&format!(
+            "- [...Middle messages omitted: {omittedCount}...]\n"
+        ));
+    } else {
+        summary.push_str(&format!("- [...中间省略 {omittedCount} 条消息...]\n"));
+    }
+    appendEntries(summary, &entries[entries.len() - tailCount..]);
+}
+
 #[allow(non_snake_case)]
 fn cleanSummarySourceMessage(message: &ChatMessage) -> String {
     let source = if message.sender == "ai" {
@@ -1690,6 +1722,57 @@ mod tests {
             .starts_with("<tool_result name=\"switch_core\""));
         assert_eq!(turns[2].tool_name.as_deref(), Some("switch_core"));
         assert_eq!(turns[3].content, "after");
+    }
+
+    /// Enforces a fixed review size even for chats with thousands of messages.
+    #[test]
+    fn summary_review_bounds_entries_and_omits_the_middle() {
+        for count in [0, 1, 100, 101, 10_000] {
+            let entries = (0..count)
+                .map(|index| ("user".to_string(), format!("entry-{index}")))
+                .collect::<Vec<_>>();
+            let mut summary = "Model summary".to_string();
+            appendConversationReview(&mut summary, &entries, false);
+            let retained = summary
+                .lines()
+                .filter_map(|line| line.strip_prefix("- user: "))
+                .collect::<Vec<_>>();
+            let indices = if count <= 100 {
+                (0..count).collect::<Vec<_>>()
+            } else {
+                (0..30).chain(count - 70..count).collect::<Vec<_>>()
+            };
+            assert_eq!(
+                retained,
+                indices
+                    .iter()
+                    .map(|index| format!("entry-{index}"))
+                    .collect::<Vec<_>>()
+            );
+            assert!(retained.len() <= MAX_CONVERSATION_REVIEW_ENTRIES);
+            if count == 0 {
+                assert_eq!(summary, "Model summary");
+            } else if count <= 100 {
+                assert!(!summary.contains("中间省略"));
+            } else {
+                assert!(summary.contains(&format!("中间省略 {} 条消息", count - 100)));
+                assert!(
+                    summary.len() < 3000,
+                    "the review must stay bounded at {count} entries"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn summary_review_localizes_the_omission_marker() {
+        let entries = vec![("AI".to_string(), "reply".to_string()); 101];
+        let mut summary = String::new();
+        appendConversationReview(&mut summary, &entries, true);
+        assert!(summary.contains("【Conversation Review】"));
+        assert!(summary.contains("Middle messages omitted: 1"));
+        assert!(!summary.contains("对话回顾"));
+        assert!(!summary.contains("省略"));
     }
 
     #[test]

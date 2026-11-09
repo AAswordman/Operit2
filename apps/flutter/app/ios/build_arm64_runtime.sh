@@ -26,7 +26,28 @@ export OPERIT_ARM64_BUILD_TYPE=Release
 export OPERIT_ARM64_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-16.4}"
 # Xcode adds this to its script environment; nested CMake/Make must not inherit it.
 unset SDKROOT
-bash "$repo_dir/tools/ios-runtime/arm64/build.sh" "$target"
+aot_profile="${OPERIT_ARM64_GUEST_AOT_PROFILE:-}"
+aot_args=(
+    "-DOPERIT_ARM64_GUEST_AOT_PROFILE=$aot_profile"
+    "-DOPERIT_ARM64_GUEST_AOT_EXTRA_PROFILES="
+    "-DOPERIT_ARM64_GUEST_AOT_ELFS="
+    "-DOPERIT_ARM64_GUEST_AOT_TRACES=OFF"
+    "-DOPERIT_ARM64_GUEST_AOT_COVERAGE=OFF"
+)
+if [[ -n "$aot_profile" ]]; then
+    aot_args+=(
+        "-DOPERIT_ARM64_GUEST_AOT_LIMIT=16384"
+        "-DOPERIT_ARM64_GUEST_AOT_MAX_LENGTH=32"
+        "-DOPERIT_ARM64_GUEST_AOT_SCORE_LENGTH=ON"
+        "-DOPERIT_ARM64_GUEST_AOT_DIVERSE=ON"
+        "-DOPERIT_ARM64_GUEST_AOT_BRANCHES=ON"
+        "-DOPERIT_ARM64_GUEST_AOT_INDIRECT=ON"
+        "-DOPERIT_ARM64_GUEST_AOT_FOLDED=ON"
+        "-DOPERIT_ARM64_GUEST_AOT_INLINE_MEMORY=ON"
+        "-DOPERIT_ARM64_GUEST_AOT_REGISTER_MEMORY=ON"
+    )
+fi
+bash "$repo_dir/tools/ios-runtime/arm64/build.sh" "$target" "${aot_args[@]}"
 if ! cmp -s "$OPERIT_ARM64_BUILD_DIR/liboperit_arm64.a" "$output_dir/liboperit_arm64.a"; then
     cp "$OPERIT_ARM64_BUILD_DIR/liboperit_arm64.a" "$output_dir/.liboperit_arm64.a.tmp"
     mv -f "$output_dir/.liboperit_arm64.a.tmp" "$output_dir/liboperit_arm64.a"

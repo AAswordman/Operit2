@@ -132,6 +132,7 @@ enum class Encoding : uint8_t {
     ScalarSubtract64,
     ScalarUnary32, ScalarUnary64, ScalarSignedToDouble64,
     ScalarUnsignedToDouble32, ScalarSignedToDouble32, ScalarDoubleToSigned32, ScalarDoubleToSigned64,
+    LoadAcquire,
     Count
 };
 

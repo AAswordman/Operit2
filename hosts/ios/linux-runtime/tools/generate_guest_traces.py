@@ -217,7 +217,7 @@ def main():
     cpp += ['};', 'static const uint8_t operation_counts[] = {']
     for item in selected:
         words = (item[0], *item[2:])
-        cpp.append('    ' + ','.join('2' if aot.decode(word)[0] == 'memory_reg' else '1' for word in words) + ',')
+        cpp.append('    ' + ','.join(str(aot.operation_count(aot.decode(word))) for word in words) + ',')
     cpp += ['};', 'static const uint8_t boundaries[] = {']
     for item in selected:
         words, marker = (item[0], *item[2:]), item[1]
@@ -267,7 +267,11 @@ def main():
             '    if(count==1)return true;',
             '    const auto first=operation_info(code[at]);const auto second=operation_info(code[at+1]);',
             '    return count==2 && first.code==StaticCode::Prepare && first.node==second.node &&',
-            '        (second.code==StaticCode::LoadPrepared || second.code==StaticCode::StorePrepared);',
+            '        (second.code==StaticCode::LoadPrepared || second.code==StaticCode::StorePrepared ||',
+            '         second.code==StaticCode::Madd || second.code==StaticCode::Msub ||',
+            '         second.code==StaticCode::AddPrepared || second.code==StaticCode::SubPrepared ||',
+            '         second.code==StaticCode::AndPrepared || second.code==StaticCode::OrPrepared ||',
+            '         second.code==StaticCode::XorPrepared);',
             '}', '}',
             'std::size_t guest_trace_block_count(const void *entry) {',
             '    for(const auto &trace:traces)if(trace.entry==entry)return trace.blocks;',
@@ -278,7 +282,9 @@ def main():
             '        for(size_t i=0;i<result.size();++i)result[i]=reinterpret_cast<uintptr_t>(traces[i].entry);',
             '        std::sort(result.begin(),result.end());return result;',
             '    }();',
-            '    return std::binary_search(entries.begin(),entries.end(),reinterpret_cast<uintptr_t>(entry));', '}',
+            '    const auto address=reinterpret_cast<uintptr_t>(entry);',
+            '    return address>=entries.front() && address<=entries.back() &&',
+            '        std::binary_search(entries.begin(),entries.end(),address);', '}',
             'std::size_t install_guest_traces(BlockGraph &graph) {',
             '    std::size_t installed=0;',
             '    for(auto &owner:graph.blocks) {auto &code=owner->code;bool done=false;',

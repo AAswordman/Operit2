@@ -2277,8 +2277,8 @@
   "settingsAppearanceThemeConfigDelete": "删除当前未启用的主题配置",
   "settingsAppearanceThemeConfigName": "主题名称",
   "settingsAppearanceThemeConfigNameRequired": "请输入主题名称",
-  "settingsAppearanceThemeConfigCustomHint": "点击 + 创建和管理独立的主题配置。",
-  "settingsAppearanceThemeConfigEditingHint": "修改外观会自动保存到当前主题配置。",
+  "settingsAppearanceThemeConfigCustomHint": "创建主题保存你的外观。点击卡片切换，点击编辑调整细节。",
+  "settingsAppearanceThemeConfigEditingHint": "点击卡片即可切换主题；进入编辑后，修改会自动保存。",
   "settingsAppearanceThemeConfigFailed": "主题操作失败：{detail}",
   "@settingsAppearanceThemeConfigFailed": {
     "placeholders": {
@@ -2520,5 +2520,20 @@
         "type": "int"
       }
     }
-  }
+  },
+  "contextStatsSummaryLoadFailed": "无法加载上下文信息",
+  "contextStatsDevicesLoadFailed": "无法加载设备信息",
+  "settingsAppearanceThemeLibrary": "我的主题",
+  "settingsAppearanceThemeLibraryHint": "选一个喜欢的外观，再把它调成你的样子。",
+  "settingsAppearanceThemeActive": "使用中",
+  "settingsAppearanceThemeApply": "使用此主题",
+  "settingsAppearanceThemeMore": "更多主题操作",
+  "settingsAppearanceThemeDuplicate": "创建副本",
+  "settingsAppearanceThemeUnboundHint": "保留当前外观，自由调整，不绑定已保存的主题。",
+  "settingsAppearanceThemeDeleteTitle": "删除主题",
+  "settingsAppearanceThemeDeleteConfirm": "确定删除「{name}」？删除后无法恢复。",
+  "settingsAppearancePreviewCollapse": "收起",
+  "settingsAppearancePreviewExpand": "展开",
+  "@settingsAppearanceThemeDeleteConfirm": {"placeholders": {"name": {"type": "String"}}},
+  "settingsAppearanceThemeNew": "新建主题"
 }

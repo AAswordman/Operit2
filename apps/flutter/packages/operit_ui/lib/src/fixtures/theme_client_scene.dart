@@ -41,6 +41,9 @@ class ThemeClientScene extends StatelessWidget {
     this.aiFontFamily,
     this.inspectEnabled = false,
     this.mode = ThemeClientSceneMode.conversation,
+    this.showTopBar = true,
+    this.userSample = '帮我把主题工作台调整得更简洁一些。',
+    this.aiSample = '可以。选择预览里的消息气泡，我会显示它可编辑的全部主题参数。',
     this.selectedTargetId,
     this.onInspectTargetSelected = _ignoreInspectSelection,
   });
@@ -53,6 +56,9 @@ class ThemeClientScene extends StatelessWidget {
   final String? aiFontFamily;
   final bool inspectEnabled;
   final ThemeClientSceneMode mode;
+  final bool showTopBar;
+  final String userSample;
+  final String aiSample;
   final String? selectedTargetId;
   final ValueChanged<String> onInspectTargetSelected;
 
@@ -72,6 +78,9 @@ class ThemeClientScene extends StatelessWidget {
           body: compact
               ? _PreviewChatSurface(
                   snapshot: snapshot,
+                  showTopBar: showTopBar,
+                  userSample: userSample,
+                  aiSample: aiSample,
                   compact: true,
                   mode: mode,
                   inspectEnabled: inspectEnabled,
@@ -102,6 +111,9 @@ class ThemeClientScene extends StatelessWidget {
                     Expanded(
                       child: _PreviewChatSurface(
                         snapshot: snapshot,
+                        showTopBar: showTopBar,
+                        userSample: userSample,
+                        aiSample: aiSample,
                         mode: mode,
                         inspectEnabled: inspectEnabled,
                         selectedTargetId: selectedTargetId,
@@ -351,6 +363,9 @@ class _PreviewConversationItem extends StatelessWidget {
 class _PreviewChatSurface extends StatelessWidget {
   const _PreviewChatSurface({
     required this.snapshot,
+    required this.showTopBar,
+    required this.userSample,
+    required this.aiSample,
     required this.mode,
     required this.inspectEnabled,
     required this.selectedTargetId,
@@ -361,6 +376,9 @@ class _PreviewChatSurface extends StatelessWidget {
   });
 
   final ThemePreferenceSnapshot snapshot;
+  final bool showTopBar;
+  final String userSample;
+  final String aiSample;
   final ThemeClientSceneMode mode;
   final bool inspectEnabled;
   final String? selectedTargetId;
@@ -381,33 +399,34 @@ class _PreviewChatSurface extends StatelessWidget {
         : scheme.surface;
     return Column(
       children: <Widget>[
-        ThemeInspectTarget(
-          targetId: ThemeInspectableTargetId.topBar,
-          label: '对话顶部栏',
-          enabled: inspectEnabled,
-          selected: selectedTargetId == ThemeInspectableTargetId.topBar,
-          onSelected: onInspectTargetSelected,
-          child: ThemeTopBarChrome(
-            title: ThemeTopBarTitle(
-              primaryText: 'Operit',
-              secondaryText: 'New Chat',
-              contentColor: scheme.onSurface,
-            ),
-            navigationIcon: compact ? Icons.segment : Icons.chevron_left,
-            navigationTooltip: compact ? 'Navigation' : 'Collapse sidebar',
-            onNavigationPressed: () {},
-            flipNavigationIcon: compact,
-            contentColor: contentColor,
-            contentForeground: scheme.onSurface,
-            actions: <Widget>[
-              ThemeWorkspaceTopBarButton(
-                open: false,
-                hasBoundWorkspace: false,
-                onPressed: () {},
+        if (showTopBar)
+          ThemeInspectTarget(
+            targetId: ThemeInspectableTargetId.topBar,
+            label: '对话顶部栏',
+            enabled: inspectEnabled,
+            selected: selectedTargetId == ThemeInspectableTargetId.topBar,
+            onSelected: onInspectTargetSelected,
+            child: ThemeTopBarChrome(
+              title: ThemeTopBarTitle(
+                primaryText: 'Operit',
+                secondaryText: 'New Chat',
+                contentColor: scheme.onSurface,
               ),
-            ],
+              navigationIcon: compact ? Icons.segment : Icons.chevron_left,
+              navigationTooltip: compact ? 'Navigation' : 'Collapse sidebar',
+              onNavigationPressed: () {},
+              flipNavigationIcon: compact,
+              contentColor: contentColor,
+              contentForeground: scheme.onSurface,
+              actions: <Widget>[
+                ThemeWorkspaceTopBarButton(
+                  open: false,
+                  hasBoundWorkspace: false,
+                  onPressed: () {},
+                ),
+              ],
+            ),
           ),
-        ),
         Expanded(
           child: Center(
             child: SingleChildScrollView(
@@ -437,6 +456,7 @@ class _PreviewChatSurface extends StatelessWidget {
                           child: _PreviewBubble(
                             snapshot: snapshot,
                             user: true,
+                            text: userSample,
                             fontFamily: userFontFamily,
                           ),
                         ),
@@ -455,6 +475,7 @@ class _PreviewChatSurface extends StatelessWidget {
                           child: _PreviewBubble(
                             snapshot: snapshot,
                             user: false,
+                            text: aiSample,
                             fontFamily: aiFontFamily,
                           ),
                         ),
@@ -483,11 +504,13 @@ class _PreviewBubble extends StatelessWidget {
   const _PreviewBubble({
     required this.snapshot,
     required this.user,
+    required this.text,
     required this.fontFamily,
   });
 
   final ThemePreferenceSnapshot snapshot;
   final bool user;
+  final String text;
   final String? fontFamily;
 
   @override
@@ -588,7 +611,7 @@ class _PreviewBubble extends StatelessWidget {
     final content = Padding(
       padding: bubbleStyle || user ? padding : const EdgeInsets.all(0),
       child: Text(
-        user ? '帮我把主题工作台调整得更简洁一些。' : '可以。选择预览里的消息气泡，我会显示它可编辑的全部主题参数。',
+        text,
         style: TextStyle(
           color: textColor,
           fontFamily: bubbleStyle ? fontFamily : null,

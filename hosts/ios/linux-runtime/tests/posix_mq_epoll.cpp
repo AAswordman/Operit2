@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unistd.h>
 
 using namespace operit::arm64;
@@ -333,6 +334,8 @@ void native_edge_and_oneshot() {
     EventPoll poll;
     f.control(poll, 1, fd, in, 54);
     poll.control(1, 301, reader.get(), native, in | edge | oneshot, 55);
+    for (int i = 0; i < 3; ++i)
+        expect_empty(poll, "empty native queue before pipe becomes ready");
     const char byte = 1;
     require(::write(writer.get(), &byte, 1) == 1, "write native oneshot pipe");
     expect(poll, in, 55, "native edge oneshot");
@@ -345,6 +348,27 @@ void native_edge_and_oneshot() {
     require(::read(reader.get(), bytes, sizeof(bytes)) == 2, "drain native edge pipe");
     f.send(fd);
     expect(poll, in, 54, "MQ watch still works beside disarmed native watch");
+}
+
+void native_async_wakeup() {
+    int raw[2];
+    require(::pipe(raw) == 0, "native pipe for async wakeup");
+    FD reader(raw[0]), writer(raw[1]);
+    auto native = std::make_shared<OpenDescription>(0);
+    EventPoll poll;
+    poll.control(1, 302, reader.get(), native, in | edge, 57);
+    expect_empty(poll, "native async pipe initially empty");
+    ssize_t written = 0;
+    std::thread producer([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const char byte = 1;
+        written = ::write(writer.get(), &byte, 1);
+    });
+    const auto events = poll.wait(1, 1000);
+    producer.join();
+    require(written == 1 && events.size() == 1 && events[0].events == in && events[0].data == 57,
+            "native event must wake a blocked poll after an empty scan");
+    expect_empty(poll, "native edge delivered only once");
 }
 
 void scheduler_rechecks() {
@@ -482,6 +506,8 @@ int main() {
         fairness_and_native_watch();
         phase = "native_edge_and_oneshot";
         native_edge_and_oneshot();
+        phase = "native_async_wakeup";
+        native_async_wakeup();
         phase = "scheduler_rechecks";
         scheduler_rechecks();
         phase = "blocked_handoffs";

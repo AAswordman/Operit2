@@ -822,6 +822,148 @@ Future<void> _saveStartupThemeModeDefault(ThemeMode themeMode) {
   return RuntimeBootstrapManager.instance.saveStartupThemeMode(themeMode);
 }
 
+/// Renders an inert appearance in its own scope without starting runtime
+/// observers or writing the application's selected theme.
+class OperitThemePreview extends StatefulWidget {
+  const OperitThemePreview({
+    super.key,
+    required this.snapshot,
+    required this.child,
+    this.visual,
+    this.assets,
+  });
+
+  final ThemePreferenceSnapshot snapshot;
+  final PreparedThemeVisual? visual;
+  final ThemeAssetResolver? assets;
+  final Widget child;
+
+  @override
+  State<OperitThemePreview> createState() => _OperitThemePreviewState();
+}
+
+class _OperitThemePreviewState extends State<OperitThemePreview> {
+  late final OperitThemeController _controller = OperitThemeController(
+    onChanged: () {},
+  );
+  final _assets = ThemeAssetStore();
+  Future<void>? _preparation;
+  late ThemeAssetResolver _resolver;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepare();
+  }
+
+  @override
+  void didUpdateWidget(covariant OperitThemePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!mapEquals(oldWidget.snapshot.toJson(), widget.snapshot.toJson()) ||
+        oldWidget.visual != widget.visual ||
+        oldWidget.assets != widget.assets) {
+      _prepare();
+    }
+  }
+
+  void _prepare() {
+    final visual = widget.visual;
+    _resolver = visual == null
+        ? widget.assets ?? _assets
+        : _PreviewAssetResolver(
+            visual: visual.resources,
+            runtime: widget.assets ?? _assets,
+          );
+    final snapshot = visual?.snapshot(widget.snapshot) ?? widget.snapshot;
+    _controller.setInitialThemePreferenceSnapshot(snapshot);
+    if (visual != null) {
+      for (final font in [
+        visual.resources.sans,
+        visual.resources.user,
+        visual.resources.ai,
+      ]) {
+        _loadedCustomFontFamilies[font.family] = font.family;
+      }
+      _preparation = null;
+    } else if (snapshot.fontType == UserPreferencesManager.FONT_TYPE_FILE ||
+        (snapshot.bubbleUserUseCustomFont &&
+            snapshot.bubbleUserFontType ==
+                UserPreferencesManager.FONT_TYPE_FILE) ||
+        (snapshot.bubbleAiUseCustomFont &&
+            snapshot.bubbleAiFontType ==
+                UserPreferencesManager.FONT_TYPE_FILE)) {
+      _preparation = _prepareCustomFonts(snapshot).then((families) {
+        _loadedCustomFontFamilies.addAll(families);
+      });
+    } else {
+      _preparation = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: _preparation,
+      builder: (context, preparation) {
+        if (preparation.hasError) {
+          return Center(
+            child: Text(
+              AppLocalizations.of(
+                context,
+              )!.settingsAppearanceThemeConfigFailed('${preparation.error}'),
+            ),
+          );
+        }
+        if (_preparation != null &&
+            preparation.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final snapshot = _controller.themePreferenceSnapshot;
+        final brightness = switch (snapshot.themeMode) {
+          ThemeMode.light => Brightness.light,
+          ThemeMode.dark => Brightness.dark,
+          ThemeMode.system => MediaQuery.platformBrightnessOf(context),
+        };
+        return _OperitThemeScope(
+          controller: _controller,
+          child: ThemeAssetScope(
+            resolver: _resolver,
+            child: Theme(
+              data: buildOperitThemeData(
+                _seedColorScheme(brightness, snapshot),
+                snapshot,
+                fontFamily: _fontFamily(snapshot),
+                fontFamilyFallback: _fontFamilyFallback(snapshot),
+              ),
+              child: IgnorePointer(child: ExcludeFocus(child: widget.child)),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Template references are checked in memory; saved media uses the same runtime
+/// owner as the catalog. Both are available in previews that mix these sources.
+class _PreviewAssetResolver implements ThemeAssetResolver {
+  const _PreviewAssetResolver({required this.visual, required this.runtime});
+  final ThemeAssetResolver? visual;
+  final ThemeAssetResolver runtime;
+
+  @override
+  Future<Uint8List> readBytes(String reference) =>
+      (reference.startsWith('assets/') ? visual ?? runtime : runtime).readBytes(
+        reference,
+      );
+}
+
 class _OperitThemeScope extends InheritedWidget {
   const _OperitThemeScope({required this.controller, required super.child});
 

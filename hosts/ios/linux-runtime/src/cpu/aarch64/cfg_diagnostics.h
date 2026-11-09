@@ -41,7 +41,7 @@ inline constexpr const char *encoding_names[]={
     "VectorImmediate","VectorLogical","ScalarFma64","ScalarSqrt64","ScalarUnsignedToDouble64","ScalarAdd64",
     "ScalarCompare64","ScalarSelect64","VectorFma2D","ScalarMultiply64","ScalarDivide64","ScalarSubtract64",
     "ScalarUnary32","ScalarUnary64","ScalarSignedToDouble64",
-    "ScalarUnsignedToDouble32","ScalarSignedToDouble32","ScalarDoubleToSigned32","ScalarDoubleToSigned64"
+    "ScalarUnsignedToDouble32","ScalarSignedToDouble32","ScalarDoubleToSigned32","ScalarDoubleToSigned64","LoadAcquire"
 };
 inline constexpr const char *static_code_names[]={
     "Block","Bridge","IndirectDispatch","Next","Helper","Nop",
@@ -58,7 +58,7 @@ inline constexpr const char *static_code_names[]={
     "IndirectCall","Branch","CompareBranch","TestBranch","CompareImmediateBranch","ReadTls",
     "WriteTls","ReadFlags","WriteFlags","ConditionalCompare","LoadWriteback","StoreWriteback",
     "SignedLoadWriteback","VectorLoadWriteback","VectorStoreWriteback","FUnary","BlockBody","ScheduledLoads","SignedToDouble","DoubleToSigned",
-    "SmaddLong","UmaddLong","SmsubLong","UmsubLong"
+    "SmaddLong","UmaddLong","SmsubLong","UmsubLong","VectorLogical","LoadAcquire"
 };
 
 inline const char *name(const char *const *names,size_t size,unsigned value) {

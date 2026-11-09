@@ -128,7 +128,7 @@ ExecutionEngine::Entry ExecutionEngine::find(uint64_t pc) {
         graphs_.erase(std::remove_if(graphs_.begin(),graphs_.end(),[&](const auto &graph){return graph.get()==entry.graph;}),graphs_.end());
     }
     OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("cache.find_miss");)
-    if(graphs_.size()>=4096) {
+    if(graphs_.size()>=graph_cache_capacity) {
         // Native bridges mark their destination too: a graph can stay hot for
         // millions of edges without returning through find().
         while(graphs_.front()->referenced) {
@@ -239,7 +239,7 @@ const StaticOperation *ExecutionEngine::link(const StaticOperation &source,uint6
             OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("link.same_graph.indirect");++diagnostics_.links[{source_pc,pc,false,true,0,0}];)
             return next;
         }
-        owned=&pic.bridges[slot];
+        owned=&pic.bridge_for(slot);
     } else {
         if(old==frame_.graph) {
             OPERIT_EXEC_DIAGNOSTIC(diagnostics_.count("link.same_graph.direct");++diagnostics_.links[{source_pc,pc,false,false,0,0}];)
@@ -430,9 +430,10 @@ const StaticOperation *ExecutionEngine::slow(const StaticOperation &op) {
         return link(op,frame_.pending_pc);
     }
     case StaticCode::Branch:case StaticCode::CompareBranch:case StaticCode::TestBranch:
-        return link(op,info.pc+frame_.graph->source.at(info.pc)->instruction.immediate);
+        return link(op,info.pc+info.node->instruction.immediate);
     case StaticCode::CompareImmediateBranch:
-        return link(op,info.pc+4+frame_.graph->source.at(info.pc+4)->instruction.immediate);
+        // Lowering only fuses consecutive instructions in the same block.
+        return link(op,info.pc+4+(info.node+1)->instruction.immediate);
     default:break;
     }
     frame_.completed=frame_.block_base+info.prefix-1;

@@ -375,6 +375,34 @@ void rejected_parallel_batch_preserves_serial_rotation() {
                 "singleton parallel probe replaced the selected serial task");
     }
 }
+void serial_selection_matches_batch_order() {
+    Scheduler serial, batch;
+    for (unsigned i = 0; i != 5; ++i) {
+        require(serial.spawn(CpuState{}, 0x18000, 0, 0) == batch.spawn(CpuState{}, 0x18000, 0, 0),
+                "selection comparison task IDs differ");
+    }
+    for (unsigned step = 0; step != 180; ++step) {
+        for (Scheduler *scheduler : {&serial, &batch}) {
+            for (uint32_t tid = 1; tid <= 6; ++tid) {
+                auto &task = scheduler->find(tid);
+                task.nice = int32_t((step / 7 + tid * 3) % 5) - 2;
+                task.cpu_affinity = (step + tid) % 11 == 0 ? 0 : 1;
+                task.stopped = (step / 3 + tid) % 13 == 0;
+                const bool realtime = (step / 9 + tid) % 4 == 0;
+                task.sched_policy = realtime ? Task::SchedulingPolicy::Fifo : Task::SchedulingPolicy::Other;
+                task.rt_priority = realtime ? 10 + (tid % 3) : 0;
+                scheduler->scheduling_changed(tid);
+            }
+            if (step % 5 == 0)
+                scheduler->yield();
+        }
+        const bool selected = serial.select(false);
+        const auto candidates = batch.runnable_batch(1);
+        require(selected == !candidates.empty(), "serial and batch runnable state differs");
+        if (selected)
+            require(serial.current_tid() == candidates.front().tid, "serial and batch task order differs");
+    }
+}
 void realtime_exec_rekey_and_interval_syscall() {
     Fixture f;
     f.seed(Resource::RealtimePriority, 30, 30);
@@ -693,6 +721,7 @@ int main(int argc, char **argv) {
         realtime_priority_moves_and_rr_budget();
         realtime_affinity_batch_matching();
         rejected_parallel_batch_preserves_serial_rotation();
+        serial_selection_matches_batch_order();
         realtime_exec_rekey_and_interval_syscall();
         realtime_policy_syscalls_preserve_rr_budget();
         realtime_limit_thresholds_and_permissions();

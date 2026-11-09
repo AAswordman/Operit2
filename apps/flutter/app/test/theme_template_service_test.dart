@@ -9,6 +9,7 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/ui/theme/ThemeTemplateService.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 
 /// Verifies template creation copies complete appearance and resources through the ordinary owners.
 void main() {
@@ -31,17 +32,21 @@ void main() {
     },
   );
 
-  test('removing a creation source reports failure without writing user assets', () async {
-    final bridge = _TemplateBridge();
-    final service = ThemeTemplateService(GeneratedCoreProxyClients(bridge));
-    final source = (await service.listTemplates()).single;
-    bridge.installed = false;
-    await expectLater(service.createSnapshot(source), throwsStateError);
-    expect(bridge.files, isEmpty);
-    expect(bridge.calls.map((call) => call.methodName), <String>[
-      'getToolPkgContainerRuntimes', 'previewToolPkgTheme',
-    ]);
-  });
+  test(
+    'removing a creation source reports failure without writing user assets',
+    () async {
+      final bridge = _TemplateBridge();
+      final service = ThemeTemplateService(GeneratedCoreProxyClients(bridge));
+      final source = (await service.listTemplates()).single;
+      bridge.installed = false;
+      await expectLater(service.createSnapshot(source), throwsStateError);
+      expect(bridge.files, isEmpty);
+      expect(bridge.calls.map((call) => call.methodName), <String>[
+        'getToolPkgContainerRuntimes',
+        'previewToolPkgTheme',
+      ]);
+    },
+  );
 
   test(
     'template creation copies images and fonts without mutating appearance or binding its plugin',
@@ -96,6 +101,23 @@ void main() {
       );
       final service = ThemeTemplateService(GeneratedCoreProxyClients(bridge));
       final source = (await service.listTemplates()).single;
+      final preview = await service.preparePreview(source);
+      expect(
+        preview.spec
+            .toSnapshot(UserPreferencesManager.defaultThemePreferenceSnapshot)
+            .backgroundImageUri,
+        'assets/images/background.svg',
+      );
+      expect(
+        bridge.files,
+        isEmpty,
+        reason: 'Preview must not import user assets',
+      );
+      expect(
+        bridge.calls.any((call) => call.methodName == 'writeBase64'),
+        isFalse,
+      );
+      preview.dispose();
       final snapshot = await service.createSnapshot(source);
       expect(
         snapshot.backgroundImageUri,

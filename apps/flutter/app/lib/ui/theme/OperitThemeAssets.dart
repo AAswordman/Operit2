@@ -85,14 +85,11 @@ class ThemeAssetImage extends StatelessWidget {
   final String storagePath;
   final BoxFit fit;
 
-  static final ThemeAssetStore _runtimeStore = ThemeAssetStore();
-
   @override
   Widget build(BuildContext context) {
     final scoped = ThemeAssetScope.of(context);
-    final resolver = storagePath.startsWith('assets/') ? scoped : _runtimeStore;
     return ResolvedThemeImage(
-      resolver: resolver,
+      resolver: scoped,
       reference: storagePath,
       fit: fit,
     );

@@ -190,12 +190,13 @@ for line in args.definitions.read_text().splitlines():
     elif kind in ('gptov','uitod'):configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(9) for a in range(gp_roles)]
     elif kind in ('vtogp','ftosi'):configs=[(bits,f,d,a,7) for bits in (32,64) for f in range(fc) for d in range(gp_roles) for a in range(9)]
     elif kind=='vimm':configs=[(bits,0,d,7,7) for bits in (32,64) for d in range(9)]
+    elif kind=='vlogical':configs=[(bits,f,d,a,b) for bits in (64,128) for f in range(fc) for d in range(9) for a in range(9) for b in range(9)]
     elif kind in ('pairload','pairstore','vpairload','vpairstore','scheduledloads'):
         roles=9 if kind.startswith('v') else gp_roles
         configs=[(bits,f,d,a,b) for bits in ((32,64,128) if kind.startswith('v') else (32,64)) for f in range(fc) for d in range(roles) for a in range(gp_roles) for b in range(roles)]
     elif kind=='signedload':configs=[(bits,f,d,a,7) for bits in (8,16,32) for f in range(2) for d in range(gp_roles) for a in range(gp_roles)]
     elif kind in ('move','keep'):configs=[(bits,0,d,7,7) for bits in (32,64) for d in range(gp_roles)]
-    elif kind in ('load','vload'):configs=[(bits,0,d,a,7) for bits in ((8,16,32,64) if kind=='load' else (32,64,128)) for d in range(gp_roles if kind=='load' else 9) for a in range(gp_roles)]
+    elif kind in ('load','acquireload','vload'):configs=[(bits,0,d,a,7) for bits in ((8,16,32,64) if kind!='vload' else (32,64,128)) for d in range(gp_roles if kind!='vload' else 9) for a in range(gp_roles)]
     elif kind in ('store','vstore'):configs=[(bits,0,7,a,b) for bits in ((8,16,32,64) if kind=='store' else (32,64,128)) for a in range(gp_roles) for b in range(gp_roles if kind=='store' else 9)]
     elif kind=='longacc':configs=[(64,f,d,a,b) for f in range(fc) for d in range(gp_roles) for a in range(gp_roles) for b in range(gp_roles)]
     elif kind=='high':configs=[(64,0,d,a,b) for d in range(gp_roles) for a in range(gp_roles) for b in range(gp_roles)]
@@ -208,10 +209,24 @@ for line in args.definitions.read_text().splitlines():
     else:configs=[(bits,f,d,a,b) for bits in (32,64) for f in range(fc) for d in range(gp_roles) for a in range(gp_roles) for b in range(gp_roles)]
     for bits,f,d,a,b in configs:
         label=f'L{name}_{bits}_{f}_{d}_{a}_{b}';labels.append(label);emit('.p2align 2')
-        profile_flags=(1 if kind=='conditionalcmp' else 0)|(2 if kind in ('load','signedload','store','vload','vstore','pairload','pairstore','vpairload','vpairstore') else 0)|(4 if writeback or kind in ('pairload','pairstore','vpairload','vpairstore') else 0)|(8 if kind=='fpma' else 0)
+        profile_flags=(1 if kind=='conditionalcmp' else 0)|(2 if kind in ('load','acquireload','signedload','store','vload','vstore','pairload','pairstore','vpairload','vpairstore') else 0)|(4 if writeback or kind in ('pairload','pairstore','vpairload','vpairstore') else 0)|(8 if kind=='fpma' else 0)
         begin_handler(label,profile_flags);r='x' if bits==64 else 'w'
         if kind in ('fp','fpsqrt','fpcmp','fpma','fpselect','fpunary','uitod','ftosi'):emit('    FP_ENTER')
-        if kind=='sysread':
+        if kind=='vlogical':
+            def full_vector(role,field,scratch):
+                binding('vector_read',role)
+                if role<8:return 8+role
+                emit(f'    ldrh w12, [x28, #{field}]',f'    ldr q{scratch}, [x27, x12]')
+                return scratch
+            left=full_vector(a,'OP_A',0);right=full_vector(b,'OP_B',1)
+            dest=8+d if d<8 else 2
+            if f>=5:full_vector(d,'OP_D',2)
+            if d<8:binding('vector_write',d)
+            lanes='16b' if bits==128 else '8b'
+            emit(f'    {("and","bic","orr","orn","eor","bsl","bit","bif")[f]} v{dest}.{lanes}, v{left}.{lanes}, v{right}.{lanes}')
+            if d>=8:vstore(d,2)
+            finish()
+        elif kind=='sysread':
             dest=output_gp(d)
             if name=='ReadTls':emit(f'    ldr {dest}, [x27, #EF_SHADOW_TLS]')
             else:emit(f'    mov {dest}, x25')
@@ -399,6 +414,18 @@ for line in args.definitions.read_text().splitlines():
             if not writing:memory_release()
             emit('    ldrb w12, [x28, #OP_EXTRA]',f'    tbz w12, #0, {label}_done')
             store(a,'OP_A',0);emit(label+'_done:');finish()
+        elif kind=='acquireload':
+            emit('    cbz x7, Lslow')
+            gp(a,'OP_A',9)
+            if bits>8:emit(f'    tst x9, #{bits//8-1}','    b.ne Lslow')
+            memory_check(bits//8,False,offset=False)
+            emit(f'    cbz x13, {label}_private')
+            memory_release()
+            emit('    b Lslow',label+'_private:')
+            if bits>8:emit(f'    tst x11, #{bits//8-1}','    b.ne Lslow')
+            dest=output_gp(d,10,64 if bits==64 else 32)
+            emit(f'    {"ldarb" if bits==8 else "ldarh" if bits==16 else "ldar"} {dest}, [x11]')
+            complete_gp(d,'OP_D',10);finish()
         elif kind in ('load','signedload','store','vload','vstore'):
             gp(a,'OP_A',9)
             if indexed:emit('    add x9, x9, x15')
@@ -441,12 +468,13 @@ for line in args.definitions.read_text().splitlines():
     elif kind=='ftosi':index=f'(((bits==64)*{gp_roles}+d)*9+a)'
     elif kind=='vtogp':index=f'((((bits==64)*{fc}+flags)*{gp_roles}+d)*9+a)'
     elif kind=='vimm':index='((bits==64)*9+d)'
+    elif kind=='vlogical':index=f'(((((bits==128)*{fc}+flags)*9+d)*9+a)*9+b)'
     elif kind in ('pairload','pairstore','vpairload','vpairstore','scheduledloads'):
         roles=9 if kind.startswith('v') else gp_roles
         index=f'(((((bits==32?0:bits==64?1:2)*{fc}+flags)*{roles}+d)*{gp_roles}+a)*{roles}+b)'
     elif kind=='signedload':index=f'((((bits==8?0:bits==16?1:2)*2+flags)*{gp_roles}+d)*{gp_roles}+a)'
     elif kind in ('move','keep'):index=f'((bits==64)*{gp_roles}+d)'
-    elif kind=='load':index=f'(((bits==8?0:bits==16?1:bits==32?2:3)*{gp_roles}+d)*{gp_roles}+a)'
+    elif kind in ('load','acquireload'):index=f'(((bits==8?0:bits==16?1:bits==32?2:3)*{gp_roles}+d)*{gp_roles}+a)'
     elif kind=='vload':index=f'(((bits==32?0:bits==64?1:2)*9+d)*{gp_roles}+a)'
     elif kind=='store':index=f'(((bits==8?0:bits==16?1:bits==32?2:3)*{gp_roles}+a)*{gp_roles}+b)'
     elif kind=='vstore':index=f'(((bits==32?0:bits==64?1:2)*{gp_roles}+a)*9+b)'

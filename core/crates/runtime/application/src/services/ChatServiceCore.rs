@@ -1502,7 +1502,7 @@ impl ChatServiceCore {
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
             delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
-            delegate
+            let refreshedWindow = delegate
                 .refreshStableContextWindow(
                     &mut enhancedAiService,
                     Some(currentChatId.clone()),
@@ -1513,6 +1513,11 @@ impl ChatServiceCore {
                 .await;
             self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
             self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
+            if refreshedWindow.is_none() {
+                // The summary is already persisted. Keep the refresh error visible
+                // instead of clearing it to Idle with stale context statistics.
+                return true;
+            }
         }
         self.messageProcessingDelegate
             .setInputProcessingStateForChat(currentChatId, InputProcessingState::Idle);

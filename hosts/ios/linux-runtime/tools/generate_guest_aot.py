@@ -9,6 +9,7 @@ control flow and relocation-dependent instructions remain on the static executor
 """
 import argparse
 import collections
+import heapq
 import json
 import struct
 from pathlib import Path
@@ -40,6 +41,8 @@ def decode(word):
         return ('native_binary', width, rd, rn, rm, word, False)
     if word & 0x3fe00800 == 0x1a800000:
         return ('native_binary', width, rd, rn, rm, word, True)
+    if word & 0x7fe00000 == 0x1b000000:
+        return ('native_multiply', width, rd, rn, rm, (word >> 10) & 31, word)
     if word & 0x1f000000 == 0x10000000:
         return ('address', 64, rd)
     if word & 0x1f000000 == 0x11000000 and not word & (1 << 23):
@@ -75,6 +78,13 @@ def decode(word):
         opc, size = (word >> 22) & 3, 1 << (word >> 30)
         if opc in (0, 1):
             return ('memory', size, rd, rn, ((word >> 10) & 4095) * size, opc == 0)
+    if word & 0x3f200000 == 0x38000000:
+        opc, size, mode = (word >> 22) & 3, 1 << (word >> 30), (word >> 10) & 3
+        if opc in (0, 1):
+            offset = (word >> 12) & 511
+            if offset & 256:
+                offset -= 512
+            return ('memory_unscaled', size, rd, rn, offset, opc == 0, mode)
     if word & 0x3f200c00 == 0x38200800:
         opc, size, option = (word >> 22) & 3, 1 << (word >> 30), (word >> 13) & 7
         if opc in (0, 1) and option in (2, 3, 6, 7):
@@ -89,6 +99,16 @@ def decode(word):
             return ('pair', size, rd, rn, (word >> 10) & 31, offset * size,
                     not load, (word >> 23) & 3, opc == 1)
     return None
+
+
+def operation_count(instruction):
+    if instruction[0] == 'memory_reg':
+        return 2
+    if instruction[0] == 'reg' and (instruction[7] or instruction[5] in ('bic', 'orn', 'eon')):
+        return 2
+    if instruction[0] == 'native_multiply':
+        return 2 if instruction[5] != 31 or instruction[6] & (1 << 15) else 1
+    return 1
 
 
 def compile_sequence(words, inline_memory=False, label_prefix='Lguest_aot_local', trace_index=None,
@@ -121,7 +141,7 @@ def compile_sequence(words, inline_memory=False, label_prefix='Lguest_aot_local'
     edge_at = {index: natural for index, natural in edges}
     def edge_fallback(index):
         return f'{label_prefix}_trace_fallback' if len(edges) == 1 else f'{label_prefix}_trace_{index}_fallback'
-    slots = [2 if ins[0] == 'memory_reg' else 1 for ins in instructions]
+    slots = [operation_count(ins) for ins in instructions]
     offsets = [sum(slots[:n]) for n in range(len(slots))]
 
     def reg(number, width, stack=False, read=True):
@@ -259,14 +279,16 @@ def compile_sequence(words, inline_memory=False, label_prefix='Lguest_aot_local'
                            '    b Lslow', '4:', '    mov x28, x16', '    DISPATCH']
                 return output + cold
             kind, width, rd = ins[:3]
-            if kind not in ('pair', 'memory_reg') and (kind != 'memory' or inline_memory):
+            if kind not in ('pair', 'memory_reg', 'memory_unscaled') and (kind != 'memory' or inline_memory):
                 operands = {rd}
                 if kind in ('imm', 'reg', 'logical_imm', 'bitfield'):
                     operands.add(ins[3])
                 if kind == 'memory':
                     operands.add(ins[3])
-                if kind in ('reg', 'native_binary'):
+                if kind in ('reg', 'native_binary', 'native_multiply'):
                     operands.update((ins[3], ins[4]))
+                if kind == 'native_multiply':
+                    operands.add(ins[5])
                 needed = {number for number in operands if number not in RESIDENT}
                 if len(set(allocated) | needed) > len(SCRATCH):
                     # Flush only at an instruction boundary, never between
@@ -303,6 +325,14 @@ def compile_sequence(words, inline_memory=False, label_prefix='Lguest_aot_local'
                     output.append('    msr nzcv, x25')
                 encoded = ((word & ~((31 << 16) | 0x3ff)) |
                            (host_number(right) << 16) | (host_number(left) << 5) | host_number(target))
+                output.append(f'    .long 0x{encoded:08x}')
+            elif kind == 'native_multiply':
+                _, _, _, rn, rm, ra, word = ins
+                left, right, addend = reg(rn, width), reg(rm, width), reg(ra, width)
+                target = dest(rd, width)
+                encoded = ((word & ~((31 << 16) | (31 << 10) | 0x3ff)) |
+                           (host_number(right) << 16) | (host_number(addend) << 10) |
+                           (host_number(left) << 5) | host_number(target))
                 output.append(f'    .long 0x{encoded:08x}')
             elif kind == 'wide':
                 _, _, _, immediate, mnemonic, shift = ins
@@ -364,6 +394,40 @@ def compile_sequence(words, inline_memory=False, label_prefix='Lguest_aot_local'
                     output += ['    cbz x13, 2f', '1:', '    ldxr w14, [x13]', '    sub w14, w14, #1',
                                '    stlxr w15, w14, [x13]', '    cbnz w15, 1b', '2:']
                 output.append('    DIAG_COUNT ED_EVENT_GUEST_AOT_REGISTER_MEMORY_SUCCESS')
+            elif kind == 'memory_unscaled':
+                _, size, _, rn, offset, writing, mode = ins
+                flush()
+                if index != cursor:
+                    output.append(f'    add x28, x28, #{(index - cursor) * 32}')
+                    cursor = index
+                output.append(f'    mov x9, x{RESIDENT[rn]}' if rn in RESIDENT else
+                              f'    ldr x9, [x27, #{304 + rn * 8}]')
+                if mode != 1 and offset:
+                    output.append(f'    {"add" if offset > 0 else "sub"} x9, x9, #{abs(offset)}')
+                output += ['    DIAG_COUNT ' + ('ED_EVENT_MEMORY_WRITE_ATTEMPT' if writing else 'ED_EVENT_MEMORY_READ_ATTEMPT'),
+                           f'    bl Lmemoryguard_{int(writing)}_{size}']
+                prefix = 'x' if size == 8 else 'w'
+                mnemonic = (('strb', 'strh', 'str', 'str') if writing else
+                            ('ldrb', 'ldrh', 'ldr', 'ldr'))[size.bit_length() - 1]
+                if writing:
+                    source = prefix + ('zr' if rd == 31 else str(RESIDENT[rd]) if rd in RESIDENT else '10')
+                    if rd != 31 and rd not in RESIDENT:
+                        output.append(f'    ldr {source}, [x27, #{304 + rd * 8}]')
+                    output.append(f'    {mnemonic} {source}, [x11]')
+                else:
+                    target = prefix + (str(RESIDENT[rd]) if rd in RESIDENT and rd != 31 else '10')
+                    output.append(f'    {mnemonic} {target}, [x11]')
+                    if rd != 31 and rd not in RESIDENT:
+                        output.append(f'    str x10, [x27, #{304 + rd * 8}]')
+                    output += ['    cbz x13, 2f', '1:', '    ldxr w14, [x13]', '    sub w14, w14, #1',
+                               '    stlxr w15, w14, [x13]', '    cbnz w15, 1b', '2:']
+                if mode in (1, 3):
+                    if mode == 1 and offset:
+                        output.append(f'    {"add" if offset > 0 else "sub"} x9, x9, #{abs(offset)}')
+                    if rn in RESIDENT:
+                        output.append(f'    mov x{RESIDENT[rn]}, x9')
+                    else:
+                        output.append(f'    str x9, [x27, #{304 + rn * 8}]')
             elif kind == 'pair':
                 _, size, _, rn, rt2, offset, writing, mode, signed = ins
                 flush()
@@ -622,6 +686,51 @@ def sequence_index(selected):
     return ordered, slots
 
 
+def select_diverse(scores, limit):
+    """Defer contained candidates while retaining them as capacity permits.
+
+    Containment is only a ranking heuristic: a shorter pattern can still
+    match when its enclosing sequence crosses a block or optimization boundary.
+    """
+    ordered = scores.most_common()
+    selected, deferred, covered = [], [], set()
+    for sequence, _ in ordered:
+        if sequence in covered:
+            deferred.append(sequence)
+            continue
+        selected.append(sequence)
+        for start in range(len(sequence)):
+            for end in range(start + 2, len(sequence) + 1):
+                covered.add(sequence[start:end])
+        if len(selected) == limit:
+            return selected
+    return (selected + deferred)[:limit]
+
+
+def select_coverage(scores, occurrences, weights, limit):
+    """Greedily cover weighted block edges, retaining zero-gain fallbacks."""
+    covered = [0] * len(weights)
+    heap = []
+    ordered = list(scores.most_common())
+    for order, (sequence, _) in enumerate(ordered):
+        gain = sum(weights[block] * bin(mask).count('1')
+                   for block, mask in occurrences[sequence].items())
+        heap.append((-gain, order, sequence))
+    heapq.heapify(heap)
+    selected = []
+    while heap and len(selected) < limit:
+        neg_gain, order, sequence = heapq.heappop(heap)
+        gain = sum(weights[block] * bin(mask & ~covered[block]).count('1')
+                   for block, mask in occurrences[sequence].items())
+        if gain != -neg_gain:
+            heapq.heappush(heap, (-gain, order, sequence))
+            continue
+        selected.append(sequence)
+        for block, mask in occurrences[sequence].items():
+            covered[block] |= mask
+    return selected
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', type=Path, action='append', default=[],
@@ -631,6 +740,10 @@ def main():
     parser.add_argument('--limit', type=int, default=1024)
     parser.add_argument('--max-length', type=int, default=8)
     parser.add_argument('--score-length', action='store_true')
+    parser.add_argument('--diverse', action='store_true',
+                        help='defer patterns contained in a previously selected pattern')
+    parser.add_argument('--coverage', action='store_true',
+                        help='rank profile patterns by marginal weighted block-edge coverage')
     parser.add_argument('--branches', action='store_true')
     parser.add_argument('--indirect', action='store_true')
     parser.add_argument('--folded', action='store_true')
@@ -639,17 +752,22 @@ def main():
     args = parser.parse_args()
     if not args.profile and not args.elf:
         parser.error('at least one profile or ELF is required')
+    if args.coverage and (args.elf or args.diverse):
+        parser.error('--coverage requires profile-only input and cannot be combined with --diverse')
     if not 1 <= args.limit <= 65536:
         parser.error('limit must be between 1 and 65536')
     if not 2 <= args.max_length <= 64:
         parser.error('max-length must be between 2 and 64')
     candidates = collections.Counter()
+    occurrences = {} if args.coverage else None
     # The same block can appear at several sampled handlers and in several
     # workloads. Combine it before compiling its windows: this preserves the
     # old additive weights without recompiling identical windows thousands of times.
     training = collections.Counter()
     for profile_path in args.profile:
         for samples, words in sequences(json.loads(profile_path.read_text())):
+            if args.coverage and samples < 0:
+                parser.error('--coverage requires nonnegative sample counts')
             training[tuple(words)] += samples
     compilable = {}
     decoded = {}
@@ -657,7 +775,7 @@ def main():
         if word not in decoded:
             decoded[word] = decode(word)
         return decoded[word]
-    for words, samples in training.items():
+    for block, (words, samples) in enumerate(training.items()):
         for start in range(len(words)):
             for end in range(start + 2, min(start + args.max_length + 1, len(words) + 1)):
                 sequence = tuple(words[start:end])
@@ -669,19 +787,30 @@ def main():
                     if not (args.indirect if ins[0].startswith('branch_indirect') else args.branches):
                         break
                 if sequence not in compilable:
-                    compilable[sequence] = compile_sequence(sequence) is not None
+                    compilable[sequence] = compile_sequence(sequence, args.inline_memory) is not None
                 if not compilable[sequence]:
                     break
                 candidates[sequence] += samples
+                if occurrences is not None:
+                    blocks = occurrences.setdefault(sequence, {})
+                    mask = ((1 << (end - start - 1)) - 1) << start
+                    blocks[block] = blocks.get(block, 0) | mask
     for path in args.elf:
         for words in elf_sequences(path.read_bytes(), args.branches, args.folded, args.indirect, args.register_memory):
             for start in range(len(words) - 1):
                 for end in range(start + 2, min(start + args.max_length + 1, len(words) + 1)):
-                    candidates[tuple(words[start:end])] += 1
+                    sequence = tuple(words[start:end])
+                    if sequence not in compilable:
+                        compilable[sequence] = compile_sequence(sequence, args.inline_memory) is not None
+                    if not compilable[sequence]:
+                        break
+                    candidates[sequence] += 1
     scores = (collections.Counter({sequence: samples * (len(sequence) - 1)
                                    for sequence, samples in candidates.items()})
               if args.score_length else candidates)
-    selected = [sequence for sequence, _ in scores.most_common(args.limit)]
+    selected = (select_coverage(scores, occurrences, list(training.values()), args.limit)
+                if args.coverage else select_diverse(scores, args.limit) if args.diverse else
+                [sequence for sequence, _ in scores.most_common(args.limit)])
     if not selected:
         raise ValueError('inputs contain no supported guest sequences')
     selected.sort(key=len, reverse=True)
@@ -700,7 +829,7 @@ def main():
         offset += len(sequence)
     cpp += ['};', 'static const uint8_t operation_counts[] = {']
     for sequence in selected:
-        cpp.append('    ' + ','.join('2' if decode(word)[0] == 'memory_reg' else '1' for word in sequence) + ',')
+        cpp.append('    ' + ','.join(str(operation_count(decode(word))) for word in sequence) + ',')
     cpp += ['};', 'static const Pattern patterns[] = {']
     for n, sequence in enumerate(selected):
         asm += ['.p2align 2', f'.globl SYM(operit_guest_aot_{n})', f'SYM(operit_guest_aot_{n}):',
@@ -764,7 +893,11 @@ def main():
             '                if(count==2) {',
             '                    const auto next=operation_info(code[i+operations+1]);',
             '                    if(info.code!=StaticCode::Prepare || next.node!=info.node ||',
-            '                       (next.code!=StaticCode::LoadPrepared && next.code!=StaticCode::StorePrepared))break;',
+            '                       (next.code!=StaticCode::LoadPrepared && next.code!=StaticCode::StorePrepared &&',
+            '                        next.code!=StaticCode::Madd && next.code!=StaticCode::Msub &&',
+            '                        next.code!=StaticCode::AddPrepared && next.code!=StaticCode::SubPrepared &&',
+            '                        next.code!=StaticCode::AndPrepared && next.code!=StaticCode::OrPrepared &&',
+            '                        next.code!=StaticCode::XorPrepared))break;',
             '                }',
             '                if(branch ? (branch==1 ? info.code!=StaticCode::Branch :',
             ('                              branch==2 ? info.code!=StaticCode::CompareBranch :'

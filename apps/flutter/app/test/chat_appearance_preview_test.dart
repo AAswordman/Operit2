@@ -137,11 +137,11 @@ void main() {
             final contentLeft = rowLeft + 16;
             expect(tester.getTopLeft(userBody).dx, closeTo(contentLeft, 0.01));
             expect(tester.getTopLeft(aiBody).dx, closeTo(contentLeft, 0.01));
-            final title = find.descendant(of: ai, matching: find.text('Operit'));
-            expect(
-              tester.getTopLeft(title).dx,
-              closeTo(contentLeft, 0.01),
+            final title = find.descendant(
+              of: ai,
+              matching: find.text('Operit'),
             );
+            expect(tester.getTopLeft(title).dx, closeTo(contentLeft, 0.01));
             expect(find.byType(ChatAvatarImage), findsNothing);
             expect(find.byIcon(Icons.person), findsNothing);
             expect(tester.takeException(), isNull);
@@ -245,7 +245,10 @@ void main() {
   ) async {
     await _pumpPreview(
       tester,
-      _snapshot(<String, Object?>{'userChatStyle': 'cursor', 'aiChatStyle': 'cursor'}),
+      _snapshot(<String, Object?>{
+        'userChatStyle': 'cursor',
+        'aiChatStyle': 'cursor',
+      }),
     );
     await tester.pumpAndSettle();
     final context = tester.element(find.byType(ChatAppearancePreview));
@@ -271,7 +274,10 @@ void main() {
     (tester) async {
       await _pumpPreview(
         tester,
-        _snapshot(<String, Object?>{'userChatStyle': 'cursor', 'aiChatStyle': 'cursor'}),
+        _snapshot(<String, Object?>{
+          'userChatStyle': 'cursor',
+          'aiChatStyle': 'cursor',
+        }),
       );
       await tester.pumpAndSettle();
       final message = tester
@@ -380,25 +386,14 @@ Future<void> _pumpPreview(
       hostInteractionHostsEnabled: false,
       child: Builder(
         builder: (context) {
-          // Bootstrap deliberately uses default typography; reproduce the
-          // runtime theme's font scaling while keeping the host offline.
-          final scale = OperitTheme.of(
-            context,
-          ).themePreferenceSnapshot.fontScale;
-          final theme = Theme.of(context);
-          return Theme(
-            data: theme.copyWith(
-              textTheme: theme.textTheme.apply(fontSizeFactor: scale),
-            ),
-            child: Scaffold(
-              body: SingleChildScrollView(
-                child: Center(
-                  child: SizedBox(
-                    width: width,
-                    child: ChatAppearancePreview(
-                      showInputPreview: showInput,
-                      viewModel: _PreviewViewModel(),
-                    ),
+          return Scaffold(
+            body: SingleChildScrollView(
+              child: Center(
+                child: SizedBox(
+                  width: width,
+                  child: ChatAppearancePreview(
+                    showInputPreview: showInput,
+                    viewModel: _PreviewViewModel(),
                   ),
                 ),
               ),

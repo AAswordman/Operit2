@@ -26,12 +26,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, default=REPO / 'apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz')
     parser.add_argument('--skip-build', action='store_true')
+    parser.add_argument('--library', type=Path, help='use an existing simulator static library instead of building')
     options = parser.parse_args()
     archive = options.archive.resolve(strict=True)
     build = REPO / 'tools/ios-runtime/arm64/build/simulator-smoke'
-    if not options.skip_build:
+    if not options.skip_build and not options.library:
         run(['bash', REPO / 'tools/ios-runtime/arm64/build.sh', 'ios-simulator'],
             env={**os.environ, 'OPERIT_ARM64_BUILD_DIR': str(build), 'OPERIT_ARM64_JOBS': '6'})
+    library = options.library.resolve(strict=True) if options.library else build / 'liboperit_arm64.a'
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], text=True).strip()
     simulator = os.environ.get('OPERIT_TEST_SIMULATOR', 'booted')
     with tempfile.TemporaryDirectory(prefix='operit-arm64-simulator-') as temporary:
@@ -42,7 +44,7 @@ def main():
              '-arch', 'arm64', '-mios-simulator-version-min=16.4', '-isysroot', sdk,
              '-I', REPO / 'hosts/ios/linux-runtime/include', '-I', runner,
              REPO / 'tools/tests/fixtures/arm64_simulator_smoke.mm', runner / 'Arm64RootFilesystem.mm',
-             build / 'liboperit_arm64.a', '-lresolv', '-lz', '-framework', 'Foundation', '-o', executable])
+             library, '-lresolv', '-lz', '-framework', 'Foundation', '-o', executable])
         run(['codesign', '--force', '--sign', '-', executable])
         workspace = work / 'workspace'
         workspace.mkdir()

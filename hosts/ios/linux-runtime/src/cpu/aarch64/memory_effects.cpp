@@ -50,6 +50,10 @@ Effects instruction_effects(const Instruction &i) {
         case Encoding::ScalarDoubleToSigned32:case Encoding::ScalarDoubleToSigned64:
             e.vector_read=uint32_t{1}<<i.rn;write(i.rd);break;
         case Encoding::VectorImmediate:e.vector_write=uint32_t{1}<<i.rd;break;
+        case Encoding::VectorLogical:
+            e.vector_read=(uint32_t{1}<<i.rn)|(uint32_t{1}<<i.rm);
+            if(i.flags>=5)e.vector_read|=uint32_t{1}<<i.rd;
+            e.vector_write=uint32_t{1}<<i.rd;break;
         case Encoding::VectorToRegister32:case Encoding::VectorToRegister64:case Encoding::VectorHighToRegister:
             e.vector_read=uint32_t{1}<<i.rn;write(i.rd);break;
         case Encoding::RegisterToVector32:case Encoding::RegisterToVector64:
@@ -58,7 +62,11 @@ Effects instruction_effects(const Instruction &i) {
         default:e.vector_read=e.vector_write=UINT32_MAX;e.gp_read=e.gp_write=UINT32_MAX;e.flags_read=e.flags_write=true;break;
         }break;
     case Op::Cache:read(i.rd);e.memory=true;break;
-    case Op::Exclusive: e.memory=true;e.gp_read=e.gp_write=UINT32_MAX;break;
+    case Op::Exclusive:
+        e.memory=true;
+        if(i.encoding==Encoding::LoadAcquire) {read(i.rn,true);write(i.rd);}
+        else e.gp_read=e.gp_write=UINT32_MAX;
+        break;
     case Op::System:
         switch(i.encoding) {
         case Encoding::ReadTls:write(i.rd);break;

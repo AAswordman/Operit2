@@ -51,10 +51,8 @@ class ThemeTemplateService {
     ];
   }
 
-  /// Validates the current package bytes and copies all referenced media into shared user assets.
-  Future<ThemePreferenceSnapshot> createSnapshot(
-    ThemeTemplateSource source,
-  ) async {
+  /// Prepares a template for preview without importing assets or selecting it.
+  Future<PreparedThemeVisual> preparePreview(ThemeTemplateSource source) async {
     final payload = await clients.application.previewToolPkgTheme(
       packageName: source.packageName,
       templateId: source.templateId,
@@ -85,18 +83,27 @@ class ThemeTemplateService {
       jsonDecode(payload.themeJson) as Map<String, dynamic>,
     );
     final builtin = await BuiltinThemeFonts.load(bundle: rootBundle);
-    final prepared = await PreparedThemeVisual.prepare(
+    return PreparedThemeVisual.prepare(
       spec: spec,
       assets: assets,
       assetSha256: digests,
       builtinFonts: builtin,
       fontRegistry: ThemeFontRegistry(),
     );
+  }
+
+  /// Copies validated template media into an independent user configuration.
+  Future<ThemePreferenceSnapshot> createSnapshot(
+    ThemeTemplateSource source,
+  ) async {
+    final prepared = await preparePreview(source);
     try {
+      final spec = prepared.spec;
+      final builtin = await BuiltinThemeFonts.load(bundle: rootBundle);
       final paths = <String, String>{};
       for (final reference in spec.assetReferences) {
         final imported = await _assets.importBytes(
-          bytes: assets[reference]!,
+          bytes: await prepared.resources.readBytes(reference),
           fileName: reference,
         );
         paths[reference] = imported.storagePath;

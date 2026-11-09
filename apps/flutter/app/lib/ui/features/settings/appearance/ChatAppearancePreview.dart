@@ -75,8 +75,8 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
                           roleName: '',
                         ),
                         splitMarkdownContent:
-                            (widget.viewModel ?? _defaultViewModel)
-                                .splitMarkdownContent,
+                            widget.viewModel?.splitMarkdownContent ??
+                            _splitPreviewContent,
                         enableDialogs: false,
                       ),
                       const SizedBox(height: 8),
@@ -89,8 +89,8 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
                           roleName: roleName,
                         ),
                         splitMarkdownContent:
-                            (widget.viewModel ?? _defaultViewModel)
-                                .splitMarkdownContent,
+                            widget.viewModel?.splitMarkdownContent ??
+                            _splitPreviewContent,
                         enableDialogs: false,
                       ),
                     ],
@@ -196,3 +196,29 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
 
 /// Keeps appearance previews inert without performing chat actions.
 void _noOp() {}
+
+/// The fixed preview sentences are plain text. Feed their paragraph events to
+/// the production renderer locally so opening appearance never waits for Core
+/// to parse a sample or leaves the assistant message empty while disconnected.
+Future<List<core_proxy.MarkdownStreamEvent>> _splitPreviewContent(
+  String content,
+) async {
+  core_proxy.MarkdownStreamEvent event(String type, {String? value}) =>
+      core_proxy.MarkdownStreamEvent(
+        chatId: 'appearance-preview',
+        eventType: type,
+        value: value,
+        id: null,
+        blockId: type == 'completed' ? null : 1,
+        inlineId: null,
+        parentBlockId: null,
+        nodeType: null,
+        headerLevel: null,
+        xml: null,
+      );
+  return [
+    event('markdownBlockStart'),
+    event('markdownBlockChunk', value: content),
+    event('completed'),
+  ];
+}

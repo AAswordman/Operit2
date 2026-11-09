@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import collections
 import json
 from pathlib import Path
 import struct
@@ -14,6 +15,7 @@ aot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(aot)
 sys.path.insert(0, str(path.parent))
 import generate_guest_traces as traces
+import compact_guest_aot_profile as compact_profile
 
 
 def elf_image(segments):
@@ -32,6 +34,143 @@ def elf_image(segments):
 
 
 class GuestAotTests(unittest.TestCase):
+    def test_inline_memory_selection_uses_inline_register_requirements(self):
+        words = [0xa9065bf5, 0x91050015, 0xa9086bf9, 0xaa0103f9, 0x528000a1, 0xa90973fb,
+                 0xaa0303fa, 0xaa0203fb, 0x7943d016, 0x2a0603fc, 0x790152a1, 0xb4000a47]
+        self.assertIsNotNone(aot.compile_sequence(words))
+        self.assertIsNone(aot.compile_sequence(words, inline_memory=True))
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            profile = directory / 'profile.json'
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1', 'blocks': [
+                {'words': [hex(word) for word in words]}]}))
+            subprocess.run([sys.executable, str(path), '--profile', str(profile),
+                            '--output', str(directory / 'output'), '--max-length', '32',
+                            '--branches', '--inline-memory'], check=True, capture_output=True)
+            elf = directory / 'input.elf'
+            elf.write_bytes(elf_image([(0x10000, 5, struct.pack('<' + 'I'*len(words), *words))]))
+            subprocess.run([sys.executable, str(path), '--elf', str(elf),
+                            '--output', str(directory / 'elf-output'), '--max-length', '32',
+                            '--branches', '--inline-memory', '--folded'], check=True, capture_output=True)
+
+    def test_diverse_selection_defers_contained_sequences(self):
+        scores = collections.Counter({(1, 2, 3, 4): 10, (1, 2, 3): 9,
+                                      (5, 6): 8, (2, 3): 7})
+        self.assertEqual(aot.select_diverse(scores, 2), [(1, 2, 3, 4), (5, 6)])
+        self.assertEqual(aot.select_diverse(scores, 4),
+                         [(1, 2, 3, 4), (5, 6), (1, 2, 3), (2, 3)])
+
+    def test_coverage_selection_accounts_for_overlap_and_other_blocks(self):
+        long, short, independent, repeated = ((1, 2, 3), (1, 2), (4, 5), (6, 6))
+        scores = collections.Counter({long: 20, short: 19, independent: 18, repeated: 17})
+        occurrences = {long: {0: 0b11}, short: {0: 0b01, 1: 0b1},
+                       independent: {2: 0b1}, repeated: {3: 0b11}}
+        weights = [10, 8, 9, 1]
+        self.assertEqual(aot.select_coverage(scores, occurrences, weights, 4),
+                         [long, independent, short, repeated])
+        self.assertEqual(aot.select_coverage(scores, occurrences, weights, 2),
+                         [long, independent])
+
+    def test_coverage_selection_ties_and_fallback_are_deterministic(self):
+        first, second, third = ((1, 2, 3), (1, 2), (2, 3))
+        scores = collections.Counter({first: 3, second: 2, third: 1})
+        occurrences = {first: {0: 0b11}, second: {0: 0b01}, third: {0: 0b10}}
+        for _ in range(2):
+            self.assertEqual(aot.select_coverage(scores, occurrences, [1], 5),
+                             [first, second, third])
+
+    def test_coverage_cli_generation_and_invalid_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            profile = directory / 'profile.json'
+            words = ['0x9100054a', '0x9100056b', '0x9100054a', '0x9100056b']
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1',
+                                           'blocks': [{'samples': 2, 'words': words}]}))
+            common = [sys.executable, str(path), '--profile', str(profile), '--coverage',
+                      '--output', str(directory / 'out')]
+            subprocess.run(common, check=True, capture_output=True)
+            self.assertTrue((directory / 'out/guest_aot.cpp').exists())
+            for extra in (['--diverse'], ['--elf', str(directory / 'unused')]):
+                result = subprocess.run(common + extra, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('--coverage requires profile-only input', result.stderr)
+            profile.write_text(json.dumps({'schema': 'operit.guest-aot-fixture.v1',
+                                           'blocks': [{'samples': -1, 'words': words}]}))
+            result = subprocess.run(common, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('nonnegative sample counts', result.stderr)
+
+    def test_compacted_profiles_preserve_generation_and_tie_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            inputs = []
+            blocks = [
+                [{'samples': 2, 'words': ['0x9100054a', '0x9100056b']},
+                 {'samples': 1, 'words': ['0x9100058c', '0x910005ad']}],
+                [{'samples': 1, 'words': ['0x9100058c', '0x910005ad']},
+                 {'samples': 1, 'words': ['0x910005ce', '0x910005ef']}],
+            ]
+            for index, entries in enumerate(blocks):
+                profile = directory / f'{index}.json'
+                if index == 0:
+                    contents = {'schema': 'operit.execution-diagnostics.v1', 'top_sites': [
+                        {'samples': entry['samples'], 'mappings': [{'instructions': [
+                            {'raw': word} for word in entry['words']]}]} for entry in entries]}
+                else:
+                    contents = {'schema': 'operit.guest-aot-fixture.v1', 'blocks': entries}
+                profile.write_text(json.dumps(contents))
+                inputs.append(profile)
+            compacted = directory / 'compact.json'
+            result = compact_profile.compact(inputs)
+            compacted.write_text(json.dumps(result))
+            self.assertEqual([block['samples'] for block in result['blocks']], [2, 2, 1])
+            self.assertEqual(result, compact_profile.compact(inputs))
+            for input_args, name in ((sum((['--profile', str(p)] for p in inputs), []), 'original'),
+                                     (['--profile', str(compacted)], 'compact')):
+                subprocess.run([sys.executable, str(path), *input_args, '--output', str(directory / name),
+                                '--limit', '1'], check=True, capture_output=True)
+            for name in ('guest_aot.cpp', 'guest_aot.inc'):
+                self.assertEqual((directory / 'original' / name).read_bytes(),
+                                 (directory / 'compact' / name).read_bytes())
+
+    def test_shifted_integer_instructions_count_preparation_records(self):
+        for width in (0, 1 << 31):
+            for operation in (0x0b000000, 0x4b000000, 0x0a000000,
+                              0x2a000000, 0x4a000000, 0x6a000000):
+                word = width | operation | (11 << 16) | (6 << 10) | (10 << 5) | 12
+                self.assertEqual(aot.operation_count(aot.decode(word)), 2)
+                unshifted = word & ~(63 << 10)
+                self.assertEqual(aot.operation_count(aot.decode(unshifted)), 1)
+                if operation & 0x1f000000 == 0x0a000000:
+                    inverted = unshifted | (1 << 21)
+                    self.assertEqual(aot.operation_count(aot.decode(inverted)), 2)
+        hot = [0x38401661, 0x0b020022, 0x0b022842, 0x4a421842, 0xeb13007f, 0x54ffff61]
+        self.assertEqual([aot.operation_count(aot.decode(word)) for word in hot], [1, 1, 2, 2, 1, 1])
+        self.assertIsNotNone(aot.compile_sequence(hot, inline_memory=True))
+
+    def test_unscaled_integer_memory_commits_writeback_after_access(self):
+        for size in (1, 2, 4, 8):
+            for writing in (False, True):
+                for mode in range(4):
+                    shift = size.bit_length() - 1
+                    word = (0x38000000 | shift << 30 | (not writing) << 22 |
+                            (504 << 12) | (mode << 10) | (6 << 5) | 11)
+                    self.assertEqual(aot.decode(word),
+                                     ('memory_unscaled', size, 11, 6, -8, writing, mode))
+                    asm = '\n'.join(aot.compile_sequence([word, 0x9100054a]))
+                    guard = asm.index(f'bl Lmemoryguard_{int(writing)}_{size}')
+                    address = asm.index('sub x9, x9, #8')
+                    if mode == 1:
+                        self.assertGreater(address, guard)
+                    else:
+                        self.assertLess(address, guard)
+                    if mode in (1, 3):
+                        self.assertGreater(asm.index('str x9, [x27, #352]'), guard)
+                    else:
+                        self.assertNotIn('str x9, [x27, #352]', asm)
+        self.assertIsNone(aot.decode(0x3c4084cb))  # vector
+        self.assertIsNone(aot.decode(0x388084cb))  # signed load
+
     def test_two_word_index_separates_common_first_instructions(self):
         patterns = [(1, 2, 3), (1, 2), (1, 9), (4, 9)]
         ordered, slots = aot.sequence_index(patterns)
@@ -55,6 +194,25 @@ class GuestAotTests(unittest.TestCase):
             self.assertIn('msr nzcv, x25', generated)
         self.assertIsNone(aot.decode(0x1ac00000 | (4 << 10)))
         self.assertIsNone(aot.decode(0x3a800000))
+
+    def test_multiply_add_sub_remaps_all_operands_and_record_counts(self):
+        for width in (0, 1 << 31):
+            for sub in (0, 1 << 15):
+                word = width | 0x1b000000 | (11 << 16) | sub | (13 << 10) | (10 << 5) | 12
+                decoded = aot.decode(word)
+                self.assertEqual(decoded, ('native_multiply', 64 if width else 32, 12, 10, 11, 13, word))
+                self.assertEqual(aot.operation_count(decoded), 2)
+                generated = '\n'.join(aot.compile_sequence([word, 0x910004a5]))
+                expected = width | 0x1b000000 | (10 << 16) | sub | (11 << 10) | (9 << 5) | 12
+                self.assertIn(f'.long 0x{expected:08x}', generated)
+                self.assertIn('add x28, x28, #96', generated)
+                zero_addend = (word & ~(31 << 10)) | (31 << 10)
+                self.assertEqual(aot.operation_count(aot.decode(zero_addend)), 2 if sub else 1)
+                trace = '\n'.join(aot.compile_sequence([word, 0xb400006a, 0x9100056b], trace_index=1))
+                self.assertIn('add x28, x28, #64\n    cbz x7, Lguest_aot_local_trace_fallback', trace)
+        for reserved in (0x3b0b354c, 0x5b0b354c, 0x1b2b354c):
+            result = aot.decode(reserved)
+            self.assertTrue(result is None or result[0] != 'native_multiply')
 
     def test_multiple_profiles_accumulate_weights_before_selection(self):
         with tempfile.TemporaryDirectory() as directory:

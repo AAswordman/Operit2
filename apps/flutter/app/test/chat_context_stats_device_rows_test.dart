@@ -89,6 +89,73 @@ void main() {
     }
   }
   testWidgets(
+    'context counts keep refreshing while device discovery is pending',
+    (tester) async {
+      final bridge = _DeviceStatsBridge('local')
+        ..topologyGate = Completer<void>();
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      expect(find.text('1%'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.data_usage_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('5826 / 1000000'), findsOneWidget);
+
+      bridge.currentWindowSize = 129774;
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.text('129774 / 1000000'), findsOneWidget);
+      expect(find.text('13%'), findsOneWidget);
+      expect(bridge.topologyCalls, 1);
+
+      bridge.topologyGate!.complete();
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('本机'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'device discovery failure preserves and refreshes context counts',
+    (tester) async {
+      final bridge = _DeviceStatsBridge('local')
+        ..topologyError = StateError('Device lookup failed');
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.data_usage_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('5826 / 1000000'), findsOneWidget);
+      expect(find.text('无法加载设备信息'), findsOneWidget);
+
+      bridge.currentWindowSize = 129774;
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.text('129774 / 1000000'), findsOneWidget);
+      expect(find.text('13%'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('context lookup failure leaves the device list available', (
+    tester,
+  ) async {
+    final bridge = _DeviceStatsBridge('local')
+      ..summaryError = StateError('Context lookup failed');
+    await tester.pumpWidget(_app(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.data_usage_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('无法加载上下文信息'), findsOneWidget);
+    expect(find.byTooltip('本机'), findsOneWidget);
+
+    bridge.summaryError = null;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(find.text('5826 / 1000000'), findsOneWidget);
+    expect(find.text('无法加载上下文信息'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
     'clicking an online device changes the confirmed execution route',
     (tester) async {
       final bridge = _DeviceStatsBridge('local')
@@ -240,6 +307,11 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
   final switchCalls = <CoreCallRequest>[];
   Completer<void>? switchGate;
   Object? switchError;
+  Completer<void>? topologyGate;
+  Object? topologyError;
+  Object? summaryError;
+  int topologyCalls = 0;
+  int currentWindowSize = 5826;
 
   BindingRouteStatus get status => BindingRouteStatus(
     ownerNodeId: owner,
@@ -260,9 +332,17 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
       owner = (request.args as Map)['targetNodeId'] as String;
       return encodeCoreLink(<Object?>[0, status.toJson()]);
     }
+    if (request.methodName == 'deviceSpaceTopology') {
+      topologyCalls++;
+      await topologyGate?.future;
+      if (topologyError case final error?) throw error;
+    }
+    if (request.methodName == 'chatInputMenuSummary') {
+      if (summaryError case final error?) throw error;
+    }
     final value = switch (request.methodName) {
-      'chatInputMenuSummary' => const ChatInputMenuSummary(
-        currentWindowSize: 5826,
+      'chatInputMenuSummary' => ChatInputMenuSummary(
+        currentWindowSize: currentWindowSize,
         inputTokenCount: 8972,
         outputTokenCount: 96,
         maxContextLength: 1000,

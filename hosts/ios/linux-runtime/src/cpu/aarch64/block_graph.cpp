@@ -8,12 +8,6 @@
 #include <unordered_set>
 namespace operit::arm64 {
 namespace {
-struct Successors {
-    std::array<uint64_t,2> values{};
-    size_t count=0;
-    const uint64_t *begin() const {return values.data();}
-    const uint64_t *end() const {return values.data()+count;}
-};
 struct DiscoveryPage {
     Memory::CodeSnapshot snapshot;
     std::array<uint64_t,page_size/4/64> discovered{};
@@ -34,24 +28,43 @@ bool ends(const Instruction &i) {
 // Both backends split before every possible entry and after every control edge.
 // Each conditional fallthrough must start a block
 // even when its target lies outside this region.
-void partition_graph(BlockGraph &graph,const std::vector<InstructionNode> &nodes) {
-    std::unordered_set<uint64_t> leaders{graph.address};
-    for(size_t i=0;i<nodes.size();++i) {
-        const auto &node=nodes[i];
-        const InstructionNode *previous=i ? &nodes[i-1]:nullptr;
+void partition_graph(BlockGraph &graph,std::vector<InstructionNode> nodes) {
+    // Discovery grows geometrically; avoid retaining mostly unused capacity
+    // in the graph cache while keeping small excesses allocation-free.
+    if(nodes.capacity()>nodes.size()+nodes.size()/4)nodes.shrink_to_fit();
+    graph.node_storage=std::move(nodes);
+    auto &owned=graph.node_storage;
+    // Runtime discovery is capped at 512 instructions. Mark leaders in the
+    // already sorted instruction array instead of allocating one hash node
+    // for every branch target and block boundary.
+    std::array<uint8_t,512> local{};
+    std::vector<uint8_t> overflow;
+    if(owned.size()>local.size())overflow.resize(owned.size());
+    auto *leaders=overflow.empty() ? local.data():overflow.data();
+    const auto mark=[&](uint64_t address) {
+        const auto found=std::lower_bound(owned.begin(),owned.end(),address,
+            [](const InstructionNode &node,uint64_t target){return node.pc<target;});
+        if(found!=owned.end() && found->pc==address)leaders[found-owned.begin()]=1;
+    };
+    mark(graph.address);
+    for(size_t i=0;i<owned.size();++i) {
+        const auto &node=owned[i];
+        const InstructionNode *previous=i ? &owned[i-1]:nullptr;
         // Preserve the previous-address lookup's unsigned wraparound.
-        if(node.pc==0 && !nodes.empty() && nodes.back().pc==UINT64_MAX-3)previous=&nodes.back();
-        if(!previous || previous->pc!=node.pc-4 || ends(previous->instruction))leaders.insert(node.pc);
-        if(ends(node.instruction))for(auto target:successors(node))leaders.insert(target);
+        if(node.pc==0 && !owned.empty() && owned.back().pc==UINT64_MAX-3)previous=&owned.back();
+        if(!previous || previous->pc!=node.pc-4 || ends(previous->instruction))leaders[i]=1;
+        if(ends(node.instruction))for(auto target:successors(node))mark(target);
     }
-    for(const auto &node:nodes) {
-        if(graph.blocks.empty() || leaders.count(node.pc)) {
-            auto block=std::make_unique<BasicBlock>();block->pc=node.pc;
-            graph.entries.emplace(node.pc,block.get());graph.blocks.push_back(std::move(block));
-        }
-        auto &block=*graph.blocks.back();
-        block.instructions.push_back(node);
-        const auto edges=successors(node);block.successors.assign(edges.begin(),edges.end());
+    const auto count=std::count(leaders,leaders+owned.size(),uint8_t{1});
+    graph.blocks.reserve(count);graph.entries.reserve(count);
+    for(size_t start=0;start<owned.size();) {
+        size_t end=start+1;
+        while(end<owned.size() && !leaders[end])++end;
+        auto block=std::make_unique<BasicBlock>();block->pc=owned[start].pc;
+        block->instructions={owned.data()+start,end-start};
+        block->successors=successors(owned[end-1]);
+        graph.entries.emplace(block->pc,block.get());graph.blocks.push_back(std::move(block));
+        start=end;
     }
 }
 
@@ -121,7 +134,7 @@ std::unique_ptr<BlockGraph> build_instruction_graph(const std::vector<std::pair<
     std::sort(nodes.begin(),nodes.end(),[](const auto &a,const auto &b){return a.pc<b.pc;});
     const auto entry=std::lower_bound(nodes.begin(),nodes.end(),pc,[](const auto &node,uint64_t address){return node.pc<address;});
     if(entry==nodes.end() || entry->pc!=pc)throw Failure("missing region entry "+hex(pc));
-    partition_graph(*graph,nodes);optimize_graph(*graph);
+    partition_graph(*graph,std::move(nodes));optimize_graph(*graph);
     return graph;
 }
 std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedComponents *intrinsics,
@@ -168,7 +181,13 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
     };
     // Discover unique instructions first. Splitting at all leaders afterwards
     // prevents overlapping entries and represents a backedge exactly once.
-    while(!queue.empty() && nodes.size()<16384) {
+    // Bound speculative discovery: larger regions increase cold-start work
+    // even when most of their paths are never reached. Remaining edges use
+    // the ordinary graph linking path when execution reaches them.
+    constexpr size_t discovery_limit=512;
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(diagnostics,"compile.discovery.ns");)
+    while(!queue.empty() && nodes.size()<discovery_limit) {
         auto at=queue.front(); queue.pop_front();
         const auto page=align_down(at);auto found=pages.find(page);
         const auto index=unsigned((at-page)/4);
@@ -206,12 +225,20 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
         if(policy==GraphDiscoveryPolicy::DeferNonLoopCalls && !call && ends(instruction)) {
             for(auto target:edges)if(target<at && target<=UINT64_MAX-4 && at<=UINT64_MAX-4)add_loop(target,at);
         }
-        for(size_t i=deferred ? 1:0;i<edges.count;++i)queue.push_back(edges.values[i]);
+        // Keep nearby branches local for hot loops, but discover distant
+        // forward targets only if execution actually reaches them.
+        const bool forward_conditional=(instruction.op==Op::ConditionalBranch ||
+            instruction.op==Op::CompareBranch || instruction.op==Op::TestBranch) &&
+            edges.values[0]>at && edges.values[0]-at>256;
+        for(size_t i=deferred || forward_conditional ? 1:0;i<edges.count;++i)queue.push_back(edges.values[i]);
+    }
     }
     OPERIT_EXEC_DIAGNOSTIC(if(diagnostics) {
         diagnostics->count("compile.instructions",nodes.size());diagnostics->count("compile.pages",pages.size());
         if(!queue.empty()) {diagnostics->count("discover.instruction_limit");diagnostics->count("discover.undiscovered_queue",queue.size());}
     })
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(diagnostics,"compile.dependencies.ns");)
     std::sort(nodes.begin(),nodes.end(),[](const auto &a,const auto &b){return a.pc<b.pc;});
     for(const auto &node:nodes) {
         const auto at=node.pc;
@@ -222,7 +249,11 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
            graph->dependencies.back().offset+graph->dependencies.back().count==index)++graph->dependencies.back().count;
         else graph->dependencies.push_back({at,snapshot.words,snapshot.proof,index,1});
     }
-    partition_graph(*graph,nodes);
+    }
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(diagnostics,"compile.partition.ns");)
+    partition_graph(*graph,std::move(nodes));
+    }
     OPERIT_EXEC_DIAGNOSTIC(if(diagnostics)for(const auto &block:graph->blocks)++diagnostics->pcs[block->pc].block_compiles;)
     // Aggregate required lines per owned snapshot proof. This immutable list
     // lets native bridges consume proofs established by another overlapping
@@ -235,11 +266,20 @@ std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedCo
         if(found==graph->proofs.end())graph->proofs.push_back({dependency.proof.get(),mask});
         else found->mask|=mask;
     }
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(diagnostics,"compile.optimize_local.ns");)
     optimize_graph(*graph);
+    }
 #if OPERIT_ARM64_GLOBAL_VALUES
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(diagnostics,"compile.optimize_global.ns");)
     optimize_global_values(*graph);
+    }
 #endif
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(diagnostics,"compile.lower.ns");)
     lower_graph(*graph);
+    }
     OPERIT_EXEC_DIAGNOSTIC(if(diagnostics) {
         diagnostics->count("compile.blocks",graph->blocks.size());diagnostics->count("compile.dependencies",graph->dependencies.size());
         diagnostics->count("compile.proofs",graph->proofs.size());diagnostics->count("compile.eliminated",graph->eliminated);diagnostics->count("compile.fused",graph->fused);

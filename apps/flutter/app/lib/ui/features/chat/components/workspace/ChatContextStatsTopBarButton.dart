@@ -5,7 +5,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../common/components/M3LoadingIndicator.dart';
 import '../../../../main/navigation/AppNavigationModels.dart';
@@ -40,7 +41,9 @@ class _ChatContextStatsTopBarButtonState
   core_proxy.ChatInputMenuSummary? _summary;
   core_proxy.RuntimeDeviceSpaceTopology? _topology;
   core_proxy.BindingRouteStatus? _bindingStatus;
-  bool _polling = false;
+  bool _pollingSummary = false;
+  bool _pollingTopology = false;
+  bool _topologyFailed = false;
   bool _loading = true;
   bool _loadFailed = false;
   bool _routeFailed = false;
@@ -67,7 +70,9 @@ class _ChatContextStatsTopBarButtonState
     if (oldWidget.currentChatId != widget.currentChatId ||
         oldWidget.viewModel != widget.viewModel) {
       _requestEpoch++;
-      _polling = false;
+      _pollingSummary = false;
+      _pollingTopology = false;
+      _topologyFailed = false;
       _summary = null;
       _topology = null;
       _bindingStatus = null;
@@ -96,39 +101,43 @@ class _ChatContextStatsTopBarButtonState
     final chatId = widget.currentChatId;
     if (chatId == null || chatId.trim().isEmpty) return;
     final epoch = _requestEpoch;
-    _routeSubscription = widget.viewModel.watchRouteStatus(chatId).listen(
-      (status) {
-        if (!mounted || epoch != _requestEpoch) return;
-        setState(() {
-          _bindingStatus = status;
-          _routeFailed = false;
-        });
-      },
-      onError: (Object error) {
-        if (!mounted || epoch != _requestEpoch) return;
-        setState(() {
-          _bindingStatus = null;
-          _routeFailed = true;
-        });
-      },
-    );
+    _routeSubscription = widget.viewModel
+        .watchRouteStatus(chatId)
+        .listen(
+          (status) {
+            if (!mounted || epoch != _requestEpoch) return;
+            setState(() {
+              _bindingStatus = status;
+              _routeFailed = false;
+            });
+          },
+          onError: (Object error) {
+            if (!mounted || epoch != _requestEpoch) return;
+            setState(() {
+              _bindingStatus = null;
+              _routeFailed = true;
+            });
+          },
+        );
   }
 
-  /// Loads only the context summary and the device list shown in this menu.
+  /// Refreshes context statistics independently of device discovery.
   Future<void> _loadAllData() async {
-    if (_polling) return;
-    _polling = true;
+    await Future.wait<void>(<Future<void>>[_loadSummary(), _loadTopology()]);
+  }
+
+  /// Publishes new context counts as soon as Core returns them.
+  Future<void> _loadSummary() async {
+    if (_pollingSummary) return;
+    _pollingSummary = true;
     final epoch = _requestEpoch;
-    final viewModel = widget.viewModel;
     try {
-      final results = await Future.wait<Object>(<Future<Object>>[
-        viewModel.chatCore.chatInputMenuSummary(chatId: widget.currentChatId),
-        viewModel.clients.server.runtimeRemoteLinkService.deviceSpaceTopology(),
-      ]);
+      final summary = await widget.viewModel.chatCore.chatInputMenuSummary(
+        chatId: widget.currentChatId,
+      );
       if (!mounted || epoch != _requestEpoch) return;
       setState(() {
-        _summary = results[0] as core_proxy.ChatInputMenuSummary;
-        _topology = results[1] as core_proxy.RuntimeDeviceSpaceTopology;
+        _summary = summary;
         _loading = false;
         _loadFailed = false;
       });
@@ -136,12 +145,39 @@ class _ChatContextStatsTopBarButtonState
       if (!mounted || epoch != _requestEpoch) return;
       setState(() {
         _summary = null;
-        _topology = null;
         _loading = false;
         _loadFailed = true;
       });
     } finally {
-      if (epoch == _requestEpoch) _polling = false;
+      if (epoch == _requestEpoch) _pollingSummary = false;
+    }
+  }
+
+  /// Keeps slow or failed device queries from holding up subsequent count refreshes.
+  Future<void> _loadTopology() async {
+    if (_pollingTopology) return;
+    _pollingTopology = true;
+    final epoch = _requestEpoch;
+    try {
+      final topology = await widget
+          .viewModel
+          .clients
+          .server
+          .runtimeRemoteLinkService
+          .deviceSpaceTopology();
+      if (!mounted || epoch != _requestEpoch) return;
+      setState(() {
+        _topology = topology;
+        _topologyFailed = false;
+      });
+    } catch (_) {
+      if (!mounted || epoch != _requestEpoch) return;
+      setState(() {
+        _topology = null;
+        _topologyFailed = true;
+      });
+    } finally {
+      if (epoch == _requestEpoch) _pollingTopology = false;
     }
   }
 
@@ -254,7 +290,9 @@ class _ChatContextStatsTopBarButtonState
                 Text(displayText),
                 const SizedBox(width: 3),
                 Icon(
-                  _isOpen ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  _isOpen
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
                   size: 16,
                 ),
               ],
@@ -292,26 +330,29 @@ class _ChatContextStatsTopBarButtonState
                           ),
                           IconButton(
                             tooltip: AppLocalizations.of(context)!.refresh,
-                            onPressed: _polling ? null : _loadAllData,
+                            onPressed: _pollingSummary ? null : _loadAllData,
                             icon: const Icon(Icons.refresh_rounded, size: 16),
                             visualDensity: VisualDensity.compact,
                           ),
                         ],
                       ),
                       if (_loading)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Text('正在加载…'),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(AppLocalizations.of(context)!.loading),
                         )
                       else if (_loadFailed)
                         Text(
-                          '无法加载上下文和设备信息',
+                          AppLocalizations.of(
+                            context,
+                          )!.contextStatsSummaryLoadFailed,
                           style: TextStyle(color: colorScheme.error),
                         )
                       else ...<Widget>[
                         _StatRow(
                           label: '上下文窗口',
-                          value: '${_summary!.currentWindowSize} / '
+                          value:
+                              '${_summary!.currentWindowSize} / '
                               '${_maxContextTokens! > 0 ? _maxContextTokens : "未设置上限"}',
                         ),
                         _StatRow(
@@ -341,7 +382,18 @@ class _ChatContextStatsTopBarButtonState
                           ),
                         ],
                       ),
-                      if (!_loading && !_loadFailed) ...<Widget>[
+                      if (_topology == null)
+                        Text(
+                          _topologyFailed
+                              ? AppLocalizations.of(
+                                  context,
+                                )!.contextStatsDevicesLoadFailed
+                              : AppLocalizations.of(context)!.loading,
+                          style: _topologyFailed
+                              ? TextStyle(color: colorScheme.error)
+                              : null,
+                        ),
+                      if (_topology != null) ...<Widget>[
                         for (final device in _topology!.devices)
                           _DeviceRow(
                             device: device,

@@ -4271,10 +4271,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceThemeConfigNameRequired => '请输入主题名称';
 
   @override
-  String get settingsAppearanceThemeConfigCustomHint => '点击 + 创建和管理独立的主题配置。';
+  String get settingsAppearanceThemeConfigCustomHint =>
+      '创建主题保存你的外观。点击卡片切换，点击编辑调整细节。';
 
   @override
-  String get settingsAppearanceThemeConfigEditingHint => '修改外观会自动保存到当前主题配置。';
+  String get settingsAppearanceThemeConfigEditingHint =>
+      '点击卡片即可切换主题；进入编辑后，修改会自动保存。';
 
   @override
   String settingsAppearanceThemeConfigFailed(String detail) {
@@ -4717,4 +4719,48 @@ class AppLocalizationsZh extends AppLocalizations {
   String settingsDataTimelineUnknownSavings(int count) {
     return '$count 次请求无法估算节省金额';
   }
+
+  @override
+  String get contextStatsSummaryLoadFailed => '无法加载上下文信息';
+
+  @override
+  String get contextStatsDevicesLoadFailed => '无法加载设备信息';
+
+  @override
+  String get settingsAppearanceThemeLibrary => '我的主题';
+
+  @override
+  String get settingsAppearanceThemeLibraryHint => '选一个喜欢的外观，再把它调成你的样子。';
+
+  @override
+  String get settingsAppearanceThemeActive => '使用中';
+
+  @override
+  String get settingsAppearanceThemeApply => '使用此主题';
+
+  @override
+  String get settingsAppearanceThemeMore => '更多主题操作';
+
+  @override
+  String get settingsAppearanceThemeDuplicate => '创建副本';
+
+  @override
+  String get settingsAppearanceThemeUnboundHint => '保留当前外观，自由调整，不绑定已保存的主题。';
+
+  @override
+  String get settingsAppearanceThemeDeleteTitle => '删除主题';
+
+  @override
+  String settingsAppearanceThemeDeleteConfirm(String name) {
+    return '确定删除「$name」？删除后无法恢复。';
+  }
+
+  @override
+  String get settingsAppearancePreviewCollapse => '收起';
+
+  @override
+  String get settingsAppearancePreviewExpand => '展开';
+
+  @override
+  String get settingsAppearanceThemeNew => '新建主题';
 }

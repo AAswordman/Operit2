@@ -11,12 +11,21 @@
 namespace operit::arm64 {
 namespace {
 struct Operand {unsigned role;uint16_t home;};
+constexpr auto make_gp_operands() {
+    std::array<Operand,32> operands{};
+    for(unsigned reg=0;reg<operands.size();++reg) {
+        unsigned role=6;
+        for(unsigned index=0;index<resident_gp.size();++index)
+            if(resident_gp[index]==reg)role=index<6 ? index:index+2;
+        const auto offset=offsetof(ExecutionFrame,shadow)+(reg==31 ? offsetof(CpuState,sp) : offsetof(CpuState,x)+reg*8);
+        operands[reg]={role,uint16_t(offset)};
+    }
+    return operands;
+}
 Operand gp(unsigned reg,bool stack=false) {
     if(reg==31 && !stack) return {7,0};
-    auto found=std::find(resident_gp.begin(),resident_gp.end(),reg);
-    const auto offset=offsetof(ExecutionFrame,shadow)+(reg==31 ? offsetof(CpuState,sp) : offsetof(CpuState,x)+reg*8);
-    const auto index=unsigned(found-resident_gp.begin());
-    return {found==resident_gp.end() ? 6u : index<6 ? index:index+2,uint16_t(offset)};
+    static constexpr auto operands=make_gp_operands();
+    return operands[reg];
 }
 Operand vec(unsigned reg) {
     return {reg<resident_vector.size() ? reg:8u,
@@ -26,9 +35,14 @@ Operand vec(unsigned reg) {
 void lower_graph(BlockGraph &g) {
     using S=StaticCode;using E=Encoding;
     uint64_t reservation=0;
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(g.diagnostics,"compile.lower.emit.ns");)
     for(auto bp=g.blocks.rbegin();bp!=g.blocks.rend();++bp) {
         auto &block=**bp;auto &out=block.code;
         reservation+=block.instructions.size();
+        out.reserve(block.instructions.size()+3);
+        block.metadata.reserve(block.instructions.size()+3);
+        OPERIT_EXEC_DIAGNOSTIC(block.recipes.reserve(block.instructions.size()+3);)
         // Both arrays stop growing before any executable pointers are exposed.
         const auto append=[&](StaticOperation op,const InstructionNode &node,S code,uint16_t prefix,uint64_t value=0) {
             if(out.size()>=OP_DETACHED_INDEX)throw Failure("static block operation index overflow");
@@ -42,10 +56,15 @@ void lower_graph(BlockGraph &g) {
         // revisit this header. Interior entries retain precise block prefixes.
         header.immediate=reservation;append(header,block.instructions.front(),S::Block,0);
         header.entry=static_entry(S::BlockBody);append(header,block.instructions.front(),S::BlockBody,0);
+#if OPERIT_ARM64_MEMORY_SCHEDULING
         std::vector<bool> scheduled(block.instructions.size());
+#endif
         for(size_t n=0;n<block.instructions.size();++n) {
-            auto &node=block.instructions[n];g.source[node.pc]=&node;
+            auto &node=block.instructions[n];
+            OPERIT_EXEC_DIAGNOSTIC(g.source[node.pc]=&node;)
+#if OPERIT_ARM64_MEMORY_SCHEDULING
             if(scheduled[n])continue;
+#endif
             if(node.dead_result) {
                 OPERIT_EXEC_DIAGNOSTIC(if(g.diagnostics)++g.diagnostics->instruction("eliminated",node.pc,node.instruction,unsigned(S::Nop)).compiled;)
                 continue;
@@ -98,6 +117,9 @@ void lower_graph(BlockGraph &g) {
             S code=S::Helper; uint64_t meta=0;
             bool prepare=false;Operand prepared{7,0};uint64_t prepare_meta=0,prepare_shift=0;unsigned prepare_bits=i.width;
             if(i.encoding!=E::General) switch(i.op) {
+            case Op::Exclusive:
+                if(i.encoding==E::LoadAcquire) {code=S::LoadAcquire;a=gp(i.rn,true);}
+                break;
             case Op::Hint:code=S::Nop;break;
             case Op::Address:code=S::Move;b={7,0};op.immediate=(i.flags ? align_down(node.pc)+(i.immediate<<12) : node.pc+i.immediate);break;
             case Op::MoveWide:
@@ -206,6 +228,7 @@ void lower_graph(BlockGraph &g) {
                 case E::VectorToRegister32:case E::VectorToRegister64:case E::VectorHighToRegister:
                     code=S::VectorToGp;flags=i.encoding==E::VectorHighToRegister;break;
                 case E::VectorImmediate:code=S::VectorImmediate;i.width=(i.raw&(1u<<22)) ? 64:32;break;
+                case E::VectorLogical:code=S::VectorLogical;flags=i.flags;i.width=i.shift*8;break;
                 case E::ScalarUnary32:case E::ScalarUnary64:code=S::FUnary;flags=i.flags;break;
                 case E::ScalarUnsignedToDouble32:case E::ScalarUnsignedToDouble64:code=S::UnsignedToDouble;break;
                 case E::ScalarSignedToDouble32:case E::ScalarSignedToDouble64:code=S::SignedToDouble;break;
@@ -241,7 +264,8 @@ void lower_graph(BlockGraph &g) {
             // block guard reserves their whole budget before either executes.
             if(code==S::Sub && flags && i.rd==31 && b.role==7 && n+1<block.instructions.size() &&
                block.instructions[n+1].instruction.op==Op::ConditionalBranch) {
-                const auto &branch=block.instructions[++n];g.source[branch.pc]=&branch;
+                const auto &branch=block.instructions[++n];
+                OPERIT_EXEC_DIAGNOSTIC(g.source[branch.pc]=&branch;)
                 code=S::CompareImmediateBranch;meta=branch.instruction.flags;
                 op.target=reinterpret_cast<const void*>(branch.pc+branch.instruction.immediate);
                 ++g.fused;
@@ -314,6 +338,9 @@ void lower_graph(BlockGraph &g) {
         append(edge,last,S::Next,uint16_t(block.instructions.size()));
         out.front().target=block.metadata.data();
     }
+    }
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(g.diagnostics,"compile.lower.link.ns");)
     for(auto &block:g.blocks)for(auto &op:block->code) {
         const auto info=operation_info(op);const auto code=info.code;
         if(code==S::Jump || code==S::Call || code==S::Next || code==S::Branch || code==S::CompareBranch || code==S::TestBranch || code==S::CompareImmediateBranch) {
@@ -327,7 +354,10 @@ void lower_graph(BlockGraph &g) {
             // guest target from the second original instruction on a slow miss.
         }
     }
+    }
 #if OPERIT_ARM64_GUEST_AOT
+    {
+    OPERIT_EXEC_DIAGNOSTIC(execution_diagnostics::Timer timer(g.diagnostics,"compile.lower.aot.ns");)
 #if OPERIT_ARM64_GUEST_AOT_TRACES
     const auto traces=install_guest_traces(g);
     OPERIT_EXEC_DIAGNOSTIC(if(g.diagnostics)g.diagnostics->count("compile.guest_aot_trace",traces);)
@@ -337,6 +367,7 @@ void lower_graph(BlockGraph &g) {
         const auto installed=install_guest_aot(*block);
         OPERIT_EXEC_DIAGNOSTIC(if(g.diagnostics)g.diagnostics->count("compile.guest_aot",installed);)
         (void)installed;
+    }
     }
 #endif
 #if OPERIT_ARM64_PROFILE_SUPERBLOCKS

@@ -76,3 +76,5 @@ SmaddLong longacc smaddl 2
 UmaddLong longacc umaddl 2
 SmsubLong longacc smsubl 2
 UmsubLong longacc umsubl 2
+VectorLogical vlogical and 8
+LoadAcquire acquireload ldar 1

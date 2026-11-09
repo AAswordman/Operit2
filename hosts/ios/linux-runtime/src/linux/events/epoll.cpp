@@ -266,8 +266,16 @@ void EventPoll::refresh(std::set<EventPoll *> &refreshed) {
     thread_local std::vector<struct kevent> events;
     events.resize(std::max<size_t>(1, watches_.size() * 3));
     struct timespec immediate{};
-    const int count = ::kevent(queue_.get(), nullptr, 0, events.data(), int(events.size()), &immediate);
-    check_host(count);
+    // An empty zero-timeout kevent is expensive on Darwin. Check the kqueue
+    // descriptor first; new events are checked again on every refresh.
+    pollfd queue{queue_.get(), POLLIN, 0};
+    const int ready = ::poll(&queue, 1, 0);
+    check_host(ready);
+    int count = 0;
+    if (ready) {
+        count = ::kevent(queue_.get(), nullptr, 0, events.data(), int(events.size()), &immediate);
+        check_host(count);
+    }
     bool notified = false;
     for (int j = 0; j < count; ++j) {
         const uint64_t token = reinterpret_cast<uintptr_t>(events[j].udata);

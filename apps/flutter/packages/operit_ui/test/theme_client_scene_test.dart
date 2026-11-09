@@ -4,6 +4,32 @@ import 'package:operit_ui/operit_ui.dart';
 
 /// Verifies the shared preview shell and its workspace navigation.
 void main() {
+  testWidgets(
+    'theme cards use localized samples without the full navigation bar',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(560, 360);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ThemeClientScene(
+            snapshot: ThemePreferenceDefaults.snapshot,
+            showTopBar: false,
+            userSample: 'Plan my day',
+            aiSample: 'Here is your task list.',
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Plan my day'), findsOneWidget);
+      expect(find.text('Here is your task list.'), findsOneWidget);
+      expect(find.byType(ThemeTopBarChrome), findsNothing);
+      expect(find.byKey(const ValueKey<String>('chat.input')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Inspector hit target selects the corresponding chat component', (
     tester,
   ) async {

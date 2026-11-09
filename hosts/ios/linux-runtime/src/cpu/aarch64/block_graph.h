@@ -3,7 +3,9 @@
 #include "cpu/aarch64/executor_abi.h"
 #include "cpu/aarch64/memory_effects.h"
 #include "cpu/aarch64/cfg_diagnostics.h"
+#include <algorithm>
 #include <array>
+#include <iterator>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -24,7 +26,7 @@ enum class StaticCode : uint8_t {
     Jump, Call, Indirect, IndirectCall, Branch, CompareBranch, TestBranch,
     CompareImmediateBranch, ReadTls, WriteTls, ReadFlags, WriteFlags, ConditionalCompare,
     LoadWriteback, StoreWriteback, SignedLoadWriteback, VectorLoadWriteback, VectorStoreWriteback, FUnary, BlockBody, ScheduledLoads, SignedToDouble, DoubleToSigned,
-    SmaddLong, UmaddLong, SmsubLong, UmsubLong, Count
+    SmaddLong, UmaddLong, SmsubLong, UmsubLong, VectorLogical, LoadAcquire, Count
 };
 struct InstructionNode {
     uint64_t pc=0,constant=0;
@@ -35,6 +37,34 @@ struct InstructionNode {
     // A full-width architectural copy selected by value numbering; originals
     // remain intact for precise prefixes and cold semantic execution.
     int8_t copy_register=-1;
+};
+// A graph owns one immutable-sized instruction allocation. Blocks borrow
+// disjoint ranges from it so metadata pointers stay valid for graph lifetime.
+struct InstructionRange {
+    InstructionNode *first=nullptr;
+    size_t count=0;
+    InstructionNode *begin() {return first;}
+    InstructionNode *end() {return first+count;}
+    const InstructionNode *begin() const {return first;}
+    const InstructionNode *end() const {return first+count;}
+    auto rbegin() {return std::reverse_iterator<InstructionNode*>(end());}
+    auto rend() {return std::reverse_iterator<InstructionNode*>(begin());}
+    size_t size() const {return count;}
+    InstructionNode &operator[](size_t i) {return first[i];}
+    const InstructionNode &operator[](size_t i) const {return first[i];}
+    InstructionNode &front() {return first[0];}
+    const InstructionNode &front() const {return first[0];}
+    InstructionNode &back() {return first[count-1];}
+    const InstructionNode &back() const {return first[count-1];}
+};
+struct Successors {
+    std::array<uint64_t,2> values{};
+    size_t count=0;
+    const uint64_t *begin() const {return values.data();}
+    const uint64_t *end() const {return values.data()+count;}
+    bool operator==(const std::vector<uint64_t> &other) const {
+        return count==other.size() && std::equal(begin(),end(),other.begin());
+    }
 };
 // One fixed-size native record. index locates cold metadata; it is never a
 // guest retirement count. Native control edges use b for their retired prefix.
@@ -116,8 +146,15 @@ struct IndirectCache {
     uint64_t expected_generation=0;
     const StaticOperation *source=nullptr;
     std::array<IndirectTarget,128> targets{};
-    std::array<std::unique_ptr<BridgePlan>,128> bridges{};
+    // Keep bridge objects stable while allocating ownership only for used slots.
+    std::vector<std::unique_ptr<BridgePlan>> bridges;
+    std::array<uint8_t,128> bridge_slots{};
     std::array<uint8_t,32> replacement{};
+    std::unique_ptr<BridgePlan> &bridge_for(unsigned slot) {
+        auto &index=bridge_slots[slot];
+        if(!index) {bridges.emplace_back();index=uint8_t(bridges.size());}
+        return bridges[index-1];
+    }
 };
 static_assert(offsetof(IndirectCache,metadata)==OP_SIZE);
 static_assert(offsetof(IndirectCache,generation)==48 && offsetof(IndirectCache,source)==64 && offsetof(IndirectCache,targets)==72);
@@ -135,8 +172,8 @@ struct StaticRecipe {
 #endif
 struct BasicBlock {
     uint64_t pc=0;
-    std::vector<InstructionNode> instructions;
-    std::vector<uint64_t> successors;
+    InstructionRange instructions;
+    Successors successors;
     std::vector<StaticOperation> code;
     std::vector<OperationMetadata> metadata;
     OPERIT_EXEC_DIAGNOSTIC(std::vector<StaticRecipe> recipes;)
@@ -175,11 +212,12 @@ struct BlockGraph {
     uint64_t referenced=1;
     std::shared_ptr<uint64_t> lifetime=std::make_shared<uint64_t>(1);
     uint64_t address=0, validated_epoch=0, validated_scope=0;
+    std::vector<InstructionNode> node_storage;
     std::vector<std::unique_ptr<BasicBlock>> blocks;
     std::unordered_map<uint64_t,BasicBlock*> entries;
     std::vector<CodeDependency> dependencies;
     std::vector<StaticProof> proofs;
-    std::unordered_map<uint64_t,const InstructionNode*> source;
+    OPERIT_EXEC_DIAGNOSTIC(std::unordered_map<uint64_t,const InstructionNode*> source;)
     uint64_t eliminated=0,fused=0;
     uint64_t ssa_constants=0,cse_copies=0,cse_eliminated=0,scheduled_loads=0;
     // Cross-block facts are valid only after this graph's root entry.
@@ -195,6 +233,8 @@ static_assert(offsetof(BlockGraph,referenced)==0);
 std::unique_ptr<BlockGraph> build_instruction_graph(const std::vector<std::pair<uint64_t,uint32_t>> &words,uint64_t pc);
 using GraphEntryKnown = bool (*)(const void *context,uint64_t pc);
 using GraphCallHot = bool (*)(const void *context,uint64_t source,uint64_t target);
+// This policy controls direct call targets; distant forward conditional
+// targets are independently deferred until they are taken.
 enum class GraphDiscoveryPolicy { Eager, DeferCallTargets, DeferNonLoopCalls };
 std::unique_ptr<BlockGraph> build_graph(uint64_t pc,Memory &memory,const FixedComponents *intrinsics=nullptr,
                                        GraphEntryKnown entry_known=nullptr,const void *entry_context=nullptr,

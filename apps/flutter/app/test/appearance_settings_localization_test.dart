@@ -8,6 +8,18 @@ void main() {
     test('creation sources are readable in $language', () {
       final l10n = lookupAppLocalizations(Locale(language));
       final labels = <String>[
+        l10n.settingsAppearanceThemeLibrary,
+        l10n.settingsAppearanceThemeLibraryHint,
+        l10n.settingsAppearanceThemeNew,
+        l10n.settingsAppearanceThemeActive,
+        l10n.settingsAppearanceThemeApply,
+        l10n.settingsAppearanceThemeMore,
+        l10n.settingsAppearanceThemeDuplicate,
+        l10n.settingsAppearanceThemeUnboundHint,
+        l10n.settingsAppearanceThemeDeleteTitle,
+        l10n.settingsAppearanceThemeDeleteConfirm('Example'),
+        l10n.settingsAppearancePreviewExpand,
+        l10n.settingsAppearancePreviewCollapse,
         l10n.settingsAppearanceThemeConfigSource,
         l10n.settingsAppearanceThemeConfigFromDefaults,
         l10n.settingsAppearanceThemeConfigFromCurrent,

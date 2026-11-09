@@ -1,6 +1,11 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import '../../../theme/OperitThemeAssets.dart';
+
+import 'ThemeAppearancePreview.dart';
+import 'ThemeCreationDialog.dart';
+import '../components/SettingsControlStyles.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -11,13 +16,19 @@ import '../../../common/components/OperitDialog.dart';
 import '../../../theme/ThemeTemplateService.dart';
 
 class ThemeConfigurationControl extends StatefulWidget {
-  /// Creates the named theme selector using the ordinary appearance owner.
+  /// Creates the visual theme library using the synchronized appearance owner.
   const ThemeConfigurationControl({
     super.key,
     this.clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()),
+    this.onEdit,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
   });
 
   final GeneratedCoreProxyClients clients;
+  final Future<void> Function(String name)? onEdit;
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode mode)? onThemeModeChanged;
 
   /// Creates the catalog observer and explicit configuration action state.
   @override
@@ -28,6 +39,7 @@ class ThemeConfigurationControl extends StatefulWidget {
 class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
   late GeneratedApplicationThemeConfigManagerCoreProxy _manager;
   late UserPreferencesManager _preferences;
+  late ThemeAssetStore _assets;
   late Stream<core.ThemeConfigState> _catalog;
   bool _busy = false;
   String? _error;
@@ -50,6 +62,9 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
   void _connect() {
     _manager = widget.clients.application.themeConfigManager();
     _preferences = UserPreferencesManager(clients: widget.clients);
+    _assets = ThemeAssetStore(
+      runtimeStorage: widget.clients.repositoryRuntimeStorageRepository,
+    );
     _catalog = _manager.watch();
     _error = null;
   }
@@ -71,116 +86,131 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
         }
         final state = snapshot.data;
         if (state == null) return const LinearProgressIndicator();
-        final inactive = state.configs
-            .where((config) => config.id != state.activeThemeConfigId)
-            .toList();
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: InputDecorator(
-                      decoration: InputDecoration(
-                        labelText: l10n.settingsAppearanceThemeConfig,
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: state.activeThemeConfigId ?? '',
-                          isDense: true,
-                          isExpanded: true,
-                          items: [
-                            DropdownMenuItem(
-                              value: '',
-                              child: Text(
-                                l10n.settingsAppearanceThemeConfigCustom,
-                              ),
-                            ),
-                            for (final config in state.configs)
-                              DropdownMenuItem(
-                                value: config.id,
-                                child: Text(
-                                  config.name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                          ],
-                          onChanged: _busy
-                              ? null
-                              : (id) {
-                                  if (id == null) {
-                                    throw StateError(
-                                      'A theme selection must have an explicit value.',
-                                    );
-                                  }
-                                  _run(() async {
-                                    if (id.isEmpty) {
-                                      final current = await _preferences
-                                          .resolveThemePreferenceSnapshot();
-                                      await _manager.useCustomAppearance(
-                                        snapshot: current.toJson(),
-                                      );
-                                    } else {
-                                      await _manager.apply(id: id);
-                                    }
-                                  });
-                                },
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    key: const ValueKey('theme-config-create'),
-                    tooltip: l10n.settingsAppearanceThemeConfigCreate,
-                    onPressed: _busy ? null : _create,
-                    icon: const Icon(Icons.add),
-                  ),
-                  IconButton(
-                    key: const ValueKey('theme-config-rename'),
-                    tooltip: l10n.settingsAppearanceThemeConfigRename,
-                    onPressed: _busy || state.activeThemeConfigId == null
-                        ? null
-                        : () => _rename(
-                            state.configs.singleWhere(
-                              (config) =>
-                                  config.id == state.activeThemeConfigId,
+        final theme = Theme.of(context);
+        return CustomScrollView(
+          key: const PageStorageKey('theme-library-scroll'),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              sliver: SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            l10n.settingsAppearanceThemeLibrary,
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
-                  PopupMenuButton<String>(
-                    key: const ValueKey('theme-config-delete'),
-                    tooltip: l10n.settingsAppearanceThemeConfigDelete,
-                    enabled: !_busy && inactive.isNotEmpty,
-                    icon: const Icon(Icons.delete_outline),
-                    itemBuilder: (_) => [
-                      for (final config in inactive)
-                        PopupMenuItem(
-                          value: config.id,
-                          child: Text(config.name),
                         ),
+                        const SizedBox(width: 12),
+                        FilledButton.icon(
+                          key: const ValueKey('theme-config-create'),
+                          onPressed: _busy ? null : _create,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: Text(l10n.settingsAppearanceThemeNew),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.settingsAppearanceThemeLibraryHint,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SettingsSegmentedSelector<ThemeMode>(
+                      value: widget.themeMode,
+                      onChanged: (mode) {
+                        if (!_busy && widget.onThemeModeChanged != null) {
+                          _run(() => widget.onThemeModeChanged!(mode));
+                        }
+                      },
+                      segments: [
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          icon: const Icon(
+                            Icons.brightness_auto_outlined,
+                            size: 18,
+                          ),
+                          label: Text(l10n.settingsAppearanceThemeSystem),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          icon: const Icon(Icons.light_mode_outlined, size: 18),
+                          label: Text(l10n.settingsAppearanceThemeLight),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          icon: const Icon(Icons.dark_mode_outlined, size: 18),
+                          label: Text(l10n.settingsAppearanceThemeDark),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      state.activeThemeConfigId == null
+                          ? l10n.settingsAppearanceThemeConfigCustomHint
+                          : l10n.settingsAppearanceThemeConfigEditingHint,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (_busy) ...[
+                      const SizedBox(height: 12),
+                      const LinearProgressIndicator(),
                     ],
-                    onSelected: (id) => _run(() => _manager.delete(id: id)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                state.activeThemeConfigId == null
-                    ? l10n.settingsAppearanceThemeConfigCustomHint
-                    : l10n.settingsAppearanceThemeConfigEditingHint,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              if (_busy) const LinearProgressIndicator(),
-              if (_error != null)
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                    ],
+                  ],
                 ),
-            ],
-          ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  if (index == state.configs.length) {
+                    return _UnboundAppearanceCard(
+                      active: state.activeThemeConfigId == null,
+                      busy: _busy,
+                      onEdit: () => _editCustom(),
+                    );
+                  }
+                  final config = state.configs[index];
+                  final active = config.id == state.activeThemeConfigId;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _ThemeCard(
+                      key: ValueKey('theme-card:${config.id}'),
+                      config: config,
+                      assets: _assets,
+                      active: active,
+                      busy: _busy,
+                      onApply: () => _run(() async {
+                        await _manager.apply(id: config.id);
+                      }),
+                      onEdit: () => _edit(config),
+                      onPreview: () => _preview(config),
+                      onRename: () => _rename(config),
+                      onDuplicate: () =>
+                          _create(initialSource: 'config:${config.id}'),
+                      onDelete: active ? null : () => _delete(config),
+                    ),
+                  );
+                }, childCount: state.configs.length + 1),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -207,102 +237,150 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
     }
   }
 
-  /// Creates an independent configuration from defaults, an existing configuration, or a plugin template.
-  Future<void> _create() async {
-    final l10n = AppLocalizations.of(context)!;
-    final service = ThemeTemplateService(widget.clients);
-    List<ThemeTemplateSource>? templates;
-    List<core.CoreDataPreferencesThemeConfigManagerThemeConfig>? configs;
+  Future<void> _edit(
+    core.CoreDataPreferencesThemeConfigManagerThemeConfig config,
+  ) async {
+    var applied = false;
     await _run(() async {
-      configs = await _manager.list();
-      templates = await service.listTemplates();
+      await _manager.apply(id: config.id);
+      applied = true;
     });
-    if (!mounted || templates == null || configs == null) return;
-    final form = GlobalKey<FormState>();
-    var name = '';
-    var source = 'defaults';
-    final sources = <String, Object>{
-      for (final config in configs!) 'config:${config.id}': config,
-      for (final template in templates!)
-        'template:${template.packageName}:${template.templateId}': template,
-    };
+    if (applied && mounted) await widget.onEdit?.call(config.name);
+  }
+
+  Future<void> _editCustom() async {
+    var applied = false;
+    await _run(() async {
+      final current = await _preferences.resolveThemePreferenceSnapshot();
+      await _manager.useCustomAppearance(snapshot: current.toJson());
+      applied = true;
+    });
+    if (applied && mounted) {
+      await widget.onEdit?.call(
+        AppLocalizations.of(context)!.settingsAppearanceThemeConfigCustom,
+      );
+    }
+  }
+
+  Future<void> _preview(
+    core.CoreDataPreferencesThemeConfigManagerThemeConfig config,
+  ) async {
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => OperitDialogScaffold(
-          title: l10n.settingsAppearanceThemeConfigCreate,
-          maxWidth: 520,
-          maxHeight: 640,
-          expandContent: false,
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(l10n.cancel),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (!form.currentState!.validate()) return;
-                form.currentState!.save();
-                Navigator.of(dialogContext).pop(true);
-              },
-              child: Text(l10n.create),
-            ),
-          ],
-          child: SingleChildScrollView(
-            key: const ValueKey('theme-creation-scroll'),
-            child: Form(
-              key: form,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  TextFormField(
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      labelText: l10n.settingsAppearanceThemeConfigName,
-                    ),
-                    onSaved: (value) => name = value!.trim(),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? l10n.settingsAppearanceThemeConfigNameRequired
-                        : null,
-                  ),
-                  const SizedBox(height: 24),
-                  _ThemeCreationSources(
-                    value: source,
-                    configs: configs!,
-                    templates: templates!,
-                    onSelected: (value) => setDialogState(() => source = value),
-                  ),
-                ],
-              ),
+      builder: (context) => OperitDialogScaffold(
+        title: config.name,
+        maxWidth: 580,
+        maxHeight: 700,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppLocalizations.of(context)!.close),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              AppLocalizations.of(context)!.settingsAppearanceThemeApply,
             ),
           ),
+        ],
+        child: ThemeAppearancePreview(
+          snapshot: ThemePreferenceSnapshot.fromJson(config.snapshot),
+          thumbnail: false,
+          assets: _assets,
         ),
       ),
     );
-    if (accepted != true || !mounted) return;
+    if (accepted == true && mounted) {
+      await _run(() async {
+        await _manager.apply(id: config.id);
+      });
+    }
+  }
+
+  Future<void> _delete(
+    core.CoreDataPreferencesThemeConfigManagerThemeConfig config,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => OperitDialogScaffold(
+        title: l10n.settingsAppearanceThemeDeleteTitle,
+        expandContent: false,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              l10n.delete,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        ],
+        child: Text(l10n.settingsAppearanceThemeDeleteConfirm(config.name)),
+      ),
+    );
+    if (accepted == true && mounted) {
+      await _run(() => _manager.delete(id: config.id));
+    }
+  }
+
+  /// Creates from a visual source picker, then opens the new theme's editor.
+  Future<void> _create({String initialSource = 'defaults'}) async {
+    final service = ThemeTemplateService(widget.clients);
+    List<ThemeTemplateSource>? templates;
+    List<core.CoreDataPreferencesThemeConfigManagerThemeConfig>? configs;
+    ThemePreferenceSnapshot? current;
+    await _run(() async {
+      configs = await _manager.list();
+      templates = await service.listTemplates();
+      current = await _preferences.resolveThemePreferenceSnapshot();
+    });
+    if (!mounted || templates == null || configs == null || current == null) {
+      return;
+    }
+    final choice = await showDialog<ThemeCreationChoice>(
+      context: context,
+      builder: (_) => ThemeCreationDialog(
+        configs: configs!,
+        templates: templates!,
+        current: current!,
+        service: service,
+        assets: _assets,
+        initialSource: initialSource,
+      ),
+    );
+    if (choice == null || !mounted) return;
+    String? createdName;
     await _run(() async {
       final Map<String, Object?> snapshot;
-      if (source == 'defaults') {
+      if (choice.source == 'defaults') {
         snapshot = UserPreferencesManager.defaultThemePreferenceSnapshot
             .toJson();
-      } else if (source == 'current') {
-        snapshot = (await _preferences.resolveThemePreferenceSnapshot())
-            .toJson();
+      } else if (choice.source == 'current') {
+        snapshot = current!.toJson();
+      } else if (choice.source.startsWith('config:')) {
+        snapshot = (await _manager.getValue(
+          id: choice.source.substring(7),
+        )).snapshot;
       } else {
-        final selected = sources[source];
-        switch (selected) {
-          case core.CoreDataPreferencesThemeConfigManagerThemeConfig():
-            snapshot = (await _manager.getValue(id: selected.id)).snapshot;
-          case ThemeTemplateSource():
-            snapshot = (await service.createSnapshot(selected)).toJson();
-          default:
-            throw StateError('Creation source is no longer available');
-        }
+        final template = templates!.singleWhere(
+          (source) =>
+              choice.source ==
+              'template:${source.packageName}:${source.templateId}',
+        );
+        snapshot = (await service.createSnapshot(template)).toJson();
       }
-      final config = await _manager.create(name: name, snapshot: snapshot);
+      final config = await _manager.create(
+        name: choice.name,
+        snapshot: snapshot,
+      );
       await _manager.apply(id: config.id);
+      createdName = config.name;
     });
+    if (createdName != null && mounted) await widget.onEdit?.call(createdName!);
   }
 
   /// Renames the selected configuration while retaining its current persisted appearance.
@@ -370,221 +448,260 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
   }
 }
 
-/// Shows creation sources directly with separate groups for saved configurations and plugin templates.
-class _ThemeCreationSources extends StatelessWidget {
-  /// Receives the current registry snapshot and a single explicit selection.
-  const _ThemeCreationSources({
-    required this.value,
-    required this.configs,
-    required this.templates,
-    required this.onSelected,
+/// Keeps selection and editing visible; occasional actions live in one menu.
+class _ThemeCard extends StatelessWidget {
+  const _ThemeCard({
+    super.key,
+    required this.config,
+    required this.assets,
+    required this.active,
+    required this.busy,
+    required this.onApply,
+    required this.onEdit,
+    required this.onPreview,
+    required this.onRename,
+    required this.onDuplicate,
+    required this.onDelete,
   });
 
-  final String value;
-  final List<core.CoreDataPreferencesThemeConfigManagerThemeConfig> configs;
-  final List<ThemeTemplateSource> templates;
-  final ValueChanged<String> onSelected;
+  final core.CoreDataPreferencesThemeConfigManagerThemeConfig config;
+  final ThemeAssetStore assets;
+  final bool active;
+  final bool busy;
+  final VoidCallback onApply;
+  final VoidCallback onEdit;
+  final VoidCallback onPreview;
+  final VoidCallback onRename;
+  final VoidCallback onDuplicate;
+  final VoidCallback? onDelete;
 
-  /// Keeps each option visible and wraps pairs into single columns on narrow layouts.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth < 360
-            ? constraints.maxWidth
-            : (constraints.maxWidth - 12) / 2;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              l10n.settingsAppearanceThemeConfigSource,
-              style: theme.textTheme.titleSmall,
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 12,
-              runSpacing: 10,
-              children: <Widget>[
-                SizedBox(
-                  width: width,
-                  child: _ThemeCreationSourceOption(
-                    key: const ValueKey('theme-source-defaults'),
-                    title: l10n.settingsAppearanceThemeConfigFromDefaults,
-                    subtitle: l10n.settingsAppearanceThemeConfigDefaultsHint,
-                    icon: Icons.palette_outlined,
-                    selected: value == 'defaults',
-                    onTap: () => onSelected('defaults'),
-                  ),
-                ),
-                SizedBox(
-                  width: width,
-                  child: _ThemeCreationSourceOption(
-                    key: const ValueKey('theme-source-current'),
-                    title: l10n.settingsAppearanceThemeConfigFromCurrent,
-                    subtitle: l10n.settingsAppearanceThemeConfigCurrentHint,
-                    icon: Icons.copy_outlined,
-                    selected: value == 'current',
-                    onTap: () => onSelected('current'),
-                  ),
-                ),
-              ],
-            ),
-            if (configs.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 24),
-              Text(
-                l10n.settingsAppearanceThemeConfigSavedSources,
-                style: theme.textTheme.titleSmall,
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 12,
-                runSpacing: 10,
-                children: <Widget>[
-                  for (final config in configs)
-                    SizedBox(
-                      width: width,
-                      child: _ThemeCreationSourceOption(
-                        key: ValueKey('theme-source-config:${config.id}'),
-                        title: config.name,
-                        icon: Icons.layers_outlined,
-                        selected: value == 'config:${config.id}',
-                        onTap: () => onSelected('config:${config.id}'),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            if (templates.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 24),
-              Text(
-                l10n.settingsAppearanceThemeConfigPluginSources,
-                style: theme.textTheme.titleSmall,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                l10n.settingsAppearanceThemeConfigSourceHint,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 12,
-                runSpacing: 10,
-                children: <Widget>[
-                  for (final template in templates)
-                    SizedBox(
-                      width: width,
-                      child: _ThemeCreationSourceOption(
-                        key: ValueKey(
-                          'theme-source-template:${template.packageName}:${template.templateId}',
-                        ),
-                        title: template.label,
-                        icon: Icons.extension_outlined,
-                        selected:
-                            value ==
-                            'template:${template.packageName}:${template.templateId}',
-                        onTap: () => onSelected(
-                          'template:${template.packageName}:${template.templateId}',
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// Displays a source with an explicit selection mark and the application's theme colors.
-class _ThemeCreationSourceOption extends StatelessWidget {
-  /// Describes one creation source without storing its selection independently.
-  const _ThemeCreationSourceOption({
-    super.key,
-    required this.title,
-    this.subtitle,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String title;
-  final String? subtitle;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  /// Exposes selection to assistive technology and keeps the entire card clickable.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final snapshot = ThemePreferenceSnapshot.fromJson(config.snapshot);
+    final mode = switch (snapshot.themeMode) {
+      ThemeMode.light => l10n.settingsAppearanceThemeLight,
+      ThemeMode.dark => l10n.settingsAppearanceThemeDark,
+      ThemeMode.system => l10n.settingsAppearanceThemeSystem,
+    };
     return Semantics(
-      selected: selected,
-      button: true,
+      selected: active,
+      container: true,
       child: Material(
-        color: selected
-            ? scheme.primary.withValues(alpha: 0.07)
-            : scheme.surface,
+        color: scheme.surfaceContainerLow,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           side: BorderSide(
-            color: selected ? scheme.primary : scheme.outlineVariant,
-            width: selected ? 1.5 : 1,
+            color: active ? scheme.primary : scheme.outlineVariant,
+            width: active ? 2 : 1,
           ),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    icon,
-                    size: 20,
-                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+          key: ValueKey('theme-apply:${config.id}'),
+          onTap: busy || active ? null : onApply,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 520;
+              return Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: compact ? 112 : 196,
+                      height: compact ? 104 : 112,
+                      child: ThemeAppearancePreview(
+                        key: ValueKey('theme-thumbnail:${config.id}'),
+                        snapshot: snapshot,
+                        assets: assets,
                       ),
-                      if (subtitle != null) ...<Widget>[
-                        const SizedBox(height: 4),
-                        Text(
-                          subtitle!,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                    ),
+                    SizedBox(width: compact ? 12 : 20),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            config.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (active) ...[
+                                Icon(
+                                  Icons.check_circle,
+                                  size: 14,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  active
+                                      ? l10n.settingsAppearanceThemeActive
+                                      : mode,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: active
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (compact)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton(
+                                key: ValueKey('theme-edit:${config.id}'),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 0,
+                                  ),
+                                  alignment: Alignment.centerLeft,
+                                  minimumSize: const Size(48, 36),
+                                ),
+                                onPressed: busy ? null : onEdit,
+                                child: Text(l10n.edit),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (!compact) ...[
+                      IconButton(
+                        key: ValueKey('theme-preview:${config.id}'),
+                        tooltip: l10n.settingsAppearanceLivePreviewTitle,
+                        onPressed: busy ? null : onPreview,
+                        icon: const Icon(Icons.open_in_full, size: 18),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        key: ValueKey('theme-edit:${config.id}'),
+                        onPressed: busy ? null : onEdit,
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: Text(l10n.edit),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    PopupMenuButton<String>(
+                      key: ValueKey('theme-menu:${config.id}'),
+                      enabled: !busy,
+                      tooltip: l10n.settingsAppearanceThemeMore,
+                      icon: const Icon(Icons.more_vert, size: 20),
+                      itemBuilder: (_) => [
+                        PopupMenuItem(
+                          value: 'preview',
+                          child: Text(l10n.settingsAppearanceLivePreviewTitle),
+                        ),
+                        PopupMenuItem(
+                          value: 'rename',
+                          child: Text(l10n.settingsAppearanceThemeConfigRename),
+                        ),
+                        PopupMenuItem(
+                          value: 'duplicate',
+                          child: Text(l10n.settingsAppearanceThemeDuplicate),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          enabled: onDelete != null,
+                          child: Text(
+                            l10n.delete,
+                            style: TextStyle(
+                              color: onDelete == null
+                                  ? scheme.onSurface.withValues(alpha: 0.38)
+                                  : scheme.error,
+                            ),
                           ),
                         ),
                       ],
-                    ],
-                  ),
+                      onSelected: (action) {
+                        switch (action) {
+                          case 'preview':
+                            onPreview();
+                          case 'rename':
+                            onRename();
+                          case 'duplicate':
+                            onDuplicate();
+                          case 'delete':
+                            onDelete?.call();
+                        }
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Icon(
-                  selected ? Icons.check_circle : Icons.radio_button_unchecked,
-                  size: 18,
-                  color: selected ? scheme.primary : scheme.outline,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UnboundAppearanceCard extends StatelessWidget {
+  const _UnboundAppearanceCard({
+    required this.active,
+    required this.busy,
+    required this.onEdit,
+  });
+  final bool active;
+  final bool busy;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: active ? scheme.primary : scheme.outlineVariant,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('theme-config-custom'),
+        onTap: busy ? null : onEdit,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          child: Row(
+            children: [
+              Icon(Icons.tune, color: scheme.primary),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.settingsAppearanceThemeConfigCustom,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      l10n.settingsAppearanceThemeConfigCustomHint,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+            ],
           ),
         ),
       ),

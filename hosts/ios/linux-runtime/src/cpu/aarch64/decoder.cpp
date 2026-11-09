@@ -83,6 +83,12 @@ void normalize(Instruction &i) {
     const bool wide = i.width == 64;
     using D = Encoding;
     switch (i.op) {
+    case Op::Exclusive:
+        if ((r & 0x3ffffc00) == 0x08dffc00) {
+            i.width = 8u << (r >> 30);
+            i.encoding = D::LoadAcquire;
+        }
+        break;
     case Op::Hint: {
         const unsigned hint = (r >> 5) & 127;
         if (hint == 0 || hint == 1 || hint == 7 || hint == 25 || hint == 27 || hint == 29 || hint == 31 ||

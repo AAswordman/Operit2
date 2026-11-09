@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <deque>
 namespace operit::arm64 {
+inline constexpr size_t graph_cache_capacity=5120;
 enum class Trap { Budget, Syscall };
 struct Execution { Trap trap; uint64_t instructions; };
 class ExecutionEngine {

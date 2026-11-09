@@ -93,7 +93,7 @@ def main():
         'notes': ['Warm-up does not preserve execution graphs between processes.',
                   'Node uses --jitless. Fixed native replacements and diagnostic instrumentation are disabled.',
                   'Whole-process time includes spawn, guest initialization, work and shutdown.',
-                  'python-json, node-math and node-json were not the profile collection workloads.'],
+                  'Profile collection workloads are not inferred by this benchmark.'],
     }
     (args.output / 'environment.json').write_text(json.dumps(metadata, indent=2) + '\n')
     rows, expected = [], {}
