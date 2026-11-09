@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   dynamic_color
   file_selector_linux
   floating_windows
+  fvp
   operit_keep_alive
   printing
   record_linux

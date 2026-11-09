@@ -53,11 +53,8 @@ dependencies:
   printing: ^5.14.3
   audioplayers: ^6.7.0
   video_player: ^2.11.1
-  video_player_ohos:
-    git:
-      url: https://gitee.com/openharmony-sig/flutter_packages.git
-      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
-      path: packages/video_player/video_player_ohos
+  # Uses the same native video backend for runtime asset data URIs on every OS.
+  fvp: ^0.40.0
   path_provider: ^2.1.5
   path_provider_ohos:
     git:

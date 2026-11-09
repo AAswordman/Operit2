@@ -36,13 +36,13 @@ function toHvigorPath(value: string): string {
   return value.split(path.sep).join(path.posix.sep)
 }
 
-/** Copies one native OHOS plugin into this project for Hvigor module inclusion. */
+/** Stages the complete package so its OHOS module retains sibling source paths. */
 function stageNativeOhosPlugin(nativeProjectPath: string, plugin: FlutterPluginDependency): string {
-  const sourcePath = path.join(plugin.path, 'ohos')
-  const stagedPath = path.join(nativeProjectPath, STAGED_OHOS_PLUGINS_DIR, plugin.name)
-  fs.rmSync(stagedPath, { recursive: true, force: true })
-  fs.mkdirSync(path.dirname(stagedPath), { recursive: true })
-  fs.cpSync(sourcePath, stagedPath, { recursive: true })
+  const stagedRoot = path.join(nativeProjectPath, STAGED_OHOS_PLUGINS_DIR, plugin.name)
+  const stagedPath = path.join(stagedRoot, 'ohos')
+  fs.rmSync(stagedRoot, { recursive: true, force: true })
+  fs.mkdirSync(path.dirname(stagedRoot), { recursive: true })
+  fs.cpSync(plugin.path, stagedRoot, { recursive: true })
   patchStagedPluginHvigorfile(stagedPath)
   patchStagedPluginPackage(stagedPath)
   return `./${toHvigorPath(path.relative(nativeProjectPath, stagedPath))}`
@@ -90,7 +90,7 @@ const { harTasks } = requireActiveHvigorPackage<OhosHvigorPluginModule>('@ohos/h
 function patchStagedPluginPackage(stagedPath: string): void {
   const packagePath = path.join(stagedPath, 'oh-package.json5')
   const content = fs.readFileSync(packagePath, 'utf-8')
-  const updated = content.replace('"@ohos/flutter_ohos": "file:libs/flutter.har"', '"@ohos/flutter_ohos": ""')
+  const updated = content.replace(/("@ohos\/flutter_ohos"\s*:\s*)"[^"]*"/g, '$1""')
   fs.writeFileSync(packagePath, updated)
 }
 

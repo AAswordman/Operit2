@@ -1,7 +1,7 @@
 //! User-editable policies for app-managed workspace and conversation files.
 #![allow(non_snake_case)]
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use operit_host_api::RuntimeStorageHost;
+use operit_host_api::{HostError, HostResult, RuntimeStorageHost};
 use operit_util::RuntimeStorageLayout::{
     DEFAULT_AUTO_SYNC_FILE_BYTES, DEFAULT_AUTO_SYNC_TOTAL_BYTES,
 };
@@ -45,19 +45,25 @@ impl Default for FileSyncPolicy {
     }
 }
 impl FileSyncPolicy {
+    /// Loads the editable policy through the shared storage capability.
     pub fn load(host: &dyn RuntimeStorageHost, root: &str) -> Result<Self, String> {
+        Self::loadForScan(host, root).map_err(|error| error.to_string())
+    }
+
+    /// Retains typed storage errors so scans can isolate inaccessible directories.
+    pub(crate) fn loadForScan(host: &dyn RuntimeStorageHost, root: &str) -> HostResult<Self> {
         let path = format!("{root}/{POLICY_PATH}");
-        if !host.exists(&path).map_err(|e| e.to_string())? {
+        if !host.exists(&path)? {
             return Ok(Self::default());
         }
-        let bytes = readLimited(host, &path, MAX_POLICY_BYTES)?;
+        let bytes = readLimitedForScan(host, &path, MAX_POLICY_BYTES)?;
         let policy: Self =
-            serde_json::from_slice(&bytes).map_err(|e| format!("Invalid {path}: {e}"))?;
+            serde_json::from_slice(&bytes).map_err(|e| HostError::new(format!("Invalid {path}: {e}")))?;
         if policy.version != 1 {
-            return Err(format!("Unsupported sync policy version in {path}"));
+            return Err(HostError::new(format!("Unsupported sync policy version in {path}")));
         }
         for name in &policy.ignoreFiles {
-            validateRelative(name)?;
+            validateRelative(name).map_err(HostError::new)?;
         }
         Ok(policy)
     }
@@ -73,26 +79,37 @@ impl FileSyncPolicy {
         }
         Ok(())
     }
+    /// Builds ignore rules for callers using string errors.
     pub fn rules(
         &self,
         host: &dyn RuntimeStorageHost,
         root: &str,
     ) -> Result<Vec<Gitignore>, String> {
+        self.rulesForScan(host, root).map_err(|error| error.to_string())
+    }
+
+    /// Builds ignore rules while preserving permission errors from their source files.
+    pub(crate) fn rulesForScan(
+        &self,
+        host: &dyn RuntimeStorageHost,
+        root: &str,
+    ) -> HostResult<Vec<Gitignore>> {
         let mut builder = GitignoreBuilder::new(root);
         for pattern in &self.exclude {
             builder
                 .add_line(None, pattern)
-                .map_err(|e| format!("Invalid sync exclude: {e}"))?;
+                .map_err(|e| HostError::new(format!("Invalid sync exclude: {e}")))?;
         }
-        let mut rules = vec![builder.build().map_err(|e| e.to_string())?];
+        let mut rules = vec![builder.build().map_err(|e| HostError::new(e.to_string()))?];
         for name in &self.ignoreFiles {
             let path = format!("{root}/{name}");
-            if let Some(rule) = readIgnore(host, &path)? {
+            if let Some(rule) = readIgnoreForScan(host, &path)? {
                 rules.push(rule);
             }
         }
         Ok(rules)
     }
+    /// Evaluates inclusion for callers using string errors.
     pub fn includes(
         &self,
         host: &dyn RuntimeStorageHost,
@@ -100,20 +117,31 @@ impl FileSyncPolicy {
         path: &str,
         isDirectory: bool,
     ) -> Result<bool, String> {
+        self.includesForScan(host, root, path, isDirectory).map_err(|error| error.to_string())
+    }
+
+    /// Evaluates inherited rules without losing their permission error classification.
+    pub(crate) fn includesForScan(
+        &self,
+        host: &dyn RuntimeStorageHost,
+        root: &str,
+        path: &str,
+        isDirectory: bool,
+    ) -> HostResult<bool> {
         if isControl(root, path) {
             return Ok(true);
         }
-        let mut rules = self.rules(host, root)?;
+        let mut rules = self.rulesForScan(host, root)?;
         if self.ignoreFiles.iter().any(|p| p == ".gitignore") {
             let relative = path
                 .strip_prefix(&format!("{root}/"))
-                .ok_or("Sync path escaped its root")?;
+                .ok_or_else(|| HostError::new("Sync path escaped its root"))?;
             let parts: Vec<_> = relative.split('/').collect();
             let mut parent = root.to_string();
             for part in parts.iter().take(parts.len().saturating_sub(1)) {
                 parent.push('/');
                 parent.push_str(part);
-                if let Some(rule) = readIgnore(host, &format!("{parent}/.gitignore"))? {
+                if let Some(rule) = readIgnoreForScan(host, &format!("{parent}/.gitignore"))? {
                     rules.push(rule);
                 }
             }
@@ -127,17 +155,24 @@ pub fn readLimited(
     path: &str,
     limit: usize,
 ) -> Result<Vec<u8>, String> {
+    readLimitedForScan(host, path, limit).map_err(|error| error.to_string())
+}
+
+/// Bounds file reads without erasing the Host's permission error classification.
+pub(crate) fn readLimitedForScan(
+    host: &dyn RuntimeStorageHost,
+    path: &str,
+    limit: usize,
+) -> HostResult<Vec<u8>> {
     let mut bytes = Vec::new();
     loop {
         let length = limit
             .saturating_sub(bytes.len())
             .saturating_add(1)
             .min(64 * 1024);
-        let chunk = host
-            .readBytesRange(path, bytes.len() as u64, length)
-            .map_err(|e| e.to_string())?;
+        let chunk = host.readBytesRange(path, bytes.len() as u64, length)?;
         if chunk.len() > length || bytes.len().saturating_add(chunk.len()) > limit {
-            return Err(format!("{path} exceeds the allowed {limit} bytes"));
+            return Err(HostError::new(format!("{path} exceeds the allowed {limit} bytes")));
         }
         if chunk.is_empty() {
             return Ok(bytes);
@@ -157,21 +192,27 @@ pub fn validateRelative(path: &str) -> Result<(), String> {
     }
     Ok(())
 }
+/// Reads an ignore file for callers using string errors.
 pub fn readIgnore(host: &dyn RuntimeStorageHost, path: &str) -> Result<Option<Gitignore>, String> {
-    if !host.exists(path).map_err(|e| e.to_string())? {
+    readIgnoreForScan(host, path).map_err(|error| error.to_string())
+}
+
+/// Keeps permission errors distinct from malformed ignore rules during traversal.
+pub(crate) fn readIgnoreForScan(host: &dyn RuntimeStorageHost, path: &str) -> HostResult<Option<Gitignore>> {
+    if !host.exists(path)? {
         return Ok(None);
     }
-    let bytes = readLimited(host, path, MAX_POLICY_BYTES)?;
+    let bytes = readLimitedForScan(host, path, MAX_POLICY_BYTES)?;
     let text =
-        std::str::from_utf8(&bytes).map_err(|e| format!("Invalid ignore file {path}: {e}"))?;
-    let parent = path.rsplit_once('/').ok_or("Invalid ignore path")?.0;
+        std::str::from_utf8(&bytes).map_err(|e| HostError::new(format!("Invalid ignore file {path}: {e}")))?;
+    let parent = path.rsplit_once('/').ok_or_else(|| HostError::new("Invalid ignore path"))?.0;
     let mut builder = GitignoreBuilder::new(parent);
     for line in text.lines() {
         builder
             .add_line(Some(PathBuf::from(path)), line)
-            .map_err(|e| format!("Invalid {path}: {e}"))?;
+            .map_err(|e| HostError::new(format!("Invalid {path}: {e}")))?;
     }
-    Ok(Some(builder.build().map_err(|e| e.to_string())?))
+    Ok(Some(builder.build().map_err(|e| HostError::new(e.to_string()))?))
 }
 pub fn ignored(rules: &[Gitignore], path: &str, directory: bool) -> bool {
     let mut ignored = false;

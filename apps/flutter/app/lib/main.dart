@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:desktop_widgets/desktop_widgets.dart';
 import 'package:floating_windows/floating_windows.dart';
+import 'package:fvp/fvp.dart' as fvp;
 import 'package:operit_keep_alive/operit_keep_alive.dart';
 import 'package:operit_ui/operit_ui.dart'
     show prepareLiquidGlass, OperitDesignCaptureScope;
@@ -57,6 +58,7 @@ void main(List<String> arguments) async {
         applicationStarted = true;
         return;
       }
+      fvp.registerWith();
       await platformCoreProxy.dataRescue({'operation': 'runtimeLease'});
       consumeGitHubOAuthWebCallbackAtStartup();
       final bindingElapsedMs = bindingStopwatch.elapsedMilliseconds;

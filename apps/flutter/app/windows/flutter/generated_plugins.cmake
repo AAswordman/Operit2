@@ -11,6 +11,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   dynamic_color
   file_selector_windows
   floating_windows
+  fvp
   geolocator_windows
   operit_keep_alive
   printing

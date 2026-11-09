@@ -464,6 +464,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  fvp:
+    dependency: "direct main"
+    description:
+      name: fvp
+      sha256: "1ee9df424ace41988c2e10ed01f35b170d9ef00c62330acd1b97f007ca56ec99"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.40.0"
   geoclue:
     dependency: transitive
     description:
@@ -1306,15 +1314,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.12.1"
-  video_player_ohos:
-    dependency: "direct main"
-    description:
-      path: "packages/video_player/video_player_ohos"
-      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
-    source: git
-    version: "1.0.0+1"
   video_player_platform_interface:
     dependency: transitive
     description:

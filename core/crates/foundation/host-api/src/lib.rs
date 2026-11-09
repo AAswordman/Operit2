@@ -946,6 +946,7 @@ fn ohosOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
 pub enum HostErrorKind {
     General,
     Timeout,
+    PermissionDenied,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -981,8 +982,16 @@ impl Display for HostError {
 impl Error for HostError {}
 
 impl From<std::io::Error> for HostError {
+    /// Preserves permission failures for callers that isolate inaccessible resources.
     fn from(value: std::io::Error) -> Self {
-        Self::new(value.to_string())
+        Self {
+            kind: if value.kind() == std::io::ErrorKind::PermissionDenied {
+                HostErrorKind::PermissionDenied
+            } else {
+                HostErrorKind::General
+            },
+            message: value.to_string(),
+        }
     }
 }
 

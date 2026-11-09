@@ -14,6 +14,7 @@
 #include <dynamic_color/dynamic_color_plugin_c_api.h>
 #include <file_selector_windows/file_selector_windows.h>
 #include <floating_windows/floating_windows_plugin.h>
+#include <fvp/fvp_plugin_c_api.h>
 #include <geolocator_windows/geolocator_windows.h>
 #include <operit_keep_alive/operit_keep_alive_plugin.h>
 #include <printing/printing_plugin.h>
@@ -38,6 +39,8 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("FileSelectorWindows"));
   FloatingWindowsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("FloatingWindowsPlugin"));
+  FvpPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("FvpPluginCApi"));
   GeolocatorWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("GeolocatorWindows"));
   OperitKeepAlivePluginRegisterWithRegistrar(

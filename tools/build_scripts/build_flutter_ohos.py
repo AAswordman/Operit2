@@ -562,7 +562,7 @@ def replace_required(text: str, old: str, new: str, member_name: str) -> str:
     return text.replace(old, new)
 
 
-# Copies native OHOS Flutter plugin modules into the app project.
+# Stages complete plugin packages so native modules retain sibling source paths.
 def stage_ohos_flutter_plugins() -> list[str]:
     if not FLUTTER_PLUGINS_DEPENDENCIES.is_file():
         raise RuntimeError(f"Flutter plugin dependency graph is missing: {FLUTTER_PLUGINS_DEPENDENCIES}")
@@ -573,13 +573,13 @@ def stage_ohos_flutter_plugins() -> list[str]:
         if plugin.get("native_build") is False:
             continue
         name = plugin["name"]
-        source = Path(plugin["path"]) / "ohos"
+        source = Path(plugin["path"])
         destination = OHOS_STAGED_PLUGINS_DIR / name
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(source, destination)
-        patch_staged_ohos_plugin_hvigorfile(destination)
-        patch_staged_ohos_plugin_package(destination)
+        patch_staged_ohos_plugin_hvigorfile(destination / "ohos")
+        patch_staged_ohos_plugin_package(destination / "ohos")
         plugin_names.append(name)
     return plugin_names
 
@@ -629,7 +629,7 @@ def patch_staged_ohos_plugin_package(plugin_dir: Path) -> None:
     package_file = plugin_dir / "oh-package.json5"
     content = package_file.read_text(encoding="utf-8")
     package_file.write_text(
-        content.replace('"@ohos/flutter_ohos": "file:libs/flutter.har"', '"@ohos/flutter_ohos": ""'),
+        re.sub(r'("@ohos/flutter_ohos"\s*:\s*)"[^"]*"', r'\1""', content),
         encoding="utf-8",
     )
 
@@ -645,7 +645,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
         }
     )
     for name in plugin_names:
-        root_dependencies[name] = f"file:./.flutter_ohos_plugins/{name}"
+        root_dependencies[name] = f"file:./.flutter_ohos_plugins/{name}/ohos"
     root_config["dependencies"] = root_dependencies
 
     root_overrides = clean_generated_ohos_dependencies(root_config.get("overrides", {}), "./")
@@ -656,7 +656,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
         }
     )
     for name in plugin_names:
-        root_overrides[name] = f"file:./.flutter_ohos_plugins/{name}"
+        root_overrides[name] = f"file:./.flutter_ohos_plugins/{name}/ohos"
     root_config["overrides"] = root_overrides
     write_json_package(OHOS_ROOT_PACKAGE, root_config)
 
@@ -669,7 +669,7 @@ def write_ohos_package_dependencies(plugin_names: list[str]) -> None:
         }
     )
     for name in plugin_names:
-        entry_dependencies[name] = f"file:../.flutter_ohos_plugins/{name}"
+        entry_dependencies[name] = f"file:../.flutter_ohos_plugins/{name}/ohos"
     entry_config["dependencies"] = entry_dependencies
     write_json_package(OHOS_ENTRY_PACKAGE, entry_config)
 

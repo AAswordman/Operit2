@@ -669,7 +669,7 @@ fn remainingScriptRequestMillis(deadline: u128) -> JsExecutionResult<u64> {
 fn javaScriptExecutionErrorFromHost(error: HostError) -> JsExecutionError {
     match error.kind {
         HostErrorKind::Timeout => JsExecutionError::timeout(error.message),
-        HostErrorKind::General => JsExecutionError::worker_unavailable(error.message),
+        HostErrorKind::General | HostErrorKind::PermissionDenied => JsExecutionError::worker_unavailable(error.message),
     }
 }
 

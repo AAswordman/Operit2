@@ -1,4 +1,4 @@
-use operit_host_api::{HostError, HostResult, RuntimeStorageWriteHost, RuntimeStorageWriteSession};
+use operit_host_api::{HostError, HostResult, RuntimeStorageHost, RuntimeStorageWriteHost, RuntimeStorageWriteSession};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::{
     Arc,
@@ -134,9 +134,14 @@ async fn streamed_attachment_worker() {
     })
     .await
     .expect("bounded upload must complete");
+    storage.writeBytes("workspaces/broken/.operit/sync.json", b"invalid").unwrap();
+    assert!(operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
+        storage.clone(), "runtime/sync",
+    ).scan().is_err());
     let attachment = transfer
         .completeSelectedAttachment(chat_id.clone(), id.clone(), "大文件.apk".into(), Some(size))
         .unwrap();
+    storage.delete("workspaces/broken/.operit/sync.json", false).unwrap();
     assert_eq!(attachment.fileSize, size);
     assert_eq!(attachment.fileName, "大文件.apk");
     assert!(

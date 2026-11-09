@@ -10,15 +10,15 @@
     "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
     "flutter_native_arm64_v8a": "file:./har/arm64_v8a_release.har",
     "flutter_native_x86_64": "file:./har/x86_64_release.har",
-    "file_selector_ohos": "file:./.flutter_ohos_plugins/file_selector_ohos",
-    "image_picker_ohos": "file:./.flutter_ohos_plugins/image_picker_ohos",
-    "integration_test": "file:./.flutter_ohos_plugins/integration_test",
-    "operit_keep_alive": "file:./.flutter_ohos_plugins/operit_keep_alive",
-    "path_provider_ohos": "file:./.flutter_ohos_plugins/path_provider_ohos",
-    "record_ohos": "file:./.flutter_ohos_plugins/record_ohos",
-    "url_launcher_ohos": "file:./.flutter_ohos_plugins/url_launcher_ohos",
-    "video_player_ohos": "file:./.flutter_ohos_plugins/video_player_ohos",
-    "webview_all_ohos": "file:./.flutter_ohos_plugins/webview_all_ohos"
+    "file_selector_ohos": "file:./.flutter_ohos_plugins/file_selector_ohos/ohos",
+    "fvp": "file:./.flutter_ohos_plugins/fvp/ohos",
+    "image_picker_ohos": "file:./.flutter_ohos_plugins/image_picker_ohos/ohos",
+    "integration_test": "file:./.flutter_ohos_plugins/integration_test/ohos",
+    "operit_keep_alive": "file:./.flutter_ohos_plugins/operit_keep_alive/ohos",
+    "path_provider_ohos": "file:./.flutter_ohos_plugins/path_provider_ohos/ohos",
+    "record_ohos": "file:./.flutter_ohos_plugins/record_ohos/ohos",
+    "url_launcher_ohos": "file:./.flutter_ohos_plugins/url_launcher_ohos/ohos",
+    "webview_all_ohos": "file:./.flutter_ohos_plugins/webview_all_ohos/ohos"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.6"
@@ -27,14 +27,14 @@
     "@ohos/flutter_ohos": "file:./har/flutter_embedding_release.har",
     "flutter_native_arm64_v8a": "file:./har/arm64_v8a_release.har",
     "flutter_native_x86_64": "file:./har/x86_64_release.har",
-    "file_selector_ohos": "file:./.flutter_ohos_plugins/file_selector_ohos",
-    "image_picker_ohos": "file:./.flutter_ohos_plugins/image_picker_ohos",
-    "integration_test": "file:./.flutter_ohos_plugins/integration_test",
-    "operit_keep_alive": "file:./.flutter_ohos_plugins/operit_keep_alive",
-    "path_provider_ohos": "file:./.flutter_ohos_plugins/path_provider_ohos",
-    "record_ohos": "file:./.flutter_ohos_plugins/record_ohos",
-    "url_launcher_ohos": "file:./.flutter_ohos_plugins/url_launcher_ohos",
-    "video_player_ohos": "file:./.flutter_ohos_plugins/video_player_ohos",
-    "webview_all_ohos": "file:./.flutter_ohos_plugins/webview_all_ohos"
+    "file_selector_ohos": "file:./.flutter_ohos_plugins/file_selector_ohos/ohos",
+    "fvp": "file:./.flutter_ohos_plugins/fvp/ohos",
+    "image_picker_ohos": "file:./.flutter_ohos_plugins/image_picker_ohos/ohos",
+    "integration_test": "file:./.flutter_ohos_plugins/integration_test/ohos",
+    "operit_keep_alive": "file:./.flutter_ohos_plugins/operit_keep_alive/ohos",
+    "path_provider_ohos": "file:./.flutter_ohos_plugins/path_provider_ohos/ohos",
+    "record_ohos": "file:./.flutter_ohos_plugins/record_ohos/ohos",
+    "url_launcher_ohos": "file:./.flutter_ohos_plugins/url_launcher_ohos/ohos",
+    "webview_all_ohos": "file:./.flutter_ohos_plugins/webview_all_ohos/ohos"
   }
 }

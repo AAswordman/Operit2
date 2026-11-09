@@ -530,7 +530,7 @@ impl NativeRuntimeStorageHost {
                         return Err(HostError::new("Workspace storage requires a regular file or directory")),
                     Ok(_) => {},
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                    Err(error) => return Err(error.into()),
+                    Err(error) => return Err(storageIoError("Inspect storage path", &current, error)),
                 }
             }
         }
@@ -617,12 +617,14 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        Ok(fs::read(self.resolveFile(path)?)?)
+        let resolved = self.resolveFile(path)?;
+        fs::read(&resolved).map_err(|error| storageIoError("Read storage file", &resolved, error))
     }
 
     /// Reads one bounded byte range from native runtime storage.
     fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        let mut file = fs::File::open(self.resolveFile(path)?)?;
+        let resolved = self.resolveFile(path)?;
+        let mut file = fs::File::open(&resolved).map_err(|error| storageIoError("Open storage file", &resolved, error))?;
         file.seek(SeekFrom::Start(offset))?;
         let mut bytes = vec![0; length];
         let count = file.read(&mut bytes)?;
@@ -638,7 +640,9 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
 
     /// Reads native file metadata without opening or hashing file contents.
     fn modifiedAt(&self, path: &str) -> HostResult<i64> {
-        let time = fs::metadata(self.resolveFile(path)?)?.modified()?;
+        let resolved = self.resolveFile(path)?;
+        let time = fs::metadata(&resolved).and_then(|metadata| metadata.modified())
+            .map_err(|error| storageIoError("Read storage metadata", &resolved, error))?;
         let elapsed = time.duration_since(std::time::UNIX_EPOCH).map_err(|e| HostError::new(e.to_string()))?;
         i64::try_from(elapsed.as_micros()).map_err(|e| HostError::new(e.to_string()))
     }
@@ -680,7 +684,7 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
 
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         let path = self.resolveFile(path)?;
-        if !path.exists() {
+        if !path.try_exists().map_err(|error| storageIoError("Inspect storage deletion target", &path, error))? {
             return Ok(());
         }
         if path.is_dir() {
@@ -699,17 +703,17 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         let resolved = self.resolve(path)?;
         if self.managedRoot(path)?.is_some() {
             // A dangling link is still an occupied destination, never a new writable file.
-            return match fs::symlink_metadata(resolved) {
+            return match fs::symlink_metadata(&resolved) {
                 Ok(_) => Ok(true),
                 // A former descendant also ceases to exist when its parent
                 // directory has been replaced by a regular file.
                 Err(error) if matches!(error.kind(),
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) => Ok(false),
-                Err(error) => Err(error.into()),
+                Err(error) => Err(storageIoError("Inspect storage path", &resolved, error)),
             };
         }
-        Ok(resolved.exists())
+        resolved.try_exists().map_err(|error| storageIoError("Inspect storage path", &resolved, error))
     }
 
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
@@ -729,29 +733,30 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
                     Ok(metadata) if isStorageLink(&metadata) => return Ok(entries),
                     Ok(_) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
-                    Err(error) => return Err(error.into()),
+                    Err(error) => return Err(storageIoError("Inspect storage directory", &current, error)),
                 }
             }
         }
-        if !directory.exists() {
+        if !directory.try_exists().map_err(|error| storageIoError("Inspect storage directory", &directory, error))? {
             return Ok(entries);
         }
-        for entry in fs::read_dir(directory)? {
-            let entry = entry?;
+        for entry in fs::read_dir(&directory).map_err(|error| storageIoError("List storage directory", &directory, error))? {
+            let entry = entry.map_err(|error| storageIoError("Read storage directory entry", &directory, error))?;
             // The atomic writer stages a private sibling until commit; a killed
             // process leaves it behind and no listing may ever publish it.
             if isPartialStagingFile(&entry.file_name().to_string_lossy()) {
                 continue;
             }
             let metadata = if managedWorkspace {
-                let metadata = fs::symlink_metadata(entry.path())?;
+                let metadata = fs::symlink_metadata(entry.path())
+                    .map_err(|error| storageIoError("Inspect storage entry", &entry.path(), error))?;
                 // Do not copy link targets or try reading sockets, devices and FIFOs as files.
                 if isStorageLink(&metadata) || (!metadata.is_dir() && !metadata.is_file()) {
                     continue;
                 }
                 metadata
             } else {
-                entry.metadata()?
+                entry.metadata().map_err(|error| storageIoError("Inspect storage entry", &entry.path(), error))?
             };
             entries.push(RuntimeStorageEntry {
                 path: self.storagePathForPhysical(&entry.path())?,
@@ -897,6 +902,13 @@ fn legacySecurePath(runtimeRoot: &Path, segments: &[&str]) -> HostResult<PathBuf
         resolved.push(segment);
     }
     Ok(resolved)
+}
+
+/// Adds the physical operation path while preserving the system error classification.
+fn storageIoError(operation: &str, path: &Path, error: std::io::Error) -> HostError {
+    let mut error = HostError::from(error);
+    error.message = format!("{operation} {}: {}", path.display(), error.message);
+    error
 }
 
 /// Normalizes a runtime storage path into safe relative segments.

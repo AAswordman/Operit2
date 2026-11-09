@@ -245,11 +245,9 @@ impl AttachmentTransferManager {
         );
         let path = selectedAttachmentStoragePath(&chatId, &Uuid::new_v4().simple().to_string(), &name)?;
         let bytes = reference.bytes()?;
-        operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::new(
-            self.storageHost.clone(),
-            operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
-        )
-        .writeBytes(&path, &bytes)?;
+        self.storageHost
+            .writeBytesAtomically(&path, &bytes)
+            .map_err(|error| error.to_string())?;
         self.persistentInfo(&path, name, bytes.len() as i64)
     }
 
@@ -283,11 +281,6 @@ impl AttachmentTransferManager {
     ) -> Result<AttachmentInfo, String> {
         let path = selectedAttachmentStoragePath(&chatId, &uploadId, &fileName)?;
         let length = self.committedLength(&path, expectedByteLength)?;
-        operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
-            self.storageHost.clone(),
-            operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
-        )
-        .scan()?;
         self.persistentInfo(&path, fileName, length)
     }
 
