@@ -152,16 +152,6 @@ fn defaultEnableSummary() -> bool {
 }
 
 #[allow(non_snake_case)]
-fn defaultEnableSummaryByMessageCount() -> bool {
-    ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT
-}
-
-#[allow(non_snake_case)]
-fn defaultSummaryMessageCountThreshold() -> i32 {
-    ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD
-}
-
-#[allow(non_snake_case)]
 fn defaultThreadCount() -> i32 {
     4
 }

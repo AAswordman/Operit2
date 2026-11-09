@@ -5015,7 +5015,6 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
       _summaryRatio = (value > 1 ? value / 100 : value).clamp(0.01, 1.0);
     }
     _savedSummary = text;
-    final stored = widget.initialConfig.summary;
     final ratio = _summaryRatio;
     _persist(
       () => widget.clients.preferencesModelConfigManager.updateSummaryForModel(
@@ -5024,8 +5023,6 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
         summary: core_proxy.ModelSummarySettings(
           enableSummary: enabled,
           summaryTokenThreshold: ratio,
-          enableSummaryByMessageCount: stored.enableSummaryByMessageCount,
-          summaryMessageCountThreshold: stored.summaryMessageCountThreshold,
         ),
       ),
       undo: () {

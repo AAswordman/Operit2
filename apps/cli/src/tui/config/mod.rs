@@ -745,9 +745,6 @@ impl ConfigUi {
                         Some(model_editor::SummaryFocus::TokenThreshold) => {
                             push_numeric_text(&mut editor.summary_token_threshold, &text);
                         }
-                        Some(model_editor::SummaryFocus::MessageCountThreshold) => {
-                            push_numeric_text(&mut editor.summary_message_count_threshold, &text);
-                        }
                         _ => {}
                     },
                 }
@@ -1354,14 +1351,6 @@ impl ConfigUi {
                         Some(model_editor::SummaryFocus::TokenThreshold) => {
                             editor.editing_field = !editor.editing_field
                         }
-                        Some(model_editor::SummaryFocus::ByMessageCount) => {
-                            editor.enable_summary_by_message_count =
-                                !editor.enable_summary_by_message_count;
-                            editor.clamp_focus();
-                        }
-                        Some(model_editor::SummaryFocus::MessageCountThreshold) => {
-                            editor.editing_field = !editor.editing_field
-                        }
                         None => {}
                     },
                 }
@@ -1384,9 +1373,6 @@ impl ConfigUi {
                                 Some(model_editor::SummaryFocus::TokenThreshold) => {
                                     editor.summary_token_threshold.push(c)
                                 }
-                                Some(model_editor::SummaryFocus::MessageCountThreshold) => {
-                                    editor.summary_message_count_threshold.push(c)
-                                }
                                 _ => {}
                             }
                         }
@@ -1406,9 +1392,6 @@ impl ConfigUi {
                         model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
                             Some(model_editor::SummaryFocus::TokenThreshold) => {
                                 editor.summary_token_threshold.pop();
-                            }
-                            Some(model_editor::SummaryFocus::MessageCountThreshold) => {
-                                editor.summary_message_count_threshold.pop();
                             }
                             _ => {}
                         },

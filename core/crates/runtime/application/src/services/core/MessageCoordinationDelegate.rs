@@ -846,13 +846,10 @@ impl MessageCoordinationDelegate {
                 .ok_or_else(|| format!("Chat does not exist: {chatId}"))?;
             if !messages.is_empty()
                 && AIMessageManager::shouldGenerateSummary(
-                    messages.clone(),
                     chat.currentWindowSize,
                     maxTokens,
                     policy.tokenUsageThreshold,
                     true,
-                    settings.summary.enableSummaryByMessageCount,
-                    settings.summary.summaryMessageCountThreshold,
                 )
             {
                 let _summaryCompletion = self.launchSummary(
@@ -894,9 +891,8 @@ impl MessageCoordinationDelegate {
                 &participant.modelBinding.providerId, &participant.modelBinding.modelId,
             ).map_err(|error| error.to_string())?;
             if AIMessageManager::shouldGenerateSummary(
-                messages.clone(), window, settings.context.maxContextTokens(),
+                window, settings.context.maxContextTokens(),
                 settings.summary.tokenThresholdRatio(), settings.summary.enableSummary,
-                settings.summary.enableSummaryByMessageCount, settings.summary.summaryMessageCountThreshold,
             ) {
                 return self.launchSummary(service, messages, ConversationSummaryRequest {
                     chatId, participantId: Some(configuration.profile.id.clone()),
@@ -1266,13 +1262,10 @@ mod summary_send_policy_tests {
                 let policy = SummarySendPolicy::new(&settings, &options, false, background);
                 assert!(!policy.checkBeforeSend);
                 assert!(AIMessageManager::shouldGenerateSummary(
-                    Vec::new(),
                     i64::from(maxTokens) * 98 / 100,
                     maxTokens,
                     policy.tokenUsageThreshold,
                     true,
-                    false,
-                    16,
                 ));
             }
         }
@@ -1313,13 +1306,10 @@ mod summary_send_policy_tests {
             let policy = SummarySendPolicy::new(&settings, &options, true, false);
             assert!(!policy.checkBeforeSend);
             assert!(!AIMessageManager::shouldGenerateSummary(
-                Vec::new(),
                 196_000,
                 200_000,
                 policy.tokenUsageThreshold,
                 true,
-                false,
-                16,
             ));
         }
     }

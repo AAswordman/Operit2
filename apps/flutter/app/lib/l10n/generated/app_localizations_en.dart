@@ -1923,12 +1923,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelSummaryThreshold => 'Summarize at';
 
   @override
-  String get settingsModelSummaryByMessageCount => 'Summarize by message count';
-
-  @override
-  String get settingsModelSummaryMessageCount => 'Summary message threshold';
-
-  @override
   String get settingsModelCustomHeaders => 'Custom headers';
 
   @override

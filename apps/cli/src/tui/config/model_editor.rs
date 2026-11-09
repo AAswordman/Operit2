@@ -32,8 +32,6 @@ pub(crate) enum MainFocus {
 pub(crate) enum SummaryFocus {
     EnableSummary,
     TokenThreshold,
-    ByMessageCount,
-    MessageCountThreshold,
 }
 
 #[derive(Clone, PartialEq)]
@@ -62,8 +60,6 @@ pub(crate) struct EditorState {
     // Summary
     pub(crate) enable_summary: bool,
     pub(crate) summary_token_threshold: String,
-    pub(crate) enable_summary_by_message_count: bool,
-    pub(crate) summary_message_count_threshold: String,
 
     // Builtin tools
     pub(crate) builtin_tools: Vec<ModelBuiltinTool>,
@@ -107,11 +103,6 @@ impl EditorState {
             max_context_length: format!("{:.0}", config.context.maxContextLength),
             enable_summary: config.summary.enableSummary,
             summary_token_threshold: config.summary.summaryTokenThreshold.to_string(),
-            enable_summary_by_message_count: config.summary.enableSummaryByMessageCount,
-            summary_message_count_threshold: format!(
-                "{}",
-                config.summary.summaryMessageCountThreshold
-            ),
             builtin_tools: config.builtinTools.clone(),
             supports_structured_tools: config.request.supportsStructuredTools,
             enable_claude_1h_prompt_cache: config.request.enableClaude1hPromptCache,
@@ -166,10 +157,6 @@ impl EditorState {
         let mut items = vec![SummaryFocus::EnableSummary];
         if self.enable_summary {
             items.push(SummaryFocus::TokenThreshold);
-            items.push(SummaryFocus::ByMessageCount);
-            if self.enable_summary_by_message_count {
-                items.push(SummaryFocus::MessageCountThreshold);
-            }
         }
         items
     }
@@ -209,11 +196,6 @@ impl EditorState {
             summary: ModelSummarySettings {
                 enableSummary: self.enable_summary,
                 summaryTokenThreshold: self.summary_token_threshold.parse().unwrap_or(4096.0),
-                enableSummaryByMessageCount: self.enable_summary_by_message_count,
-                summaryMessageCountThreshold: self
-                    .summary_message_count_threshold
-                    .parse()
-                    .unwrap_or(10),
             },
             builtin_tools: self.builtin_tools.clone(),
             thinking_level: self.thinking_level.filter(|_| self.thinking_level_changed),
@@ -576,77 +558,6 @@ impl EditorState {
                     ),
                     Style::default().fg(theme::TEXT_MUTED),
                 ))]));
-            }
-
-            // Enable Summary By Message Count toggle
-            let is_focused = self.focused_summary_item() == Some(SummaryFocus::ByMessageCount);
-            if is_focused {
-                items.push(ListItem::new(vec![Line::from(Span::styled(
-                    format!(
-                        "{}: {}",
-                        text.config_editor_by_message_count(),
-                        if self.enable_summary_by_message_count {
-                            text.config_yes()
-                        } else {
-                            text.config_no()
-                        }
-                    ),
-                    Style::default()
-                        .bg(theme::ACCENT_BG)
-                        .fg(theme::TEXT)
-                        .add_modifier(Modifier::BOLD),
-                ))]));
-            } else {
-                items.push(ListItem::new(vec![Line::from(Span::styled(
-                    format!(
-                        "{}: {}",
-                        text.config_editor_by_message_count(),
-                        if self.enable_summary_by_message_count {
-                            text.config_yes()
-                        } else {
-                            text.config_no()
-                        }
-                    ),
-                    if self.enable_summary_by_message_count {
-                        Style::default().fg(theme::TEXT)
-                    } else {
-                        Style::default().fg(theme::TEXT_MUTED)
-                    },
-                ))]));
-            }
-
-            if self.enable_summary_by_message_count {
-                let is_focused =
-                    self.focused_summary_item() == Some(SummaryFocus::MessageCountThreshold);
-                if is_focused {
-                    if self.editing_field {
-                        items.push(ListItem::new(vec![Self::editing_value_line(
-                            text.config_editor_message_count_threshold(),
-                            &self.summary_message_count_threshold,
-                        )]));
-                    } else {
-                        items.push(ListItem::new(vec![Line::from(Span::styled(
-                            format!(
-                                "{}: {}",
-                                text.config_editor_message_count_threshold(),
-                                self.summary_message_count_threshold
-                            ),
-                            Style::default()
-                                .bg(theme::ACCENT_BG)
-                                .fg(theme::TEXT)
-                                .add_modifier(Modifier::BOLD),
-                        ))]));
-                    }
-                } else {
-                    items.push(ListItem::new(vec![Line::from(Span::styled(
-                        format!(
-                            "{}: {}",
-                            text.config_editor_message_count_threshold(),
-                            self.summary_message_count_threshold
-                        ),
-                        Style::default().fg(theme::TEXT_MUTED),
-                    ))]));
-                }
             }
         }
 

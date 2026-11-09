@@ -252,8 +252,6 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   static const summarySettings = core.ModelSummarySettings(
     enableSummary: true,
     summaryTokenThreshold: 0.7,
-    enableSummaryByMessageCount: false,
-    summaryMessageCountThreshold: 0,
   );
   static const localRuntime = core.LocalModelRuntimeSettings(
     inferenceBindingKey: '',

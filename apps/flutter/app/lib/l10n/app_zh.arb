@@ -911,8 +911,6 @@
   "settingsModelMaxContextLength": "最大上下文长度",
   "settingsModelMaxContextLengthInvalid": "请输入大于 0 的最大上下文长度",
   "settingsModelSummaryThreshold": "总结阈值",
-  "settingsModelSummaryByMessageCount": "按消息数总结",
-  "settingsModelSummaryMessageCount": "总结消息数阈值",
   "settingsModelCustomHeaders": "自定义 Headers",
   "settingsModelCustomParameters": "自定义参数 JSON",
   "settingsModelToolCall": "工具调用",

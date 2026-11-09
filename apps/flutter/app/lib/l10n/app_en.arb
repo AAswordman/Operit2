@@ -918,8 +918,6 @@
   "settingsModelMaxContextLength": "Max context length",
   "settingsModelMaxContextLengthInvalid": "Enter a max context length greater than 0",
   "settingsModelSummaryThreshold": "Summarize at",
-  "settingsModelSummaryByMessageCount": "Summarize by message count",
-  "settingsModelSummaryMessageCount": "Summary message threshold",
   "settingsModelCustomHeaders": "Custom headers",
   "settingsModelCustomParameters": "Custom parameters JSON",
   "settingsModelToolCall": "Tool calling",

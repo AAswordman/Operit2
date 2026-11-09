@@ -1,4 +1,4 @@
-use crate::commands::util::{parse_bool_arg, parse_f32_arg, parse_i32_arg};
+use crate::commands::util::{parse_bool_arg, parse_f32_arg};
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
 use operit_model::ApiKeyInfo::ApiKeyInfo;
@@ -508,17 +508,16 @@ pub fn run_model_command(
             }));
         }
         "summary-set" => {
-            let providerId = requiredArg(args, 1, "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
-            let modelId = requiredArg(args, 2, "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
-            let enableSummary = parse_bool_arg(args.get(3), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
-            let summaryTokenThreshold = parse_f32_arg(args.get(4), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
-            let enableSummaryByMessageCount = parse_bool_arg(args.get(5), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
-            let summaryMessageCountThreshold = parse_i32_arg(args.get(6), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>")?;
+            if args.len() != 5 {
+                return Err("usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold>".to_string());
+            }
+            let providerId = requiredArg(args, 1, "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold>")?;
+            let modelId = requiredArg(args, 2, "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold>")?;
+            let enableSummary = parse_bool_arg(args.get(3), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold>")?;
+            let summaryTokenThreshold = parse_f32_arg(args.get(4), "usage: operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold>")?;
             let summary = ModelSummarySettings {
                 enableSummary,
                 summaryTokenThreshold,
-                enableSummaryByMessageCount,
-                summaryMessageCountThreshold,
             };
             let model = command
                 .modelManager()
@@ -852,14 +851,6 @@ fn print_summary_settings(
         "Token threshold: {}",
         summary.summaryTokenThreshold
     ));
-    output.push_stdout_line(format!(
-        "Message-count summary: {}",
-        summary.enableSummaryByMessageCount
-    ));
-    output.push_stdout_line(format!(
-        "Message-count threshold: {}",
-        summary.summaryMessageCountThreshold
-    ));
 }
 
 /// Prints pricing settings for a resolved model.
@@ -1001,7 +992,7 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model context-show [provider-id] [model-id]",
         "operit2 model context-set <provider-id> <model-id> <max-context-length>",
         "operit2 model summary-show [provider-id] [model-id]",
-        "operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>",
+        "operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold>",
         "operit2 model thinking <provider-id> <model-id> [off|enabled|minimal|low|medium|high|xhigh|max]",
         "operit2 model function-list",
         "operit2 model function-show <function-type>",

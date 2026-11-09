@@ -421,8 +421,6 @@ class _Bridge extends OperitRuntimeBridge {
     'summary': const core.ModelSummarySettings(
       enableSummary: true,
       summaryTokenThreshold: 0.7,
-      enableSummaryByMessageCount: false,
-      summaryMessageCountThreshold: 0,
     ).toJson(),
     'localRuntime': settings.toJson(),
   };

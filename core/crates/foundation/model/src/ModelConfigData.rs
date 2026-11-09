@@ -146,8 +146,6 @@ impl ModelConfigDefaults {
     pub const DEFAULT_MAX_CONTEXT_LENGTH: f32 = 200.0;
     pub const DEFAULT_SUMMARY_TOKEN_THRESHOLD: f32 = 0.85;
     pub const DEFAULT_ENABLE_SUMMARY: bool = true;
-    pub const DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT: bool = true;
-    pub const DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD: i32 = 16;
     pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str =
         "https://api.deepseek.com/v1/chat/completions";
     pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-v4-flash";
@@ -322,8 +320,6 @@ impl ModelContextSpec {
 pub struct ModelSummarySettings {
     pub enableSummary: bool,
     pub summaryTokenThreshold: f32,
-    pub enableSummaryByMessageCount: bool,
-    pub summaryMessageCountThreshold: i32,
 }
 
 impl Default for ModelSummarySettings {
@@ -331,10 +327,6 @@ impl Default for ModelSummarySettings {
         Self {
             enableSummary: ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY,
             summaryTokenThreshold: ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD,
-            enableSummaryByMessageCount:
-                ModelConfigDefaults::DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT,
-            summaryMessageCountThreshold:
-                ModelConfigDefaults::DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD,
         }
     }
 }

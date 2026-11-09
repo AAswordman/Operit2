@@ -251,10 +251,6 @@ struct Operit1ModelConfig {
     summaryTokenThreshold: f32,
     #[serde(default = "defaultEnableSummary")]
     enableSummary: bool,
-    #[serde(default = "defaultEnableSummaryByMessageCount")]
-    enableSummaryByMessageCount: bool,
-    #[serde(default = "defaultSummaryMessageCountThreshold")]
-    summaryMessageCountThreshold: i32,
     #[serde(default)]
     mnnForwardType: i32,
     #[serde(default = "defaultThreadCount")]
@@ -455,8 +451,6 @@ fn buildModelProfile(modelId: &str, config: &Operit1ModelConfig) -> Result<Model
     model.summary = ModelSummarySettings {
         enableSummary: config.enableSummary,
         summaryTokenThreshold: config.summaryTokenThreshold,
-        enableSummaryByMessageCount: config.enableSummaryByMessageCount,
-        summaryMessageCountThreshold: config.summaryMessageCountThreshold,
     };
     model.localRuntime.mnnForwardType = config.mnnForwardType;
     model.localRuntime.mnnThreadCount = config.mnnThreadCount;

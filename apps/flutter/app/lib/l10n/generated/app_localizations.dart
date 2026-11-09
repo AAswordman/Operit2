@@ -3524,18 +3524,6 @@ abstract class AppLocalizations {
   /// **'Summarize at'**
   String get settingsModelSummaryThreshold;
 
-  /// No description provided for @settingsModelSummaryByMessageCount.
-  ///
-  /// In en, this message translates to:
-  /// **'Summarize by message count'**
-  String get settingsModelSummaryByMessageCount;
-
-  /// No description provided for @settingsModelSummaryMessageCount.
-  ///
-  /// In en, this message translates to:
-  /// **'Summary message threshold'**
-  String get settingsModelSummaryMessageCount;
-
   /// No description provided for @settingsModelCustomHeaders.
   ///
   /// In en, this message translates to:

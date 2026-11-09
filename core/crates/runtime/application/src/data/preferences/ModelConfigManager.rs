@@ -97,7 +97,7 @@ impl ModelConfigManager {
             })
     }
 
-    const PREFERENCES_VERSION: u32 = 7;
+    const PREFERENCES_VERSION: u32 = 8;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -1056,6 +1056,39 @@ impl ModelConfigManager {
                 }
                 Ok(())
             }
+            7 => {
+                // Remove retired message-count controls from every model, preserving
+                // each user's summary switch, token threshold and all other settings.
+                let records = preferences
+                    .iterEntries()
+                    .filter_map(|(key, value)| {
+                        (key != "provider_list" && key.starts_with("provider_"))
+                            .then(|| (key.to_owned(), value.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, value) in records {
+                    let mut record = match value {
+                        serde_json::Value::String(encoded) => serde_json::from_str(&encoded)?,
+                        record => record,
+                    };
+                    if let Some(models) = record
+                        .get_mut("models")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        for model in models {
+                            if let Some(summary) = model
+                                .get_mut("summary")
+                                .and_then(serde_json::Value::as_object_mut)
+                            {
+                                summary.remove("enableSummaryByMessageCount");
+                                summary.remove("summaryMessageCountThreshold");
+                            }
+                        }
+                    }
+                    preferences.set(&stringPreferencesKey(&key), record);
+                }
+                Ok(())
+            }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
     }
@@ -1768,6 +1801,7 @@ mod tests {
     /// Verifies exported provider JSON restores a new provider with its API key.
     #[test]
     fn import_all_providers_from_backup_content_restores_provider() {
+        use operit_model::ModelConfigData::{ModelSummarySettings, ProviderProfile};
         let root = unique_test_root("import_all_providers_from_backup_content_restores_provider");
         setup_test_runtime(root.clone());
         let manager = ModelConfigManager::new(root.clone());
@@ -1777,7 +1811,12 @@ mod tests {
         provider.id = "restored_provider".to_string();
         provider.name = "Restored provider".to_string();
         provider.apiKey = "sk-restored".to_string();
-        let backup = serde_json::to_string(&vec![provider]).expect("serialize backup");
+        let mut backup = serde_json::to_value(vec![provider]).expect("serialize backup");
+        backup[0]["models"][0]["summary"] = serde_json::json!({
+            "enableSummary": false, "summaryTokenThreshold": 0.92,
+            "enableSummaryByMessageCount": true, "summaryMessageCountThreshold": 1
+        });
+        let backup = backup.to_string();
 
         let result = manager
             .importAllProvidersFromBackupContent(&backup)
@@ -1794,6 +1833,19 @@ mod tests {
                 .apiKey,
             "sk-restored"
         );
+        let restored = manager.getProviderProfile("restored_provider").unwrap();
+        assert_eq!(
+            serde_json::to_value(&restored.models[0].summary).unwrap(),
+            serde_json::to_value(ModelSummarySettings {
+                enableSummary: false,
+                summaryTokenThreshold: 0.92,
+            }).unwrap()
+        );
+        let exported: Vec<ProviderProfile> = serde_json::from_str(
+            &manager.exportAllProviders().expect("export imported settings")
+        ).unwrap();
+        let exported = exported.iter().find(|provider| provider.id == "restored_provider").unwrap();
+        assert_eq!(exported.models[0].summary, restored.models[0].summary);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2030,6 +2082,65 @@ mod tests {
         assert_eq!(
             store.schemaVersion().unwrap(),
             ModelConfigManager::PREFERENCES_VERSION
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Upgrades persisted settings once, keeping user choices and cleaning every provider.
+    #[test]
+    fn schema_seven_migration_removes_retired_summary_controls() {
+        use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
+        let root = unique_test_root("schema_seven_summary_controls");
+        let host: Arc<dyn RuntimeStorageHost> =
+            Arc::new(TestRuntimeStorageHost { root: root.clone() });
+        let path = "runtime/config/model-schema-seven.preferences.json";
+        let provider = serde_json::json!({
+            "id": "custom",
+            "apiKey": "preserved-test-key",
+            "models": [
+                {"id": "enabled", "summary": {
+                    "enableSummary": true, "summaryTokenThreshold": 0.92,
+                    "enableSummaryByMessageCount": true, "summaryMessageCountThreshold": 1
+                }},
+                {"id": "disabled", "summary": {
+                    "enableSummary": false, "summaryTokenThreshold": 70,
+                    "enableSummaryByMessageCount": false, "summaryMessageCountThreshold": 16
+                }},
+                {"id": "without-summary"}
+            ]
+        });
+        let legacy = serde_json::json!({
+            "__operit_preferences_schema_version": "7",
+            "provider_custom": provider,
+            "provider_unindexed": provider.to_string(),
+            "unrelated_preference": "preserved"
+        });
+        host.writeBytes(path, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let store = ModelConfigManager::preferenceStore(host.clone(), path);
+        let migrated = store.data().unwrap();
+        let mut expected = provider;
+        for summary in expected["models"].as_array_mut().unwrap().iter_mut()
+            .filter_map(|model| model.get_mut("summary"))
+        {
+            let summary = summary.as_object_mut().unwrap();
+            summary.remove("enableSummaryByMessageCount");
+            summary.remove("summaryMessageCountThreshold");
+        }
+        for key in ["provider_custom", "provider_unindexed"] {
+            assert_eq!(migrated.get(&stringPreferencesKey(key)), Some(&expected));
+        }
+        assert_eq!(
+            migrated.get(&stringPreferencesKey("unrelated_preference")),
+            Some(&serde_json::json!("preserved"))
+        );
+        assert_eq!(store.schemaVersion().unwrap(), 8);
+        let reopened = PreferencesDataStore::newEncryptedWithStorage(host, path).withMigration(
+            ModelConfigManager::PREFERENCES_VERSION,
+            |_, _| panic!("a migrated store must not run migration again"),
+        );
+        assert_eq!(
+            reopened.data().unwrap().get(&stringPreferencesKey("provider_custom")),
+            Some(&expected)
         );
         let _ = fs::remove_dir_all(root);
     }

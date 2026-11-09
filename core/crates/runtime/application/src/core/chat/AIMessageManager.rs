@@ -643,39 +643,16 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Automatic summaries depend only on the configured context token threshold.
     pub fn shouldGenerateSummary(
-        messages: Vec<ChatMessage>,
         currentTokens: i64,
         maxTokens: i32,
         tokenUsageThreshold: f64,
         enableSummary: bool,
-        enableSummaryByMessageCount: bool,
-        summaryMessageCountThreshold: i32,
     ) -> bool {
-        if !enableSummary {
-            return false;
-        }
-        if maxTokens > 0 {
-            let usageRatio = currentTokens as f64 / f64::from(maxTokens);
-            if usageRatio >= tokenUsageThreshold {
-                return true;
-            }
-        }
-        if enableSummaryByMessageCount {
-            let lastSummaryIndex = messages
-                .iter()
-                .rposition(|message| message.sender == "summary");
-            let relevantMessages = match lastSummaryIndex {
-                Some(index) => &messages[index + 1..],
-                None => messages.as_slice(),
-            };
-            let userAiMessagesSinceLastSummary = relevantMessages
-                .iter()
-                .filter(|message| message.sender == "user")
-                .count() as i32;
-            return userAiMessagesSinceLastSummary >= summaryMessageCountThreshold;
-        }
-        false
+        enableSummary
+            && maxTokens > 0
+            && currentTokens as f64 / f64::from(maxTokens) >= tokenUsageThreshold
     }
 
     /// Projects history using persisted participant identities and the owner's explicit history policy.
@@ -1490,6 +1467,17 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// Low context usage cannot trigger automatic summaries, even after many user turns.
+    #[test]
+    fn automatic_summary_requires_context_token_threshold() {
+        assert!(!AIMessageManager::shouldGenerateSummary(4_000, 200_000, 0.85, true));
+        assert!(!AIMessageManager::shouldGenerateSummary(169_999, 200_000, 0.85, true));
+        assert!(AIMessageManager::shouldGenerateSummary(170_000, 200_000, 0.85, true));
+        assert!(AIMessageManager::shouldGenerateSummary(200_000, 200_000, 0.85, true));
+        assert!(!AIMessageManager::shouldGenerateSummary(200_000, 200_000, 0.85, false));
+        assert!(!AIMessageManager::shouldGenerateSummary(4_000, 0, 0.85, true));
+    }
 
     /// Constructs an explicit descriptor for real history projection tests without a host runtime.
     fn historyConfiguration(isolate: bool, labelUsers: bool) -> ChatConfigurationResult {

@@ -1851,12 +1851,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelSummaryThreshold => '总结阈值';
 
   @override
-  String get settingsModelSummaryByMessageCount => '按消息数总结';
-
-  @override
-  String get settingsModelSummaryMessageCount => '总结消息数阈值';
-
-  @override
   String get settingsModelCustomHeaders => '自定义 Headers';
 
   @override
