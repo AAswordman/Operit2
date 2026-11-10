@@ -472,7 +472,8 @@ class _AnimatedScreenSlotState extends State<_AnimatedScreenSlot> {
     final screenChild = RepaintBoundary(
       child: SnapshotWidget(
         controller: _snapshotController,
-        mode: SnapshotMode.forced,
+        // Native WebViews must stay in the live scene during transitions.
+        mode: SnapshotMode.permissive,
         autoresize: true,
         child: RepaintBoundary(child: widget.child),
       ),

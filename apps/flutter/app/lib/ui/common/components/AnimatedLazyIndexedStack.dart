@@ -163,7 +163,8 @@ class _AnimatedLazyIndexedStackState extends State<AnimatedLazyIndexedStack>
     final child = RepaintBoundary(
       child: SnapshotWidget(
         controller: snapshotController,
-        mode: SnapshotMode.forced,
+        // Native WebViews must stay in the live scene during transitions.
+        mode: SnapshotMode.permissive,
         autoresize: true,
         child: Builder(
           builder: (context) => widget.itemBuilder(context, index),

@@ -16,11 +16,13 @@ class InputProcessingStatusLane extends StatelessWidget {
     required this.visible,
     required this.status,
     required this.textStyle,
+    this.isSummarizing = false,
   });
 
   final bool visible;
   final String status;
   final TextStyle? textStyle;
+  final bool isSummarizing;
 
   /// Builds the always-reserved status lane and its optional floating label.
   @override
@@ -38,7 +40,21 @@ class InputProcessingStatusLane extends StatelessWidget {
               child: IgnorePointer(
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(status, style: textStyle),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isSummarizing) ...[
+                        const SizedBox(
+                          key: ValueKey('summary-processing-indicator'),
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Flexible(child: Text(status, style: textStyle)),
+                    ],
+                  ),
                 ),
               ),
             ),

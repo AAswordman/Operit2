@@ -560,6 +560,7 @@ class ChatScreenContent extends StatelessWidget {
         ),
         child: InputProcessingStatusLane(
           visible: visible,
+          isSummarizing: inputProcessingState.tag == 'Summarizing',
           status: status,
           textStyle: textStyle,
         ),

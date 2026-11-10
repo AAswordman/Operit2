@@ -3,10 +3,60 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/style/SummaryMessageComposable.dart';
+import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
 import 'support/markdown_event_fixture.dart';
 
 void main() {
+  for (final mountDelay in [Duration.zero, const Duration(seconds: 12)]) {
+    testWidgets(
+      'completed summary stays settled when mounted after $mountDelay',
+      (tester) async {
+        final message = _summaryMessage(
+          content: List.filled(100, 'Saved summary content.').join(' '),
+          timestamp: DateTime.now().subtract(mountDelay).millisecondsSinceEpoch,
+        );
+        Widget conversation({required bool showSummary}) => MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Column(
+              children: [
+                if (showSummary)
+                  SummaryMessageComposable(
+                    message: message,
+                    splitMarkdownContent: splitMarkdownEventFixture,
+                  ),
+                const Text('Conversation has already continued.'),
+              ],
+            ),
+          ),
+        );
+        await tester.pumpWidget(conversation(showSummary: false));
+        await tester.pumpWidget(conversation(showSummary: true));
+        final vessel = find.byKey(const ValueKey('summary-vessel'));
+        final collapsedSize = tester.getSize(vessel);
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(tester.getSize(vessel), collapsedSize);
+        await tester.pump(const Duration(seconds: 3));
+        expect(tester.getSize(vessel), collapsedSize);
+        // A newly saved summary still opens on demand with its full content.
+        await tester.tap(find.byKey(const ValueKey('summary-toggle')));
+        await tester.pumpAndSettle();
+        expect(
+          tester.getSize(vessel).height,
+          greaterThan(collapsedSize.height),
+        );
+        expect(
+          find.text(message.displayText, findRichText: true),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final fresh in [false, true]) {
     for (final content in ['', ' \n\t']) {
       testWidgets(

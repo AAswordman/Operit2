@@ -1,11 +1,11 @@
 import 'dart:ui' as ui;
 
 import 'support/native_sidebar_bridge.dart';
+import 'support/test_platform_view.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit_ui/operit_ui.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/main/MainLayoutController.dart';
 import 'package:operit2/ui/main/TopBarController.dart';
@@ -22,6 +22,47 @@ import 'package:operit2/ui/theme/OperitGlassSurface.dart';
 /// Verifies drawer snapshots do not hide page transitions or loading frames.
 void main() {
   for (final effects in <bool>[true, false]) {
+    testWidgets(
+      'native WebView layer stays visible during drawer and page motion (effects: $effects)',
+      (tester) async {
+        final host = _PhonePageHarness(platformView: true);
+        addTearDown(host.dispose);
+        await host.pump(tester, effects: effects);
+        await tester.pumpAndSettle();
+        final pageState = tester.state(_page(0));
+        expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+
+        for (final open in <bool>[true, false]) {
+          host.drawerOpen.value = open;
+          await tester.pump();
+          expect(_snapshot(tester, 0).controller.allowSnapshotting, isTrue);
+          for (var frame = 0; frame < 5; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+            expect(_boundary(tester, 0).debugLayer!.parent, isNotNull);
+          }
+          await tester.pumpAndSettle();
+          expect(tester.state(_page(0)), same(pageState));
+        }
+
+        host.selected.value = 1;
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 32));
+        expect(_snapshot(tester, 0).controller.allowSnapshotting, isTrue);
+        expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+        await tester.pumpAndSettle();
+        expect(tester.layers.whereType<PlatformViewLayer>(), isEmpty);
+
+        host.selected.value = 0;
+        await tester.pumpAndSettle();
+        expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+        expect(tester.state(_page(0)), same(pageState));
+        expect(host.initializations[0], 1);
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets(
       'glass stays blurred during drawer and page motion (effects: $effects)',
       (tester) async {
@@ -375,9 +416,13 @@ Future<void> _expectBlurredPixel(
 
 class _PhonePageHarness {
   /// Creates page probes with either opaque or backdrop-dependent surfaces.
-  _PhonePageHarness({this.transparentSurface = false});
+  _PhonePageHarness({
+    this.transparentSurface = false,
+    this.platformView = false,
+  });
 
   final bool transparentSurface;
+  final bool platformView;
   final captureKey = GlobalKey();
   final selected = ValueNotifier<int>(0);
   final drawerOpen = ValueNotifier<bool>(false);
@@ -528,7 +573,9 @@ class _LoadingPageState extends State<_LoadingPage> {
     widget.host.builds[widget.index]++;
     final content = CustomPaint(
       painter: _LoadingPainter(widget.index, widget.host),
-      child: Center(child: Text('Page ${widget.index}')),
+      child: widget.host.platformView && widget.index == 0
+          ? const TestPlatformView()
+          : Center(child: Text('Page ${widget.index}')),
     );
     if (widget.host.transparentSurface) {
       return OperitGlassSurface(color: Colors.white, child: content);

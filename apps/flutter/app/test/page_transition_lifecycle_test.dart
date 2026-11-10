@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/components/AnimatedLazyIndexedStack.dart';
@@ -9,8 +10,47 @@ import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
+import 'support/test_platform_view.dart';
+
 /// Verifies page transitions preserve cached state and isolate animation work.
 void main() {
+  testWidgets('native WebView layer survives tab exits and reactivation', (
+    tester,
+  ) async {
+    final selected = ValueNotifier<int>(0);
+    addTearDown(selected.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ValueListenableBuilder<int>(
+            valueListenable: selected,
+            builder: (context, index, child) => AnimatedLazyIndexedStack(
+              index: index,
+              itemCount: 2,
+              itemBuilder: (context, page) => page == 0
+                  ? const TestPlatformView()
+                  : const ColoredBox(color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+    selected.value = 1;
+    await tester.pump();
+    for (var frame = 0; frame < 5; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+    }
+    await tester.pumpAndSettle();
+    expect(tester.layers.whereType<PlatformViewLayer>(), isEmpty);
+    selected.value = 0;
+    await tester.pumpAndSettle();
+    expect(tester.layers.whereType<PlatformViewLayer>(), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('cached main pages remain mounted when hidden and restored', (
     tester,
   ) async {

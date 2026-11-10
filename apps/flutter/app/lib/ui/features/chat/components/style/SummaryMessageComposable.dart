@@ -1,6 +1,5 @@
 // ignore_for_file: file_names
 
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -12,9 +11,7 @@ import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import 'MessageHeaderMetadata.dart';
 
-enum _SummaryDisplayPhase { streaming, settled }
-
-/// Renders a saved summary with inline expansion and a reveal animation.
+/// Renders a completed, saved summary with manual inline expansion.
 class SummaryMessageComposable extends StatefulWidget {
   const SummaryMessageComposable({
     super.key,
@@ -38,15 +35,9 @@ class SummaryMessageComposable extends StatefulWidget {
 
 class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     with SingleTickerProviderStateMixin {
-  static final Set<int> _animatedSummaryTimestamps = <int>{};
-
   late final AnimationController _expandController;
   late final Animation<double> _expandAnimation;
 
-  _SummaryDisplayPhase _phase = _SummaryDisplayPhase.settled;
-  int _streamedCharacterCount = 0;
-  Timer? _streamTimer;
-  Timer? _autoCollapseTimer;
   final ScrollController _scrollController = ScrollController();
   bool _copied = false;
 
@@ -64,119 +55,23 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
       reverseCurve: const Cubic(0.33, 0, 0.67, 0),
     );
 
-    final isTextEmpty = widget.message.displayText.trim().isEmpty;
-    final isFreshMessage =
-        (DateTime.now().millisecondsSinceEpoch - widget.message.timestamp)
-                .abs() <
-            20000 &&
-        !_animatedSummaryTimestamps.contains(widget.message.timestamp);
-
-    if (!isTextEmpty && isFreshMessage) {
-      _animatedSummaryTimestamps.add(widget.message.timestamp);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _startStreamingPhase();
-        }
-      });
-    } else {
-      _phase = _SummaryDisplayPhase.settled;
-    }
+    // This message is inserted after generation has finished. Its timestamp
+    // cannot indicate live work: it may first mount after the next reply starts.
   }
 
   @override
   void didUpdateWidget(covariant SummaryMessageComposable oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.message.timestamp != widget.message.timestamp) {
-      _cancelAllTimers();
-      _phase = _SummaryDisplayPhase.settled;
       _expandController.value = 0.0;
-    } else if (oldWidget.message.displayText != widget.message.displayText) {
-      // Edits are saved content, not a new generation or reveal animation.
-      _cancelAllTimers();
-      _phase = _SummaryDisplayPhase.settled;
-      _streamedCharacterCount = widget.message.displayText.length;
     }
   }
 
   @override
   void dispose() {
-    _cancelAllTimers();
     _expandController.dispose();
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _cancelAllTimers() {
-    _streamTimer?.cancel();
-    _streamTimer = null;
-    _autoCollapseTimer?.cancel();
-    _autoCollapseTimer = null;
-  }
-
-  void _startStreamingPhase() {
-    _cancelAllTimers();
-    setState(() {
-      _phase = _SummaryDisplayPhase.streaming;
-      _streamedCharacterCount = 0;
-    });
-
-    _expandController.forward().then((_) {
-      if (!mounted) return;
-      _beginTypewriterStream();
-    });
-  }
-
-  void _beginTypewriterStream() {
-    final fullText = widget.message.displayText;
-    if (fullText.isEmpty) {
-      _finishStreamingAndAutoCollapse();
-      return;
-    }
-
-    const streamInterval = Duration(milliseconds: 20);
-    const charactersPerTick = 5;
-
-    _streamTimer = Timer.periodic(streamInterval, (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      final nextCount = math.min(
-        _streamedCharacterCount + charactersPerTick,
-        fullText.length,
-      );
-      setState(() {
-        _streamedCharacterCount = nextCount;
-      });
-
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      }
-
-      if (_streamedCharacterCount >= fullText.length) {
-        timer.cancel();
-        _streamTimer = null;
-        _finishStreamingAndAutoCollapse();
-      }
-    });
-  }
-
-  void _finishStreamingAndAutoCollapse() {
-    _streamTimer?.cancel();
-    _streamTimer = null;
-    setState(() {
-      _streamedCharacterCount = widget.message.displayText.length;
-    });
-
-    _autoCollapseTimer = Timer(const Duration(milliseconds: 700), () {
-      if (!mounted) return;
-      _expandController.reverse().then((_) {
-        if (!mounted) return;
-        setState(() {
-          _phase = _SummaryDisplayPhase.settled;
-        });
-      });
-    });
   }
 
   void _handleManualToggle() {
@@ -185,10 +80,6 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     if (_expandController.value > 0.5) {
       _expandController.reverse();
     } else {
-      setState(() {
-        _phase = _SummaryDisplayPhase.settled;
-        _streamedCharacterCount = widget.message.displayText.length;
-      });
       _expandController.forward();
     }
   }
@@ -599,7 +490,7 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
           ),
         ),
 
-        // Body Content: Streaming or Markdown
+        // Completed summary content.
         Expanded(
           child: _buildCardBody(context, theme, baseTextStyle, colorScheme),
         ),
@@ -613,40 +504,6 @@ class _SummaryMessageComposableState extends State<SummaryMessageComposable>
     TextStyle baseTextStyle,
     ColorScheme colorScheme,
   ) {
-    if (_phase == _SummaryDisplayPhase.streaming) {
-      final currentStreamText = widget.message.displayText.substring(
-        0,
-        math.min(_streamedCharacterCount, widget.message.displayText.length),
-      );
-      return Scrollbar(
-        controller: _scrollController,
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          controller: _scrollController,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: SelectableText.rich(
-            TextSpan(
-              children: <InlineSpan>[
-                TextSpan(text: currentStreamText),
-                const WidgetSpan(
-                  alignment: PlaceholderAlignment.middle,
-                  child: Padding(
-                    padding: EdgeInsets.only(left: 4),
-                    child: StreamingCursor(),
-                  ),
-                ),
-              ],
-            ),
-            style: baseTextStyle.copyWith(
-              fontSize: 12.5,
-              height: 1.5,
-              color: colorScheme.onSurface.withValues(alpha: 0.9),
-            ),
-          ),
-        ),
-      );
-    }
-
     return Scrollbar(
       controller: _scrollController,
       thumbVisibility: true,

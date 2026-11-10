@@ -50,6 +50,78 @@ void main() {
     );
   });
 
+  testWidgets(
+    'summary activity follows live state and stops before the next reply',
+    (tester) async {
+      final l10n = AppLocalizationsZh();
+      Future<void> show(
+        core_proxy.InputProcessingState state, {
+        bool visible = true,
+      }) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 200,
+              child: InputProcessingStatusLane(
+                visible: visible,
+                status: inputProcessingStatusText(l10n, state),
+                textStyle: null,
+                isSummarizing: state.tag == 'Summarizing',
+              ),
+            ),
+          ),
+        ),
+      );
+      final indicator = find.byKey(
+        const ValueKey('summary-processing-indicator'),
+      );
+      await show(
+        core_proxy.InputProcessingState.summarizing(
+          message: 'chat_compressing_history',
+        ),
+      );
+      expect(indicator, findsOneWidget);
+      expect(find.text('正在压缩历史记录...'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      expect(indicator, findsOneWidget);
+
+      await show(
+        core_proxy.InputProcessingState.summarizing(
+          message: 'summary_key_files',
+        ),
+      );
+      expect(indicator, findsOneWidget);
+      expect(find.text('正在整理关键文件与代码...'), findsOneWidget);
+
+      await show(core_proxy.InputProcessingState.idle(), visible: false);
+      expect(indicator, findsNothing);
+      await show(
+        core_proxy.InputProcessingState.receiving(
+          message: 'enhanced_receiving_response',
+        ),
+      );
+      expect(indicator, findsNothing);
+      await tester.pump(const Duration(seconds: 25));
+      expect(indicator, findsNothing);
+
+      // A later real summary starts activity again; hidden status stays hidden.
+      await show(
+        core_proxy.InputProcessingState.summarizing(
+          message: 'message_summarizing',
+        ),
+      );
+      expect(indicator, findsOneWidget);
+      await show(
+        core_proxy.InputProcessingState.summarizing(
+          message: 'message_summarizing',
+        ),
+        visible: false,
+      );
+      expect(indicator, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('reserves the same status lane height when status is hidden', (
     tester,
   ) async {
