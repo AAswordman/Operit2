@@ -2537,5 +2537,9 @@
   "settingsAppearancePreviewCollapse": "收起",
   "settingsAppearancePreviewExpand": "展开",
   "@settingsAppearanceThemeDeleteConfirm": {"placeholders": {"name": {"type": "String"}}},
-  "settingsAppearanceThemeNew": "新建主题"
+  "settingsAppearanceThemeNew": "新建主题",
+  "settingsAppearanceDeviceFonts": "设备字体",
+  "settingsAppearanceChooseDeviceFont": "选择设备字体",
+  "settingsAppearanceNoDeviceFonts": "没有匹配的设备字体",
+  "settingsAppearanceDeviceFontPreview": "字体预览：你好，世界\nThe quick brown fox · 0123456789"
 }

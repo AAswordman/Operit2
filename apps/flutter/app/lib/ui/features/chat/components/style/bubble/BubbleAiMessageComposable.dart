@@ -144,6 +144,10 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
         fontFamily: messageFontFamily,
         fontFamilyFallback: messageFontFamilyFallback,
       ),
+      primaryTextTheme: theme.primaryTextTheme.apply(
+        fontFamily: messageFontFamily,
+        fontFamilyFallback: messageFontFamilyFallback,
+      ),
     );
     final nodeGrouper = ThinkToolsXmlNodeGrouper(
       showThinkingProcess: showThinkingProcess,

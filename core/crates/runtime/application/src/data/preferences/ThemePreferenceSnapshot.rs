@@ -21,7 +21,6 @@ pub(crate) enum FieldKind {
     OptionalString,
     OptionalPalette,
     Enum(&'static [&'static str]),
-    OptionalEnum(&'static [&'static str]),
     Number { min: f64, max: f64 },
 }
 
@@ -377,12 +376,12 @@ pub(crate) const SNAPSHOT_FIELDS: &[SnapshotField] = &[
     SnapshotField {
         json_key: "fontType",
         preference_key: "font_type",
-        kind: FieldKind::Enum(&["system", "file"]),
+        kind: FieldKind::Enum(&["system", "file", "device"]),
     },
     SnapshotField {
         json_key: "systemFontName",
         preference_key: "system_font_name",
-        kind: FieldKind::OptionalEnum(&["default", "serif", "sans-serif", "monospace", "cursive"]),
+        kind: FieldKind::OptionalString,
     },
     SnapshotField {
         json_key: "customFontPath",
@@ -405,12 +404,12 @@ pub(crate) const SNAPSHOT_FIELDS: &[SnapshotField] = &[
     SnapshotField {
         json_key: "bubbleUserFontType",
         preference_key: "bubble_user_font_type",
-        kind: FieldKind::Enum(&["system", "file"]),
+        kind: FieldKind::Enum(&["system", "file", "device"]),
     },
     SnapshotField {
         json_key: "bubbleUserSystemFontName",
         preference_key: "bubble_user_system_font_name",
-        kind: FieldKind::OptionalEnum(&["default", "serif", "sans-serif", "monospace", "cursive"]),
+        kind: FieldKind::OptionalString,
     },
     SnapshotField {
         json_key: "bubbleUserCustomFontPath",
@@ -425,12 +424,12 @@ pub(crate) const SNAPSHOT_FIELDS: &[SnapshotField] = &[
     SnapshotField {
         json_key: "bubbleAiFontType",
         preference_key: "bubble_ai_font_type",
-        kind: FieldKind::Enum(&["system", "file"]),
+        kind: FieldKind::Enum(&["system", "file", "device"]),
     },
     SnapshotField {
         json_key: "bubbleAiSystemFontName",
         preference_key: "bubble_ai_system_font_name",
-        kind: FieldKind::OptionalEnum(&["default", "serif", "sans-serif", "monospace", "cursive"]),
+        kind: FieldKind::OptionalString,
     },
     SnapshotField {
         json_key: "bubbleAiCustomFontPath",
@@ -542,6 +541,29 @@ pub fn validateThemePreferenceSnapshot(
     for field in EXTENDED_SNAPSHOT_FIELDS {
         if let Some(value) = snapshot.get(field.json_key) {
             validateField(field, value)?;
+        }
+    }
+    for (font_type, name, path) in [
+        ("fontType", "systemFontName", "customFontPath"),
+        ("bubbleUserFontType", "bubbleUserSystemFontName", "bubbleUserCustomFontPath"),
+        ("bubbleAiFontType", "bubbleAiSystemFontName", "bubbleAiCustomFontPath"),
+    ] {
+        match snapshot.get(font_type).and_then(Value::as_str) {
+            Some("device") => {
+                for key in [name, path] {
+                    if !snapshot.get(key).and_then(Value::as_str).is_some_and(|text| !text.trim().is_empty()) {
+                        return Err(invalidSnapshot(key, "device fonts require a family name and a persisted font resource"));
+                    }
+                }
+            }
+            Some("system") => {
+                if let Some(value) = snapshot.get(name).and_then(Value::as_str) {
+                    if !["default", "serif", "sans-serif", "monospace", "cursive"].contains(&value) {
+                        return Err(invalidSnapshot(name, "unknown system font preset"));
+                    }
+                }
+            }
+            _ => {}
         }
     }
     for (start, end) in [
@@ -880,12 +902,6 @@ fn validateField(field: &SnapshotField, value: &Value) -> Result<(), Preferences
         FieldKind::Enum(allowed) => value
             .as_str()
             .is_some_and(|text| allowed.iter().any(|candidate| *candidate == text)),
-        FieldKind::OptionalEnum(allowed) => {
-            value.is_null()
-                || value
-                    .as_str()
-                    .is_some_and(|text| allowed.iter().any(|candidate| *candidate == text))
-        }
         FieldKind::Number { min, max } => value
             .as_f64()
             .is_some_and(|number| number.is_finite() && number >= min && number <= max),

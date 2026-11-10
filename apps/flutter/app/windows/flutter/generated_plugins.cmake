@@ -14,6 +14,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   fvp
   geolocator_windows
   operit_keep_alive
+  operit_system_fonts
   printing
   record_windows
   url_launcher_windows

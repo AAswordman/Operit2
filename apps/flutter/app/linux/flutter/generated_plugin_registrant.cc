@@ -15,6 +15,7 @@
 #include <floating_windows/floating_windows_plugin.h>
 #include <fvp/fvp_plugin.h>
 #include <operit_keep_alive/operit_keep_alive_plugin.h>
+#include <operit_system_fonts/operit_system_fonts_plugin.h>
 #include <printing/printing_plugin.h>
 #include <record_linux/record_linux_plugin.h>
 #include <url_launcher_linux/url_launcher_plugin.h>
@@ -48,6 +49,9 @@ void fl_register_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) operit_keep_alive_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "OperitKeepAlivePlugin");
   operit_keep_alive_plugin_register_with_registrar(operit_keep_alive_registrar);
+  g_autoptr(FlPluginRegistrar) operit_system_fonts_registrar =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "OperitSystemFontsPlugin");
+  operit_system_fonts_plugin_register_with_registrar(operit_system_fonts_registrar);
   g_autoptr(FlPluginRegistrar) printing_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "PrintingPlugin");
   printing_plugin_register_with_registrar(printing_registrar);

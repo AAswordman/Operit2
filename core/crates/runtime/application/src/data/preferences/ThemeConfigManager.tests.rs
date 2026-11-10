@@ -228,6 +228,29 @@ fn invalid_types_enums_and_ranges_are_rejected() {
     }
 }
 
+/// Requires complete device face metadata for global, user, and AI typography.
+#[test]
+fn device_fonts_require_the_selected_family_and_persisted_face() {
+    for (font_type, name, path) in [
+        ("fontType", "systemFontName", "customFontPath"),
+        ("bubbleUserFontType", "bubbleUserSystemFontName", "bubbleUserCustomFontPath"),
+        ("bubbleAiFontType", "bubbleAiSystemFontName", "bubbleAiCustomFontPath"),
+    ] {
+        let mut value = snapshot();
+        value.insert(font_type.to_string(), json!("device"));
+        value.insert(name.to_string(), json!("Microsoft YaHei UI"));
+        value.insert(path.to_string(), json!("runtime/data/user_assets/theme/font.ttf"));
+        validateThemePreferenceSnapshot(&value).unwrap();
+        for key in [name, path] {
+            for invalid in [Value::Null, json!(""), json!("  ")] {
+                let mut incomplete = value.clone();
+                incomplete.insert(key.to_string(), invalid);
+                assert!(validateThemePreferenceSnapshot(&incomplete).is_err(), "{key}");
+            }
+        }
+    }
+}
+
 /// Checks all four repeat intervals and allows nullable u32 color boundaries.
 #[test]
 fn repeat_ordering_and_nullable_colors_are_strict() {
@@ -973,7 +996,6 @@ fn released_named_theme_clears_previous_template_input_preferences() {
             FieldKind::OptionalPalette => json!(serde_json::to_string(&visual["palette"]).unwrap()),
             FieldKind::Enum(values) => json!(values[0]),
             FieldKind::Number { min, .. } => json!(min),
-            FieldKind::OptionalEnum(values) => json!(values[0]),
         };
         extended_values.insert(field.preference_key.to_owned(), value);
     }

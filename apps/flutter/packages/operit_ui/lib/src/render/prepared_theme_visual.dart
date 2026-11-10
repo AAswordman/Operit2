@@ -90,8 +90,8 @@ class PreparedThemeVisual {
     }
 
     font('', resources.sans);
-    font('bubbleUser', resources.user);
-    font('bubbleAi', resources.ai);
+    if (spec.fontReferences['user'] != null) font('bubbleUser', resources.user);
+    if (spec.fontReferences['ai'] != null) font('bubbleAi', resources.ai);
     return ThemePreferenceSnapshot.fromJson(json);
   }
 

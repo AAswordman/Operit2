@@ -129,8 +129,8 @@ class ThemeTemplateService {
       final global = fonts['global']!;
       for (final role in <String, String>{
         '': global,
-        'bubbleUser': fonts['user'] == null ? global : fonts['user']!,
-        'bubbleAi': fonts['ai'] == null ? global : fonts['ai']!,
+        if (fonts['user'] != null) 'bubbleUser': fonts['user']!,
+        if (fonts['ai'] != null) 'bubbleAi': fonts['ai']!,
       }.entries) {
         final reference = role.value;
         if (!reference.startsWith('assets/') && !paths.containsKey(reference)) {

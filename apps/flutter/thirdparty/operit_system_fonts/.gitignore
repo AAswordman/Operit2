@@ -1,0 +1,6 @@
+/.dart_tool/
+/build/
+/pubspec.lock
+/.flutter-plugins*
+/ohos/har/
+/ohos/oh_modules/

@@ -18,6 +18,7 @@ import image_picker_macos
 import mobile_scanner
 import operit_folder_access
 import operit_keep_alive
+import operit_system_fonts
 import package_info_plus
 import printing
 import record_macos
@@ -39,6 +40,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   MobileScannerPlugin.register(with: registry.registrar(forPlugin: "MobileScannerPlugin"))
   OperitFolderAccessPlugin.register(with: registry.registrar(forPlugin: "OperitFolderAccessPlugin"))
   OperitKeepAlivePlugin.register(with: registry.registrar(forPlugin: "OperitKeepAlivePlugin"))
+  OperitSystemFontsPlugin.register(with: registry.registrar(forPlugin: "OperitSystemFontsPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   PrintingPlugin.register(with: registry.registrar(forPlugin: "PrintingPlugin"))
   RecordMacOsPlugin.register(with: registry.registrar(forPlugin: "RecordMacOsPlugin"))

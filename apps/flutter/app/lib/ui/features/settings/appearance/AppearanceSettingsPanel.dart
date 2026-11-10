@@ -26,6 +26,7 @@ import '../../../theme/OperitThemeAssets.dart';
 import '../components/SettingsAssetTile.dart';
 import '../components/SettingsControlStyles.dart';
 import 'ChatAppearancePreview.dart';
+import 'DeviceFontPicker.dart';
 import 'ThemeConfigurationControl.dart';
 
 enum _AppearanceSettingsTab { theme, background, bubbles, interaction }
@@ -101,7 +102,9 @@ class _AppearanceThemeEditor extends StatelessWidget {
   ) {
     final applicationZoom = ApplicationZoomScope.of(context);
     final hasCustomFont =
-        snapshot.customFontPath != null && snapshot.customFontPath!.isNotEmpty;
+        snapshot.fontType == UserPreferencesManager.FONT_TYPE_FILE &&
+        snapshot.customFontPath != null &&
+        snapshot.customFontPath!.isNotEmpty;
     return _ResponsivePreviewSplitTabView(
       previewCard: _ChatAppearanceLivePreviewCard(
         snapshot: snapshot,
@@ -171,6 +174,9 @@ class _AppearanceThemeEditor extends StatelessWidget {
                 badge: _fontFamilyLabel(l10n, snapshot),
                 child: _FontFamilySelector(
                   value: _fontFamilyPresetFromSnapshot(snapshot),
+                  hasSelection:
+                      snapshot.fontType ==
+                      UserPreferencesManager.FONT_TYPE_SYSTEM,
                   onChanged: (value) {
                     unawaited(
                       themeController.saveThemeSettings(
@@ -186,8 +192,32 @@ class _AppearanceThemeEditor extends StatelessWidget {
               const SizedBox(height: 10),
               SettingsAssetTile(
                 icon: Icons.font_download_outlined,
+                title: l10n.settingsAppearanceDeviceFonts,
+                subtitle:
+                    snapshot.fontType == UserPreferencesManager.FONT_TYPE_DEVICE
+                    ? snapshot.systemFontName!
+                    : l10n.settingsAppearanceChooseDeviceFont,
+                actions: [
+                  FilledButton.tonalIcon(
+                    style: SettingsControlStyles.sectionTextButton(),
+                    icon: const Icon(Icons.text_fields, size: 16),
+                    label: Text(l10n.settingsAppearanceChooseDeviceFont),
+                    onPressed: () => _pickDeviceFont(
+                      context,
+                      themeController,
+                      snapshot.systemFontName,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SettingsAssetTile(
+                icon: Icons.font_download_outlined,
                 title: l10n.settingsAppearanceCustomFont,
-                subtitle: _customFontLabel(l10n, snapshot.customFontPath),
+                subtitle: _customFontLabel(
+                  l10n,
+                  hasCustomFont ? snapshot.customFontPath : null,
+                ),
                 actions: <Widget>[
                   FilledButton.tonalIcon(
                     style: SettingsControlStyles.sectionTextButton(),
@@ -206,6 +236,8 @@ class _AppearanceThemeEditor extends StatelessWidget {
                           themeController.saveThemeSettings(
                             useCustomFont: false,
                             fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
+                            systemFontName:
+                                UserPreferencesManager.SYSTEM_FONT_DEFAULT,
                             customFontPath: '',
                           ),
                         );
@@ -1578,6 +1610,32 @@ Rect _themeImageCropRect(
   return Rect.fromLTWH(left, top, cropWidth, cropHeight);
 }
 
+/// Copies a selected device face into the existing synchronized theme resource owner.
+Future<void> _pickDeviceFont(
+  BuildContext context,
+  OperitThemeController themeController,
+  String? selectedName,
+) async {
+  try {
+    final selected = await showDeviceFontPicker(
+      context,
+      selectedName: selectedName,
+    );
+    if (selected == null || !context.mounted) return;
+    final imported = await ThemeAssetStore().importFontFile(
+      XFile.fromData(selected.bytes, name: 'device-font.ttf'),
+    );
+    await themeController.saveThemeSettings(
+      useCustomFont: true,
+      fontType: UserPreferencesManager.FONT_TYPE_DEVICE,
+      systemFontName: selected.name,
+      customFontPath: imported.storagePath,
+    );
+  } catch (error) {
+    if (context.mounted) _showFontImportError(context, error);
+  }
+}
+
 /// Imports and saves a selected font as the active custom font asset.
 Future<void> _pickCustomFont(
   BuildContext context,
@@ -1704,12 +1762,18 @@ Future<void> _showBubbleFontDialog(
                 const SizedBox(height: 8),
                 _AppearanceFieldBlock(
                   label: l10n.settingsAppearanceFontFamily,
-                  badge: _fontFamilyPresetLabel(
-                    l10n,
-                    _fontFamilyPresetFromSystemName(systemFontName),
-                  ),
+                  badge: fontType == UserPreferencesManager.FONT_TYPE_DEVICE
+                      ? systemFontName!
+                      : fontType == UserPreferencesManager.FONT_TYPE_FILE
+                      ? l10n.settingsAppearanceFontCustom
+                      : _fontFamilyPresetLabel(
+                          l10n,
+                          _fontFamilyPresetFromSystemName(systemFontName),
+                        ),
                   child: _FontFamilySelector(
                     value: _fontFamilyPresetFromSystemName(systemFontName),
+                    hasSelection:
+                        fontType == UserPreferencesManager.FONT_TYPE_SYSTEM,
                     onChanged: (value) {
                       setDialogState(() {
                         useCustomFont = true;
@@ -1721,9 +1785,54 @@ Future<void> _showBubbleFontDialog(
                 ),
                 const SizedBox(height: 10),
                 SettingsAssetTile(
+                  icon: Icons.text_fields,
+                  title: l10n.settingsAppearanceDeviceFonts,
+                  subtitle: fontType == UserPreferencesManager.FONT_TYPE_DEVICE
+                      ? systemFontName!
+                      : l10n.settingsAppearanceChooseDeviceFont,
+                  actions: [
+                    FilledButton.tonalIcon(
+                      style: SettingsControlStyles.sectionTextButton(),
+                      icon: const Icon(Icons.text_fields, size: 16),
+                      label: Text(l10n.settingsAppearanceChooseDeviceFont),
+                      onPressed: () async {
+                        try {
+                          final selected = await showDeviceFontPicker(
+                            context,
+                            selectedName: systemFontName,
+                          );
+                          if (selected == null || !context.mounted) return;
+                          final imported = await ThemeAssetStore()
+                              .importFontFile(
+                                XFile.fromData(
+                                  selected.bytes,
+                                  name: 'device-font.ttf',
+                                ),
+                              );
+                          if (!context.mounted) return;
+                          setDialogState(() {
+                            useCustomFont = true;
+                            fontType = UserPreferencesManager.FONT_TYPE_DEVICE;
+                            systemFontName = selected.name;
+                            customFontPath = imported.storagePath;
+                          });
+                        } catch (error) {
+                          _showFontImportError(context, error);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SettingsAssetTile(
                   icon: Icons.folder_open_outlined,
                   title: l10n.settingsAppearanceCustomFont,
-                  subtitle: _customFontLabel(l10n, customFontPath),
+                  subtitle: _customFontLabel(
+                    l10n,
+                    fontType == UserPreferencesManager.FONT_TYPE_FILE
+                        ? customFontPath
+                        : null,
+                  ),
                   actions: <Widget>[
                     FilledButton.tonalIcon(
                       style: SettingsControlStyles.sectionTextButton(),
@@ -1733,7 +1842,9 @@ Future<void> _showBubbleFontDialog(
                       icon: const Icon(Icons.file_upload_outlined, size: 16),
                       label: Text(l10n.settingsAppearanceChooseCustomFont),
                     ),
-                    if (customFontPath != null && customFontPath!.isNotEmpty)
+                    if (fontType == UserPreferencesManager.FONT_TYPE_FILE &&
+                        customFontPath != null &&
+                        customFontPath!.isNotEmpty)
                       SettingsEntityIconButton(
                         tooltip: l10n.settingsAppearanceClearCustomFont,
                         icon: Icons.close,
@@ -1741,6 +1852,8 @@ Future<void> _showBubbleFontDialog(
                           setDialogState(() {
                             customFontPath = '';
                             fontType = UserPreferencesManager.FONT_TYPE_SYSTEM;
+                            systemFontName =
+                                UserPreferencesManager.SYSTEM_FONT_DEFAULT;
                           });
                         },
                       ),
@@ -2496,6 +2609,9 @@ String _bubbleFontLabel(
       : snapshot.bubbleAiCustomFontPath;
   if (!useCustomFont) {
     return l10n.settingsAppearanceFontDefault;
+  }
+  if (fontType == UserPreferencesManager.FONT_TYPE_DEVICE) {
+    return systemFontName!;
   }
   if (fontType == UserPreferencesManager.FONT_TYPE_FILE &&
       customFontPath != null &&
@@ -3720,16 +3836,22 @@ String _bubbleImageRenderModeLabel(AppLocalizations l10n, String value) {
 enum _FontFamilyPreset { defaultFont, serif, monospace }
 
 class _FontFamilySelector extends StatelessWidget {
-  const _FontFamilySelector({required this.value, required this.onChanged});
+  const _FontFamilySelector({
+    required this.value,
+    required this.onChanged,
+    required this.hasSelection,
+  });
 
   final _FontFamilyPreset value;
   final ValueChanged<_FontFamilyPreset> onChanged;
+  final bool hasSelection;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return SettingsSegmentedSelector<_FontFamilyPreset>(
       value: value,
+      hasSelection: hasSelection,
       onChanged: onChanged,
       segments: <ButtonSegment<_FontFamilyPreset>>[
         ButtonSegment<_FontFamilyPreset>(
@@ -3775,6 +3897,9 @@ String _fontFamilyLabel(
   AppLocalizations l10n,
   ThemePreferenceSnapshot snapshot,
 ) {
+  if (snapshot.fontType == UserPreferencesManager.FONT_TYPE_DEVICE) {
+    return snapshot.systemFontName!;
+  }
   if (snapshot.fontType == UserPreferencesManager.FONT_TYPE_FILE &&
       snapshot.customFontPath != null &&
       snapshot.customFontPath!.isNotEmpty) {

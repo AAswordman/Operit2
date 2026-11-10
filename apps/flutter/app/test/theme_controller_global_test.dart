@@ -27,6 +27,46 @@ void main() {
   }
 
   test(
+    'selecting a global font releases previous message font overrides atomically',
+    () async {
+      final bridge = _SharedThemeBridge();
+      bridge.preferences.addAll(<String, Object?>{
+        'bubble_user_use_custom_font': true,
+        'bubble_user_system_font_name': 'serif',
+        'bubble_ai_use_custom_font': true,
+        'bubble_ai_system_font_name': 'serif',
+      });
+      final theme = controller(bridge);
+      addTearDown(theme.dispose);
+      addTearDown(bridge.close);
+      await theme.start();
+      expect(theme.themePreferenceSnapshot.bubbleUserUseCustomFont, isTrue);
+      expect(theme.themePreferenceSnapshot.bubbleAiUseCustomFont, isTrue);
+      await theme.saveThemeSettings(fontScale: 1.2);
+      expect(theme.themePreferenceSnapshot.bubbleUserUseCustomFont, isTrue);
+      expect(theme.themePreferenceSnapshot.bubbleAiUseCustomFont, isTrue);
+      bridge.updates.clear();
+      await theme.saveThemeSettings(
+        fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
+        systemFontName: UserPreferencesManager.SYSTEM_FONT_SANS_SERIF,
+      );
+      expect(bridge.updates.single, <String, Object?>{
+        'font_type': 'system',
+        'system_font_name': 'sans-serif',
+        'bubble_user_use_custom_font': false,
+        'bubble_ai_use_custom_font': false,
+      });
+      final snapshot = theme.themePreferenceSnapshot;
+      expect(snapshot.bubbleUserUseCustomFont, isFalse);
+      expect(snapshot.bubbleAiUseCustomFont, isFalse);
+      expect(
+        operitMessageFontFamily(snapshot, isUser: true),
+        operitMessageFontFamily(snapshot, isUser: false),
+      );
+    },
+  );
+
+  test(
     'startup reads released preferences and watches shared appearance',
     () async {
       final bridge = _SharedThemeBridge();

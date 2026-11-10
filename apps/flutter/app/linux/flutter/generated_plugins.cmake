@@ -12,6 +12,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   floating_windows
   fvp
   operit_keep_alive
+  operit_system_fonts
   printing
   record_linux
   url_launcher_linux

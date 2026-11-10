@@ -1,0 +1,35 @@
+name: operit_system_fonts
+description: Enumerates and reads fonts installed on the Flutter client's device.
+publish_to: none
+version: 0.1.0
+environment:
+  sdk: ^3.10.8
+  flutter: '>=3.38.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+  web: ^1.1.1
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: app.operit.system_fonts
+        pluginClass: OperitSystemFontsPlugin
+      ios:
+        pluginClass: OperitSystemFontsPlugin
+        sharedDarwinSource: true
+      macos:
+        pluginClass: OperitSystemFontsPlugin
+        sharedDarwinSource: true
+      windows:
+        pluginClass: OperitSystemFontsPlugin
+      linux:
+        pluginClass: OperitSystemFontsPlugin
+      ohos:
+        package: app.operit.system_fonts
+        pluginClass: OperitSystemFontsPlugin
+      web:
+        pluginClass: BrowserSystemFonts
+        fileName: browser_fonts.dart

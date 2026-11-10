@@ -49,6 +49,7 @@ class UserPreferencesManager {
   static const String ON_COLOR_MODE_DARK = 'dark';
   static const String FONT_TYPE_SYSTEM = 'system';
   static const String FONT_TYPE_FILE = 'file';
+  static const String FONT_TYPE_DEVICE = 'device';
   static const String SYSTEM_FONT_DEFAULT = 'default';
   static const String SYSTEM_FONT_SERIF = 'serif';
   static const String SYSTEM_FONT_SANS_SERIF = 'sans-serif';
@@ -428,6 +429,8 @@ class UserPreferencesManager {
     String? bubbleAiSystemFontName,
     String? bubbleAiCustomFontPath,
   }) async {
+    final changesGlobalFont =
+        fontType != null || systemFontName != null || customFontPath != null;
     await saveAppearanceFields(<String, Object?>{
       if (useCustomColors != null ||
           customPrimaryColor != null ||
@@ -545,15 +548,19 @@ class UserPreferencesManager {
       if (systemFontName != null) 'systemFontName': systemFontName,
       if (customFontPath != null) 'customFontPath': customFontPath,
       if (fontScale != null) 'fontScale': fontScale,
-      if (bubbleUserUseCustomFont != null)
-        'bubbleUserUseCustomFont': bubbleUserUseCustomFont,
+      if (changesGlobalFont || bubbleUserUseCustomFont != null)
+        'bubbleUserUseCustomFont': changesGlobalFont
+            ? false
+            : bubbleUserUseCustomFont,
       if (bubbleUserFontType != null) 'bubbleUserFontType': bubbleUserFontType,
       if (bubbleUserSystemFontName != null)
         'bubbleUserSystemFontName': bubbleUserSystemFontName,
       if (bubbleUserCustomFontPath != null)
         'bubbleUserCustomFontPath': bubbleUserCustomFontPath,
-      if (bubbleAiUseCustomFont != null)
-        'bubbleAiUseCustomFont': bubbleAiUseCustomFont,
+      if (changesGlobalFont || bubbleAiUseCustomFont != null)
+        'bubbleAiUseCustomFont': changesGlobalFont
+            ? false
+            : bubbleAiUseCustomFont,
       if (bubbleAiFontType != null) 'bubbleAiFontType': bubbleAiFontType,
       if (bubbleAiSystemFontName != null)
         'bubbleAiSystemFontName': bubbleAiSystemFontName,

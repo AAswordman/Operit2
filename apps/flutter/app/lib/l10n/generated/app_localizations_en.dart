@@ -4993,4 +4993,17 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAppearanceThemeNew => 'New theme';
+
+  @override
+  String get settingsAppearanceDeviceFonts => 'Device fonts';
+
+  @override
+  String get settingsAppearanceChooseDeviceFont => 'Choose device font';
+
+  @override
+  String get settingsAppearanceNoDeviceFonts => 'No matching device fonts';
+
+  @override
+  String get settingsAppearanceDeviceFontPreview =>
+      'The quick brown fox · 0123456789\n字体预览：你好，世界';
 }

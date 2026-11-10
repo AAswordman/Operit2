@@ -1,0 +1,8 @@
+{
+  "name": "operit_system_fonts",
+  "version": "0.1.0",
+  "description": "Client-local installed font access",
+  "main": "index.ets",
+  "license": "AGPL-3.0-only",
+  "dependencies": { "@ohos/flutter_ohos": "file:./har/flutter.har" }
+}

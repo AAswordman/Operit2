@@ -789,6 +789,13 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  operit_system_fonts:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/operit_system_fonts"
+      relative: true
+    source: path
+    version: "0.1.0"
   operit_ui:
     dependency: "direct main"
     description:

@@ -19,6 +19,7 @@ class ThemePreferenceDefaults {
   static const String AVATAR_SHAPE_SQUARE = 'square';
   static const String FONT_TYPE_SYSTEM = 'system';
   static const String FONT_TYPE_FILE = 'file';
+  static const String FONT_TYPE_DEVICE = 'device';
   static const String SYSTEM_FONT_DEFAULT = 'default';
   static const String SYSTEM_FONT_SERIF = 'serif';
   static const String SYSTEM_FONT_SANS_SERIF = 'sans-serif';

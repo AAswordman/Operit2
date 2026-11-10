@@ -16,7 +16,7 @@ void main() {
     final gestures = MarkdownLinkGestureOwner();
     addTearDown(gestures.dispose);
     final nodes = markdownNodesFromEvents(
-      semanticMarkdownEvents(semanticMarkdownFixtures[0]['source'] as String),
+      semanticMarkdownEvents(semanticMarkdownInlineSource),
     );
     late TextSpan span;
     await tester.pumpWidget(
@@ -54,7 +54,7 @@ void main() {
     testWidgets('renders Core lists, headings and emphasis for live=$live', (
       tester,
     ) async {
-      final source = semanticMarkdownFixtures[1]['source'] as String;
+      const source = semanticMarkdownBlocksSource;
       final events = semanticMarkdownEvents(source);
       final controller = StreamController<Object>.broadcast();
       await tester.pumpWidget(
@@ -96,7 +96,7 @@ void main() {
     testWidgets(
       'routes nested quote events without reparsing live text for live=$live',
       (tester) async {
-        final source = semanticMarkdownFixtures[2]['source'] as String;
+        const source = semanticMarkdownQuoteSource;
         final controller = StreamController<Object>.broadcast();
         var splits = 0;
         await tester.pumpWidget(

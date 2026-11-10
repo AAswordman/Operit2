@@ -32,6 +32,8 @@ dependencies:
     path: ../packages/operit_ui
   operit_folder_access:
     path: ../thirdparty/operit_folder_access
+  operit_system_fonts:
+    path: ../thirdparty/operit_system_fonts
   flutter:
     sdk: flutter
   flutter_localizations:

@@ -56,6 +56,7 @@ class ThemeRenderRoot extends StatelessWidget {
   final Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates;
   final Iterable<Locale> supportedLocales;
 
+  /// Sets ambient text typography as well as Material component typography.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -77,7 +78,10 @@ class ThemeRenderRoot extends StatelessWidget {
       themeAnimationDuration: themeAnimationDuration,
       localizationsDelegates: localizationsDelegates,
       supportedLocales: supportedLocales,
-      builder: builder,
+      builder: (context, child) => DefaultTextStyle(
+        style: Theme.of(context).textTheme.bodyMedium!,
+        child: builder(context, child),
+      ),
       home: home,
     );
   }

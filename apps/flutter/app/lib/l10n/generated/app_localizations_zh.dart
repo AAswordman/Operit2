@@ -4775,4 +4775,17 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceThemeNew => '新建主题';
+
+  @override
+  String get settingsAppearanceDeviceFonts => '设备字体';
+
+  @override
+  String get settingsAppearanceChooseDeviceFont => '选择设备字体';
+
+  @override
+  String get settingsAppearanceNoDeviceFonts => '没有匹配的设备字体';
+
+  @override
+  String get settingsAppearanceDeviceFontPreview =>
+      '字体预览：你好，世界\nThe quick brown fox · 0123456789';
 }

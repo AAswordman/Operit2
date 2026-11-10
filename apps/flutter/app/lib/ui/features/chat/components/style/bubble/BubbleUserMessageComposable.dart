@@ -50,8 +50,10 @@ class BubbleUserMessageComposable extends StatefulWidget {
 
 class _BubbleUserMessageComposableState
     extends State<BubbleUserMessageComposable> {
+  /// Applies the message font to both themed text and inherited text styles.
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
     final isHiddenPlaceholder =
         widget.message.sender == 'user' &&
@@ -93,61 +95,73 @@ class _BubbleUserMessageComposableState
       isHiddenPlaceholder ? 0 : 12,
     );
 
-    return DefaultTextStyle.merge(
-      style: TextStyle(
-        fontFamily: messageFontFamily,
-        fontFamilyFallback: messageFontFamilyFallback,
+    return Theme(
+      data: theme.copyWith(
+        textTheme: theme.textTheme.apply(
+          fontFamily: messageFontFamily,
+          fontFamilyFallback: messageFontFamilyFallback,
+        ),
+        primaryTextTheme: theme.primaryTextTheme.apply(
+          fontFamily: messageFontFamily,
+          fontFamilyFallback: messageFontFamilyFallback,
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          if (snapshot.bubbleWideLayoutEnabled)
-            _WideUserBubbleLayout(
-              parseResult: parseResult,
-              enableDialogs: widget.enableDialogs,
-              shouldShowAvatar: shouldShowAvatar,
-              shouldShowResolvedName: shouldShowResolvedName,
-              resolvedDisplayName: resolvedDisplayName,
-              isProxySender: isProxySender,
-              avatarImagePath: isProxySender
-                  ? widget.proxyAvatarImagePath
-                  : snapshot.customUserAvatarUri,
-              avatarShape: snapshot.avatarShape,
-              avatarCornerRadius: snapshot.avatarCornerRadius,
-              bubbleShape: bubbleShape,
-              backgroundColor: backgroundColor,
-              textColor: textColor,
-              imageStyle: effectiveBubbleImageStyle,
-              transparentSurface:
-                  !isHiddenPlaceholder && widget.transparentSurface,
-              contentPadding: contentPadding,
-              isHiddenPlaceholder: isHiddenPlaceholder,
-              textContent: parseResult.processedText,
-            )
-          else
-            _NormalUserBubbleLayout(
-              parseResult: parseResult,
-              enableDialogs: widget.enableDialogs,
-              shouldShowAvatar: shouldShowAvatar,
-              shouldShowResolvedName: shouldShowResolvedName,
-              resolvedDisplayName: resolvedDisplayName,
-              isProxySender: isProxySender,
-              avatarImagePath: isProxySender
-                  ? widget.proxyAvatarImagePath
-                  : snapshot.customUserAvatarUri,
-              avatarShape: snapshot.avatarShape,
-              avatarCornerRadius: snapshot.avatarCornerRadius,
-              bubbleShape: bubbleShape,
-              backgroundColor: backgroundColor,
-              textColor: textColor,
-              imageStyle: effectiveBubbleImageStyle,
-              transparentSurface:
-                  !isHiddenPlaceholder && widget.transparentSurface,
-              contentPadding: contentPadding,
-              isHiddenPlaceholder: isHiddenPlaceholder,
-              textContent: parseResult.processedText,
-            ),
-        ],
+      child: DefaultTextStyle.merge(
+        style: TextStyle(
+          fontFamily: messageFontFamily,
+          fontFamilyFallback: messageFontFamilyFallback,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            if (snapshot.bubbleWideLayoutEnabled)
+              _WideUserBubbleLayout(
+                parseResult: parseResult,
+                enableDialogs: widget.enableDialogs,
+                shouldShowAvatar: shouldShowAvatar,
+                shouldShowResolvedName: shouldShowResolvedName,
+                resolvedDisplayName: resolvedDisplayName,
+                isProxySender: isProxySender,
+                avatarImagePath: isProxySender
+                    ? widget.proxyAvatarImagePath
+                    : snapshot.customUserAvatarUri,
+                avatarShape: snapshot.avatarShape,
+                avatarCornerRadius: snapshot.avatarCornerRadius,
+                bubbleShape: bubbleShape,
+                backgroundColor: backgroundColor,
+                textColor: textColor,
+                imageStyle: effectiveBubbleImageStyle,
+                transparentSurface:
+                    !isHiddenPlaceholder && widget.transparentSurface,
+                contentPadding: contentPadding,
+                isHiddenPlaceholder: isHiddenPlaceholder,
+                textContent: parseResult.processedText,
+              )
+            else
+              _NormalUserBubbleLayout(
+                parseResult: parseResult,
+                enableDialogs: widget.enableDialogs,
+                shouldShowAvatar: shouldShowAvatar,
+                shouldShowResolvedName: shouldShowResolvedName,
+                resolvedDisplayName: resolvedDisplayName,
+                isProxySender: isProxySender,
+                avatarImagePath: isProxySender
+                    ? widget.proxyAvatarImagePath
+                    : snapshot.customUserAvatarUri,
+                avatarShape: snapshot.avatarShape,
+                avatarCornerRadius: snapshot.avatarCornerRadius,
+                bubbleShape: bubbleShape,
+                backgroundColor: backgroundColor,
+                textColor: textColor,
+                imageStyle: effectiveBubbleImageStyle,
+                transparentSurface:
+                    !isHiddenPlaceholder && widget.transparentSurface,
+                contentPadding: contentPadding,
+                isHiddenPlaceholder: isHiddenPlaceholder,
+                textContent: parseResult.processedText,
+              ),
+          ],
+        ),
       ),
     );
   }

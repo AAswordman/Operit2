@@ -129,8 +129,10 @@ void main() {
         snapshot.customFontPath,
         startsWith('runtime/data/user_assets/theme/'),
       );
-      expect(snapshot.bubbleUserCustomFontPath, snapshot.customFontPath);
-      expect(snapshot.bubbleAiCustomFontPath, snapshot.customFontPath);
+      expect(snapshot.bubbleUserUseCustomFont, isFalse);
+      expect(snapshot.bubbleAiUseCustomFont, isFalse);
+      expect(snapshot.bubbleUserCustomFontPath, isNull);
+      expect(snapshot.bubbleAiCustomFontPath, isNull);
       expect(bridge.files[snapshot.customFontPath]!.length, greaterThan(1000));
       expect(bridge.files, hasLength(2));
       expect(bridge.calls.map((call) => call.methodName).toSet(), <String>{

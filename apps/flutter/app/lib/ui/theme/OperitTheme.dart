@@ -885,13 +885,11 @@ class _OperitThemePreviewState extends State<OperitThemePreview> {
         _loadedCustomFontFamilies[font.family] = font.family;
       }
       _preparation = null;
-    } else if (snapshot.fontType == UserPreferencesManager.FONT_TYPE_FILE ||
+    } else if (_usesFontAsset(snapshot.fontType) ||
         (snapshot.bubbleUserUseCustomFont &&
-            snapshot.bubbleUserFontType ==
-                UserPreferencesManager.FONT_TYPE_FILE) ||
+            _usesFontAsset(snapshot.bubbleUserFontType)) ||
         (snapshot.bubbleAiUseCustomFont &&
-            snapshot.bubbleAiFontType ==
-                UserPreferencesManager.FONT_TYPE_FILE)) {
+            _usesFontAsset(snapshot.bubbleAiFontType))) {
       _preparation = _prepareCustomFonts(snapshot).then((families) {
         _loadedCustomFontFamilies.addAll(families);
       });
@@ -941,7 +939,14 @@ class _OperitThemePreviewState extends State<OperitThemePreview> {
                 fontFamily: _fontFamily(snapshot),
                 fontFamilyFallback: _fontFamilyFallback(snapshot),
               ),
-              child: IgnorePointer(child: ExcludeFocus(child: widget.child)),
+              child: Builder(
+                builder: (context) => DefaultTextStyle(
+                  style: Theme.of(context).textTheme.bodyMedium!,
+                  child: IgnorePointer(
+                    child: ExcludeFocus(child: widget.child),
+                  ),
+                ),
+              ),
             ),
           ),
         );
@@ -1301,13 +1306,6 @@ List<String> operitMessageFontFamilyFallback(
   ThemePreferenceSnapshot themePreferenceSnapshot, {
   required bool isUser,
 }) {
-  final path = isUser && themePreferenceSnapshot.bubbleUserUseCustomFont
-      ? themePreferenceSnapshot.bubbleUserCustomFontPath
-      : !isUser && themePreferenceSnapshot.bubbleAiUseCustomFont
-      ? themePreferenceSnapshot.bubbleAiCustomFontPath
-      : themePreferenceSnapshot.customFontPath;
-  if (path != null && _loadedCustomFontFamilies[path] == path)
-    return const <String>[];
   if (isUser && themePreferenceSnapshot.bubbleUserUseCustomFont) {
     return _fontFamilyFallbackForSettings(
       fontType: themePreferenceSnapshot.bubbleUserFontType,
@@ -1336,7 +1334,7 @@ String _fontFamilyForSettings({
   required String? systemFontName,
   required String? customFontPath,
 }) {
-  if (fontType == UserPreferencesManager.FONT_TYPE_FILE) {
+  if (_usesFontAsset(fontType)) {
     if (customFontPath == null || customFontPath.isEmpty) {
       throw StateError('A file font requires a runtime asset reference');
     }
@@ -1358,9 +1356,6 @@ String _fontFamilyForSettings({
 List<String> _fontFamilyFallback(
   ThemePreferenceSnapshot themePreferenceSnapshot,
 ) {
-  final path = themePreferenceSnapshot.customFontPath;
-  if (path != null && _loadedCustomFontFamilies[path] == path)
-    return const <String>[];
   return _fontFamilyFallbackForSettings(
     fontType: themePreferenceSnapshot.fontType,
     systemFontName: themePreferenceSnapshot.systemFontName,
@@ -1371,6 +1366,9 @@ List<String> _fontFamilyFallbackForSettings({
   required String fontType,
   required String? systemFontName,
 }) {
+  if (_usesFontAsset(fontType)) {
+    return const <String>[];
+  }
   if (fontType != UserPreferencesManager.FONT_TYPE_SYSTEM) {
     return _defaultFontFamilyFallback;
   }
@@ -1387,13 +1385,12 @@ Future<Map<String, String>> _prepareCustomFonts(
   ThemePreferenceSnapshot snapshot,
 ) async {
   final paths = <String?>[
-    if (snapshot.fontType == UserPreferencesManager.FONT_TYPE_FILE)
-      snapshot.customFontPath,
+    if (_usesFontAsset(snapshot.fontType)) snapshot.customFontPath,
     if (snapshot.bubbleUserUseCustomFont &&
-        snapshot.bubbleUserFontType == UserPreferencesManager.FONT_TYPE_FILE)
+        _usesFontAsset(snapshot.bubbleUserFontType))
       snapshot.bubbleUserCustomFontPath,
     if (snapshot.bubbleAiUseCustomFont &&
-        snapshot.bubbleAiFontType == UserPreferencesManager.FONT_TYPE_FILE)
+        _usesFontAsset(snapshot.bubbleAiFontType))
       snapshot.bubbleAiCustomFontPath,
   ];
   final families = <String, String>{};
@@ -1421,6 +1418,11 @@ String _customFontFamilyForPath(String path) {
   }
   return family;
 }
+
+/// Identifies persisted faces that must be registered before publishing a theme.
+bool _usesFontAsset(String fontType) =>
+    fontType == UserPreferencesManager.FONT_TYPE_FILE ||
+    fontType == UserPreferencesManager.FONT_TYPE_DEVICE;
 
 final ThemeFontRegistry _customFontRegistry = ThemeFontRegistry();
 final Map<String, String> _loadedCustomFontFamilies = <String, String>{};

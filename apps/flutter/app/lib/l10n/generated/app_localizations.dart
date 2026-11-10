@@ -8783,6 +8783,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'New theme'**
   String get settingsAppearanceThemeNew;
+
+  /// No description provided for @settingsAppearanceDeviceFonts.
+  ///
+  /// In en, this message translates to:
+  /// **'Device fonts'**
+  String get settingsAppearanceDeviceFonts;
+
+  /// No description provided for @settingsAppearanceChooseDeviceFont.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose device font'**
+  String get settingsAppearanceChooseDeviceFont;
+
+  /// No description provided for @settingsAppearanceNoDeviceFonts.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching device fonts'**
+  String get settingsAppearanceNoDeviceFonts;
+
+  /// No description provided for @settingsAppearanceDeviceFontPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'The quick brown fox · 0123456789\n字体预览：你好，世界'**
+  String get settingsAppearanceDeviceFontPreview;
 }
 
 class _AppLocalizationsDelegate

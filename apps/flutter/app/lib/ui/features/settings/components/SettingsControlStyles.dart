@@ -561,11 +561,13 @@ class SettingsSegmentedSelector<T> extends StatelessWidget {
     required this.value,
     required this.segments,
     required this.onChanged,
+    this.hasSelection = true,
   });
 
   final T value;
   final List<ButtonSegment<T>> segments;
   final ValueChanged<T> onChanged;
+  final bool hasSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -602,7 +604,8 @@ class SettingsSegmentedSelector<T> extends StatelessWidget {
         ),
       ),
       segments: segments,
-      selected: <T>{value},
+      selected: hasSelection ? <T>{value} : <T>{},
+      emptySelectionAllowed: !hasSelection,
       onSelectionChanged: (selection) => onChanged(selection.single),
     );
   }
