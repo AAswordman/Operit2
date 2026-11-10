@@ -123,14 +123,12 @@ impl Operit1SnapshotImportManager {
                     if collection != "memories" {
                         continue;
                     }
-                    for field in ["documentPath", "chunkIndexFilePath"] {
-                        if let Some(path) = envelope["record"][field].as_str() {
-                            if path.starts_with("runtime/") || path.starts_with("workspaces/") {
-                                self.storageHost
-                                    .readBytes(path)
-                                    .map_err(|error| error.to_string())?;
-                                envelope["record"][field] = serde_json::json!(crate::data::backup::CharacterPluginMigration::publicResourcePath(path)?);
-                            }
+                    if let Some(path) = envelope["record"]["documentPath"].as_str() {
+                        if path.starts_with("runtime/") || path.starts_with("workspaces/") {
+                            self.storageHost
+                                .readBytes(path)
+                                .map_err(|error| error.to_string())?;
+                            envelope["record"]["documentPath"] = serde_json::json!(crate::data::backup::CharacterPluginMigration::publicResourcePath(path)?);
                         }
                     }
                 }

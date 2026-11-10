@@ -44,10 +44,9 @@ fn diagnose_external_operit1_snapshot() {
         assert_eq!(owner["key"], owner["value"]["ownerKey"], "memory owner identity mismatch");
     }
     for memory in writer.list("memories").unwrap() {
-        for field in ["documentPath", "chunkIndexFilePath"] {
-            if let Some(path) = memory["value"]["record"][field].as_str() {
-                assert!(!path.starts_with("content://"), "Source-app document grant survived import");
-            }
+        assert_eq!(memory["value"]["record"]["chunkIndexFilePath"], Value::Null);
+        if let Some(path) = memory["value"]["record"]["documentPath"].as_str() {
+            assert!(!path.starts_with("content://"), "Source-app document grant survived import");
         }
     }
     assert!(writer.list("chat_drafts").unwrap().is_empty());
@@ -191,6 +190,9 @@ fn completeSnapshotFixture(version: i32) -> Arc<SnapshotFixture> {
         ("payload/shared_prefs/cloud_embedding_settings_default.xml", br#"<map><boolean name="enabled" value="true"/><string name="endpoint">https://embedding.invalid</string><string name="api_key">actual-source-key</string><string name="model">source-model</string></map>"#.to_vec()),
         (ENTRY_DATABASE, std::fs::read(&databasePath).expect("real SQLite bytes must be readable")),
         (ENTRY_OBJECTBOX_DEFAULT_DATA, b"opaque source memory database: not decoded or adopted".to_vec()),
+        ("payload/files/.vector_index/doc_index_default_25_1024.hnsw", b"Retired vector index".to_vec()),
+        ("payload/files/doc_index_default_25_1024.hnsw", b"Retired top-level document index".to_vec()),
+        ("payload/files/memory_hnsw_default_1024.idx", b"Retired top-level memory index".to_vec()),
         ("payload/files/memory-space-profiles/default/user.md", b"Legacy user document".to_vec()),
         ("payload/files/workspace/demo/USER.md", b"Workspace-owned USER.md remains a normal file".to_vec()),
         ("payload/files/attachment.txt", b"Preserved attachment".to_vec()),
@@ -553,7 +555,7 @@ fn complete_snapshot_keeps_legacy_source_entries_and_preview_domains() {
     assert_eq!((preview.importedFileCount, preview.importedExternalFileCount), (2, 1));
 }
 
-/// Applies the actual resource plan and ZIP streaming copy, retaining workspace USER.md while excluding legacy memory storage.
+/// Streams documents and attachments while excluding legacy memory storage and HNSW indexes.
 #[test]
 fn resource_copy_plan_keeps_normal_files_and_does_not_copy_legacy_domain_storage() {
     let fixture = completeSnapshotFixture(20);
@@ -866,11 +868,11 @@ fn operit1_github_user_info_rejects_invalid_source_types() {
 /// Uses exact source memory directories rather than deleting normal workspace and externally supplied USER.md files.
 #[test]
 fn memory_copy_exclusion_is_scoped_to_declared_legacy_storage_directories() {
-    for entry in [ENTRY_OBJECTBOX_DEFAULT_DATA, "payload/files/objectbox_profile/data.mdb", "payload/files/memory-space-profiles/default/user.md"] {
+    for entry in [ENTRY_OBJECTBOX_DEFAULT_DATA, "payload/files/objectbox_profile/data.mdb", "payload/files/memory-space-profiles/default/user.md", "payload/files/.vector_index/doc_index_default_25_1024.hnsw", "payload/files/.vector_index/nested/index.hnsw", "payload/files/doc_index_default_25_1024.hnsw", "payload/files/memory_hnsw_default_1024.idx"] {
         assert!(isOperit1LegacyMemoryEntry(entry));
         assert!(!entryMatchesCopyPrefix(entry, ENTRY_FILES_PREFIX));
     }
-    for entry in ["payload/files/workspace/demo/USER.md", "payload/external_files/USER.md", "payload/files/objectbox_notes.txt", "payload/files/normal/memory-notes.md"] {
+    for entry in ["payload/files/workspace/demo/USER.md", "payload/external_files/USER.md", "payload/files/objectbox_notes.txt", "payload/files/normal/memory-notes.md", "payload/files/workspace/demo/.vector_index/user.hnsw", "payload/files/.vector_index_notes.txt", "payload/files/doc_index_notes.txt", "payload/files/normal/doc_index_default_25_1024.hnsw"] {
         assert!(!isOperit1LegacyMemoryEntry(entry));
     }
 }

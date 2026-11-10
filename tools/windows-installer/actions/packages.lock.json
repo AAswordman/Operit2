@@ -13,11 +13,11 @@
       },
       "WixToolset.Dtf.CustomAction": {
         "type": "Direct",
-        "requested": "[4.0.6, )",
-        "resolved": "4.0.6",
-        "contentHash": "n7naTp5HizmEUqz0kioApIc8odl+LgaxuoAbHqTrCmXoloTvnV63yyQQQNawWFTt4XbxUzg4976IbRlDSRUg2w==",
+        "requested": "[5.0.2, )",
+        "resolved": "5.0.2",
+        "contentHash": "F+BlC2/ND/wYFXuDdBHT3Mnr47Zi70t6ukqx3s/Sh6RGG2nf6SKZcMNnEINreedTsCkxdcUDxU4WJrl1krc0EA==",
         "dependencies": {
-          "WixToolset.Dtf.WindowsInstaller": "4.0.6"
+          "WixToolset.Dtf.WindowsInstaller": "5.0.2"
         }
       },
       "Microsoft.NETFramework.ReferenceAssemblies.net472": {
@@ -27,8 +27,8 @@
       },
       "WixToolset.Dtf.WindowsInstaller": {
         "type": "Transitive",
-        "resolved": "4.0.6",
-        "contentHash": "N2ZXs8FvaVNcW33zmyWbXzqwwh/f7SPKfbIx42ZLGiSwnH33Drhdgue44ubFSNTe7a+vtrt2JcAV8euQLB+ymA=="
+        "resolved": "5.0.2",
+        "contentHash": "kERpD6nv0DWxNy8KuI4ezBEeWeCRxYbsSB+Qcr5YGYw3vER5LVqR3n38o3TjO37o7eokTVuZoFtuVarEj6k4Wg=="
       }
     }
   }
