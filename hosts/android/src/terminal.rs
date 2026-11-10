@@ -245,7 +245,16 @@ impl TerminalHost for AndroidTerminalHost {
                 workingDir,
                 resolveHostDirectory,
             ),
-            "shell" => resolveHostDirectory(workingDir),
+            "shell" => {
+                let directory = resolveHostDirectory(workingDir)?;
+                let transport = crate::terminal_privilege::privileges()?.select()?;
+                let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
+                Ok(androidSystemShellWorkingDirectory(
+                    &transport,
+                    &directory,
+                    &internalRoot,
+                ))
+            }
             value => Err(HostError::new(format!(
                 "Unsupported Android terminal type: {value}"
             ))),
@@ -1707,6 +1716,21 @@ fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand
     )
 }
 
+/// Maps app-private directories to shared storage for Shizuku system shells.
+fn androidSystemShellWorkingDirectory(
+    transport: &crate::terminal_privilege::ShellTransport,
+    workingDir: &str,
+    internalRoot: &Path,
+) -> String {
+    if *transport == crate::terminal_privilege::ShellTransport::Shizuku
+        && Path::new(workingDir).starts_with(internalRoot)
+    {
+        "/sdcard".to_string()
+    } else {
+        workingDir.to_string()
+    }
+}
+
 /// Builds the selected persistent shell with literal argv and transport-specific paths.
 fn buildAndroidSystemShellCommand(
     transport: crate::terminal_privilege::ShellTransport,
@@ -1719,11 +1743,11 @@ fn buildAndroidSystemShellCommand(
 ) -> HostResult<AndroidPtyCommand> {
     use crate::terminal_privilege::ShellTransport;
 
-    let mut workDir = nonBlank(workingDir, "working_directory")?;
-    // The ADB shell UID cannot enter the app's private default directory.
-    if transport == ShellTransport::Shizuku && Path::new(&workDir) == internalRoot {
-        workDir = "/sdcard".to_string();
-    }
+    let workDir = androidSystemShellWorkingDirectory(
+        &transport,
+        &nonBlank(workingDir, "working_directory")?,
+        internalRoot,
+    );
     let ldLibraryPath = format!(
         "{}:{}",
         nativeLibraryDir.to_string_lossy(),
@@ -2385,21 +2409,29 @@ mod tests {
     /// Shizuku must not inherit private app paths that the ADB shell UID cannot access.
     #[test]
     fn shizuku_system_shell_has_accessible_environment_and_default_directory() {
-        let command = system_shell(
-            crate::terminal_privilege::ShellTransport::Shizuku,
-            "/private/app",
-        );
-        assert!(command.shizuku);
-        assert_eq!(command.cwd.to_str().unwrap(), "/");
-        assert_eq!(command.workingDir.as_deref(), Some("/sdcard"));
-        for value in command.envp {
-            assert!(!value.to_str().unwrap().contains("/private/"));
+        for directory in ["/private/app", "/private/app/workspaces/project"] {
+            let command = system_shell(
+                crate::terminal_privilege::ShellTransport::Shizuku,
+                directory,
+            );
+            assert!(command.shizuku);
+            assert_eq!(command.cwd.to_str().unwrap(), "/");
+            assert_eq!(command.workingDir.as_deref(), Some("/sdcard"));
+            assert!(command.argv[2]
+                .to_str()
+                .unwrap()
+                .contains("cd '/sdcard' || exit;"));
+            for value in command.envp {
+                assert!(!value.to_str().unwrap().contains("/private/"));
+            }
         }
-        let explicit = system_shell(
-            crate::terminal_privilege::ShellTransport::Shizuku,
-            "/sdcard/custom",
-        );
-        assert_eq!(explicit.workingDir.as_deref(), Some("/sdcard/custom"));
+        for directory in ["/sdcard/custom", "/private/app-other/workspaces/project"] {
+            let explicit = system_shell(
+                crate::terminal_privilege::ShellTransport::Shizuku,
+                directory,
+            );
+            assert_eq!(explicit.workingDir.as_deref(), Some(directory));
+        }
     }
 
     /// Literal paths cannot inject commands and the app shell keeps its original private directory.

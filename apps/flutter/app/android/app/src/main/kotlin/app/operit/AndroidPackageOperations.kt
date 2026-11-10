@@ -1,6 +1,7 @@
 package app.operit
 
 import android.app.AppOpsManager
+import android.app.Activity
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -16,9 +17,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Android package operations invoked through the owner interaction channel. */
-internal class AndroidPackageOperations(private val context: Context) {
+internal class AndroidPackageOperations(private val context: Activity) {
     private val pm = context.packageManager
+    private val uninstaller = AndroidAppUninstaller(context)
 
+    /** Executes one package operation and returns its verified outcome. */
     fun execute(operation: String, params: JSONObject): JSONObject = when (operation) {
         "install_app" -> install(params.getString("path"))
         "uninstall_app" -> uninstall(packageName(params))
@@ -56,12 +59,19 @@ internal class AndroidPackageOperations(private val context: Context) {
             .put("installState", "installer_opened")
     }
 
+    /** Reports success only after system confirmation and package removal verification. */
     private fun uninstall(name: String): JSONObject {
-        pm.getPackageInfo(name, 0)
-        val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$name"))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-        return result("uninstall_app", name, "Uninstallation requested; system confirmation is required")
+        uninstaller.uninstall(name)
+        return result("uninstall_app", name, "Application uninstalled; removal verified")
+    }
+
+    /** Routes system uninstall confirmation to its pending host call. */
+    fun onActivityResult(requestCode: Int, resultCode: Int): Boolean =
+        uninstaller.onActivityResult(requestCode, resultCode)
+
+    /** Cancels package operations whose Activity owner is being detached. */
+    fun release() {
+        uninstaller.release()
     }
 
     private fun list(includeSystem: Boolean): JSONObject {

@@ -110,6 +110,7 @@ class OwnerSystemCapabilityChannel(
     private var musicLoopPlayback: Boolean = false
     private var musicMessage: String = "android music player idle"
     private val locationReader = AndroidLocationReader(activity)
+    private val packageOperations = AndroidPackageOperations(activity)
     private val bluetoothClassicSockets = ConcurrentHashMap<String, BluetoothSocket>()
     private val bluetoothClassicServers = ConcurrentHashMap<String, BluetoothServerSocket>()
     private val bluetoothBleSessions = ConcurrentHashMap<String, BluetoothBleSession>()
@@ -175,6 +176,7 @@ class OwnerSystemCapabilityChannel(
 
     /** Releases owner-host resources and invalidates every active TTS generation. */
     fun release() {
+        packageOperations.release()
         cachedMediaProjectionCaptureManager?.release()
         cachedMediaProjectionCaptureManager = null
         cachedMediaProjection = null
@@ -265,7 +267,10 @@ class OwnerSystemCapabilityChannel(
         }
     }
 
-    /** Executes one generic Core-owned system operation. */
+    /** Delivers system uninstall confirmation to the package operation that owns it. */
+    fun onActivityResult(requestCode: Int, resultCode: Int): Boolean =
+        packageOperations.onActivityResult(requestCode, resultCode)
+
     /** Delivers the permission result to the location request that owns it. */
     fun onRequestPermissionsResult(requestCode: Int): Boolean =
         locationReader.onRequestPermissionsResult(requestCode)
@@ -308,7 +313,7 @@ class OwnerSystemCapabilityChannel(
                             mapOf("resultJson" to JSONObject().put("success", true).toString())
                         }
                         "install_app", "uninstall_app", "list_installed_apps", "start_app", "stop_app", "get_app_usage_time" ->
-                            mapOf("resultJson" to AndroidPackageOperations(activity).execute(operation, JSONObject(paramsJson)).toString())
+                            mapOf("resultJson" to packageOperations.execute(operation, JSONObject(paramsJson)).toString())
                         "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
                         else -> throw IllegalArgumentException("unsupported system operation: $operation")
                     }
