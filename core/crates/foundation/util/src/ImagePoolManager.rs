@@ -3,14 +3,16 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 
 use crate::AppLogger::AppLogger;
+use crate::ImageBitmapLimiter::{ImageBitmapLimiter, MAX_SOURCE_BYTES};
 
 const TAG: &str = "ImagePoolManager";
-const DEFAULT_SCALE_PERCENT: i32 = 100;
-const DEFAULT_JPEG_QUALITY: i32 = 85;
-const DEFAULT_MAX_LONG_EDGE: i32 = 2048;
+pub(crate) const DEFAULT_SCALE_PERCENT: i32 = 100;
+pub(crate) const DEFAULT_JPEG_QUALITY: i32 = 85;
+pub(crate) const DEFAULT_MAX_LONG_EDGE: i32 = 2048;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 /// Output format used when registering images for model input.
@@ -31,6 +33,7 @@ pub struct ImageRegistrationOptions {
 }
 
 impl Default for ImageRegistrationOptions {
+    /// Matches the default Kotlin registration policy.
     fn default() -> Self {
         Self {
             scale_percent: Some(DEFAULT_SCALE_PERCENT),
@@ -91,34 +94,40 @@ impl ImagePoolManager {
                 .lock()
                 .expect("ImagePool mutex poisoned")
                 .max_pool_size = value;
-            AppLogger::v_with_level(TAG, &format!("pool size limit updated: {value}"), crate::AppLogger::VERBOSE_LEVEL_4);
+            AppLogger::v_with_level(
+                TAG,
+                &format!("pool size limit updated: {value}"),
+                crate::AppLogger::VERBOSE_LEVEL_4,
+            );
         }
     }
 
     /// Returns the maximum number of images retained in the pool.
     pub fn max_pool_size() -> usize {
-        state().lock().expect("ImagePool mutex poisoned").max_pool_size
+        state()
+            .lock()
+            .expect("ImagePool mutex poisoned")
+            .max_pool_size
     }
 
-    /// Registers image bytes for model input.
+    /// Registers normalized model input; the encoded bytes determine the final MIME type.
     pub fn add_image_bytes(
         bytes: &[u8],
-        mime_type: Option<&str>,
-        _options: Option<ImageRegistrationOptions>,
+        _mime_type: Option<&str>,
+        options: Option<ImageRegistrationOptions>,
     ) -> String {
-        if bytes.is_empty() {
-            AppLogger::e(TAG, "image bytes must not be empty");
-            return "error".to_string();
-        }
-        let mime_type = mime_type_from_bytes(&bytes)
-            .or_else(|| mime_type.map(str::to_string))
-            .unwrap_or_else(|| "image/png".to_string());
-        let (width, height) = image_dimensions(&bytes).unwrap_or((0, 0));
+        let image = match ImageBitmapLimiter::prepare(bytes, &options.unwrap_or_default()) {
+            Ok(image) => image,
+            Err(error) => {
+                AppLogger::e(TAG, &error);
+                return "error".to_string();
+            }
+        };
         Self::insert(ImageData {
-            base64: encode_base64(&bytes),
-            mime_type,
-            width,
-            height,
+            base64: encode_base64(&image.bytes),
+            mime_type: image.format.to_mime_type().to_string(),
+            width: image.width as i32,
+            height: image.height as i32,
         })
     }
 
@@ -126,17 +135,15 @@ impl ImagePoolManager {
     pub fn add_image_from_base64(
         base64: &str,
         mime_type: &str,
-        _options: Option<ImageRegistrationOptions>,
+        options: Option<ImageRegistrationOptions>,
     ) -> String {
-        let (normalized_base64, normalized_mime) = normalize_base64_input(base64, mime_type);
-        let bytes = decode_base64(&normalized_base64);
-        let (width, height) = image_dimensions(&bytes).unwrap_or((0, 0));
-        Self::insert(ImageData {
-            base64: encode_base64(&bytes),
-            mime_type: mime_type_from_bytes(&bytes).unwrap_or(normalized_mime),
-            width,
-            height,
-        })
+        match decode_image_base64(base64) {
+            Ok(bytes) => Self::add_image_bytes(&bytes, Some(mime_type), options),
+            Err(error) => {
+                AppLogger::e(TAG, &error);
+                "error".to_string()
+            }
+        }
     }
 
     /// Returns registered image data by id.
@@ -206,106 +213,45 @@ fn trim_locked(state: &mut PoolState) {
     }
 }
 
-fn normalize_base64_input(base64: &str, mime_type: &str) -> (String, String) {
-    let trimmed = base64.trim();
-    if let Some(rest) = trimmed.strip_prefix("data:") {
-        if let Some(comma) = rest.find(',') {
-            let header = &rest[..comma];
-            let header_mime = header.split(';').next().unwrap_or("").trim();
-            return (
-                rest[comma + 1..].to_string(),
-                if header_mime.is_empty() {
-                    mime_type_or_png(mime_type)
-                } else {
-                    header_mime.to_string()
-                },
-            );
-        }
+/// Decodes raw Base64 or a Base64 data URL without accepting malformed payloads.
+fn decode_image_base64(input: &str) -> Result<Vec<u8>, String> {
+    let trimmed = input.trim();
+    if trimmed.len() > MAX_SOURCE_BYTES.div_ceil(3) * 4 + 1024 {
+        return Err("Image Base64 input exceeds 32 MiB".into());
     }
-    (trimmed.to_string(), mime_type_or_png(mime_type))
-}
-
-fn mime_type_or_png(mime_type: &str) -> String {
-    if mime_type.trim().is_empty() {
-        "image/png".to_string()
+    let payload = if let Some(rest) = trimmed.strip_prefix("data:") {
+        let (header, payload) = rest
+            .split_once(',')
+            .ok_or("Image data URL is missing its payload")?;
+        if !header.split(';').any(|part| part == "base64") {
+            return Err("Image data URL must use Base64 encoding".into());
+        }
+        payload
     } else {
-        mime_type.to_string()
-    }
+        trimmed
+    };
+    let compact: Vec<u8> = payload
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect();
+    STANDARD
+        .decode(compact)
+        .map_err(|error| format!("Invalid image Base64: {error}"))
 }
 
-fn mime_type_from_bytes(bytes: &[u8]) -> Option<String> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png".to_string())
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
-        Some("image/jpeg".to_string())
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        Some("image/gif".to_string())
-    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        Some("image/webp".to_string())
-    } else {
-        None
-    }
-}
-
-fn image_dimensions(bytes: &[u8]) -> Option<(i32, i32)> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 24 {
-        let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as i32;
-        let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]) as i32;
-        return Some((width, height));
-    }
-    jpeg_dimensions(bytes)
-}
-
-fn jpeg_dimensions(bytes: &[u8]) -> Option<(i32, i32)> {
-    let mut index = 2;
-    while index + 9 < bytes.len() {
-        if bytes[index] != 0xFF {
-            index += 1;
-            continue;
-        }
-        let marker = bytes[index + 1];
-        let length = u16::from_be_bytes([bytes[index + 2], bytes[index + 3]]) as usize;
-        if matches!(marker, 0xC0 | 0xC1 | 0xC2 | 0xC3) {
-            let height = u16::from_be_bytes([bytes[index + 5], bytes[index + 6]]) as i32;
-            let width = u16::from_be_bytes([bytes[index + 7], bytes[index + 8]]) as i32;
-            return Some((width, height));
-        }
-        index += 2 + length;
-    }
-    None
-}
-
+/// Allocates a process-unique pool identifier.
 fn new_id() -> String {
     let millis = operit_host_api::TimeUtils::currentTimeMillisU128();
     let sequence = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     format!("{millis:x}-{sequence:x}")
 }
 
+/// Encodes media bytes as unwrapped standard Base64.
 pub(crate) fn encode_base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let b0 = bytes[index];
-        let b1 = *bytes.get(index + 1).unwrap_or(&0);
-        let b2 = *bytes.get(index + 2).unwrap_or(&0);
-        out.push(TABLE[(b0 >> 2) as usize] as char);
-        out.push(TABLE[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize] as char);
-        if index + 1 < bytes.len() {
-            out.push(TABLE[(((b1 & 0b1111) << 2) | (b2 >> 6)) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if index + 2 < bytes.len() {
-            out.push(TABLE[(b2 & 0b111111) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        index += 3;
-    }
-    out
+    STANDARD.encode(bytes)
 }
 
+/// Decodes the legacy audio/video Base64 representation.
 pub(crate) fn decode_base64(input: &str) -> Vec<u8> {
     let mut buffer = 0u32;
     let mut bits = 0u8;
@@ -328,6 +274,7 @@ pub(crate) fn decode_base64(input: &str) -> Vec<u8> {
     out
 }
 
+/// Maps one standard Base64 digit to its numeric value.
 fn base64_value(byte: u8) -> Option<u8> {
     match byte {
         b'A'..=b'Z' => Some(byte - b'A'),
@@ -338,3 +285,7 @@ fn base64_value(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "ImagePoolManagerTests.rs"]
+mod tests;

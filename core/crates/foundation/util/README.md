@@ -22,6 +22,14 @@ or store ownership.
 - `src/stream/`: shared stream abstractions and operators.
 - `src/streamnative/`: native stream splitting helpers.
 - `src/AppLogger.rs` and `src/ChainLogger.rs`: logging utilities.
+- `src/ImagePoolManager.rs` and `src/ImageBitmapLimiter.rs`: a single image-input
+  boundary for chat, tools, and providers. Registration decodes PNG, JPEG, GIF,
+  WebP, BMP, ICO, and HEIC/HEIF bytes, applies orientation and scaling, and stores
+  only the final PNG (alpha) or JPEG (opaque, quality 85). The default longest
+  edge is 2048 pixels; explicit registration options control these transforms.
+  Input is limited to 32 MiB and 64 megapixels, with a 256 MiB image decode limit.
+  Corrupt or unsupported inputs fail registration; their original bytes are not
+  inserted into the image pool. GIF/WebP inputs contribute one still image.
 - `src/*Util.rs`: focused helpers for files, archives, media, network, and
   document processing.
 

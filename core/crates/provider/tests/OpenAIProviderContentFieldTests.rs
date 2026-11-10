@@ -2,7 +2,7 @@
 
 use super::OpenAIProvider;
 use crate::chat::llmprovider::ProviderMediaTestSupport::{
-    send_request, tool_image_request, TestImage, IMAGE_DATA_URL,
+    send_request, tool_image_request, TestImage,
 };
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
@@ -42,7 +42,7 @@ fn history_images_are_forwarded_as_readable_user_inputs() {
     assert_eq!(messages.len(), 4);
     assert_eq!(
         messages[0]["content"][0]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert_eq!(messages[0]["content"][1]["text"], "user text");
     assert_eq!(messages[1]["role"], "assistant");
@@ -54,12 +54,12 @@ fn history_images_are_forwarded_as_readable_user_inputs() {
         .contains("assistant"));
     assert_eq!(
         messages[2]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert_eq!(messages[3]["role"], "user");
     assert_eq!(
         messages[3]["content"][0]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert!(!body.to_string().contains("<link"));
 }
@@ -86,7 +86,7 @@ fn structured_tool_images_are_forwarded_as_readable_user_inputs() {
         .contains("tool result"));
     assert_eq!(
         messages[2]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert!(!body.to_string().contains("<link"));
 }
@@ -122,7 +122,7 @@ fn tool_batch_images_are_deduplicated_after_all_required_results() {
     assert_eq!(messages[3]["content"].as_array().unwrap().len(), 2);
     assert_eq!(
         messages[3]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert_eq!(messages[4]["content"], "Continue");
     assert!(!body.to_string().contains("<link"));
@@ -187,7 +187,7 @@ fn assistant_image_forwarding_preserves_reasoning_content() {
     assert_eq!(body["messages"][0]["content"], "visible");
     assert_eq!(
         body["messages"][1]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
 }
 
@@ -202,7 +202,7 @@ fn assistant_image_forwarding_deduplicates_links_within_one_message() {
         .unwrap();
     let content = body["messages"][1]["content"].as_array().unwrap();
     assert_eq!(content.len(), 2);
-    assert_eq!(content[1]["image_url"]["url"], IMAGE_DATA_URL);
+    assert_eq!(content[1]["image_url"]["url"], image.data_url());
     assert!(!body.to_string().contains("<link"));
 }
 
@@ -240,7 +240,7 @@ fn chat_history_does_not_replay_responses_metadata_as_visible_text() {
     assert_eq!(body["messages"][0]["content"], "assistant text");
     assert_eq!(
         body["messages"][1]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert!(!body.to_string().contains("<meta"));
     assert!(!body.to_string().contains("encrypted-reasoning"));

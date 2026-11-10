@@ -493,7 +493,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Standard 1x1 PNG payload used to exercise real image registration.
-    const ONE_PIXEL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const ONE_PIXEL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DQAAAEgQGALFXOsAAAAABJRU5ErkJggg==";
 
     fn executor() -> MCPToolExecutor {
         MCPToolExecutor::new(

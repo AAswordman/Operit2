@@ -18,20 +18,28 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) const IMAGE_DATA_URL: &str = "data:image/png;base64,aW1hZ2U=";
-
 /// Owns one unique pool entry without clearing other tests' images.
 pub(crate) struct TestImage(String);
 
 impl TestImage {
+    /// Registers a complete image through the production normalization boundary.
     pub(crate) fn new() -> Self {
-        let id = ImagePoolManager::add_image_from_base64("aW1hZ2U=", "image/png", None);
+        let id = ImagePoolManager::add_image_bytes(
+            include_bytes!("fixtures/pixel.png"), Some("image/png"), None,
+        );
         assert_ne!(id, "error");
         Self(id)
     }
 
+    /// Returns the serialized image reference used in prompt fixtures.
     pub(crate) fn link(&self) -> String {
         MediaLinkBuilder::image(&self.0)
+    }
+
+    /// Returns the actual normalized payload expected in provider request bodies.
+    pub(crate) fn data_url(&self) -> String {
+        let image = ImagePoolManager::get_image(&self.0).unwrap();
+        format!("data:{};base64,{}", image.mime_type, image.base64)
     }
 }
 

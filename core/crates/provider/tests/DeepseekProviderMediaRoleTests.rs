@@ -2,7 +2,7 @@
 
 use super::DeepseekProvider;
 use crate::chat::llmprovider::ProviderMediaTestSupport::{
-    send_request, test_runtime_context, tool_image_request, TestImage, IMAGE_DATA_URL,
+    send_request, test_runtime_context, tool_image_request, TestImage,
 };
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 
@@ -50,7 +50,7 @@ fn chat_completions_history_images_are_readable_user_inputs() {
     assert_eq!(messages[0]["content"][0]["type"], "image_url");
     assert_eq!(
         messages[0]["content"][0]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert_eq!(messages[0]["content"][1]["text"], "user text");
     assert_eq!(messages[1]["role"], "assistant");
@@ -63,12 +63,12 @@ fn chat_completions_history_images_are_readable_user_inputs() {
         .contains("assistant"));
     assert_eq!(
         messages[2]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert_eq!(messages[3]["role"], "user");
     assert_eq!(
         messages[3]["content"][0]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert_eq!(messages[3]["content"][1]["text"], "tool text");
     assert!(!body.to_string().contains("<link"));
@@ -98,7 +98,7 @@ fn chat_completions_structured_tool_images_are_readable_user_inputs() {
         .contains("tool result"));
     assert_eq!(
         messages[2]["content"][1]["image_url"]["url"],
-        IMAGE_DATA_URL
+        image.data_url()
     );
     assert!(!body.to_string().contains("<link"));
 }
@@ -123,10 +123,10 @@ fn deepseek_user_image_encoding_is_identical_for_streaming_and_non_streaming() {
         let content = &streaming[content_key][0]["content"];
         if responses {
             assert_eq!(content[0]["type"], "input_image");
-            assert_eq!(content[0]["image_url"], IMAGE_DATA_URL);
+            assert_eq!(content[0]["image_url"], image.data_url());
         } else {
             assert_eq!(content[0]["type"], "image_url");
-            assert_eq!(content[0]["image_url"]["url"], IMAGE_DATA_URL);
+            assert_eq!(content[0]["image_url"]["url"], image.data_url());
         }
         assert!(!streaming.to_string().contains("<link"));
     }
@@ -144,7 +144,7 @@ fn deepseek_responses_tool_images_stay_in_function_output() {
     assert_eq!(input[1]["type"], "function_call_output");
     assert_eq!(input[1]["call_id"], input[0]["call_id"]);
     assert_eq!(input[1]["output"][0]["type"], "input_image");
-    assert_eq!(input[1]["output"][0]["image_url"], IMAGE_DATA_URL);
+    assert_eq!(input[1]["output"][0]["image_url"], image.data_url());
     assert_eq!(input[1]["output"][1]["type"], "input_text");
     assert_eq!(input[1]["output"][1]["text"], "tool text");
     assert!(!body.to_string().contains("<link"));
@@ -165,7 +165,7 @@ fn responses_assistant_images_are_forwarded_as_user_input_images() {
     assert_eq!(input[0]["content"], "assistant text");
     assert_eq!(input[1]["role"], "user");
     assert_eq!(input[1]["content"][1]["type"], "input_image");
-    assert_eq!(input[1]["content"][1]["image_url"], IMAGE_DATA_URL);
+    assert_eq!(input[1]["content"][1]["image_url"], image.data_url());
     assert!(!body.to_string().contains("<link"));
 }
 

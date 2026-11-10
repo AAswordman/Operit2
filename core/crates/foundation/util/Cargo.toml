@@ -15,8 +15,11 @@ full = ["dep:flate2", "dep:regex", "dep:zip"]
 
 [dependencies]
 operit-host-api = { version = "0.1.0", path = "../host-api" }
+base64.workspace = true
 chrono.workspace = true
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
+heic-rs = { version = "0.1.4", default-features = false }
+image = { workspace = true, features = ["bmp", "gif", "ico", "webp"] }
 regex = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

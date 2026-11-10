@@ -34,7 +34,7 @@ fn streaming_request_negotiates_sse_and_encodes_query_authentication() {
 #[test]
 fn imageLinksBecomeGeminiInlineDataParts() {
     let image_id = ImagePoolManager::add_image_bytes(
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01",
+        include_bytes!("fixtures/pixel.png"),
         Some("image/png"),
         None,
     );
@@ -57,7 +57,8 @@ fn imageLinksBecomeGeminiInlineDataParts() {
 #[test]
 fn packageProxyResultMatchesGeminiFunctionCall() {
     let provider = test_provider();
-    let image_id = ImagePoolManager::add_image_bytes(b"\x89PNG\r\n\x1a\n", Some("image/png"), None);
+    let image_id = ImagePoolManager::add_image_bytes(include_bytes!("fixtures/pixel.png"), Some("image/png"), None);
+    let expected_image = ImagePoolManager::get_image(&image_id).unwrap().base64;
     let history = vec![
         PromptTurn::new(
             PromptTurnKind::ASSISTANT,
@@ -96,7 +97,7 @@ fn packageProxyResultMatchesGeminiFunctionCall() {
         Some(&serde_json::json!("2026-09-12"))
     );
     assert_eq!(contents[1]["parts"][1]["inline_data"]["mime_type"], "image/png");
-    assert_eq!(contents[1]["parts"][1]["inline_data"]["data"], "iVBORw0KGgo=");
+    assert_eq!(contents[1]["parts"][1]["inline_data"]["data"], expected_image);
 }
 
 /// Verifies audio and video media links become Gemini inline_data parts.

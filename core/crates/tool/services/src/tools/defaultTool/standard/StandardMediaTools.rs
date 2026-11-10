@@ -195,11 +195,15 @@ mod tests {
     use operit_util::MediaPoolManager::MediaPoolManager;
 
     #[test]
+    /// Verifies the public media tool registers decoded pixels and returns a media link.
     fn native_base64_request_returns_media_links() {
+        use base64::Engine;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(2, 3).write_to(&mut png, image::ImageFormat::Png).unwrap();
         let json = serde_json::json!({
             "type": "image",
             "source": "base64",
-            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAAD",
+            "base64": base64::engine::general_purpose::STANDARD.encode(png.get_ref()),
         })
         .to_string();
         let result: MediaRegistrationResultData = serde_json::from_str(

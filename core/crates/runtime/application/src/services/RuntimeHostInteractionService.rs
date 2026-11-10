@@ -1868,8 +1868,11 @@ mod tests {
     #[test]
     fn mediaPoolDataIsReadByIdWithTypeValidation() {
         let service = RuntimeHostInteractionService::getInstance(&HostManager::new());
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(1, 1)
+            .write_to(&mut png, image::ImageFormat::Png).unwrap();
         let imageId = ImagePoolManager::add_image_bytes(
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01",
+            png.get_ref(),
             Some("image/png"),
             None,
         );
@@ -1900,6 +1903,7 @@ mod tests {
         MediaPoolManager::remove_media(&audioId);
         MediaPoolManager::remove_media(&videoId);
         MediaPoolManager::remove_media(&invalidAudioId);
+        ImagePoolManager::remove_image(&imageId);
     }
 
 

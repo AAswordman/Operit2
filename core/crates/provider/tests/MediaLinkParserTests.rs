@@ -6,7 +6,7 @@ use operit_util::MediaPoolManager::MediaPoolManager;
 #[test]
 fn extractImageLinksReadsRegisteredImageData() {
     let image_id = ImagePoolManager::add_image_bytes(
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01",
+        include_bytes!("fixtures/pixel.png"),
         Some("image/png"),
         None,
     );

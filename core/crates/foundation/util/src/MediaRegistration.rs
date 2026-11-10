@@ -116,11 +116,11 @@ fn decode_media_base64(input: &str) -> Result<(Vec<u8>, Option<String>), String>
 mod tests {
     use super::*;
 
+    /// Creates complete transparent PNG data for the public registration contract.
     fn png() -> Vec<u8> {
-        let mut bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
-        bytes.extend_from_slice(&2u32.to_be_bytes());
-        bytes.extend_from_slice(&3u32.to_be_bytes());
-        bytes
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(2, 3).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
     }
 
     #[test]
