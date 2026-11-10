@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <unistd.h>
 #include <utility>
 
@@ -25,6 +26,18 @@ class FD {
     }
     int get() const {
         return value_;
+    }
+};
+
+// Guest dup/fork entries share one native open description. Guest descriptor
+// flags and table membership are independent and do not require a native dup.
+class SharedFD {
+    std::shared_ptr<FD> owner_;
+
+  public:
+    explicit SharedFD(FD fd) : owner_(std::make_shared<FD>(std::move(fd))) {}
+    int get() const {
+        return owner_ ? owner_->get() : -1;
     }
 };
 

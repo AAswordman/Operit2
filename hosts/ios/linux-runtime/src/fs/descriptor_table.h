@@ -47,12 +47,13 @@ struct OpenDescription {
     ~OpenDescription();
 };
 struct Descriptor {
-    FD host;
+    SharedFD host;
     std::string path;
     int descriptor_flags;
     std::shared_ptr<OpenDescription> description;
     Descriptor(FD fd, std::string p, int f);
     Descriptor(FD fd, const Descriptor &source, bool cloexec);
+    Descriptor(const Descriptor &source, bool cloexec);
     // Metadata display only; anonymous files keep path empty for /proc reopening.
     std::string display_path() const;
 };

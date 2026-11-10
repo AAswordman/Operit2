@@ -1,5 +1,6 @@
 #include "base/support.h"
 #include "fs/filesystem.h"
+#include "fs/descriptor_table.h"
 #include "native_descriptor_budget.h"
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,47 @@ struct Temporary {
     }
     ~Temporary() { std::filesystem::remove_all(path); }
 };
+void descriptor_inheritance_without_native_duplicates() {
+    Temporary temp;
+    std::ofstream(temp.path + "/message") << "shared";
+    DescriptorTable parent;
+    const int original = parent.insert(FD(::open((temp.path + "/message").c_str(), O_RDONLY)),
+                                       "/message", 0);
+    const int native = parent.get(original).host.get();
+    require(native >= 0, "open test file");
+    const auto initial = NativeDescriptorBudget::count();
+    {
+        NativeDescriptorBudget budget(0);
+        const int duplicate = parent.duplicate(original, 10, true);
+        const int target = parent.duplicate_to(original, 20, false, [](const Descriptor &) {});
+        DescriptorTable child(parent);
+        DescriptorTable peer;
+        peer.share_with(child);
+        child.unshare();
+        child.get(duplicate).descriptor_flags = 0;
+        require(parent.get(duplicate).descriptor_flags == 1 &&
+                    peer.get(duplicate).descriptor_flags == 1,
+                "fork/unshare shared descriptor flags");
+        child.get(original).descriptor_flags = 1;
+        child.close_on_exec([](const Descriptor &) {});
+        require(child.numbers() == std::vector<int>({duplicate, target}),
+                "close-on-exec did not remove only the child's flagged descriptor");
+        parent.close(original);
+        parent.close(duplicate);
+        parent.close(target);
+        peer.clear();
+        require(NativeDescriptorBudget::count() == initial,
+                "dup/fork/unshare multiplied native descriptors");
+        char byte = 0;
+        require(::read(child.get(duplicate).host.get(), &byte, 1) == 1 && byte == 's',
+                "closing parent descriptors invalidated the child");
+        require(::read(child.get(target).host.get(), &byte, 1) == 1 && byte == 'h',
+                "duplicated descriptors lost their shared offset");
+        child.clear();
+        require(::fcntl(native, F_GETFD) == -1 && errno == EBADF,
+                "last guest close retained the native descriptor");
+    }
+}
 const std::string container =
     "/var/mobile/Containers/Data/Application/77122FF4-test/Library/Application Support/Operit/workspaces/default";
 void ordinary_walks_with_constant_budget() {
@@ -123,6 +165,7 @@ void recursive_mount_attachments() {
 } // namespace
 int main() {
     try {
+        descriptor_inheritance_without_native_duplicates();
         ordinary_walks_with_constant_budget();
         repeated_deep_lookups();
         mounted_parent_identity_with_small_budget();

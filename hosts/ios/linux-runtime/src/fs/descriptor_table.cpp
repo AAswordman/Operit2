@@ -22,6 +22,9 @@ Descriptor::Descriptor(FD fd, std::string p, int f)
 Descriptor::Descriptor(FD fd, const Descriptor &source, bool cloexec)
     : host(std::move(fd)), path(source.path), descriptor_flags(cloexec ? 1 : 0),
       description(source.description) {}
+Descriptor::Descriptor(const Descriptor &source, bool cloexec)
+    : host(source.host), path(source.path), descriptor_flags(cloexec ? 1 : 0),
+      description(source.description) {}
 std::string Descriptor::display_path() const {
     if (description->inotify)
         return "anon_inode:inotify";
@@ -49,11 +52,7 @@ OpenDescription::~OpenDescription() {
 DescriptorTable::DescriptorTable(const DescriptorTable &source) : limits_(source.limits_) {
     for (const auto &item : source.state_->entries) {
         const auto &entry = *item.second;
-        FD host(entry.host.get() < 0 ? -1 : ::fcntl(entry.host.get(), F_DUPFD_CLOEXEC, 0));
-        if (entry.host.get() >= 0)
-            check_host(host.get());
-        state_->entries.emplace(item.first, std::make_unique<Descriptor>(std::move(host), entry,
-                                                                entry.descriptor_flags & 1));
+        state_->entries.emplace(item.first, std::make_unique<Descriptor>(entry, entry.descriptor_flags & 1));
     }
 }
 DescriptorTable &DescriptorTable::operator=(const DescriptorTable &source) {
@@ -122,10 +121,7 @@ int DescriptorTable::duplicate(uint64_t source, int minimum, bool cloexec) {
     if (minimum < 0)
         guest_error(22);
     int candidate = available(minimum);
-    FD fd(entry.host.get() < 0 ? -1 : ::fcntl(entry.host.get(), F_DUPFD_CLOEXEC, 0));
-    if (entry.host.get() >= 0)
-        check_host(fd.get());
-    state_->entries.emplace(candidate, std::make_unique<Descriptor>(std::move(fd), entry, cloexec));
+    state_->entries.emplace(candidate, std::make_unique<Descriptor>(entry, cloexec));
     return candidate;
 }
 int DescriptorTable::duplicate_minimum(uint64_t source, uint64_t minimum, bool cloexec) {
@@ -141,10 +137,7 @@ int DescriptorTable::duplicate_to(uint64_t source, uint64_t target, bool cloexec
     auto &entry = get(source);
     if (target > INT_MAX || target >= limits_->get(process::Resource::OpenFiles).soft)
         guest_error(9);
-    FD fd(entry.host.get() < 0 ? -1 : ::fcntl(entry.host.get(), F_DUPFD_CLOEXEC, 0));
-    if (entry.host.get() >= 0)
-        check_host(fd.get());
-    auto copy = std::make_unique<Descriptor>(std::move(fd), entry, cloexec);
+    auto copy = std::make_unique<Descriptor>(entry, cloexec);
     auto existing = state_->entries.find(int(target));
     if (existing != state_->entries.end())
         before_close(*existing->second);

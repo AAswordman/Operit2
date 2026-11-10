@@ -132,11 +132,24 @@ void descriptor_exhaustion_and_rollback() {
     require(ns::unshare(ns::clone_files, private_context) == 0 &&
                 private_files.get(private_fd).host.get() == private_host_fd,
             "private file table was copied under descriptor exhaustion");
-    error(24, [&] { ns::unshare(ns::clone_fs | ns::clone_files, shared_context); });
-    require(state == original_state, "failed descriptor copy committed fs state");
+    shared_context.prepare_fs = [](const Filesystem *) -> std::unique_ptr<ns::PreparedChange> {
+        guest_error(5);
+    };
+    error(5, [&] { ns::unshare(ns::clone_fs | ns::clone_files, shared_context); });
+    require(state == original_state, "failed unshare committed fs state");
     shared_files.get(shared_fd).descriptor_flags = 1;
     require(peer_files.get(shared_fd).descriptor_flags == 1,
-            "failed descriptor copy detached shared table");
+            "failed unshare detached shared table");
+
+    // Copying guest entries no longer requires native descriptor capacity.
+    shared_context.prepare_fs = prepare_fs(state);
+    require(ns::unshare(ns::clone_fs | ns::clone_files, shared_context) == 0 && state != original_state,
+            "shared file table could not unshare under native descriptor exhaustion");
+    shared_files.get(shared_fd).descriptor_flags = 0;
+    require(peer_files.get(shared_fd).descriptor_flags == 1,
+            "successful unshare retained shared descriptor flags");
+    shared_files.close(shared_fd);
+    require(exists(peer_files, shared_fd), "unshared close invalidated the peer descriptor");
 }
 
 void mount_isolation_and_rollback() {

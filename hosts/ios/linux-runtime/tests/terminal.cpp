@@ -123,15 +123,31 @@ void descriptor_budget(const char *root) {
     std::filesystem::create_directories(workspace.path + deep);
     std::ofstream(workspace.path + deep + "/message") << "ok";
     NativeDescriptorBudget budget(64);
-    Terminal terminal(root, workspace.path.c_str());
-    terminal.expect("ORT> ");
-    terminal.write("i=0; while [ \"$i\" -lt 20 ]; do cd '/ort-fd-budget" + deep +
-                   "' && /bin/busybox ls > /dev/null && /bin/busybox date > /dev/null && "
-                   "/bin/busybox cat message | /bin/busybox tr a-z A-Z || break; "
-                   "i=$((i+1)); done; printf '__FD_BUDGET_DONE_%s__\\n' \"$i\"\n");
-    terminal.expect("__FD_BUDGET_DONE_20__\r\n");
-    terminal.exit();
-    std::puts("public terminal API: deep cd, ls/date, pipelines and exit with 64 native FDs spare passed");
+    const auto initial_descriptors = NativeDescriptorBudget::count();
+    for (int cycle = 0; cycle < 5; ++cycle) {
+        {
+            Terminal terminal(root, workspace.path.c_str());
+            terminal.expect("ORT> ");
+            terminal.write("i=0; while [ \"$i\" -lt 20 ]; do cd '/ort-fd-budget" + deep +
+                           "' && ls > /dev/null && date > /dev/null && "
+                           "cat message > /dev/null && result=$(cat message | tr a-z A-Z) && "
+                           "[ \"$result\" = OK ] || break; "
+                           "i=$((i+1)); done; printf '__FD_BUDGET_DONE_%s__\\n' \"$i\"\n");
+            terminal.expect("__FD_BUDGET_DONE_20__\r\n");
+            terminal.wait();
+            {
+                NativeDescriptorBudget exhausted(0);
+                auto start = terminal.size();
+                terminal.write("(exit 0); printf '__FD_FORK_%s__\\n' \"$?\"\n");
+                terminal.expect("__FD_FORK_0__\r\n", start);
+                terminal.wait();
+            }
+            terminal.exit();
+        }
+        require(NativeDescriptorBudget::count() == initial_descriptors,
+                "closing the terminal leaked native descriptors");
+    }
+    std::puts("public terminal API: 100 ls/date/cat/pipeline checks, exhausted-FD fork and 5 leak-free sessions passed");
 }
 } // namespace
 int main(int argc, char **argv) {
