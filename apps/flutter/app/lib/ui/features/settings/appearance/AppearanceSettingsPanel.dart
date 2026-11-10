@@ -1622,8 +1622,9 @@ Future<void> _pickDeviceFont(
       selectedName: selectedName,
     );
     if (selected == null || !context.mounted) return;
-    final imported = await ThemeAssetStore().importFontFile(
-      XFile.fromData(selected.bytes, name: 'device-font.ttf'),
+    final imported = await ThemeAssetStore().importFontBytes(
+      bytes: selected.bytes,
+      fileName: 'device-font.ttf',
     );
     await themeController.saveThemeSettings(
       useCustomFont: true,
@@ -1803,11 +1804,9 @@ Future<void> _showBubbleFontDialog(
                           );
                           if (selected == null || !context.mounted) return;
                           final imported = await ThemeAssetStore()
-                              .importFontFile(
-                                XFile.fromData(
-                                  selected.bytes,
-                                  name: 'device-font.ttf',
-                                ),
+                              .importFontBytes(
+                                bytes: selected.bytes,
+                                fileName: 'device-font.ttf',
                               );
                           if (!context.mounted) return;
                           setDialogState(() {

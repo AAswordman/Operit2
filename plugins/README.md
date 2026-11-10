@@ -12,6 +12,8 @@ This directory contains the Operit2 plugin workspace.
 - `docs/`: plugin authoring notes.
 - `tools/`: development and sync tools.
 
+`packages/external/image_workbench/` provides the optional official Image Workbench, available from "more plugins" and disabled by default. It owns the unified image-generation tools and six internal provider adapters.
+
 `packages/buildin/`, `packages/external/`, and `packages/examples/` use the same source layout. The difference is packaging: `buildin` is loaded as current built-in plugins, `external` is bundled as optional official plugins, while `examples` is kept for development samples.
 
 Bundled Skill sources may include `skill.include.json`. The runtime build script resolves each declared source into the final bundled Skill tree, so large shared resources such as `types/`, docs, and package examples can stay in their canonical locations.

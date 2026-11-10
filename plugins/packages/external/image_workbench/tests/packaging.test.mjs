@@ -37,11 +37,11 @@ function installed(files, registrationOnly) {
 test('the real archive has one tool namespace, registers both entries and renders the installed page', async () => {
   await buildPackage();
   const archive = await readFile(new URL('../dist/image_workbench.toolpkg', import.meta.url));
-  const assets = await readFile(new URL('../../../../../core/crates/runtime/application/assets/plugins/buildin/image_workbench.toolpkg', import.meta.url));
+  const assets = await readFile(new URL('../../../../../core/crates/runtime/application/assets/plugins/external/image_workbench.toolpkg', import.meta.url));
   assert.deepEqual(archive, assets);
   const files = unzipSync(archive), decoder = new TextDecoder();
   const manifest = JSON.parse(decoder.decode(files['manifest.json']));
-  assert.equal(manifest.enabled_by_default, true);
+  assert.equal(manifest.enabled_by_default, false);
   assert.deepEqual(manifest.subpackages, [{ id: 'image_workbench', entry: 'dist/tools.js' }]);
   const metadata = JSON.parse(decoder.decode(files['dist/tools.js']).match(/^\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
   assert.deepEqual(metadata.tools.map(tool => tool.name), ['list_methods', 'generate_image', 'generate_video']);

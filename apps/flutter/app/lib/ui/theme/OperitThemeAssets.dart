@@ -47,15 +47,25 @@ class ThemeAssetStore implements ThemeAssetResolver {
         'Theme font exceeds the ${themePrivateFontMaxBytes ~/ (1024 * 1024)} MiB limit',
       );
     }
-    final bytes = await file.readAsBytes();
-    await _fontRegistry.registerBytes(
-      reference: _themeAssetFileName(file),
-      bytes: bytes,
+    return importFontBytes(
+      bytes: await file.readAsBytes(),
+      fileName: _themeAssetFileName(file),
     );
-    final fileName = _themeAssetFileName(file);
+  }
+
+  /// Imports an already-read device face without fabricating a local file path.
+  Future<ThemeAssetImport> importFontBytes({
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    if (fileName.trim().isEmpty) {
+      throw StateError('theme asset file name is empty');
+    }
+    final extension = _themeAssetExtension(fileName);
+    await _fontRegistry.registerBytes(reference: fileName, bytes: bytes);
     final directory = await _runtimeStorage.themeAssetsDirPath();
     final digest = sha256.convert(bytes).toString().substring(0, 16);
-    final storagePath = '$directory/$digest.${_themeAssetExtension(fileName)}';
+    final storagePath = '$directory/$digest.$extension';
     await _runtimeStorage.writeBytesStream(
       path: storagePath,
       expectedByteLength: bytes.length,

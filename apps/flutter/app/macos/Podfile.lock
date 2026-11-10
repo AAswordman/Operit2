@@ -33,6 +33,9 @@ PODS:
     - FlutterMacOS
   - operit_keep_alive (0.1.0):
     - FlutterMacOS
+  - operit_system_fonts (0.1.0):
+    - Flutter
+    - FlutterMacOS
   - package_info_plus (0.0.1):
     - FlutterMacOS
   - printing (1.0.0):
@@ -63,6 +66,7 @@ DEPENDENCIES:
   - mobile_scanner (from `Flutter/ephemeral/.symlinks/plugins/mobile_scanner/darwin`)
   - operit_folder_access (from `Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos`)
   - operit_keep_alive (from `Flutter/ephemeral/.symlinks/plugins/operit_keep_alive/macos`)
+  - operit_system_fonts (from `Flutter/ephemeral/.symlinks/plugins/operit_system_fonts/darwin`)
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
@@ -103,6 +107,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos
   operit_keep_alive:
     :path: Flutter/ephemeral/.symlinks/plugins/operit_keep_alive/macos
+  operit_system_fonts:
+    :path: Flutter/ephemeral/.symlinks/plugins/operit_system_fonts/darwin
   package_info_plus:
     :path: Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos
   printing:
@@ -132,6 +138,7 @@ SPEC CHECKSUMS:
   mobile_scanner: 77265f3dc8d580810e91849d4a0811a90467ed5e
   operit_folder_access: e49c215aae854e85a2c736a3105f8992373a9768
   operit_keep_alive: b2583e0fe8e3963dd038afd796a8067863e6a474
+  operit_system_fonts: 90b789bf0b0c39ad0e0b4f6dd4f137e208b97223
   package_info_plus: 12f1c5c2cfe8727ca46cbd0b26677728972d9a5b
   printing: 1dd6a1fce2209ec240698e2439a4adbb9b427637
   record_macos: ccd7864c9922136e50c2937b21384f0b175922f2

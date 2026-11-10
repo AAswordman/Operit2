@@ -13,7 +13,7 @@
     "en": "One workbench for OpenAI, Qwen, Zhipu, xAI, MiniMax and Nano Banana, with provider settings, generation and previews."
   },
   "logo": "package_logo",
-  "enabled_by_default": true,
+  "enabled_by_default": false,
   "subpackages": [
     {
       "id": "image_workbench",
@@ -26,5 +26,8 @@
       "path": "resources/logo.svg",
       "mime": "image/svg+xml"
     }
+  ],
+  "author": [
+    "Operit"
   ]
 }

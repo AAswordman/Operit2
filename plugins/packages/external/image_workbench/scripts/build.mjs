@@ -43,7 +43,7 @@ export async function buildPackage() {
   }
   const archive = zipSync(files, { mtime: new Date(1980, 0, 1) });
   await writeFile(path.join(root, 'dist/image_workbench.toolpkg'), archive);
-  const assets = path.resolve(root, '../../../../core/crates/runtime/application/assets/plugins/buildin');
+  const assets = path.resolve(root, '../../../../core/crates/runtime/application/assets/plugins/external');
   await mkdir(assets, { recursive: true });
   await writeFile(path.join(assets, 'image_workbench.toolpkg'), archive);
   return files;

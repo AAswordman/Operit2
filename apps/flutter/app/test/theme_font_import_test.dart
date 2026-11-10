@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit_ui/operit_ui.dart';
+import 'package:operit_system_fonts/operit_system_fonts.dart';
+import 'package:operit2/ui/theme/DeviceFontService.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
@@ -11,6 +13,57 @@ import 'package:operit2/ui/theme/OperitThemeAssets.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'selected device face saves and reloads without a local file path',
+    () async {
+      final bridge = _FontStorageBridge();
+      final registry = ThemeFontRegistry(registration: (_, _) async {});
+      final selected = await DeviceFontService(
+        platform: _DeviceFonts(),
+        registry: registry,
+      ).prepare('Al Tarikh');
+      final store = ThemeAssetStore(
+        runtimeStorage: GeneratedCoreProxyClients(
+          bridge,
+        ).repositoryRuntimeStorageRepository,
+        fontRegistry: registry,
+      );
+      final imported = await store.importFontBytes(
+        bytes: selected.bytes,
+        fileName: 'device-font.ttf',
+      );
+      expect(imported.fileName, 'device-font.ttf');
+      expect(imported.storagePath, endsWith('.ttf'));
+      expect(bridge.files[imported.storagePath], selected.bytes);
+      final restored = await registry.registerBytes(
+        reference: imported.storagePath,
+        bytes: await store.readFontBytes(imported.storagePath),
+      );
+      expect(restored.family, selected.family);
+    },
+  );
+
+  test('empty device font names fail before registration or storage', () async {
+    final bridge = _FontStorageBridge();
+    var registered = false;
+    final store = ThemeAssetStore(
+      runtimeStorage: GeneratedCoreProxyClients(
+        bridge,
+      ).repositoryRuntimeStorageRepository,
+      fontRegistry: ThemeFontRegistry(
+        registration: (_, _) async {
+          registered = true;
+        },
+      ),
+    );
+    await expectLater(
+      store.importFontBytes(bytes: Uint8List.fromList([1]), fileName: ''),
+      throwsStateError,
+    );
+    expect(registered, isFalse);
+    expect(bridge.calls, isEmpty);
+  });
+
   test('oversized fonts are rejected before persistence', () async {
     final bridge = _FontStorageBridge();
     final store = ThemeAssetStore(
@@ -158,4 +211,14 @@ class _FontSink extends CorePushSink {
     expect(content.length, args['expectedByteLength']);
     bridge.files[args['path'] as String] = content.takeBytes();
   }
+}
+
+/// Represents bytes already read from a native catalog, with no selected file path.
+class _DeviceFonts implements SystemFontsPlatform {
+  @override
+  Future<List<String>> listFamilies() async => ['Al Tarikh'];
+
+  @override
+  Future<Uint8List> readFamily(String family) async =>
+      Uint8List.fromList([0, 1, 0, 0, 7, 8, 9]);
 }
