@@ -543,6 +543,11 @@ where F: Fn(&str,&str)->bool {
         }
         let compact = independentHistory(store, &schema.stores);
         let retired = PreferencesSyncedEntry::replay(&entries, preferences, compact)?;
+        // Contract resolution is independent of business LWW order, including
+        // schema-only checkpoints whose originals are already covered.
+        if let Some(contract) = &contract {
+            preferences.set(&stringPreferencesKey(crate::PluginPreferenceSchema::KEY), serde_json::to_value(contract)?);
+        }
         // Content identity is declared by the owner catalog; ignored fields are not business identity.
         for (store, catalog) in schema.catalogs() {
             let mut contents = BTreeMap::<String, String>::new();

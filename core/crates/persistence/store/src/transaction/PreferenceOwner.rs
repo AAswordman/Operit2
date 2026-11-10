@@ -64,7 +64,19 @@ fn state(store: &PreferencesDataStore) -> Result<Option<OwnerState>, Error> {
     Ok(owner)
 }
 
-fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format: u32) -> Result<Snapshot,Error> {
+fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format: u32, local: &Preferences) -> Result<Snapshot,Error> {
+    // Schema-only checkpoints carry unversioned engine metadata. Resolve it
+    // before joining checkpoints, including contracts in covered originals.
+    // Normalize replay views only; immutable originals retain their payloads.
+    let mut contract = crate::PluginPreferenceSchema::contract(history.iter())?;
+    if let Some(value) = local.get(&stringPreferencesKey(crate::PluginPreferenceSchema::KEY)) {
+        let local = serde_json::from_value(value.clone())?;
+        contract = Some(match contract {
+            Some(incoming) => crate::PluginPreferenceSchema::combine(&local,&incoming)?,
+            None => local,
+        });
+    }
+    let contract = contract.as_ref().map(serde_json::to_value).transpose()?;
     let initializations = history.iter().filter_map(|operation|
         super::compaction::Initialization::decode(operation).transpose().map(|result| result.map(|initialization| (operation, initialization))))
         .collect::<Result<Vec<_>, _>>().map_err(Error::Message)?;
@@ -78,6 +90,9 @@ fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format:
         current.data.relocate(&store.storagePath).map_err(Error::Message)?;
         let source = current.data.clone();
         let mut values = preferences(&current);
+        if let Some(contract) = &contract {
+            values.set(&stringPreferencesKey(crate::PluginPreferenceSchema::KEY), contract.clone());
+        }
         store.migratePreferencesToCurrentSchema(&mut values)?;
         current.data = data(store,&values)?;
         if source.owner.format != current.data.owner.format {
@@ -85,6 +100,9 @@ fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format:
         }
         if index == 0 { snapshot.data = current.data; }
         else { snapshot.data.merge(&current.data).map_err(Error::Message)?; }
+    }
+    if let Some(contract) = contract {
+        snapshot.data.values.insert(crate::PluginPreferenceSchema::KEY.into(), contract);
     }
     Ok(snapshot)
 }
@@ -234,7 +252,7 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
     if let Some(mut existing) = state(store)? {
         if existing.current.data.owner.format != PreferencesDataStore::readSchemaVersion(values)? {
             let history = journal(store)?.archivedPreferenceHistory(&store.storagePath)?;
-            let source = replay_start(store,&history,existing.current.data.owner.format)?.data;
+            let source = replay_start(store,&history,existing.current.data.owner.format,values)?.data;
             let mut converted = preferences(&existing.current);
             store.migratePreferencesToCurrentSchema(&mut converted)?;
             existing.current.data = data(store,&converted)?;
@@ -304,12 +322,12 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
 }
 
 /// Publishes a portable format contract as migrated state, preserving business order and coverage.
-pub(crate) fn declare_format(store: &PreferencesDataStore, key: &str, value: serde_json::Value) -> Result<(), Error> {
+pub(crate) fn declare_format(store: &PreferencesDataStore, key: &str, mut value: serde_json::Value) -> Result<(), Error> {
     let _lock = store.lockTransaction();
     store.loadUnlocked()?;
     let mut values = store.loadedPreferences().expect("loaded file");
     if let Some(existing) = values.get(&stringPreferencesKey(key)) {
-        crate::PluginPreferenceSchema::combine(&serde_json::from_value(existing.clone())?,&serde_json::from_value(value.clone())?)?;
+        value = serde_json::to_value(crate::PluginPreferenceSchema::combine(&serde_json::from_value(existing.clone())?,&serde_json::from_value(value.clone())?)?)?;
     }
     let migrated = store.migratePreferencesToCurrentSchema(&mut values)?;
     let mut current = initialize(store,&mut values)?.current;
@@ -550,7 +568,7 @@ where
         Revision::fromOperation,
     )
     .map_err(Error::Message)?;
-    let start = replay_start(store,&history,owner.current.data.owner.format)?;
+    let start = replay_start(store,&history,owner.current.data.owner.format,&values)?;
     values = preferences(&start);
     if start.covered.iter().all(|id| !id.starts_with("~init:") || owner.current.covered.contains(id)) {
         values.setMergeAliases(owner.current.data.aliases.clone());

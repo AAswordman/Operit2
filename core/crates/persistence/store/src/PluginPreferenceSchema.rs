@@ -1,4 +1,4 @@
-//! Portable plugin format rules share the native state/transaction migration and its equality checks.
+//! Portable plugin format rules share native migration and deterministic contract resolution.
 use operit_host_api::PluginStorage::{StoragePreferencesSchema, StoragePreferencesMigrationRule as Step};
 use crate::{PreferencesDataStore::{PreferencesDataStore, PreferencesDataStoreError as Error, stringPreferencesKey}, Transaction::{Rule, Form}};
 
@@ -27,12 +27,21 @@ pub(crate) fn validate(schema: &StoragePreferencesSchema) -> Result<(), Error> {
     Ok(())
 }
 
-/// Versions append rules. An old peer's declaration never replaces a newer compatible contract.
+/// Prefer the highest format, then a canonical ordering of the complete contract.
+/// This total order is associative, commutative and idempotent: accidental edits to
+/// released steps cannot block an owner or make peers choose by arrival order.
+/// Keep one complete migration chain; splicing conflicting steps could invent a
+/// chain that no plugin published. Already applied versions are never rerun.
 pub(crate) fn combine(a: &StoragePreferencesSchema, b: &StoragePreferencesSchema) -> Result<StoragePreferencesSchema, Error> {
     validate(a)?; validate(b)?;
-    let (short, long) = if a.version <= b.version { (a,b) } else { (b,a) };
-    if !long.steps.starts_with(&short.steps) { return Err(failure("Conflicting immutable preference migration steps")); }
-    Ok(long.clone())
+    if a.version != b.version { return Ok(if a.version > b.version { a } else { b }.clone()); }
+    if a == b { return Ok(a.clone()); }
+    let canonical = |schema: &StoragePreferencesSchema| -> Result<Vec<u8>, Error> {
+        let mut value = serde_json::to_value(schema)?;
+        value.sort_all_objects();
+        Ok(serde_json::to_vec(&value)?)
+    };
+    Ok(if canonical(a)? >= canonical(b)? { a } else { b }.clone())
 }
 
 pub(crate) fn read(store: &PreferencesDataStore) -> Result<Option<StoragePreferencesSchema>, Error> {
@@ -80,7 +89,6 @@ pub(crate) fn configure(store: PreferencesDataStore, schema: StoragePreferencesS
 /// Data upgrades and publication of their portable contract share the file/SQL commit boundary.
 pub(crate) fn declare(store: &PreferencesDataStore, schema: StoragePreferencesSchema) -> Result<(), Error> {
     validate(&schema)?;
-    if store.schemaVersion()? > schema.version { return Err(failure("Preference schema is newer than supported")); }
     let schema = match read(store)? { Some(existing) => combine(&existing,&schema)?, None => schema };
     let store = configure(store.clone(),schema.clone())?;
     let value = serde_json::to_value(&schema)?;
@@ -119,4 +127,36 @@ pub(crate) fn contract<'a>(operations: impl IntoIterator<Item=&'a crate::SyncOpe
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn contract_resolution_converges_for_every_order_and_grouping() {
+        let contracts = [
+            json!({"version":0,"steps":[]}),
+            json!({"version":1,"steps":[[]]}),
+            json!({"version":1,"steps":[[{"op":"rename_key","from":"a","to":"b"}]]}),
+            json!({"version":1,"steps":[[{"op":"drop_key","key":"a"}]]}),
+            json!({"version":2,"steps":[[],[{"op":"rename_key","from":"x","to":"y"}]]}),
+            json!({"version":2,"steps":[[{"op":"drop_key","key":"b"}],[]]}),
+        ].map(|value| serde_json::from_value::<StoragePreferencesSchema>(value).unwrap());
+        for a in &contracts {
+            assert_eq!(combine(a,a).unwrap(), *a);
+            for b in &contracts {
+                let resolved = combine(a,b).unwrap();
+                assert_eq!(resolved, combine(b,a).unwrap());
+                assert_eq!(resolved.version, a.version.max(b.version));
+                assert!(resolved == *a || resolved == *b, "Never splice migration chains");
+                for c in &contracts {
+                    assert_eq!(combine(&resolved,c).unwrap(), combine(a,&combine(b,c).unwrap()).unwrap());
+                }
+            }
+        }
+        let invalid = StoragePreferencesSchema { version:1, steps:vec![] };
+        assert!(combine(&contracts[0],&invalid).is_err());
+    }
 }
