@@ -252,6 +252,13 @@ pub const RUNTIME_APPLICATION_ZOOM: RuntimeStoragePathDefinition =
         RuntimeStorageOwnership::CoreNode,
     );
 pub const RUNTIME_APPLICATION_ZOOM_PATH: &str = RUNTIME_APPLICATION_ZOOM.path;
+/// Connection checks describe this node's network and provider access.
+pub const RUNTIME_MODEL_CONNECTION_TESTS: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::exact(
+        "runtime/diagnostics/model_connection_tests.preferences.json",
+        RuntimeStorageOwnership::CoreNode,
+    );
+pub const RUNTIME_MODEL_CONNECTION_TESTS_PATH: &str = RUNTIME_MODEL_CONNECTION_TESTS.path;
 pub const RUNTIME_CLIENT_LOG: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::exact(
     "runtime/logs/client.log",
     RuntimeStorageOwnership::CoreNode,
@@ -499,6 +506,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RuntimeStoragePathDefinition::exact(CURRENT_CHAT_ID_PREFERENCES_PATH, RuntimeStorageOwnership::CoreNode),
     CLIENT_RUNTIME_BOOTSTRAP,
     RUNTIME_APPLICATION_ZOOM,
+    RUNTIME_MODEL_CONNECTION_TESTS,
     // Model weights, native runtimes and installation inventories belong to this node.
     RuntimeStoragePathDefinition::tree(RUNTIME_LOCAL_MODELS_DIR_PATH, RuntimeStorageOwnership::CoreNode),
     RuntimeStoragePathDefinition::exact(RUNTIME_LOCAL_MODEL_REGISTRY_PATH, RuntimeStorageOwnership::CoreNode),
@@ -598,6 +606,10 @@ mod tests {
 
     #[test]
     fn resolves_registered_runtime_storage_ownership() {
+        assert_eq!(
+            runtimeStorageOwnership(RUNTIME_MODEL_CONNECTION_TESTS_PATH).unwrap(),
+            RuntimeStorageOwnership::CoreNode
+        );
         assert_eq!(
             runtimeStorageOwnership("runtime/data/chat_attachments/chat-a/attachment-a/report.pdf").unwrap(),
             RuntimeStorageOwnership::Space

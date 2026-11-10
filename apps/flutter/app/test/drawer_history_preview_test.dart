@@ -575,51 +575,56 @@ void main() {
     );
   }
 
-  testWidgets('brand header fits the narrow drawer beside the tab switch', (
+  testWidgets('brand header constrains plugin tabs inside narrow drawers', (
     tester,
   ) async {
     for (final scale in [1.0, 1.4]) {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: MediaQuery(
-              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: SizedBox(
-                  width: 195,
-                  child: SidebarInfoCard(
-                    brandName: 'Operit',
-                    appearance: const NavigationDrawerAppearance(
-                      containerColor: Colors.white,
-                      titleColor: Colors.black,
-                      statusAvailableColor: Colors.blue,
-                      itemColor: Colors.black87,
-                      buttonContainerColor: Colors.white70,
-                      selectedContainerColor: Colors.blue,
-                      selectedContentColor: Colors.white,
-                      dividerColor: Colors.black12,
-                      transparentSurfaceEnabled: false,
-                    ),
-                    trailing: const SizedBox(
-                      key: ValueKey('test-tab-switch'),
-                      width: 98,
-                      height: 23,
+      for (final (headerWidth, tabWidth) in [(195.0, 98.0), (125.0, 245.0)]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: MediaQuery(
+                data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: headerWidth,
+                    child: SidebarInfoCard(
+                      brandName: 'Operit',
+                      appearance: const NavigationDrawerAppearance(
+                        containerColor: Colors.white,
+                        titleColor: Colors.black,
+                        statusAvailableColor: Colors.blue,
+                        itemColor: Colors.black87,
+                        buttonContainerColor: Colors.white70,
+                        selectedContainerColor: Colors.blue,
+                        selectedContentColor: Colors.white,
+                        dividerColor: Colors.black12,
+                        transparentSurfaceEnabled: false,
+                      ),
+                      trailing: SizedBox(
+                        key: const ValueKey('test-tab-switch'),
+                        width: tabWidth,
+                        height: 23,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-      expect(
-        tester.getSize(find.byKey(const ValueKey('test-tab-switch'))).width,
-        98,
-      );
-      expect(tester.getSize(find.text('Operit')).width, lessThanOrEqualTo(63));
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        final tabs = tester.getRect(
+          find.byKey(const ValueKey('test-tab-switch')),
+        );
+        final brand = tester.getRect(find.text('Operit'));
+        expect(tabs.right, lessThanOrEqualTo(headerWidth));
+        expect(brand.right, lessThanOrEqualTo(tabs.left));
+        expect(brand.width, greaterThan(0));
+        if (headerWidth == 195) expect(tabs.width, 98);
+      }
     }
   });
 

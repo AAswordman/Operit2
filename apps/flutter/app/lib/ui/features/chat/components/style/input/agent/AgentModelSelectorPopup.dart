@@ -442,27 +442,120 @@ class AgentThinkingSliderRow extends StatefulWidget {
   State<AgentThinkingSliderRow> createState() => _AgentThinkingSliderRowState();
 }
 
-class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
+class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow>
+    with TickerProviderStateMixin {
   static const Duration _morphDuration = Duration(milliseconds: 380);
+  static const Duration _positionDuration = Duration(milliseconds: 160);
   static const Curve _morphCurve = Curves.easeOutCubic;
+  static const Curve _switchSlideCurve = Interval(
+    0,
+    0.5,
+    curve: Curves.easeInOutCubic,
+  );
+  static const Curve _switchFadeCurve = Interval(
+    0.42,
+    0.82,
+    curve: Curves.easeInOutCubic,
+  );
+  static const Curve _fillRevealCurve = Interval(
+    0.2,
+    0.85,
+    curve: Curves.easeOutCubic,
+  );
+  static const Curve _tickRevealCurve = Interval(
+    0.45,
+    0.9,
+    curve: Curves.easeOutCubic,
+  );
+  static const Curve _thumbFadeCurve = Interval(
+    0.52,
+    0.8,
+    curve: Curves.easeOutCubic,
+  );
+  static const Curve _thumbScaleCurve = Interval(
+    0.5,
+    1,
+    curve: Curves.easeOutCubic,
+  );
 
+  late final AnimationController _morph;
+  late final AnimationController _position;
+  late final Listenable _animations;
   int _stop = 0;
   bool _dragging = false;
+
+  bool get _on => !(widget.offStop && _stop == 0);
 
   /// Initializes the selected stop position.
   @override
   void initState() {
     super.initState();
     _stop = widget.stop;
+    _morph = AnimationController(
+      vsync: this,
+      duration: _morphDuration,
+      value: _on ? 1 : 0,
+    );
+    _position = AnimationController(
+      vsync: this,
+      value: _stop / (widget.stops.length - 1),
+    );
+    _animations = Listenable.merge(<Listenable>[_morph, _position]);
+  }
+
+  @override
+  void dispose() {
+    _morph.dispose();
+    _position.dispose();
+    super.dispose();
   }
 
   /// Syncs the stop when the resolved thinking selection changes.
   @override
   void didUpdateWidget(covariant AgentThinkingSliderRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_dragging && oldWidget.stop != widget.stop) {
+    final scaleChanged =
+        oldWidget.stops.length != widget.stops.length ||
+        oldWidget.offStop != widget.offStop;
+    // An acknowledgement of the local selection must not restart its animation.
+    final selectionChanged =
+        !_dragging && oldWidget.stop != widget.stop && _stop != widget.stop;
+    if (scaleChanged || selectionChanged) {
+      _dragging = false;
       _stop = widget.stop;
+      _syncAnimations();
     }
+  }
+
+  /// Keeps the closing knob in place and reverses the shared morph timeline.
+  void _syncAnimations({bool updatePosition = true}) {
+    if (updatePosition) {
+      if (_on) {
+        _animatePosition(_stop / (widget.stops.length - 1));
+      } else {
+        _position.stop();
+      }
+    }
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _morph.value = _on ? 1 : 0;
+    } else if (_on) {
+      _morph.forward();
+    } else {
+      _morph.reverse();
+    }
+  }
+
+  /// Moves the knob and fill together, starting from their current position.
+  void _animatePosition(double fraction) {
+    if (_morph.isDismissed || MediaQuery.disableAnimationsOf(context)) {
+      _position.value = fraction;
+      return;
+    }
+    _position.animateTo(
+      fraction,
+      duration: _positionDuration,
+      curve: _morphCurve,
+    );
   }
 
   /// Maps one track tap or drag position onto the nearest stop.
@@ -471,15 +564,30 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
     // The 1.5px track border insets the positioned children, so the thumb
     // center travels between 12.5px (border + inset + half thumb) and the
     // mirrored right edge of the outer track width.
-    final fraction = ((dx - 12.5) / (trackWidth - 25)).clamp(0.0, 1.0);
+    final fraction = ((dx - 12.5) / (trackWidth - 25))
+        .clamp(0.0, 1.0)
+        .toDouble();
     final next = (fraction * last).round().clamp(0, last);
+    if (_dragging) {
+      _position.value = fraction;
+    }
     if (next == _stop) {
       return;
     }
     setState(() {
       _stop = next;
     });
+    _syncAnimations(updatePosition: !_dragging);
     widget.onChanged(next);
+  }
+
+  /// Settles a continuous drag onto its selected stop without another write.
+  void _finishDrag() {
+    if (!_dragging) {
+      return;
+    }
+    _dragging = false;
+    _animatePosition(_stop / (widget.stops.length - 1));
   }
 
   /// Builds the merged thinking toggle and quality slider row.
@@ -488,9 +596,8 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final l10n = AppLocalizations.of(context)!;
-    final on = !(widget.offStop && _stop == 0);
+    final on = _on;
     final last = widget.stops.length - 1;
-    final fraction = last > 0 ? _stop / last : 1.0;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: SizedBox(
@@ -529,161 +636,171 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow> {
                 builder: (context, constraints) {
                   final trackWidth = constraints.maxWidth;
                   final travel = trackWidth - 25;
-                  final thumbLeft = 3 + fraction * travel;
-                  // The fill reaches past the thumb's trailing edge so the track
-                  // reads fully covered, meeting the pill's inner end at the
-                  // last stop (19 = 3 inset + 16 thumb; +3 closes the tail gap).
-                  final fillWidth = 19 + fraction * (travel + 3);
                   return GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTapUp: (details) =>
                         _applyPosition(details.localPosition.dx, trackWidth),
-                    onHorizontalDragDown: (details) {
+                    onHorizontalDragStart: (details) {
                       _dragging = true;
                       _applyPosition(details.localPosition.dx, trackWidth);
                     },
-                    onHorizontalDragUpdate: (details) =>
-                        _applyPosition(details.localPosition.dx, trackWidth),
-                    onHorizontalDragEnd: (_) => _dragging = false,
-                    onHorizontalDragCancel: () => _dragging = false,
+                    onHorizontalDragUpdate: (details) {
+                      if (_dragging) {
+                        _applyPosition(details.localPosition.dx, trackWidth);
+                      }
+                    },
+                    onHorizontalDragEnd: (_) => _finishDrag(),
+                    onHorizontalDragCancel: _finishDrag,
                     child: Center(
-                      child: AnimatedContainer(
-                        key: AgentThinkingSliderRow.trackKey,
-                        duration: _morphDuration,
-                        curve: _morphCurve,
-                        height: 21,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            width: 1.5,
-                            color: on
-                                ? Colors.transparent
-                                : colorScheme.outline,
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: <Widget>[
-                              Positioned(
-                                left: 0,
-                                top: 0,
-                                bottom: 0,
-                                child: AnimatedContainer(
-                                  duration: _dragging
-                                      ? const Duration(milliseconds: 60)
-                                      : const Duration(milliseconds: 300),
-                                  width: on ? fillWidth : 0,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(999),
-                                    gradient: LinearGradient(
-                                      begin: Alignment.centerLeft,
-                                      end: Alignment.centerRight,
-                                      colors: <Color>[
-                                        colorScheme.primary.withValues(
-                                          alpha: 0.30,
+                      child: AnimatedBuilder(
+                        animation: _animations,
+                        builder: (context, child) {
+                          final progress = _morph.value;
+                          final fraction = _position.value;
+                          final fillReveal = _fillRevealCurve.transform(
+                            progress,
+                          );
+                          final switchSlide = _switchSlideCurve.transform(
+                            progress,
+                          );
+                          final switchOpacity =
+                              1 - _switchFadeCurve.transform(progress);
+                          final tickOpacity = _tickRevealCurve.transform(
+                            progress,
+                          );
+                          final thumbOpacity = _thumbFadeCurve.transform(
+                            progress,
+                          );
+                          final thumbScale = _thumbScaleCurve.transform(
+                            progress,
+                          );
+                          final thumbLeft = 3 + fraction * travel;
+                          // At the final stop the gradient reaches the inner end
+                          // of the pill. Position changes share the knob's value.
+                          final fillWidth =
+                              (19 + fraction * (travel + 3)) * fillReveal;
+                          return Container(
+                            key: AgentThinkingSliderRow.trackKey,
+                            height: 21,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                width: 1.5,
+                                color: Color.lerp(
+                                  colorScheme.outline,
+                                  Colors.transparent,
+                                  fillReveal,
+                                )!,
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: <Widget>[
+                                  Positioned(
+                                    left: 0,
+                                    top: 0,
+                                    bottom: 0,
+                                    child: Container(
+                                      width: fillWidth,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(
+                                          999,
                                         ),
-                                        colorScheme.primary.withValues(
-                                          alpha: 0.92,
+                                        gradient: LinearGradient(
+                                          begin: Alignment.centerLeft,
+                                          end: Alignment.centerRight,
+                                          colors: <Color>[
+                                            colorScheme.primary.withValues(
+                                              alpha: 0.30,
+                                            ),
+                                            colorScheme.primary.withValues(
+                                              alpha: 0.92,
+                                            ),
+                                          ],
                                         ),
-                                      ],
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ),
-                              // Closed-state layer: the highlight block sits
-                              // on the left half like a switch. On open it
-                              // first slides to the right, then dissolves
-                              // while the gradient track morphs in.
-                              Positioned.fill(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 2,
-                                    vertical: 3,
-                                  ),
-                                  child: AnimatedAlign(
-                                    alignment: on
-                                        ? Alignment.centerRight
-                                        : Alignment.centerLeft,
-                                    duration: const Duration(milliseconds: 260),
-                                    curve: Curves.easeInOutCubic,
-                                    child: AnimatedOpacity(
-                                      duration: const Duration(
-                                        milliseconds: 460,
+                                  // Preserve the half-width switch block. Its
+                                  // slide leads the dissolve and knob reveal;
+                                  // closing plays the same timeline in reverse.
+                                  Positioned.fill(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 2,
+                                        vertical: 3,
                                       ),
-                                      curve: Curves.easeInCubic,
-                                      opacity: on ? 0.0 : 1.0,
-                                      child: FractionallySizedBox(
-                                        widthFactor: 0.5,
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            color: colorScheme.primary
-                                                .withValues(alpha: 0.55),
-                                            borderRadius: BorderRadius.circular(
-                                              5,
+                                      child: Align(
+                                        alignment: Alignment(
+                                          -1 + switchSlide * 2,
+                                          0,
+                                        ),
+                                        child: Opacity(
+                                          opacity: switchOpacity,
+                                          child: FractionallySizedBox(
+                                            widthFactor: 0.5,
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                color: colorScheme.primary
+                                                    .withValues(alpha: 0.55),
+                                                borderRadius:
+                                                    BorderRadius.circular(5),
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              ),
-                              for (var j = 0; j < widget.stops.length; j++)
-                                Positioned(
-                                  left: 11 + (j / last) * travel - 2,
-                                  // Centered within the 18px inner height
-                                  // left after the 1.5px border inset.
-                                  top: 7,
-                                  child: AnimatedOpacity(
-                                    duration: const Duration(milliseconds: 240),
-                                    opacity: on ? 1 : 0,
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 200,
+                                  for (var j = 0; j <= last; j++)
+                                    Positioned(
+                                      left: 11 + (j / last) * travel - 2,
+                                      // Centered in the 18px border-inset track.
+                                      top: 7,
+                                      child: Opacity(
+                                        opacity: tickOpacity,
+                                        child: Container(
+                                          width: 4,
+                                          height: 4,
+                                          decoration: BoxDecoration(
+                                            color: j / last <= fraction
+                                                ? colorScheme.onSurfaceVariant
+                                                : colorScheme.outlineVariant,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
                                       ),
-                                      width: 4,
-                                      height: 4,
-                                      decoration: BoxDecoration(
-                                        color: on && j <= _stop
-                                            ? colorScheme.onSurfaceVariant
-                                            : colorScheme.outlineVariant,
-                                        shape: BoxShape.circle,
+                                    ),
+                                  // The knob emerges after the switch starts
+                                  // dissolving, and stays in place as it closes.
+                                  Positioned(
+                                    key: AgentThinkingSliderRow.thumbKey,
+                                    left: thumbLeft,
+                                    top: 1,
+                                    child: Transform.scale(
+                                      scale: thumbScale,
+                                      child: Opacity(
+                                        opacity: thumbOpacity,
+                                        child: Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.onSurfaceVariant,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              // The knob stays hidden while closed; once the
-                              // switch turns on it pops out in place with a
-                              // springy scale-and-fade emergence.
-                              Positioned(
-                                key: AgentThinkingSliderRow.thumbKey,
-                                left: thumbLeft,
-                                top: 1,
-                                child: AnimatedScale(
-                                  scale: on ? 1.0 : 0.0,
-                                  duration: _morphDuration,
-                                  curve: _morphCurve,
-                                  child: AnimatedOpacity(
-                                    duration: const Duration(milliseconds: 240),
-                                    opacity: on ? 1.0 : 0.0,
-                                    child: Container(
-                                      width: 16,
-                                      height: 16,
-                                      decoration: BoxDecoration(
-                                        color: colorScheme.onSurfaceVariant,
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                                ],
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   );
