@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS _operit_compaction_scopes(
 CREATE INDEX IF NOT EXISTS _operit_compaction_ids ON _operit_compaction_scopes(id);
 CREATE TABLE IF NOT EXISTS _operit_transaction_initialization(id INTEGER PRIMARY KEY CHECK(id=1),
  operation_id TEXT NOT NULL,origin TEXT NOT NULL,sequence INTEGER NOT NULL,original TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS _operit_initialization_metadata(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS _operit_initialization_coverage(id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS _operit_compaction_progress(version INTEGER PRIMARY KEY);";
 
@@ -52,6 +53,8 @@ impl Initialization {
         }
     }
     pub fn operation(&self, domain: &str, encrypted: bool) -> super::Result<SyncOperation> {
+        #[cfg(feature="full")]
+        if self.data.sql.is_some() { return super::sql_snapshot::operation(self,domain,encrypted); }
         let payload = serde_json::json!({"storagePath":self.data.owner.path,"schemaVersion":self.data.owner.format,
             "encrypted":encrypted,"initialization":self});
         let origin = format!("~init:{}", digest(&(domain, &payload))?);
@@ -69,14 +72,45 @@ impl Initialization {
             schemaVersion: 1,
         })
     }
+    /// Checks the immutable envelope without materializing a second copy of its business payload.
+    /// Owner decoding still validates the complete schema when applying the transaction.
+    pub fn validate_identity(operation: &SyncOperation) -> super::Result<bool> {
+        if operation.operation != "initialize" || operation.entityType != "initialization" { return Ok(false); }
+        let Some(payload) = operation.payload.as_object() else { return Ok(false); };
+        let Some(data) = payload.get("initialization").and_then(|v|v.get("data")) else { return Ok(false); };
+        let Some(path) = data.get("owner").and_then(|v|v.get("path")).and_then(serde_json::Value::as_str) else { return Ok(false); };
+        let Some(format) = data.get("owner").and_then(|v|v.get("format")).and_then(serde_json::Value::as_u64) else { return Ok(false); };
+        let created = data.get("revision").and_then(|v|v.get("createdAt")).and_then(serde_json::Value::as_i64).unwrap_or(0);
+        let origin = format!("~init:{}", digest(&(&operation.domain, &operation.payload))?);
+        Ok(payload.len() == 4 && payload.get("encrypted").is_some_and(serde_json::Value::is_boolean)
+            && payload.get("storagePath").and_then(serde_json::Value::as_str) == Some(path)
+            && payload.get("schemaVersion").and_then(serde_json::Value::as_u64) == Some(format)
+            && operation.originDeviceId == origin && operation.opId == format!("{origin}:1")
+            && operation.sequence == 1 && operation.createdAt == created && operation.schemaVersion == 1
+            && operation.semantics == SyncOperationSemantics::Transaction && operation.entityId == path)
+    }
+
     pub fn decode(operation: &SyncOperation) -> super::Result<Option<Self>> {
         if operation.operation != "initialize" || operation.entityType != "initialization" {
             return Ok(None);
         }
-        let value: Self = serde_json::from_value(operation.payload["initialization"].clone())
-            .map_err(|e| e.to_string())?;
-        if value.operation(&operation.domain, operation.payload["encrypted"] == true)? != *operation
-        {
+        let mut value = Self::deserialize(&operation.payload["initialization"]).map_err(|e| e.to_string())?;
+        // Canonical metadata stays small; compare business values in place instead of re-encoding them.
+        let values = std::mem::take(&mut value.data.values);
+        let canonical = serde_json::to_value(&value).map_err(|e|e.to_string());
+        value.data.values = values;
+        let canonical = canonical?;
+        let raw = operation.payload["initialization"].as_object().ok_or("Invalid initialization")?;
+        let data = raw["data"].as_object().ok_or("Invalid initialization data")?;
+        let expected = canonical["data"].as_object().ok_or("Invalid canonical data")?;
+        let canonical = canonical.as_object().ok_or("Invalid canonical initialization")?;
+        let matches = raw.len() == canonical.len()
+            && canonical.iter().all(|(key,value)| key == "data" || raw.get(key) == Some(value))
+            && data.len() == expected.len()
+            && expected.iter().all(|(key,value)| key == "values" || data.get(key) == Some(value))
+            && data["values"].as_object().is_some_and(|values| values.len() == value.data.values.len()
+                && value.data.values.iter().all(|(key,value)| values.get(key) == Some(value)));
+        if !matches || !Self::validate_identity(operation)? {
             return Err("Invalid initialization transaction identity".into());
         }
         Ok(Some(value))
@@ -284,7 +318,7 @@ pub(crate) fn retired(
         return Ok(false);
     };
     let fingerprint = row.valueAt(0)?.asString()?;
-    if !fingerprint.is_empty() && fingerprint != digest(operation).map_err(error)? {
+    if !fingerprint.is_empty() && fingerprint != super::operation_digest(operation).map_err(error)? {
         return Err(error(format!(
             "Conflicting immutable operation {}",
             operation.opId
@@ -344,7 +378,7 @@ fn register(tx: &mut dyn RuntimeSqliteTransaction, operation: &SyncOperation) ->
     Ok(tx.execute(
         "INSERT OR IGNORE INTO _operit_compacted(id,origin,sequence,business_time,fingerprint) VALUES(?1,?2,?3,?4,?5)",
         vec![text(&operation.opId), text(&revision.originDeviceId), SqliteValue::Integer(revision.sequence),
-            SqliteValue::Integer(revision.createdAt), text(&digest(operation).map_err(error)?)],
+            SqliteValue::Integer(revision.createdAt), text(&super::operation_digest(operation).map_err(error)?)],
     )? != 0)
 }
 
@@ -461,15 +495,15 @@ pub(crate) fn initialization(
 }
 
 #[cfg(feature = "full")]
+/// Callers supply coverage from the already validated initializer or the committed snapshot.
 pub(crate) fn save_initialization(
     tx: &mut crate::SqliteStore::SqliteTransaction<'_>,
     operation: &SyncOperation,
+    covered: &BTreeSet<String>,
+    data: &Data,
 ) -> Result<(), crate::SqliteStore::SqliteStoreError> {
     use crate::SqliteStore::{SqliteStoreError, SqliteRowGet};
     let fail = |e: String| SqliteStoreError::Message(e);
-    let data = Initialization::decode(operation)
-        .map_err(fail)?
-        .ok_or_else(|| fail("Missing initialization".into()))?;
     if let Some(row) = tx.queryOne("SELECT operation_id,origin,sequence FROM _operit_transaction_initialization WHERE id=1",vec![])? {
         let id: String = row.get(0)?;
         if id != operation.opId {
@@ -477,11 +511,13 @@ pub(crate) fn save_initialization(
         }
     }
     record(tx.raw(), operation, None)?;
+    let original = serde_json::to_string(operation).map_err(|e|fail(e.to_string()))?;
     tx.execute("INSERT INTO _operit_transaction_initialization(id,operation_id,origin,sequence,original) VALUES(1,?1,?2,?3,?4)
         ON CONFLICT(id) DO UPDATE SET operation_id=excluded.operation_id,origin=excluded.origin,sequence=excluded.sequence,original=excluded.original",
-        vec![text(&operation.opId),text(&operation.originDeviceId),SqliteValue::Integer(operation.sequence),text(&serde_json::to_string(operation).map_err(|e|fail(e.to_string()))?)])?;
+        vec![text(&operation.opId),text(&operation.originDeviceId),SqliteValue::Integer(operation.sequence),SqliteValue::Text(original)])?;
+    tx.execute("INSERT INTO _operit_initialization_metadata VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",vec![text(&serde_json::to_string(&serde_json::json!({"owner":data.owner,"revision":data.revision,"originalFingerprint":super::digest(operation).map_err(fail)?})).map_err(|e|fail(e.to_string()))?)])?;
     tx.execute("DELETE FROM _operit_initialization_coverage", vec![])?;
-    for id in &data.covered {
+    for id in covered {
         tx.execute(
             "INSERT INTO _operit_initialization_coverage VALUES(?1)",
             vec![text(id)],
@@ -548,5 +584,6 @@ pub(crate) fn observe_id(receipt: &mut crate::SyncOperationStore::SyncReceipt, i
 pub(crate) fn prepare(
     store: &crate::SqliteStore::SqliteStore,
 ) -> Result<(), crate::SqliteStore::SqliteStoreError> {
-    store.executeBatch(SCHEMA)
+    store.executeBatch(SCHEMA)?;
+    super::sql_snapshot::migrate_initialization(store)
 }

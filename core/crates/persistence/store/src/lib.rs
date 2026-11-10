@@ -87,3 +87,6 @@ pub mod FileSyncPolicy;
 #[cfg(feature = "full")]
 #[path = "ChatOutputStore.rs"]
 pub mod ChatOutputStore;
+
+#[path = "SyncBlobIo.rs"]
+mod SyncBlobIo;

@@ -155,6 +155,18 @@ fn export_excludes_host_archive_namespaces_from_the_complete_runtime_tree() {
     drop(active);
 }
 
+/// Finds legacy staging beside a selected runtime outside the default application layout.
+#[test]
+fn maintenance_collects_staging_beside_selected_runtime() {
+    let fixture = Fixture::new();
+    fixture.write("selected/archive_staging/retired-identity/old.upload", b"legacy partial archive");
+    fixture.write("selected/runtime/data/archive_staging/record", b"user data");
+    let session = fixture.session_for(fixture.layout("selected/runtime", "selected/workspaces"), None);
+    assert!(!fixture.0.join("selected/archive_staging/retired-identity/old.upload").exists());
+    assert_eq!(fs::read(fixture.0.join("selected/runtime/data/archive_staging/record")).unwrap(), b"user data");
+    drop(session);
+}
+
 /// Rejects changed published payloads on resume while retaining every displaced original.
 #[test]
 fn interrupted_import_rechecks_payloads_before_resuming() {

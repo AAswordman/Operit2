@@ -3,10 +3,7 @@ use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::slice;
 
-use operit_host_api::{
-    HostError, HostResult, HostSecretStore, RuntimeSqliteConnection, RuntimeSqliteHost,
-    RuntimeStorageEntry, RuntimeStorageHost, RuntimeStorageWriteHost, RuntimeStorageWriteSession,
-};
+use operit_host_api::{HostError, HostResult, HostSecretStore};
 use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND, FILETIME};
 use windows_sys::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
@@ -19,6 +16,8 @@ use operit_host_native_common::NativeRuntimeStorageHost;
 pub struct WindowsRuntimeStorageHost {
     storage: NativeRuntimeStorageHost,
 }
+
+operit_host_api::delegate_runtime_storage!(WindowsRuntimeStorageHost, storage, writer);
 
 impl WindowsRuntimeStorageHost {
     /// Returns the default Windows runtime data root.
@@ -43,86 +42,6 @@ impl WindowsRuntimeStorageHost {
         Self {
             storage: NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot),
         }
-    }
-}
-
-impl RuntimeStorageHost for WindowsRuntimeStorageHost {
-    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
-        RuntimeSqliteHost::openSqliteDatabase(self, path)
-    }
-
-    /// Returns the shared runtime storage root.
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        self.storage.runtimeRootDir()
-    }
-
-    /// Returns the shared workspace storage root.
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        self.storage.workspaceRootDir()
-    }
-
-    /// Reads a file through the shared storage boundary.
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        self.storage.readBytes(path)
-    }
-
-    /// Reads a bounded range through the shared storage boundary.
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        self.storage.readBytesRange(path, offset, length)
-    }
-
-    /// Publishes a complete file through the shared atomic writer.
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.storage.writeBytes(path, content)
-    }
-
-    /// Flushes and publishes a private catalog through the shared atomic writer.
-    /// Reads the source file modification time through the shared storage host.
-    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.storage.modifiedAt(path) }
-    /// Preserves source metadata through the shared storage host.
-    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> { self.storage.setModifiedAt(path, modifiedAt) }
-
-    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.storage.writeBytesAtomically(path, content)
-    }
-
-    /// Appends bytes through the shared storage boundary.
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.storage.appendBytes(path, content)
-    }
-
-    /// Flushes a file and its parent directory through the shared host.
-    fn flushFile(&self, path: &str) -> HostResult<()> {
-        self.storage.flushFile(path)
-    }
-
-    /// Deletes an entry through the shared storage boundary.
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        self.storage.delete(path, recursive)
-    }
-
-    /// Tests an entry through the shared storage boundary.
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        self.storage.exists(path)
-    }
-
-    /// Lists logical entries without exposing host-owned staging files.
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        self.storage.list(prefix)
-    }
-}
-
-impl RuntimeStorageWriteHost for WindowsRuntimeStorageHost {
-    /// Opens a streaming writer owned by the same shared storage host.
-    fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        self.storage.createWriteSession(path)
-    }
-}
-
-impl RuntimeSqliteHost for WindowsRuntimeStorageHost {
-    /// Opens a database through the shared storage boundary.
-    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        self.storage.openSqliteDatabase(path)
     }
 }
 

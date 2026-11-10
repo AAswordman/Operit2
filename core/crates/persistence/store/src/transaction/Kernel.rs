@@ -91,7 +91,7 @@ pub struct Participant<'a> {
 /// Transport pagination and blobs remain outside the owner lifecycle.
 pub struct Source<'a> {
     pub receipt: Box<dyn Fn() -> Result<(SyncReceipt, Vec<String>), String> + 'a>,
-    pub export: Box<dyn Fn(&SyncReceipt, &[String], usize) -> Result<(Vec<SyncOperation>, Vec<String>), String> + 'a>,
+    pub export: Box<dyn Fn(&SyncReceipt, &[String], usize, usize) -> Result<(Vec<SyncOperation>, Vec<String>), String> + 'a>,
     pub inventory: Box<dyn Fn(&SyncReceipt, &[String]) -> Result<(BTreeSet<String>, Vec<String>), String> + 'a>,
 }
 
@@ -296,13 +296,14 @@ impl<'a> Registry<'a> {
     }
 
     pub fn export(&self, receipt: &SyncReceipt, domains: &[String], limit: usize) -> Result<(Vec<SyncOperation>, Vec<String>), String> {
-        let mut operations = self.journal.operationsSince(receipt, domains, limit).map_err(|e| e.to_string())?;
+        let budget = crate::SyncOperationStore::DEFAULT_SYNC_PAGE_BYTES;
+        let mut operations = self.journal.operationsSinceWithBudget(receipt, domains, limit, budget, |_| true).map_err(|e| e.to_string())?;
         let mut errors = self.prepare();
         for source in &self.sources {
-            match (source.export)(receipt, domains, limit) { Ok((page, failures)) => { operations.extend(page); errors.extend(failures); }, Err(error) => errors.push(error) }
+            match (source.export)(receipt, domains, limit, budget) { Ok((page, failures)) => { operations.extend(page); errors.extend(failures); }, Err(error) => errors.push(error) }
         }
         let operations = super::ordered(operations, |op| &op.opId, Revision::fromOperation)?;
-        Ok((operations.into_iter().take(limit).collect(), errors))
+        Ok((crate::SyncOperationStore::boundSyncOperationPage(operations.into_iter().take(limit).collect(), budget), errors))
     }
 
     pub fn inventory(&self, receipt: &SyncReceipt, domains: &[String]) -> Result<(BTreeSet<String>,Vec<String>),String> {
@@ -332,11 +333,19 @@ impl<'a> Registry<'a> {
 
     /// Only materialized contents decide whether a dataset needs correction.
     pub fn manifests(&self) -> Result<(Vec<super::Manifest>, BTreeSet<String>, Vec<String>), String> {
-        let (snapshots, pending, errors) = self.snapshots()?;
+        let pending = self.pending_owners()?;
+        let mut errors = self.prepare();
         let mut manifests = Vec::new();
-        for snapshot in snapshots {
+        // A report retains metadata only. Release each owner's contents before opening the next.
+        for (path, owner) in &self.owners {
+            if pending.contains(path) { continue; }
+            let Some(capture) = &owner.snapshot else { continue; };
+            let snapshot = match capture() {
+                Ok(snapshot) => snapshot,
+                Err(error) => { errors.push(format!("{path}: {error}")); continue; }
+            };
             let mut manifest = snapshot.manifest()?;
-            match (self.owners[&snapshot.data.owner.path].content_digest)(&snapshot) {
+            match (owner.content_digest)(&snapshot) {
                 Ok(digest) => manifest.digest = digest,
                 Err(error) => {
                     manifest.damaged = true;

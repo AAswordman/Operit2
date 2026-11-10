@@ -45,6 +45,21 @@ test("published memory queries retain owner-scoped deduplication in the provider
   assert.deepEqual(env.disk.stateBytes(), beforeFailure);
 });
 
+/** Concurrent callers must consume disjoint full pages from the same owner snapshot. */
+test("concurrent public memory queries fill each page without repeating records", async t => {
+  const env = await environment(t), titles = ["First", "Second", "Third", "Fourth"];
+  for (const title of titles) await env.client.memory.create({ ownerKey: "character:default", values: { title, content: title + " complete content" } });
+  const request = { participantId: "default", query: "*", limit: 1, snapshotId: "concurrent-chat" };
+  const results = await Promise.all(Array.from({ length: 5 }, () => env.client.memory.query(request)));
+  const delivered = results.flatMap(result => result.memories.map(memory => memory.title));
+  assert.deepEqual(delivered.sort(), [...titles].sort());
+  assert.deepEqual(results.map(result => result.memories.length).sort(), [0, 1, 1, 1, 1]);
+  assert.deepEqual(results.map(result => result.excludedBySnapshotCount).sort(), [0, 1, 2, 3, 4]);
+  assert.equal(results.filter(result => result.snapshotCreated).length, 1);
+  assert.ok(results.every(result => result.snapshotId === request.snapshotId));
+  assert.equal((await env.client.memory.query(request)).memories.length, 0);
+});
+
 /** Preserves real document chunk selection through the public client without copying query business logic. */
 test("public memory query returns persisted document snippets and lossless chunk identities", async t => {
   const env = await environment(t);

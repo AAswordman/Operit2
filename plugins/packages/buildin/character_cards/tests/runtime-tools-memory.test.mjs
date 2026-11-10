@@ -70,6 +70,42 @@ test("query snapshots isolate owners and preserve full records and filters", asy
   await assert.rejects(call(environment, "query_memory", { query: "*", threshold: -1 }), /Invalid threshold/);
 });
 
+/** A failed search must release its snapshot without blocking independent queries or consuming records. */
+test("snapshot query failure releases waiting callers and leaves other snapshots independent", { timeout: 5000 }, async t => {
+  const environment = await environmentFor(t);
+  await call(environment, "create_memory", { title: "One", content: "complete text" });
+  const memory = loadModule("src/runtime-tools/memory.ts", environment.disk.globals);
+  let release, entered;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  t.after(() => release());
+  const failure = new Error("snapshot-search-storage-original");
+  let firstSearch = true;
+  environment.tools = new memory.MemoryTools(async (operation, input) => {
+    if (operation === "memory.searchWithOptions" && firstSearch) {
+      firstSearch = false;
+      entered();
+      await blocked;
+      environment.disk.failNext("storage.preferences.data", failure);
+    }
+    return environment.domain(operation, input);
+  });
+  const request = { query: "*", limit: 1, snapshot_id: "waiting-chat" };
+  const first = call(environment, "query_memory", request);
+  // Attach rejection handling before releasing the deliberately failed IO.
+  const completed = Promise.allSettled([first, call(environment, "query_memory", request)]);
+  await started;
+  const independent = await call(environment, "query_memory", { ...request, snapshot_id: "other-chat" });
+  assert.deepEqual(plain(independent.memories).map(memory => memory.title), ["One"]);
+  release();
+  const [failed, next] = await completed;
+  assert.equal(failed.status, "rejected"); assert.equal(failed.reason, failure);
+  assert.equal(next.status, "fulfilled");
+  assert.deepEqual(plain(next.value.memories).map(memory => memory.title), ["One"]);
+  assert.equal(next.value.excludedBySnapshotCount, 0);
+  assert.equal((await call(environment, "query_memory", request)).memories.length, 0);
+});
+
 test("relationship CRUD preserves string identities, description and unspecified patch fields", async t => {
   const environment = await environmentFor(t);
   for (const title of ["Source", "Target"]) await call(environment, "create_memory", { title, content: title + " complete content" });

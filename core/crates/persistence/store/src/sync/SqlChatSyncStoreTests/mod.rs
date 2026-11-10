@@ -1,7 +1,6 @@
 use super::*;
 
 use std::fs;
-use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,345 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::db::AppDatabase::DATABASE_VERSION;
 use crate::sqliteParams;
 use crate::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
-use operit_host_api::{
-    HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
-    RuntimeStorageEntry, RuntimeStorageHost, SqliteRow as HostSqliteRow, SqliteValue,
-};
+
 use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
-use rusqlite::types::Value as RusqliteValue;
+use operit_host_native_storage::NativeRuntimeStorageHost;
 
 static HOSTS: OnceLock<()> = OnceLock::new();
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 pub(crate) static DATABASE_MUTEX: Mutex<()> = Mutex::new(());
-
-#[derive(Clone, Debug)]
-struct TestRuntimeHost {
-    root: PathBuf,
-}
-
-impl TestRuntimeHost {
-    fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-
-    fn resolve(&self, path: &str) -> HostResult<PathBuf> {
-        let path = Path::new(path);
-        if path.is_absolute() {
-            return Err(HostError::new(format!(
-                "Runtime storage path must be relative: {}",
-                path.display()
-            )));
-        }
-        let mut resolved = self.root.clone();
-        for component in path.components() {
-            match component {
-                Component::Normal(segment) => resolved.push(segment),
-                Component::CurDir => {}
-                _ => {
-                    return Err(HostError::new(format!(
-                        "Invalid runtime storage path: {}",
-                        path.display()
-                    )))
-                }
-            }
-        }
-        Ok(resolved)
-    }
-}
-
-impl RuntimeStorageHost for TestRuntimeHost {
-    fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        RuntimeSqliteHost::openSqliteDatabase(self, path)
-    }
-
-    /// Flushes the existing test file through its backing filesystem.
-    fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
-        std::fs::OpenOptions::new().write(true).open(self.resolve(path)?)?.sync_all()?;
-        Ok(())
-    }
-
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        Some(self.root.clone())
-    }
-
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        Some(self.root.join(WORKSPACE_DIR_PATH))
-    }
-
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        Ok(fs::read(self.resolve(path)?)?)
-    }
-
-    /// Reads one bounded byte range from the filesystem-backed test host.
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        let content = self.readBytes(path)?;
-        let start = usize::try_from(offset)
-            .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
-        if start >= content.len() {
-            return Ok(Vec::new());
-        }
-        let end = start
-            .checked_add(length)
-            .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
-            .min(content.len());
-        Ok(content[start..end].to_vec())
-    }
-
-    /// Uses the production atomic writer for filesystem-backed persistence tests.
-    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        operit_host_native_storage::NativeRuntimeStorageHost::new(self.root.join("runtime"), self.root.join("workspaces"))
-            .writeBytesAtomically(path, content)
-    }
-
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    /// Appends bytes to the SQL chat sync test runtime root.
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-        std::io::Write::write_all(&mut file, content)?;
-        Ok(())
-    }
-
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if !path.exists() {
-            return Ok(());
-        }
-        if path.is_dir() {
-            if recursive {
-                fs::remove_dir_all(path)?;
-            } else {
-                fs::remove_dir(path)?;
-            }
-        } else {
-            fs::remove_file(path)?;
-        }
-        Ok(())
-    }
-
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        Ok(self.resolve(path)?.exists())
-    }
-
-    fn modifiedAt(&self, path: &str) -> HostResult<i64> {
-        let modified = fs::metadata(self.resolve(path)?)?.modified()?;
-        let elapsed = modified.duration_since(UNIX_EPOCH)
-            .map_err(|error| HostError::new(error.to_string()))?;
-        i64::try_from(elapsed.as_micros()).map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> {
-        let micros = u64::try_from(modifiedAt)
-            .map_err(|error| HostError::new(error.to_string()))?;
-        let file = fs::OpenOptions::new().write(true).open(self.resolve(path)?)?;
-        file.set_times(fs::FileTimes::new().set_modified(
-            UNIX_EPOCH + std::time::Duration::from_micros(micros),
-        ))?;
-        Ok(())
-    }
-
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        let directory = self.resolve(prefix)?;
-        let mut entries = Vec::new();
-        if !directory.exists() {
-            return Ok(entries);
-        }
-        for entry in fs::read_dir(directory)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            let path = entry
-                .path()
-                .strip_prefix(&self.root)
-                .map_err(|error| HostError::new(error.to_string()))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            entries.push(RuntimeStorageEntry {
-                path,
-                isDirectory: metadata.is_dir(),
-                size: metadata.len() as i64,
-            });
-        }
-        Ok(entries)
-    }
-}
-
-impl RuntimeSqliteHost for TestRuntimeHost {
-    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let connection =
-            rusqlite::Connection::open(path).map_err(|error| HostError::new(error.to_string()))?;
-        connection
-            .execute_batch(
-                r#"
-                    PRAGMA journal_mode = MEMORY;
-                    PRAGMA synchronous = OFF;
-                    PRAGMA temp_store = MEMORY;
-                    "#,
-            )
-            .map_err(|error| HostError::new(error.to_string()))?;
-        Ok(Box::new(TestRuntimeSqliteConnection { connection }))
-    }
-}
-
-struct TestRuntimeSqliteConnection {
-    connection: rusqlite::Connection,
-}
-
-impl RuntimeSqliteConnection for TestRuntimeSqliteConnection {
-    fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
-        self.connection
-            .execute_batch(sql)
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
-        let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
-        self.connection
-            .execute(sql, rusqlite::params_from_iter(params))
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<HostSqliteRow>> {
-        queryRows(&self.connection, sql, params)
-    }
-
-    fn lastInsertRowId(&self) -> HostResult<i64> {
-        Ok(self.connection.last_insert_rowid())
-    }
-
-    fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>> {
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(|error| HostError::new(error.to_string()))?;
-        Ok(Box::new(TestRuntimeSqliteTransaction { transaction }))
-    }
-}
-
-struct TestRuntimeSqliteTransaction<'a> {
-    transaction: rusqlite::Transaction<'a>,
-}
-
-impl RuntimeSqliteTransaction for TestRuntimeSqliteTransaction<'_> {
-    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
-        let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
-        self.transaction
-            .execute(sql, rusqlite::params_from_iter(params))
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<HostSqliteRow>> {
-        queryRows(&self.transaction, sql, params)
-    }
-
-    fn lastInsertRowId(&self) -> HostResult<i64> {
-        Ok(self.transaction.last_insert_rowid())
-    }
-
-    fn commit(self: Box<Self>) -> HostResult<()> {
-        self.transaction
-            .commit()
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    /// Aborts the host transaction explicitly instead of relying on destructor cleanup.
-    fn rollback(self: Box<Self>) -> HostResult<()> {
-        self.transaction
-            .rollback()
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-}
-
-trait TestRusqliteConnection {
-    fn prepareStatement<'a>(&'a self, sql: &str) -> rusqlite::Result<rusqlite::Statement<'a>>;
-}
-
-impl TestRusqliteConnection for rusqlite::Connection {
-    fn prepareStatement<'a>(&'a self, sql: &str) -> rusqlite::Result<rusqlite::Statement<'a>> {
-        self.prepare(sql)
-    }
-}
-
-impl TestRusqliteConnection for rusqlite::Transaction<'_> {
-    fn prepareStatement<'a>(&'a self, sql: &str) -> rusqlite::Result<rusqlite::Statement<'a>> {
-        self.prepare(sql)
-    }
-}
-
-fn queryRows(
-    connection: &impl TestRusqliteConnection,
-    sql: &str,
-    params: Vec<SqliteValue>,
-) -> HostResult<Vec<HostSqliteRow>> {
-    let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
-    let mut statement = connection
-        .prepareStatement(sql)
-        .map_err(|error| HostError::new(error.to_string()))?;
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let mut rows = statement
-        .query(rusqlite::params_from_iter(params))
-        .map_err(|error| HostError::new(error.to_string()))?;
-    let mut out = Vec::new();
-    while let Some(row) = rows
-        .next()
-        .map_err(|error| HostError::new(error.to_string()))?
-    {
-        let mut values = Vec::new();
-        for index in 0..columns.len() {
-            let value = row
-                .get::<_, RusqliteValue>(index)
-                .map_err(|error| HostError::new(error.to_string()))?;
-            values.push(fromRusqliteValue(value));
-        }
-        out.push(HostSqliteRow {
-            columns: columns.clone(),
-            values,
-        });
-    }
-    Ok(out)
-}
-
-fn toRusqliteValue(value: SqliteValue) -> RusqliteValue {
-    match value {
-        SqliteValue::Null => RusqliteValue::Null,
-        SqliteValue::Integer(value) => RusqliteValue::Integer(value),
-        SqliteValue::Real(value) => RusqliteValue::Real(value),
-        SqliteValue::Text(value) => RusqliteValue::Text(value),
-        SqliteValue::Blob(value) => RusqliteValue::Blob(value),
-    }
-}
-
-fn fromRusqliteValue(value: RusqliteValue) -> SqliteValue {
-    match value {
-        RusqliteValue::Null => SqliteValue::Null,
-        RusqliteValue::Integer(value) => SqliteValue::Integer(value),
-        RusqliteValue::Real(value) => SqliteValue::Real(value),
-        RusqliteValue::Text(value) => SqliteValue::Text(value),
-        RusqliteValue::Blob(value) => SqliteValue::Blob(value),
-    }
-}
 
 fn installTestHosts() {
     HOSTS.get_or_init(|| {
@@ -360,10 +28,10 @@ fn installTestHosts() {
             std::process::id()
         ));
         fs::create_dir_all(&root).expect("test runtime host root must be created");
-        let host = Arc::new(TestRuntimeHost::new(root));
+        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join(WORKSPACE_DIR_PATH)));
         setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-            host.root.clone(),
-            host.root.join(WORKSPACE_DIR_PATH),
+            root.join("runtime"),
+            root.join(WORKSPACE_DIR_PATH),
         ));
         setDefaultRuntimeStorageHost(host.clone());
         setDefaultRuntimeSqliteHost(host);
@@ -1769,6 +1437,7 @@ fn incremental_messages_with_different_local_ids_have_equal_content_digests() {
     );
     assert_eq!(source_manifest.token, source_snapshot.token().unwrap(), "CAS must still cover physical row IDs");
     let mut changed = target_snapshot.clone();
+    changed.data=serde_json::from_slice(&serde_json::to_vec(&changed.data).unwrap()).unwrap();
     let parts = changed.data.values.get_mut("message_parts").unwrap();
     let content = parts["columns"].as_array().unwrap().iter().position(|name| name == "content").unwrap();
     parts["rows"][0][content] = serde_json::json!({"Text":"different business content"});

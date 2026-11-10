@@ -235,7 +235,7 @@ impl SyncOperationSemantics {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SyncOperation {
+pub struct SyncOperation<P = Value> {
     pub opId: String,
     pub originDeviceId: String,
     pub sequence: i64,
@@ -244,14 +244,25 @@ pub struct SyncOperation {
     pub entityId: String,
     pub operation: String,
     pub semantics: SyncOperationSemantics,
-    pub payload: Value,
+    pub payload: P,
     pub createdAt: i64,
     pub schemaVersion: i32,
 }
 
+impl<P> SyncOperation<P> {
+    pub(crate) fn with_payload<Q>(&self, payload: Q) -> SyncOperation<Q> {
+        SyncOperation { opId:self.opId.clone(), originDeviceId:self.originDeviceId.clone(), sequence:self.sequence,
+            domain:self.domain.clone(), entityType:self.entityType.clone(), entityId:self.entityId.clone(),
+            operation:self.operation.clone(), semantics:self.semantics.clone(), payload,
+            createdAt:self.createdAt, schemaVersion:self.schemaVersion }
+    }
+}
+
 /// Verifies the same immutable envelope in every domain; migrations derive separate views.
 pub fn verifySyncOperation(existing: &SyncOperation, incoming: &SyncOperation) -> Result<(), SyncOperationStoreError> {
-    crate::Transaction::verify_original(&incoming.opId, existing, incoming).map_err(SyncOperationStoreError::Message)
+    crate::Transaction::verify_original(&incoming.opId,
+        &crate::Transaction::operation_digest(existing).map_err(SyncOperationStoreError::Message)?,
+        &crate::Transaction::operation_digest(incoming).map_err(SyncOperationStoreError::Message)?).map_err(SyncOperationStoreError::Message)
 }
 
 /// One corrupt operation-log line found while reading an origin journal.
@@ -486,7 +497,7 @@ struct JournalQuery<'a> {
 
 /// Measures wire size without allocating a second serialized payload buffer.
 #[derive(Default)]
-struct SerializedByteCount(usize);
+pub(crate) struct SerializedByteCount(pub(crate) usize);
 
 impl Write for SerializedByteCount {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -1787,6 +1798,7 @@ impl SyncOperationStore {
     }
 
     fn storeOriginals(&self, operations: &[SyncOperation], pending: bool) -> Result<(), SyncOperationStoreError> {
+        for operation in operations { crate::SyncBlobIo::verify_initialization(self.storageHost.as_ref(),&self.rootPath,operation).map_err(SyncOperationStoreError::Message)?; }
         let stored = operations.iter().map(|operation| self.encodeOperationPayload(operation)).collect::<Result<Vec<_>, _>>()?;
         self.withJournal(|journal| journal.transaction(|tx| {
             for (operation, stored) in operations.iter().zip(&stored) {

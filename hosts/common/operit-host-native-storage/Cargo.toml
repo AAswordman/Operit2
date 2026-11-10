@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 fs2 = "0.4"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "blob", "limits"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -1521,31 +1521,37 @@ pub fn syncCoverage(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<BTre
 
 /// Compares synchronized plugin records independently of local materialization bookkeeping.
 pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
+    let mut values=snapshot.data.values.clone();
+    if let Some(sql)=&snapshot.data.sql {
+        for (name,columns) in &sql.columns { values.insert(name.clone(),serde_json::json!({"columns":columns})); }
+        values.insert("_operit_tables".into(),sql.table("_operit_tables")?);
+    }
     for (name, columns) in [
         ("_operit_versions", &["collection", "key", "created_at", "origin", "sequence"][..]),
         ("_operit_merge_map", &["collection", "origin", "remote_key", "canonical_key"][..]),
         ("_operit_merge_names", &["collection", "key", "name"][..]),
         ("_operit_tables", &["name", "definition"][..]),
     ] {
-        if snapshot.data.values.get(name).and_then(|table|table.get("columns")) != Some(&serde_json::json!(columns)) {
+        if values.get(name).and_then(|table|table.get("columns")) != Some(&serde_json::json!(columns)) {
             return Err(format!("Invalid synchronized SQL schema: {name}"));
         }
     }
-    let declarations: crate::Transaction::Table = serde_json::from_value(snapshot.data.values["_operit_tables"].clone()).map_err(|e|e.to_string())?;
+    let declarations: crate::Transaction::Table = serde_json::from_value(values["_operit_tables"].clone()).map_err(|e|e.to_string())?;
     let mut declared = BTreeSet::new();
     for row in declarations.rows {
         let table: StorageTable = match row.get(1) { Some(crate::Transaction::Cell::Text(value)) => serde_json::from_str(value).map_err(|e|e.to_string())?, _ => return Err("Invalid SQL table declaration".into()) };
         declared.insert(table.name.clone());
-        let actual = snapshot.data.values.get(&table.name).ok_or("Missing declared SQL table")?;
+        let actual = values.get(&table.name).ok_or("Missing declared SQL table")?;
         let expected = table.columns.iter().map(|column| column.name.as_str()).collect::<BTreeSet<_>>();
         let columns: Vec<String> = serde_json::from_value(actual["columns"].clone()).map_err(|e|e.to_string())?;
         if columns.iter().map(String::as_str).collect::<BTreeSet<_>>() != expected {
             return Err(format!("SQL table declaration differs: {}", table.name));
         }
     }
-    if snapshot.data.values.keys().filter(|name|!name.starts_with("_operit_")).cloned().collect::<BTreeSet<_>>() != declared {
+    if values.keys().filter(|name|!name.starts_with("_operit_")).cloned().collect::<BTreeSet<_>>() != declared {
         return Err("Synchronized SQL declarations are incomplete".into());
     }
+    if let Some(sql)=&snapshot.data.sql { return sql.content_digest(&snapshot.data.owner); }
     snapshot.projected_content_digest(|table, value| match table {
         // Derived reference/name projection may allocate a device-local CAS token.
         "_operit_values" => crate::Transaction::project_sql_table(value, &["version"], None).map(Some),
@@ -1649,7 +1655,8 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
             let mut entries = Vec::new();
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? {
                 if !clock.containsSequence(&origin,sequence) {
-                    entries.push((0,origin,sequence,stores.len(),128));
+                    let size: i64 = store.queryOne("SELECT length(CAST(original AS BLOB)) FROM _operit_transaction_initialization WHERE id=1", vec![])?.ok_or_else(||failure("Missing initialization"))?.get(0)?;
+                    entries.push((0,origin,sequence,stores.len(),usize::try_from(size).map_err(|_|failure("Invalid initialization size"))?));
                 }
             }
             for row in store.queryRows(
@@ -2871,9 +2878,7 @@ fn reconcileDurableMappings(
 /// Identifies the explicit plugin database commit boundary without interpreting its record mutations.
 pub fn syncDatasetPath(operation: &SyncOperation) -> Result<String, SqliteStoreError> {
     if operation.domain != PLUGIN_STORAGE_SYNC_DOMAIN { return Err(failure("Not a plugin storage operation")); }
-    if let Some(initialization) = crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)? {
-        return resolveStoragePath(&initialization.data.owner.path).map_err(failure);
-    }
+    if operation.operation=="initialize" && operation.entityType=="initialization" { return resolveStoragePath(&operation.entityId).map_err(failure); }
     let path = operation.payload.get("manifest").and_then(|manifest| manifest.get("path")).and_then(Value::as_str)
         .ok_or_else(|| failure("Plugin transaction dataset path is missing"))?;
     resolveStoragePath(path).map_err(failure)
@@ -2887,13 +2892,16 @@ pub fn applyOperation(
     preferences: &BTreeMap<String, String>,
 ) -> Result<(), SqliteStoreError> {
     if operation.domain == PLUGIN_STORAGE_SYNC_DOMAIN {
-        if let Some(initialization) = crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)? {
+        if operation.operation=="initialize" && operation.entityType=="initialization" {
+            let initialization=if crate::RuntimeFileSyncStore::RuntimeFileSyncStore::requiredBlob(operation).map_err(failure)?.is_some() {
+                crate::RuntimeFileSyncStore::RuntimeFileSyncStore::new(storage.clone(),"runtime/sync").readSqlInitialization(operation).map_err(failure)?
+            } else { crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)?.ok_or_else(||failure("Missing initialization"))? };
             let path = initialization.data.owner.path.clone();
-            let definition = initialization.definition.ok_or_else(||failure("Missing database definition for initialization"))?;
+            let definition = initialization.definition.clone().ok_or_else(||failure("Missing database definition for initialization"))?;
             provisionSnapshotDatabase(host.clone(),storage,&path,definition.clone())?;
             let manifest = decodeManifest(definition["manifest"].clone())?;
             let database = openDatabase(host.clone(),&manifest,String::new())?;
-            withSyncDataset(host,&path,"",|dataset|dataset.receive_initialization(operation,|tx,snapshot| {
+            withSyncDataset(host,&path,"",|dataset|dataset.receive_validated_initialization(operation,initialization,|tx,snapshot| {
                 reconcileInitialization(tx,snapshot,Some((&database,preferences)))
             })).map_err(failure)?;
             return Ok(());

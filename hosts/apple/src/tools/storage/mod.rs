@@ -3,10 +3,7 @@ use std::path::PathBuf;
 
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use operit_host_api::HostSecretStore;
-use operit_host_api::{
-    HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageEntry,
-    RuntimeStorageHost, RuntimeStorageWriteHost, RuntimeStorageWriteSession,
-};
+use operit_host_api::{HostError, HostResult};
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 use security_framework::passwords::{
     delete_generic_password, get_generic_password, set_generic_password,
@@ -18,6 +15,8 @@ use operit_host_native_common::NativeRuntimeStorageHost;
 pub struct AppleRuntimeStorageHost {
     storage: NativeRuntimeStorageHost,
 }
+
+operit_host_api::delegate_runtime_storage!(AppleRuntimeStorageHost, storage, writer);
 
 impl AppleRuntimeStorageHost {
     /// Returns the default Apple runtime data root.
@@ -40,86 +39,6 @@ impl AppleRuntimeStorageHost {
         Self {
             storage: NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot),
         }
-    }
-}
-
-impl RuntimeStorageHost for AppleRuntimeStorageHost {
-    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
-        RuntimeSqliteHost::openSqliteDatabase(self, path)
-    }
-
-    /// Returns the shared runtime storage root.
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        self.storage.runtimeRootDir()
-    }
-
-    /// Returns the shared workspace storage root.
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        self.storage.workspaceRootDir()
-    }
-
-    /// Reads a file through the shared storage boundary.
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        self.storage.readBytes(path)
-    }
-
-    /// Reads a bounded range through the shared storage boundary.
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        self.storage.readBytesRange(path, offset, length)
-    }
-
-    /// Publishes a complete file through the shared atomic writer.
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.storage.writeBytes(path, content)
-    }
-
-    /// Flushes and publishes a private catalog through the shared atomic writer.
-    /// Reads the source file modification time through the shared storage host.
-    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.storage.modifiedAt(path) }
-    /// Preserves source metadata through the shared storage host.
-    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> { self.storage.setModifiedAt(path, modifiedAt) }
-
-    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.storage.writeBytesAtomically(path, content)
-    }
-
-    /// Appends bytes through the shared storage boundary.
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.storage.appendBytes(path, content)
-    }
-
-    /// Flushes a file and its parent directory through the shared host.
-    fn flushFile(&self, path: &str) -> HostResult<()> {
-        self.storage.flushFile(path)
-    }
-
-    /// Deletes an entry through the shared storage boundary.
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        self.storage.delete(path, recursive)
-    }
-
-    /// Tests an entry through the shared storage boundary.
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        self.storage.exists(path)
-    }
-
-    /// Lists logical entries without exposing host-owned staging files.
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        self.storage.list(prefix)
-    }
-}
-
-impl RuntimeStorageWriteHost for AppleRuntimeStorageHost {
-    /// Opens a streaming writer owned by the same shared storage host.
-    fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        self.storage.createWriteSession(path)
-    }
-}
-
-impl RuntimeSqliteHost for AppleRuntimeStorageHost {
-    /// Opens a database through the shared storage boundary.
-    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        self.storage.openSqliteDatabase(path)
     }
 }
 

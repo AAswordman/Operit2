@@ -2202,7 +2202,6 @@ dependencies = [
  "quote",
  "rand_core 0.6.4",
  "ring",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",

@@ -258,7 +258,14 @@ resolves the explicit participant's actual memory binding and reuses the
 plugin's existing query implementation. Results contain complete typed
 matches and document chunks; snapshots remain in the provider's main runtime.
 A `null` snapshot ID requests a fresh query. An explicit snapshot ID retains
-owner-scoped deduplication across calls.
+owner-scoped deduplication across calls. Calls sharing an owner and snapshot
+serialize exclusion reads, page retrieval and successful result registration,
+so concurrent callers receive disjoint pages without losing available matches.
+A failed query releases the snapshot and does not consume its memory IDs;
+other owners and snapshots remain independent. Like Operit1, snapshots are
+in memory only and each owner retains at most 32, evicting the least recently
+used. A runtime restart or snapshot eviction can allow previously returned
+memories to be recalled again in a later user turn.
 
 ## Built-in memory recall
 

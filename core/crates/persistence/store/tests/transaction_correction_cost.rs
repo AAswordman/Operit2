@@ -8,7 +8,7 @@ fn unchanged_sql_correction_updates_only_the_checkpoint_and_still_enforces_cas()
     let root = std::env::temp_dir().join(format!("operit-correction-cost-{}", uuid::Uuid::new_v4()));
     {
         let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
-        let store = SqliteStore::openWithHost(host, "runtime/correction.sqlite").unwrap();
+        let store = SqliteStore::openWithHost(host.clone(), "runtime/correction.sqlite").unwrap();
         store.executeBatch("CREATE TABLE business(id INTEGER PRIMARY KEY,payload TEXT); CREATE TABLE audit(kind TEXT);
             CREATE TRIGGER audit_delete AFTER DELETE ON business BEGIN INSERT INTO audit VALUES('delete'); END;
             CREATE TRIGGER audit_insert AFTER INSERT ON business BEGIN INSERT INTO audit VALUES('insert'); END;").unwrap();
@@ -26,13 +26,16 @@ fn unchanged_sql_correction_updates_only_the_checkpoint_and_still_enforces_cas()
         let mut source = original.clone();
         source.covered.insert("other-history:1".into());
         assert!(dataset.repair(&original.token().unwrap(), &source).unwrap());
-        let initialization = operit_store::Transaction::compaction::Initialization::decode(&dataset.initialization().unwrap().unwrap()).unwrap().unwrap();
+        let operation = dataset.initialization().unwrap().unwrap();
+        let files = operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::new(host, "runtime/sync");
+        let initialization = if operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::requiredBlob(&operation).unwrap().is_some() { files.readSqlInitialization(&operation).unwrap() } else { operit_store::Transaction::compaction::Initialization::decode(&operation).unwrap().unwrap() };
         assert_eq!(initialization.data, source.data);
         assert_eq!(initialization.covered, source.covered);
         assert_eq!(store.queryOne("SELECT count(*) FROM audit", vec![]).unwrap().unwrap().get::<_, i64>(0).unwrap(), 0);
         assert!(!dataset.repair(&original.token().unwrap(), &source).unwrap());
         assert_eq!(store.queryOne("SELECT count(*) FROM audit", vec![]).unwrap().unwrap().get::<_, i64>(0).unwrap(), 0);
         let current = dataset.snapshot().unwrap();
+        source.data = serde_json::from_slice(&serde_json::to_vec(&source.data).unwrap()).unwrap();
         source.data.values.get_mut("business").unwrap()["rows"][0][1] = serde_json::json!({"Text":"corrected"});
         assert!(dataset.repair(&current.token().unwrap(), &source).unwrap());
         assert_eq!(dataset.snapshot().unwrap().data, source.data);

@@ -137,6 +137,7 @@ impl SqlChatSyncStore {
 
     /// Compares synchronized chat contents independently of local storage identities.
     pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
+        if let Some(sql)=&snapshot.data.sql { return sql.content_digest(&snapshot.data.owner); }
         snapshot.projected_content_digest(|table, value| match table {
             "messages" => crate::Transaction::project_sql_table(value, &["messageId"], None).map(Some),
             "message_variants" => crate::Transaction::project_sql_table(value, &["variantId"], None).map(Some),
@@ -519,6 +520,14 @@ impl SqlChatSyncStore {
         domains: &[String],
         limit: usize,
     ) -> Result<Vec<SyncOperation>, SqlChatSyncStoreError> {
+        self.operationsSinceWithBudget(clock, domains, limit, usize::MAX)
+    }
+
+    /// Selects metadata first and stops hydrating payloads at the shared byte budget.
+    pub fn operationsSinceWithBudget<K: SyncOperationKnowledge>(
+        &self, clock: &K, domains: &[String], limit: usize, maxBytes: usize,
+    ) -> Result<Vec<SyncOperation>, SqlChatSyncStoreError> {
+        if limit == 0 { return Ok(Vec::new()); }
         let domainSet = domains.iter().cloned().collect::<BTreeSet<_>>();
         if !domainSet.is_empty() && !domainSet.contains(CHAT_SYNC_DOMAIN) {
             return Ok(Vec::new());
@@ -567,11 +576,19 @@ impl SqlChatSyncStore {
         });
         let mut operations = compactSyncOperations(operations);
         operations.truncate(limit);
-        for operation in &mut operations {
+        let mut page = Vec::new();
+        let mut bytes = 0usize;
+        for mut operation in operations {
             operation.payload = serde_json::to_value(readPayload(
                 &mut |sql, params| self.store.queryRows(sql, params), &operation.opId,
             )?)?;
+            let mut measured = crate::SyncOperationStore::SerializedByteCount::default();
+            serde_json::to_writer(&mut measured, &operation)?;
+            if !page.is_empty() && bytes.saturating_add(measured.0) > maxBytes { break; }
+            bytes = bytes.saturating_add(measured.0);
+            page.push(operation);
         }
+        let mut operations = page;
         if limit > 0 {
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
                 if !clock.containsSequence(&origin,sequence) {
@@ -582,7 +599,7 @@ impl SqlChatSyncStore {
                 }
             }
         }
-        Ok(operations)
+        Ok(crate::SyncOperationStore::boundSyncOperationPage(operations, maxBytes))
     }
 
     /// Applies a remote SQL chat sync operation to the local database.
@@ -606,7 +623,7 @@ impl SqlChatSyncStore {
         operation: &SyncOperation,
         ignoreNewerEntityState: bool,
     ) -> Result<(), SqlChatSyncStoreError> {
-        if crate::Transaction::compaction::Initialization::decode(operation).map_err(SqlChatSyncStoreError::Message)?.is_some() {
+        if operation.operation == "initialize" && operation.entityType == "initialization" {
             self.dataset().receive_initialization(operation, |tx,snapshot| self.reconcileInitialization(tx,snapshot,true))
                 .map_err(SqlChatSyncStoreError::Message)?;
             return Ok(());

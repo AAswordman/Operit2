@@ -79,6 +79,22 @@ test("recall injects matched participant memories once per chat snapshot", async
   assert.equal(unknownParticipant, null);
 });
 
+/** Real simultaneous input hooks must not append the same recalled record to two turns. */
+test("concurrent recall hooks inject each matched memory only once per chat", async t => {
+  const env = await environment(t);
+  for (const title of ["Stable fact", "Other fact"]) await env.client.memory.create({ ownerKey: "character:default", values: { title, content: "Known durable " + title } });
+  env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 1, allowRepeated: false } });
+  const hook = recallHook(env.disk);
+  const outputs = await Promise.all([hook(inputEvent(RECALL_EVENT)), hook(inputEvent(RECALL_EVENT)), hook(inputEvent(RECALL_EVENT))]);
+  const injected = outputs.filter(output => output !== null);
+  assert.equal(injected.length, 2);
+  for (const title of ["Stable fact", "Other fact"]) {
+    assert.equal(injected.filter(output => output.includes("标题: " + title)).length, 1);
+  }
+  assert.ok(injected.every(output => output.includes('<attachment id="character_memory_recall"')));
+  assert.equal(await hook(inputEvent(RECALL_EVENT)), null);
+});
+
 /** Literal markup in recalled records must survive UI decoding without ending the attachment early. */
 test("recall escapes memory text inside the supplementary attachment", async t => {
   const env = await environment(t);
@@ -136,8 +152,8 @@ test("allowRepeated recall settings deliver the same memory again", async t => {
   await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
   env.disk.replaceState({ ...plain(env.disk.readState()), memoryRecall: { enabled: true, limit: 3, allowRepeated: true } });
   const hook = recallHook(env.disk);
-  assert.match(await hook(inputEvent(RECALL_EVENT)), /Known durable knowledge/);
-  assert.match(await hook(inputEvent(RECALL_EVENT)), /Known durable knowledge/);
+  const outputs = await Promise.all([hook(inputEvent(RECALL_EVENT)), hook(inputEvent(RECALL_EVENT))]);
+  for (const output of outputs) assert.match(output, /Known durable knowledge/);
 });
 
 /** Verifies the transactional state path persists the settings and released states default to enabled. */

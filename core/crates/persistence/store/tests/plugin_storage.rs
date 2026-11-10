@@ -1949,7 +1949,7 @@ fn damaged_plugin_structures_accept_complete_correction_and_forward_the_baseline
         assert!(!target.repair(&source, "stale", &file).unwrap(), "{damage}");
         assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap(), capture);
         if damage == "missing-business" {
-            let mut invalid = file.clone(); invalid.data.values.get_mut("records").unwrap()["columns"] = json!(["invalid"]);
+            let mut invalid = file.clone(); invalid.data = serde_json::from_slice(&serde_json::to_vec(&invalid.data).unwrap()).unwrap(); invalid.data.values.get_mut("records").unwrap()["columns"] = json!(["invalid"]);
             assert!(target.repair(&source, &capture.token().unwrap(), &invalid).is_err());
             assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap(), capture);
         }
@@ -1989,8 +1989,10 @@ fn incremental_object_merge_bookkeeping_does_not_require_a_full_snapshot() {
     seed_object_card(&source, &handle, "same-card", "Card", "same content");
     let target = Fixture::new("digest-target");
     target.replay(&source.export());
-    let a = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
-    let b = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+    let mut a = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
+    let mut b = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
+    a.data=serde_json::from_slice(&serde_json::to_vec(&a.data).unwrap()).unwrap();
+    b.data=serde_json::from_slice(&serde_json::to_vec(&b.data).unwrap()).unwrap();
     assert_eq!(a.data.revision, b.data.revision);
     assert_ne!(a.data.values["_operit_merge_map"], b.data.values["_operit_merge_map"]);
     assert_eq!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&b).unwrap());

@@ -79,6 +79,10 @@
     {
       "version": 10,
       "hash": "60906c2313b92f71c873c779471c906890f182a7cdc719fa41d20db1d8c3a843"
+    },
+    {
+      "version": 11,
+      "hash": "ea2926bd3a024622f47b475022cd908b4188efc4c1ee786878635321a761415b"
     }
   ],
   "schemaRoots": [

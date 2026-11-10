@@ -4,7 +4,7 @@ use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::CoreNodeBindingStore::BINDING_SYNC_DOMAIN;
 use operit_store::NetworkControlStore::NETWORK_CONTROL_SYNC_DOMAIN;
 use operit_store::PluginStorage::PLUGIN_STORAGE_SYNC_DOMAIN;
-use operit_store::SyncOperationStore::{SyncOperation, DEFAULT_SYNC_PAGE_BYTES};
+use operit_store::SyncOperationStore::SyncOperation;
 use std::collections::BTreeMap;
 use operit_store::PreferenceMerge::{self, PreferenceMergeSchema};
 use operit_store::Transaction::{Owner, Snapshot, kernel::{ApplyError, Registry, Participant, Source}};
@@ -56,14 +56,14 @@ impl OperitApplication {
         })?;
         registry.sources.push(Source {
             receipt: Box::new(move || receipt.as_ref().map_err(Clone::clone)?.receipt().map(|r|(r,vec![])).map_err(|e|e.to_string())),
-            export: Box::new(move |receipt,domains,limit| export.as_ref().map_err(Clone::clone)?.operationsSince(receipt,domains,limit).map(|ops|(ops,vec![])).map_err(|e|e.to_string())),
+            export: Box::new(move |receipt,domains,limit,bytes| export.as_ref().map_err(Clone::clone)?.operationsSinceWithBudget(receipt,domains,limit,bytes).map(|ops|(ops,vec![])).map_err(|e|e.to_string())),
             inventory: Box::new(move |receipt,domains| inventory.as_ref().map_err(Clone::clone)?.operationIdsSince(receipt,domains).map(|ids|(ids,vec![])).map_err(|e|e.to_string())),
         });
         let plugin = self.pluginSqliteHost();
         let (receipt,export,inventory) = (plugin.clone(),plugin.clone(),plugin.clone());
         registry.sources.push(Source {
             receipt: Box::new(move || PluginStorage::receipt(receipt.clone()?).map_err(|e|e.to_string())),
-            export: Box::new(move |receipt,domains,limit| PluginStorage::exportWithBudget(export.clone()?,receipt,domains,limit,DEFAULT_SYNC_PAGE_BYTES).map_err(|e|e.to_string())),
+            export: Box::new(move |receipt,domains,limit,bytes| PluginStorage::exportWithBudget(export.clone()?,receipt,domains,limit,bytes).map_err(|e|e.to_string())),
             inventory: Box::new(move |receipt,domains| {
                 if !domains.is_empty() && !domains.iter().any(|domain|domain==PLUGIN_STORAGE_SYNC_DOMAIN) { return Ok((Default::default(),vec![])); }
                 PluginStorage::operationIdsSince(inventory.clone()?,receipt).map_err(|e|e.to_string())
@@ -152,26 +152,28 @@ impl OperitApplication {
             Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
         } else { None };
         let definition = registry.snapshot_definition(&owner)?;
-        let bytes = serde_json::to_vec(&CorrectionFile { snapshot, content, definition }).map_err(|e|e.to_string())?;
-        serde_json::to_value(self.runtimeFileSyncStore()?.storeBlob(&bytes)?).map_err(|e|e.to_string())
+        serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&CorrectionFile { snapshot, content, definition })?).map_err(|e|e.to_string())
     }
     pub(super) fn exportConsistencyCoverage(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
-        let bytes = serde_json::to_vec(&FileCoverage { owner, covered: snapshot.covered }).map_err(|e|e.to_string())?;
-        serde_json::to_value(self.runtimeFileSyncStore()?.storeBlob(&bytes)?).map_err(|e|e.to_string())
+        serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&FileCoverage { owner, covered: snapshot.covered })?).map_err(|e|e.to_string())
     }
     pub(super) fn repairConsistencySnapshot(&self, owner: Owner, expected: &str, reference: FileCorrectionReference) -> Result<bool,String> {
         let journal = self.runtimeSyncOperationStore()?;
         let _application = journal.lockApplication().map_err(|e|e.to_string())?;
         let files = self.runtimeFileSyncStore()?;
-        let mut source: CorrectionFile = serde_json::from_slice(&files.readBlob(&reference.source)?).map_err(|e|e.to_string())?;
+        let mut source: CorrectionFile = if owner.backend==operit_store::Transaction::Backend::Sql {
+            let (mut source,sql)=files.readStagedJson::<CorrectionFile>(&reference.source)?;
+            source.snapshot.data.sql=Some(sql);
+            source
+        } else { files.readJsonBlob(&reference.source)? };
         if source.snapshot.data.owner != owner { return Err("Correction file owner differs".into()); }
         source.snapshot.covered.extend(reference.skipped);
         if let Some(reference) = reference.superseded {
-            let superseded: FileCoverage = serde_json::from_slice(&files.readBlob(&reference)?).map_err(|e|e.to_string())?;
+            let superseded: FileCoverage = files.readJsonBlob(&reference)?;
             if superseded.owner != owner { return Err("Superseded file owner differs".into()); }
             source.snapshot.covered.extend(superseded.covered);
         }

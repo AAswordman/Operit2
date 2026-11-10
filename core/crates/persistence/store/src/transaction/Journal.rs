@@ -62,7 +62,7 @@ impl Journal {
         }
         if super::compaction::retired(tx,original)? { return Ok(()); }
         if !tx.query("SELECT 1 FROM _operit_initialization_coverage WHERE id=?1",vec![text(&original.opId)])?.is_empty() { return Ok(()); }
-        let fingerprint = crate::Transaction::digest(original).map_err(Error::Message)?;
+        let fingerprint = crate::Transaction::operation_digest(original).map_err(Error::Message)?;
         let previous = tx.query("SELECT fingerprint FROM originals WHERE id=?1 UNION ALL SELECT fingerprint FROM legacy_fingerprints WHERE id=?1", vec![text(&original.opId)])?;
         for row in &previous {
             if row.valueAt(0)?.asString()? != fingerprint {
@@ -73,7 +73,8 @@ impl Journal {
         let completed = !pending || !tx.query("SELECT 1 FROM legacy_receipts WHERE origin=?1 AND first<=?2 AND last>=?2", vec![text(&original.originDeviceId), SqliteValue::Integer(original.sequence)])?.is_empty();
         let header = JournalRecord::parse(&serde_json::to_vec(original)?, 0)?;
         tx.execute("INSERT INTO originals(id,origin,sequence,domain,header,original,fingerprint,pending,business_time,target,format_version)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO NOTHING", vec![
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO UPDATE SET domain=excluded.domain,header=excluded.header,original=excluded.original,
+                business_time=excluded.business_time,target=excluded.target,format_version=excluded.format_version WHERE originals.pending=1", vec![
             text(&original.opId), text(&original.originDeviceId), SqliteValue::Integer(original.sequence), text(&original.domain),
             text(&serde_json::to_string(&header)?), text(&serde_json::to_string(stored)?), text(&fingerprint), SqliteValue::Integer(i64::from(!completed)),
             SqliteValue::Integer(crate::Transaction::Revision::fromOperation(original).createdAt),

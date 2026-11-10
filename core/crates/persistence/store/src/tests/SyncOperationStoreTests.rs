@@ -2575,7 +2575,7 @@ fn preference_replay_reads_only_its_completed_sql_target() {
     store.receiveOperations(std::slice::from_ref(&pending)).unwrap();
     // An all-history scan would try to parse these unrelated headers and fail.
     store.withJournal(|journal| journal.transaction(|tx| {
-        tx.execute("UPDATE originals SET header='not a JSON header' WHERE target<>?1", vec![crate::SqliteStore::SqliteValue::Text(path.into())])?;
+        tx.execute("UPDATE originals SET header='not a JSON header' WHERE target<>?1", vec![operit_host_api::SqliteValue::Text(path.into())])?;
         Ok(())
     })).unwrap();
     for _ in 0..3 {
@@ -2669,4 +2669,21 @@ fn direct_allocator_skips_reserved_preference_id() {
     assert_eq!(direct.sequence, 2);
     let next = journal.withJournal(|j|j.reserve("allocator-test:preferences", mutation())).unwrap();
     assert_eq!(next.sequence, 3);
+}
+
+/// Blob fingerprints and header checks must also work in builds without SQL owner features.
+#[test]
+fn initialization_blob_identity_and_header_checks_are_shared_by_lightweight_builds() {
+    let host=Arc::new(MemoryStorageHost::default());
+    let store=SyncOperationStore::new(host.clone(),"blob-compat");
+    let original=operation(1,"initialization","runtime/config/test.json","initialize",SyncOperationSemantics::Transaction,json!({"data":"中文\\\""}));
+    let bytes=serde_json::to_vec(&original).unwrap();
+    let hash=crate::Transaction::digest(&original).unwrap();
+    host.writeBytes(&format!("blob-compat/blobs/{hash}"),&bytes).unwrap();
+    let wire=original.with_payload(json!({"transactionBlob":{"contentHash":hash,"size":bytes.len()}}));
+    assert_eq!(crate::Transaction::operation_digest(&original).unwrap(),crate::Transaction::operation_digest(&wire).unwrap());
+    let mut forged=wire.clone();forged.entityId="runtime/other.json".into();
+    assert!(store.receiveOperations(&[forged]).is_err());
+    store.receiveOperations(&[wire.clone()]).unwrap();
+    assert_eq!(store.pendingOperations().unwrap(),vec![wire]);
 }

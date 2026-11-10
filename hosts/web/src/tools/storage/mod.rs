@@ -38,6 +38,10 @@ impl WebRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for WebRuntimeStorageHost {
+    fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_api::RuntimeStorageWriteSession>>> {
+        Ok(Some(operit_host_api::RuntimeStorageWriteHost::createWriteSession(self, path)?))
+    }
+
     fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
         RuntimeSqliteHost::openSqliteDatabase(self, path)
     }
@@ -207,6 +211,7 @@ impl HostSecretStore for WebRuntimeStorageHost {
 }
 
 impl RuntimeSqliteHost for WebRuntimeStorageHost {
+    fn runtimeStorage(&self)->Option<std::sync::Arc<dyn RuntimeStorageHost>> { Some(std::sync::Arc::new(self.clone())) }
     fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
         let id = call_sqlite("open", &[JsValue::from_str(path)])?;
         Ok(Box::new(WebRuntimeSqliteConnection {
@@ -221,30 +226,37 @@ struct WebRuntimeSqliteConnection {
 
 unsafe impl Send for WebRuntimeSqliteConnection {}
 
-impl RuntimeSqliteConnection for WebRuntimeSqliteConnection {
-    fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
-        call_sqlite(
-            "executeBatch",
-            &[JsValue::from_str(&self.id), JsValue::from_str(sql)],
-        )?;
-        Ok(())
+// Connection and transaction calls share the same bridge conversion and bounded query fallback.
+macro_rules! sqlite_access {
+    ($execute:literal, $query:literal, $rowid:literal) => {
+    // Byte-oriented SQL reads preserve old TEXT checkpoints on hosts without SQLite's BLOB API.
+    fn columnSize(&mut self, table:&str, column:&str, row:i64)->HostResult<usize> {
+        let sql=format!("SELECT length(CAST(\"{}\" AS BLOB)) FROM \"{}\" WHERE rowid=?1",column.replace('"',"\"\""),table.replace('"',"\"\""));
+        let rows=self.query(&sql,vec![SqliteValue::Integer(row)])?;
+        usize::try_from(rows.first().ok_or_else(||operit_host_api::HostError::new("Missing SQLite column row"))?.valueAt(0)?.asI64()?).map_err(|e|operit_host_api::HostError::new(e.to_string()))
+    }
+    fn readColumnRange(&mut self, table:&str, column:&str, row:i64, offset:usize, length:usize)->HostResult<Vec<u8>> {
+        let start=i64::try_from(offset).ok().and_then(|v|v.checked_add(1)).ok_or_else(||operit_host_api::HostError::new("SQLite column offset exceeds i64"))?;
+        let sql=format!("SELECT substr(CAST(\"{}\" AS BLOB),?2,?3) FROM \"{}\" WHERE rowid=?1",column.replace('"',"\"\""),table.replace('"',"\"\""));
+        let rows=self.query(&sql,vec![SqliteValue::Integer(row),SqliteValue::Integer(start),SqliteValue::Integer(length.min(64*1024) as i64)])?;
+        match rows.into_iter().next().and_then(|row|row.values.into_iter().next()) { Some(SqliteValue::Blob(bytes))=>Ok(bytes),_=>Err(operit_host_api::HostError::new("Missing SQLite column bytes")) }
     }
 
     fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
         let value = call_sqlite(
-            "execute",
+            $execute,
             &[
                 JsValue::from_str(&self.id),
                 JsValue::from_str(sql),
                 sqlite_params_to_js(params),
             ],
         )?;
-        js_usize(value, "sqlite.execute")
+        js_usize(value, $execute)
     }
 
     fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>> {
         let value = call_sqlite(
-            "query",
+            $query,
             &[
                 JsValue::from_str(&self.id),
                 JsValue::from_str(sql),
@@ -255,9 +267,23 @@ impl RuntimeSqliteConnection for WebRuntimeSqliteConnection {
     }
 
     fn lastInsertRowId(&self) -> HostResult<i64> {
-        let value = call_sqlite("lastInsertRowId", &[JsValue::from_str(&self.id)])?;
-        js_i64(value, "sqlite.lastInsertRowId")
+        let value = call_sqlite($rowid, &[JsValue::from_str(&self.id)])?;
+        js_i64(value, $rowid)
     }
+
+    };
+}
+
+impl RuntimeSqliteConnection for WebRuntimeSqliteConnection {
+    fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
+        call_sqlite(
+            "executeBatch",
+            &[JsValue::from_str(&self.id), JsValue::from_str(sql)],
+        )?;
+        Ok(())
+    }
+
+    sqlite_access!("execute", "query", "lastInsertRowId");
 
     fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>> {
         let id = call_sqlite("beginTransaction", &[JsValue::from_str(&self.id)])?;
@@ -274,34 +300,7 @@ struct WebRuntimeSqliteTransaction {
 unsafe impl Send for WebRuntimeSqliteTransaction {}
 
 impl RuntimeSqliteTransaction for WebRuntimeSqliteTransaction {
-    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
-        let value = call_sqlite(
-            "transactionExecute",
-            &[
-                JsValue::from_str(&self.id),
-                JsValue::from_str(sql),
-                sqlite_params_to_js(params),
-            ],
-        )?;
-        js_usize(value, "sqlite.transactionExecute")
-    }
-
-    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>> {
-        let value = call_sqlite(
-            "transactionQuery",
-            &[
-                JsValue::from_str(&self.id),
-                JsValue::from_str(sql),
-                sqlite_params_to_js(params),
-            ],
-        )?;
-        js_rows(value)
-    }
-
-    fn lastInsertRowId(&self) -> HostResult<i64> {
-        let value = call_sqlite("transactionLastInsertRowId", &[JsValue::from_str(&self.id)])?;
-        js_i64(value, "sqlite.transactionLastInsertRowId")
-    }
+    sqlite_access!("transactionExecute", "transactionQuery", "transactionLastInsertRowId");
 
     fn commit(self: Box<Self>) -> HostResult<()> {
         call_sqlite("commitTransaction", &[JsValue::from_str(&self.id)])?;

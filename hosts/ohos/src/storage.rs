@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use operit_host_api::{
-    HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageEntry, RuntimeStorageHost,
-};
+use operit_host_api::{HostResult};
 use operit_host_native_common::NativeRuntimeStorageHost;
 
 #[derive(Clone, Debug)]
@@ -10,82 +8,13 @@ pub struct OhosRuntimeStorageHost {
     inner: NativeRuntimeStorageHost,
 }
 
+operit_host_api::delegate_runtime_storage!(OhosRuntimeStorageHost, inner);
+
 impl OhosRuntimeStorageHost {
     /// Creates the OpenHarmony runtime storage host with app-owned roots.
     pub fn new(runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
         Self {
             inner: NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot),
         }
-    }
-}
-
-impl RuntimeStorageHost for OhosRuntimeStorageHost {
-    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
-        RuntimeSqliteHost::openSqliteDatabase(self, path)
-    }
-
-    /// Returns the OpenHarmony runtime storage physical root.
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        self.inner.runtimeRootDir()
-    }
-
-    /// Returns the OpenHarmony workspace storage physical root.
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        self.inner.workspaceRootDir()
-    }
-
-    /// Reads bytes from OpenHarmony runtime storage.
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        self.inner.readBytes(path)
-    }
-
-    /// Reads one bounded byte range from OpenHarmony runtime storage.
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        self.inner.readBytesRange(path, offset, length)
-    }
-
-    /// Writes bytes into OpenHarmony runtime storage.
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.inner.writeBytes(path, content)
-    }
-
-    /// Reads the source file modification time through the shared storage host.
-    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.inner.modifiedAt(path) }
-    /// Preserves source metadata through the shared storage host.
-    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> { self.inner.setModifiedAt(path, modifiedAt) }
-
-    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.inner.writeBytesAtomically(path, content)
-    }
-
-    fn flushFile(&self, path: &str) -> HostResult<()> {
-        self.inner.flushFile(path)
-    }
-
-    /// Appends bytes to OpenHarmony runtime storage.
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.inner.appendBytes(path, content)
-    }
-
-    /// Deletes an OpenHarmony runtime storage entry.
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        self.inner.delete(path, recursive)
-    }
-
-    /// Checks whether an OpenHarmony runtime storage entry exists.
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        self.inner.exists(path)
-    }
-
-    /// Lists OpenHarmony runtime storage entries.
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        self.inner.list(prefix)
-    }
-}
-
-impl RuntimeSqliteHost for OhosRuntimeStorageHost {
-    /// Opens an OpenHarmony SQLite database under runtime storage.
-    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        self.inner.openSqliteDatabase(path)
     }
 }

@@ -663,3 +663,80 @@ fn indexed_preference_retirement_rolls_back_and_preserves_other_authors() {
     forged.payload = json!("forged");
     assert!(fixture.store.transaction(|tx| Ok(record_preference(tx.raw(), &forged, &second)?)).is_err());
 }
+
+/// The allocation-free identity check must accept exactly the former canonical representation.
+#[test]
+fn initialization_validation_preserves_canonical_identity() {
+    use sha2::Digest;
+    let data = Data::empty(super::super::Owner { backend: super::super::Backend::Sql, path: "runtime/probe.db".into(), format: 1, layout: 1 });
+    let original = Initialization { data, covered: BTreeSet::from(["a:1".into(),"b:2".into()]), definition: None }.operation("plugin_storage",false).unwrap();
+    let mut variants = vec![original.clone()];
+    for pointer in ["/initialization/data/versions", "/initialization/data/additions", "/initialization/data/owner/layout", "/encrypted"] {
+        let mut changed = original.clone();
+        *changed.payload.pointer_mut(pointer).unwrap() = serde_json::Value::Null;
+        variants.push(changed);
+    }
+    let mut changed = original.clone(); changed.payload["initialization"]["unknown"] = json!(true); variants.push(changed);
+    let mut changed = original.clone(); changed.payload["initialization"]["data"]["unknown"] = json!(true); variants.push(changed);
+    let mut changed = original.clone(); changed.payload["initialization"]["covered"] = json!(["b:2","a:1","a:1"]); variants.push(changed);
+    for mut operation in variants {
+        // Re-sign malformed payloads too, to exercise schema canonicalization rather than just hashing.
+        operation.originDeviceId = format!("~init:{}", digest(&(&operation.domain,&operation.payload)).unwrap());
+        operation.opId = format!("{}:1",operation.originDeviceId);
+        let old = serde_json::from_value::<Initialization>(operation.payload["initialization"].clone()).ok()
+            .and_then(|value|value.operation(&operation.domain,operation.payload["encrypted"] == true).ok()) == Some(operation.clone());
+        assert_eq!(Initialization::decode(&operation).is_ok(), old, "{}", operation.payload);
+        assert_eq!(digest(&operation).unwrap(), format!("{:x}",sha2::Sha256::digest(serde_json::to_vec(&operation).unwrap())));
+    }
+}
+
+#[test]
+fn disk_initializers_preserve_bytes_migrate_old_text_and_reject_changed_envelopes() {
+    use super::super::{Backend, Owner, SqlDataset};
+    use crate::RuntimeFileSyncStore::RuntimeFileSyncStore;
+    for checkpoint in [false, true] {
+        let fixture = Fixture::new();
+        fixture.store.executeBatch("CREATE TABLE business(id INTEGER PRIMARY KEY,value TEXT)").unwrap();
+        fixture.store.execute("INSERT INTO business VALUES(1,?1)",vec![SqliteValue::Text("中文\\\"\n".repeat(8192))]).unwrap();
+        let owner = SqlDataset { store:&fixture.store, owner:Owner { backend:Backend::Sql,
+            path:"runtime/compaction.sqlite".into(),format:1,layout:1 },node:"probe".into(),tables:&["business"],
+            revisions:"SELECT 'peer:1',1,'peer',1",cleanup:"",restore_schema:None };
+        let snapshot = owner.snapshot().unwrap();
+        let mut eager = snapshot.clone();
+        eager.data = serde_json::from_slice(&serde_json::to_vec(&snapshot.data).unwrap()).unwrap();
+        let original = Initialization::from_snapshot(&eager).operation("plugin_storage",false).unwrap();
+        let wire = Initialization::from_snapshot(&snapshot).operation("plugin_storage",false).unwrap();
+        let reference = RuntimeFileSyncStore::requiredBlob(&wire).unwrap().unwrap();
+        assert_eq!(reference.contentHash,digest(&original).unwrap());
+        let files = RuntimeFileSyncStore::new(fixture.store.storage.clone().unwrap(),"runtime/sync");
+        assert_eq!(files.readSqlInitialization(&wire).unwrap().data,eager.data);
+        let mut forged = wire.clone(); forged.entityId = "runtime/other.sqlite".into();
+        assert!(crate::SyncBlobIo::verify_initialization(fixture.store.storage.as_ref().unwrap().as_ref(),"runtime/sync",&forged).is_err());
+        assert!(files.readSqlInitialization(&forged).is_err());
+        // An unverified pending envelope must be replaceable after its blob arrives.
+        let storage = fixture.store.storage.as_ref().unwrap();
+        let path = files.blobStoragePath(&reference).unwrap();
+        let bytes = storage.readBytes(&path).unwrap();
+        storage.delete(&path,false).unwrap();
+        let journal = crate::SyncOperationStore::SyncOperationStore::new(storage.clone(),"runtime/sync");
+        journal.receiveOperations(&[forged]).unwrap();
+        files.writeBlob(&reference,&bytes).unwrap();
+        journal.receiveOperations(&[wire.clone()]).unwrap();
+        assert_eq!(journal.pendingOperations().unwrap(),vec![wire.clone()]);
+        if checkpoint {
+            fixture.store.executeBatch("CREATE TABLE _operit_transaction_checkpoint(id INTEGER PRIMARY KEY,snapshot TEXT)").unwrap();
+            fixture.store.execute("INSERT INTO _operit_transaction_checkpoint VALUES(1,?1)",vec![text(&serde_json::to_string(&eager).unwrap())]).unwrap();
+        } else {
+            fixture.store.transaction(|tx| save_initialization(tx,&original,&eager.covered,&eager.data)).unwrap();
+            fixture.store.executeBatch("DELETE FROM _operit_initialization_metadata; UPDATE _operit_compacted SET fingerprint='corrupt'").unwrap();
+            assert!(owner.snapshot().is_err());
+            fixture.store.execute("UPDATE _operit_compacted SET fingerprint=?1",vec![text(&digest(&original).unwrap())]).unwrap();
+        }
+        assert_eq!(owner.snapshot().unwrap().data,eager.data);
+        let migrated = owner.initialization().unwrap().unwrap();
+        assert_eq!(migrated,wire);
+        assert!(fixture.store.queryOne("SELECT 1 FROM sqlite_master WHERE name='_operit_transaction_checkpoint'",vec![]).unwrap().is_none());
+        drop(snapshot);
+        assert!(fixture.store.storage.as_ref().unwrap().list("runtime/sync/staging").unwrap().is_empty());
+    }
+}

@@ -12,7 +12,7 @@ export type QueryResult = MemoryQueryResult;
 export interface LinkInfo { linkId: string; sourceTitle: string; targetTitle: string; linkType: string; weight: number; description: string }
 interface GraphMemory { id: string; uuid: string; title: string }
 interface MemoryGraphSnapshot { memories: GraphMemory[]; links: LinkRecord[] }
-interface Snapshot { seen: Set<string>; access: number }
+interface Snapshot { seen: Set<string>; access: number; pending: Promise<void> }
 /** Owns ephemeral pagination only; all records and mutations remain in the main file repository. */
 export class MemoryTools {
   private readonly snapshots = new Map<string, Map<string, Snapshot>>();
@@ -104,7 +104,7 @@ export class MemoryTools {
     const id = requested === undefined ? "memory-query-" + (++this.nextSnapshot) : requested;
     if (id.trim() === "") throw new Error("snapshot_id must not be blank");
     let state = snapshots.get(id); const created = state === undefined;
-    if (state === undefined) { state = { seen: new Set(), access: ++this.access }; snapshots.set(id, state); }
+    if (state === undefined) { state = { seen: new Set(), access: ++this.access, pending: Promise.resolve() }; snapshots.set(id, state); }
     state.access = ++this.access;
     while (snapshots.size > 32) {
       let oldestKey: string | undefined, oldest = Infinity;
@@ -220,7 +220,7 @@ export class MemoryTools {
     /** Excludes empty tag entries as declared by the tool contract. */
     tag => tag !== "",
   ); }
-  /** Searches full records and commits snapshot exclusions only after document queries succeed. */
+  /** Serializes each snapshot through search and successful document projection before recording exclusions. */
   private async query(ownerKey: string, input: ToolParameters): Promise<QueryResult> {
     const query = requiredText(input, "query"), count = limit(input, 20);
     const threshold = optionalNumber(input, "threshold"), folder = optionalText(input, "folder_path");
@@ -228,35 +228,47 @@ export class MemoryTools {
     const start = timeBoundary(input, "start_time"), end = timeBoundary(input, "end_time");
     if (start !== null && end !== null && start > end) throw new Error("start_time must not be after end_time");
     const snapshot = this.snapshot(ownerKey, optionalText(input, "snapshot_id"));
-    const excludeIds = [...snapshot.state.seen].map(/** Removes the exact selected owner namespace. */ identity => identity.slice(ownerKey.length + 1));
-    const result = await this.domain("memory.searchWithOptions", { ownerKey, query, limit: count, excludeIds,
-      folderPath: folder === undefined ? null : folder, relevanceThreshold: threshold === undefined ? MEMORY_SEARCH_THRESHOLD : threshold,
-      createdAtStartMs: start, createdAtEndMs: end });
-    if (result.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
-    const returned = result.items;
-    const memories: MemoryInfo[] = [];
-    for (const memory of returned) {
-      const info = this.info(ownerKey, memory);
-      if (memory.isDocumentNode) {
-        const document = result.documents.find(/** Resolves the selected document's database results. */ item => item.memoryId === memory.id);
-        if (document === undefined) throw new Error("Memory search omitted a selected document's chunks");
-        const { total, chunks } = document;
-        info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
-        if (chunks.length !== 0) {
-          info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
-            /** Displays the original one-based document positions. */
-            chunk => chunk.chunkIndex + 1,
-          ).join(", ") + "/" + total;
-          info.chunkIndices = chunks.map(
-            /** Retains zero-based persisted indices for subsequent selectors. */
-            chunk => chunk.chunkIndex,
-          );
+    // The repository limits pages before returning them, so lock before reading
+    // exclusions to let concurrent callers receive different, fully filled pages.
+    const previous = snapshot.state.pending;
+    let release!: () => void;
+    snapshot.state.pending = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      const excludeIds = [...snapshot.state.seen].map(/** Removes the exact selected owner namespace. */ identity => identity.slice(ownerKey.length + 1));
+      const result = await this.domain("memory.searchWithOptions", { ownerKey, query, limit: count, excludeIds,
+        folderPath: folder === undefined ? null : folder, relevanceThreshold: threshold === undefined ? MEMORY_SEARCH_THRESHOLD : threshold,
+        createdAtStartMs: start, createdAtEndMs: end });
+      if (result.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
+      const returned = result.items;
+      const memories: MemoryInfo[] = [];
+      for (const memory of returned) {
+        const info = this.info(ownerKey, memory);
+        if (memory.isDocumentNode) {
+          const document = result.documents.find(/** Resolves the selected document's database results. */ item => item.memoryId === memory.id);
+          if (document === undefined) throw new Error("Memory search omitted a selected document's chunks");
+          const { total, chunks } = document;
+          info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
+          if (chunks.length !== 0) {
+            info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
+              /** Displays the original one-based document positions. */
+              chunk => chunk.chunkIndex + 1,
+            ).join(", ") + "/" + total;
+            info.chunkIndices = chunks.map(
+              /** Retains zero-based persisted indices for subsequent selectors. */
+              chunk => chunk.chunkIndex,
+            );
+          }
         }
+        memories.push(info);
       }
-      memories.push(info);
+      for (const memory of returned) snapshot.state.seen.add(ownerKey + ":" + memory.id);
+      snapshot.state.access = ++this.access;
+      return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: result.excludedBySnapshotCount };
+    } finally {
+      // A rejected search must neither consume memory IDs nor strand later calls.
+      release();
     }
-    for (const memory of returned) snapshot.state.seen.add(ownerKey + ":" + memory.id);
-    return { memories, snapshotId: snapshot.id, snapshotCreated: snapshot.created, excludedBySnapshotCount: result.excludedBySnapshotCount };
   }
   /** Reads an exact title or validates the original one-based document query/index/range parameters. */
   private async byTitle(ownerKey: string, input: ToolParameters): Promise<QueryResult | string> {

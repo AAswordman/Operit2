@@ -237,9 +237,15 @@ struct JournalSecrets { imported: BTreeMap<String, String>, previous: BTreeMap<S
 impl NativeRescueHost {
     /// Removes interrupted archive transfers from the exact Host-owned staging namespaces.
     fn cleanup_abandoned_archives(&self) -> Result<(), String> {
-        for parent in [&self.application, &self.roots["runtime"], &self.roots["runtime"].join("identities")] {
+        let runtime = &self.roots["runtime"];
+        let runtimeParent = runtime.parent().ok_or("Runtime root has no parent")?;
+        let parents = BTreeSet::from([
+            self.application.as_path(), runtimeParent, runtime.as_path(),
+        ]);
+        for parent in parents {
             NativeArchiveStagingHost::cleanupAbandonedArchivesForRuntimeParent(parent).map_err(text)?;
         }
+        NativeArchiveStagingHost::cleanupAbandonedArchivesForRuntimeParent(&runtime.join("identities")).map_err(text)?;
         Ok(())
     }
 

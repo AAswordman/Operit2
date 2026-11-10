@@ -1,95 +1,24 @@
 use std::path::PathBuf;
 
-use operit_host_api::{
-    HostResult, HostSecretStore, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageEntry,
-    RuntimeStorageHost,
-};
+use operit_host_api::{HostResult, HostSecretStore};
 
 #[derive(Clone, Debug)]
 pub struct AndroidRuntimeStorageHost {
-    runtimeRoot: PathBuf,
-    workspaceRoot: PathBuf,
     inner: operit_host_native_common::NativeRuntimeStorageHost,
 }
+
+operit_host_api::delegate_runtime_storage!(AndroidRuntimeStorageHost, inner);
 
 impl AndroidRuntimeStorageHost {
     /// Creates an Android runtime storage host with explicit runtime and workspace roots.
     #[allow(non_snake_case)]
     pub fn new(runtimeRoot: PathBuf, workspaceRoot: PathBuf) -> Self {
         Self {
-            runtimeRoot: runtimeRoot.clone(),
-            workspaceRoot: workspaceRoot.clone(),
             inner: operit_host_native_common::NativeRuntimeStorageHost::new(
                 runtimeRoot,
                 workspaceRoot,
             ),
         }
-    }
-}
-
-impl RuntimeStorageHost for AndroidRuntimeStorageHost {
-    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
-        RuntimeSqliteHost::openSqliteDatabase(self, path)
-    }
-
-    /// Returns the Android runtime files root directory.
-    #[allow(non_snake_case)]
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        Some(self.runtimeRoot.clone())
-    }
-
-    /// Returns the Android workspace collection root directory.
-    #[allow(non_snake_case)]
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        Some(self.workspaceRoot.clone())
-    }
-
-    /// Reads bytes from Android runtime storage.
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        self.inner.readBytes(path)
-    }
-
-    /// Reads one bounded byte range from Android runtime storage.
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        self.inner.readBytesRange(path, offset, length)
-    }
-
-    /// Writes bytes into Android runtime storage.
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.inner.writeBytes(path, content)
-    }
-
-    /// Reads the source file modification time through the shared storage host.
-    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.inner.modifiedAt(path) }
-    /// Preserves source metadata through the shared storage host.
-    fn setModifiedAt(&self, path: &str, modifiedAt: i64) -> HostResult<()> { self.inner.setModifiedAt(path, modifiedAt) }
-
-    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.inner.writeBytesAtomically(path, content)
-    }
-
-    fn flushFile(&self, path: &str) -> HostResult<()> {
-        self.inner.flushFile(path)
-    }
-
-    /// Appends bytes to Android runtime storage.
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        self.inner.appendBytes(path, content)
-    }
-
-    /// Deletes an entry from Android runtime storage.
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        self.inner.delete(path, recursive)
-    }
-
-    /// Checks whether an Android runtime storage path exists.
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        self.inner.exists(path)
-    }
-
-    /// Lists entries under an Android runtime storage prefix.
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        self.inner.list(prefix)
     }
 }
 
@@ -137,12 +66,5 @@ impl HostSecretStore for AndroidRuntimeStorageHost {
                 "Android host secret store is available on Android targets",
             ))
         }
-    }
-}
-
-impl RuntimeSqliteHost for AndroidRuntimeStorageHost {
-    /// Opens an SQLite database under Android runtime storage.
-    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        self.inner.openSqliteDatabase(path)
     }
 }
