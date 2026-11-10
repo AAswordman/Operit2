@@ -21,6 +21,7 @@ class DeviceBridge extends JoinBridge {
   Completer<Uint8List>? discovery;
   Map<String, Object?>? discoveryArgs;
   Map<String, Object?>? pairingArgs;
+  Completer<Uint8List>? pairingResponse;
   Map<String, Object?>? finishArgs;
   List<Map<String, Object?>> peers = [
     {
@@ -42,6 +43,7 @@ class DeviceBridge extends JoinBridge {
       case 'startPairing':
         calls.add(request.methodName);
         pairingArgs = Map<String, Object?>.from(request.args as Map);
+        if (pairingResponse != null) return pairingResponse!.future;
         return encodeCoreLink([
           0,
           {
@@ -227,6 +229,44 @@ void main() {
     expect(find.text('暂未发现附近设备'), findsOneWidget);
     await dispose(tester, bridge);
   });
+  testWidgets(
+    'discovered pairing shows activity and recovers from a handshake timeout',
+    (tester) async {
+      final pending = Completer<Uint8List>();
+      final bridge = DeviceBridge()..pairingResponse = pending;
+      await mount(tester, bridge);
+      await tester.tap(find.text('添加设备'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('我的 iPhone'));
+      await tester.pump();
+      expect(find.text('正在连接'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('完成连接'), findsNothing);
+      expect(bridge.calls, isNot(contains('requestDeviceSpaceJoin')));
+
+      pending.completeError(
+        StateError('PAIRING_TIMEOUT: Pairing hello timed out'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Pairing hello timed out'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.widgetWithIcon(IconButton, Icons.refresh_rounded),
+            )
+            .onPressed,
+        isNotNull,
+      );
+
+      bridge.pairingResponse = null;
+      await tester.tap(find.text('我的 iPhone'));
+      await tester.pumpAndSettle();
+      expect(find.text('完成连接'), findsOneWidget);
+      await dispose(tester, bridge);
+    },
+  );
+
   testWidgets('address entry returns to the redesigned dialog on cancel', (
     tester,
   ) async {

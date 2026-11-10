@@ -28,7 +28,7 @@ pub(crate) struct ProjectionProtocol {
 impl ProjectionProtocol {
     /// Validates peer identity and the explicitly advertised projection capabilities.
     pub fn validate(&self, peer: &str) -> Result<(), String> {
-        crate::PeerProtocol::PeerProtocol::requireAdvertised(self.protocol.as_ref()).map_err(|error| error.to_string())?;
+        crate::PeerProtocol::PeerProtocol::requireAdvertised(self.protocol.as_ref(), "space projection reply").map_err(|error| error.to_string())?;
         if self.version != VERSION || self.nodeId != peer || self.authorityMode != "localReplay"
             || self.maxMessageBytes <= ENVELOPE_BYTES || (self.endpoint && !self.snapshotPaging)
             || (self.projectionReference && !self.snapshotPaging) {

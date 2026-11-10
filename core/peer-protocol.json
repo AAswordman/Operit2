@@ -95,6 +95,10 @@
     {
       "version": 14,
       "hash": "6e5c06e42dfc8d5b5be8737246dfb4dc3a9d706cc00ef302086b242317359794"
+    },
+    {
+      "version": 15,
+      "hash": "6e1cd3450e8812471bfd25830cf769c1ce2e2181387b3b1a1357ea259952e80d"
     }
   ],
   "schemaRoots": [

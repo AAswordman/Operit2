@@ -7,6 +7,7 @@ import 'SpaceJoinWidgets.dart';
 import 'PeerQrCodeDialog.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/logging/ClientLogger.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../core/runtime/PeerEndpointTransport.dart';
@@ -328,7 +329,19 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
           if (mounted) Navigator.pop(context);
         }
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
+      if (ClientLogger.isInitialized) {
+        ClientLogger.w(
+          'Pairing failed source=${connectionCode != null
+              ? 'qr'
+              : peer != null
+              ? 'discovery'
+              : 'address'} target=${peer?.nodeId ?? 'from-input'}',
+          tag: 'DeviceSpacePairing',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       if (mounted) setState(() => _error = error.toString());
     } finally {
       _setBusy(false);
@@ -627,6 +640,23 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             ),
           ),
           SliverToBoxAdapter(child: _qrActions(l10n)),
+          if (_busy && (ModalRoute.of(context)?.isCurrent ?? true))
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(l10n.backgroundWorkConnecting)),
+                  ],
+                ),
+              ),
+            ),
           if (_error != null)
             SliverToBoxAdapter(child: _buildError(context, _error!)),
           if (_discoveryError != null)
