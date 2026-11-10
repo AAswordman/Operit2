@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.image_workbench",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "生图工作台",
+    "en": "Image Workbench"
+  },
+  "description": {
+    "zh": "在一个工作台中使用 OpenAI、通义千问、智谱、xAI、MiniMax 和 Nano Banana，配置密钥、文生图、参考图生图和查看生成结果。",
+    "en": "One workbench for OpenAI, Qwen, Zhipu, xAI, MiniMax and Nano Banana, with provider settings, generation and previews."
+  },
+  "logo": "package_logo",
+  "enabled_by_default": true,
+  "subpackages": [
+    {
+      "id": "image_workbench",
+      "entry": "dist/tools.js"
+    }
+  ],
+  "resources": [
+    {
+      "key": "package_logo",
+      "path": "resources/logo.svg",
+      "mime": "image/svg+xml"
+    }
+  ]
+}
