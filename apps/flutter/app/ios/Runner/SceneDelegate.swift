@@ -9,12 +9,27 @@ class SceneDelegate: FlutterSceneDelegate {
   ) {
     AppleRuntimeChannel.dataRescueRequested = connectionOptions.shortcutItem?.type == "app.operit.data-rescue"
     super.scene(scene, willConnectTo: session, options: connectionOptions)
+    AppleIncomingFileChannel.receive(connectionOptions.urlContexts.filter { $0.url.isFileURL }.map(\.url))
     if let controller = window?.rootViewController as? FlutterViewController {
       AppleSnapshotImportInputChannel.register(
         binaryMessenger: controller.binaryMessenger,
         presenter: controller
       )
     }
+  }
+
+  /// Imports files opened from Files, Mail, and other document providers while running.
+  override func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    let files = URLContexts.filter { $0.url.isFileURL }
+    AppleIncomingFileChannel.receive(files.map(\.url))
+    let other = URLContexts.subtracting(files)
+    if !other.isEmpty { super.scene(scene, openURLContexts: other) }
+  }
+
+  /// Delivers files committed by the share extension while the main app was inactive.
+  override func sceneDidBecomeActive(_ scene: UIScene) {
+    super.sceneDidBecomeActive(scene)
+    AppleIncomingFileChannel.refresh()
   }
 
   /// Makes a warm shortcut explicit instead of silently routing the running business UI.

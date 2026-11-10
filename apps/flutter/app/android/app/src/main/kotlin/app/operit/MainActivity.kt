@@ -24,6 +24,7 @@ class MainActivity : FlutterActivity() {
     private lateinit var ownerSystem: OwnerSystemCapabilityChannel
     private lateinit var runtimeRouter: RuntimeMethodChannelRouter
     private lateinit var nativeCrashChannel: NativeCrashChannel
+    private lateinit var incomingFileChannel: IncomingFileChannel
     private var pendingNotificationActivation: Map<String, String>? = null
     private var notificationActivationReceiverReady = false
 
@@ -32,6 +33,7 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
         activeActivity = this
         recordNotificationActivation(intent)
+        incomingFileChannel.receive(intent)
         requestHighestRefreshRate()
     }
 
@@ -66,9 +68,11 @@ class MainActivity : FlutterActivity() {
         runtimeRouter.configure(flutterEngine.dartExecutor.binaryMessenger)
         nativeCrashChannel = NativeCrashChannel(this)
         nativeCrashChannel.configure(flutterEngine.dartExecutor.binaryMessenger)
+        incomingFileChannel = IncomingFileChannel(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        if (::incomingFileChannel.isInitialized) incomingFileChannel.clear()
         try {
             if (::ownerSystem.isInitialized) {
                 ownerSystem.release()
@@ -107,6 +111,7 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         recordNotificationActivation(intent)
+        incomingFileChannel.receive(intent)
     }
 
     /** Rejects accidental local runtime creation from a module client process. */

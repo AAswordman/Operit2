@@ -14,6 +14,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../common/contributions/ChatSidebarTabHost.dart'
     show ChatSidebarPreparation, ChatSidebarPreparationScope;
 import '../../../core/notifications/NotificationActivationService.dart';
+import '../../../core/host/IncomingAttachmentService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../features/chat/components/NewChatIntro.dart';
@@ -118,6 +119,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     unawaited(_initializeDrawerData());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        IncomingAttachmentService.instance.installNavigation(
+          _activateConversationRoute,
+        );
         unawaited(_initializeDesktopWidgets());
       }
     });
@@ -301,6 +305,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     AppRouterGateway.clear();
     AppRouteDiscoveryGateway.clear();
     NotificationActivationService.instance.clearChatHandler();
+    IncomingAttachmentService.instance.clearNavigation();
     _toolPkgCatalogChangeSubscription?.cancel();
     _drawerHistoriesSubscription?.cancel();
     _drawerCurrentChatSubscription?.cancel();

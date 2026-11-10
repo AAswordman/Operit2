@@ -24,6 +24,8 @@ flutter:
         package: app.operit.folder_access
         pluginClass: OperitFolderAccessPlugin
         dartPluginClass: OperitFolderAccessAndroid
+      ios:
+        dartPluginClass: OperitFolderAccessIOS
       macos:
         pluginClass: OperitFolderAccessPlugin
         dartPluginClass: OperitFolderAccessMacOS

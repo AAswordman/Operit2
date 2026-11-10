@@ -11,6 +11,7 @@ import 'package:mime/mime.dart';
 
 import '../../../../core/application/PluginHotReload.dart';
 import '../../../../core/host/SelectedFileInput.dart';
+import '../../../../core/host/IncomingAttachmentService.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -418,6 +419,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _topBarController = TopBarScope.of(context);
     _mainLayoutController = MainLayoutScope.of(context);
     _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
+    _updateIncomingAttachmentReceiver();
     if (_isCurrentMainScreen) {
       _scheduleTopBarActionsUpdate();
     } else {
@@ -430,6 +432,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   /// Releases chat state and subscriptions.
   @override
   void dispose() {
+    IncomingAttachmentService.instance.clearComposer(this);
     _saveCurrentInputDraft();
     ChatSelectionTransition.requests.removeListener(_onChatSelectionTransition);
     PendingChatDraftHandler.revision.removeListener(_consumePendingChatDraft);
@@ -1364,6 +1367,49 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     await _refreshAttachments();
   }
 
+  /// Binds external delivery only after the selected main conversation is ready.
+  void _updateIncomingAttachmentReceiver() {
+    if (widget.embedded ||
+        !_isCurrentMainScreen ||
+        _isPreparingChatSwitch ||
+        _currentChatId == null ||
+        _requestedChatFlowChatId != _currentChatId ||
+        _chatFlowError != null) {
+      IncomingAttachmentService.instance.clearComposer(this);
+      return;
+    }
+    IncomingAttachmentService.instance.installComposer(
+      this,
+      _handleIncomingFiles,
+    );
+  }
+
+  /// Attaches a share batch to the captured conversation using the drop upload path.
+  Future<void> _handleIncomingFiles(List<SelectedFileInput> files) async {
+    final chatId = _currentChatId;
+    final generation = _chatSelectionGeneration;
+    /// Cancels the captured batch when its owning surface or selection expires.
+    bool cancelled() => !mounted || generation != _chatSelectionGeneration;
+    for (final file in files) {
+      try {
+        await _viewModel.attachSelectedFile(
+          file,
+          expectedChatId: chatId,
+          isCancelled: cancelled,
+        );
+      } catch (error, stack) {
+        ClientLogger.e(
+          'Failed to attach shared file ${file.name}',
+          tag: 'AIChatScreen',
+          error: error,
+          stackTrace: stack,
+        );
+        if (mounted) _showLocalToast('无法添加附件 ${file.name}: $error');
+      }
+    }
+    if (mounted) await _refreshAttachments();
+  }
+
   /// Adds pasted image payloads to the current attachment list.
   Future<void> _handlePastedImages(
     List<PastedImageAttachmentPayload> images,
@@ -1593,6 +1639,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     }
     _hasBoundChatFlow = true;
     _requestedChatFlowChatId = chatId;
+    IncomingAttachmentService.instance.clearComposer(this);
     _chatSelectionGeneration += 1;
     _clearChatFlowError();
     final generation = ++_chatFlowBindingGeneration;
@@ -1744,6 +1791,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           _isPreparingChatSwitch = false;
         });
       }
+      _updateIncomingAttachmentReceiver();
       return;
     }
     if (request.generation != _lastChatSelectionTransitionGeneration) {
@@ -1762,6 +1810,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _isMultiSelectMode = false;
       _selectedMessageTimestamps = const <int>{};
     });
+    _updateIncomingAttachmentReceiver();
   }
 
   /// Applies one routed chat-state change without replacing the message window.
@@ -1821,6 +1870,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
     }
     _syncPendingQueueAfterSnapshot();
+    _updateIncomingAttachmentReceiver();
   }
 
   /// Clears the terminal error owned by the active chat-flow binding.
@@ -1852,6 +1902,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         ? error.message
         : error.toString();
     _chatFlowError = error;
+    IncomingAttachmentService.instance.clearComposer(this);
     _chatFlowErrorMessage = errorMessage;
     _errorMessage = errorMessage;
     _loading = false;

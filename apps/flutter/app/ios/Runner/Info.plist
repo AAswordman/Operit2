@@ -26,8 +26,22 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
+	<key>OperitIncomingAppGroup</key>
+	<string>$(OPERIT_INCOMING_APP_GROUP)</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Chat attachment</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array><string>public.data</string><string>public.content</string></array>
+		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Operit ToolPkg</string>

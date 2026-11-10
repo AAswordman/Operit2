@@ -24,6 +24,7 @@ import operit_keep_alive
       GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     }
     AppleRuntimeChannel.register(binaryMessenger: engineBridge.applicationRegistrar.messenger())
+    AppleIncomingFileChannel.register(binaryMessenger: engineBridge.applicationRegistrar.messenger())
   }
 
   /// Forwards a local-notification click to the Flutter notification activation receiver.
