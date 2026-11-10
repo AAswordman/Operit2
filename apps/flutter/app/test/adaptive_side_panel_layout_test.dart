@@ -53,63 +53,180 @@ void main() {
     }
   }
 
-  for (final width in <double>[402, 600, 768, 900, 1023, 1024, 1440]) {
-    testWidgets('workspace adapts to host width $width in a wide window', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(1600, 1200);
+  for (final (platform, overlay) in <(TargetPlatform, bool)>[
+    (TargetPlatform.android, true),
+    (TargetPlatform.iOS, true),
+    (TargetPlatform.fuchsia, true),
+    (TargetPlatform.windows, false),
+    (TargetPlatform.macOS, false),
+    (TargetPlatform.linux, false),
+  ]) {
+    for (final width in <double>[402, 600, 768, 900, 1023, 1024, 1440]) {
+      testWidgets(
+        '${platform.name} workspace keeps its layout at width $width',
+        (tester) async {
+          tester.view.physicalSize = const Size(1600, 1200);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final open = ValueNotifier<bool>(true);
+          addTearDown(open.dispose);
+          const contentKey = ValueKey('chat');
+          const panelKey = ValueKey('workspace');
+          const toolbarKey = ValueKey('original-toolbar');
+          const toggleKey = ValueKey('original-workspace-toggle');
+          const toolbarHeight = 64.0;
+          expect(
+            workspaceSidePanelLayout,
+            overlay ? SidePanelLayout.overlay : SidePanelLayout.split,
+          );
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: width,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: open,
+                      builder: (context, value, _) => AdaptiveSidePanel(
+                        open: value,
+                        onOpenChanged: (value) => open.value = value,
+                        animate: false,
+                        layout: workspaceSidePanelLayout,
+                        defaultWidth: workspaceDefaultWidth,
+                        defaultWidthFraction: workspaceDefaultWidthFraction,
+                        minWidth: workspaceMinWidth,
+                        minContentWidth: workspaceMinChatWidth,
+                        widePanelPadding: EdgeInsets.zero,
+                        overlayTopInset: toolbarHeight,
+                        panel: const ColoredBox(
+                          key: panelKey,
+                          color: Colors.blue,
+                        ),
+                        child: Column(
+                          key: contentKey,
+                          children: [
+                            SizedBox(
+                              key: toolbarKey,
+                              height: toolbarHeight,
+                              child: Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text('Conversation title'),
+                                  ),
+                                  IconButton(
+                                    key: toggleKey,
+                                    onPressed: () => open.value = !open.value,
+                                    icon: const Icon(
+                                      Icons.view_sidebar_outlined,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Expanded(child: SizedBox.expand()),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final host = tester.getRect(find.byType(AdaptiveSidePanel));
+          final content = tester.getRect(find.byKey(contentKey));
+          final panel = tester.getRect(find.byKey(panelKey));
+          expect(host.width, width);
+          expect(panel.right, host.right);
+          expect(panel.bottom, host.bottom);
+          expect(content.width, overlay ? width : width - panel.width);
+          if (overlay) {
+            expect(
+              find.byKey(const ValueKey('sidePanelDismissBarrier')),
+              findsOneWidget,
+            );
+            expect(panel.width, width);
+            expect(panel.top, tester.getRect(find.byKey(toolbarKey)).bottom);
+            expect(find.byKey(toolbarKey), findsOneWidget);
+            expect(find.byKey(toggleKey).hitTestable(), findsOneWidget);
+            // The original toolbar stays visible above both panel and barrier.
+            await tester.tap(find.byKey(toggleKey));
+            await tester.pumpAndSettle();
+            expect(open.value, isFalse);
+            expect(tester.getRect(find.byKey(contentKey)).width, width);
+            await tester.tap(find.byKey(toggleKey));
+            await tester.pumpAndSettle();
+            expect(open.value, isTrue);
+            expect(tester.getRect(find.byKey(panelKey)).top, toolbarHeight);
+          } else {
+            expect(
+              find.byKey(const ValueKey('sidePanelDismissBarrier')),
+              findsNothing,
+            );
+            expect(panel.left, content.right);
+            expect(panel.width, greaterThan(0));
+            expect(content.width, greaterThanOrEqualTo(workspaceMinChatWidth));
+            if (width == 1440) expect(panel.width, closeTo(648, 0.001));
+            expect(panel.top, host.top);
+            expect(find.byKey(toolbarKey), findsOneWidget);
+            // The desktop divider remains draggable within its size limits.
+            if (width > 600) {
+              final gesture = await tester.startGesture(
+                Offset(panel.left, panel.center.dy),
+              );
+              await gesture.moveBy(const Offset(-80, 0));
+              await tester.pump();
+              await gesture.up();
+              await tester.pumpAndSettle();
+              expect(
+                tester.getRect(find.byKey(panelKey)).width,
+                greaterThan(panel.width),
+              );
+            }
+          }
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+        variant: TargetPlatformVariant.only(platform),
+      );
+    }
+  }
+
+  testWidgets(
+    'desktop retains dragged workspace width while the host changes size',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      final open = ValueNotifier<bool>(true);
-      addTearDown(open.dispose);
+      final width = ValueNotifier<double>(900);
+      addTearDown(width.dispose);
       const contentKey = ValueKey('chat');
       const panelKey = ValueKey('workspace');
-      const toolbarKey = ValueKey('original-toolbar');
-      const toggleKey = ValueKey('original-workspace-toggle');
-      const toolbarHeight = 64.0;
-      final overlay = width < workspaceSideBySideBreakpoint;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: Align(
               alignment: Alignment.topLeft,
-              child: SizedBox(
-                width: width,
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: open,
-                  builder: (context, value, _) => AdaptiveSidePanel(
-                    open: value,
-                    onOpenChanged: (value) => open.value = value,
+              child: ValueListenableBuilder<double>(
+                valueListenable: width,
+                builder: (context, value, _) => SizedBox(
+                  width: value,
+                  child: AdaptiveSidePanel(
+                    open: true,
+                    onOpenChanged: (_) {},
                     animate: false,
-                    breakpoint: workspaceSideBySideBreakpoint,
-                    defaultWidth: workspaceDefaultTabletWidth,
+                    layout: workspaceSidePanelLayout,
+                    defaultWidth: workspaceDefaultWidth,
                     defaultWidthFraction: workspaceDefaultWidthFraction,
                     minWidth: workspaceMinWidth,
-                    minContentWidth: workspaceMinTabletChatWidth,
+                    minContentWidth: workspaceMinChatWidth,
                     widePanelPadding: EdgeInsets.zero,
-                    overlayTopInset: toolbarHeight,
                     panel: const ColoredBox(key: panelKey, color: Colors.blue),
-                    child: Column(
-                      key: contentKey,
-                      children: [
-                        SizedBox(
-                          key: toolbarKey,
-                          height: toolbarHeight,
-                          child: Row(
-                            children: [
-                              const Expanded(child: Text('Conversation title')),
-                              IconButton(
-                                key: toggleKey,
-                                onPressed: () => open.value = !open.value,
-                                icon: const Icon(Icons.view_sidebar_outlined),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Expanded(child: SizedBox.expand()),
-                      ],
-                    ),
+                    child: const SizedBox.expand(key: contentKey),
                   ),
                 ),
               ),
@@ -118,51 +235,50 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final host = tester.getRect(find.byType(AdaptiveSidePanel));
-      final content = tester.getRect(find.byKey(contentKey));
       final panel = tester.getRect(find.byKey(panelKey));
-      expect(host.width, width);
-      expect(panel.right, host.right);
-      expect(panel.bottom, host.bottom);
-      expect(content.width, overlay ? width : width - panel.width);
-      if (overlay) {
-        expect(panel.width, width);
-        expect(panel.top, tester.getRect(find.byKey(toolbarKey)).bottom);
-        expect(find.byKey(toolbarKey), findsOneWidget);
-        expect(find.byKey(toggleKey).hitTestable(), findsOneWidget);
-        // The original toolbar stays visible above both panel and barrier.
-        await tester.tap(find.byKey(toggleKey));
+      expect(panel.width, closeTo(405, 0.001));
+      final gesture = await tester.startGesture(
+        Offset(panel.left, panel.center.dy),
+      );
+      await gesture.moveBy(const Offset(-24, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(-80, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      final draggedWidth = tester.getRect(find.byKey(panelKey)).width;
+      expect(draggedWidth, greaterThan(448));
+
+      // Models both a resized window and a conversation sidebar taking space.
+      for (final (hostWidth, panelWidth) in <(double, double)>[
+        (1440, draggedWidth),
+        (1024, draggedWidth),
+        (1023, draggedWidth),
+        (768, 448),
+        (600, 280),
+        (402, 82),
+        (900, draggedWidth),
+        (1440, draggedWidth),
+      ]) {
+        width.value = hostWidth;
         await tester.pumpAndSettle();
-        expect(open.value, isFalse);
-        expect(tester.getRect(find.byKey(contentKey)).width, width);
-        await tester.tap(find.byKey(toggleKey));
-        await tester.pumpAndSettle();
-        expect(open.value, isTrue);
-        expect(tester.getRect(find.byKey(panelKey)).top, toolbarHeight);
-      } else {
+        final content = tester.getRect(find.byKey(contentKey));
+        final panel = tester.getRect(find.byKey(panelKey));
+        expect(panel.width, closeTo(panelWidth, 0.001));
+        expect(panel.left, content.right);
         expect(
-          panel.width,
-          closeTo(width * workspaceDefaultWidthFraction, 0.001),
+          find.byKey(const ValueKey('sidePanelDismissBarrier')),
+          findsNothing,
         );
-        expect(panel.top, host.top);
-        expect(find.byKey(toolbarKey), findsOneWidget);
-        // The desktop divider remains draggable.
-        final gesture = await tester.startGesture(
-          Offset(panel.left, panel.center.dy),
-        );
-        await gesture.moveBy(const Offset(-80, 0));
-        await tester.pump();
-        await gesture.up();
-        await tester.pumpAndSettle();
-        expect(
-          tester.getRect(find.byKey(panelKey)).width,
-          greaterThan(panel.width),
-        );
+        expect(tester.takeException(), isNull);
       }
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    });
-  }
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.windows,
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+    }),
+  );
 
   testWidgets('flush panel uses its full width fraction without an inset', (
     tester,

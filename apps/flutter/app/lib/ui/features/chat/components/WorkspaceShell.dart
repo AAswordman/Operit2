@@ -74,16 +74,16 @@ class WorkspaceShell extends StatelessWidget {
       open: workspaceOpen,
       widePanelPadding: EdgeInsets.zero,
       onOpenChanged: onWorkspaceOpenChanged,
-      breakpoint: workspaceSideBySideBreakpoint,
+      layout: workspaceSidePanelLayout,
       // Match the phone shell: cover only the body, leaving the original
       // title and workspace toggle in the host toolbar visible.
       overlayTopInset: usesMainLayoutAttachment
           ? ThemeTopBarChrome.toolbarHeight + MediaQuery.paddingOf(context).top
           : 0,
-      defaultWidth: workspaceDefaultTabletWidth,
+      defaultWidth: workspaceDefaultWidth,
       defaultWidthFraction: workspaceDefaultWidthFraction,
       minWidth: workspaceMinWidth,
-      minContentWidth: workspaceMinTabletChatWidth,
+      minContentWidth: workspaceMinChatWidth,
       resizeHandleHitWidth: workspaceResizeHandleHitWidth,
       resizeHandleVisualWidth: workspaceResizeHandleVisualWidth,
       resizeHandleHeight: workspaceResizeHandleHeight,
