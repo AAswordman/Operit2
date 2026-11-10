@@ -1,15 +1,19 @@
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{Map, Value};
 
+use operit_host_api::HostManager::HostManager;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolParameter::MCPToolParameter;
 use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, AsyncToolExecutor, ToolInvocationFuture, ToolValidationResult,
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, AsyncToolExecutor, ToolInvocationFuture,
+    ToolRuntimeContext, ToolValidationResult,
 };
 use operit_util::AppLogger::AppLogger;
 use operit_util::ImagePoolManager::ImagePoolManager;
@@ -25,16 +29,54 @@ struct ArgumentIntegrityViolation {
     utf8_byte_offset: usize,
 }
 
+/// Filesystem destination persisting MCP image payloads into the caller's
+/// current file directory (bound workspace or chat output area), so images
+/// stay reachable through `read_file` after the in-memory pool recycles them.
+struct ImageSaveTarget {
+    vfs: VisualFileSystem,
+    directory: String,
+}
+
+impl ImageSaveTarget {
+    /// Resolves the caller's file directory into a writable target; any missing
+    /// piece (turn, storage, hosts, roots, directory) disables persistence.
+    fn resolve(host: &HostManager, turn: Option<&ToolRuntimeContext>) -> Option<Self> {
+        let turn = turn?;
+        let storage = host.runtimeStorageHost.clone()?;
+        let directory = turn.fileDirectory(storage.clone()).ok()??;
+        match VisualFileSystem::fromContext(host) {
+            Ok(vfs) => Some(Self { vfs, directory }),
+            Err(error) => {
+                AppLogger::w(TAG, &format!("MCP image persistence unavailable: {error}"));
+                None
+            }
+        }
+    }
+
+    /// Writes image bytes under the target directory and returns the VFS path.
+    fn save(&self, extension: &str, bytes: &[u8]) -> Result<String, String> {
+        let timestampMs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis())
+            .unwrap_or_default();
+        let fileName = format!("mcp-{timestampMs}-{}", uuid::Uuid::new_v4().simple());
+        let path = format!("{}/{}", self.directory.trim_end_matches('/'), fileName);
+        self.vfs.writeFileBytes(&path, bytes).map(|()| path)
+    }
+}
+
 #[derive(Clone)]
 /// Tool executor that dispatches package-qualified calls to MCP servers.
 pub struct MCPToolExecutor {
     mcpManager: MCPManager,
+    host: HostManager,
 }
 
 impl MCPToolExecutor {
-    /// Creates an MCP tool executor backed by the shared MCP manager.
-    pub fn new(mcpManager: MCPManager) -> Self {
-        Self { mcpManager }
+    /// Creates an MCP tool executor backed by the shared MCP manager; the host
+    /// supplies filesystem capability for persisting returned image payloads.
+    pub fn new(mcpManager: MCPManager, host: HostManager) -> Self {
+        Self { mcpManager, host }
     }
 
     #[allow(non_snake_case)]
@@ -51,7 +93,12 @@ impl MCPToolExecutor {
     }
 
     #[allow(non_snake_case)]
-    fn extractContentFromResult(&self, resultData: Option<&Value>) -> String {
+    fn extractContentFromResult(
+        &self,
+        resultData: Option<&Value>,
+        saveTarget: Option<&ImageSaveTarget>,
+        inlineLimit: usize,
+    ) -> String {
         let Some(resultData) = resultData else {
             return "{}".to_string();
         };
@@ -63,7 +110,7 @@ impl MCPToolExecutor {
             .map(|items| {
                 items
                     .iter()
-                    .map(|contentItem| self.extractContentItem(contentItem, &mut imageBudget))
+                    .map(|contentItem| self.extractContentItem(contentItem, &mut imageBudget, saveTarget, inlineLimit))
                     .collect::<Vec<_>>()
                     .join("\n")
             })
@@ -94,7 +141,13 @@ impl MCPToolExecutor {
     }
 
     #[allow(non_snake_case)]
-    fn extractContentItem(&self, contentItem: &Value, imageBudget: &mut usize) -> String {
+    fn extractContentItem(
+        &self,
+        contentItem: &Value,
+        imageBudget: &mut usize,
+        saveTarget: Option<&ImageSaveTarget>,
+        inlineLimit: usize,
+    ) -> String {
         let contentType = contentItem
             .get("type")
             .and_then(Value::as_str)
@@ -110,7 +163,6 @@ impl MCPToolExecutor {
                     _ => text.to_string(),
                 }
             }
-            "image" if *imageBudget == 0 => "[Image omitted: attachment limit reached]".to_string(),
             "image" => {
                 let mimeType = contentItem
                     .get("mimeType")
@@ -120,12 +172,45 @@ impl MCPToolExecutor {
                     .get("data")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                Self::registerImageContent(data).inspect(|_| *imageBudget -= 1).unwrap_or_else(|| {
+                let attachmentFailure = || {
                     format!(
                         "[Image: {mimeType}, Size: {} bytes; the image data could not be attached]",
                         data.len()
                     )
-                })
+                };
+                let Some((bytes, format)) = Self::decodeValidatedImage(data) else {
+                    return attachmentFailure();
+                };
+                // Oversized payloads stay out of the model context; the persisted
+                // file keeps them reachable through on-demand read_file calls.
+                if bytes.len() > inlineLimit {
+                    return match saveTarget.map(|target| target.save(Self::imageFileExtension(format), &bytes)) {
+                        Some(Ok(path)) => format!(
+                            "[Image: {mimeType}, Size: {} bytes; saved to {path}; call read_file on it to view]",
+                            bytes.len()
+                        ),
+                        Some(Err(error)) => {
+                            AppLogger::w(TAG, &format!("unable to persist oversized MCP image: {error}"));
+                            attachmentFailure()
+                        }
+                        None => attachmentFailure(),
+                    };
+                }
+                if *imageBudget == 0 {
+                    return "[Image omitted: attachment limit reached]".to_string();
+                }
+                let Some(link) = Self::registerImageBytes(&bytes, format) else {
+                    return attachmentFailure();
+                };
+                *imageBudget -= 1;
+                match saveTarget.map(|target| target.save(Self::imageFileExtension(format), &bytes)) {
+                    Some(Ok(path)) => format!("{link} (saved to {path})"),
+                    Some(Err(error)) => {
+                        AppLogger::w(TAG, &format!("unable to persist MCP image copy: {error}"));
+                        link
+                    }
+                    None => link,
+                }
             }
             "resource" => {
                 let Some(resource) = contentItem.get("resource") else {
@@ -147,7 +232,8 @@ impl MCPToolExecutor {
     }
 
     #[allow(non_snake_case)]
-    fn registerImageContent(data: &str) -> Option<String> {
+    /// Decodes and validates raw image payload bytes without registering anything.
+    fn decodeValidatedImage(data: &str) -> Option<(Vec<u8>, image::ImageFormat)> {
         let bytes = STANDARD.decode(data.trim()).ok()?;
         let format = image::guess_format(&bytes).ok()?;
         match format {
@@ -158,8 +244,25 @@ impl MCPToolExecutor {
             image::ImageFormat::Gif | image::ImageFormat::WebP => {}
             _ => return None,
         }
-        let id = ImagePoolManager::add_image_bytes(&bytes, Some(format.to_mime_type()), None);
+        Some((bytes, format))
+    }
+
+    #[allow(non_snake_case)]
+    /// Registers validated image bytes in the process pool and returns its media-link tag.
+    fn registerImageBytes(bytes: &[u8], format: image::ImageFormat) -> Option<String> {
+        let id = ImagePoolManager::add_image_bytes(bytes, Some(format.to_mime_type()), None);
         (id != "error").then(|| MediaLinkBuilder::image(&id))
+    }
+
+    #[allow(non_snake_case)]
+    /// Picks a filesystem extension for the decoded image format.
+    fn imageFileExtension(format: image::ImageFormat) -> &'static str {
+        match format {
+            image::ImageFormat::Jpeg => "jpg",
+            image::ImageFormat::Gif => "gif",
+            image::ImageFormat::WebP => "webp",
+            _ => "png",
+        }
     }
 
     #[allow(non_snake_case)]
@@ -234,7 +337,7 @@ impl MCPToolExecutor {
 
     #[allow(non_snake_case)]
     /// Invokes one MCP tool and converts its structured response into tool result text.
-    pub async fn invoke(&self, tool: &AITool) -> ToolResult {
+    pub async fn invoke(&self, tool: &AITool, saveTarget: Option<&ImageSaveTarget>) -> ToolResult {
         let toolNameParts = tool.name.split(':').collect::<Vec<_>>();
         if toolNameParts.len() < 2 {
             return ToolResult {
@@ -289,7 +392,11 @@ impl MCPToolExecutor {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            let extractedContent = self.extractContentFromResult(response.get("result"));
+            let extractedContent = self.extractContentFromResult(
+                response.get("result"),
+                saveTarget,
+                ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES,
+            );
             return ToolResult {
                 toolName: tool.name.clone(),
                 success: true,
@@ -367,24 +474,88 @@ impl AsyncToolExecutor for MCPToolExecutor {
     }
 
     fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
-        Box::pin(async move { vec![self.invoke(tool).await] })
+        Box::pin(async move {
+            let saveTarget = ImageSaveTarget::resolve(&self.host, context.turnSnapshot());
+            vec![self.invoke(tool, saveTarget.as_ref()).await]
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::ImageSaveTarget;
     use super::MCPToolExecutor;
     use crate::tools::mcp::MCPManager::MCPManager;
+    use crate::ToolExecutionManager::{ToolExposureMode, ToolRuntimeContext};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use operit_host_api::HostManager::HostManager;
+    use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
     use operit_util::ImagePoolManager::ImagePoolManager;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     /// Standard 1x1 PNG payload used to exercise real image registration.
     const ONE_PIXEL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
     fn executor() -> MCPToolExecutor {
-        MCPToolExecutor::new(MCPManager::getInstance(HostManager::default()))
+        MCPToolExecutor::new(
+            MCPManager::getInstance(HostManager::default()),
+            HostManager::default(),
+        )
+    }
+
+    /// Real native filesystem/storage hosts rooted in a unique temporary directory.
+    struct ImageSaveFixture {
+        host: HostManager,
+        root: std::path::PathBuf,
+    }
+
+    impl ImageSaveFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("operit-mcp-image-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+                root.join("runtime"),
+                root.join("workspaces"),
+            ));
+            Self {
+                host: HostManager {
+                    runtimeStorageHost: Some(storage),
+                    fileSystemHost: Some(Arc::new(operit_host_native_filesystem::PosixFileSystemHost::new())),
+                    ..Default::default()
+                },
+                root,
+            }
+        }
+
+        fn runtimeContext(&self) -> ToolRuntimeContext {
+            ToolRuntimeContext {
+                callerChatId: None,
+                callerParticipantId: None,
+                workspacePath: Some("/operitapp/workspaces/ws1".to_string()),
+                workspaceFolders: Vec::new(),
+                toolExposureMode: ToolExposureMode::FULL,
+                extensionOwner: "test-owner".to_string(),
+                executionData: serde_json::Map::new(),
+            }
+        }
+
+        /// Native path of a file persisted under the fixture workspace.
+        fn persistedPath(&self, vfsPath: &str) -> std::path::PathBuf {
+            let relative = vfsPath
+                .strip_prefix("/operitapp/workspaces/")
+                .expect("workspace path");
+            self.root.join("workspaces").join(relative)
+        }
+    }
+
+    impl Drop for ImageSaveFixture {
+        /// Removes only this test's checked unique temporary storage root.
+        fn drop(&mut self) {
+            assert_eq!(self.root.parent(), Some(std::env::temp_dir().as_path()));
+            std::fs::remove_dir_all(&self.root).unwrap();
+        }
     }
 
     fn arguments(value: Value) -> BTreeMap<String, Value> {
@@ -482,8 +653,11 @@ mod tests {
         let executor = executor();
         let item = json!({"type": "image", "mimeType": "image/jpeg", "data": ONE_PIXEL_PNG_BASE64});
         let mut budget = 1;
-        let result = executor.extractContentItem(&item, &mut budget);
-        assert_eq!(executor.extractContentItem(&item, &mut budget), "[Image omitted: attachment limit reached]");
+        let result = executor.extractContentItem(&item, &mut budget, None, ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES);
+        assert_eq!(
+            executor.extractContentItem(&item, &mut budget, None, ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES),
+            "[Image omitted: attachment limit reached]"
+        );
         let id = result
             .split("id=\"")
             .nth(1)
@@ -511,7 +685,7 @@ mod tests {
             "iVBORw0KGgo=".to_string(),
         ] {
             let item = json!({"type": "image", "mimeType": "image/png", "data": data});
-            let result = executor.extractContentItem(&item, &mut 1);
+            let result = executor.extractContentItem(&item, &mut 1, None, ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES);
             assert!(result.contains("could not be attached"), "tag: {result}");
             assert!(!result.contains("<link"), "tag: {result}");
         }
@@ -522,7 +696,7 @@ mod tests {
     fn empty_image_data_falls_back_to_placeholder() {
         let executor = executor();
         let item = json!({"type": "image", "mimeType": "image/png", "data": "   "});
-        let result = executor.extractContentItem(&item, &mut 1);
+        let result = executor.extractContentItem(&item, &mut 1, None, ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES);
         assert!(result.contains("[Image: image/png, Size: 3 bytes"), "tag: {result}");
     }
 
@@ -538,7 +712,11 @@ mod tests {
                 {"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64},
             ]
         });
-        let result = executor.extractContentFromResult(Some(&resultData));
+        let result = executor.extractContentFromResult(
+            Some(&resultData),
+            None,
+            ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES,
+        );
         assert!(result.starts_with("screenshot ready\n{\"ok\":true}\n 1 \n"), "tag: {result}");
         assert!(result.contains("<link type=\"image\""), "tag: {result}");
         let id = result
@@ -548,5 +726,87 @@ mod tests {
             .unwrap_or_default()
             .to_string();
         ImagePoolManager::remove_image(&id);
+    }
+
+    /// A small image keeps its inline link and additionally persists into the
+    /// caller's bound workspace for later reference.
+    #[test]
+    fn small_image_registers_link_and_persists_file() {
+        let fixture = ImageSaveFixture::new();
+        let executor = executor();
+        let turn = fixture.runtimeContext();
+        let target = ImageSaveTarget::resolve(&fixture.host, Some(&turn)).expect("save target");
+        let item = json!({"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64});
+        let result = executor.extractContentItem(
+            &item,
+            &mut 1,
+            Some(&target),
+            ToolExecutionLimits::MAX_INLINE_IMAGE_BYTES,
+        );
+        assert!(result.contains("<link type=\"image\""), "tag: {result}");
+        let vfsPath = result
+            .split("(saved to ")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            vfsPath.starts_with("/operitapp/workspaces/ws1/mcp-"),
+            "path: {vfsPath}"
+        );
+        let persisted = std::fs::read(fixture.persistedPath(&vfsPath)).expect("persisted image file");
+        assert_eq!(persisted, STANDARD.decode(ONE_PIXEL_PNG_BASE64).unwrap());
+        let id = result
+            .split("id=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_default()
+            .to_string();
+        ImagePoolManager::remove_image(&id);
+    }
+
+    /// An oversized image stays out of the model context and persists for
+    /// on-demand reads through read_file.
+    #[test]
+    fn oversized_image_persists_file_without_inline_link() {
+        let fixture = ImageSaveFixture::new();
+        let executor = executor();
+        let turn = fixture.runtimeContext();
+        let target = ImageSaveTarget::resolve(&fixture.host, Some(&turn)).expect("save target");
+        let item = json!({"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64});
+        let result = executor.extractContentItem(&item, &mut 1, Some(&target), 10);
+        assert!(!result.contains("<link"), "tag: {result}");
+        assert!(
+            result.contains("saved to /operitapp/workspaces/ws1/mcp-"),
+            "tag: {result}"
+        );
+        assert!(result.contains("call read_file on it to view"), "tag: {result}");
+        let vfsPath = result
+            .split("saved to ")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .unwrap_or_default()
+            .to_string();
+        let persisted = std::fs::read(fixture.persistedPath(&vfsPath)).expect("persisted image file");
+        assert_eq!(persisted, STANDARD.decode(ONE_PIXEL_PNG_BASE64).unwrap());
+    }
+
+    /// Without filesystem capability, oversized payloads degrade to the placeholder.
+    #[test]
+    fn oversized_image_without_filesystem_falls_back_to_placeholder() {
+        let executor = executor();
+        let item = json!({"type": "image", "mimeType": "image/png", "data": ONE_PIXEL_PNG_BASE64});
+        let result = executor.extractContentItem(&item, &mut 1, None, 10);
+        assert!(result.contains("could not be attached"), "tag: {result}");
+        assert!(!result.contains("<link"), "tag: {result}");
+    }
+
+    /// Image persistence needs both a turn snapshot with a file directory and hosts.
+    #[test]
+    fn save_target_requires_turn_snapshot_and_filesystem() {
+        assert!(ImageSaveTarget::resolve(&HostManager::default(), None).is_none());
+        let fixture = ImageSaveFixture::new();
+        let turn = fixture.runtimeContext();
+        assert!(ImageSaveTarget::resolve(&HostManager::default(), Some(&turn)).is_none());
     }
 }
