@@ -504,7 +504,7 @@ impl StandardFileSystemTools {
         fileExt: &str,
     ) -> ToolResult {
         match fileExt {
-            "jpg" | "jpeg" | "png" | "gif" | "bmp" => {
+            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" => {
                 self.handleImageFileRead(tool, vfs, path).await
             }
             "pdf" | "doc" | "docx" => self.handleDocumentFileRead(tool, vfs, path, fileExt),
@@ -2516,6 +2516,7 @@ fn imageMimeTypeFromPath(path: &str) -> &'static str {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "bmp" => "image/bmp",
+        "webp" => "image/webp",
         _ => "image/png",
     }
 }
@@ -2574,6 +2575,7 @@ fn isSpecialFileType(fileExtension: &str) -> bool {
             | "png"
             | "gif"
             | "bmp"
+            | "webp"
             | "pdf"
             | "doc"
             | "docx"

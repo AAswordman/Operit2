@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{Map, Value};
 
 use operit_host_api::HostManager::HostManager;
+use operit_host_api::TimeUtils::tryCurrentTimeMillisU128;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolParameter::MCPToolParameter;
@@ -55,11 +55,8 @@ impl ImageSaveTarget {
 
     /// Writes image bytes under the target directory and returns the VFS path.
     fn save(&self, extension: &str, bytes: &[u8]) -> Result<String, String> {
-        let timestampMs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis())
-            .unwrap_or_default();
-        let fileName = format!("mcp-{timestampMs}-{}", uuid::Uuid::new_v4().simple());
+        let timestampMs = tryCurrentTimeMillisU128()?;
+        let fileName = format!("mcp-{timestampMs}-{}.{extension}", uuid::Uuid::new_v4().simple());
         let path = format!("{}/{}", self.directory.trim_end_matches('/'), fileName);
         self.vfs.writeFileBytes(&path, bytes).map(|()| path)
     }
@@ -750,10 +747,8 @@ mod tests {
             .and_then(|rest| rest.split(')').next())
             .unwrap_or_default()
             .to_string();
-        assert!(
-            vfsPath.starts_with("/operitapp/workspaces/ws1/mcp-"),
-            "path: {vfsPath}"
-        );
+        assert!(vfsPath.starts_with("/operitapp/workspaces/ws1/mcp-"), "path: {vfsPath}");
+        assert_eq!(std::path::Path::new(&vfsPath).extension().unwrap(), "png");
         let persisted = std::fs::read(fixture.persistedPath(&vfsPath)).expect("persisted image file");
         assert_eq!(persisted, STANDARD.decode(ONE_PIXEL_PNG_BASE64).unwrap());
         let id = result
@@ -787,6 +782,7 @@ mod tests {
             .and_then(|rest| rest.split(';').next())
             .unwrap_or_default()
             .to_string();
+        assert_eq!(std::path::Path::new(&vfsPath).extension().unwrap(), "png");
         let persisted = std::fs::read(fixture.persistedPath(&vfsPath)).expect("persisted image file");
         assert_eq!(persisted, STANDARD.decode(ONE_PIXEL_PNG_BASE64).unwrap());
     }
