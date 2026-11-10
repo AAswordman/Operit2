@@ -4,6 +4,109 @@ struct ParsedOperit1Snapshot {
     chatMapping: Operit1FunctionConfigMapping,
 }
 
+impl Operit1SnapshotImportManager {
+    /// Adopts every source configuration and function binding using the existing provider import transaction.
+    fn importAllModelConfigsFromParsed(
+        &self,
+        parsed: &ParsedOperit1Snapshot,
+    ) -> Result<Operit1ModelConfigImportResult, String> {
+        use crate::data::preferences::FunctionalConfigManager::FunctionModelBinding;
+        let providers = parsed.configs.iter()
+            .map(|config| buildOperit1ProviderProfile(config, operit1ProviderId(&config.id)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let raw = requiredPreferenceString(
+            &parsed.archive.datastorePreferences[ENTRY_FUNCTIONAL_CONFIGS],
+            KEY_FUNCTION_CONFIG_MAPPING,
+            "Operit1 snapshot is missing function model mappings",
+        )?;
+        let mappings: HashMap<FunctionType, Value> = serde_json::from_str(raw)
+            .map_err(|error| format!("Operit1 function model mappings are invalid: {error}"))?;
+        let mut bindings = HashMap::new();
+        for (function, value) in mappings {
+            let mapping = decodeFunctionMapping(value)?;
+            let config = parsed.configById(&mapping.configId)?;
+            let modelId = splitModelIds(&config.modelName).get(mapping.modelIndex as usize)
+                .cloned().ok_or_else(|| {
+                    format!("Operit1 功能模型索引越界：{function:?}/{}", mapping.modelIndex)
+                })?;
+            bindings.insert(
+                function,
+                FunctionModelBinding::new(operit1ProviderId(&config.id), modelId),
+            );
+        }
+        let chat = bindings.get(&FunctionType::CHAT)
+            .ok_or("Operit1 function model mappings are missing CHAT")?;
+        let provider = providers.iter().find(|provider| provider.id == chat.providerId)
+            .ok_or("Operit1 chat provider is missing")?;
+        let result = operit1ModelImportResult(
+            provider,
+            chat.modelId.clone(),
+            providers.iter().map(|provider| provider.models.len() as i32).sum(),
+        );
+        let content = serde_json::to_string(&providers).map_err(|error| error.to_string())?;
+        ModelConfigManager::new(self.paths.runtime_dir().to_path_buf())
+            .importAllProvidersFromBackupContent(&content)?;
+        FunctionalConfigManager::new(self.paths.runtime_dir().to_path_buf())
+            .saveFunctionModelBinding(bindings).map_err(|error| error.to_string())?;
+        Ok(result)
+    }
+}
+
+/// Maps the source default provider to the runtime default while retaining other configuration identities.
+fn operit1ProviderId(configId: &str) -> String {
+    match configId {
+        "default" => ModelConfigDefaults::DEFAULT_PROVIDER_ID.to_string(),
+        id => id.to_string(),
+    }
+}
+
+/// Projects the complete source provider, credentials and model settings for both import entry points.
+fn buildOperit1ProviderProfile(
+    config: &Operit1ModelConfig,
+    providerId: String,
+) -> Result<ProviderProfile, String> {
+    let binding = config.providerBinding()?;
+    let mut provider = ProviderProfile::new(
+        providerId,
+        config.name.clone(),
+        binding.providerType,
+        config.apiEndpoint.trim().to_string(),
+    );
+    provider.providerTypeId = binding.providerTypeId;
+    provider.apiKey = config.apiKey.clone();
+    provider.useMultipleApiKeys = config.useMultipleApiKeys;
+    provider.apiKeyPool = config.apiKeyPool.iter().map(Operit1ApiKeyInfo::toApiKeyInfo).collect();
+    provider.currentKeyIndex = config.currentKeyIndex;
+    provider.keyRotationMode = config.keyRotationMode.clone();
+    provider.customHeaders = config.customHeaders.clone();
+    provider.requestLimitPerMinute = config.requestLimitPerMinute;
+    provider.maxConcurrentRequests = config.maxConcurrentRequests;
+    provider.models = splitModelIds(&config.modelName).iter()
+        .map(|model| buildModelProfile(model, config)).collect::<Result<_, _>>()?;
+    Ok(provider)
+}
+
+/// Reports the selected chat provider together with the number of models actually adopted.
+fn operit1ModelImportResult(
+    provider: &ProviderProfile,
+    modelId: String,
+    importedModelCount: i32,
+) -> Operit1ModelConfigImportResult {
+    Operit1ModelConfigImportResult {
+        providerId: provider.id.clone(),
+        providerTypeId: provider.providerTypeId.clone(),
+        providerName: provider.name.clone(),
+        modelId,
+        importedModelCount,
+        chatBindingUpdated: true,
+        skippedFields: vec![
+            "contextLength".to_string(),
+            "summaryCustomRules".to_string(),
+            "enableGoogleSearch".to_string(),
+        ],
+    }
+}
+
 impl ParsedOperit1Snapshot {
     /// Parses importer metadata from an immutable range-readable snapshot source.
     fn fromSource(source: Arc<dyn ArchiveSource>) -> Result<Self, String> {
@@ -16,7 +119,7 @@ impl ParsedOperit1Snapshot {
                     .map_err(|error| format!("模型配置「{}」格式不正确：{error}", config.id))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let chatMapping = decodeChatMapping(archive.chatMappingJson.clone())?;
+        let chatMapping = decodeFunctionMapping(archive.chatMappingJson.clone())?;
 
         Ok(Self {
             archive,
@@ -572,15 +675,16 @@ fn pushStandardParameter(
     Ok(())
 }
 
+/// Decodes released function bindings, including Kotlin's omitted default fields.
 #[allow(non_snake_case)]
-fn decodeChatMapping(value: Value) -> Result<Operit1FunctionConfigMapping, String> {
+fn decodeFunctionMapping(value: Value) -> Result<Operit1FunctionConfigMapping, String> {
     if let Some(configId) = value.as_str() {
         return Ok(Operit1FunctionConfigMapping {
             configId: configId.to_string(),
             modelIndex: 0,
         });
     }
-    serde_json::from_value(value).map_err(|error| format!("CHAT 模型映射格式不正确：{error}"))
+    serde_json::from_value(value).map_err(|error| format!("功能模型映射格式不正确：{error}"))
 }
 
 #[allow(non_snake_case)]

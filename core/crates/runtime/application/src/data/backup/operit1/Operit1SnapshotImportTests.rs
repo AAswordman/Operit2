@@ -13,17 +13,13 @@ fn memory_attachments_do_not_import_source_app_document_grants() {
     assert!(plan.rewriteMemoryAttachmentPath(Some("/data/user/0/com.ai.assistance.operit/files/../outside.txt")).is_err());
 }
 
-/// Runs a supplied snapshot through the full importer and retains isolated output for plugin diagnostics.
-#[test]
-#[ignore]
-fn diagnose_external_operit1_snapshot() {
+/// Configures real isolated hosts and the executing CoreNode identity for import acceptance checks.
+fn snapshotImportManager(root: &std::path::Path) -> (Operit1SnapshotImportManager, Arc<operit_host_native_storage::NativeRuntimeStorageHost>) {
     use operit_host_native_storage::NativeRuntimeStorageHost;
-    let source = std::env::var("OPERIT1_IMPORT_SNAPSHOT").unwrap();
-    let root = std::env::temp_dir().join(format!("operit1-diagnostic-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
-    let databasePath = root.join("fixture.db");
-    std::fs::write(&databasePath, []).unwrap();
-    let fixture = Arc::new(SnapshotFixture { bytes: std::fs::read(source).unwrap(), databasePath });
+    operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
+        operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
+    ));
+    let paths = RuntimeStorePaths::new(root.join("runtime"), root.join("workspaces"));
     let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
     operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
         operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(root.join("runtime"), root.join("workspaces")),
@@ -33,9 +29,36 @@ fn diagnose_external_operit1_snapshot() {
     operit_store::RuntimeStorageHost::setDefaultHostSecretStore(Arc::new(
         operit_host_native_storage::NativeFileSecretStore(root.join("secrets")),
     ));
-    let manager = Operit1SnapshotImportManager::new(RuntimeStorePaths::new(root.join("runtime"), root.join("workspaces")), host.clone(), host.clone(), host.clone());
+    operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(host.clone()).initialize().unwrap();
+    (Operit1SnapshotImportManager::new(paths, host.clone(), host.clone(), host.clone()), host)
+}
+
+/// Runs a supplied snapshot through the full importer and retains isolated output for plugin diagnostics.
+#[test]
+#[ignore]
+fn diagnose_external_operit1_snapshot() {
+    let source = std::env::var("OPERIT1_IMPORT_SNAPSHOT").unwrap();
+    let root = std::env::temp_dir().join(format!("operit1-diagnostic-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let databasePath = root.join("fixture.db");
+    std::fs::write(&databasePath, []).unwrap();
+    let fixture = Arc::new(SnapshotFixture { bytes: std::fs::read(source).unwrap(), databasePath });
+    let (manager, host) = snapshotImportManager(&root);
+    let expected = ParsedOperit1Snapshot::fromSource(fixture.clone()).unwrap();
+    let themes = crate::data::preferences::ThemeConfigManager::ThemeConfigManager::new(host.clone());
+    let initial = serde_json::from_str(include_str!("../../preferences/theme_snapshot_fixture.json")).unwrap();
+    let saved = themes.create("Existing target theme".to_string(), initial).unwrap();
+    themes.apply(saved.id).unwrap();
     let preview = manager.inspectSnapshotSource(fixture.clone()).expect("snapshot inspection");
     let imported = manager.importSnapshotSource(fixture).expect("full snapshot import");
+    themes.watch().first().expect("imported appearance and saved theme selection must be consistent");
+    let providers = ModelConfigManager::new(root.join("runtime")).getProviderProfiles().unwrap();
+    for config in &expected.configs {
+        let provider = providers.iter().find(|provider| provider.id == operit1ProviderId(&config.id)).expect("every source API configuration must be imported");
+        assert!(provider.apiKey == config.apiKey, "Imported API key differs from source");
+        assert_eq!(provider.name, config.name);
+        assert_eq!(provider.apiKeyPool.len(), config.apiKeyPool.len());
+    }
     assert_eq!(imported.importedChats, preview.chatCount);
     assert_eq!(imported.importedMessages, preview.messageCount);
     let writer = crate::data::backup::CharacterPluginMigration::CharacterPluginWriter::open(host.clone(), host.clone()).unwrap();
@@ -50,6 +73,10 @@ fn diagnose_external_operit1_snapshot() {
         }
     }
     assert!(writer.list("chat_drafts").unwrap().is_empty());
+    let node = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(host.clone()).identity().unwrap().nodeId;
+    for candidate in writer.list("candidates").unwrap() {
+        assert_eq!(candidate["value"]["record"]["producerNodeId"], node, "Imported memory tasks must belong to the importing CoreNode");
+    }
     eprintln!("Full import chats={} messages={} memories={} links={} usage={} bindings={}", imported.importedChats, imported.importedMessages, imported.importedMemories, imported.importedMemoryLinks, imported.importedTokenUsageRecords, writer.list("chat_bindings").unwrap().len());
     eprintln!("Diagnostic storage: {}", root.display());
 }
@@ -190,6 +217,8 @@ fn completeSnapshotFixture(version: i32) -> Arc<SnapshotFixture> {
         ("payload/shared_prefs/cloud_embedding_settings_default.xml", br#"<map><boolean name="enabled" value="true"/><string name="endpoint">https://embedding.invalid</string><string name="api_key">actual-source-key</string><string name="model">source-model</string></map>"#.to_vec()),
         (ENTRY_DATABASE, std::fs::read(&databasePath).expect("real SQLite bytes must be readable")),
         (ENTRY_OBJECTBOX_DEFAULT_DATA, b"opaque source memory database: not decoded or adopted".to_vec()),
+        ("payload/files/objectbox_profile_1784617683731/data.mdb", b"unlisted database must not be opened".to_vec()),
+        ("payload/files/objectbox_profile_1784617717534/data.mdb", b"another unlisted database must not be opened".to_vec()),
         ("payload/files/.vector_index/doc_index_default_25_1024.hnsw", b"Retired vector index".to_vec()),
         ("payload/files/doc_index_default_25_1024.hnsw", b"Retired top-level document index".to_vec()),
         ("payload/files/memory_hnsw_default_1024.idx", b"Retired top-level memory index".to_vec()),
@@ -205,6 +234,72 @@ fn completeSnapshotFixture(version: i32) -> Arc<SnapshotFixture> {
         writer.write_all(&bytes).unwrap();
     }
     Arc::new(SnapshotFixture { bytes: writer.finish().unwrap().into_inner(), databasePath })
+}
+
+/// Uses Kotlin's memory-space list despite unlisted raw databases and still rejects broken live references.
+#[test]
+fn memory_space_validation_uses_metadata_instead_of_raw_database_directories() {
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    validateOperit1MemorySpaces(&parsed).unwrap();
+    let spaces = buildOperit1MemorySpaces(&parsed).unwrap();
+    assert_eq!(spaces.keys().map(String::as_str).collect::<Vec<_>>(), vec!["default"]);
+    let plan = buildSnapshotFileCopyPlan(&parsed).unwrap();
+    assert!(plan.items.iter().all(|item| !isOperit1LegacyMemoryEntry(&item.sourceEntry)));
+
+    parsed.archive.datastorePreferences.get_mut(ENTRY_USER_PREFERENCES).unwrap().insert(
+        KEY_ACTIVE_MEMORY_SPACE_ID.to_string(),
+        Operit1PreferenceValue::String("profile_1784617683731".to_string()),
+    );
+    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 当前记忆库不在记忆库列表中："));
+    parsed.archive.datastorePreferences.get_mut(ENTRY_USER_PREFERENCES).unwrap().insert(
+        KEY_ACTIVE_MEMORY_SPACE_ID.to_string(), Operit1PreferenceValue::String("default".to_string()),
+    );
+    let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+    cards.insert("character_card_card-1_memory_profile_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_PROFILE".to_string()));
+    cards.insert("character_card_card-1_memory_profile_id".to_string(), Operit1PreferenceValue::String("profile_1784617683731".to_string()));
+    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 角色卡绑定了不存在的记忆库："));
+}
+
+/// Persists all API credentials, empty draft providers, model indices and fixed character provider bindings.
+#[test]
+fn full_model_import_preserves_all_providers_and_function_bindings() {
+    let root = std::env::temp_dir().join(format!("operit1-model-import-{}", Uuid::new_v4()));
+    let (manager, _) = snapshotImportManager(&root);
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    parsed.configs = serde_json::from_value(serde_json::json!([
+        {"id":"default","name":"Source main","apiEndpoint":"https://main.invalid/v1","apiKey":"main-secret","modelName":"first,second","useMultipleApiKeys":true,"apiKeyPool":[{"id":"key-1","key":"pool-secret"}]},
+        {"id":"vision-provider","name":"Source vision","apiProviderType":"ANTHROPIC_GENERIC","apiEndpoint":"https://vision.invalid/v1","apiKey":"vision-secret","modelName":"vision"},
+        {"id":"empty-provider","name":"Source draft","apiProviderType":"OTHER","apiEndpoint":"https://draft.invalid/v1","apiKey":"draft-secret"}
+    ])).unwrap();
+    let mut mapping = serde_json::Map::new();
+    for function in ["CHAT", "SUMMARY", "TITLE_GENERATION", "MEMORY", "UI_CONTROLLER", "TRANSLATION", "GREP", "ROLE_RESPONSE_PLANNER", "IMAGE_RECOGNITION", "AUDIO_RECOGNITION", "VIDEO_RECOGNITION"] {
+        mapping.insert(function.to_string(), serde_json::json!({"configId":"default","modelIndex":1}));
+    }
+    mapping.insert("IMAGE_RECOGNITION".to_string(), serde_json::json!({"configId":"vision-provider"}));
+    parsed.archive.datastorePreferences.get_mut(ENTRY_FUNCTIONAL_CONFIGS).unwrap().insert(
+        KEY_FUNCTION_CONFIG_MAPPING.to_string(), Operit1PreferenceValue::String(Value::Object(mapping).to_string()),
+    );
+    let result = manager.importAllModelConfigsFromParsed(&parsed).unwrap();
+    assert_eq!(result.importedModelCount, 3);
+    assert_eq!(result.modelId, "second");
+    let providers = ModelConfigManager::new(root.join("runtime")).getProviderProfiles().unwrap();
+    assert_eq!(providers.len(), 3);
+    for config in &parsed.configs {
+        let provider = providers.iter().find(|provider| provider.id == operit1ProviderId(&config.id)).unwrap();
+        assert_eq!(provider.name, config.name);
+        assert!(provider.apiKey == config.apiKey, "Source API credential was not preserved");
+        assert_eq!(provider.apiKeyPool.len(), config.apiKeyPool.len());
+        assert_eq!(provider.models.iter().map(|model| model.id.clone()).collect::<Vec<_>>(), splitModelIds(&config.modelName));
+    }
+    let bindings = FunctionalConfigManager::new(root.join("runtime")).functionModelBindingFlow().unwrap().first().unwrap();
+    assert_eq!(bindings[&FunctionType::CHAT].modelId, "second");
+    assert_eq!(bindings[&FunctionType::IMAGE_RECOGNITION].providerId, "vision-provider");
+    let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+    cards.insert("character_card_card-1_chat_model_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_CONFIG".to_string()));
+    cards.insert("character_card_card-1_chat_model_config_id".to_string(), Operit1PreferenceValue::String("vision-provider".to_string()));
+    let card = &buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap()[0];
+    assert_eq!(card.chatProviderId.as_deref(), Some("vision-provider"));
+    assert_eq!(card.chatModelId.as_deref(), Some("vision"));
 }
 
 /// Executes the production source bridge and target projection using the same database bytes retained in the ZIP.
@@ -727,6 +822,10 @@ fn user_preference_import_completes_theme_migrations_after_native_values() {
         let manager = Operit1SnapshotImportManager::new(
             paths, host.clone(), host.clone(), host.clone(),
         );
+        let themes = crate::data::preferences::ThemeConfigManager::ThemeConfigManager::new(host.clone());
+        let initial = serde_json::from_str(include_str!("../../preferences/theme_snapshot_fixture.json")).unwrap();
+        let saved = themes.create("Existing theme".to_string(), initial).unwrap();
+        themes.apply(saved.id.clone()).unwrap();
         let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(20)).unwrap();
         parsed.archive.datastorePreferences.clear();
         parsed.archive.datastorePreferences.insert(
@@ -738,9 +837,12 @@ fn user_preference_import_completes_theme_migrations_after_native_values() {
                 ("theme_mode".to_string(), Operit1PreferenceValue::String("dark".to_string())),
                 ("background_image_opacity".to_string(), Operit1PreferenceValue::Float(0.5)),
                 ("app_language".to_string(), Operit1PreferenceValue::String("zh-CN".to_string())),
+                ("use_custom_colors".to_string(), Operit1PreferenceValue::Boolean(true)),
             ]),
         );
-        assert_eq!(manager.importDataStorePreferences(&parsed, &SnapshotFileImportPlan::new()).unwrap(), (1, 6));
+        assert_eq!(manager.importDataStorePreferences(&parsed, &SnapshotFileImportPlan::new()).unwrap(), (1, 7));
+        assert_eq!(themes.watch().first().unwrap().activeThemeConfigId, None);
+        assert_eq!(themes.get(saved.id.clone()).unwrap(), saved);
         let preferences = UserPreferencesManager::store(host).data().unwrap();
         let initial = serde_json::from_str(include_str!("../../preferences/theme_snapshot_fixture.json")).unwrap();
         let snapshot = readThemePreferenceSnapshot(&preferences, &initial).unwrap();
@@ -748,6 +850,7 @@ fn user_preference_import_completes_theme_migrations_after_native_values() {
         assert_eq!(snapshot["customSecondaryColor"], serde_json::json!(u32::MAX));
         assert_eq!(snapshot["themeMode"], "dark");
         assert_eq!(snapshot["backgroundImageOpacity"], serde_json::json!(0.5));
+        assert_eq!(snapshot["useCustomColors"], true);
         assert_eq!(preferences.getTyped::<String>(&stringPreferencesKey("app_language")).unwrap().as_deref(), Some("zh-CN"));
     }
     assert_eq!(root.parent().unwrap(), std::env::temp_dir());

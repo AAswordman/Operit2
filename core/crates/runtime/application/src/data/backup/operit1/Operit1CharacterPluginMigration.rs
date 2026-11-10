@@ -86,6 +86,11 @@ impl Operit1SnapshotImportManager {
         let profiles = buildOperit1MemorySpaces(parsed)?;
         let bindings = collectOperit1CharacterMemoryProfileBindings(parsed)?;
         let now = parsed.archive.manifest.createdAt;
+        let producerNodeId = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(
+            self.storageHost.clone(),
+        )
+        .identity()?
+        .nodeId;
         let mut memory_count = 0;
         let mut link_count = 0;
         for profile in profiles.values() {
@@ -114,6 +119,7 @@ impl Operit1SnapshotImportManager {
                     &owner,
                     plan,
                     archive,
+                    &producerNodeId,
                 );
                 self.storageHost
                     .delete(target, false)

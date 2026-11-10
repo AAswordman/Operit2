@@ -166,6 +166,7 @@ fn buildOperit1PluginMemoryRecords(
     owner: &str,
     plan: &SnapshotFileImportPlan,
     archive: &OperitChatArchive,
+    producerNodeId: &str,
 ) -> Result<(Vec<(String, String, Value)>, i32, i32), String> {
     use crate::data::backup::CharacterPluginMigration::{
         migrateCandidateTrigger, ownerRecord, CandidateSourceState,
@@ -238,7 +239,7 @@ fn buildOperit1PluginMemoryRecords(
                         message.baseMessage.sender.clone(),
                     ))
                     .collect::<Vec<_>>();
-                let mut candidate = serde_json::json!({"id":table.requiredI64(0,"MemoryAutoSaveCandidate.id")?,"chatId":chat,"triggerMessageTimestamp":timestamp,
+                let mut candidate = serde_json::json!({"id":table.requiredI64(0,"MemoryAutoSaveCandidate.id")?,"producerNodeId":producerNodeId,"chatId":chat,"triggerMessageTimestamp":timestamp,
                     "createdAt":table.requiredI64(3,"MemoryAutoSaveCandidate.createdAt")?,"updatedAt":table.requiredI64(4,"MemoryAutoSaveCandidate.updatedAt")?,"status":table.requiredString(5,"MemoryAutoSaveCandidate.status")?,"attemptCount":table.scalarI32(6,"MemoryAutoSaveCandidate.attemptCount")?,"lastError":table.requiredString(7,"MemoryAutoSaveCandidate.lastError")?,"sourceType":table.requiredString(8,"MemoryAutoSaveCandidate.sourceType")?});
                 // The retired app deleted chats without clearing their queued extractions, and the
                 // plugin requires a resolvable source revision, so stale queue records are dropped.

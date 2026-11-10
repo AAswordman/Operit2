@@ -77,10 +77,14 @@ fn buildOperit2CharacterCards(
             preferences,
             &format!("character_card_{id}_chat_model_binding_mode"),
         )?;
-        let chatModelId = resolveOperit1CharacterChatModelId(parsed, preferences, &id)?;
+        let (chatProviderId, chatModelId) =
+            match resolveOperit1CharacterChatModelBinding(parsed, preferences, &id)? {
+                Some((provider, model)) => (Some(provider), Some(model)),
+                None => (None, None),
+            };
         let memoryBinding = resolveOperit1CharacterMemoryBinding(parsed, preferences, &id)?;
         cards.push(CharacterCard {
-            chatProviderId: None,
+            chatProviderId,
             id: id.clone(),
             name: name.to_string(),
             description: optionalPreferenceString(
@@ -401,29 +405,6 @@ fn collectOperit1CharacterMemoryProfileBindings(
 }
 
 #[allow(non_snake_case)]
-/// Collects the memory databases physically present in the snapshot.
-fn collectOperit1ObjectBoxProfileIds(
-    parsed: &ParsedOperit1Snapshot,
-) -> Result<BTreeSet<String>, String> {
-    let mut ids = BTreeSet::new();
-    for entry in parsed.archive.entries.keys() {
-        if entry == ENTRY_OBJECTBOX_DEFAULT_DATA {
-            ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
-            continue;
-        }
-        let Some(rest) = entry.strip_prefix("payload/files/objectbox_") else {
-            continue;
-        };
-        let Some(profileId) = rest.strip_suffix("/data.mdb") else {
-            continue;
-        };
-        validateOperit1ProfileId(profileId)?;
-        ids.insert(profileId.to_string());
-    }
-    Ok(ids)
-}
-
-#[allow(non_snake_case)]
 fn operit1ObjectBoxEntryForProfile(profileId: &str) -> String {
     if profileId == OPERIT1_DEFAULT_PROFILE_ID {
         ENTRY_OBJECTBOX_DEFAULT_DATA.to_string()
@@ -522,7 +503,7 @@ fn operit1UserMarkdownEntry(profileId: &str) -> String {
     format!("payload/files/memory-space-profiles/{profileId}/user.md")
 }
 
-/// Validates current memory metadata and documents before any import writes occur.
+/// Validates listed memory spaces, bindings and documents; raw snapshots can retain unlisted databases.
 fn validateOperit1MemorySpaces(parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
     let spaces = buildOperit1MemorySpaces(parsed)?;
     let activeId = operit1ActiveProfileId(parsed)?;
@@ -532,11 +513,6 @@ fn validateOperit1MemorySpaces(parsed: &ParsedOperit1Snapshot) -> Result<(), Str
     for profileId in collectOperit1CharacterMemoryProfileBindings(parsed)?.values() {
         if !spaces.contains_key(profileId) {
             return Err(format!("Operit1 角色卡绑定了不存在的记忆库：{profileId}"));
-        }
-    }
-    for profileId in collectOperit1ObjectBoxProfileIds(parsed)? {
-        if !spaces.contains_key(&profileId) {
-            return Err(format!("Operit1 记忆数据库不在记忆库列表中：{profileId}"));
         }
     }
     for profileId in spaces.keys() {
@@ -790,12 +766,12 @@ struct Operit1TtsHttpResponsePipelineStep {
 }
 
 #[allow(non_snake_case)]
-/// Resolves one character card fixed chat-model binding into a current model id.
-fn resolveOperit1CharacterChatModelId(
+/// Resolves a fixed character model to the imported provider and exact source model index.
+fn resolveOperit1CharacterChatModelBinding(
     parsed: &ParsedOperit1Snapshot,
     preferences: &HashMap<String, Operit1PreferenceValue>,
     cardId: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<(String, String)>, String> {
     let bindingMode = optionalPreferenceString(
         preferences,
         &format!("character_card_{cardId}_chat_model_binding_mode"),
@@ -819,7 +795,7 @@ fn resolveOperit1CharacterChatModelId(
     modelIds
         .get(modelIndex as usize)
         .cloned()
-        .map(Some)
+        .map(|modelId| Some((operit1ProviderId(&config.id), modelId)))
         .ok_or_else(|| format!("Operit1 角色卡模型索引越界：{cardId}/{modelIndex}"))
 }
 
