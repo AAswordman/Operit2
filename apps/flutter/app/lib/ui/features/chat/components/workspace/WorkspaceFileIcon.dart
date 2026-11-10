@@ -188,6 +188,8 @@ Widget buildWorkspaceFileIcon(String name, {double size = 14}) {
       'svg' ||
       'ico' ||
       'bmp' ||
+      'heic' ||
+      'heif' ||
       'avif' => (Icons.image_outlined, const Color(0xFFA78BCA)),
       'mp3' ||
       'wav' ||

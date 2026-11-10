@@ -99,6 +99,8 @@ WorkspaceFilePreviewKind workspacePreviewKindForPath(String path) {
     case 'gif':
     case 'bmp':
     case 'webp':
+    case 'heic':
+    case 'heif':
     case 'svg':
       return WorkspaceFilePreviewKind.image;
     case 'mp3':

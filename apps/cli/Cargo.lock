@@ -2989,6 +2989,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "getrandom 0.2.17",
+ "heic-rs",
  "image",
  "js-sys",
  "json5",

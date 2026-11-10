@@ -70,6 +70,7 @@ class AttachmentData {
       'gif',
       'bmp',
       'heic',
+      'heif',
     }.contains(extension)) {
       return 'image';
     }

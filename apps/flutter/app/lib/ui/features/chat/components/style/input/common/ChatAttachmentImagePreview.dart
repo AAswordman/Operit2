@@ -119,12 +119,16 @@ Future<Uint8List> _readAttachmentImageBytes(
     final mediaData = await _mediaPoolClients
         .servicesRuntimeHostInteractionService
         .getMediaPoolData(mediaType: mediaPoolType, id: attachmentPath);
-    return base64Decode(mediaData.base64);
+    return readImageDisplayBytes(
+      base64Decode(mediaData.base64),
+      clients: _mediaPoolClients,
+    );
   }
-  return readChatAttachmentFileBytes(
+  final bytes = await readChatAttachmentFileBytes(
     attachmentPath,
     sourceNodeId: sourceNodeId,
   );
+  return readImageDisplayBytes(bytes, clients: _mediaPoolClients);
 }
 
 /// Uses the existing VFS binary reader for both current and historical locations.

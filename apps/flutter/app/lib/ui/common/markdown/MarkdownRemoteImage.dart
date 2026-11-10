@@ -71,19 +71,8 @@ class MarkdownRemoteImage extends StatelessWidget {
         final dataBytes = markdownDataImageBytes(trimmed);
         final vfsPath = composeDslVfsImagePath(trimmed);
         final Widget image;
-        if (isDataImage) {
-          image = dataBytes == null
-              ? error
-              : Image.memory(
-                  dataBytes,
-                  key: ValueKey((trimmed, owner.bridge)),
-                  gaplessPlayback: true,
-                  fit: fit,
-                  cacheWidth: cacheWidth,
-                  cacheHeight: cacheHeight,
-                  semanticLabel: alt.trim().isEmpty ? null : alt.trim(),
-                  errorBuilder: (context, failure, stackTrace) => error,
-                );
+        if (isDataImage && dataBytes == null) {
+          image = error;
         } else if (vfsPath != null) {
           image = Image(
             key: ValueKey((trimmed, owner.bridge)),
@@ -94,6 +83,7 @@ class MarkdownRemoteImage extends StatelessWidget {
               ComposeDslVfsImage(
                 path: vfsPath,
                 owner: owner.bridge,
+                clients: owner,
                 readBytes: readBytes,
               ),
             ),
@@ -208,6 +198,17 @@ class _RuntimeImageState extends State<_RuntimeImage> {
 
   /// Creates the cold proxy stream owned by the image subscription.
   void _load() {
+    final bytes = markdownDataImageBytes(widget.url);
+    if (bytes != null) {
+      _request =
+          Stream.fromFuture(
+            readImageDisplayBytes(bytes, clients: widget.clients),
+          ).map(
+            (bytes) =>
+                RuntimeImageData(bytes: bytes, displayUrl: null, error: null),
+          );
+      return;
+    }
     _request = widget.clients.servicesRuntimeHostInteractionService.imageBytes(
       url: widget.url,
     );

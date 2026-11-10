@@ -3,6 +3,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import '../../../packages/screens/ComposeDslImageSource.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
@@ -109,7 +110,7 @@ class _WorkspaceBytesPreview extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return FutureBuilder<Uint8List>(
-      future: onReadWorkspaceFileBytes(filePath),
+      future: _readPreviewBytes(filePath),
       builder: (context, snapshot) {
         final l10n = AppLocalizations.of(context)!;
         if (snapshot.connectionState != ConnectionState.done) {
@@ -151,6 +152,14 @@ class _WorkspaceBytesPreview extends StatelessWidget {
         }
       },
     );
+  }
+
+  /// Prepares image bytes at the file read boundary before building a preview.
+  Future<Uint8List> _readPreviewBytes(String path) async {
+    final bytes = await onReadWorkspaceFileBytes(path);
+    return tab.previewKind == WorkspaceFilePreviewKind.image
+        ? readImageDisplayBytes(bytes)
+        : bytes;
   }
 
   Widget _buildPreview(AppLocalizations l10n, Uint8List bytes) {

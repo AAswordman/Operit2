@@ -95,9 +95,12 @@ String extractMarkdownImageAlt(String imageContent) {
 String extractMarkdownImageUrl(String imageContent) {
   final destination =
       RegExp(r'\]\(([^)]+)\)$').firstMatch(imageContent.trim())?.group(1) ?? '';
-  return destination
+  final url = destination
       .replaceFirst(RegExp(r"""\s+(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$"""), '')
       .trim();
+  return url.startsWith('<') && url.endsWith('>')
+      ? url.substring(1, url.length - 1)
+      : url;
 }
 
 /// Whether the entire message is one still/animated image, not audio or video.

@@ -5,12 +5,33 @@ import 'package:operit_folder_access/operit_folder_access.dart'
     show OperitFolderAccessAndroid, OperitFolderAccessPlatform;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:operit2/core/host/SelectedFileInput.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final originalFileAccess = OperitFolderAccessPlatform.instance;
   tearDown(() => OperitFolderAccessPlatform.instance = originalFileAccess);
+
+  test(
+    'image picker library accepts HEIC and HEIF without altering selected files',
+    () async {
+      final previousSelector = FileSelectorPlatform.instance;
+      final selector = _ImageSelector();
+      FileSelectorPlatform.instance = selector;
+      addTearDown(() => FileSelectorPlatform.instance = previousSelector);
+      final selected = await originalFileAccess.pickFileInputs(
+        imagesOnly: true,
+      );
+      expect(selector.groups.single.extensions, containsAll(['heic', 'heif']));
+      expect(selector.groups.single.uniformTypeIdentifiers, ['public.image']);
+      expect(selector.groups.single.webWildCards, ['image/*']);
+      expect(selected.single.name, 'photo.heif');
+      expect(selected.single.mimeType, 'image/heif');
+      expect(await selected.single.readChunk(), [1, 2, 3]);
+      await selected.single.close();
+    },
+  );
 
   test(
     'source is split into bounded chunks with exact binary contents',
@@ -226,5 +247,28 @@ void main() {
             .setMockMethodCallHandler(channel, null);
       }
     });
+  }
+}
+
+/// Supplies the platform selector contract used by the existing picker library.
+class _ImageSelector extends FileSelectorPlatform {
+  List<XTypeGroup> groups = [];
+
+  /// Records image filters and returns the original HEIF selection unchanged.
+  @override
+  Future<List<XFile>> openFiles({
+    List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async {
+    groups = acceptedTypeGroups!;
+    return [
+      XFile.fromData(
+        Uint8List.fromList([1, 2, 3]),
+        path: 'photo.heif',
+        name: 'photo.heif',
+        mimeType: 'image/heif',
+      ),
+    ];
   }
 }

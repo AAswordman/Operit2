@@ -3,8 +3,12 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../features/packages/screens/ComposeDslImageSource.dart';
+import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/logging/ClientLogger.dart';
+import '../../features/chat/components/style/input/common/ChatAttachmentImagePreview.dart';
 import '../interactions/MessagePressShield.dart';
+import 'MarkdownFileScope.dart';
 import 'MarkdownAudioRenderer.dart';
 import 'MarkdownImageRenderer.dart';
 import 'MarkdownLink.dart';
@@ -20,9 +24,43 @@ const Set<String> _markdownVideoExtensions = <String>{
   'ogv',
 };
 
+/// Recognizes video destinations in Markdown image syntax.
 bool isLikelyVideoUrl(String url) {
+  if (url.trim().toLowerCase().startsWith('data:video/')) return true;
   final extension = normalizeMarkdownMediaUrl(url).split('.').last;
   return _markdownVideoExtensions.contains(extension);
+}
+
+/// Resolves local and VFS videos through the same file host as attachments.
+Future<Uri> resolveMarkdownVideoUri(
+  String source, {
+  String? basePath,
+  String? nodeId,
+  GeneratedCoreProxyClients clients = imageSourceClients,
+}) async {
+  final resolved = resolveMarkdownFilePath(source, basePath);
+  final uri = Uri.tryParse(resolved);
+  if (uri != null &&
+      (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'data')) {
+    return uri;
+  }
+  final bytes = await readChatAttachmentFileBytes(
+    resolved,
+    sourceNodeId: nodeId,
+    clients: clients,
+  );
+  final extension = normalizeMarkdownMediaUrl(resolved).split('.').last;
+  final mimeType = switch (extension) {
+    'mp4' || 'm4v' => 'video/mp4',
+    'webm' => 'video/webm',
+    'mkv' => 'video/x-matroska',
+    'mov' => 'video/quicktime',
+    '3gp' => 'video/3gpp',
+    'avi' => 'video/x-msvideo',
+    'ogv' => 'video/ogg',
+    _ => throw UnsupportedError('Unsupported Markdown video: $source'),
+  };
+  return Uri.dataFromBytes(bytes, mimeType: mimeType);
 }
 
 class MarkdownVideoRenderer extends StatefulWidget {
@@ -45,13 +83,25 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
   VideoPlayerController? _controller;
   Future<void>? _initializeFuture;
   bool _failed = false;
+  MarkdownFileScope? _scope;
+  int _loadGeneration = 0;
 
+  /// Creates the controller after the message's file scope becomes available.
   @override
-  void initState() {
-    super.initState();
-    _createController();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scope = MarkdownFileScope.maybeOf(context);
+    if (_initializeFuture == null ||
+        scope?.basePath != _scope?.basePath ||
+        scope?.nodeId != _scope?.nodeId ||
+        scope?.clients.bridge != _scope?.clients.bridge) {
+      _scope = scope;
+      _releaseController();
+      _createController();
+    }
   }
 
+  /// Replaces the source when streamed Markdown changes its destination.
   @override
   void didUpdateWidget(covariant MarkdownVideoRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -61,31 +111,36 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
     }
   }
 
+  /// Starts one source request and clears the previous playback failure.
   void _createController() {
     _failed = false;
-    _initializeFuture = null;
     final videoUrl = extractMarkdownImageUrl(widget.videoMarkdown);
-    final uri = Uri.tryParse(videoUrl);
-    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
-      _failed = true;
-      return;
-    }
-    final controller = VideoPlayerController.networkUrl(uri);
-    _controller = controller;
-    controller.addListener(_handleControllerChanged);
-    _initializeFuture = _initializeController(controller, videoUrl);
+    _initializeFuture = _initializeController(videoUrl, ++_loadGeneration);
   }
 
-  Future<void> _initializeController(
-    VideoPlayerController controller,
-    String videoUrl,
-  ) async {
+  /// Initializes only the current request and disposes obsolete asynchronous loads.
+  Future<void> _initializeController(String videoUrl, int generation) async {
+    VideoPlayerController? controller;
     try {
+      final scope = _scope;
+      final uri = await resolveMarkdownVideoUri(
+        videoUrl,
+        basePath: scope?.basePath,
+        nodeId: scope?.nodeId,
+        clients: scope?.clients ?? imageSourceClients,
+      );
+      if (!mounted || generation != _loadGeneration) return;
+      controller = VideoPlayerController.networkUrl(uri);
       await controller.initialize();
-      if (mounted) {
-        setState(() {});
+      if (!mounted || generation != _loadGeneration) {
+        await controller.dispose();
+        return;
       }
+      controller.addListener(_handleControllerChanged);
+      setState(() => _controller = controller);
     } catch (error, stackTrace) {
+      await controller?.dispose();
+      if (!mounted || generation != _loadGeneration) return;
       ClientLogger.w(
         'Cannot load markdown video: $videoUrl',
         tag: 'MarkdownVideo',
@@ -100,13 +155,16 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
     }
   }
 
+  /// Repaints playback controls as the player state changes.
   void _handleControllerChanged() {
     if (mounted) {
       setState(() {});
     }
   }
 
+  /// Invalidates pending loads and releases the active player.
   void _releaseController() {
+    _loadGeneration++;
     final controller = _controller;
     _controller = null;
     _initializeFuture = null;
@@ -117,12 +175,14 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
     controller.dispose();
   }
 
+  /// Releases playback and prevents late source reads from creating a player.
   @override
   void dispose() {
     _releaseController();
     super.dispose();
   }
 
+  /// Toggles playback for the initialized video.
   Future<void> _togglePlayback() async {
     final controller = _controller;
     if (controller == null) {
@@ -149,6 +209,7 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
     }
   }
 
+  /// Displays loading, playback controls or the source error.
   @override
   Widget build(BuildContext context) {
     if (!isCompleteImageMarkdown(widget.videoMarkdown)) {
@@ -179,7 +240,7 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                 ),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxHeight: widget.maxVideoHeight),
-                  child: _failed || controller == null || initializeFuture == null
+                  child: _failed || initializeFuture == null
                       ? _MarkdownMediaFailure(
                           label: videoAlt.isEmpty ? videoUrl : videoAlt,
                           onTap: () => activateMarkdownLink(videoUrl, null),
@@ -190,12 +251,14 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                             if (_failed || snapshot.hasError) {
                               return _MarkdownMediaFailure(
                                 label: videoAlt.isEmpty ? videoUrl : videoAlt,
-                                onTap: () => activateMarkdownLink(videoUrl, null),
+                                onTap: () =>
+                                    activateMarkdownLink(videoUrl, null),
                               );
                             }
                             final ready =
                                 snapshot.connectionState ==
-                                ConnectionState.done;
+                                    ConnectionState.done &&
+                                controller != null;
                             if (!ready) {
                               return const AspectRatio(
                                 aspectRatio: 16 / 9,
@@ -208,8 +271,7 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                               alignment: Alignment.center,
                               children: <Widget>[
                                 AspectRatio(
-                                  aspectRatio:
-                                      controller.value.aspectRatio == 0
+                                  aspectRatio: controller.value.aspectRatio == 0
                                       ? 16 / 9
                                       : controller.value.aspectRatio,
                                   child: VideoPlayer(controller),

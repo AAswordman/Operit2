@@ -18,6 +18,7 @@ chrono.workspace = true
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 futures-util.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+heic-rs = { version = "0.1.4", default-features = false }
 json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { path = "../../foundation/host-api" }

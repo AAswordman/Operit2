@@ -3453,6 +3453,7 @@ pub(crate) fn getMimeTypeFromPath(path: &Path) -> &'static str {
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("heic") => "image/heic",
+        Some("heif") => "image/heif",
         Some("txt") => "text/plain",
         Some("json") => "application/json",
         Some("xml") => "application/xml",

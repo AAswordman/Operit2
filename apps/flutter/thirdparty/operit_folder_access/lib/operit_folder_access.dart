@@ -107,8 +107,11 @@ abstract class OperitFolderAccessPlatform {
                   'bmp',
                   'gif',
                   'heic',
+                  'heif',
                 ],
                 mimeTypes: ['image/*'],
+                uniformTypeIdentifiers: ['public.image'],
+                webWildCards: ['image/*'],
               ),
             ]
           : const [],

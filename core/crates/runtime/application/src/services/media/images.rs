@@ -12,6 +12,34 @@ use std::{
 const CACHE_ENTRIES: usize = 4;
 const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 
+/// Uses the HEIF library to prepare pixels for the existing image delivery service.
+pub(crate) fn heif_display_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use image::ImageEncoder;
+
+    let options = heic_rs::DecodeOptions::default()
+        .with_layout(heic_rs::PixelLayout::Rgba8)
+        .with_max_pixels(Some(64 * 1024 * 1024));
+    let decoded = heic_rs::decode(bytes, &options)
+        .map_err(|error| format!("Cannot decode HEIF image: {error}"))?;
+    let context = heic_rs::context::Context::open(bytes)
+        .map_err(|error| format!("Cannot read HEIF metadata: {error}"))?;
+    let properties = context.props(context.meta.primary)
+        .map_err(|error| format!("Cannot read HEIF image properties: {error}"))?;
+    let mut png = Vec::new();
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut png);
+    if let Some(profile) = context.icc(&properties) {
+        encoder.set_icc_profile(profile.to_vec())
+            .map_err(|error| format!("Cannot preserve HEIF color profile: {error}"))?;
+    }
+    encoder.write_image(
+        &decoded.data,
+        decoded.width,
+        decoded.height,
+        image::ExtendedColorType::Rgba8,
+    ).map_err(|error| format!("Cannot encode HEIF display image: {error}"))?;
+    Ok(png)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
     Rgb565Le,
