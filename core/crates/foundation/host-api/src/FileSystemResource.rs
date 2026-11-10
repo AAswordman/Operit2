@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 
 pub const RESOURCE_PREFIX: &str = "operit-resource:";
 
+/// A file reference whose native location is resolved by the consuming platform provider.
+pub trait FileSource: Send + Sync {
+    /// Resolves a native file location, rejecting document resources without native access.
+    fn nativePath(&self) -> HostResult<String>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileSystemResource {
     pub backend: String,

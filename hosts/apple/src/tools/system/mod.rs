@@ -30,6 +30,39 @@ impl AppleSystemOperationHost {
 }
 
 impl SystemOperationHost for AppleSystemOperationHost {
+    /// Reads the installed macOS distribution without exposing bundle paths to clients.
+    fn applicationUpdateTarget(
+        &self,
+    ) -> HostResult<Option<operit_host_api::ApplicationUpdateTarget>> {
+        #[cfg(target_os = "macos")]
+        {
+            let executable = std::env::current_exe()?;
+            let contents = executable
+                .parent()
+                .and_then(Path::parent)
+                .ok_or_else(|| HostError::new("Application bundle metadata is unavailable"))?;
+            let metadata = Command::new("/usr/bin/plutil")
+                .args(["-extract", "OperitDistributionType", "raw", "-o", "-"])
+                .arg(contents.join("Info.plist"))
+                .output()?;
+            if !metadata.status.success() {
+                return Err(HostError::new(
+                    "Cannot read this macOS application's distribution metadata",
+                ));
+            }
+            let buildType = String::from_utf8(metadata.stdout)
+                .map_err(|error| HostError::new(error.to_string()))?
+                .trim()
+                .to_owned();
+            return Ok(Some(operit_host_api::ApplicationUpdateTarget {
+                installTiming: operit_host_api::AppInstallTiming::Immediate,
+                arch: "universal".into(),
+                package: operit_host_api::ApplicationUpdatePackage::MacosPkg { buildType },
+            }));
+        }
+        #[cfg(not(target_os = "macos"))]
+        Ok(None)
+    }
     fn getSystemLanguageCode(&self) -> HostResult<String> {
         use core_foundation::base::TCFType;
         use core_foundation::string::CFString;
@@ -169,8 +202,11 @@ impl SystemOperationHost for AppleSystemOperationHost {
         }
     }
 
-    fn installApp(&self, path: &str) -> HostResult<AppOperationData> {
-        let path = non_blank(path, "path")?;
+    /// Installs a VFS file reference using the requested platform execution timing.
+    fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> HostResult<AppOperationData> {
+        timing.requireImmediate()?;
+        let path = source.nativePath()?;
+        let path = non_blank(&path, "path")?;
         #[cfg(target_os = "macos")]
         { packages::install(&path) }
         #[cfg(target_os = "ios")]

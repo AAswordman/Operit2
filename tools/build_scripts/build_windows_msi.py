@@ -12,6 +12,7 @@ from pathlib import Path
 
 from common import DIST_DIR, FLUTTER_APP_DIR, REPO_ROOT, require_command, run
 from release_artifacts import release_asset_name, release_version
+from windows_bash import prepare_windows_bash, REQUIRED_FILES as BASH_REQUIRED_FILES
 
 
 INSTALLER_DIR = REPO_ROOT / "tools/windows-installer"
@@ -24,7 +25,7 @@ REQUIRED_FILES = (
     "operit_local_llm.dll", "msvcp140.dll", "vcruntime140.dll",
     "data/icudtl.dat", "data/app.so", "data/flutter_assets/AssetManifest.bin",
     "Operit2DataCleanup.exe", "README-Windows.txt",
-)
+) + tuple(f"bash/{name}" for name in BASH_REQUIRED_FILES)
 
 
 # Maps supported SemVer channels to strictly ordered Windows Installer versions.
@@ -100,6 +101,7 @@ def write_payload(release_dir: Path, destination: Path) -> None:
 
 # Restores the pinned WiX tools and builds a validated, self-contained MSI.
 def build_windows_msi(release_dir: Path, destination: Path) -> Path:
+    prepare_windows_bash(release_dir)
     version = release_version()
     windows_version = msi_version(version)
     WORK_DIR.mkdir(parents=True, exist_ok=True)

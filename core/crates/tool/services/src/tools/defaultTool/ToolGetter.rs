@@ -88,6 +88,7 @@ impl ToolGetter {
             context.systemOperationHost.clone(),
             context.toastHost.clone(),
             context.clipboardHost.clone(),
+            Self::getVirtualFileSystem(context),
         )
     }
 

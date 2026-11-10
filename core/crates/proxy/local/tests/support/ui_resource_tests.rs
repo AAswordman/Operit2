@@ -29,7 +29,7 @@ impl SystemOperationHost for TestSystemLocale {
         sendNotification(request: &SystemNotificationRequest) -> ();
         modifySystemSetting(namespace: &str, setting: &str, value: &str) -> SystemSettingData;
         getSystemSetting(namespace: &str, setting: &str) -> SystemSettingData;
-        installApp(path: &str) -> AppOperationData;
+        installApp(source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> AppOperationData;
         uninstallApp(packageName: &str) -> AppOperationData;
         listInstalledApps(includeSystemApps: bool) -> AppListData;
         startApp(packageName: &str) -> AppOperationData;

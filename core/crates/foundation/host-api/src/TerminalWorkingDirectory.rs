@@ -22,8 +22,13 @@ pub fn resolveSessionDirectory(
 ) -> HostResult<String> {
     let info = host.terminalInfo()?;
     let (terminal, terminalType) = if let Some(kind) = requestedType {
-        let selected = info.types.iter().find(|entry| entry.terminalType == kind && entry.available)
+        let selected = info.types.iter().find(|entry| entry.terminalType == kind)
             .ok_or_else(|| HostError::new(format!("Terminal type is unavailable: {kind}")))?;
+        if !selected.available {
+            return Err(HostError::new(format!(
+                "Terminal type is unavailable: {kind}: {}", selected.description,
+            )));
+        }
         (selected.terminal.as_str(), selected.terminalType.as_str())
     } else {
         (info.terminal.as_str(), info.terminalType.as_str())

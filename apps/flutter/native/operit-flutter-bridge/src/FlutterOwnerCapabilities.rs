@@ -273,6 +273,12 @@ impl FlutterSystemOperationBridge {
 }
 
 impl SystemOperationHost for FlutterSystemOperationBridge {
+    /// Preserves the selected host's application installation identity.
+    fn applicationUpdateTarget(
+        &self,
+    ) -> HostResult<Option<operit_host_api::ApplicationUpdateTarget>> {
+        self.host.applicationUpdateTarget()
+    }
     /// Reads the selected host's language.
     fn getSystemLanguageCode(&self) -> HostResult<String> {
         self.host.getSystemLanguageCode()
@@ -294,9 +300,9 @@ impl SystemOperationHost for FlutterSystemOperationBridge {
     fn getSystemSetting(&self, namespace: &str, setting: &str) -> HostResult<SystemSettingData> {
         self.host.getSystemSetting(namespace, setting)
     }
-    /// Installs an app through the selected system host.
-    fn installApp(&self, path: &str) -> HostResult<AppOperationData> {
-        self.host.installApp(path)
+    /// Forwards the file reference and execution timing without resolving native paths.
+    fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> HostResult<AppOperationData> {
+        self.host.installApp(source, timing)
     }
     /// Uninstalls an app through the selected system host.
     fn uninstallApp(&self, name: &str) -> HostResult<AppOperationData> {

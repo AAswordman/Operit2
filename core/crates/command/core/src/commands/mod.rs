@@ -90,7 +90,7 @@ async fn run_core_owned_command(
         BuiltinRoot::Storage => storage::run_storage_command(application, args, output),
         BuiltinRoot::Stt => stt::run_stt_command(application, args, output),
         BuiltinRoot::Sync => sync::run_sync_command(application, args, output),
-        BuiltinRoot::Update => update::run_update_command(args, output),
+        BuiltinRoot::Update => update::run_update_command(&application.hostManager, args, output).await,
         BuiltinRoot::Usage => usage::run_usage_command(application, args, output),
     }
 }

@@ -1,15 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use flate2::read::GzDecoder;
 use operit_link::CoreLinkError;
 use operit_model::ApiKeyInfo::ApiKeyInfo;
 use operit_model::AttachmentInfo::AttachmentInfo;
@@ -40,13 +38,11 @@ use operit_util::stream::Stream::Stream;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
 };
-use tar::Archive;
-use zip::ZipArchive;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-mod host_ops;
+pub(crate) mod host_ops;
 pub(crate) mod link;
 pub(crate) mod network_control_ui;
 mod transfer;
@@ -62,7 +58,11 @@ use crate::chat_runtime::{
     run_chat_shell_command_with_core, run_shell_command,
 };
 use crate::core_proxy::local_cli_core;
+pub(crate) use host_ops::install_downloaded_cli_update;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
+#[cfg(test)]
+use host_ops::extract_cli_binary_from_zip;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use link::run_link_command;
 use transfer::{run_backup_command, run_export_command, run_import_command};
 use web::run_web_command;
@@ -512,8 +512,9 @@ async fn run_update_cli_command(
     args: &[String],
 ) -> Result<(), String> {
     if args.is_empty() {
-        let target = FullUpdateTarget::cliForCurrentHost()?;
+        let target = crate::cli::host_ops::cli_update_target()?;
         return run_update_with_progress(
+            core.localHostManager()?,
             env!("CARGO_PKG_VERSION"),
             target,
             UpdateApplyMode::InstallCurrentTarget,
@@ -523,7 +524,7 @@ async fn run_update_cli_command(
 
     match args[0].as_str() {
         "check" if args.len() == 1 => {
-            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let target = crate::cli::host_ops::cli_update_target()?;
             let command = vec![
                 "update".to_string(),
                 "check".to_string(),
@@ -535,13 +536,14 @@ async fn run_update_cli_command(
             run_core_command_and_print(core, &command).await
         }
         "target" if args.len() == 1 => {
-            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let target = crate::cli::host_ops::cli_update_target()?;
             print_update_target(target)
         }
         "run" if args.len() == 2 => {
             let current_version = args.get(1).ok_or_else(|| cli_update_usage("run"))?;
-            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let target = crate::cli::host_ops::cli_update_target()?;
             run_update_with_progress(
+                core.localHostManager()?,
                 current_version,
                 target,
                 UpdateApplyMode::InstallCurrentTarget,
@@ -550,12 +552,12 @@ async fn run_update_cli_command(
         }
         "download" if args.len() == 2 => {
             let current_version = args.get(1).ok_or_else(|| cli_update_usage("download"))?;
-            let target = FullUpdateTarget::cliForCurrentHost()?;
-            run_update_with_progress(current_version, target, UpdateApplyMode::DownloadOnly).await
+            let target = crate::cli::host_ops::cli_update_target()?;
+            run_update_with_progress(core.localHostManager()?, current_version, target, UpdateApplyMode::DownloadOnly).await
         }
         "check" if args.len() == 2 => {
             let current_version = args.get(1).ok_or_else(|| cli_update_usage("check"))?;
-            let target = FullUpdateTarget::cliForCurrentHost()?;
+            let target = crate::cli::host_ops::cli_update_target()?;
             let command = vec![
                 "update".to_string(),
                 "check".to_string(),
@@ -617,6 +619,7 @@ enum UpdateApplyMode {
 
 /// Checks, downloads, and optionally installs a full CLI update.
 async fn run_update_with_progress(
+    context: &operit_host_api::HostManager::HostManager,
     current_version: &str,
     target: FullUpdateTarget,
     apply_mode: UpdateApplyMode,
@@ -624,16 +627,15 @@ async fn run_update_with_progress(
     let package_name = target.assetName()?;
     let target_for_install = target.clone();
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(current_version)?;
-    let status = GithubReleaseUtil::checkForFullUpdateBlocking(current_version, target)?;
+    let status = GithubReleaseUtil::checkForFullUpdate(current_version, target).await?;
     match status {
         FullUpdateStatus::Available(info) => {
-            let work_dir = std::env::temp_dir().join("operit2").join("full_update");
             let last_line_len = Arc::new(Mutex::new(0usize));
             let progress_line_len = Arc::clone(&last_line_len);
-            let package_path = GithubReleaseUtil::downloadAndPrepareFullUpdateBlocking(
-                &info.downloadUrl,
-                &info.assetName,
-                &work_dir,
+            let package_path = GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
+                info.downloadUrl.clone(),
+                info.assetName.clone(),
+                context,
                 move |event| match event {
                     FullUpdateProgressEvent::StageChanged { stage: _, message } => {
                         let mut last_line_len = progress_line_len
@@ -671,15 +673,23 @@ async fn run_update_with_progress(
                         *last_line_len = line.len();
                     }
                 },
-            )?;
+            )
+            .await?;
+            let package_path =
+                operit_tools::files::VisualFileSystem::VisualFileSystem::runtimePath(
+                    &package_path,
+                )?;
             let mut last_line_len = last_line_len
                 .lock()
                 .expect("progress line length mutex poisoned");
             clear_progress_line(&mut *last_line_len);
             let mut install_status = None;
             if apply_mode == UpdateApplyMode::InstallCurrentTarget {
+                let vfs =
+                    operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(context)?;
                 install_status = Some(handle_downloaded_update_package(
                     &target_for_install,
+                    &vfs,
                     &package_path,
                 )?);
             }
@@ -700,7 +710,7 @@ async fn run_update_with_progress(
                 println!("Current version: {current_version}");
                 println!("Channel: {channel}");
                 println!("Package: {}", info.assetName);
-                println!("Downloaded to: {}", package_path.display());
+                println!("Downloaded to: {package_path}");
                 println!("Release page: {}", info.releasePageUrl);
                 if apply_mode == UpdateApplyMode::DownloadOnly {
                     println!("Install status: download-only");
@@ -780,37 +790,16 @@ pub(crate) enum DownloadedUpdateInstallStatus {
     TargetMismatch,
 }
 
-pub(crate) fn install_downloaded_cli_update(
-    target: &FullUpdateTarget,
-    package_path: &Path,
-    output: InstallOutput,
-) -> Result<DownloadedUpdateInstallStatus, String> {
-    if target.product != "cli" {
-        return Ok(DownloadedUpdateInstallStatus::TargetMismatch);
-    }
-    let current_target = FullUpdateTarget::cliForCurrentHost()?;
-    if target != &current_target {
-        return Ok(DownloadedUpdateInstallStatus::TargetMismatch);
-    }
-    let source = extract_cli_binary_from_package(target, package_path)?;
-    let install_state = current_cli_install_state()?;
-    match install_state {
-        CliInstallState::Installed => {
-            install_cli_from_source(&source, InstallMode::Update, output, |_| {})?;
-            Ok(DownloadedUpdateInstallStatus::Scheduled)
-        }
-        CliInstallState::NotInstalled => Ok(DownloadedUpdateInstallStatus::NotInstalled),
-    }
-}
-
 /// Installs a downloaded package and returns the exact installation outcome.
 fn handle_downloaded_update_package(
     target: &FullUpdateTarget,
-    package_path: &Path,
+    vfs: &VisualFileSystem,
+    package_path: &str,
 ) -> Result<DownloadedUpdateInstallStatus, String> {
+    let source = vfs.resolvePath(package_path)?;
     let status = install_downloaded_cli_update(
         target,
-        package_path,
+        &source,
         if cli_json_mode() {
             InstallOutput::Silent
         } else {
@@ -905,6 +894,9 @@ fn install_cli_from_source(
     for library in host_ops::cli_runtime_libraries() {
         copy_cli_binary(&source.with_file_name(library), &install_dir.join(library))?;
     }
+    for directory in host_ops::cli_runtime_directories() {
+        copy_cli_runtime_directory(&source.with_file_name(directory), &install_dir.join(directory))?;
+    }
     on_progress(CliInstallProgress::CopyOperit);
     copy_cli_binary(source, &operit)?;
     on_progress(CliInstallProgress::CopyOperit2);
@@ -986,6 +978,19 @@ fn uninstall_cli() -> Result<(), String> {
     remove_file_if_exists(&operit2)?;
     for library in host_ops::cli_runtime_libraries() {
         remove_file_if_exists(&install_dir.join(library))?;
+    }
+    for directory in host_ops::cli_runtime_directories() {
+        let target = install_dir.join(directory);
+        if !target.is_absolute() || target.parent() != Some(install_dir.as_path()) {
+            return Err(format!("Runtime directory escapes CLI installation: {}", target.display()));
+        }
+        if target.exists() {
+            let metadata = fs::symlink_metadata(&target).map_err(|error| error.to_string())?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!("Runtime directory is a link: {}", target.display()));
+            }
+            fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
+        }
     }
     remove_cli_install_dir_from_path(&install_dir)?;
 
@@ -1095,6 +1100,46 @@ fn cli_install_dir() -> Result<PathBuf, String> {
 fn cli_profile_file() -> Result<PathBuf, String> {
     let home = env::var_os("HOME").ok_or_else(|| "HOME is required".to_string())?;
     Ok(PathBuf::from(home).join(".profile"))
+}
+
+/// Copies a complete runtime tree without following links and preserves an identical source.
+fn copy_cli_runtime_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata =
+        fs::symlink_metadata(source).map_err(|error| format!("{}: {error}", source.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "Runtime source is not a regular directory: {}",
+            source.display()
+        ));
+    }
+    if destination.exists() {
+        let metadata = fs::symlink_metadata(destination).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(format!(
+                "Runtime destination is not a regular directory: {}",
+                destination.display()
+            ));
+        }
+        if existing_paths_equal(source, destination)? {
+            return Ok(());
+        }
+    }
+    fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let kind = entry.file_type().map_err(|error| error.to_string())?;
+        if kind.is_dir() {
+            copy_cli_runtime_directory(&entry.path(), &destination.join(entry.file_name()))?;
+        } else if kind.is_file() {
+            copy_cli_binary(&entry.path(), &destination.join(entry.file_name()))?;
+        } else {
+            return Err(format!(
+                "Runtime entry is not a regular file: {}",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn copy_cli_binary(source: &Path, destination: &Path) -> Result<(), String> {
@@ -1353,80 +1398,6 @@ fn windows_path_part_matches(part: &str, target: &Path) -> bool {
     let target = target.display().to_string();
     let target = target.trim_end_matches(['\\', '/']);
     part.eq_ignore_ascii_case(target)
-}
-
-fn extract_cli_binary_from_package(
-    target: &FullUpdateTarget,
-    package_path: &Path,
-) -> Result<PathBuf, String> {
-    let extract_dir = std::env::temp_dir()
-        .join("operit2")
-        .join("cli_update_extract")
-        .join(unique_suffix());
-    fs::create_dir_all(&extract_dir).map_err(|error| error.to_string())?;
-    match target.platform.as_str() {
-        "windows" => extract_cli_binary_from_zip(package_path, &extract_dir),
-        "linux" | "macos" => extract_cli_binary_from_tar_gz(package_path, &extract_dir),
-        other => Err(format!("Unsupported CLI update package platform: {other}")),
-    }
-}
-
-/// Extracts the Windows executable together with its required runtime libraries.
-fn extract_cli_binary_from_zip(package_path: &Path, extract_dir: &Path) -> Result<PathBuf, String> {
-    let file = fs::File::open(package_path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
-    for name in std::iter::once("operit2.exe")
-        .chain(host_ops::WINDOWS_CLI_RUNTIME_LIBRARIES.iter().copied())
-    {
-        let mut entry = archive.by_name(name).map_err(|error| {
-            format!("{name} not found in {}: {error}", package_path.display())
-        })?;
-        let destination = extract_dir.join(name);
-        let mut output = fs::File::create(&destination).map_err(|error| error.to_string())?;
-        io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
-    }
-    Ok(extract_dir.join("operit2.exe"))
-}
-
-fn extract_cli_binary_from_tar_gz(
-    package_path: &Path,
-    extract_dir: &Path,
-) -> Result<PathBuf, String> {
-    let file = fs::File::open(package_path).map_err(|error| error.to_string())?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = Archive::new(decoder);
-    for entry in archive.entries().map_err(|error| error.to_string())? {
-        let mut entry = entry.map_err(|error| error.to_string())?;
-        let path = entry.path().map_err(|error| error.to_string())?;
-        if archive_path_is_exact_file(&path, "operit2") {
-            let destination = extract_dir.join("operit2");
-            entry
-                .unpack(&destination)
-                .map_err(|error| error.to_string())?;
-            #[cfg(unix)]
-            {
-                let mut permissions = fs::metadata(&destination)
-                    .map_err(|error| error.to_string())?
-                    .permissions();
-                permissions.set_mode(0o755);
-                fs::set_permissions(&destination, permissions)
-                    .map_err(|error| error.to_string())?;
-            }
-            return Ok(destination);
-        }
-    }
-    Err(format!("operit2 not found in {}", package_path.display()))
-}
-
-fn archive_path_is_exact_file(path: &Path, file_name: &str) -> bool {
-    let mut components = path.components().filter_map(|component| match component {
-        Component::CurDir => None,
-        Component::Normal(value) => Some(value),
-        _ => Some(OsStr::new("")),
-    });
-    let first = components.next();
-    let second = components.next();
-    first == Some(OsStr::new(file_name)) && second.is_none()
 }
 
 fn unique_suffix() -> String {
@@ -2205,7 +2176,10 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = env::temp_dir().join(format!("operit-cli-package-{}-{unique}", std::process::id()));
+        let root = env::temp_dir().join(format!(
+            "operit-cli-package-{}-{unique}",
+            std::process::id()
+        ));
         let extract_dir = root.join("extracted");
         fs::create_dir_all(&extract_dir).unwrap();
         let package = root.join("cli.zip");
@@ -2217,6 +2191,14 @@ mod tests {
             for name in host_ops::WINDOWS_CLI_RUNTIME_LIBRARIES {
                 archive.start_file(*name, options).unwrap();
                 archive.write_all(b"native inference runtime").unwrap();
+            }
+            for name in [
+                "bash/bin/bash.exe",
+                "bash/usr/bin/msys-2.0.dll",
+                "bash/LICENSE.txt",
+            ] {
+                archive.start_file(name, options).unwrap();
+                archive.write_all(b"bundled Bash runtime").unwrap();
             }
         }
         archive.finish().unwrap();
@@ -2236,6 +2218,10 @@ mod tests {
                 b"native inference runtime"
             );
         }
+        assert_eq!(
+            fs::read(extract_dir.join("bash/bin/bash.exe")).unwrap(),
+            b"bundled Bash runtime"
+        );
         fs::remove_dir_all(package.parent().unwrap()).unwrap();
     }
 
@@ -2245,6 +2231,74 @@ mod tests {
         let (package, extract_dir) = windows_cli_package_fixture(false);
         let error = extract_cli_binary_from_zip(&package, &extract_dir).unwrap_err();
         assert!(error.starts_with("operit_local_llm.dll not found in "));
+        fs::remove_dir_all(package.parent().unwrap()).unwrap();
+    }
+
+    /// Rejects updates that would install the executable without its Bash runtime.
+    #[test]
+    fn windows_cli_package_requires_bundled_bash() {
+        use std::io::Write;
+        let (package, extract_dir) = windows_cli_package_fixture(false);
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&package)
+            .unwrap();
+        let mut archive = zip::ZipWriter::new_append(file).unwrap();
+        for name in host_ops::WINDOWS_CLI_RUNTIME_LIBRARIES {
+            archive
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(b"native runtime").unwrap();
+        }
+        archive.finish().unwrap();
+        assert!(extract_cli_binary_from_zip(&package, &extract_dir)
+            .unwrap_err()
+            .starts_with("bash/bin/bash.exe not found"));
+        fs::remove_dir_all(package.parent().unwrap()).unwrap();
+    }
+
+    /// Prevents a runtime ZIP entry from overwriting a file outside its declared tree.
+    #[test]
+    fn windows_cli_package_rejects_runtime_parent_components() {
+        use std::io::Write;
+        let (package, extract_dir) = windows_cli_package_fixture(true);
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&package)
+            .unwrap();
+        let mut archive = zip::ZipWriter::new_append(file).unwrap();
+        archive
+            .start_file(
+                "bash/../outside.txt",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(b"must not escape runtime").unwrap();
+        archive.finish().unwrap();
+        assert!(extract_cli_binary_from_zip(&package, &extract_dir)
+            .unwrap_err()
+            .starts_with("Invalid CLI package path"));
+        assert!(!extract_dir.join("outside.txt").exists());
+        fs::remove_dir_all(package.parent().unwrap()).unwrap();
+    }
+
+    /// Copies every bundled runtime file and supports installing from the installed directory.
+    #[test]
+    fn cli_runtime_directory_copy_preserves_nested_files() {
+        let (package, extract_dir) = windows_cli_package_fixture(true);
+        extract_cli_binary_from_zip(&package, &extract_dir).unwrap();
+        let source = extract_dir.join("bash");
+        let destination = package.parent().unwrap().join("installed/bash");
+        copy_cli_runtime_directory(&source, &destination).unwrap();
+        copy_cli_runtime_directory(&destination, &destination).unwrap();
+        for name in ["bin/bash.exe", "usr/bin/msys-2.0.dll", "LICENSE.txt"] {
+            assert_eq!(
+                fs::read(source.join(name)).unwrap(),
+                fs::read(destination.join(name)).unwrap()
+            );
+        }
         fs::remove_dir_all(package.parent().unwrap()).unwrap();
     }
 

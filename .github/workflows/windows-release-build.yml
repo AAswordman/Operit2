@@ -90,11 +90,13 @@ jobs:
         shell: pwsh
         run: python tools/build_scripts/build_cli_windows.py --arches "${{ inputs.cli_arches }}"
 
-      - name: Verify Windows uninstall and data cleanup
+      - name: Verify Windows installer and update helpers
         if: inputs.products != 'cli'
         shell: pwsh
         run: |
           python -m unittest discover -s tools/tests -p test_windows_msi.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tools/tests -p test_windows_application_update.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $installers = @(Get-ChildItem -LiteralPath tools/release/dist -Filter 'operit2-app-windows-x86_64-*.msi')
           if ($installers.Count -ne 1) { throw 'Expected exactly one Windows MSI artifact.' }

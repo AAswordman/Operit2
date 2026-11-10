@@ -14,6 +14,8 @@ use operit_tools::tools::ToolResultDataClasses::{
     ToolResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
@@ -24,6 +26,7 @@ pub struct StandardSystemOperationTools {
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub toastHost: Option<Arc<dyn ToastHost>>,
     pub clipboardHost: Option<Arc<dyn ClipboardHost>>,
+    vfs: VisualFileSystem,
 }
 
 #[derive(Clone, Copy)]
@@ -59,11 +62,13 @@ impl StandardSystemOperationTools {
         systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
         toastHost: Option<Arc<dyn ToastHost>>,
         clipboardHost: Option<Arc<dyn ClipboardHost>>,
+        vfs: VisualFileSystem,
     ) -> Self {
         Self {
             systemOperationHost,
             toastHost,
             clipboardHost,
+            vfs,
         }
     }
 
@@ -185,18 +190,24 @@ impl StandardSystemOperationTools {
     #[allow(non_snake_case)]
     /// Requests host installation of an application package.
     pub fn installApp(&self, tool: &AITool) -> ToolResult {
-        let apkPath = parameterValue(tool, "path");
-        if apkPath.is_empty() {
+        let packagePath = parameterValue(tool, "path");
+        if packagePath.is_empty() {
             return toolError(tool, "Must provide installer file path".to_string());
         }
-        match self.host().and_then(|host| host.installApp(&apkPath)) {
+        let result = (|| {
+            let path = PathMapper::resolveFileResourcePath(None, &packagePath)?;
+            let source = self.vfs.resolvePath(&path)?;
+            self.host().and_then(|host| host.installApp(&source, operit_host_api::AppInstallTiming::Immediate))
+                .map_err(|error| error.message)
+        })();
+        match result {
             Ok(data) => toolSuccessData(
                 tool,
                 ToolResultData::AppOperationData(appOperationData(data)),
             ),
             Err(error) => toolError(
                 tool,
-                format!("Error requesting app installation: {}", error.message),
+                format!("Error requesting app installation: {}", error),
             ),
         }
     }
@@ -873,3 +884,7 @@ fn deviceInfoDataToString(data: &DeviceInfoResultData) -> String {
     }
     text
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "StandardSystemOperationToolsTests.rs"]
+mod tests;

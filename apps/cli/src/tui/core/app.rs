@@ -44,7 +44,7 @@ use operit_tools::tools::ToolPermissionSystem::AiPermissionMode;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::GithubReleaseUtil::{
-    FullUpdateProgressEvent, FullUpdateStage, FullUpdateTarget, ReleaseInfo,
+    FullUpdateProgressEvent, FullUpdateStage, ReleaseInfo,
 };
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 
@@ -965,7 +965,7 @@ pub(super) enum FullUpdateDownloadState {
         speed_bytes_per_sec: u64,
     },
     Complete {
-        package_path: PathBuf,
+        package_path: String,
         install_status: Option<crate::cli::DownloadedUpdateInstallStatus>,
     },
     Error {
@@ -979,7 +979,7 @@ pub(super) enum FullUpdateDownloadState {
 #[derive(Debug, Clone)]
 pub(super) enum FullUpdateDownloadMessage {
     Progress(FullUpdateProgressEvent),
-    Complete(Result<(PathBuf, Option<crate::cli::DownloadedUpdateInstallStatus>), String>),
+    Complete(Result<(String, Option<crate::cli::DownloadedUpdateInstallStatus>), String>),
 }
 
 #[derive(Clone, Debug)]
@@ -2411,8 +2411,16 @@ impl OperitTui {
         Ok(())
     }
 
+    /// Downloads through shared Host streaming and keeps the completed package as a VFS path.
     fn start_full_update_download(&mut self) -> Result<(), String> {
         let text = self.text();
+        let context = self
+            .core
+            .application()
+            .generatedClientMut()
+            .0
+            .hostManager()
+            .clone();
         let Some(prompt) = self.startup_update_prompt.as_mut() else {
             return Ok(());
         };
@@ -2422,8 +2430,7 @@ impl OperitTui {
         let (tx, rx) = mpsc::channel::<FullUpdateDownloadMessage>();
         let package_url = release_info.downloadUrl.clone();
         let package_file_name = release_info.assetName.clone();
-        let update_target = FullUpdateTarget::cliForCurrentHost()?;
-        let work_dir = std::env::temp_dir().join("operit2").join("full_update");
+        let update_target = crate::cli::host_ops::cli_update_target()?;
         prompt.progress_rx = Some(rx);
         prompt.download_state = FullUpdateDownloadState::Downloading {
             stage: FullUpdateStage::DownloadingPackage,
@@ -2438,16 +2445,19 @@ impl OperitTui {
             let result = operit_util::GithubReleaseUtil::GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
                 package_url,
                 package_file_name,
-                work_dir,
+                &context,
                 move |event| {
                     let _ = progress_tx.send(FullUpdateDownloadMessage::Progress(event));
                 },
             )
             .await
-            .and_then(|package_path| {
+            .and_then(|storage_path| {
+                let package_path = operit_tools::files::VisualFileSystem::VisualFileSystem::runtimePath(&storage_path)?;
+                let vfs = operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(&context)?;
+                let source = vfs.resolvePath(&package_path)?;
                 crate::cli::install_downloaded_cli_update(
                     &update_target,
-                    &package_path,
+                    &source,
                     crate::cli::InstallOutput::Silent,
                 )
                 .map(|status| (package_path, Some(status)))

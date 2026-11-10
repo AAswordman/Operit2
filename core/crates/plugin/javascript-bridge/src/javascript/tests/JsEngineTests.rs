@@ -4002,6 +4002,40 @@ async fn completion_retains_detached_promise_context_until_host_event() {
     engine.destroy();
 }
 
+/// Successful before-hook completion ends its deadline while retained host work keeps the original owner.
+#[tokio::test(flavor = "current_thread")]
+async fn completed_before_hook_does_not_expire_detached_work() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let (sender, mut progress) = tokio::sync::mpsc::unbounded_channel();
+    let output = engine.execute_script_function_with_timeout_millis(
+        r#"exports.main = function() {
+            toolCall('gate', {}).then(function() {
+                sendIntermediateResult({ owner: getEnv('CALL_OWNER') });
+            });
+            return 'admitted';
+        };"#,
+        "main", &testParams(),
+        &BTreeMap::from([("CALL_OWNER".into(), "group-submit".into())]),
+        Some(Arc::new(move |value| { sender.send(value).unwrap(); })),
+        true, 1_000, None,
+    ).await;
+    assert_eq!(expect_js_output(output, "before-hook admission"), "\"admitted\"");
+    host.gatedToolStarted.notified().await;
+    assert_eq!(executionSessionCounts(&engine).await, (0, 1));
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    finishGatedTool(&host);
+    let resumed: Value = serde_json::from_str(
+        &tokio::time::timeout(Duration::from_secs(2), progress.recv()).await
+            .expect("admitted work must outlive the before-hook deadline")
+            .expect("detached work must publish its result"),
+    ).unwrap();
+    assert_eq!(resumed, serde_json::json!({ "owner": "group-submit" }));
+    assert_eq!(executionSessionCounts(&engine).await, (0, 0));
+    assert!(progress.try_recv().is_err(), "the continuation must run exactly once");
+    engine.destroy();
+}
+
 /// Destruction completes a pending request rather than leaving its caller suspended.
 #[tokio::test(flavor = "current_thread")]
 async fn destruction_completes_pending_request() {

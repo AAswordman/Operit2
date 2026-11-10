@@ -25,6 +25,16 @@ impl LinuxSystemOperationHost {
 }
 
 impl SystemOperationHost for LinuxSystemOperationHost {
+    /// Selects the existing Linux portable application package.
+    fn applicationUpdateTarget(
+        &self,
+    ) -> HostResult<Option<operit_host_api::ApplicationUpdateTarget>> {
+        Ok(Some(operit_host_api::ApplicationUpdateTarget {
+            installTiming: operit_host_api::AppInstallTiming::Immediate,
+            arch: std::env::consts::ARCH.into(),
+            package: operit_host_api::ApplicationUpdatePackage::LinuxTarGz,
+        }))
+    }
     fn getSystemLanguageCode(&self) -> HostResult<String> {
         get_linux_system_language_code()
     }
@@ -71,8 +81,11 @@ impl SystemOperationHost for LinuxSystemOperationHost {
         get_linux_system_setting(namespace, setting)
     }
 
-    fn installApp(&self, path: &str) -> HostResult<AppOperationData> {
-        packages::install(path)
+    /// Installs a VFS file reference using the requested platform execution timing.
+    fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> HostResult<AppOperationData> {
+        timing.requireImmediate()?;
+        let path = source.nativePath()?;
+        packages::install(&path)
     }
 
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData> {

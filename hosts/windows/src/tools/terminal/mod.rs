@@ -68,8 +68,10 @@ struct PtyCursor {
 type PtyCursorState = Arc<Mutex<PtyCursor>>;
 
 impl Drop for PtySession {
+    /// Reaps the interpreter before releasing a session's workspace and runtime files.
     fn drop(&mut self) {
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -100,6 +102,7 @@ impl TerminalHost for WindowsTerminalHost {
     }
 
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
+        let bash = bundledBashExecutable();
         Ok(TerminalInfo {
             platform: PLATFORM.to_string(),
             terminal: TERMINAL.to_string(),
@@ -117,8 +120,14 @@ impl TerminalHost for WindowsTerminalHost {
                 TerminalTypeInfo {
                     terminal: TERMINAL.to_string(),
                     terminalType: "bash".to_string(),
-                    available: gitBashExecutable().is_ok(),
-                    description: "Windows Git Bash terminal".to_string(),
+                    available: bash.is_ok(),
+                    description: match bash {
+                        Ok(_) => "Bundled Windows Bash terminal".to_string(),
+                        Err(error) => format!(
+                            "Bundled Windows Bash unavailable: {}. Reinstall the complete Operit Windows package.",
+                            error.message,
+                        ),
+                    },
                 },
             ],
         })
@@ -646,7 +655,17 @@ fn ptyCommand(kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder
     match kind {
         TerminalKind::PowerShell => Ok(windowsPtyCommand(workingDir)),
         TerminalKind::Bash => {
-            let mut command = CommandBuilder::new(gitBashExecutable()?);
+            let executable = bundledBashExecutable()?;
+            let root = executable
+                .parent()
+                .and_then(|path| path.parent())
+                .ok_or_else(|| HostError::new("Bundled Bash executable has no runtime root"))?;
+            let mut paths = vec![root.join("bin"), root.join("usr/bin")];
+            if let Some(inherited) = std::env::var_os("PATH") {
+                paths.extend(std::env::split_paths(&inherited));
+            }
+            let mut command = CommandBuilder::new(&executable);
+            command.env("PATH", std::env::join_paths(paths).map_err(toHostError)?);
             command.arg("--noprofile");
             command.arg("--norc");
             command.arg("-i");
@@ -657,7 +676,7 @@ fn ptyCommand(kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder
             command.env("PS1", "$PWD $ ");
             command.env(
                 "PROMPT_COMMAND",
-                r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status""#,
+                r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$__operit_status" "$PWD""#,
             );
             Ok(command)
         }
@@ -665,39 +684,16 @@ fn ptyCommand(kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder
 }
 
 #[allow(non_snake_case)]
-/// Resolves the Bash executable from the active Git for Windows installation.
-fn gitBashExecutable() -> HostResult<PathBuf> {
-    let output = background_command("git")
-        .arg("--exec-path")
-        .output()
-        .map_err(|error| {
-            HostError::new(format!(
-                "Failed to resolve Git for Windows exec path: {error}"
-            ))
-        })?;
-    if !output.status.success() {
-        return Err(HostError::new(format!(
-            "git --exec-path failed with status {}",
-            output.status
-        )));
-    }
-    let execPathText = String::from_utf8(output.stdout)
-        .map_err(|error| HostError::new(format!("Git exec path is not UTF-8: {error}")))?;
-    let execPath = PathBuf::from(execPathText.trim());
-    let gitRoot = execPath
+/// Resolves only the Bash runtime shipped beside the running application.
+fn bundledBashExecutable() -> HostResult<PathBuf> {
+    let executable = std::env::current_exe()?;
+    let root = executable
         .parent()
-        .and_then(|path| path.parent())
-        .and_then(|path| path.parent())
-        .ok_or_else(|| {
-            HostError::new(format!(
-                "Unexpected Git for Windows exec path: {}",
-                execPath.display()
-            ))
-        })?;
-    let bashExecutable = gitRoot.join("bin").join("bash.exe");
+        .ok_or_else(|| HostError::new("Operit executable has no parent directory"))?;
+    let bashExecutable = root.join("bash/bin/bash.exe");
     if !bashExecutable.is_file() {
         return Err(HostError::new(format!(
-            "Git Bash executable does not exist: {}",
+            "Bundled Bash executable does not exist: {}",
             bashExecutable.display()
         )));
     }
@@ -724,7 +720,7 @@ fn windowsPtyCommand(workingDir: &str) -> CommandBuilder {
 
 #[allow(non_snake_case)]
 fn powershellPtyInitScript() -> &'static str {
-    "$global:__operit_error_count = $global:error.Count; [Console]::OutputEncoding = [Text.Encoding]::UTF8; $OutputEncoding = [Text.Encoding]::UTF8; function global:prompt { $__operit_success = $?; $__operit_error_changed = $global:error.Count -gt $global:__operit_error_count; $global:__operit_error_count = $global:error.Count; $__operit_location = (Get-Location).Path; $__operit_pwd = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($__operit_location)); $__operit_exit_code = if ($__operit_success -and -not $__operit_error_changed) { 0 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } else { 1 }; ([char]27) + ']133;OperitPrompt=' + $__operit_pwd + ':' + $__operit_exit_code + ([char]7) + 'PS ' + $__operit_location + '> ' }"
+    "$global:__operit_error_count = $global:error.Count; [Console]::OutputEncoding = [Text.Encoding]::UTF8; $OutputEncoding = [Text.Encoding]::UTF8; function global:prompt { $__operit_success = $?; $__operit_error_changed = $global:error.Count -gt $global:__operit_error_count; $global:__operit_error_count = $global:error.Count; $__operit_location = (Get-Location).Path; $__operit_exit_code = if ($__operit_success -and -not $__operit_error_changed) { 0 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } else { 1 }; ([char]27) + ']133;OperitPrompt=' + $__operit_exit_code + ':' + $__operit_location + ([char]7) + 'PS ' + $__operit_location + '> ' }"
 }
 
 #[allow(non_snake_case)]
@@ -1005,14 +1001,11 @@ fn findLastPtyPromptMarker(data: &[u8]) -> HostResult<Option<PtyPromptMarker>> {
     let payloadEnd = payloadStart + relativeEnd;
     let payload = std::str::from_utf8(&data[payloadStart..payloadEnd])
         .map_err(|error| HostError::new(format!("Invalid PTY prompt marker UTF-8: {error}")))?;
-    let (workingDirText, exitCodeText) = payload
+    // Windows directory names exclude BEL; putting the status first preserves drive colons.
+    let (exitCodeText, workingDir) = payload
         .split_once(':')
         .ok_or_else(|| HostError::new(format!("Invalid PTY prompt marker '{payload}'")))?;
-    let workingDirBytes = BASE64_STANDARD
-        .decode(workingDirText.as_bytes())
-        .map_err(|error| HostError::new(format!("Invalid PTY prompt cwd marker: {error}")))?;
-    let workingDir = String::from_utf8(workingDirBytes)
-        .map_err(|error| HostError::new(format!("Invalid PTY prompt cwd UTF-8: {error}")))?;
+    let workingDir = workingDir.to_string();
     let exitCode = parseExitCode(exitCodeText)?;
     Ok(Some(PtyPromptMarker {
         start,
@@ -1448,23 +1441,43 @@ fn dropCommandEcho(value: String, command: &str) -> String {
 #[allow(non_snake_case)]
 /// Removes the trailing PowerShell prompt from command output.
 fn dropTrailingPowerShellPrompt(value: &str, workingDir: &str) -> HostResult<String> {
-    let prompt = format!("PS {workingDir}>");
-    let output = value
-        .trim_end()
-        .strip_suffix(&prompt)
-        .ok_or_else(|| HostError::new(format!("Missing PowerShell prompt suffix: {prompt}")))?;
-    Ok(output.trim().to_string())
+    dropTrailingPtyPrompt(value, &format!("PS {workingDir}>"))
 }
 
 #[allow(non_snake_case)]
 /// Removes the trailing Git Bash prompt from command output.
 fn dropTrailingBashPrompt(value: &str, workingDir: &str) -> HostResult<String> {
-    let prompt = format!("{workingDir} $");
-    let output = value
-        .trim_end()
-        .strip_suffix(&prompt)
-        .ok_or_else(|| HostError::new(format!("Missing Git Bash prompt suffix: {prompt}")))?;
-    Ok(output.trim().to_string())
+    dropTrailingPtyPrompt(value, &format!("{workingDir} $"))
+}
+
+/// Matches the shell-owned prompt across physical ConPTY rows without altering command output.
+#[allow(non_snake_case)]
+fn dropTrailingPtyPrompt(value: &str, prompt: &str) -> HostResult<String> {
+    let value = value.trim_end();
+    let mut cells = value
+        .char_indices()
+        .rev()
+        .filter(|(_, ch)| *ch != '\r' && *ch != '\n');
+    let mut start = value.len();
+    for expected in prompt.chars().rev() {
+        match cells.next() {
+            Some((index, actual)) if actual == expected => start = index,
+            _ => {
+                let tail = value
+                    .chars()
+                    .rev()
+                    .take(prompt.chars().count() + 80)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<String>();
+                return Err(HostError::new(format!(
+                    "Missing terminal prompt suffix: expected={prompt:?}, renderedTail={tail:?}",
+                )));
+            }
+        }
+    }
+    Ok(value[..start].trim().to_string())
 }
 
 #[allow(non_snake_case)]
@@ -1659,6 +1672,83 @@ fn nextSessionId() -> String {
 mod tests {
     use super::*;
     use operit_host_api::TerminalHost;
+
+    /// Preserves Unicode workspaces and drive colons without spawning an encoder in Bash.
+    #[test]
+    fn terminal_marker_preserves_status_and_native_directory() {
+        for directory in [
+            r"E:\中文 工作区\chat_outputs",
+            "/e/中文 工作区/chat_outputs",
+        ] {
+            let raw = format!("\x1b]133;OperitPrompt=7:{directory}\x07");
+            let marker = findLastPtyPromptMarker(raw.as_bytes()).unwrap().unwrap();
+            assert_eq!(marker.exitCode, 7);
+            assert_eq!(marker.workingDir, directory);
+        }
+    }
+
+    /// Accepts explicit ConPTY row breaks inside the exact prompt while preserving output newlines.
+    #[test]
+    fn terminal_prompt_matches_physical_rows() {
+        let directory = r"E:\operitRuntime\identities\identity-1794309438693-7bda0f99\data\chat_outputs\2026-11-10_20-41-54-933";
+        for prompt in [format!("PS {directory}>"), format!("{directory} $")] {
+            for cols in [20, 40, 80] {
+                let wrapped = prompt
+                    .as_bytes()
+                    .chunks(cols)
+                    .map(|chunk| std::str::from_utf8(chunk).unwrap())
+                    .collect::<Vec<_>>()
+                    .join("\r\n");
+                assert_eq!(
+                    dropTrailingPtyPrompt(&format!("first\r\nsecond\r\n{wrapped} "), &prompt).unwrap(),
+                    "first\r\nsecond"
+                );
+            }
+        }
+        assert!(dropTrailingPtyPrompt("hello\nPS wrong>", "PS expected>")
+            .unwrap_err()
+            .message
+            .contains("renderedTail="));
+    }
+
+    /// Exercises the reported long workspace prompt across narrow ConPTY viewports.
+    #[test]
+    fn powershell_long_workspace_prompt_preserves_output() {
+        let directory = std::env::temp_dir()
+            .join(format!("operit-terminal-{}", Uuid::new_v4()))
+            .join(
+                "identities/identity-1794309438693-7bda0f99/data/chat_outputs/2026-11-10_20-41-54-933",
+            );
+        std::fs::create_dir_all(&directory).unwrap();
+        let host = WindowsTerminalHost::new();
+        for cols in [40, 80, 120] {
+            let sessionId = host
+                .startPtySession(
+                    "long-workspace",
+                    TERMINAL,
+                    "powershell",
+                    &directory.display().to_string(),
+                    24,
+                    cols,
+                )
+                .unwrap();
+            for command in ["Write-Host 'hello'", "echo test123"] {
+                let result = host.executeInSession(&sessionId, command, 5000).unwrap();
+                assert_eq!(result.exitCode, 0);
+                assert!(!result.timedOut);
+                assert_eq!(
+                    result.output,
+                    if command.starts_with("Write-Host") {
+                        "hello"
+                    } else {
+                        "test123"
+                    }
+                );
+            }
+            host.closePtySession(&sessionId).unwrap();
+        }
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
 
     #[test]
     fn powershell_command_block_completes() {

@@ -67,6 +67,13 @@ impl ResolvedVfsPath {
     }
 }
 
+impl operit_host_api::FileSource for ResolvedVfsPath {
+    /// Resolves this VFS file reference only when a native provider consumes it.
+    fn nativePath(&self) -> operit_host_api::HostResult<String> {
+        ResolvedVfsPath::nativePath(self).map_err(operit_host_api::HostError::new)
+    }
+}
+
 /// Normalizes VFS paths and maps them onto host-visible storage roots.
 #[derive(Debug, Clone)]
 pub struct PathMapper {

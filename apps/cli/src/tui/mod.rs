@@ -65,7 +65,7 @@ use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
 use operit_util::AppLogger::AppLogger;
-use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil};
+use operit_util::GithubReleaseUtil::{FullUpdateStatus, GithubReleaseUtil};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -421,7 +421,7 @@ pub(crate) fn mark_startup_install_prompt_declined() -> Result<(), String> {
 async fn build_startup_update_prompt(
     current_version_override: Option<&str>,
 ) -> Result<Option<StartupUpdatePrompt>, String> {
-    let target = FullUpdateTarget::cliForCurrentHost()?;
+    let target = crate::cli::host_ops::cli_update_target()?;
     let current_version = current_version_override.unwrap_or(env!("CARGO_PKG_VERSION"));
     let status = match GithubReleaseUtil::checkForFullUpdate(current_version, target).await {
         Ok(status) => status,

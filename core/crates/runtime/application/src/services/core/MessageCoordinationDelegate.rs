@@ -348,7 +348,7 @@ impl MessageCoordinationDelegate {
         chatId: String,
         messageTimestamp: i64,
     ) -> Result<(), String> {
-        if self.messageProcessingDelegate.isChatLoading(chatId.clone()) {
+        if self.messageProcessingDelegate.isChatProcessing(&chatId) {
             return Err("Chat is busy".to_string());
         }
         let targetMessage = self

@@ -286,7 +286,9 @@ impl SystemOperationHost for OhosSystemOperationHost {
     }
 
     /// Installs an app through the OpenHarmony owner app.
-    fn installApp(&self, path: &str) -> HostResult<AppOperationData> {
+    fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> HostResult<AppOperationData> {
+        timing.requireImmediate()?;
+        let path = source.nativePath()?;
         Self::appOperation(self.execute("install_app", json!({ "path": path }))?)
     }
 

@@ -1729,8 +1729,11 @@ impl JsEngineState {
             .as_bool()
             .ok_or("Detached-call predicate must return a boolean")?;
         if detached {
+            let mut context = pending.context.clone();
+            // The successful primary result ends its before-hook deadline; retained work owns its lifetime.
+            context.interrupt = HostJavaScriptExecutionInterrupt::unlimited();
             self.detachedCallContexts
-                .insert(pending.callId.clone(), pending.context.clone());
+                .insert(pending.callId.clone(), context);
         }
         Ok(())
     }

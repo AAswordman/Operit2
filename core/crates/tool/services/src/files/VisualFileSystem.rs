@@ -307,7 +307,6 @@ mod tests {
     use operit_host_native_storage::NativeRuntimeStorageHost;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
     struct DownloadHost { calls: AtomicUsize }
 
     impl HttpStreamHost for DownloadHost {

@@ -846,7 +846,8 @@ impl OperitApplication {
         &self,
     ) -> impl std::future::Future<Output = Result<Option<ApplicationUpdateInfo>, String>> + 'static {
         let manager = self.applicationUpdate.clone();
-        async move { manager.check().await }
+        let host = self.hostManager.systemOperationHost.clone();
+        async move { manager.check(host).await }
     }
 
     /// Observes host download progress without exposing URLs or native file paths.
@@ -860,21 +861,22 @@ impl OperitApplication {
         version: String,
     ) -> impl std::future::Future<Output = Result<String, String>> + 'static {
         let manager = self.applicationUpdate.clone();
-        async move { manager.download(version).await }
+        let context = self.hostManager.clone();
+        async move { manager.download(version, context).await }
     }
 
     pub fn cancelApplicationUpdateDownload(&self) {
         self.applicationUpdate.cancel();
     }
 
-    /// Resolves the receipt inside core and calls the existing install_app pipeline.
+    /// Resolves the receipt inside core and prepares installation through the local host.
     pub fn installApplicationUpdate(
         &self,
         receipt: String,
     ) -> impl std::future::Future<Output = Result<ApplicationUpdateInstallResult, String>> + 'static {
         let manager = self.applicationUpdate.clone();
-        let tools = self.toolHandler.clone();
-        async move { manager.install(receipt, tools).await }
+        let context = self.hostManager.clone();
+        async move { manager.install(receipt, context).await }
     }
 
     /// Returns the Cargo package version compiled into the runtime crate.

@@ -5,7 +5,7 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../logging/ClientLogger.dart';
 import 'AppUpdateModels.dart';
 
-/// Presentation adapter only. The core owns target selection, HTTP, files and install_app.
+/// Presentation adapter only. Core and Host own target selection, HTTP, files and installation.
 class CoreAppUpdateBackend extends AppUpdateBackend {
   CoreAppUpdateBackend({
     GeneratedCoreProxyClients clients = const GeneratedCoreProxyClients(

@@ -107,8 +107,9 @@ verify(/loadChatHistory\(id\.clone\(\)\)/.test(create) && create.indexOf("Source
 const inputBridge = source(application + "plugins/toolpkg/ToolPkgChatInputHookBridge.rs");
 verify(!/已跳过并继续|timeoutNoticeMessage|decodeToolPkgHookResult|unwrap_or_default/.test(inputBridge), "Submit failure must never degrade to a normal send or malformed-result no-contribution");
 verify(/Result<Option<ChatInputHookResult>, String>/.test(inputBridge) && /map_err\(\|error\| format!\("Chat input/.test(inputBridge), "Hook execution must preserve errors through its real caller");
-const submit = section(core, "pub async fn dispatchChatInputSubmitRequested(", "/// Accepts a host-authored message");
+const submit = section(core, "pub fn dispatchChatInputSubmitRequested(", "/// Accepts a host-authored message");
 verify(/attachments: Vec<AttachmentInfo>/.test(submit) && /replyToMessageTimestamp: Option<i64>/.test(submit) && /\.await\?/.test(submit), "The public widget submit route must carry actual attachments and reply identity and propagate errors");
+verify(/impl std::future::Future<Output = Result<serde_json::Value, String>> \+ 'static/.test(submit) && submit.indexOf("prepareChatInputSubmit(") < submit.indexOf("async move"), "Widget submit hooks must own their captured context so generated dispatch releases Holder before plugin sends");
 verify(/\"attachments\": context\.attachments/.test(inputBridge) && /\"replyToMessageTimestamp\": context\.replyToMessageTimestamp/.test(inputBridge), "Production hook payload must preserve original attachment records and reply target");
 const branch = section(history, "pub async fn createBranch(", "/// Loads branches");
 verify(/ToolPkgChatCreationKind::Branch/.test(branch) && /createChatDraft/.test(branch), "Branches must use the same real lifecycle and draft transaction");

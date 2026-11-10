@@ -2,6 +2,7 @@
 
 pub mod AtomicCounter;
 pub mod FileSystemResource;
+pub use FileSystemResource::FileSource;
 pub mod HostManager;
 pub mod PluginStorage;
 pub mod HttpServer;
@@ -1442,9 +1443,44 @@ pub struct HttpDownloadResult {
     pub downloadedBytes: u64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct HttpDownloadControl {
     cancelled: Arc<AtomicBool>,
+    listeners: Arc<std::sync::Mutex<HttpDownloadCancellationListeners>>,
+}
+
+#[derive(Default)]
+struct HttpDownloadCancellationListeners {
+    nextId: u64,
+    callbacks: BTreeMap<u64, Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl std::fmt::Debug for HttpDownloadControl {
+    /// Reports cancellation without exposing registered callbacks.
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpDownloadControl")
+            .field("cancelled", &self.isCancelled())
+            .finish()
+    }
+}
+
+/// Detaches a download cancellation listener when its operation ends.
+pub struct HttpDownloadCancellationSubscription {
+    control: HttpDownloadControl,
+    id: u64,
+}
+
+impl Drop for HttpDownloadCancellationSubscription {
+    /// Removes the callback without cancelling other users of this token.
+    fn drop(&mut self) {
+        self.control
+            .listeners
+            .lock()
+            .expect("download listeners poisoned")
+            .callbacks
+            .remove(&self.id);
+    }
 }
 
 impl HttpDownloadControl {
@@ -1455,7 +1491,39 @@ impl HttpDownloadControl {
 
     /// Requests cancellation for every file in the associated download operation.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
+        if self.cancelled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let callbacks = std::mem::take(
+            &mut self
+                .listeners
+                .lock()
+                .expect("download listeners poisoned")
+                .callbacks,
+        );
+        for callback in callbacks.into_values() {
+            callback();
+        }
+    }
+
+    /// Subscribes atomically with cancellation, including already cancelled tokens.
+    pub fn onCancel(
+        &self,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) -> HttpDownloadCancellationSubscription {
+        let mut listeners = self.listeners.lock().expect("download listeners poisoned");
+        let id = listeners.nextId;
+        listeners.nextId += 1;
+        if self.isCancelled() {
+            drop(listeners);
+            callback();
+        } else {
+            listeners.callbacks.insert(id, callback);
+        }
+        HttpDownloadCancellationSubscription {
+            control: self.clone(),
+            id,
+        }
     }
 
     /// Returns whether cancellation has been requested.
@@ -3136,7 +3204,47 @@ where F: Fn(Value) -> HostResult<Value> + Send + Sync {
     fn command(&self, request: Value) -> HostResult<Value> { self(request) }
 }
 
+/// Identifies the native package that can update this running application.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApplicationUpdatePackage {
+    AndroidApk,
+    WindowsZip,
+    WindowsMsi,
+    LinuxTarGz,
+    MacosPkg { buildType: String },
+}
+
+/// Keeps installation identity and architecture selection inside the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationUpdateTarget {
+    pub arch: String,
+    pub package: ApplicationUpdatePackage,
+    pub installTiming: AppInstallTiming,
+}
+
+/// Controls when a platform installer may modify files used by the current process.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AppInstallTiming {
+    #[default]
+    Immediate,
+    AfterProcessExit,
+}
+
+impl AppInstallTiming {
+    /// Rejects deferred execution on providers that require a foreground installation request.
+    pub fn requireImmediate(self) -> HostResult<()> {
+        match self {
+            Self::Immediate => Ok(()),
+            Self::AfterProcessExit => Err(HostError::new("Deferred package installation is not supported by this provider")),
+        }
+    }
+}
+
 pub trait SystemOperationHost: Send + Sync {
+    /// Reports the running application's distribution; None disables in-app updates.
+    fn applicationUpdateTarget(&self) -> HostResult<Option<ApplicationUpdateTarget>> {
+        Ok(None)
+    }
     fn getSystemLanguageCode(&self) -> HostResult<String>;
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()>;
     fn modifySystemSetting(
@@ -3146,7 +3254,8 @@ pub trait SystemOperationHost: Send + Sync {
         value: &str,
     ) -> HostResult<SystemSettingData>;
     fn getSystemSetting(&self, namespace: &str, setting: &str) -> HostResult<SystemSettingData>;
-    fn installApp(&self, path: &str) -> HostResult<AppOperationData>;
+    /// Installs a file reference, resolving its native location inside the platform provider.
+    fn installApp(&self, source: &dyn FileSource, timing: AppInstallTiming) -> HostResult<AppOperationData>;
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData>;
     fn listInstalledApps(&self, includeSystemApps: bool) -> HostResult<AppListData>;
     fn startApp(&self, packageName: &str) -> HostResult<AppOperationData>;
@@ -3238,6 +3347,30 @@ pub trait FileSystemHost: Send + Sync {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    /// Download listeners detach on scope exit and notify once, including late subscriptions.
+    #[test]
+    fn download_cancellation_listener_lifecycle() {
+        let control = HttpDownloadControl::new();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = calls.clone();
+        let removed = control.onCancel(Arc::new(move || {
+            count.fetch_add(100, Ordering::SeqCst);
+        }));
+        drop(removed);
+        let count = calls.clone();
+        let _active = control.onCancel(Arc::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        }));
+        control.cancel();
+        control.cancel();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let count = calls.clone();
+        let _late = control.onCancel(Arc::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
 
     #[test]
     fn installation_state_is_optional_for_legacy_results() {

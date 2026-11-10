@@ -319,6 +319,12 @@ pub const RUNTIME_CLEAN_ON_EXIT: RuntimeStoragePathDefinition = RuntimeStoragePa
     RuntimeStorageOwnership::Ephemeral,
 );
 pub const RUNTIME_CLEAN_ON_EXIT_DIR_PATH: &str = RUNTIME_CLEAN_ON_EXIT.path;
+/// Owns verified self-update packages locally until the native installer consumes them.
+pub const RUNTIME_APPLICATION_UPDATES: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/temp/application_updates",
+    RuntimeStorageOwnership::Ephemeral,
+);
+pub const RUNTIME_APPLICATION_UPDATES_DIR_PATH: &str = RUNTIME_APPLICATION_UPDATES.path;
 /// Persistent shared output directories and their saved conversation bindings.
 pub const RUNTIME_CHAT_OUTPUTS_DIR_PATH: &str = "runtime/data/chat_outputs";
 pub const RUNTIME_CHAT_OUTPUT_BINDINGS_DIR_PATH: &str = "runtime/data/chat_output_bindings";
@@ -526,6 +532,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     EXTENSIONS_PLUGIN_CONFIGS,
     EXTENSIONS_PLUGIN_DATA,
     RUNTIME_CLEAN_ON_EXIT,
+    RUNTIME_APPLICATION_UPDATES,
     LEGACY_CHAT_ATTACHMENTS,
     RUNTIME_ATTACHMENT_SOURCES,
     RuntimeStoragePathDefinition::tree(RUNTIME_CHAT_OUTPUTS_DIR_PATH, RuntimeStorageOwnership::Space),

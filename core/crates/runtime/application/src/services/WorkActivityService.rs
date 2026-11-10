@@ -532,15 +532,16 @@ mod tests {
     fn staleWorkStopCannotCancelNewGeneration() {
         let mut runtime = super::super::core::MessageProcessingDelegate::ChatRuntime::new();
         runtime.activeTurnId = 2;
-        runtime.isLoading = true;
-        let error = runtime.reserveCancellation(Some(1)).unwrap_err();
+        let error = runtime.reserveCancellation(Some(1), true).unwrap_err();
         assert_eq!(error, "Work generation is no longer active");
         assert_eq!(runtime.activeTurnId, 2);
-        assert!(runtime.isLoading);
         assert!(!runtime.isCancelling);
-        assert_eq!(runtime.reserveCancellation(Some(2)).unwrap(), Some((2, 3)));
+        assert_eq!(runtime.reserveCancellation(Some(2), false).unwrap_err(), "Work execution is no longer running");
+        assert_eq!(runtime.activeTurnId, 2);
+        assert!(!runtime.isCancelling);
+        assert_eq!(runtime.reserveCancellation(Some(2), true).unwrap(), Some((2, 3)));
         assert!(runtime.isCancelling);
-        assert!(runtime.reserveCancellation(Some(2)).is_err());
+        assert!(runtime.reserveCancellation(Some(2), true).is_err());
     }
 
     /// Verifies failed request ownership is released rather than leaving phantom running work.

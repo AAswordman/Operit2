@@ -82,18 +82,7 @@ pub fn installPortableApp(package: &str) -> HostResult<Option<AppOperationData>>
         let log = work.join(format!("installer-{token}.log"));
         let mut child =
             spawnInstaller(target, &stage, &backup, executableName, &lock, &ready, &log)?;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !ready.exists() {
-            if child.try_wait()?.is_some() || Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(HostError::new(format!(
-                    "更新安装助手未能启动，应用保持打开。日志：{}",
-                    log.display()
-                )));
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        waitForApplicationUpdateHelper(&mut child, &ready, &log)?;
         Ok(AppOperationData {
             installState: Some(operit_host_api::AppInstallState::RestartRequired),
             operationType: "install".to_string(),
@@ -184,6 +173,7 @@ fn extractPackage(package: &Path, stage: &Path) -> HostResult<()> {
     Ok(())
 }
 
+/// Prepares the portable helper using the common detached installer launcher.
 fn spawnInstaller(
     target: &Path,
     stage: &Path,
@@ -193,15 +183,42 @@ fn spawnInstaller(
     ready: &Path,
     log: &Path,
 ) -> HostResult<Child> {
-    let script = ready.with_extension(if cfg!(windows) { "ps1" } else { "sh" });
-    fs::write(
-        &script,
+    let pid = std::process::id().to_string();
+    spawnApplicationUpdateHelper(
         if cfg!(windows) {
             WINDOWS_INSTALLER
         } else {
             UNIX_INSTALLER
         },
-    )?;
+        &[
+            std::ffi::OsStr::new(&pid),
+            target.as_os_str(),
+            stage.as_os_str(),
+            backup.as_os_str(),
+            executable,
+            lock.as_os_str(),
+            ready.as_os_str(),
+        ],
+        ready,
+        log,
+    )
+}
+
+/// Launches an installer outside the application directory without a console window.
+pub fn spawnApplicationUpdateHelper(
+    source: &str,
+    arguments: &[&std::ffi::OsStr],
+    ready: &Path,
+    log: &Path,
+) -> HostResult<Child> {
+    let script = ready.with_extension(if cfg!(windows) { "ps1" } else { "sh" });
+    // Windows PowerShell 5.1 needs a BOM to decode localized UTF-8 helper messages.
+    let source = if cfg!(windows) {
+        format!("\u{feff}{source}")
+    } else {
+        source.to_owned()
+    };
+    fs::write(&script, source)?;
     let mut command;
     #[cfg(windows)]
     {
@@ -224,18 +241,33 @@ fn spawnInstaller(
     let logFile = File::create(log)?;
     command
         .arg(script)
-        .arg(std::process::id().to_string())
-        .arg(target)
-        .arg(stage)
-        .arg(backup)
-        .arg(executable)
-        .arg(lock)
-        .arg(ready)
+        .args(arguments)
         .stdin(Stdio::null())
         .stdout(logFile.try_clone()?)
         .stderr(logFile)
         .spawn()
         .map_err(|error| HostError::new(format!("无法启动安装助手：{error}")))
+}
+
+/// Confirms helper readiness before allowing the application to exit for an update.
+pub fn waitForApplicationUpdateHelper(
+    child: &mut Child,
+    ready: &Path,
+    log: &Path,
+) -> HostResult<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        if child.try_wait()?.is_some() || Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(HostError::new(format!(
+                "更新安装助手未能启动，应用保持打开。日志：{}",
+                log.display()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
 }
 
 const UNIX_INSTALLER: &str = r#"#!/bin/sh

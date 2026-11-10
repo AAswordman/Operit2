@@ -50,6 +50,8 @@ set(OPERIT_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../")
 set(OPERIT_PLUGIN_SYNC_PYTHON "${OPERIT_REPO_ROOT}/.venv/Scripts/python.exe")
 set(OPERIT_PLUGIN_SYNC_SCRIPT "${OPERIT_REPO_ROOT}/plugins/tools/sync_plugin_packages.py")
 set(OPERIT_FLUTTER_BRIDGE_CRATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../native/operit-flutter-bridge")
+include("${CMAKE_CURRENT_SOURCE_DIR}/operit_windows_bash.cmake")
+add_dependencies(${BINARY_NAME} operit_windows_bash)
 find_program(OPERIT_CARGO_EXECUTABLE
   NAMES cargo cargo.exe
   HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{CARGO_HOME}/bin"

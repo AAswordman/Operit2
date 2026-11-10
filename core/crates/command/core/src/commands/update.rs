@@ -1,16 +1,22 @@
 use crate::output::CoreCommandOutput;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil};
 
 /// Runs full-update commands.
-pub fn run_update_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+pub async fn run_update_command(
+    context: &HostManager,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.is_empty() {
         print_update_usage(output);
         return Ok(());
     }
 
     match args[0].as_str() {
-        "run" => run_update_run(args, output),
-        "check" => run_update_check(args, output),
+        "run" => run_update_run(context, args, output).await,
+        "check" => run_update_check(args, output).await,
         "target" => run_update_target(args, output),
         _ => {
             print_update_usage(output);
@@ -20,7 +26,11 @@ pub fn run_update_command(args: &[String], output: &mut CoreCommandOutput) -> Re
 }
 
 /// Checks for an update and downloads the matching package when available.
-fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+async fn run_update_run(
+    context: &HostManager,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let usage = "usage: operit2 update run <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]";
     if !matches!(args.len(), 5 | 6) {
         return Err(usage.to_string());
@@ -34,16 +44,16 @@ fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(),
     let packageName = target.assetName()?;
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     let channelText = channel.to_string();
-    match GithubReleaseUtil::checkForFullUpdateBlocking(currentVersion, target)? {
+    match GithubReleaseUtil::checkForFullUpdate(currentVersion, target).await? {
         FullUpdateStatus::Available(info) => {
-            let workDir = std::env::temp_dir().join("operit2").join("full_update");
-            let packagePath = GithubReleaseUtil::downloadAndPrepareFullUpdateBlocking(
-                &info.downloadUrl,
-                &info.assetName,
-                &workDir,
+            let packagePath = GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
+                info.downloadUrl.clone(),
+                info.assetName.clone(),
+                context,
                 |_| {},
-            )?;
-            let packagePathText = packagePath.display().to_string();
+            )
+            .await?;
+            let packagePathText = VisualFileSystem::runtimePath(&packagePath)?;
             output.push_stdout_line("Update package downloaded.");
             output.push_stdout_line(format!("Current version: {currentVersion}"));
             output.push_stdout_line(format!("Channel: {channelText}"));
@@ -78,7 +88,7 @@ fn run_update_run(args: &[String], output: &mut CoreCommandOutput) -> Result<(),
 }
 
 /// Checks whether a full update is available.
-fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+async fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
     let usage = "usage: operit2 update check <current-version> <app|cli> <windows|linux|macos|android|ios|ohos> <arch> [sandbox|unsandbox]";
     if !matches!(args.len(), 5 | 6) {
         return Err(usage.to_string());
@@ -92,7 +102,7 @@ fn run_update_check(args: &[String], output: &mut CoreCommandOutput) -> Result<(
     let packageName = target.assetName()?;
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     let channelText = channel.to_string();
-    match GithubReleaseUtil::checkForFullUpdateBlocking(currentVersion, target)? {
+    match GithubReleaseUtil::checkForFullUpdate(currentVersion, target).await? {
         FullUpdateStatus::Available(info) => {
             output.push_stdout_line("Update available.");
             output.push_stdout_line(format!("Current version: {currentVersion}"));

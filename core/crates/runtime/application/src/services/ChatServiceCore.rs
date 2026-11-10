@@ -372,28 +372,6 @@ impl ChatServiceCore {
         self.pendingQueueStore.stateFlow()
     }
 
-    /// Reports whether the specified chat is currently unable to accept a new turn.
-    fn isChatQueueBlocked(&self, chatId: &str) -> bool {
-        let activeStreamingChatIds = self
-            .messageProcessingDelegate
-            .activeStreamingChatIdsFlow()
-            .value();
-        if activeStreamingChatIds.contains(chatId) {
-            return true;
-        }
-        let inputProcessingStateByChatId = self
-            .messageProcessingDelegate
-            .inputProcessingStateByChatIdFlow()
-            .value();
-        match inputProcessingStateByChatId.get(chatId) {
-            Some(InputProcessingState::Idle)
-            | Some(InputProcessingState::Completed)
-            | Some(InputProcessingState::Error { .. })
-            | None => false,
-            Some(_) => true,
-        }
-    }
-
     /// Marks an existing queue as blocked when a new turn starts for its chat.
     fn markPendingQueueBlocked(&mut self, chatId: &str) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
@@ -487,7 +465,7 @@ impl ChatServiceCore {
             text: text.to_string(), selectionStart, selectionEnd,
             hasAttachments: attachmentCount > 0, attachmentCount: attachmentCount as i32,
             attachments, replyToMessageTimestamp,
-            isProcessing: self.messageProcessingDelegate.isChatLoading(chatId.to_string()),
+            isProcessing: self.messageProcessingDelegate.isChatProcessing(chatId),
             inputStyle: "Runtime".to_string(), source: "Runtime".to_string(),
             submitSource: "Send".to_string(), eventName: eventName.to_string(),
         }
@@ -504,21 +482,23 @@ impl ChatServiceCore {
             attachments.len(), Some(attachments.to_vec()), replyToMessageTimestamp, eventName)
     }
 
-    /// Dispatches count-only input notifications honestly and exposes notification failures to the host log.
+    /// Captures count-only input notifications before releasing Holder for plugin callbacks.
     #[allow(non_snake_case)]
-    pub async fn dispatchChatInputChanged(
+    pub fn dispatchChatInputChanged(
         &self, chatIdOverride: Option<String>, messageText: String, selectionStart: i32,
         selectionEnd: i32, attachmentCount: usize,
-    ) {
-        let hookChatId = match self.inputChatId(chatIdOverride) {
-            Ok(id) => id,
-            Err(error) => { AppLogger::e("ChatInputHook", &error); return; }
-        };
-        if let Err(error) = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
-            self.buildChatInputHookContext(&hookChatId, &messageText, selectionStart, selectionEnd,
-                attachmentCount, None, None, CHAT_INPUT_EVENT_INPUT_CHANGED),
-        ).await {
-            AppLogger::e("ChatInputHook", &error);
+    ) -> impl std::future::Future<Output = ()> + 'static {
+        let context = self.inputChatId(chatIdOverride).map(|chatId|
+            self.buildChatInputHookContext(&chatId, &messageText, selectionStart, selectionEnd,
+                attachmentCount, None, None, CHAT_INPUT_EVENT_INPUT_CHANGED));
+        async move {
+            let context = match context {
+                Ok(context) => context,
+                Err(error) => { AppLogger::e("ChatInputHook", &error); return; }
+            };
+            if let Err(error) = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(context).await {
+                AppLogger::e("ChatInputHook", &error);
+            }
         }
     }
 
@@ -534,22 +514,22 @@ impl ChatServiceCore {
         Ok(self.buildChatInputHookContextAtEnd(&chatId, &text, &attachments, replyToMessageTimestamp, CHAT_INPUT_EVENT_SUBMIT_REQUESTED))
     }
 
-    /// Resolves the real reply target and dispatches submit hooks strictly before any host sends or clears input.
+    /// Captures validated input under Holder and dispatches hooks after releasing it so plugins can send.
     #[allow(non_snake_case)]
-    pub async fn dispatchChatInputSubmitRequested(
+    pub fn dispatchChatInputSubmitRequested(
         &self, chatIdOverride: Option<String>, messageText: String, selectionStart: i32,
         selectionEnd: i32, attachments: Vec<AttachmentInfo>, replyToMessageTimestamp: Option<i64>,
-    ) -> Result<serde_json::Value, String> {
-        let hookChatId = self.inputChatId(chatIdOverride)?;
-        if let Some(timestamp) = replyToMessageTimestamp {
-            self.chatHistoryDelegate.chatHistoryManager.loadChatMessageVariant(&hookChatId, timestamp, 0)
-                .map_err(|error| error.to_string())?;
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, String>> + 'static {
+        let context = self.inputChatId(chatIdOverride).and_then(|chatId| {
+            let mut context = self.prepareChatInputSubmit(chatId, messageText, attachments, replyToMessageTimestamp)?;
+            context.selectionStart = selectionStart;
+            context.selectionEnd = selectionEnd;
+            Ok(context)
+        });
+        async move {
+            let decision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(context?).await?;
+            Ok(serializeChatInputHookResult(decision))
         }
-        let decision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(
-            self.buildChatInputHookContext(&hookChatId, &messageText, selectionStart, selectionEnd,
-                attachments.len(), Some(attachments), replyToMessageTimestamp, CHAT_INPUT_EVENT_SUBMIT_REQUESTED),
-        ).await?;
-        Ok(serializeChatInputHookResult(decision))
     }
 
     /// Accepts a host-authored message through the same native turn pipeline and exposes immediate errors explicitly.
@@ -960,7 +940,7 @@ impl ChatServiceCore {
         messageId: i64,
         suppressNextAutoDequeue: bool,
     ) -> Option<PendingQueueMessageItem> {
-        let shouldSuppressAutoDequeue = suppressNextAutoDequeue && self.isChatQueueBlocked(&chatId);
+        let shouldSuppressAutoDequeue = suppressNextAutoDequeue && self.messageProcessingDelegate.isChatProcessing(&chatId);
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId.get_mut(&chatId)?;
         let messageIndex = queueState
@@ -997,7 +977,7 @@ impl ChatServiceCore {
         &mut self,
         chatId: String,
     ) -> Option<PendingQueueMessageItem> {
-        if self.isChatQueueBlocked(&chatId) {
+        if self.messageProcessingDelegate.isChatProcessing(&chatId) {
             return None;
         }
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
@@ -2565,10 +2545,7 @@ impl ChatServiceCore {
         let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow().value() else {
             return false;
         };
-        self.messageProcessingDelegate
-            .activeStreamingChatIdsFlow()
-            .value()
-            .contains(&chatId)
+        self.messageProcessingDelegate.isChatLoading(chatId)
     }
 
     /// Returns whether older messages exist beyond the current display window.
@@ -3583,6 +3560,7 @@ fn authorizeChatImage(messages: &[ChatMessage], id: &str) -> Result<(), String> 
 #[cfg(test)]
 mod chat_deletion_tests {
     use super::*;
+    use crate::services::core::MessageProcessingDelegate::ChatExecutionState;
     use operit_host_native_filesystem::PosixFileSystemHost;
     use operit_host_native_storage::NativeRuntimeStorageHost;
     use operit_model::ChatEntity::ChatEntity;
@@ -3649,13 +3627,17 @@ mod chat_deletion_tests {
             ChatMessage::new_with_markdown_timestamp("ai".into(), "partial output".into(), 123)
         ]);
         let mut streams = Vec::new();
+        let observer = core.messageProcessingDelegate.clone_for_core();
         for id in ["deleted-chat", "live-chat"] {
             let stream = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
             let mut runtime = ChatRuntime::new();
             runtime.activeTurnId = 7;
-            runtime.isLoading = true;
             runtime.responseStream = Some(stream.clone());
             core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert(id.into(), runtime);
+            core.messageProcessingDelegate.setChatExecutionStateForTest(id.into(), ChatExecutionState {
+                isLoading: true,
+                inputProcessingState: InputProcessingState::Processing { message: "processing".into() },
+            });
             core.pendingQueueStateFlow().update(|queues| { queues.insert(id.into(), PendingChatQueueState::new()); });
             core.chatHistoryDelegate.chatConfigurationsFlow.update(|configs| {
                 configs.insert(id.into(), operit_providers::runtime_support::ChatConfigurationDisplayResult {
@@ -3664,14 +3646,18 @@ mod chat_deletion_tests {
             });
             streams.push(stream);
         }
-        core.messageProcessingDelegate.refreshActiveStreamingChatIds();
         assert_eq!(core.activeStreamingChatIds().len(), 2);
+        assert!(observer.isChatLoading("deleted-chat".into()));
+        assert!(observer.isChatProcessing("deleted-chat"));
         assert!(SqlChatSyncStore::default().unwrap().deleteChat("deleted-chat").unwrap());
 
         core.applySynchronizedChatDeletion("deleted-chat".into()).await.unwrap();
         core.applySynchronizedChatDeletion("deleted-chat".into()).await.unwrap();
 
         assert_eq!(core.activeStreamingChatIds(), vec!["live-chat".to_string()]);
+        assert!(!observer.isChatLoading("deleted-chat".into()));
+        assert!(!observer.isChatProcessing("deleted-chat"));
+        assert!(observer.isChatLoading("live-chat".into()));
         let runtimes = core.messageProcessingDelegate.chatRuntimes.lock().unwrap();
         assert_eq!(runtimes["deleted-chat"].activeTurnId, 8);
         assert!(runtimes["deleted-chat"].responseStream.is_none());
@@ -3688,6 +3674,23 @@ mod chat_deletion_tests {
         assert!(core.chatHistoryDelegate.chatHistoryManager.loadChatHistory("deleted-chat".into()).unwrap().is_none());
         drop(runtimes);
 
+        // A summary occupies the chat after streaming resources have finished.
+        core.messageProcessingDelegate.setChatExecutionStateForTest("live-chat".into(), ChatExecutionState {
+            isLoading: false,
+            inputProcessingState: InputProcessingState::Summarizing { message: "summarizing".into() },
+        });
+        assert!(!observer.isChatLoading("live-chat".into()));
+        assert!(observer.isChatProcessing("live-chat"));
+        assert!(observer.activeStreamingChatIdsFlow().value().is_empty());
+        assert!(matches!(observer.inputProcessingStateByChatIdFlow().value()["live-chat"], InputProcessingState::Summarizing { .. }));
+        core.messageProcessingDelegate.finishChatExecution("live-chat".into(), InputProcessingState::Completed);
+        assert!(!observer.isChatProcessing("live-chat"));
+
+        let runtimeCount = observer.chatRuntimes.lock().unwrap().len();
+        assert!(!observer.isChatLoading("missing-chat".into()));
+        assert!(!observer.isChatProcessing("missing-chat"));
+        assert_eq!(observer.chatRuntimes.lock().unwrap().len(), runtimeCount);
+
         // Reuse the same native fixture: the production history manager is process-wide.
         // A completed source turn must hand its lease to the route lifecycle.
         for id in ["route-chat", "other-chat"] {
@@ -3697,7 +3700,6 @@ mod chat_deletion_tests {
         let other = database.store().beginChatExecution("other-chat").unwrap();
         let mut turn = ChatRuntime::new();
         turn.activeTurnId = 7;
-        turn.isLoading = true;
         turn.executionLease = Some(source.clone());
         core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert("route-chat".into(), turn);
 

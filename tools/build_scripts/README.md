@@ -50,6 +50,19 @@ To build only the module release using the current version sources:
 The same Android signing material and build prerequisites as the ordinary APK
 are required. This command builds packages without installing them on a phone.
 
+## Windows Bash runtime
+
+Windows App ZIP/MSI and CLI ZIP packages include a checksum-pinned PortableGit
+runtime under `bash/`, including its upstream licenses. The Windows host starts
+`bash/bin/bash.exe` beside the executable and does not require a system Git
+installation or Git on PATH. Both x86_64 and aarch64 CLI packages stage their
+corresponding runtime. Flutter's normal Windows CMake build stages the runtime
+for Debug, Profile and Release, including `fvm flutter run -d windows`. This is
+an independent incremental target; Dart-only builds do not recopy a complete
+runtime or rebuild Rust to prepare Bash. Missing required runtime files trigger
+preparation again. The same preparation script can stage standalone development
+binaries with `.venv/Scripts/python.exe tools/build_scripts/windows_bash.py --destination <binary-directory>`.
+
 ## Generated plugin assets
 
 Every App/CLI build embeds the ToolPkg assets generated from `plugins/packages/`

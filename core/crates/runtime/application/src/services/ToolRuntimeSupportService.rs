@@ -658,7 +658,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         Ok(holder
             .cores
             .values()
-            .any(|core| core.activeStreamingChatIds().iter().any(|id| id == chatId)))
+            .any(|core| core.messageProcessingDelegate.isChatProcessing(chatId)))
     }
 
     /// Switches the main chat only after its registered configuration owner has resolved the actual binding.

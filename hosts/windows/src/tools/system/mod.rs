@@ -1,4 +1,5 @@
 mod packages;
+mod application_update;
 use crate::process::background_command;
 
 use std::collections::BTreeMap;
@@ -32,6 +33,13 @@ impl WindowsSystemOperationHost {
 }
 
 impl SystemOperationHost for WindowsSystemOperationHost {
+    /// Selects MSI or ZIP from the running copy's registered installation identity.
+    fn applicationUpdateTarget(
+        &self,
+    ) -> HostResult<Option<operit_host_api::ApplicationUpdateTarget>> {
+        application_update::target()
+    }
+
     fn getSystemLanguageCode(&self) -> HostResult<String> {
         get_windows_system_language_code()
     }
@@ -53,8 +61,13 @@ impl SystemOperationHost for WindowsSystemOperationHost {
         get_windows_system_setting(namespace, setting)
     }
 
-    fn installApp(&self, path: &str) -> HostResult<AppOperationData> {
-        request_windows_install_app(path)
+    /// Installs a VFS file reference using the requested platform execution timing.
+    fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> HostResult<AppOperationData> {
+        let path = source.nativePath()?;
+        match timing {
+            operit_host_api::AppInstallTiming::Immediate => request_windows_install_app(&path),
+            operit_host_api::AppInstallTiming::AfterProcessExit => application_update::prepare(&path),
+        }
     }
 
     fn uninstallApp(&self, packageName: &str) -> HostResult<AppOperationData> {

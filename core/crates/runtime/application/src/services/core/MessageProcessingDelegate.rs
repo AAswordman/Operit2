@@ -289,7 +289,7 @@ impl ChatTurnReceiptState {
     }
 }
 
-/// Per-chat runtime state for one active or recently active send turn.
+/// Owns resources and generation identity for one active or recently active send turn.
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
     pub activeTurnId: u64,
@@ -308,7 +308,6 @@ pub struct ChatRuntime {
     pub requestSentAt: i64,
     pub requestStartElapsed: i64,
     pub firstResponseElapsed: Option<i64>,
-    pub isLoading: bool,
 }
 
 impl ChatRuntime {
@@ -331,18 +330,21 @@ impl ChatRuntime {
             requestSentAt: 0,
             requestStartElapsed: 0,
             firstResponseElapsed: None,
-            isLoading: false,
         }
     }
 }
 
 impl ChatRuntime {
     /// Validates generation ownership and reserves cancellation while the caller holds its runtime lock.
-    pub(crate) fn reserveCancellation(&mut self, expectedTurnId: Option<u64>) -> Result<Option<(u64, u64)>, String> {
+    pub(crate) fn reserveCancellation(
+        &mut self,
+        expectedTurnId: Option<u64>,
+        isLoading: bool,
+    ) -> Result<Option<(u64, u64)>, String> {
         if expectedTurnId.is_some_and(|expected| self.activeTurnId != expected) {
             return Err("Work generation is no longer active".to_string());
         }
-        if !self.isLoading || self.isCancelling {
+        if !isLoading || self.isCancelling {
             if expectedTurnId.is_some() { return Err("Work execution is no longer running".to_string()); }
             return Ok(None);
         }
@@ -356,7 +358,7 @@ impl ChatRuntime {
     }
 }
 
-/// Stores the observable lifecycle of one logical chat execution.
+/// Stores the authoritative lifecycle shared by execution queries and observable projections.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatExecutionState {
     pub isLoading: bool,
@@ -370,6 +372,17 @@ impl ChatExecutionState {
             isLoading: false,
             inputProcessingState: InputProcessingState::Idle,
         }
+    }
+
+    /// Reports whether streaming or another nonterminal operation still occupies the chat.
+    pub fn isProcessing(&self) -> bool {
+        self.isLoading
+            || !matches!(
+                self.inputProcessingState,
+                InputProcessingState::Idle
+                    | InputProcessingState::Completed
+                    | InputProcessingState::Error { .. }
+            )
     }
 }
 
@@ -883,7 +896,6 @@ impl MessageProcessingDelegate {
             runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
             runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
             runtime.firstResponseElapsed = None;
-            runtime.isLoading = true;
             runtime.activeStreamingAiMessage = None;
             runtime.responseStream = None;
             runtime.activeTurnId
@@ -1009,7 +1021,6 @@ impl MessageProcessingDelegate {
                         lease.release().expect("Execution lease release must succeed");
                     }
                 }
-                runtime.isLoading = false;
                 runtime.sendJob = None;
                 runtime.streamCollectionJob = None;
                 runtime.stateCollectionJob = None;
@@ -1078,11 +1089,9 @@ impl MessageProcessingDelegate {
     /// Initializes tool invocation accounting for a chat state that is about to be published.
     #[allow(non_snake_case)]
     fn initializeCurrentTurnToolInvocationCount(&mut self, chatId: &str) {
-        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
-        counts.entry(chatId.to_string()).or_insert(0);
-        self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
-            .set_value(counts);
+            .update(|counts| { counts.entry(chatId.to_string()).or_insert(0); });
+        self.currentTurnToolInvocationCountByChatId = self.currentTurnToolInvocationCountByChatIdFlow.value();
     }
 
     /// Dispatches a ToolPkg chat runtime state change with active-chat statistics.
@@ -1106,64 +1115,31 @@ impl MessageProcessingDelegate {
     fn updateChatExecutionState(
         &mut self,
         chatId: String,
-        update: impl FnOnce(&mut ChatExecutionState),
+        mut update: impl FnMut(&mut ChatExecutionState),
     ) {
         let key = Self::chatKey(Some(chatId.clone()));
-        let mut states = self.executionStateByChatIdFlow.value();
-        update(states.entry(key).or_insert_with(ChatExecutionState::idle));
-        let changedState = states
-            .get(&Self::chatKey(Some(chatId.clone())))
-            .cloned()
-            .expect("chat execution state must exist after update");
-        self.executionStateByChatIdFlow.set_value(states);
         self.initializeCurrentTurnToolInvocationCount(&chatId);
+        let mut changedState = ChatExecutionState::idle();
+        self.executionStateByChatIdFlow.update(|states| {
+            let state = states
+                .entry(key.clone())
+                .or_insert_with(ChatExecutionState::idle);
+            update(state);
+            changedState = state.clone();
+        });
         self.dispatchToolPkgChatRuntimeStateChange(&chatId, &changedState.inputProcessingState);
         self.publishWorkState(&chatId, &changedState.inputProcessingState);
     }
 
-    /// Recomputes the chat ids that currently own active streaming turns.
-    #[allow(non_snake_case)]
-    pub fn updateActiveStreamingChatIds(&mut self) {
-        let activeStreamingChatIds = {
-            let runtimes = self
-                .chatRuntimes
-                .lock()
-                .expect("chat runtimes mutex poisoned");
-            runtimes
-                .iter()
-                .filter(|(key, runtime)| key.as_str() != "__DEFAULT_CHAT__" && runtime.isLoading)
-                .map(|(key, _)| key.clone())
-                .collect::<HashSet<_>>()
-        };
-        let mut states = self.executionStateByChatIdFlow.value();
-        for (chatId, state) in states.iter_mut() {
-            state.isLoading = activeStreamingChatIds.contains(chatId);
-        }
-        for chatId in activeStreamingChatIds {
-            states
-                .entry(chatId)
-                .or_insert_with(ChatExecutionState::idle)
-                .isLoading = true;
-        }
-        let activeChatIds = states
-            .iter()
-            .filter_map(|(chatId, state)| state.isLoading.then_some(chatId.clone()))
-            .collect::<Vec<_>>();
-        self.executionStateByChatIdFlow.set_value(states);
-        for chatId in activeChatIds {
-            self.initializeCurrentTurnToolInvocationCount(&chatId);
-        }
+    /// Seeds logical lifecycle state for tests that supply their own execution resources.
+    #[cfg(test)]
+    pub(crate) fn setChatExecutionStateForTest(&mut self, chatId: String, state: ChatExecutionState) {
+        self.updateChatExecutionState(chatId, |execution| *execution = state.clone());
     }
 
-    /// Refreshes active streaming chat ids from the current runtime map.
+    /// Identifies provider completion events that must wait for execution and summary cleanup.
     #[allow(non_snake_case)]
-    pub fn refreshActiveStreamingChatIds(&mut self) {
-        self.updateActiveStreamingChatIds();
-    }
-
-    /// Returns whether an input-processing state represents an inactive terminal state.
-    #[allow(non_snake_case)]
-    pub fn isTerminalInputState(state: &InputProcessingState) -> bool {
+    fn isProviderCompletionState(state: &InputProcessingState) -> bool {
         matches!(
             state,
             InputProcessingState::Idle | InputProcessingState::Completed
@@ -1178,8 +1154,8 @@ impl MessageProcessingDelegate {
         state: InputProcessingState,
     ) {
         if let Some(chatId) = chatId.as_ref() {
-            if self.withRuntime(Some(chatId.clone()), |runtime| runtime.isLoading)
-                && Self::isTerminalInputState(&state)
+            if self.isChatLoading(chatId.clone())
+                && Self::isProviderCompletionState(&state)
             {
                 return;
             }
@@ -1188,7 +1164,7 @@ impl MessageProcessingDelegate {
                 .lock()
                 .expect("suppress idle completed map mutex poisoned")
                 .contains_key(chatId);
-            if suppressIdleCompleted && Self::isTerminalInputState(&state) {
+            if suppressIdleCompleted && Self::isProviderCompletionState(&state) {
                 return;
             }
         }
@@ -1199,19 +1175,7 @@ impl MessageProcessingDelegate {
             ToolProgressBus::clear();
         }
         let key = Self::chatKey(chatId);
-        let mut states = self.executionStateByChatIdFlow.value();
-        states
-            .entry(key.clone())
-            .or_insert_with(ChatExecutionState::idle)
-            .inputProcessingState = state;
-        let changedState = states
-            .get(&key)
-            .cloned()
-            .expect("chat execution state must exist after input processing state update");
-        self.executionStateByChatIdFlow.set_value(states);
-        self.initializeCurrentTurnToolInvocationCount(&key);
-        self.dispatchToolPkgChatRuntimeStateChange(&key, &changedState.inputProcessingState);
-        self.publishWorkState(&key, &changedState.inputProcessingState);
+        self.updateChatExecutionState(key, |execution| execution.inputProcessingState = state.clone());
     }
 
     /// Publishes processing changes to the exact work item owned by this runtime.
@@ -1364,7 +1328,6 @@ impl MessageProcessingDelegate {
                     lease.release().expect("Terminal execution lease release must succeed");
                 }
             }
-            runtime.isLoading = false;
             runtime.sendJob = None;
             runtime.responseStream = None;
             runtime.streamCollectionJob = None;
@@ -1374,7 +1337,7 @@ impl MessageProcessingDelegate {
         ToolProgressBus::clear();
         self.updateChatExecutionState(chatId, |state| {
             state.isLoading = false;
-            state.inputProcessingState = terminalState;
+            state.inputProcessingState = terminalState.clone();
         });
     }
 
@@ -1570,7 +1533,7 @@ impl MessageProcessingDelegate {
     /// Matches only an admitted native execution while it owns the actual current streaming runtime.
     pub(crate) fn isNativeExecutionActive(&self, chatId: &str, executionId: &str) -> bool {
         match self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
-            runtime.isLoading && !runtime.isCancelling
+            self.isChatLoading(chatId.to_string()) && !runtime.isCancelling
                 && runtime.currentTurnOptions.nativeExecutionId.as_deref() == Some(executionId)
         }) { Some(active) => active, None => false }
     }
@@ -1595,7 +1558,7 @@ impl MessageProcessingDelegate {
         expectedTurnId: Option<u64>) -> Result<Option<ChatMessage>, String> {
         if expectedTurnId.is_none() { self.cancelSummaryTasks(Some(&chatId)); }
         let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
-            runtime.reserveCancellation(expectedTurnId).map(|reservation|
+            runtime.reserveCancellation(expectedTurnId, self.isChatLoading(chatId.clone())).map(|reservation|
                 reservation.map(|(cancelled, cancelling)| (cancelled, cancelling, runtime.responseStream.clone())))
         });
         let Some(reservation) = cancellation else {
@@ -1624,7 +1587,6 @@ impl MessageProcessingDelegate {
                         lease.release().expect("Cancelled execution lease release must succeed");
                     }
                 }
-                runtime.isLoading = false;
                 runtime.responseStream = None;
                 runtime.sendJob = None;
                 runtime.streamCollectionJob = None;
@@ -1721,18 +1683,28 @@ impl MessageProcessingDelegate {
             .unwrap_or(&0)
     }
 
-    /// Reports whether one chat currently has a loading runtime.
+    /// Reads streaming activity from the authoritative logical execution state.
     #[allow(non_snake_case)]
     pub fn isChatLoading(&self, chatId: String) -> bool {
-        self.withExistingRuntime(Some(chatId), |runtime| runtime.isLoading)
-            .unwrap_or(false)
+        self.executionStateByChatIdFlow
+            .value()
+            .get(&chatId)
+            .is_some_and(|state| state.isLoading)
+    }
+
+    /// Reads chat occupancy from the same state used by observable lifecycle projections.
+    pub fn isChatProcessing(&self, chatId: &str) -> bool {
+        self.executionStateByChatIdFlow
+            .value()
+            .get(chatId)
+            .is_some_and(ChatExecutionState::isProcessing)
     }
 
     /// Adds guidance to the exact active turn without cancelling or starting a send.
     #[allow(non_snake_case)]
     pub fn steerMessage(&self, chatId: String, messageText: String) -> Result<(), String> {
-        self.withExistingRuntime(Some(chatId), |runtime| {
-            if !runtime.isLoading || runtime.isCancelling {
+        self.withExistingRuntime(Some(chatId.clone()), |runtime| {
+            if !self.isChatLoading(chatId.clone()) || runtime.isCancelling {
                 return Err("The current chat turn is no longer running".to_string());
             }
             let inbox = runtime.guidanceInbox.as_ref().ok_or_else(|| {
@@ -3101,21 +3073,6 @@ impl MessageProcessingDelegate {
         }
         Ok(())
     }
-
-    /// Clears runtime state after a send has finished.
-    #[allow(non_snake_case)]
-    pub fn cleanupRuntimeAfterSend(&mut self, chatId: String, _turnOptions: ChatTurnOptions) {
-        self.withExistingRuntime(Some(chatId.clone()), |runtime| {
-            if let Some(inbox) = &runtime.guidanceInbox {
-                inbox.closeAndClear();
-            }
-            runtime.isLoading = false;
-            runtime.sendJob = None;
-            runtime.streamCollectionJob = None;
-            runtime.stateCollectionJob = None;
-        });
-        self.clearCurrentTurnToolInvocationCount(chatId);
-    }
 }
 
 /// Builds a compact reply preview from Markdown parts without provider metadata.
@@ -3164,6 +3121,27 @@ mod tests {
         Arc,
     };
     use tokio::sync::oneshot;
+
+    /// Keeps summary occupancy distinct from streaming while all terminal phases release the chat.
+    #[test]
+    fn execution_state_classifies_streaming_summary_and_terminal_phases() {
+        for phase in [
+            InputProcessingState::Idle,
+            InputProcessingState::Completed,
+            InputProcessingState::Error { message: "failed".into() },
+        ] {
+            let mut state = ChatExecutionState { isLoading: false, inputProcessingState: phase };
+            assert!(!state.isProcessing());
+            state.isLoading = true;
+            assert!(state.isProcessing(), "provider completion cannot end an active execution");
+        }
+        let summary = ChatExecutionState {
+            isLoading: false,
+            inputProcessingState: InputProcessingState::Summarizing { message: "summarizing".into() },
+        };
+        assert!(summary.isProcessing());
+        assert!(!summary.isLoading);
+    }
 
     /// Persists the paused turn's input, output and cache usage together with its partial reply.
     #[test]

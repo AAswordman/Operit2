@@ -24,4 +24,5 @@ regex = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+uuid = { workspace = true, features = ["js"] }
 zip = { workspace = true, optional = true }
