@@ -1349,6 +1349,88 @@ void main() {
     );
   });
 
+  for (final entry in ['initial', 'switch', 'empty snapshot']) {
+    testWidgets('$entry long chat only parses messages near the bottom', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final scroll = ScrollController();
+      final autoScroll = ValueNotifier(true);
+      final parsed = <String>[];
+      final messages = List<ChatUiMessage>.generate(
+        80,
+        (index) => _aiMessage(
+          parts: [
+            MessagePart(
+              partId: 'cold-open-$entry-$index',
+              sequence: 0,
+              kind: MessagePartKind.markdown,
+              content: '$entry conversation response $index',
+              toolCallId: null,
+              toolName: null,
+              attributes: const {},
+            ),
+          ],
+          timestamp: index + 1,
+          completedAt: 1,
+        ),
+      );
+      addTearDown(() {
+        scroll.dispose();
+        autoScroll.dispose();
+      });
+      if (entry != 'initial') {
+        await tester.pumpWidget(
+          _chatArea(
+            currentChatId: entry == 'switch' ? 'previous-chat' : 'long-chat',
+            message: entry == 'switch'
+                ? _aiMessage(parts: const [], timestamp: 1000)
+                : null,
+            isLoading: false,
+            scrollController: scroll,
+            autoScrollToBottom: autoScroll,
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+      await tester.pumpWidget(
+        _chatArea(
+          currentChatId: 'long-chat',
+          messages: messages,
+          isLoading: false,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          splitMarkdownContent: (content) {
+            parsed.add(content);
+            return _splitMarkdownContent(content);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Count all requests, including work from rows that were already unmounted.
+      expect(parsed, contains('$entry conversation response 79'));
+      expect(parsed.length, lessThan(20), reason: 'Parsed: $parsed');
+      expect(parsed, isNot(contains('$entry conversation response 0')));
+      expect(scroll.offset, scroll.position.maxScrollExtent);
+      debugPrint('$entry long chat: ${parsed.length}/80 Markdown requests');
+
+      // Older history must remain reachable above the new layout origin.
+      autoScroll.value = false;
+      for (var page = 0; page < 30; page++) {
+        if (find.text('$entry conversation response 0').evaluate().isNotEmpty) {
+          break;
+        }
+        scroll.jumpTo(scroll.position.minScrollExtent);
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('$entry conversation response 0'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('reserves transcript padding for the floating status lane', (
     tester,
   ) async {

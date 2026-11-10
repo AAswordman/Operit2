@@ -159,6 +159,7 @@ class _ChatAreaState extends State<ChatArea>
   int? _pendingJumpToMessageTimestamp;
   int _messageNavigationGeneration = 0;
   int? _layoutAnchorTimestamp;
+  bool _initialLayoutOriginChosen = false;
   Key _scrollLayoutKey = UniqueKey();
   static const _centerSliverKey = ValueKey<String>('chat-message-center');
   late final _ChatLayoutScrollController _layoutScrollController;
@@ -241,6 +242,19 @@ class _ChatAreaState extends State<ChatArea>
       extent.updateTrailingSpacing(index == itemCount - 1 ? 0 : 8);
       return extent;
     }, growable: false);
+    // Start at the tail instead of laying out from the oldest row and then
+    // chasing an estimated maxScrollExtent. Those intermediate layouts mount
+    // offscreen rows and start their Markdown requests before discarding them.
+    // Keep this origin stable as messages arrive or older history is loaded.
+    if (!_initialLayoutOriginChosen && widget.messages.isNotEmpty) {
+      _initialLayoutOriginChosen = true;
+      if (_layoutAnchorTimestamp == null &&
+          _ownsBottomScroll() &&
+          !_hasLiveBottomStream() &&
+          widget.messages.length > 1) {
+        _layoutAnchorTimestamp = widget.messages.last.timestamp;
+      }
+    }
     final anchorIndex = widget.messages.indexWhere(
       (message) => message.timestamp == _layoutAnchorTimestamp,
     );
@@ -927,6 +941,7 @@ class _ChatAreaState extends State<ChatArea>
       _userScrollDirection = ScrollDirection.idle;
       _clearPendingMessageJump();
       _layoutAnchorTimestamp = null;
+      _initialLayoutOriginChosen = false;
       _scrollLayoutKey = UniqueKey();
     }
     if (_bottomStreamCompleted(oldWidget)) {
@@ -944,6 +959,7 @@ class _ChatAreaState extends State<ChatArea>
           (message) => message.timestamp == _layoutAnchorTimestamp,
         )) {
       _layoutAnchorTimestamp = null;
+      _initialLayoutOriginChosen = false;
       _scrollLayoutKey = UniqueKey();
     }
     _applyPendingMessageJump();
