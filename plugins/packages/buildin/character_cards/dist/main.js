@@ -1926,7 +1926,16 @@ function searchMemoryDatabase(database, settings2, options, config, debug = fals
     if (!wildcard) {
       if (options.query.trim() === "") throw new Error("Memory search query must not be blank");
       const vectorWeight = settings2.cloudEmbeddingEnabled ? config.vectorWeight : 0;
-      if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) throw new Error("Memory search query has no searchable tokens");
+      if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) {
+        return { queryEmbedding: null, result: {
+          excludedBySnapshotCount: 0,
+          query: options.query,
+          config,
+          relevanceThreshold: options.relevanceThreshold,
+          memoriesInScopeCount: 0,
+          candidates: []
+        } };
+      }
       if (config.keywordWeight + config.tagWeight + vectorWeight + config.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
     }
     const queryEmbedding = yield prepareMemoryQuery(settings2, options.query, config);
@@ -5322,8 +5331,7 @@ function currentMessageMemoryAccess(chatId, message, repository2) {
   return __async(this, null, function* () {
     assertMemoryChatMessage(message);
     const participantId = yield readMessageAuthor(chatId, message.timestamp, message.variantIndex);
-    if (participantId === "model:chat") return { primaryOwnerKey: "", resources: [] };
-    if (participantId === null) throw new Error("Message has no character author identity");
+    if (participantId === null || participantId === "model:chat") return { primaryOwnerKey: "", resources: [], authorMissing: participantId === null };
     const card = yield repository2.getCharacter(participantId);
     const primaryOwnerKey = yield primaryOwner(card, repository2);
     const resources = [{ key: primaryOwnerKey, readable: true, writable: true }];
@@ -5336,13 +5344,17 @@ function currentMessageMemoryAccess(chatId, message, repository2) {
         existing.writable || (existing.writable = mount2.writable);
       } else resources.push({ key: key2, readable: mount2.readable, writable: mount2.writable });
     }
-    return { primaryOwnerKey, resources };
+    return { primaryOwnerKey, resources, authorMissing: false };
   });
 }
 function requireMessageOwner(chatId, message, ownerKey, repository2) {
   return __async(this, null, function* () {
     yield repository2.readMemoryJobState(ownerKey);
     const access = yield currentMessageMemoryAccess(chatId, message, repository2);
+    if (access.authorMissing) {
+      yield requireChatOwner(chatId, ownerKey, repository2);
+      return access;
+    }
     if (!access.resources.some((resource) => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
     return access;
   });
@@ -5350,10 +5362,16 @@ function requireMessageOwner(chatId, message, ownerKey, repository2) {
 function requireMessagesOwner(chatId, messages, ownerKey, repository2) {
   return __async(this, null, function* () {
     yield repository2.readMemoryJobState(ownerKey);
+    let hasUnattributedReply = false;
     for (const message of messages) {
       if (message.sender !== "ai" && message.sender !== "assistant") continue;
       const access = yield currentMessageMemoryAccess(chatId, message, repository2);
+      hasUnattributedReply || (hasUnattributedReply = access.authorMissing);
       if (access.resources.some((resource) => resource.key === ownerKey && resource.writable)) return;
+    }
+    if (hasUnattributedReply) {
+      yield requireChatOwner(chatId, ownerKey, repository2);
+      return;
     }
     throw new Error("History has no assistant author currently writable for this memory owner: " + ownerKey);
   });
@@ -5896,6 +5914,7 @@ function enqueueCandidate(input, repository2) {
     const owners = /* @__PURE__ */ new Set();
     if (input.sourceType === "reply_finalized_auto") {
       const access = yield currentMessageMemoryAccess(input.chatId, message, repository2);
+      if (access.authorMissing) return { owners: [], candidateIds: [] };
       const ownerKey = input.ownerKey === null ? access.primaryOwnerKey : input.ownerKey;
       if (ownerKey === "") return { owners: [], candidateIds: [] };
       if (!access.resources.some(

@@ -378,13 +378,15 @@ test("controlled Chat/AI: registered candidate provider and interval use exact m
   for (const call of harness.extensionCalls.slice(readCount)) assert.equal(call.target.kind, "message", "Message author lookup must not read current chat identity");
 });
 
-/** Checks strict missing-snapshot and required-revision errors without manufacturing an owner or publishing a candidate. */
-test("controlled Chat/AI: candidate provider rejects missing snapshots or absent variant input without a disk mutation", async t => {
+/** Missing authors skip automatic candidates; malformed revision requests still fail without publication. */
+test("controlled Chat/AI: candidate provider skips missing authors and rejects absent variant input without a disk mutation", async t => {
   const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime(); await runtime.initialize(); await runtime.bind();
   const source = harness.message(31), before = await harness.readStateText(); harness.disk.clearCalls();
   await assert.rejects(() => runtime.api("memory.candidate.enqueue", { chatId: CONTROLLED_CHAT_ID, timestamp: source.timestamp, sourceType: "reply_finalized_auto", ownerKey: null }), /variantIndex is required/);
   harness.removeExecutionData(source.timestamp, source.variantIndex);
-  await assert.rejects(() => runtime.api("memory.candidate.enqueue", { chatId: CONTROLLED_CHAT_ID, timestamp: source.timestamp, variantIndex: source.variantIndex, sourceType: "reply_finalized_auto", ownerKey: null }), /has no character author identity/);
+  for (const ownerKey of [null, CONTROLLED_OWNER]) {
+    assert.deepEqual(plain(await runtime.api("memory.candidate.enqueue", { chatId: CONTROLLED_CHAT_ID, timestamp: source.timestamp, variantIndex: source.variantIndex, sourceType: "reply_finalized_auto", ownerKey })), { owners: [], candidateIds: [] });
+  }
   assert.equal(await harness.readStateText(), before); assert.equal(mutations(harness.disk).length, 0); assert.equal(harness.modelCalls.length, 0);
 });
 
@@ -615,4 +617,30 @@ test("producer ownership: legacy rebuilds require an explicit new request", asyn
   assert.match(failed.rebuildProgress.lastError, /no producing device/u);
   await runtime.startRebuild(); harness.queueAnalysis({}); await runtime.interval(); harness.assertOutputsConsumed();
   assert.equal((await readOwner(harness)).rebuildTask.producerNodeId, "node-b");
+});
+
+/** Explicit history rebuilds remain usable when imported replies lack optional author extensions. */
+test("controlled Chat/AI: legacy history without author metadata rebuilds through the selected chat permissions", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime();
+  await runtime.initialize(); await runtime.bind();
+  for (let index = 1; index < 32; index += 2) {
+    const source = harness.message(index); harness.removeExecutionData(source.timestamp, source.variantIndex);
+  }
+  const progress = plain(await runtime.startRebuild());
+  assert.ok(progress.totalWindows > 1);
+  harness.queueAnalysis({ main: { title: "Imported history fact", content: "Legacy conversations remain usable", tags: [], folder_path: "" }, new: [], update: [], merge: [], links: [] });
+  await runtime.interval(); harness.assertOutputsConsumed();
+  const state = await readOwner(harness);
+  assert.equal(state.rebuildProgress.completedWindows, 1);
+  assert.equal(state.rebuildProgress.failedWindows, 0);
+  assert.equal(state.memories[0].title, "Imported history fact");
+  harness.queueAnalysis({ main: { title: "Manual legacy fact", content: "Manual updates also tolerate missing author metadata", tags: [], folder_path: "" }, new: [], update: [], merge: [], links: [] });
+  await runtime.api("memory.chat.update", { ownerKey: CONTROLLED_OWNER, chatId: CONTROLLED_CHAT_ID });
+  harness.assertOutputsConsumed();
+  assert.ok((await readOwner(harness)).memories.some(memory => memory.title === "Manual legacy fact"));
+  await harness.removeChatMarker();
+  const before = await harness.readStateText(), modelCalls = harness.modelCalls.length;
+  await assert.rejects(runtime.api("memory.chat.update", { ownerKey: CONTROLLED_OWNER, chatId: CONTROLLED_CHAT_ID }));
+  assert.equal(harness.modelCalls.length, modelCalls);
+  assert.equal(await harness.readStateText(), before);
 });

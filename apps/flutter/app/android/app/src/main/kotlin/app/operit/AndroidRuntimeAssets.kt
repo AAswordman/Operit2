@@ -224,6 +224,7 @@ object AndroidRuntimeAssets {
             "/proc/self/fd/0" to "/dev/stdin",
             "/proc/self/fd/1" to "/dev/stdout",
             "/proc/self/fd/2" to "/dev/stderr",
+            "/storage" to "/storage",
             emulatedStoragePath to "/sdcard",
             emulatedStoragePath to emulatedStoragePath,
             "/data/local/tmp" to "/data/local/tmp",

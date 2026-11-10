@@ -31,6 +31,24 @@ const PLATFORM: &str = "android";
 const PROOT_TERMINAL: &str = "proot";
 const ANDROID_SYSTEM_TERMINAL: &str = "android-system";
 const PRIMARY_TERMINAL_TYPE: &str = "bash";
+
+fn resolveAndroidNativeWorkingDirectory(
+    path: &str,
+    documentOperation: &dyn Fn(serde_json::Value) -> HostResult<serde_json::Value>,
+) -> HostResult<String> {
+    let Some(resource) = operit_host_api::FileSystemResource::FileSystemResource::parse(path)? else {
+        return Ok(path.to_string());
+    };
+    if resource.backend != "android_documents" {
+        return Err(HostError::new("Unsupported Android terminal filesystem backend"));
+    }
+    let value = documentOperation(serde_json::json!({
+        "operation": "resolveNativeDirectory", "path": path,
+    }))?;
+    let directory = value.as_str().filter(|value| value.starts_with('/') && !value.contains('\0'))
+        .ok_or_else(|| HostError::new("Android document provider returned an invalid native directory"))?;
+    Ok(directory.to_string())
+}
 type RawFd = i32;
 #[cfg(target_os = "android")]
 type AndroidPid = libc::pid_t;
@@ -210,6 +228,10 @@ impl AndroidTerminalHost {
 }
 
 impl TerminalHost for AndroidTerminalHost {
+    fn resolveNativeWorkingDirectory(&self, path: &str) -> HostResult<String> {
+        resolveAndroidNativeWorkingDirectory(path, &crate::document_filesystem::call)
+    }
+
     /// Resolves proot guest paths separately from Android system-shell host paths.
     fn resolveWorkingDirectory(
         &self,
@@ -2258,6 +2280,57 @@ pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn document_resource() -> String {
+        operit_host_api::FileSystemResource::FileSystemResource {
+            backend: "android_documents".into(),
+            root: "content://com.android.externalstorage.documents/tree/primary%3AProjects".into(),
+            path: "项目 with spaces".into(),
+        }.encode().unwrap()
+    }
+
+    #[test]
+    fn document_working_directory_is_resolved_by_android_provider() {
+        let resource = document_resource();
+        let directory = resolveAndroidNativeWorkingDirectory(&resource, &|request| {
+            assert_eq!(request["operation"], "resolveNativeDirectory");
+            assert_eq!(request["path"], resource);
+            Ok(serde_json::json!("/storage/emulated/0/Projects/项目 with spaces"))
+        }).unwrap();
+        assert_eq!(directory, "/storage/emulated/0/Projects/项目 with spaces");
+        for (terminal, kind) in [("proot", "bash"), ("android-system", "shell")] {
+            let actual = AndroidTerminalHost::default().resolveWorkingDirectory(
+                terminal, kind, "/virtual/android/documents/id/项目 with spaces", &|_| Ok(directory.clone()),
+            ).unwrap();
+            assert_eq!(actual, directory);
+        }
+    }
+
+    #[test]
+    fn native_and_guest_directories_do_not_call_document_provider() {
+        let reject = |_: serde_json::Value| panic!("provider must not receive native paths");
+        assert_eq!(resolveAndroidNativeWorkingDirectory("/storage/emulated/0/work", &reject).unwrap(),
+            "/storage/emulated/0/work");
+        let host = AndroidTerminalHost::default();
+        assert_eq!(host.resolveWorkingDirectory("proot", "bash", "/virtual/linux/root", &|_| {
+            panic!("guest paths must not reach host resolver")
+        }).unwrap(), "/root");
+    }
+
+    #[test]
+    fn document_directory_errors_and_invalid_provider_responses_are_rejected() {
+        let resource = document_resource();
+        let error = resolveAndroidNativeWorkingDirectory(&resource, &|_| {
+            Err(HostError::new("Document tree permission was revoked"))
+        }).unwrap_err();
+        assert!(error.message.contains("permission was revoked"));
+        for value in [serde_json::Value::Null, serde_json::json!("relative/path"),
+            serde_json::json!("/storage/bad\u{0}path")] {
+            assert!(resolveAndroidNativeWorkingDirectory(&resource, &|_| Ok(value.clone())).is_err());
+        }
+        let unsupported = resource.replace("android_documents", "other_backend");
+        assert!(resolveAndroidNativeWorkingDirectory(&unsupported, &|_| panic!("unsupported backend")).is_err());
+    }
 
     /// Builds production shell argv without requiring an Android runtime or device.
     fn system_shell(

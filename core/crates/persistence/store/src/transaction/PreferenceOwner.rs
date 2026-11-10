@@ -93,6 +93,29 @@ fn initialization(store: &PreferencesDataStore, snapshot: &Snapshot) -> Result<S
     super::compaction::Initialization::from_snapshot(snapshot).operation("preferences",store.encryption.is_some()).map_err(Error::Message)
 }
 
+/// Record only known-safe local effects. Replay can seed this same index from
+/// the originals it already loaded; ordinary commits never load old payloads.
+fn compact_local(
+    tx: &mut dyn operit_host_api::RuntimeSqliteTransaction,
+    path: &str, format: u32, node: &str, originals: &[SyncOperation],
+) -> Result<(), crate::SyncOperationStore::SyncOperationStoreError> {
+    if tx.query("SELECT 1 FROM preference_compaction_policy WHERE path=?1 AND format=?2 AND safe=1",
+        vec![super::text(path), operit_host_api::SqliteValue::Integer(format.into())])?.is_empty() { return Ok(()); }
+    let local_origin = format!("{node}:preferences");
+    for original in originals.iter().filter(|op| op.originDeviceId == local_origin
+        && op.payload["contractVersion"] == 1 && op.operation != "initialize"
+        && !crate::PreferenceMerge::isMergeMetadata(op)) {
+        let transaction = PreferencesSyncedEntry::fromOperation(original).and_then(|entry| entry.transaction())
+            .map_err(|error| crate::SyncOperationStore::SyncOperationStoreError::Message(error.to_string()))?;
+        let super::Target::Data(owner) = &transaction.target else { continue; };
+        if owner.path != path || owner.format != format || transaction.edits.iter()
+            .any(|edit| crate::PluginPreferenceSchema::reserved(edit.key())) { continue; }
+        let retired = super::compaction::record_preference(tx, original, &transaction)?;
+        Journal::retire_ids(tx, retired)?;
+    }
+    Ok(())
+}
+
 /// Complete a file/SQL handoff before reading its replay state or accepting another edit.
 pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) -> Result<(), Error> {
     let Some(commit) = values.commit.clone() else {
@@ -146,6 +169,7 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
                 Journal::retire_covered(tx,&paths,&sealed)?;
             }
             Journal::retire_ids(tx, commit.retired.iter().cloned())?;
+            compact_local(tx, &store.storagePath, owner.format_progress, &current.node, &originals)?;
             tx.execute(
                 "INSERT OR IGNORE INTO transaction_commits(id) VALUES(?1)",
                 vec![super::text(&commit.id)],
@@ -409,14 +433,6 @@ pub(crate) fn commit_local(
     let origin = format!("{}:preferences", journal(store)?.localDeviceId()?);
     let original = journal(store)?.withJournal(|j| j.reserve(&origin, mutation))?;
     let entry = PreferencesSyncedEntry::fromOperation(&original)?;
-    let retired = {
-        let mut history = journal(store)?.preferenceCompactionHistory(&store.storagePath, format)?;
-        history.push(original.clone());
-        let transactions = history.iter().filter(|operation| !crate::PreferenceMerge::isMergeMetadata(operation)
-            && !operation.originDeviceId.starts_with("~import:"))
-            .map(|operation| PreferencesSyncedEntry::fromOperation(operation)?.transaction()).collect::<Result<Vec<_>, _>>()?;
-        super::compaction::superseded(&transactions).map_err(Error::Message)?
-    };
     let mut current = owner.current;
     current
         .data
@@ -425,7 +441,7 @@ pub(crate) fn commit_local(
     current.data.values = data(store, values)?.values;
     current.covered.insert(original.opId.clone());
     current.generation += 1;
-    save_file(store, values, current, vec![original], vec![], false, None, retired)
+    save_file(store, values, current, vec![original], vec![], false, None, BTreeSet::new())
 }
 
 pub fn snapshot(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
@@ -561,12 +577,20 @@ where
     current.covered.extend(history_initialization_ids(originals));
     current.covered.extend(uncovered.iter().map(|op| op.opId.clone()));
     if current.data == owner.current.data && current.covered == owner.current.covered {
-        journal(store)?.withJournal(|j|j.transaction(|tx|Journal::retire_ids(tx, retired.iter().cloned())))?;
+        journal(store)?.withJournal(|j|j.transaction(|tx| {
+            Journal::retire_ids(tx, retired.iter().cloned())?;
+            compact_local(tx, &store.storagePath, current.data.owner.format, &current.node, &uncovered)
+        }))?;
         journal(store)?.completeOperations(originals)?;
         return Ok(aliases);
     }
     save_file(store, &mut values, current, originals.to_vec(),
         originals.iter().map(|op| op.opId.clone()).collect(), false, None, retired)?;
+    // Validation already materialized this batch. Seed surviving local effects
+    // here without adding any history query to the ordinary commit path.
+    journal(store)?.withJournal(|j|j.transaction(|tx|
+        compact_local(tx, &store.storagePath, values.view.as_ref().expect("replayed view").owner.format,
+            &owner.current.node, &uncovered)))?;
     store.notifyChanged();
     Ok(aliases)
 }

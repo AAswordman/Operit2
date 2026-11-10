@@ -3946,7 +3946,10 @@ impl PreferencesSyncedEntry {
                 .map_err(PreferencesDataStoreError::Message)?
         } else { BTreeSet::new() };
         let mut data = preferences.view.clone().ok_or_else(|| PreferencesDataStoreError::Message("Owner replay context is missing".into()))?;
-        for transaction in transactions.iter().filter(|transaction| !retired.contains(&transaction.id)) {
+        // Coverage permits payload reclamation only after the complete history
+        // has been validated. Do not hide an invalid increment/path merely
+        // because a later assignment would overwrite its final value.
+        for transaction in &transactions {
             data.apply(transaction).map_err(PreferencesDataStoreError::Message)?;
         }
         preferences.values = Arc::new(data.values.iter().map(|(k,v)| (k.clone(),v.clone())).collect());

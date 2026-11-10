@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
@@ -75,6 +76,50 @@ class QrBridge extends DeviceBridge {
   }
 }
 
+class QrCameraPlatform extends MobileScannerPlatform {
+  final captures = StreamController<BarcodeCapture?>.broadcast();
+  final starts = <StartOptions>[];
+  bool permissionDenied = false;
+  int stops = 0, disposals = 0;
+
+  @override
+  Stream<BarcodeCapture?> get barcodesStream => captures.stream;
+  @override
+  Stream<TorchState> get torchStateStream => const Stream.empty();
+  @override
+  Stream<double> get zoomScaleStateStream => const Stream.empty();
+  @override
+  Widget buildCameraView() => const SizedBox.expand();
+  @override
+  Future<void> updateScanWindow(Rect? window) async {}
+
+  @override
+  Future<MobileScannerViewAttributes> start(StartOptions options) async {
+    starts.add(options);
+    if (permissionDenied) {
+      throw const MobileScannerException(
+        errorCode: MobileScannerErrorCode.permissionDenied,
+      );
+    }
+    return const MobileScannerViewAttributes(
+      cameraDirection: CameraFacing.back,
+      currentTorchMode: TorchState.unavailable,
+      size: Size(640, 480),
+      numberOfCameras: 1,
+    );
+  }
+
+  @override
+  Future<void> stop() async {
+    stops++;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposals++;
+  }
+}
+
 void main() {
   tearDown(() => debugDefaultTargetPlatformOverride = null);
   Future<void> mount(
@@ -85,8 +130,9 @@ void main() {
     double scale = 1,
     ThemeMode theme = ThemeMode.light,
     void Function(String?)? onResult,
+    TargetPlatform platform = TargetPlatform.linux,
   }) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    debugDefaultTargetPlatformOverride = platform;
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('zh'),
@@ -136,6 +182,82 @@ void main() {
     await tester.tap(find.byTooltip('识别连接信息'));
     await tester.pumpAndSettle();
   }
+
+  QrCameraPlatform installCamera() {
+    final previous = MobileScannerPlatform.instance;
+    final camera = QrCameraPlatform();
+    MobileScannerPlatform.instance = camera;
+    addTearDown(() async {
+      MobileScannerPlatform.instance = previous;
+      await camera.captures.close();
+    });
+    return camera;
+  }
+
+  testWidgets('iOS camera scans a QR code and requires confirmation', (
+    tester,
+  ) async {
+    final camera = installCamera();
+    final bridge = QrBridge();
+    String? result;
+    await mount(
+      tester,
+      bridge,
+      platform: TargetPlatform.iOS,
+      onResult: (code) => result = code,
+    );
+    expect(find.byType(MobileScanner), findsOneWidget);
+    expect(camera.starts, hasLength(1));
+    expect(camera.starts.single.formats, [BarcodeFormat.qrCode]);
+    camera.captures.add(
+      const BarcodeCapture(barcodes: [Barcode(rawValue: sampleCode)]),
+    );
+    await tester.pumpAndSettle();
+    expect(bridge.calls, contains('inspectPeerConnectionCode'));
+    expect(find.text('Mac'), findsOneWidget);
+    expect(result, isNull);
+    expect(bridge.calls, isNot(contains('startPairingFromCode')));
+    expect(camera.disposals, 1);
+    await tester.tap(find.text('确认加入'));
+    await tester.pumpAndSettle();
+    expect(result, sampleCode);
+    await close(tester, bridge);
+  });
+
+  testWidgets('iOS camera stops in background and restarts on resume', (
+    tester,
+  ) async {
+    final camera = installCamera();
+    final bridge = QrBridge();
+    await mount(tester, bridge, platform: TargetPlatform.iOS);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pumpAndSettle();
+    expect(camera.stops, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(camera.starts, hasLength(2));
+    await close(tester, bridge);
+    expect(camera.disposals, 1);
+  });
+
+  testWidgets('iOS camera permission denial keeps import and paste usable', (
+    tester,
+  ) async {
+    final camera = installCamera()..permissionDenied = true;
+    final bridge = QrBridge();
+    await mount(tester, bridge, platform: TargetPlatform.iOS);
+    expect(find.textContaining('需要相机权限才能扫码'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '从图片识别'))
+          .onPressed,
+      isNotNull,
+    );
+    await inspect(tester, sampleCode);
+    expect(find.text('Mac'), findsOneWidget);
+    await close(tester, bridge);
+    expect(camera.disposals, 1);
+  });
 
   testWidgets(
     'show code uses live runtime coordinates and can retry a failed listener',

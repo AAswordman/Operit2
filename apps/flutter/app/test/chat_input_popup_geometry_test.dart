@@ -22,6 +22,67 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 void main() {
   setUp(ClientLogger.initialize);
   for (final agent in [false, true]) {
+    testWidgets(
+      '${agent ? 'agent' : 'classic'} mention overlay tolerates suggestions disappearing during rebuild',
+      (tester) async {
+        final controller = TextEditingController();
+        final focus = FocusNode();
+        final viewModel = ChatViewModel(bridge: _PendingModelBridge());
+        addTearDown(controller.dispose);
+        addTearDown(focus.dispose);
+        addTearDown(tester.view.resetViewInsets);
+        late StateSetter update;
+        var showSuggestions = true;
+        await tester.pumpWidget(
+          OperitTheme(
+            initialThemePreferenceSnapshot:
+                UserPreferencesManager.defaultThemePreferenceSnapshot,
+            initialThemeIsReady: false,
+            unconfiguredChildEnabled: true,
+            hostInteractionHostsEnabled: false,
+            child: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  update = setState;
+                  return Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _composer(
+                      agent: agent,
+                      controller: controller,
+                      focus: focus,
+                      viewModel: viewModel,
+                      mention: showSuggestions
+                          ? const SizedBox(
+                              key: ValueKey('transient-mention'),
+                              height: 64,
+                              child: Text('Transient suggestion'),
+                            )
+                          : null,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(find.byKey(const ValueKey('transient-mention')), findsOneWidget);
+        tester.view.viewInsets = const FakeViewPadding(bottom: 260);
+        update(() => showSuggestions = false);
+        final reassembled = tester.binding.reassembleApplication();
+        await tester.pump();
+        await reassembled;
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const ValueKey('transient-mention')), findsNothing);
+        update(() => showSuggestions = true);
+        await tester.pump();
+        await tester.pump();
+        expect(find.byKey(const ValueKey('transient-mention')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
     for (final floating in [false, true]) {
       testWidgets(
         '${agent ? 'agent' : 'classic'} queue uses input edges above the bubble (floating: $floating)',

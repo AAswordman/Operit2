@@ -631,6 +631,10 @@ impl RuntimeSessionPublishingTerminalHost {
 }
 
 impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
+    fn resolveNativeWorkingDirectory(&self, path: &str) -> operit_host_api::HostResult<String> {
+        self.inner.resolveNativeWorkingDirectory(path)
+    }
+
     /// Preserves the wrapped terminal's ownership of its working-directory namespace.
     fn resolveWorkingDirectory(
         &self,

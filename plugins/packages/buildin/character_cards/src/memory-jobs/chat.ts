@@ -62,14 +62,13 @@ export async function requireChatOwner(chatId: string, ownerKey: string, reposit
   throw new Error("Chat is not writable for this memory owner: " + chatId + " / " + ownerKey);
 }
 
-export interface CurrentMessageMemoryAccess { primaryOwnerKey: string; resources: ChatResourceRoute[] }
+export interface CurrentMessageMemoryAccess { primaryOwnerKey: string; resources: ChatResourceRoute[]; authorMissing: boolean }
 
 /** Resolves the message author against current memory bindings and grants. */
 export async function currentMessageMemoryAccess(chatId: string, message: MemoryChatMessage, repository: CharacterRepository): Promise<CurrentMessageMemoryAccess> {
   assertMemoryChatMessage(message);
   const participantId = await readMessageAuthor(chatId, message.timestamp, message.variantIndex);
-  if (participantId === "model:chat") return { primaryOwnerKey: "", resources: [] };
-  if (participantId === null) throw new Error("Message has no character author identity");
+  if (participantId === null || participantId === "model:chat") return { primaryOwnerKey: "", resources: [], authorMissing: participantId === null };
   const card = await repository.getCharacter(participantId);
   const primaryOwnerKey = await primaryOwner(card, repository);
   const resources: ChatResourceRoute[] = [{ key: primaryOwnerKey, readable: true, writable: true }];
@@ -80,24 +79,34 @@ export async function currentMessageMemoryAccess(chatId: string, message: Memory
     if (existing) { existing.readable ||= mount.readable; existing.writable ||= mount.writable; }
     else resources.push({ key, readable: mount.readable, writable: mount.writable });
   }
-  return { primaryOwnerKey, resources };
+  return { primaryOwnerKey, resources, authorMissing: false };
 }
 
-/** Checks current permissions for the real message author. */
+/** Uses explicit chat authorization for legacy replies without author metadata. */
 export async function requireMessageOwner(chatId: string, message: MemoryChatMessage, ownerKey: string, repository: CharacterRepository): Promise<CurrentMessageMemoryAccess> {
   await repository.readMemoryJobState(ownerKey);
   const access = await currentMessageMemoryAccess(chatId, message, repository);
+  if (access.authorMissing) {
+    await requireChatOwner(chatId, ownerKey, repository);
+    return access;
+  }
   if (!access.resources.some(resource => resource.key === ownerKey && resource.writable)) throw new Error("Message author is not currently writable for this memory owner: " + ownerKey);
   return access;
 }
 
-/** Validates extraction against current author permissions. */
+/** Keeps legacy history usable through the selected chat's current memory permissions. */
 export async function requireMessagesOwner(chatId: string, messages: MemoryChatMessage[], ownerKey: string, repository: CharacterRepository): Promise<void> {
   await repository.readMemoryJobState(ownerKey);
+  let hasUnattributedReply = false;
   for (const message of messages) {
     if (message.sender !== "ai" && message.sender !== "assistant") continue;
     const access = await currentMessageMemoryAccess(chatId, message, repository);
+    hasUnattributedReply ||= access.authorMissing;
     if (access.resources.some(resource => resource.key === ownerKey && resource.writable)) return;
+  }
+  if (hasUnattributedReply) {
+    await requireChatOwner(chatId, ownerKey, repository);
+    return;
   }
   throw new Error("History has no assistant author currently writable for this memory owner: " + ownerKey);
 }

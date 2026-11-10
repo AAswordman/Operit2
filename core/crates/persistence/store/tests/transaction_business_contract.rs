@@ -1490,3 +1490,64 @@ fn unfinished_legacy_import_conflict_is_sealed_without_relaxing_identity_checks(
     assert!(Transaction::compaction::Initialization::decode(&history[0]).unwrap().is_some());
     assert!(target.journal().appendOperations(&[conflicting]).is_err());
 }
+
+/// Local commits use the same hierarchical whole-transaction proof as remote
+/// replay, and compacted originals remain acknowledged on repeated delivery.
+#[test]
+fn local_nested_updates_and_increments_retire_only_after_all_atomic_effects_are_covered() {
+    let source = Fixture::with_store(plain_store);
+    source.apply(&[]);
+    source
+        .store()
+        .edit(|p| {
+            p.set(
+                &stringPreferencesKey("settings"),
+                json!({"theme":0,"keep":"initial"}),
+            );
+            p.set(&stringPreferencesKey("counter"), 0);
+        })
+        .unwrap();
+    for n in 1..=24 {
+        source
+            .store()
+            .try_edit_result(|p| {
+                p.setObjectField(&stringPreferencesKey("settings"), "theme", json!(n))?;
+                p.incrementInteger(&stringPreferencesKey("counter"), 1)
+            })
+            .unwrap();
+    }
+    let originals = source.journal().preferenceHistory().unwrap();
+    assert_eq!(
+        originals.len(),
+        25,
+        "every increment is still a live atomic effect"
+    );
+    source
+        .store()
+        .edit(|p| {
+            p.set(&stringPreferencesKey("settings"), json!({"theme":"final"}));
+            p.set(&stringPreferencesKey("counter"), 100);
+        })
+        .unwrap();
+    let compacted = source.journal().preferenceHistory().unwrap();
+    assert_eq!(
+        compacted.len(),
+        1,
+        "the final parent assignments cover every previous effect"
+    );
+    let empty = Fixture::with_store(plain_store);
+    empty.apply(&compacted);
+    assert_eq!(empty.value("settings"), Some(json!({"theme":"final"})));
+    assert_eq!(empty.value("counter"), Some(json!(100)));
+    source.apply(&originals);
+    empty.apply(&originals);
+    assert_eq!(
+        source.store().syncSnapshot().unwrap().data,
+        empty.store().syncSnapshot().unwrap().data
+    );
+    assert_eq!(source.journal().preferenceHistory().unwrap(), compacted);
+    let receipt = source.journal().receipt().unwrap();
+    for original in originals {
+        assert!(receipt.containsSequence(&original.originDeviceId, original.sequence));
+    }
+}

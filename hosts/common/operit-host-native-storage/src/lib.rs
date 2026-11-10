@@ -744,12 +744,21 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
             let entry = entry.map_err(|error| storageIoError("Read storage directory entry", &directory, error))?;
             // The atomic writer stages a private sibling until commit; a killed
             // process leaves it behind and no listing may ever publish it.
-            if isPartialStagingFile(&entry.file_name().to_string_lossy()) {
+            let name = entry.file_name();
+            if isPartialStagingFile(&name.to_string_lossy()) {
+                continue;
+            }
+            // A POSIX backslash is a literal filename character. Shared paths reject
+            // it for Windows portability; never turn it into an invented directory.
+            if managedWorkspace && name.to_string_lossy().contains('\\') {
                 continue;
             }
             let metadata = if managedWorkspace {
-                let metadata = fs::symlink_metadata(entry.path())
-                    .map_err(|error| storageIoError("Inspect storage entry", &entry.path(), error))?;
+                let metadata = match fs::symlink_metadata(entry.path()) {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(storageIoError("Inspect storage entry", &entry.path(), error)),
+                };
                 // Do not copy link targets or try reading sockets, devices and FIFOs as files.
                 if isStorageLink(&metadata) || (!metadata.is_dir() && !metadata.is_file()) {
                     continue;
@@ -947,7 +956,9 @@ fn joinSegments(root: &Path, segments: &[&str]) -> PathBuf {
 
 /// Builds a storage path prefixed with its virtual top-level root.
 fn prefixedPath(prefix: &str, relative: &Path) -> String {
-    let relative = relative.to_string_lossy().replace('\\', "/");
+    let relative = relative.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>().join("/");
     if relative.is_empty() {
         prefix.to_string()
     } else {
@@ -1125,6 +1136,21 @@ mod tests {
     use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
+
+    /// Literal POSIX backslashes stay filename characters outside the portable sync tree.
+    #[cfg(unix)]
+    #[test]
+    fn posix_filename_backslashes_are_not_rewritten_as_storage_separators() {
+        let root = std::env::temp_dir().join(format!("operit-posix-path-{}", uuid::Uuid::new_v4()));
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        let path = r"runtime/cache/system-systemd\x2dcryptsetup.slice";
+        host.writeBytes(path, b"original").unwrap();
+        let entries = host.list("runtime/cache").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, path);
+        assert_eq!(host.readBytes(&entries[0].path).unwrap(), b"original");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// Transactions reserve their writer before reads so independent plugin
     /// connections cannot deadlock while upgrading a read lock to a write lock.

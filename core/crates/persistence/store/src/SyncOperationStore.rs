@@ -862,11 +862,6 @@ impl SyncOperationStore {
         Ok(history)
     }
 
-    pub(crate) fn preferenceCompactionHistory(&self, path: &str, format: u32) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        self.withJournal(|journal| journal.preference_compaction_history(path, format))?.into_iter()
-            .map(|operation| self.decodeOperationPayload(operation)).collect()
-    }
-
     /// Lists registered owners, including datasets prepared by plugins while their UI is closed.
     pub fn preferenceDatasets(&self) -> Result<BTreeMap<String, bool>, SyncOperationStoreError> {
         self.withJournal(|journal| journal.files())

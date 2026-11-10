@@ -96,17 +96,6 @@ impl Journal {
         )?.into_iter().map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).collect()
     }
 
-    /// Local edits compare current-format originals only; initialization blobs stay unopened.
-    pub(crate) fn preference_compaction_history(&mut self, path: &str, format: u32) -> Result<Vec<SyncOperation>, Error> {
-        self.0.query(
-            "SELECT o.original FROM originals o JOIN preference_compaction_policy p
-             ON p.path=o.target AND p.format=o.format_version AND p.safe=1
-             WHERE o.target=?1 AND p.format=?2 AND o.pending=0 AND o.domain='preferences'
-             AND json_extract(o.header,'$.operation') NOT IN ('initialize','alias') ORDER BY o.origin,o.sequence",
-            vec![text(path), SqliteValue::Integer(format.into())],
-        )?.into_iter().map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).collect()
-    }
-
     /// Small headers are enough for export planning; business payloads are read only after selection.
     pub(crate) fn headers(&mut self, pending: Option<bool>) -> Result<Vec<JournalRecord>, Error> {
         let (sql, params) = match pending {

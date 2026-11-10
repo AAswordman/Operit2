@@ -41,7 +41,7 @@ test('JNI backend preserves failures and runs directly on runtime workers', () =
   assert.match(backend, /\.put\("ok", false\)/);
   assert.match(backend, /catch \(_: Missing\)/);
   const bridge = source('hosts/android/src/document_filesystem.rs');
-  assert.match(bridge, /attach_current_thread\(\)/);
+  assert.match(bridge, /crate::attachCurrentThread\(&bridge\.vm\)/);
   assert.match(bridge, /exception_clear\(\)/);
   assert.match(bridge, /fileSystemResourceOperation/);
   const host = source(app + 'AndroidRuntimeHost.kt');

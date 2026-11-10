@@ -218,6 +218,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     final overlay = Overlay.of(context);
     _mentionPopupEntry = OverlayEntry(
       builder: (context) {
+        final panel = widget.mentionSuggestionPanel;
+        if (!mounted || panel == null) return const SizedBox.shrink();
         final placement = _popupPlacement(
           context,
           targetKey: _mentionPopupTargetKey,
@@ -242,7 +244,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                 onTap: () {},
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxHeight: placement.maxHeight),
-                  child: widget.mentionSuggestionPanel!,
+                  child: panel,
                 ),
               ),
             ),

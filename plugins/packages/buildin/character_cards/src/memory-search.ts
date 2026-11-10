@@ -97,7 +97,10 @@ export async function searchMemoryDatabase(database: CharacterMemoryDatabase, se
   if (!wildcard) {
     if (options.query.trim() === "") throw new Error("Memory search query must not be blank");
     const vectorWeight = settings.cloudEmbeddingEnabled ? config.vectorWeight : 0;
-    if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) throw new Error("Memory search query has no searchable tokens");
+    if (lexicalTerms(options.query).length === 0 && vectorWeight === 0) {
+      return { queryEmbedding: null, result: { excludedBySnapshotCount: 0, query: options.query, config,
+        relevanceThreshold: options.relevanceThreshold, memoriesInScopeCount: 0, candidates: [] } };
+    }
     if (config.keywordWeight + config.tagWeight + vectorWeight + config.edgeWeight === 0) throw new Error("Memory search has no enabled scoring weights");
   }
   const queryEmbedding = await prepareMemoryQuery(settings, options.query, config);

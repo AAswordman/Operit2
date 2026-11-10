@@ -1,5 +1,5 @@
 //! Equivalent history replacement. Payloads retire only after their whole atomic effect is covered.
-use super::{digest, newer, Data, Edit, Revision, Snapshot, Target, Transaction};
+use super::{digest, newer, Data, Edit, Path, Revision, Snapshot, Target, Transaction};
 use crate::SyncOperationStore::{SyncOperation, SyncOperationSemantics};
 use operit_host_api::{HostError, HostResult, RuntimeSqliteTransaction, SqliteValue};
 use serde::{Deserialize, Serialize};
@@ -83,40 +83,192 @@ impl Initialization {
     }
 }
 
-/// Exact scopes only. Unsupported effects stay retained until a whole-file initialization covers them.
-pub fn scopes(transaction: &Transaction) -> super::Result<Option<BTreeSet<String>>> {
-    let Target::Data(owner) = &transaction.target else {
-        return Ok(None);
-    };
-    let mut scopes = BTreeSet::new();
-    for edit in &transaction.edits {
-        let (key, path) = match edit {
-            Edit::Set { key, path, .. } | Edit::Delete { key, path } => (key, path),
-            _ => return Ok(None),
-        };
-        scopes.insert(serde_json::to_string(&(owner, key, path)).map_err(|e| e.to_string())?);
-    }
-    Ok((!scopes.is_empty()).then_some(scopes))
+/// A footprint includes every effect of an atomic transaction. Only absolute
+/// assignments can cover earlier effects; increments never cover each other.
+#[derive(Clone, Debug)]
+struct Effect {
+    owner: String,
+    key: String,
+    path: Vec<Path>,
+    absolute: bool,
+    creation: bool,
 }
 
-/// Select whole transactions before replay. A partial winner keeps its atomic original.
-pub fn superseded<'a>(transactions: impl IntoIterator<Item = &'a Transaction>) -> super::Result<BTreeSet<String>> {
-    let mut retired = BTreeSet::new();
-    let mut winners = BTreeMap::<String, &Transaction>::new();
-    for transaction in transactions {
-        if !transaction.edits.iter().all(|edit| matches!(edit,
-            Edit::Set { path, .. } | Edit::Delete { path, .. } if path.is_empty())) {
-            continue;
+fn effects(transaction: &Transaction) -> super::Result<Vec<Effect>> {
+    let Target::Data(owner) = &transaction.target else {
+        return Ok(Vec::new());
+    };
+    let owner = serde_json::to_string(owner).map_err(|e| e.to_string())?;
+    let mut effects = Vec::new();
+    let mut push = |key: &str, path: &[Path], absolute: bool, creates: bool| {
+        // Array writes can create/reorder identities, and positional deletions
+        // shift siblings. Their containing array must be replaced before the
+        // original is disposable; equality of item paths is not a proof.
+        let array = path.iter().position(|part| {
+            matches!(part, Path::Item(_))
+                || matches!(part, Path::Field(field) if field.parse::<usize>().is_ok())
+        });
+        effects.push(Effect {
+            owner: owner.clone(),
+            key: key.into(),
+            path: array.map_or_else(|| path.to_vec(), |index| path[..index].to_vec()),
+            absolute: absolute && array.is_none(),
+            creation: false,
+        });
+        // A child write can leave an empty ancestor object after a later child
+        // deletion. Keep that creation unless a later write recreates the same
+        // container, or an absolute ancestor replacement removes it entirely.
+        if creates {
+            for end in 0..array.unwrap_or(path.len()) {
+                effects.push(Effect {
+                    owner: owner.clone(),
+                    key: key.into(),
+                    path: path[..end].to_vec(),
+                    absolute: false,
+                    creation: true,
+                });
+            }
         }
-        let Some(scopes) = scopes(transaction)? else { continue; };
-        retired.insert(transaction.id.clone());
-        for scope in scopes {
-            let winner = winners.entry(scope).or_insert(transaction);
-            if newer(&transaction.revision, &winner.revision) { *winner = transaction; }
+    };
+    for edit in &transaction.edits {
+        match edit {
+            Edit::Set { key, path, .. } => push(key, path, true, true),
+            Edit::Delete { key, path } => push(key, path, true, false),
+            Edit::Increment { key, path, .. } => push(key, path, false, true),
+            Edit::Patch { key, set, delete } => {
+                for field in set.keys() {
+                    push(key, &[Path::Field(field.clone())], true, true);
+                }
+                for field in delete {
+                    push(key, &[Path::Field(field.clone())], true, false);
+                }
+            }
+            Edit::ReplaceRecords { prefix, .. } => push(prefix, &[Path::Records], true, false),
         }
     }
-    for winner in winners.into_values() { retired.remove(&winner.id); }
-    Ok(retired)
+    Ok(effects)
+}
+
+/// Exact absolute footprints for owners using the indexed replacement ledger.
+pub fn scopes(transaction: &Transaction) -> super::Result<Option<BTreeSet<String>>> {
+    let effects = effects(transaction)?;
+    if effects.is_empty() || effects.iter().any(|effect| !effect.absolute) {
+        return Ok(None);
+    }
+    effects
+        .into_iter()
+        .map(|effect| {
+            let owner: super::Owner =
+                serde_json::from_str(&effect.owner).map_err(|e| e.to_string())?;
+            serde_json::to_string(&(owner, effect.key, effect.path)).map_err(|e| e.to_string())
+        })
+        .collect::<super::Result<BTreeSet<_>>>()
+        .map(Some)
+}
+
+/// Select whole originals using ancestor and namespace coverage. A partial
+/// winner, an unabsorbed increment, or a referenced original remains intact.
+pub fn superseded<'a>(
+    transactions: impl IntoIterator<Item = &'a Transaction>,
+) -> super::Result<BTreeSet<String>> {
+    let transactions = super::ordered(transactions, |tx| &tx.id, |tx| tx.revision.clone())?;
+    // Legacy clock regressions can make an otherwise overwritten original a
+    // causal ordering barrier against another author. Preserve that owner until
+    // its revisions can be normalized rather than changing replay order.
+    let mut clocks = BTreeMap::<&str, i64>::new();
+    let mut regressed = BTreeSet::new();
+    for transaction in &transactions {
+        let revision = &transaction.revision;
+        let previous = clocks.insert(&revision.originDeviceId, revision.createdAt);
+        if previous.is_some_and(|time| time > revision.createdAt) {
+            regressed
+                .insert(serde_json::to_string(&transaction.target).map_err(|e| e.to_string())?);
+        }
+    }
+    let protected = transactions
+        .iter()
+        .filter_map(|tx| match &tx.target {
+            Target::Transaction(id) => Some(id.clone()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut footprints = Vec::new();
+    let mut assignments = BTreeMap::<(String, String, Vec<Path>), Revision>::new();
+    let mut creations = BTreeMap::<(String, String, Vec<Path>), Revision>::new();
+    for transaction in transactions {
+        if protected.contains(&transaction.id)
+            || regressed
+                .contains(&serde_json::to_string(&transaction.target).map_err(|e| e.to_string())?)
+        {
+            continue;
+        }
+        let effects = effects(transaction)?;
+        for effect in effects
+            .iter()
+            .filter(|effect| effect.absolute || effect.creation)
+        {
+            let key = (
+                effect.owner.clone(),
+                effect.key.clone(),
+                effect.path.clone(),
+            );
+            let index = if effect.creation {
+                &mut creations
+            } else {
+                &mut assignments
+            };
+            let winner = index
+                .entry(key)
+                .or_insert_with(|| transaction.revision.clone());
+            if newer(&transaction.revision, winner) {
+                *winner = transaction.revision.clone();
+            }
+        }
+        footprints.push((transaction, effects));
+    }
+    let covered = |effect: &Effect, revision: &Revision| {
+        let wins = |key: &str, path: &[Path]| {
+            assignments
+                .get(&(effect.owner.clone(), key.into(), path.to_vec()))
+                .is_some_and(|winner| newer(winner, revision))
+        };
+        // A whole namespace replaces every matching key, including identities
+        // absent locally and nested namespace replacements.
+        if effect
+            .key
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain([effect.key.len()])
+            .any(|end| wins(&effect.key[..end], &[Path::Records]))
+        {
+            return true;
+        }
+        if effect.path == [Path::Records] {
+            return false;
+        }
+        if effect.creation
+            && creations
+                .get(&(
+                    effect.owner.clone(),
+                    effect.key.clone(),
+                    effect.path.clone(),
+                ))
+                .is_some_and(|winner| newer(winner, revision))
+        {
+            return true;
+        }
+        (0..=effect.path.len()).any(|end| wins(&effect.key, &effect.path[..end]))
+    };
+    Ok(footprints
+        .into_iter()
+        .filter(|(transaction, effects)| {
+            !effects.is_empty()
+                && effects
+                    .iter()
+                    .all(|effect| covered(effect, &transaction.revision))
+        })
+        .map(|(transaction, _)| transaction.id.clone())
+        .collect())
 }
 
 /// Returns a retired original's verification result without restoring its deleted payload.
@@ -147,15 +299,9 @@ pub(crate) fn record(
     operation: &SyncOperation,
     scopes: Option<BTreeSet<String>>,
 ) -> HostResult<Vec<String>> {
-    if retired(tx, operation)? { return Ok(vec![]); }
+    if !register(tx, operation)? { return Ok(vec![]); }
     let revision = Revision::fromOperation(operation);
     let id = &operation.opId;
-    let inserted = tx.execute(
-        "INSERT OR IGNORE INTO _operit_compacted(id,origin,sequence,business_time,fingerprint) VALUES(?1,?2,?3,?4,?5)",
-        vec![text(id), text(&revision.originDeviceId), SqliteValue::Integer(revision.sequence),
-            SqliteValue::Integer(revision.createdAt), text(&digest(operation).map_err(error)?)],
-    )?;
-    if inserted == 0 { return Ok(vec![]); }
     let Some(scopes) = scopes else { return Ok(vec![]); };
     let mut candidates = BTreeSet::from([id.to_owned()]);
     for scope in scopes {
@@ -189,6 +335,20 @@ pub(crate) fn record(
             )?;
         }
     }
+    retire_unscoped(tx, candidates)
+}
+
+fn register(tx: &mut dyn RuntimeSqliteTransaction, operation: &SyncOperation) -> HostResult<bool> {
+    if retired(tx, operation)? { return Ok(false); }
+    let revision = Revision::fromOperation(operation);
+    Ok(tx.execute(
+        "INSERT OR IGNORE INTO _operit_compacted(id,origin,sequence,business_time,fingerprint) VALUES(?1,?2,?3,?4,?5)",
+        vec![text(&operation.opId), text(&revision.originDeviceId), SqliteValue::Integer(revision.sequence),
+            SqliteValue::Integer(revision.createdAt), text(&digest(operation).map_err(error)?)],
+    )? != 0)
+}
+
+fn retire_unscoped(tx: &mut dyn RuntimeSqliteTransaction, candidates: BTreeSet<String>) -> HostResult<Vec<String>> {
     let mut retired = Vec::new();
     for id in candidates {
         if tx
@@ -206,6 +366,66 @@ pub(crate) fn record(
         }
     }
     Ok(retired)
+}
+
+/// Local preference commits arrive in author sequence order. Track remaining
+/// effects, not payload history; removing a covered effect makes later edits cheap
+/// even when an unrelated effect still pins its atomic original.
+pub(crate) fn record_preference(
+    tx: &mut dyn RuntimeSqliteTransaction,
+    operation: &SyncOperation,
+    transaction: &Transaction,
+) -> HostResult<Vec<String>> {
+    fn hex(value: &[u8]) -> String {
+        const DIGITS: &[u8] = b"0123456789abcdef";
+        value.iter().flat_map(|byte| [DIGITS[(byte >> 4) as usize] as char, DIGITS[(byte & 15) as usize] as char]).collect()
+    }
+    let effects = effects(transaction).map_err(error)?;
+    if effects.is_empty() || !register(tx, operation)? { return Ok(vec![]); }
+    let mut scopes = BTreeSet::new();
+    let mut coverage = BTreeSet::new();
+    for effect in effects {
+        // Hex components keep arbitrary Unicode keys and escaped JSON paths
+        // unambiguous. Every descendant sorts below the prefix followed by 'g'.
+        let root = format!("preference/{}/{}/", effect.owner, operation.originDeviceId);
+        let key = hex(effect.key.as_bytes());
+        let path = effect.path.iter().filter(|part| **part != Path::Records)
+            .map(|part| serde_json::to_vec(part).map(|value| format!("{}/", hex(&value))))
+            .collect::<Result<String, _>>().map_err(error)?;
+        let suffix = if effect.path == [Path::Records] { key } else { format!("{key}/{path}") };
+        let kind = if effect.creation { "c" } else { "e" };
+        scopes.insert(format!("{root}{kind}/{suffix}"));
+        if effect.absolute {
+            coverage.insert((format!("{root}e/{suffix}"), true));
+            coverage.insert((format!("{root}c/{suffix}"), true));
+        } else if effect.creation {
+            coverage.insert((format!("{root}c/{suffix}"), false));
+        }
+    }
+    let mut candidates = BTreeSet::new();
+    for (scope, descendants) in coverage {
+        let mut params = vec![text(&scope), text(&operation.originDeviceId), SqliteValue::Integer(operation.sequence)];
+        let predicate = if descendants {
+            params.push(text(&format!("{scope}g")));
+            "s.scope>=?1 AND s.scope<?4"
+        } else { "s.scope=?1" };
+        let rows = tx.query(&format!(
+            "SELECT s.scope,s.id FROM _operit_compaction_scopes s
+             CROSS JOIN _operit_compacted c ON c.id=s.id WHERE {predicate}
+             AND c.origin=?2 AND c.sequence<?3"),
+            params)?;
+        for row in rows {
+            let id = row.valueAt(1)?.asString()?;
+            tx.execute("DELETE FROM _operit_compaction_scopes WHERE scope=?1 AND id=?2",
+                vec![row.valueAt(0)?.clone(), text(&id)])?;
+            candidates.insert(id);
+        }
+    }
+    for scope in scopes {
+        tx.execute("INSERT INTO _operit_compaction_scopes(scope,id) VALUES(?1,?2)",
+            vec![text(&scope), text(&operation.opId)])?;
+    }
+    retire_unscoped(tx, candidates)
 }
 
 pub(crate) fn seal(

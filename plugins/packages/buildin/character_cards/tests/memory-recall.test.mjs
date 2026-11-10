@@ -167,3 +167,16 @@ test("vector weight degrades to zero when cloud embedding is unconfigured", asyn
   const injected = await hook(inputEvent(RECALL_EVENT));
   assert.match(injected, /Known durable knowledge/);
 });
+
+/** Punctuation and emoji are valid turns even when lexical retrieval has no usable terms. */
+test("recall without searchable tokens returns no attachment and logs no error", async t => {
+  const env = await environment(t);
+  await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
+  const errors = [];
+  const hook = loadModule("src/memory-recall.ts", { ...env.disk.globals, console: { ...console, error(...values) { errors.push(values); } } }).onMemoryRecallPromptInput;
+  for (const processedInput of ["!!!", "……", "😊", '<attachment type="image/png">image</attachment>！']) {
+    assert.equal(await hook(inputEvent({ ...RECALL_EVENT, processedInput })), null);
+  }
+  assert.deepEqual(errors, []);
+  assert.match(await hook(inputEvent(RECALL_EVENT)), /Known durable knowledge/);
+});

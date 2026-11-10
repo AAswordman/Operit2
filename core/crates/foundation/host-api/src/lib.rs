@@ -945,6 +945,7 @@ fn ohosOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostErrorKind {
     General,
+    NotFound,
     Timeout,
     PermissionDenied,
 }
@@ -982,13 +983,13 @@ impl Display for HostError {
 impl Error for HostError {}
 
 impl From<std::io::Error> for HostError {
-    /// Preserves permission failures for callers that isolate inaccessible resources.
+    /// Preserves missing and inaccessible resources across the Host boundary.
     fn from(value: std::io::Error) -> Self {
         Self {
-            kind: if value.kind() == std::io::ErrorKind::PermissionDenied {
-                HostErrorKind::PermissionDenied
-            } else {
-                HostErrorKind::General
+            kind: match value.kind() {
+                std::io::ErrorKind::NotFound => HostErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied => HostErrorKind::PermissionDenied,
+                _ => HostErrorKind::General,
             },
             message: value.to_string(),
         }
@@ -1760,6 +1761,16 @@ pub type TerminalOutputCallback = Box<dyn FnMut(&[u8], bool) -> HostResult<()> +
 pub type TerminalCompletionCallback = Box<dyn FnOnce(HostResult<TerminalCommandOutput>) + Send>;
 
 pub trait TerminalHost: Send + Sync {
+    /// Converts a host filesystem locator to a directory usable by this terminal.
+    /// Resource backends require explicit platform support; opaque locators must never reach a shell.
+    fn resolveNativeWorkingDirectory(&self, path: &str) -> HostResult<String> {
+        if FileSystemResource::FileSystemResource::parse(path)?.is_some() {
+            return Err(HostError::new(
+                "Document/resource mount does not expose a native terminal working directory",
+            ));
+        }
+        Ok(path.to_string())
+    }
     /// Resolves a working directory in the exact selected terminal filesystem.
     fn resolveWorkingDirectory(
         &self,

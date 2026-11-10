@@ -69,7 +69,7 @@ impl StandardTerminalTools {
                 host, Some(terminalType), &workspace, &|path| {
                     self.pathMapper.as_ref()
                         .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
-                        .resolve(path).and_then(|path| path.nativePath()).map_err(HostError::new)
+                        .resolve(path).and_then(|path| path.terminalDirectory(host)).map_err(HostError::new)
                 },
             )
         }).transpose()?;
@@ -121,7 +121,7 @@ impl StandardTerminalTools {
             self.pathMapper.as_ref()
                 .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
                 .resolve(path)
-                .and_then(|path| path.nativePath())
+                .and_then(|path| path.terminalDirectory(host))
                 .map_err(HostError::new)
         })
     }

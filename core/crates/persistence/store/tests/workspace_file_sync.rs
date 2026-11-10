@@ -343,6 +343,7 @@ struct CountingHost {
     inner: Arc<NativeRuntimeStorageHost>,
     workspaceReads: AtomicUsize,
     directoryListings: std::sync::Mutex<Vec<String>>,
+    removeBeforeMetadata: std::sync::Mutex<Option<String>>,
 }
 
 impl RuntimeStorageHost for CountingHost {
@@ -370,7 +371,14 @@ impl RuntimeStorageHost for CountingHost {
         self.inner.writeBytes(path, content)
     }
     /// Reads metadata without counting a content read.
-    fn modifiedAt(&self, path: &str) -> HostResult<i64> { self.inner.modifiedAt(path) }
+    fn modifiedAt(&self, path: &str) -> HostResult<i64> {
+        let mut pending = self.removeBeforeMetadata.lock().unwrap();
+        if pending.as_deref() == Some(path) {
+            pending.take();
+            self.inner.delete(path, false)?;
+        }
+        self.inner.modifiedAt(path)
+    }
     /// Preserves source metadata.
     fn setModifiedAt(&self, path: &str, time: i64) -> HostResult<()> { self.inner.setModifiedAt(path, time) }
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -403,7 +411,7 @@ impl CountedNode {
     /// Reuses the native node fixture while instrumenting only workspace content reads.
     fn new() -> Self {
         let node = Node::new();
-        let host = Arc::new(CountingHost { inner: node.host.clone(), workspaceReads: AtomicUsize::new(0), directoryListings: Default::default() });
+        let host = Arc::new(CountingHost { inner: node.host.clone(), workspaceReads: AtomicUsize::new(0), directoryListings: Default::default(), removeBeforeMetadata: Default::default() });
         Self { host, _node: node }
     }
     fn workspace(&self) -> WorkspaceFileSyncStore {
@@ -661,4 +669,46 @@ fn output_bindings_and_files_replicate_through_runtime_file_sync() {
             .unwrap(),
         Some(base)
     );
+}
+
+/// A source removed between listing and stat must not block unrelated files or publish a guessed deletion.
+#[test]
+fn disappearing_file_preserves_inventory_until_the_next_scan() {
+    let a = CountedNode::new();
+    let b = Node::new();
+    let path = "workspaces/project/disappearing.txt";
+    a.host.writeBytes(path, b"original").unwrap();
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    a._node.send(&b);
+    a.host.writeBytes("workspaces/project/healthy.txt", b"still syncing").unwrap();
+    *a.host.removeBeforeMetadata.lock().unwrap() = Some(path.into());
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    a._node.send(&b);
+    assert_eq!(b.host.readBytes(path).unwrap(), b"original");
+    assert_eq!(b.host.readBytes("workspaces/project/healthy.txt").unwrap(), b"still syncing");
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    a._node.send(&b);
+    assert!(!b.host.exists(path).unwrap());
+    assert_eq!(a.workspace().scan().unwrap(), 0);
+}
+
+/// systemd ships literal backslashes on POSIX; they must never alias slash-separated storage paths.
+#[cfg(unix)]
+#[test]
+fn systemd_escaped_filenames_do_not_block_workspace_sync_or_alias_directories() {
+    use std::os::unix::fs::symlink;
+    let a = Node::new();
+    let b = Node::new();
+    let directory = a.root.join("workspaces/project/usr/lib/systemd/system");
+    std::fs::create_dir_all(&directory).unwrap();
+    let escaped = directory.join(r"system-systemd\x2dcryptsetup.slice");
+    std::fs::write(&escaped, b"[Slice]").unwrap();
+    symlink("missing.service", directory.join("broken.service")).unwrap();
+    a.write("workspaces/project/notes.txt", b"normal workspace file");
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    assert_eq!(a.workspace().scan().unwrap(), 0);
+    a.send(&b);
+    assert_eq!(b.host.readBytes("workspaces/project/notes.txt").unwrap(), b"normal workspace file");
+    assert!(!b.host.exists("workspaces/project/usr/lib/systemd/system/system-systemd/x2dcryptsetup.slice").unwrap());
+    assert_eq!(std::fs::read(&escaped).unwrap(), b"[Slice]");
 }

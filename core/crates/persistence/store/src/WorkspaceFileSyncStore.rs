@@ -229,6 +229,16 @@ impl WorkspaceFileSyncStore {
                 let Some(bytes) = self.scanRead(readLimitedForScan(self.host.as_ref(), path, limit), path, &mut skipped)? else { continue; };
                 let Some(modifiedAt) = self.scanRead(self.host.modifiedAt(path), path, &mut skipped)? else { continue; };
                 if bytes.len() as i64 != stamp.size || Some(modifiedAt) != stamp.modifiedAt { return Err(format!("File changed during synchronization: {path}")); }
+                // A verified file can replace an old directory, or a new child can
+                // replace an old file. Publish those tombstones before the upsert.
+                let replaced: Vec<_> = state.files.keys().filter(|previous|
+                    previous.starts_with(&format!("{path}/")) || path.starts_with(&format!("{previous}/"))
+                ).cloned().collect();
+                for previous in replaced {
+                    files.recordDeletion(&previous)?;
+                    state.files.remove(&previous);
+                    changes += 1;
+                }
                 files.recordSnapshot(path, &bytes, false)?;
                 changes += 1;
             }
@@ -245,10 +255,14 @@ impl WorkspaceFileSyncStore {
         Ok(changes)
     }
 
-    /// Skips only permission failures and records the protected inventory prefix.
+    /// Retains prior inventory when access is denied or a file disappears during scanning.
     fn scanRead<T>(&self, result: HostResult<T>, path: &str, skipped: &mut Vec<String>) -> Result<Option<T>, String> {
         match result {
             Ok(value) => Ok(Some(value)),
+            Err(error) if error.kind == HostErrorKind::NotFound => {
+                skipped.push(path.to_string());
+                Ok(None)
+            }
             Err(error) if error.kind == HostErrorKind::PermissionDenied => {
                 operit_util::AppLogger::AppLogger::w("WorkspaceFileSyncStore",
                     &format!("Skipping inaccessible workspace path {path}; retaining prior sync state: {error}"));

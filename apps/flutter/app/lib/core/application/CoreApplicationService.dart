@@ -82,10 +82,13 @@ class CoreApplicationService with WidgetsBindingObserver {
   /// Forwards Flutter lifecycle changes through the normalized runtime event ingress.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_runtimeManager.runtimeConfigured) return;
     if (state == AppLifecycleState.resumed) {
       unawaited(_syncHostSubscriber());
       if (_ownsRuntime) {
-        unawaited(WorkActivityPresentationService.instance.refreshCapabilities());
+        unawaited(
+          WorkActivityPresentationService.instance.refreshCapabilities(),
+        );
       }
     }
     unawaited(_emitLifecycleEvent(state));
@@ -194,6 +197,7 @@ class CoreApplicationService with WidgetsBindingObserver {
   Future<void> _startRuntimeServicesOnce() async {
     final stopwatch = Stopwatch()..start();
     try {
+      if (!_runtimeManager.runtimeConfigured) return;
       ClientLogger.attachPersistentStorage();
       if (!_ownsRuntime) {
         await _syncHostSubscriber();
@@ -209,13 +213,6 @@ class CoreApplicationService with WidgetsBindingObserver {
       await _syncHostSubscriber();
       AppNotificationService.instance.initialize();
       await WorkActivityPresentationService.instance.initialize();
-      if (!_runtimeManager.config.confirmed) {
-        ClientLogger.i(
-          'runtime services start done localStorageConfirmed=false elapsedMs=${stopwatch.elapsedMilliseconds}',
-          tag: _logTag,
-        );
-        return;
-      }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
       Future<void> spaceStep(
         String operation,
@@ -307,7 +304,8 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   /// Synchronizes owner-host event handling with the selected runtime role.
   Future<void> _syncHostSubscriber() async {
-    final shouldInstall = _ownsHostInteractions;
+    final shouldInstall =
+        _runtimeManager.runtimeConfigured && _ownsHostInteractions;
     final installed = RuntimeHostInteractionSubscriber.isInstalled;
     if (shouldInstall && !installed) {
       final subscriberStopwatch = Stopwatch()..start();

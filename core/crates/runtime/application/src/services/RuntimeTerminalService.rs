@@ -313,7 +313,7 @@ impl RuntimeTerminalService {
                 &terminal,
                 &terminalType,
                 &workingDir,
-                &|path| resolve_terminal_working_dir(&self.context, path)
+                &|path| resolve_terminal_working_dir(&self.context, self.terminalHost.as_ref(), path)
                     .map_err(operit_host_api::HostError::new),
             )
             .map_err(|error| format!(
@@ -448,7 +448,11 @@ impl RuntimeTerminalService {
 }
 
 /// Resolves host-owned directories after the selected terminal has dispatched its namespace.
-fn resolve_terminal_working_dir(context: &HostManager, workingDir: &str) -> Result<String, String> {
+fn resolve_terminal_working_dir(
+    context: &HostManager,
+    terminalHost: &dyn TerminalHost,
+    workingDir: &str,
+) -> Result<String, String> {
     let trimmed = workingDir.trim();
     if ["/app", "/operitapp", "/mnt", "/virtual"].iter().any(|root| {
         trimmed == *root || trimmed.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
@@ -456,9 +460,9 @@ fn resolve_terminal_working_dir(context: &HostManager, workingDir: &str) -> Resu
     {
         return terminal_vfs(context)?
             .resolvePath(trimmed)
-            .and_then(|path| path.nativePath());
+            .and_then(|path| path.terminalDirectory(terminalHost));
     }
-    Ok(trimmed.to_string())
+    terminalHost.resolveNativeWorkingDirectory(trimmed).map_err(|error| error.message)
 }
 
 /// Builds the host VFS used only for directories owned by the current runtime.

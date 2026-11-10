@@ -475,9 +475,17 @@ fn effective_replay_honors_deletion_and_restores_only_newer_fields() {
     applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &[later.clone()], |_,_| true).unwrap();
     let data = PreferencesDataStore::newWithStorage(fixture.host.clone(), path).data().unwrap();
     assert_eq!(data.get(&stringPreferencesKey("provider_DEEPSEEK")), Some(&json!({"name":"older name"})));
-    let mut expected = originals;
-    expected.push(later);
+    // The parent tombstone covers the earlier child write, whose identity
+    // remains acknowledged even after its immutable payload is reclaimed.
+    let expected = vec![originals[1].clone(), later];
     assert_eq!(history(&fixture), expected);
+    use operit_store::SyncOperationStore::SyncOperationKnowledge;
+    let journal = SyncOperationStore::new(fixture.host.clone(), "runtime/sync");
+    assert!(journal.receipt().unwrap().containsSequence(&originals[0].originDeviceId, originals[0].sequence));
+    applyOperations(fixture.host.clone(), &fixture_merge_schema(&[&path]), &[], &originals, |_,_| true).unwrap();
+    assert_eq!(history(&fixture), expected);
+    assert_eq!(PreferencesDataStore::newWithStorage(fixture.host.clone(), path).data().unwrap()
+        .get(&stringPreferencesKey("provider_DEEPSEEK")), Some(&json!({"name":"older name"})));
 }
 
 /// An invalid integer edit rolls back the complete transaction, including earlier sibling edits.
@@ -613,4 +621,40 @@ fn merge_history_contains_only_declarations_and_aliases() {
         assert_eq!(journal.preferenceMergeHistory().unwrap(), vec![declaration.clone(), alias.clone()]);
         assert_eq!(journal.preferenceHistory().unwrap().len(), 3);
     }
+}
+
+/// A later reset must not hide an invalid original from the replay validator.
+#[test]
+fn compaction_does_not_skip_invalid_increments_covered_by_a_later_assignment() {
+    let path = "runtime/config/preferences/invalid-covered-increment.preferences.json";
+    let fixture = Fixture::new();
+    let initial = replay_operation(
+        1,
+        "set",
+        json!({"storagePath":path,"encrypted":false,"formatVersion":2,"key":"counter","value":"not an integer"}),
+    );
+    let mut invalid = replay_operation(
+        2,
+        "increment",
+        json!({"storagePath":path,"encrypted":false,"formatVersion":2,"key":"counter","value":1}),
+    );
+    invalid.semantics = operit_store::SyncOperationStore::SyncOperationSemantics::Transaction;
+    let reset = replay_operation(
+        3,
+        "set",
+        json!({"storagePath":path,"encrypted":false,"formatVersion":2,"key":"counter","value":100}),
+    );
+    let error = applyOperations(
+        fixture.host.clone(),
+        &fixture_merge_schema(&[path]),
+        &[],
+        &[initial, invalid, reset],
+        |_, _| true,
+    )
+    .unwrap_err();
+    assert!(error.contains("integer"), "{error}");
+    let data = PreferencesDataStore::newWithStorage(fixture.host.clone(), path)
+        .data()
+        .unwrap();
+    assert_eq!(data.get(&stringPreferencesKey("counter")), None);
 }

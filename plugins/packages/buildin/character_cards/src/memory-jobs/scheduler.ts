@@ -69,6 +69,7 @@ export async function enqueueCandidate(input: CandidateRequest, repository: Char
   const owners = new Set<string>();
   if (input.sourceType === "reply_finalized_auto") {
     const access = await currentMessageMemoryAccess(input.chatId, message, repository);
+    if (access.authorMissing) return { owners: [], candidateIds: [] };
     const ownerKey = input.ownerKey === null ? access.primaryOwnerKey : input.ownerKey;
     if (ownerKey === "") return { owners: [], candidateIds: [] };
     if (!access.resources.some(

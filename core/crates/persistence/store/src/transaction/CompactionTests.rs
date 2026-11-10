@@ -168,3 +168,498 @@ fn retirement_fingerprints_and_payload_deletion_rollback_together() {
         .is_err());
     assert_eq!(fixture.originals(), vec![second]);
 }
+
+fn data_transaction(author: &str, time: i64, edits: Vec<Edit>) -> Transaction {
+    Transaction {
+        id: format!("{author}:{time}"),
+        revision: Revision {
+            createdAt: time,
+            originDeviceId: author.into(),
+            sequence: time,
+        },
+        target: Target::Data(super::super::Owner {
+            backend: super::super::Backend::DataStore,
+            path: "preferences".into(),
+            format: 1,
+            layout: 1,
+        }),
+        edits,
+    }
+}
+fn set(key: &str, path: &[&str], value: serde_json::Value) -> Edit {
+    Edit::Set {
+        key: key.into(),
+        path: path
+            .iter()
+            .map(|part| Path::Field((*part).into()))
+            .collect(),
+        value,
+    }
+}
+fn data_replay(history: &[Transaction]) -> Data {
+    let Target::Data(owner) = &history[0].target else {
+        panic!("data owner")
+    };
+    let mut data = Data::empty(owner.clone());
+    for tx in super::super::ordered(history.iter(), |tx| &tx.id, |tx| tx.revision.clone()).unwrap()
+    {
+        data.apply(tx).unwrap();
+    }
+    data
+}
+fn assert_compaction(history: &[Transaction], expected: &[&str], external: &[Transaction]) {
+    let retired = superseded(history).unwrap();
+    assert_eq!(retired, expected.iter().map(|id| (*id).into()).collect());
+    let retained = history
+        .iter()
+        .filter(|tx| !retired.contains(&tx.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    for incoming in external {
+        let mut complete = history.to_vec();
+        complete.push(incoming.clone());
+        let mut compacted = retained.clone();
+        compacted.push(incoming.clone());
+        let a = data_replay(&complete);
+        let b = data_replay(&compacted);
+        assert_eq!(a.values, b.values, "external {}", incoming.id);
+        assert_eq!(a.additions, b.additions);
+        // Also test late delivery onto the already materialized checkpoints.
+        let mut a = data_replay(history);
+        let mut b = data_replay(&retained);
+        a.apply(incoming).unwrap();
+        b.apply(incoming).unwrap();
+        assert_eq!(a.values, b.values, "late external {}", incoming.id);
+        assert_eq!(a.additions, b.additions);
+    }
+}
+
+#[test]
+fn hierarchical_coverage_retires_patches_and_absorbed_increments_in_any_arrival_order() {
+    let history = [
+        data_transaction(
+            "a",
+            10,
+            vec![
+                Edit::Patch {
+                    key: "settings".into(),
+                    set: BTreeMap::from([("theme".into(), json!("old"))]),
+                    delete: BTreeSet::from(["gone".into()]),
+                },
+                Edit::Increment {
+                    key: "counter".into(),
+                    path: vec![],
+                    delta: 3,
+                },
+            ],
+        ),
+        data_transaction(
+            "b",
+            20,
+            vec![
+                set("settings", &[], json!({"theme":"new"})),
+                set("counter", &[], json!(100)),
+            ],
+        ),
+        data_transaction(
+            "c",
+            30,
+            vec![Edit::Increment {
+                key: "counter".into(),
+                path: vec![],
+                delta: 7,
+            }],
+        ),
+    ];
+    let external = [5, 15, 25, 35].map(|time| {
+        data_transaction(
+            "offline",
+            time,
+            vec![
+                set("settings", &["other"], json!(time)),
+                set("counter", &[], json!(time)),
+            ],
+        )
+    });
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let shuffled = order.map(|index| history[index].clone());
+        assert_compaction(&shuffled, &["a:10"], &external);
+    }
+}
+
+#[test]
+fn nested_assignments_and_deletions_keep_partial_atomic_effects() {
+    let history = [
+        data_transaction(
+            "a",
+            10,
+            vec![
+                set("settings", &["theme"], json!("old")),
+                set("settings", &["keep"], json!(true)),
+            ],
+        ),
+        data_transaction("b", 20, vec![set("settings", &["theme"], json!("new"))]),
+        data_transaction(
+            "c",
+            30,
+            vec![Edit::Delete {
+                key: "settings".into(),
+                path: vec![Path::Field("keep".into())],
+            }],
+        ),
+    ];
+    assert!(superseded(&history[..2]).unwrap().is_empty());
+    let external = [5, 15, 25, 35].map(|time| {
+        data_transaction(
+            "offline",
+            time,
+            vec![set("settings", &[], json!({"offline":time}))],
+        )
+    });
+    assert_compaction(&history, &["a:10"], &external);
+    let deleted_parent = data_transaction(
+        "delete",
+        40,
+        vec![Edit::Delete {
+            key: "settings".into(),
+            path: vec![],
+        }],
+    );
+    let new_child = data_transaction(
+        "child",
+        50,
+        vec![set("settings", &["theme"], json!("restored"))],
+    );
+    assert!(superseded([&deleted_parent, &new_child])
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn namespace_replacements_cover_old_records_and_increments_but_not_other_owners() {
+    let history = [
+        data_transaction(
+            "a",
+            10,
+            vec![
+                set("card/a", &[], json!({"name":"old"})),
+                Edit::Increment {
+                    key: "card/count".into(),
+                    path: vec![],
+                    delta: 2,
+                },
+            ],
+        ),
+        data_transaction(
+            "b",
+            20,
+            vec![Edit::ReplaceRecords {
+                prefix: "card/".into(),
+                records: BTreeMap::from([("b".into(), json!({"name":"new"}))]),
+            }],
+        ),
+    ];
+    let external = [5, 15, 25, 35]
+        .map(|time| data_transaction("offline", time, vec![set("card/unseen", &[], json!(time))]));
+    assert_compaction(&history, &["a:10"], &external);
+    let mut other = history[1].clone();
+    if let Target::Data(owner) = &mut other.target {
+        owner.path = "other-owner".into();
+    }
+    assert!(superseded([&history[0], &other]).unwrap().is_empty());
+}
+
+#[test]
+fn equal_increment_payloads_and_array_structural_effects_are_not_deduplicated() {
+    let increments = [10, 20].map(|time| {
+        data_transaction(
+            "a",
+            time,
+            vec![Edit::Increment {
+                key: "counter".into(),
+                path: vec![],
+                delta: 3,
+            }],
+        )
+    });
+    assert!(superseded(&increments).unwrap().is_empty());
+    assert_eq!(data_replay(&increments).values["counter"], json!(6));
+    let first = data_transaction(
+        "a",
+        10,
+        vec![Edit::Set {
+            key: "items".into(),
+            path: vec![Path::Item("id".into()), Path::Field("name".into())],
+            value: json!("old"),
+        }],
+    );
+    let mut second = first.clone();
+    second.id = "b:20".into();
+    second.revision = Revision {
+        originDeviceId: "b".into(),
+        sequence: 20,
+        createdAt: 20,
+    };
+    assert!(superseded([&first, &second]).unwrap().is_empty());
+    let parent = data_transaction("c", 30, vec![set("items", &[], json!([]))]);
+    assert_eq!(
+        superseded([&first, &second, &parent]).unwrap(),
+        BTreeSet::from([first.id, second.id])
+    );
+}
+
+#[test]
+fn correction_dependencies_and_identity_collisions_remain_protected() {
+    let first = data_transaction("a", 10, vec![set("x", &[], json!(1))]);
+    let second = data_transaction("b", 20, vec![set("x", &[], json!(2))]);
+    let mut correction = data_transaction("correction", 30, vec![]);
+    correction.target = Target::Transaction(first.id.clone());
+    assert!(superseded([&first, &second, &correction])
+        .unwrap()
+        .is_empty());
+    let mut forged = first.clone();
+    forged.edits = vec![set("x", &[], json!(999))];
+    assert!(superseded([&first, &forged]).is_err());
+}
+
+#[test]
+fn mixed_scope_histories_remain_equivalent_under_offline_writes_and_replay() {
+    let edit = |kind: u64, n: i64| match kind % 9 {
+        0 => set("settings", &[], json!({"theme":n,"other":true})),
+        1 => set("settings", &["theme"], json!(n)),
+        2 => Edit::Delete {
+            key: "settings".into(),
+            path: vec![Path::Field("theme".into())],
+        },
+        3 => Edit::Patch {
+            key: "settings".into(),
+            set: BTreeMap::from([("other".into(), json!(n))]),
+            delete: BTreeSet::from(["theme".into()]),
+        },
+        4 => Edit::Increment {
+            key: "counter".into(),
+            path: vec![],
+            delta: n,
+        },
+        5 => set("counter", &[], json!(n)),
+        6 => Edit::ReplaceRecords {
+            prefix: "card/".into(),
+            records: BTreeMap::from([("b".into(), json!(n))]),
+        },
+        7 => set("card/a", &[], json!(n)),
+        _ => Edit::Delete {
+            key: "card/a".into(),
+            path: vec![],
+        },
+    };
+    let mut seed = 0x123456789abcdef_u64;
+    for _ in 0..96 {
+        let mut history = Vec::new();
+        for time in [10, 20, 30, 40, 50, 60] {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            history.push(data_transaction(
+                &format!("author{}", seed % 3),
+                time,
+                vec![edit(seed, time), edit(seed >> 8, time)],
+            ));
+        }
+        let fixture = Fixture::new();
+        let mut indexed_retired = BTreeSet::new();
+        for transaction in &history {
+            indexed_retired.extend(indexed_preference(&fixture, transaction).0);
+        }
+        for retired in [superseded(&history).unwrap(), indexed_retired] {
+            let retained = history
+                .iter()
+                .filter(|tx| !retired.contains(&tx.id))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!retained.is_empty());
+            for time in [5, 15, 35, 55, 65] {
+                for kind in 0..9 {
+                    let external = data_transaction("offline", time, vec![edit(kind, time)]);
+                    let mut complete = history.clone();
+                    complete.push(external.clone());
+                    let mut compacted = retained.clone();
+                    compacted.push(external.clone());
+                    let a = data_replay(&complete);
+                    let b = data_replay(&compacted);
+                    assert_eq!(
+                        a.values, b.values,
+                        "retired={retired:?}, external={external:?}, history={history:?}"
+                    );
+                    assert_eq!(a.additions, b.additions);
+                    let mut a = data_replay(&history);
+                    let mut b = data_replay(&retained);
+                    a.apply(&external).unwrap();
+                    b.apply(&external).unwrap();
+                    assert_eq!(
+                        a.values, b.values,
+                        "late retired={retired:?}, external={external:?}, history={history:?}"
+                    );
+                    assert_eq!(a.additions, b.additions);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn child_deletion_does_not_erase_an_earlier_container_creation() {
+    let first = data_transaction(
+        "a",
+        10,
+        vec![set("settings", &["nested", "field"], json!(true))],
+    );
+    let deletion = data_transaction(
+        "b",
+        20,
+        vec![Edit::Delete {
+            key: "settings".into(),
+            path: vec![Path::Field("nested".into()), Path::Field("field".into())],
+        }],
+    );
+    assert!(superseded([&first, &deletion]).unwrap().is_empty());
+    assert_eq!(
+        data_replay(&[first.clone(), deletion.clone()]).values["settings"],
+        json!({"nested":{}})
+    );
+    let sibling = data_transaction(
+        "c",
+        30,
+        vec![set("settings", &["nested", "other"], json!(true))],
+    );
+    assert_eq!(
+        superseded([&first, &deletion, &sibling]).unwrap(),
+        BTreeSet::from([first.id])
+    );
+}
+
+#[test]
+fn legacy_clock_regressions_keep_causal_ordering_barriers() {
+    let first = data_transaction("a", 100, vec![set("x", &[], json!(1))]);
+    let mut second = data_transaction("a", 101, vec![set("x", &[], json!(2))]);
+    second.revision.createdAt = 1;
+    let external = data_transaction("b", 50, vec![set("x", &[], json!(3))]);
+    assert!(superseded([&first, &second, &external]).unwrap().is_empty());
+}
+
+/// Count the metadata actually visited by commit compaction. This also rejects
+/// accidental payload reads: the ledger needs only scopes and immutable headers.
+struct CountingTransaction<'a> {
+    inner: &'a mut dyn RuntimeSqliteTransaction,
+    scope_rows: usize,
+}
+impl RuntimeSqliteTransaction for CountingTransaction<'_> {
+    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
+        self.inner.execute(sql, params)
+    }
+    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<operit_host_api::SqliteRow>> {
+        assert!(!sql.contains("originals") && !sql.contains("payloads"), "compaction read a business payload: {sql}");
+        let rows = self.inner.query(sql, params)?;
+        if sql.starts_with("SELECT s.scope,s.id") { self.scope_rows += rows.len(); }
+        Ok(rows)
+    }
+    fn lastInsertRowId(&self) -> HostResult<i64> { self.inner.lastInsertRowId() }
+    fn commit(self: Box<Self>) -> HostResult<()> { panic!("borrowed test transaction") }
+    fn rollback(self: Box<Self>) -> HostResult<()> { panic!("borrowed test transaction") }
+}
+fn indexed_preference(fixture: &Fixture, transaction: &Transaction) -> (Vec<String>, usize) {
+    let original = operation(&transaction.revision.originDeviceId, transaction.revision.sequence, json!(transaction.edits));
+    fixture.store.transaction(|tx| {
+        let mut counting = CountingTransaction { inner: tx.raw(), scope_rows: 0 };
+        let retired = record_preference(&mut counting, &original, transaction)?;
+        Ok((retired, counting.scope_rows))
+    }).unwrap()
+}
+
+#[test]
+fn local_index_visits_only_changed_scopes_and_forgets_covered_partial_effects() {
+    let fixture = Fixture::new();
+    for n in 1..=256 {
+        indexed_preference(&fixture, &data_transaction("local", n,
+            vec![set(&format!("unrelated-{n}"), &[], json!(n))]));
+    }
+    let mut last = None;
+    for n in 257..=320 {
+        let current = data_transaction("local", n, vec![
+            set("settings", &["theme"], json!(n)),
+            Edit::Increment { key: "counter".into(), path: vec![], delta: 1 },
+        ]);
+        let (retired, rows) = indexed_preference(&fixture, &current);
+        assert!(retired.is_empty(), "an uncovered increment pins its atomic original");
+        assert!(rows <= 2, "already covered theme scopes accumulated: {rows}");
+        last = Some(current);
+    }
+    let final_write = data_transaction("local", 321, vec![set("counter", &[], json!(100))]);
+    let (retired, _) = indexed_preference(&fixture, &final_write);
+    assert_eq!(retired.len(), 63, "only the last theme assignment is still live");
+    let (retired, rows) = indexed_preference(&fixture,
+        &data_transaction("local", 322, vec![set("settings", &[], json!({"theme":"final"}))]));
+    assert_eq!(retired, vec![last.unwrap().id]);
+    assert_eq!(rows, 2);
+    // Both range and exact lookups start at the scope primary key, then seek IDs.
+    for predicate in ["s.scope>=?1 AND s.scope<?2", "s.scope=?1 AND ?2=?2"] {
+        let plan = fixture.store.queryRows(&format!(
+            "EXPLAIN QUERY PLAN SELECT s.scope,s.id FROM _operit_compaction_scopes s
+             CROSS JOIN _operit_compacted c ON c.id=s.id WHERE {predicate} AND c.origin=?3 AND c.sequence<?4"),
+            vec![text("preference/"), text("preference/g"), text("local"), SqliteValue::Integer(999)])
+            .unwrap().iter().map(|row| row.get::<_, String>(3).unwrap()).collect::<Vec<_>>().join("\n");
+        assert!(plan.contains("SEARCH s USING COVERING INDEX"), "{plan}");
+        assert!(plan.contains("SEARCH c USING INDEX"), "{plan}");
+        assert!(!plan.contains("SCAN"), "{plan}");
+    }
+}
+
+#[test]
+fn indexed_local_coverage_preserves_containers_arrays_and_namespace_boundaries() {
+    let fixture = Fixture::new();
+    let created = data_transaction("local", 1, vec![set("对象/", &["nested", "field"], json!(1))]);
+    indexed_preference(&fixture, &created);
+    assert!(indexed_preference(&fixture, &data_transaction("local", 2, vec![Edit::Delete {
+        key: "对象/".into(), path: vec!["nested".into(), "field".into()],
+    }])).0.is_empty(), "deleting a field leaves its parents");
+    let (retired, _) = indexed_preference(&fixture,
+        &data_transaction("local", 3, vec![set("对象/", &["nested", "sibling"], json!(true))]));
+    assert_eq!(retired, vec![created.id]);
+    indexed_preference(&fixture, &data_transaction("local", 4, vec![set("对象/", &["list", "0"], json!(1))]));
+    assert!(indexed_preference(&fixture,
+        &data_transaction("local", 5, vec![set("对象/", &["list", "0"], json!(2))])).0.is_empty());
+    indexed_preference(&fixture, &data_transaction("local", 6, vec![set("对象/else", &[], json!(true))]));
+    let (retired, _) = indexed_preference(&fixture, &data_transaction("local", 7, vec![Edit::ReplaceRecords {
+        prefix: "对象/".into(), records: BTreeMap::new(),
+    }]));
+    assert_eq!(retired.len(), 5);
+    assert!(indexed_preference(&fixture,
+        &data_transaction("local", 8, vec![set("对象/", &[], json!("one key"))])).0.is_empty(),
+        "one key cannot replace an entire namespace");
+}
+
+#[test]
+fn indexed_preference_retirement_rolls_back_and_preserves_other_authors() {
+    let fixture = Fixture::new();
+    let first = data_transaction("local", 1, vec![set("x", &[], json!(1))]);
+    indexed_preference(&fixture, &first);
+    let second = data_transaction("local", 2, vec![set("x", &[], json!(2))]);
+    let original = operation("local", 2, json!(second.edits));
+    let failure: Result<(), SqliteStoreError> = fixture.store.transaction(|tx| {
+        assert_eq!(record_preference(tx.raw(), &original, &second)?, vec![first.id.clone()]);
+        Err(SqliteStoreError::Message("rollback".into()))
+    });
+    assert!(failure.is_err());
+    assert!(indexed_preference(&fixture, &data_transaction("peer", 3, vec![set("x", &[], json!(3))])).0.is_empty());
+    assert_eq!(indexed_preference(&fixture, &second).0, vec![first.id]);
+    assert!(indexed_preference(&fixture, &second).0.is_empty(), "recovery must be idempotent");
+    let mut forged = original;
+    forged.payload = json!("forged");
+    assert!(fixture.store.transaction(|tx| Ok(record_preference(tx.raw(), &forged, &second)?)).is_err());
+}

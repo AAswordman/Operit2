@@ -196,6 +196,8 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     final overlay = Overlay.of(context);
     _mentionPopupEntry = OverlayEntry(
       builder: (context) {
+        final panel = widget.mentionSuggestionPanel;
+        if (!mounted || panel == null) return const SizedBox.shrink();
         final placement = _popupPlacement(
           context,
           targetKey: _mentionPopupTargetKey,
@@ -208,7 +210,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           width: placement.width,
           maxHeight: placement.maxHeight,
           onDismiss: _dismissMentionSuggestionPopup,
-          child: widget.mentionSuggestionPanel!,
+          child: panel,
         );
       },
     );

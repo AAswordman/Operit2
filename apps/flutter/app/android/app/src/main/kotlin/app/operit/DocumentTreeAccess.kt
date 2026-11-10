@@ -2,8 +2,12 @@ package app.operit
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.storage.StorageManager
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
+import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
 import java.io.OutputStream
@@ -13,6 +17,8 @@ interface DocumentTreeAccess {
     fun hasReadGrant(tree: String): Boolean
     fun hasWriteGrant(tree: String): Boolean
     fun rootId(tree: String): String
+    fun nativeDirectory(tree: String, documentId: String): String =
+        throw IllegalArgumentException("Selected document provider does not expose a native terminal directory")
     fun children(tree: String, parentId: String): List<DocumentMetadata>
     fun describe(tree: String, documentId: String): DocumentMetadata
     fun create(tree: String, parentId: String, name: String, directory: Boolean): String
@@ -61,6 +67,24 @@ class ContentResolverDocumentTreeAccess(context: Context) : DocumentTreeAccess {
     override fun rootId(tree: String): String {
         val uri = tree(tree)
         return if (DocumentsContract.isTreeUri(uri)) DocumentsContract.getTreeDocumentId(uri) else DocumentsContract.getDocumentId(uri)
+    }
+
+    override fun nativeDirectory(tree: String, documentId: String): String {
+        val uri = tree(tree)
+        val volumes = mutableMapOf<String, File>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val manager = requireNotNull(resolverContext.getSystemService(StorageManager::class.java)) {
+                "Android storage manager is unavailable"
+            }
+            for (volume in manager.storageVolumes) {
+                val key = if (volume.isPrimary) "primary" else volume.uuid ?: continue
+                volume.directory?.let { volumes[key] = it }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            volumes["primary"] = Environment.getExternalStorageDirectory()
+        }
+        return AndroidDocumentNativeDirectory.resolve(uri.authority, rootId(tree), documentId, volumes)
     }
 
     private val columns = arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,

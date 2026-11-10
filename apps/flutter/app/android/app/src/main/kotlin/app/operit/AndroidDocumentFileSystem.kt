@@ -28,6 +28,7 @@ class AndroidDocumentFileSystem(
     fun execute(encoded: String): String = try {
         val request = JSONObject(encoded)
         val value: Any? = when (request.getString("operation")) {
+            "resolveNativeDirectory" -> node(request.getString("path")).nativeDirectory()
             "listFiles" -> JSONArray(node(request.getString("path")).children().map { it.entry() })
             "readFileBytes", "readFileWithLimit" -> {
                 val maximum = request.optLong("maxBytes", -1)
@@ -222,6 +223,10 @@ class AndroidDocumentFileSystem(
                 }
             }
             return current
+        }
+        fun nativeDirectory(): String {
+            require(stat().getBoolean("isDirectory")) { "Terminal working directory is not a directory" }
+            return file?.canonicalPath ?: documents.nativeDirectory(tree!!, documentId())
         }
         fun stat(): JSONObject {
             if (file != null) {
