@@ -6,6 +6,8 @@
 //! provider's models, and on an hourly check for as long as the process runs. A failed
 //! download keeps the copy in use and is reported through the catalog status; it is not
 //! retried for half an hour unless the user asks.
+//! Capability resolution requires a complete catalog. First use waits for an in-flight
+//! download or starts one, and reports failure instead of resolving against an empty catalog.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -41,6 +43,7 @@ struct CatalogState {
     updatedAt: Option<i64>,
     lastError: Option<String>,
     lastFailureAt: Option<i64>,
+    downloadAttempts: u64,
 }
 
 static STATE: OnceLock<Mutex<CatalogState>> = OnceLock::new();
@@ -48,6 +51,7 @@ static STATE: OnceLock<Mutex<CatalogState>> = OnceLock::new();
 static DOWNLOAD: Mutex<()> = Mutex::new(());
 static KEEPING_FRESH: AtomicBool = AtomicBool::new(false);
 
+/// Returns the process-wide catalog state.
 fn state() -> &'static Mutex<CatalogState> {
     STATE.get_or_init(|| Mutex::new(CatalogState::default()))
 }
@@ -60,6 +64,39 @@ pub(crate) fn currentCatalog() -> Option<Arc<ModelsDevCatalog>> {
         loadStoredCatalog(&mut state);
     }
     state.catalog.clone()
+}
+
+/// Waits for the first complete catalog, sharing an in-flight download with other callers.
+/// A new call can retry a failed first download without the background retry delay.
+pub(crate) fn requireCatalog() -> Result<Arc<ModelsDevCatalog>, String> {
+    currentCatalog();
+    let attempts = {
+        let state = state().lock().expect("model catalog state lock poisoned");
+        if let Some(catalog) = &state.catalog {
+            return Ok(catalog.clone());
+        }
+        state.downloadAttempts
+    };
+    let _download = DOWNLOAD.lock().expect("model catalog download lock poisoned");
+    {
+        let state = state().lock().expect("model catalog state lock poisoned");
+        if state.catalog.is_some() || state.downloadAttempts != attempts {
+            return requiredCatalogResult(&state);
+        }
+    }
+    downloadCatalog();
+    requiredCatalogResult(&state().lock().expect("model catalog state lock poisoned"))
+}
+
+/// Reports an unavailable catalog instead of interpreting missing facts as disabled capabilities.
+fn requiredCatalogResult(state: &CatalogState) -> Result<Arc<ModelsDevCatalog>, String> {
+    match &state.catalog {
+        Some(catalog) => Ok(catalog.clone()),
+        None => Err(format!(
+            "Model capability catalog is not ready; retry after downloading models.dev: {}",
+            state.lastError.as_deref().unwrap_or("no complete catalog downloaded")
+        )),
+    }
 }
 
 /// Reports when the catalog in use was downloaded and why the last download failed.
@@ -143,6 +180,7 @@ fn downloadCatalog() {
         Ok((catalog, updatedAt))
     });
     let mut state = state().lock().expect("model catalog state lock poisoned");
+    state.downloadAttempts += 1;
     match downloaded {
         Ok((catalog, updatedAt)) => {
             state.catalog = Some(Arc::new(catalog));
@@ -254,6 +292,7 @@ fn loadStoredCatalog(state: &mut CatalogState) {
     }
 }
 
+/// Addresses a catalog file within node-local runtime storage.
 fn cachePath(fileName: &str) -> String {
     format!("{RUNTIME_MODELS_DEV_CACHE_DIR_PATH}/{fileName}")
 }

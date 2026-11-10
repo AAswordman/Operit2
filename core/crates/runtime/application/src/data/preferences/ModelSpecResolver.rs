@@ -24,6 +24,7 @@ use operit_model::ModelConfigData::{
 use operit_model::ModelThinking::{ModelThinkingSpec, ThinkingSpecSource};
 use operit_model::ModelsDevCatalog::{contextSpec, ModelsDevCatalog};
 
+use super::ModelConfigManager::ModelConfigError;
 use crate::services::ModelCatalogService;
 
 /// What the model catalog says of one model.
@@ -91,11 +92,11 @@ pub(crate) struct ModelSpecResolver {
 }
 
 impl ModelSpecResolver {
-    /// Prepares the catalog lists that describe what this provider serves.
-    pub(crate) fn new(provider: &ProviderProfile) -> Self {
+    /// Prepares a complete catalog before resolving a remote provider's capabilities.
+    pub(crate) fn new(provider: &ProviderProfile) -> Result<Self, ModelConfigError> {
         let recognizesModels = provider.providerType != ApiProviderType::LOCAL_MODEL;
         let catalog = if recognizesModels {
-            ModelCatalogService::currentCatalog()
+            Some(ModelCatalogService::requireCatalog().map_err(ModelConfigError::ModelCatalog)?)
         } else {
             None
         };
@@ -103,12 +104,12 @@ impl ModelSpecResolver {
             .as_ref()
             .map(|catalog| catalog.providerIdsFor(&provider.providerTypeId, &provider.endpoint))
             .unwrap_or_default();
-        Self {
+        Ok(Self {
             recognizesModels,
             fixedModels: ModelCatalog::fixedModels(&provider.providerTypeId),
             catalog,
             catalogProviderIds,
-        }
+        })
     }
 
     /// Returns what the catalog says of the model this id names, `None` when it does not know it.

@@ -61,6 +61,8 @@ pub enum ModelConfigError {
     InvalidProviderType(String),
     #[error("model list fetch error: {0}")]
     ModelListFetch(String),
+    #[error("model capability catalog error: {0}")]
+    ModelCatalog(String),
     #[error("connection test error: {0}")]
     ConnectionTest(String),
     #[error("invalid thinking level: {0}")]
@@ -236,7 +238,10 @@ impl ModelConfigManager {
         let providers = self.getProviderProfiles()?;
         let mut summaries = Vec::new();
         for provider in providers {
-            let resolver = ModelSpecResolver::new(&provider);
+            if provider.models.is_empty() {
+                continue;
+            }
+            let resolver = ModelSpecResolver::new(&provider)?;
             for model in &provider.models {
                 let resolved = resolver.resolve(model);
                 summaries.push(ProviderModelSummary {
@@ -349,7 +354,7 @@ impl ModelConfigManager {
         modelId: String,
     ) -> Result<String, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
-        let builtinTools = ModelSpecResolver::new(&provider)
+        let builtinTools = ModelSpecResolver::new(&provider)?
             .catalogSpec(&modelId)
             .map(|spec| spec.builtinTools);
         self.updateProviderInternalResult(providerId, |mut provider| {
@@ -366,22 +371,24 @@ impl ModelConfigManager {
     ///
     /// Each model is described as it would be once added. A catalog over a day old is
     /// downloaded again first; when that download fails the copy in use describes the models
-    /// and `getModelCatalogStatus` reports the failure.
+    /// and `getModelCatalogStatus` reports the failure. A missing catalog must finish its
+    /// first download successfully before any models are returned.
     pub fn getAvailableProviderModels(
         &self,
         providerId: &str,
     ) -> Result<Vec<AvailableProviderModel>, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
         if provider.providerType == ApiProviderType::LOCAL_MODEL {
-            let resolver = ModelSpecResolver::new(&provider);
+            let resolver = ModelSpecResolver::new(&provider)?;
             return Ok(provider
                 .models
                 .iter()
                 .map(|model| resolver.configured(model, AvailableProviderModelSource::Local))
                 .collect());
         }
+        ModelCatalogService::requireCatalog().map_err(ModelConfigError::ModelCatalog)?;
         ModelCatalogService::refreshCatalogIfStale();
-        let resolver = ModelSpecResolver::new(&provider);
+        let resolver = ModelSpecResolver::new(&provider)?;
         let mut models: Vec<AvailableProviderModel> = Vec::new();
         let mut seenModelIds = HashSet::new();
         if provider.providerType != ApiProviderType::OPENAI_CODEX {
@@ -422,6 +429,8 @@ impl ModelConfigManager {
         model: AvailableProviderModel,
     ) -> Result<String, ModelConfigError> {
         let modelId = model.modelId.clone();
+        let provider = self.getProviderProfile(providerId)?;
+        ModelSpecResolver::new(&provider)?;
         self.updateProviderInternalResult(providerId, |mut provider| {
             Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
             let mut profile = ModelProfile::new(modelId.clone());
@@ -513,7 +522,7 @@ impl ModelConfigManager {
         capabilities: ModelCapabilities,
     ) -> Result<ModelProfile, ModelConfigError> {
         let (provider, mut model) = self.findModel(providerId, modelId)?;
-        let inherited = ModelSpecResolver::new(&provider).inherited(&model);
+        let inherited = ModelSpecResolver::new(&provider)?.inherited(&model);
         model.capabilitiesOverride = ModelSpecResolver::capabilityOverrides(&inherited, &capabilities);
         self.updateModelProfile(providerId, model)
     }
@@ -527,7 +536,7 @@ impl ModelConfigManager {
         context: ModelContextSpec,
     ) -> Result<ModelProfile, ModelConfigError> {
         let (provider, mut model) = self.findModel(providerId, modelId)?;
-        let inherited = ModelSpecResolver::new(&provider).inherited(&model);
+        let inherited = ModelSpecResolver::new(&provider)?.inherited(&model);
         model.contextOverride = ModelSpecResolver::contextOverride(&inherited, context);
         self.updateModelProfile(providerId, model)
     }
@@ -553,7 +562,7 @@ impl ModelConfigManager {
         request: ModelRequestSpec,
     ) -> Result<ModelProfile, ModelConfigError> {
         let (provider, mut model) = self.findModel(providerId, modelId)?;
-        let inherited = ModelSpecResolver::new(&provider).inherited(&model);
+        let inherited = ModelSpecResolver::new(&provider)?.inherited(&model);
         model.requestOverride = ModelSpecResolver::requestOverrides(&inherited, &request);
         self.updateModelProfile(providerId, model)
     }
@@ -600,7 +609,7 @@ impl ModelConfigManager {
         modelId: &str,
     ) -> Result<ModelThinkingSettings, ModelConfigError> {
         let (provider, model) = self.findModel(providerId, modelId)?;
-        let thinking = Self::resolvedThinking(&provider, &model);
+        let thinking = Self::resolvedThinking(&provider, &model)?;
         Ok(Self::thinkingSettings(
             &provider,
             &model,
@@ -617,6 +626,9 @@ impl ModelConfigManager {
         modelId: &str,
         level: ThinkingLevel,
     ) -> Result<ModelThinkingSettings, ModelConfigError> {
+        // Resolve catalog readiness before entering the preferences transaction.
+        let provider = self.getProviderProfile(providerId)?;
+        let resolver = ModelSpecResolver::new(&provider)?;
         self.modelConfigDataStore.try_edit_result(|preferences| {
             let provider = self.readProviderFromPreferences(preferences, providerId)?;
             let mut provider = self.hydrateLocalProviderModels(provider)?;
@@ -628,7 +640,7 @@ impl ModelConfigManager {
                     ModelConfigError::ModelNotFound(format!("{providerId}:{modelId}"))
                 })?;
             let model = &provider.models[index];
-            let thinking = Self::resolvedThinking(&provider, model);
+            let thinking = resolver.resolve(model).thinking;
             let offered = Self::thinkingLevels(&provider, model, &thinking.spec);
             if !offered.iter().any(|option| option.level == level) {
                 return Err(ModelConfigError::InvalidThinkingLevel(format!(
@@ -876,7 +888,7 @@ impl ModelConfigManager {
         provider: &ProviderProfile,
         model: &ModelProfile,
     ) -> Result<ResolvedModelConfig, ModelConfigError> {
-        let resolved = ModelSpecResolver::new(provider).resolve(model);
+        let resolved = ModelSpecResolver::new(provider)?.resolve(model);
         let pricing = resolved.pricing;
         let context = resolved.context;
         let capabilities = resolved.capabilities;
@@ -932,8 +944,11 @@ impl ModelConfigManager {
     }
 
     /// Resolves the thinking controls of a configured model.
-    fn resolvedThinking(provider: &ProviderProfile, model: &ModelProfile) -> ResolvedThinking {
-        ModelSpecResolver::new(provider).resolve(model).thinking
+    fn resolvedThinking(
+        provider: &ProviderProfile,
+        model: &ModelProfile,
+    ) -> Result<ResolvedThinking, ModelConfigError> {
+        Ok(ModelSpecResolver::new(provider)?.resolve(model).thinking)
     }
 
     /// Returns the levels a model offers through the API its provider speaks.
@@ -2562,7 +2577,7 @@ mod tests {
             String::new(),
         );
         let model = ModelProfile::new("qwen3@v1".to_string());
-        let thinking = ModelConfigManager::resolvedThinking(&provider, &model);
+        let thinking = ModelConfigManager::resolvedThinking(&provider, &model).unwrap();
         assert_eq!(thinking.source, ThinkingSpecSource::LocalRuntime);
         assert_eq!(
             ModelConfigManager::thinkingLevels(&provider, &model, &thinking.spec)
@@ -2581,7 +2596,15 @@ mod tests {
         std::env::temp_dir().join(format!("operit_model_config_test_{name}_{now}"))
     }
 
+    /// Seeds a downloaded catalog so configuration tests never depend on network access.
     fn setup_test_runtime(root: PathBuf) {
+        let catalogDir = root.join(
+            operit_util::RuntimeStorageLayout::RUNTIME_MODELS_DEV_CACHE_DIR_PATH,
+        );
+        fs::create_dir_all(&catalogDir).unwrap();
+        fs::write(catalogDir.join("api.json"), br#"{"fixture":{"models":{}}}"#).unwrap();
+        fs::write(catalogDir.join("models.json"), b"{}").unwrap();
+        fs::write(catalogDir.join("downloaded.json"), br#"{"updatedAt":1}"#).unwrap();
         setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
             root.clone(),
             root.join(WORKSPACE_DIR_PATH),
