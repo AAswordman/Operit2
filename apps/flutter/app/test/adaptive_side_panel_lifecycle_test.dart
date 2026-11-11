@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/common/components/AdaptiveSidePanel.dart';
-import 'package:operit2/ui/features/chat/components/workspace/WorkspaceLayoutMetrics.dart';
 
 void main() {
-  for (final breakpoint in <double>[600, workspaceSideBySideBreakpoint]) {
+  for (final layout in SidePanelLayout.values) {
     for (final open in <bool>[false, true]) {
       testWidgets(
-        'retains chat and panel across breakpoint $breakpoint (open: $open)',
+        'retains chat and panel while resizing $layout (open: $open)',
         (tester) async {
           tester.view.physicalSize = const Size(1600, 1000);
           tester.view.devicePixelRatio = 1;
           addTearDown(tester.view.resetPhysicalSize);
           addTearDown(tester.view.resetDevicePixelRatio);
-          final width = ValueNotifier<double>(breakpoint + 144);
+          final width = ValueNotifier<double>(1440);
           final scroll = ScrollController();
           final input = TextEditingController(text: 'unsent draft');
           final panelInput = TextEditingController(
@@ -42,7 +41,7 @@ void main() {
                       width: value,
                       child: AdaptiveSidePanel(
                         open: open,
-                        breakpoint: breakpoint,
+                        layout: layout,
                         onOpenChanged: (_) {},
                         overlayTopInset: 64,
                         panel: TextField(key: panelKey, controller: panelInput),
@@ -64,16 +63,20 @@ void main() {
           final baselineBuilds = counts.built;
           if (open) expect(panelState, isNotNull);
           for (var cycle = 0; cycle < 3; cycle++) {
-            // Includes sidebar width changes on either side of the boundary.
+            // Includes window and sidebar width changes across old boundaries.
             for (final value in <double>[
-              breakpoint + 100,
-              breakpoint,
-              breakpoint - 1,
-              breakpoint - 80,
-              breakpoint - 144,
-              breakpoint - 1,
-              breakpoint,
-              breakpoint + 144,
+              1440,
+              1024,
+              1023,
+              900,
+              768,
+              600,
+              599,
+              402,
+              599,
+              600,
+              768,
+              1440,
             ]) {
               width.value = value;
               await tester.pump();
@@ -119,6 +122,7 @@ void main() {
               child: _ChatProbe(counts: counts, scroll: scroll, input: input),
               builder: (context, value, child) => AdaptiveSidePanel(
                 open: value,
+                layout: SidePanelLayout.overlay,
                 onOpenChanged: (value) => open.value = value,
                 panel: TextField(key: panelKey),
                 child: child!,

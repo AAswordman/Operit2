@@ -5,16 +5,16 @@ import 'package:flutter/foundation.dart';
 
 import 'OperitWindowArguments.dart';
 
-/// Indicates whether the current platform supports desktop multi-window APIs.
-bool get operitSupportsDesktopMultiWindow {
-  if (kIsWeb) {
-    return false;
-  }
+/// Identifies desktop interaction independently of window size, also on Web.
+bool get operitUsesDesktopLayout {
   final platform = defaultTargetPlatform;
   return platform == TargetPlatform.linux ||
       platform == TargetPlatform.macOS ||
       platform == TargetPlatform.windows;
 }
+
+/// Indicates whether the current platform supports desktop multi-window APIs.
+bool get operitSupportsDesktopMultiWindow => !kIsWeb && operitUsesDesktopLayout;
 
 /// Reads the arguments associated with the current desktop window.
 Future<OperitWindowArguments> readOperitWindowArguments() async {
