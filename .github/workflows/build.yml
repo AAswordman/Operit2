@@ -1,0 +1,46 @@
+name: Build Operit2 Android APK
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 安装Rust
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Add android rust target
+        run: rustup target add aarch64-linux-android
+
+      # 2. 安装JDK
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 3. 安装Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+
+      # 4. 接受Android SDK协议
+      - name: Accept SDK licenses
+        run: yes | flutter doctor --android-licenses
+
+      # 5. 编译release包
+      - name: Build apk
+        run: flutter build apk --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-apk
+          path: build/app/outputs/flutter-apk/*.apk
