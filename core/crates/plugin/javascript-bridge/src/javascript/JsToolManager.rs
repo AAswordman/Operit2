@@ -30,9 +30,11 @@ struct JsEngineLease {
 
 impl Drop for JsEngineLease {
     /// Returns the leased engine when execution completes or is cancelled.
+    /// An engine beyond [`MAX_IDLE_ENGINES`] is destroyed instead of retained,
+    /// so idle packages cannot pin one isolate each for the process lifetime.
     fn drop(&mut self) {
         let mut pool = self.pool.lock().expect("JsToolManager engine pool mutex poisoned");
-        if self._permit.semaphore().is_closed() {
+        if self._permit.semaphore().is_closed() || pool.len() >= MAX_IDLE_ENGINES {
             drop(pool);
             self.engine.destroy();
         } else {
@@ -46,7 +48,15 @@ struct ToolParameterConversionException {
     message: String,
 }
 
-const MAX_CONCURRENT_ENGINES: usize = 4;
+const MAX_CONCURRENT_ENGINES: usize = if cfg!(target_os = "android") { 4 } else { 6 };
+
+/// Keeps a finished engine only while the pool is still small. One manager
+/// exists per ToolPkg package, so an unbounded idle pool retained one V8
+/// isolate plus its compiled main script for every package that ever ran; on
+/// Android that retention is what pushed the process toward its heap ceiling.
+/// Without an idle slot the engine is dropped and rebuilt on demand, which is
+/// cheaper than holding every package's isolate resident forever.
+const MAX_IDLE_ENGINES: usize = if cfg!(target_os = "android") { 2 } else { 4 };
 impl JsToolManager {
     /// Creates a JavaScript tool manager from SDK package and engine contracts.
     pub(crate) fn new(

@@ -1797,6 +1797,16 @@ impl SyncOperationStore {
         self.decodeOperationPayload(stored)
     }
 
+    /// Loads one original only while it still fits the applicable bound. Export
+    /// passes use this so a retained oversized snapshot is skipped instead of
+    /// being decoded into memory and reported as unsendable.
+    fn originalWithin(&self, id: &str, maxBytes: i64) -> Result<Option<SyncOperation>, SyncOperationStoreError> {
+        let Some(stored) = self.withJournal(|journal| journal.get_within(id, maxBytes))? else {
+            return Ok(None);
+        };
+        self.decodeOperationPayload(stored).map(Some)
+    }
+
     fn storeOriginals(&self, operations: &[SyncOperation], pending: bool) -> Result<(), SyncOperationStoreError> {
         for operation in operations { crate::SyncBlobIo::verify_initialization(self.storageHost.as_ref(),&self.rootPath,operation).map_err(SyncOperationStoreError::Message)?; }
         let stored = operations.iter().map(|operation| self.encodeOperationPayload(operation)).collect::<Result<Vec<_>, _>>()?;
@@ -1923,9 +1933,21 @@ impl SyncOperationStore {
         self.pendingOperationIds()?.iter().map(|id| self.original(id)).collect()
     }
 
+    /// One original wider than this can never fit a peer message, so it is kept
+    /// durable for audit but excluded from application and export passes: a
+    /// multi-megabyte initialization snapshot must not be decoded into memory on
+    /// every resume. The bound sits far above the 4 MB link ceiling.
+    pub const MAX_APPLICABLE_OPERATION_BYTES: i64 = 8 * 1024 * 1024;
+
+    /// Pending work the runtime can still materialize without exhausting memory.
+    pub fn pendingOperationsWithin(&self, maxBytes: i64) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        self.withJournal(|journal| journal.pending_ids_within(maxBytes))?
+            .iter().map(|id| self.original(id)).collect()
+    }
+
     /// Complete file replacements can retry directly; structured deltas still require correction.
     pub fn applicationOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
-        let mut operations = self.pendingOperations()?;
+        let mut operations = self.pendingOperationsWithin(Self::MAX_APPLICABLE_OPERATION_BYTES)?;
         operations.extend(self.fileRetryOperations()?);
         Ok(operations)
     }
@@ -1998,7 +2020,16 @@ impl SyncOperationStore {
         // SQL supplies ascending source sequences; reverse traversal finds each entity's winner once.
         for (_, record) in selected.iter().rev().filter(|(_, r)| r.domain != "preferences" && r.semantics == SyncOperationSemantics::EntityState) {
             let key = (&record.origin_device_id, &record.domain, &record.entity_type, &record.entity_id);
-            if !winners.contains(&key) && query.retain.map(|retain| self.original(&record.op_id).map(|op| retain(&op))).transpose()?.unwrap_or(true) {
+            let retained = match query.retain {
+                None => true,
+                Some(retain) => match self.originalWithin(&record.op_id, Self::MAX_APPLICABLE_OPERATION_BYTES)? {
+                    Some(op) => retain(&op),
+                    // An original wider than the application bound can never travel, so it must
+                    // not claim the entity's winner slot either.
+                    None => continue,
+                },
+            };
+            if !winners.contains(&key) && retained {
                 winners.insert(key);
                 winnerIds.insert(record.op_id.clone());
             }
@@ -2014,7 +2045,7 @@ impl SyncOperationStore {
                 if let Some(inventory) = inventory.as_deref_mut() { inventory.insert(record.op_id.clone()); }
                 if full { continue; }
             }
-            let op = self.original(&record.op_id)?;
+            let Some(op) = self.originalWithin(&record.op_id, Self::MAX_APPLICABLE_OPERATION_BYTES)? else { continue; };
             if query.retain.is_some_and(|retain| !retain(&op)) { continue; }
             if let Some(inventory) = inventory.as_deref_mut() { inventory.insert(op.opId.clone()); }
             if full { continue; }

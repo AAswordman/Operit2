@@ -89,6 +89,14 @@ impl Journal {
             .map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).transpose()
     }
 
+    /// Reads one original only when its stored width still fits the caller's
+    /// bound, so an export pass never decodes an unsendable snapshot.
+    pub(crate) fn get_within(&mut self, id: &str, maxBytes: i64) -> Result<Option<SyncOperation>, Error> {
+        self.0.query("SELECT original FROM originals WHERE id=?1 AND length(original)<=?2",
+            vec![text(id), SqliteValue::Integer(maxBytes.max(0))])?.first()
+            .map(|row| Ok(serde_json::from_str(&row.valueAt(0)?.asString()?)?)).transpose()
+    }
+
     /// Replay reads only completed originals for this owner through originals_target.
     pub(crate) fn preference_originals(&mut self, path: &str) -> Result<Vec<SyncOperation>, Error> {
         self.0.query(
@@ -131,6 +139,16 @@ impl Journal {
 
     pub(crate) fn pending_ids(&mut self) -> Result<Vec<String>, Error> {
         self.0.query("SELECT id FROM originals WHERE pending=1 ORDER BY id", vec![])?.into_iter()
+            .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
+    }
+
+    /// Pending work that still fits one peer message. Originals wider than the
+    /// bound stay durable for audit but never enter an application or export
+    /// pass, so one multi-megabyte initialization snapshot cannot exhaust the
+    /// process every time the runtime resumes its pending journal.
+    pub(crate) fn pending_ids_within(&mut self, maxBytes: i64) -> Result<Vec<String>, Error> {
+        self.0.query("SELECT id FROM originals WHERE pending=1 AND length(original)<=?1 ORDER BY id",
+            vec![SqliteValue::Integer(maxBytes.max(0))])?.into_iter()
             .map(|row| Ok(row.valueAt(0)?.asString()?)).collect()
     }
 
