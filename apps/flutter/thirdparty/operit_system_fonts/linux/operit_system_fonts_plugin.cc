@@ -55,8 +55,8 @@ static void handle_method(FlMethodChannel*, FlMethodCall* call, gpointer data) {
       FlValue* args = fl_method_call_get_args(call);
       if (fl_value_get_type(args) != FL_VALUE_TYPE_STRING) throw std::runtime_error("Expected font family");
       const auto& entry = self->fonts->at(fl_value_get_string(args));
-      GStatBuf stat;
-      if (g_stat(entry.path.c_str(), &stat) != 0 || stat.st_size <= 0 || stat.st_size > 256 * 1024 * 1024) throw std::runtime_error("Invalid installed font size");
+      GStatBuf st;
+      if (g_stat(entry.path.c_str(), &st) != 0 || st.st_size <= 0 || st.st_size > 256 * 1024 * 1024) throw std::runtime_error("Invalid installed font size");
       gchar* bytes = nullptr;
       gsize length = 0;
       g_autoptr(GError) error = nullptr;
