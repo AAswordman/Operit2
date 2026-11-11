@@ -31,7 +31,7 @@ const MODULES: &[ModuleSpec] = &[
     ModuleSpec { rust_file: "js_sdk/edge.rs", additional_rust_file: None, ts_file: "edge.d.ts", nullable_wire_fields: false },
     ModuleSpec {
         rust_file: "js_sdk/storage.rs",
-        additional_rust_file: Some("../../../foundation/host-api/src/PluginStorage.rs"),
+        additional_rust_file: Some("../../../foundation/host-contract/src/PluginStorage.rs"),
         ts_file: "storage.generated.d.ts",
         nullable_wire_fields: true,
     },

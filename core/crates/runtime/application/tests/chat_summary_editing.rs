@@ -13,7 +13,7 @@ use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 
 /// Retains plugin hooks while delivering preference notifications synchronously.
 #[derive(Default)]
@@ -61,10 +61,7 @@ async fn summary_memory_edits_are_persisted() {
     let runtime = root.join("runtime");
     let workspaces = root.join("workspaces");
     std::fs::create_dir_all(&runtime).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        runtime.clone(),
-        workspaces.clone(),
-    ));
+
     let host = Arc::new(NativeRuntimeStorageHost::new(
         runtime.clone(),
         workspaces.clone(),
@@ -72,7 +69,7 @@ async fn summary_memory_edits_are_persisted() {
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host);
     setDefaultHostRuntimeTaskSchedulerHost(Arc::new(EditScheduler::default()));
-    let database = AppDatabase::getDatabase(RuntimeStorePaths::new(runtime, workspaces)).unwrap();
+    let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
     database
         .chatDao()
         .insertChat(ChatEntity::new("chat".into(), "Summary editing".into(), 1))

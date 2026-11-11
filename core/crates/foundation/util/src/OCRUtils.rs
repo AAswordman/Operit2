@@ -1,6 +1,6 @@
 use crate::AppLogger::AppLogger;
 use operit_host_api::HostManager::HostManager;
-use operit_host_api::{OCRLanguage, OCRQuality};
+use operit_host_api::{FileSource, OCRLanguage, OCRQuality};
 
 const TAG: &str = "OCRUtils";
 
@@ -61,7 +61,7 @@ impl OCRUtils {
     #[allow(non_snake_case)]
     fn recognizeTextFromPathInternal(
         context: &HostManager,
-        imagePath: &str,
+        source: &dyn FileSource,
         language: Language,
         quality: Quality,
         logError: bool,
@@ -77,7 +77,7 @@ impl OCRUtils {
             }
         };
         match host.recognizeText(
-            imagePath,
+            source,
             language.toHostLanguage(),
             quality.toHostQuality(),
         ) {
@@ -98,21 +98,36 @@ impl OCRUtils {
         language: Language,
         quality: Quality,
     ) -> OCRResult {
-        Self::recognizeTextFromPathInternal(context, imagePath, language, quality, true)
+        match context.vfs().and_then(|vfs| vfs.fileResource(None, imagePath)) {
+            Ok(source) => Self::recognizeTextFromPathInternal(context, &source, language, quality, true),
+            Err(error) => OCRResult::Error(error),
+        }
     }
 
     #[allow(non_snake_case)]
     pub fn recognizeText(context: &HostManager, imagePath: &str, quality: Quality) -> String {
+        let source = match context.vfs().and_then(|vfs| vfs.fileResource(None, imagePath)) {
+            Ok(source) => source,
+            Err(error) => {
+                AppLogger::e(TAG, &error);
+                return String::new();
+            }
+        };
+        Self::recognizeFile(context, &source, quality)
+    }
+
+    /// Recognizes a file capability without exposing its storage backend to the caller.
+    pub fn recognizeFile(context: &HostManager, source: &dyn FileSource, quality: Quality) -> String {
         let latinResult = Self::recognizeTextFromPathInternal(
             context,
-            imagePath,
+            source,
             Language::LATIN,
             quality,
             false,
         );
         let chineseResult = Self::recognizeTextFromPathInternal(
             context,
-            imagePath,
+            source,
             Language::CHINESE,
             quality,
             false,

@@ -16,7 +16,7 @@ fn runtime_paths() -> &'static operit_store::RuntimeStorePaths::RuntimeStorePath
         setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost,
     };
     use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
     use std::sync::{Arc, OnceLock};
     static PATHS: OnceLock<RuntimeStorePaths> = OnceLock::new();
     PATHS.get_or_init(|| {
@@ -25,17 +25,14 @@ fn runtime_paths() -> &'static operit_store::RuntimeStorePaths::RuntimeStorePath
         let runtime = root.join("runtime");
         let workspaces = root.join("workspaces");
         std::fs::create_dir_all(&runtime).unwrap();
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-            runtime.clone(),
-            workspaces.clone(),
-        ));
+
         let storage = Arc::new(NativeRuntimeStorageHost::new(
             runtime.clone(),
             workspaces.clone(),
         ));
         setDefaultRuntimeStorageHost(storage.clone());
         setDefaultRuntimeSqliteHost(storage);
-        RuntimeStorePaths::new(runtime, workspaces)
+        RuntimeStorePaths::default()
     })
 }
 

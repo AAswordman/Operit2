@@ -2351,6 +2351,7 @@ dependencies = [
  "operit-host-api",
  "operit-host-data-rescue",
  "operit-host-linux-native",
+ "operit-host-local-inference",
  "operit-host-macos-native",
  "operit-host-native-common",
  "operit-host-windows-native",
@@ -2364,6 +2365,7 @@ dependencies = [
  "operit-store",
  "operit-tools",
  "operit-util",
+ "operit-vfs",
  "qrcode",
  "rand_core 0.6.4",
  "ratatui",
@@ -2393,6 +2395,7 @@ dependencies = [
  "operit-store",
  "operit-tools",
  "operit-util",
+ "operit-vfs",
  "reqwest",
  "serde",
  "serde_json",
@@ -2444,14 +2447,8 @@ dependencies = [
 name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "bytes",
- "chrono",
- "http",
- "http-body-util",
- "js-sys",
- "serde",
- "serde_json",
+ "operit-host-contract",
+ "operit-vfs",
 ]
 
 [[package]]
@@ -2476,6 +2473,20 @@ dependencies = [
  "tungstenite",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "operit-host-contract"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "http",
+ "http-body-util",
+ "js-sys",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2509,6 +2520,7 @@ dependencies = [
  "image",
  "libc",
  "operit-host-api",
+ "operit-host-local-inference",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
  "portable-pty",
@@ -2524,11 +2536,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-host-local-inference"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+ "operit-host-contract",
+ "operit-local-models",
+ "operit-util",
+ "serde_json",
+]
+
+[[package]]
 name = "operit-host-macos-native"
 version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "operit-host-apple-native",
+ "operit-host-local-inference",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
  "tokio",
@@ -2566,7 +2590,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
- "operit-host-api",
+ "operit-host-contract",
  "zip",
 ]
 
@@ -2612,7 +2636,7 @@ name = "operit-host-native-storage"
 version = "0.1.0"
 dependencies = [
  "fs2",
- "operit-host-api",
+ "operit-host-contract",
  "rusqlite",
  "uuid",
  "windows-sys 0.59.0",
@@ -2640,6 +2664,7 @@ dependencies = [
  "ignore",
  "image",
  "operit-host-api",
+ "operit-host-local-inference",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
  "portable-pty",
@@ -2697,9 +2722,9 @@ name = "operit-local-models"
 version = "2.0.0-preview.17"
 dependencies = [
  "bzip2-rs",
- "cmake",
  "operit-host-api",
  "operit-util",
+ "operit-vfs",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -2779,6 +2804,7 @@ dependencies = [
  "operit-plugin-sdk-macros",
  "operit-plugin-theme",
  "operit-util",
+ "operit-vfs",
  "regex",
  "serde",
  "serde_bytes",
@@ -2863,6 +2889,7 @@ dependencies = [
  "operit-store",
  "operit-tools",
  "operit-util",
+ "operit-vfs",
  "regex",
  "serde",
  "serde_json",
@@ -2927,6 +2954,7 @@ dependencies = [
  "operit-store",
  "operit-tools",
  "operit-util",
+ "operit-vfs",
  "serde",
  "serde_json",
  "tokio",
@@ -3009,6 +3037,7 @@ dependencies = [
  "operit-store",
  "operit-tools",
  "operit-util",
+ "operit-vfs",
  "regex",
  "reqwest",
  "rmp-serde",
@@ -3073,6 +3102,7 @@ dependencies = [
  "operit-rslink-runtime",
  "operit-store",
  "operit-util",
+ "operit-vfs",
  "regex",
  "serde",
  "serde_bytes",
@@ -3096,12 +3126,23 @@ dependencies = [
  "heic-rs",
  "image",
  "operit-host-api",
+ "operit-vfs",
  "regex",
  "serde",
  "serde_json",
  "tokio",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "operit-vfs"
+version = "0.1.0"
+dependencies = [
+ "operit-host-contract",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

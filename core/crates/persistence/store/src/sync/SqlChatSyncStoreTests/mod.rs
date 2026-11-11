@@ -1,3 +1,4 @@
+#![cfg(test)]
 use super::*;
 
 use std::fs;
@@ -10,7 +11,7 @@ use crate::sqliteParams;
 use crate::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 
 use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use operit_host_native_storage::NativeRuntimeStorageHost;
 
 static HOSTS: OnceLock<()> = OnceLock::new();
@@ -29,10 +30,7 @@ fn installTestHosts() {
         ));
         fs::create_dir_all(&root).expect("test runtime host root must be created");
         let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join(WORKSPACE_DIR_PATH)));
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-            root.join("runtime"),
-            root.join(WORKSPACE_DIR_PATH),
-        ));
+
         setDefaultRuntimeStorageHost(host.clone());
         setDefaultRuntimeSqliteHost(host);
     });
@@ -44,7 +42,7 @@ fn testPaths(name: &str) -> RuntimeStorePaths {
     let runtimeDir = RuntimeStorePaths::default()
         .runtime_dir()
         .join(format!("sync-tests/{name}-{id}"));
-    RuntimeStorePaths::new(runtimeDir.clone(), runtimeDir.join(WORKSPACE_DIR_PATH))
+    RuntimeStorePaths::default()
 }
 
 /// Opens an isolated database through the shared runtime host test fixture.

@@ -66,7 +66,7 @@ impl RuntimeHostInfoService {
                 structuredCapabilities: host.structuredCapabilities.clone(),
                 onboardingRequirements: host.onboardingRequirements.clone(),
                 workspaceRoots: host.workspaceRoots.clone(),
-                fileSystemHost: context.fileSystemHost.is_some(),
+                fileSystemHost: context.vfs().is_ok(),
                 webVisitHost: context.webVisitHost.is_some(),
                 systemOperationHost: context.systemOperationHost.is_some(),
                 audioPlaybackHost: context.audioPlaybackHost.is_some(),

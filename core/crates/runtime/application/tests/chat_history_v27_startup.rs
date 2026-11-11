@@ -8,7 +8,7 @@ use operit_store::db::AppDatabase::{AppDatabase, DATABASE_VERSION};
 use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 
 const VERSION_27_FIXTURE: &str =
     include_str!("../../../persistence/store/src/db/fixtures/version27-chat-records.sql");
@@ -24,17 +24,14 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
     let workspaceRoot = root.join("workspaces");
     fs::create_dir_all(&runtimeRoot).unwrap();
     fs::create_dir_all(&workspaceRoot).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        runtimeRoot.clone(),
-        workspaceRoot.clone(),
-    ));
+
     let host = Arc::new(NativeRuntimeStorageHost::new(
         runtimeRoot.clone(),
         workspaceRoot.clone(),
     ));
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host);
-    let paths = RuntimeStorePaths::new(runtimeRoot, workspaceRoot);
+    let paths = RuntimeStorePaths::default();
     fs::create_dir_all(paths.sqlite_database_path().parent().unwrap()).unwrap();
     let old = rusqlite::Connection::open(paths.sqlite_database_path()).unwrap();
     old.execute_batch(VERSION_27_FIXTURE).unwrap();

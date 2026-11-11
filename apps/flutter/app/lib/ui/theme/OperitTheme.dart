@@ -10,6 +10,7 @@ import 'package:operit_ui/operit_ui.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/errors/UnhandledErrorReporter.dart';
+import '../../core/logging/ClientLogger.dart';
 import '../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
@@ -501,6 +502,13 @@ class OperitThemeController {
       },
       onError: (Object error, StackTrace stack) {
         if (lifecycle != _lifecycleRevision) return;
+        ClientLogger.e(
+          'Appearance preference subscription failed lifecycle=$lifecycle '
+          'hasLoadedTheme=$_hasLoadedState',
+          tag: 'ThemeAppearance',
+          error: error,
+          stackTrace: stack,
+        );
         _themePreferenceRevision++;
         _themeIsPreparing = false;
         _themeLoadError = error;
@@ -787,10 +795,12 @@ class OperitThemeController {
     bool current() =>
         lifecycle == _lifecycleRevision && revision == _themePreferenceRevision;
     if (!_hasLoadedState) _themeIsPreparing = true;
+    var stage = 'read_preferences';
     try {
       final snapshot = await _preferencesManager
           .resolveThemePreferenceSnapshot();
       if (!current()) return;
+      stage = 'validate_palette';
       final palette = snapshot.themePaletteJson;
       if (palette != null) {
         final colors = jsonDecode(palette) as Map<String, dynamic>;
@@ -798,8 +808,10 @@ class OperitThemeController {
           ThemeVisualSpecV1.colorSchemeFromPalette(colors, brightness);
         }
       }
+      stage = 'prepare_fonts';
       final families = await _prepareCustomFonts(snapshot);
       if (!current()) return;
+      stage = 'save_startup_theme_mode';
       await _saveStartupThemeMode(snapshot.themeMode);
       if (!current()) return;
       _loadedCustomFontFamilies.addAll(families);
@@ -808,8 +820,15 @@ class OperitThemeController {
       _themeIsPreparing = false;
       _hasLoadedState = true;
       _onChanged();
-    } catch (error) {
+    } catch (error, stack) {
       if (!current()) return;
+      ClientLogger.e(
+        'Appearance load failed stage=$stage lifecycle=$lifecycle '
+        'revision=$revision hasLoadedTheme=$_hasLoadedState',
+        tag: 'ThemeAppearance',
+        error: error,
+        stackTrace: stack,
+      );
       _themeLoadError = error;
       _themeIsPreparing = false;
       _onChanged();

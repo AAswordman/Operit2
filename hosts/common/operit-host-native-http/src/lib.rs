@@ -430,8 +430,9 @@ impl HttpHost for NativeHttpHost {
     fn downloadToFile(
         &self,
         request: HttpRequestData,
-        targetPath: String,
+        target: &dyn operit_host_api::FileTarget,
     ) -> HostResult<HttpFileDownloadResult> {
+        let targetPath = target.nativePath()?;
         NativeHostRuntimeTaskSchedulerHost::new().runNetworkTask("native-http-file", move || {
             downloadToFileAsync(request, targetPath)
         })
@@ -1263,6 +1264,15 @@ mod tests {
         });
         let directory = uniqueTempDir("direct-file");
         let target = directory.join("artifact.bin");
+        struct Target(std::path::PathBuf);
+        impl operit_host_api::FileTarget for Target {
+            /// Supplies a portable identity independently of the native destination.
+            fn vfsPath(&self) -> &str { "/operitapp/data/artifact.bin" }
+            /// Rejects buffering because the native download must stream atomically.
+            fn writeBytes(&self, _: &[u8]) -> HostResult<()> { unreachable!() }
+            /// Resolves the destination only within this platform-host fixture.
+            fn nativePath(&self) -> HostResult<String> { Ok(self.0.to_string_lossy().into_owned()) }
+        }
         let response = NativeHttpHost::new()
             .downloadToFile(
                 HttpRequestData {
@@ -1279,7 +1289,7 @@ mod tests {
                     proxyHost: String::new(),
                     proxyPort: 0,
                 },
-                target.to_string_lossy().to_string(),
+                &Target(target.clone()),
             )
             .unwrap();
         assert_eq!(response.downloadedBytes, 11);

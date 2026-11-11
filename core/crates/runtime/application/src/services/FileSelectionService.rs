@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{RuntimeStorageHost, RuntimeStorageWriteHost};
-use operit_tools::files::MountRegistry::{MountRegistry, MountSource};
+use operit_vfs::MountRegistry::{MountRegistry, MountSource};
 use operit_util::stream::ReverseStream::ReverseStream;
 use operit_util::RuntimeStorageLayout::RUNTIME_CLEAN_ON_EXIT_DIR_PATH;
 use uuid::Uuid;

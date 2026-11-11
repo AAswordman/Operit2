@@ -31,6 +31,7 @@ std::string GenerateWindowId() {
 }
 
 WindowCreatedCallback _g_window_created_callback = nullptr;
+WindowDestroyedCallback _g_window_destroyed_callback = nullptr;
 
 }  // namespace
 
@@ -43,6 +44,9 @@ MultiWindowManager* MultiWindowManager::Instance() {
 MultiWindowManager::MultiWindowManager() : windows_() {}
 
 std::string MultiWindowManager::Create(const flutter::EncodableMap* args) {
+  if (shutting_down_) {
+    return "";
+  }
   std::string window_id = GenerateWindowId();
   WindowConfiguration config = WindowConfiguration::FromEncodableMap(args);
 
@@ -156,6 +160,27 @@ void MultiWindowManager::RemoveManagedFlutterWindowLater(
   pending_remove_ids_.push_back(window_id);
 }
 
+/// Releases application channels while the secondary engine is still valid.
+void MultiWindowManager::OnWindowDestroyed(
+    flutter::FlutterViewController* controller) {
+  if (_g_window_destroyed_callback) {
+    _g_window_destroyed_callback(controller);
+  }
+}
+
+/// Closes secondary engines before static destruction or COM uninitialization.
+void MultiWindowManager::Shutdown() {
+  if (shutting_down_) {
+    return;
+  }
+  shutting_down_ = true;
+  for (auto& [id, window] : managed_flutter_windows_) {
+    window->Destroy();
+  }
+  managed_flutter_windows_.clear();
+  pending_remove_ids_.clear();
+}
+
 // FIXME:maybe need a more robust way to cleanup removed windows
 void MultiWindowManager::CleanupRemovedWindows() {
   for (auto& id : pending_remove_ids_) {
@@ -169,6 +194,9 @@ void MultiWindowManager::CleanupRemovedWindows() {
 }
 
 void MultiWindowManager::NotifyWindowsChanged() {
+  if (shutting_down_) {
+    return;
+  }
   auto window_ids = GetAllWindowIds();
   flutter::EncodableList window_ids_list;
   for (const auto& id : window_ids) {
@@ -187,4 +215,15 @@ void MultiWindowManager::NotifyWindowsChanged() {
 void DesktopMultiWindowSetWindowCreatedCallback(
     WindowCreatedCallback callback) {
   _g_window_created_callback = callback;
+}
+
+/// Installs cleanup that runs before each secondary Flutter engine is destroyed.
+void DesktopMultiWindowSetWindowDestroyedCallback(
+    WindowDestroyedCallback callback) {
+  _g_window_destroyed_callback = callback;
+}
+
+/// Shuts down secondary windows before their application host is released.
+void DesktopMultiWindowShutdown() {
+  MultiWindowManager::Instance()->Shutdown();
 }

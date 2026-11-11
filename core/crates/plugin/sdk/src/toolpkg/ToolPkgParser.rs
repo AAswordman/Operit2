@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Cursor;
 
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1605,19 +1605,19 @@ impl ToolPkgArchiveParser {
     /// Builds a normalized entry index from an extracted ToolPkg directory.
     #[allow(non_snake_case)]
     pub fn buildDirectoryEntryIndex(
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         rootDir: &str,
     ) -> ToolPkgEntryIndex {
         let mut normalizedEntryNames = BTreeSet::new();
         let mut entryNamesByNormalizedLowercase = BTreeMap::new();
-        let Ok(rootInfo) = fileSystemHost.fileExists(rootDir) else {
+        let Ok(rootInfo) = filesystem.fileExists(rootDir) else {
             return ToolPkgEntryIndex::default();
         };
         if !rootInfo.exists || !rootInfo.isDirectory {
             return ToolPkgEntryIndex::default();
         }
         collectDirectoryEntryIndex(
-            fileSystemHost,
+            filesystem,
             rootDir,
             rootDir,
             &mut normalizedEntryNames,
@@ -1747,13 +1747,13 @@ impl ToolPkgArchiveParser {
     /// Reads one indexed directory entry as UTF-8 text.
     #[allow(non_snake_case)]
     pub fn readDirectoryEntryText(
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         rootDir: &str,
         entryIndex: &ToolPkgEntryIndex,
         rawPath: &str,
     ) -> Option<String> {
         let relativePath = entryIndex.resolveEntryName(rawPath)?;
-        let bytes = fileSystemHost
+        let bytes = filesystem
             .readFileBytes(&joinToolPkgHostPath(rootDir, &relativePath))
             .ok()?;
         crate::toolpkg::ToolPkgProtection::decodeUtf8(&bytes).ok()
@@ -1762,31 +1762,31 @@ impl ToolPkgArchiveParser {
     /// Extracts normalized ToolPkg entries from an external ZIP file.
     #[allow(non_snake_case)]
     pub fn extractZipEntriesFromExternal(
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         zipFilePath: &str,
         destinationDir: &str,
     ) -> bool {
-        let Ok(bytes) = fileSystemHost.readFileBytes(zipFilePath) else {
+        let Ok(bytes) = filesystem.readFileBytes(zipFilePath) else {
             return false;
         };
-        Self::extractZipEntriesFromReader(Cursor::new(bytes), fileSystemHost, destinationDir)
+        Self::extractZipEntriesFromReader(Cursor::new(bytes), filesystem, destinationDir)
     }
 
     /// Extracts normalized ToolPkg entries from embedded archive bytes.
     #[allow(non_snake_case)]
     pub fn extractZipEntriesFromAssetBytes(
         bytes: &'static [u8],
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         destinationDir: &str,
     ) -> bool {
-        Self::extractZipEntriesFromReader(Cursor::new(bytes), fileSystemHost, destinationDir)
+        Self::extractZipEntriesFromReader(Cursor::new(bytes), filesystem, destinationDir)
     }
 
     /// Extracts normalized ToolPkg entries from a generic seekable reader.
     #[allow(non_snake_case)]
     fn extractZipEntriesFromReader<R: std::io::Read + std::io::Seek>(
         reader: R,
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         destinationDir: &str,
     ) -> bool {
         let Ok(mut archive) = zip::ZipArchive::new(reader) else {
@@ -1806,7 +1806,7 @@ impl ToolPkgArchiveParser {
             if std::io::Read::read_to_end(&mut entry, &mut content).is_err() {
                 return false;
             }
-            if fileSystemHost
+            if filesystem
                 .writeFileBytes(
                     &joinToolPkgHostPath(destinationDir, &normalizedEntry),
                     &content,
@@ -2455,20 +2455,20 @@ fn duplicateLabel(registryName: &str) -> &'static str {
 #[allow(non_snake_case)]
 /// Recursively adds directory entries to a normalized ToolPkg entry index.
 fn collectDirectoryEntryIndex(
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     rootDir: &str,
     currentDir: &str,
     normalizedEntryNames: &mut BTreeSet<String>,
     entryNamesByNormalizedLowercase: &mut BTreeMap<String, String>,
 ) {
-    let Ok(entries) = fileSystemHost.listFiles(currentDir) else {
+    let Ok(entries) = filesystem.listFiles(currentDir) else {
         return;
     };
     for entry in entries {
         let path = joinToolPkgHostPath(currentDir, &entry.name);
         if entry.isDirectory {
             collectDirectoryEntryIndex(
-                fileSystemHost,
+                filesystem,
                 rootDir,
                 &path,
                 normalizedEntryNames,

@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../core/logging/ClientLogger.dart';
 import '../../l10n/generated/app_localizations.dart';
 
 /// Shows the appearance error and offers only explicit retry and reset actions.
@@ -30,14 +31,24 @@ class _ThemeAppearanceErrorScreenState
   Object? _actionError;
 
   /// Runs exactly the requested repair and leaves failures visible to the user.
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(String operation, Future<void> Function() action) async {
+    ClientLogger.i(
+      'Appearance repair requested operation=$operation',
+      tag: 'ThemeAppearance',
+    );
     setState(() {
       _busy = true;
       _actionError = null;
     });
     try {
       await action();
-    } catch (error) {
+    } catch (error, stack) {
+      ClientLogger.e(
+        'Appearance repair failed operation=$operation',
+        tag: 'ThemeAppearance',
+        error: error,
+        stackTrace: stack,
+      );
       if (mounted) setState(() => _actionError = error);
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -48,7 +59,11 @@ class _ThemeAppearanceErrorScreenState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final errorStyle = TextStyle(color: colorScheme.error);
     return Scaffold(
+      backgroundColor: colorScheme.surface,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -60,19 +75,22 @@ class _ThemeAppearanceErrorScreenState
               children: <Widget>[
                 Text(
                   l10n.settingsAppearanceLoadFailed,
-                  style: Theme.of(context).textTheme.titleLarge,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: colorScheme.onSurface,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                Text(l10n.settingsAppearanceRepairHint),
+                Text(
+                  l10n.settingsAppearanceRepairHint,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
                 const SizedBox(height: 12),
-                SelectableText(widget.error.toString()),
+                SelectableText(widget.error.toString(), style: errorStyle),
                 if (_actionError != null) ...<Widget>[
                   const SizedBox(height: 12),
                   SelectableText(
                     _actionError.toString(),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                    style: errorStyle,
                   ),
                 ],
                 const SizedBox(height: 20),
@@ -82,12 +100,16 @@ class _ThemeAppearanceErrorScreenState
                   children: <Widget>[
                     OutlinedButton(
                       key: const ValueKey('appearance-retry'),
-                      onPressed: _busy ? null : () => _run(widget.onRetry),
+                      onPressed: _busy
+                          ? null
+                          : () => _run('retry', widget.onRetry),
                       child: Text(l10n.settingsAppearanceRetry),
                     ),
                     FilledButton(
                       key: const ValueKey('appearance-reset'),
-                      onPressed: _busy ? null : () => _run(widget.onReset),
+                      onPressed: _busy
+                          ? null
+                          : () => _run('reset', widget.onReset),
                       child: Text(l10n.settingsAppearanceResetAfterError),
                     ),
                   ],

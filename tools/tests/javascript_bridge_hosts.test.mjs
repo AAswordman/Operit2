@@ -278,7 +278,7 @@ test('session cancellation removes interval state and prevents further ticks', a
 
 /** Guards the required host contract and prevents retired bindings from being reintroduced. */
 test('bridge source exposes only mandatory structured asynchronous transports', () => {
-  const host = source('core/crates/foundation/host-api/src/lib.rs');
+  const host = source('core/crates/foundation/host-contract/src/lib.rs');
   assert.match(host, /fn callHostJavaScriptFunction\([\s\S]*?\) -> HostResult<Value>;/);
   for (const method of ['registerHostJavaScriptAsyncJsonFunction',
     'settleHostJavaScriptPromise', 'cancelHostJavaScriptPromises', 'scheduleHostRuntimeCooperativeAsyncTask']) {

@@ -1,4 +1,4 @@
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
 use operit_tools::ConversationMarkupManager::ToolResult;
@@ -10,7 +10,7 @@ impl PathValidator {
     /// Validates a host path parameter before a tool invokes file-system operations.
     #[allow(non_snake_case)]
     pub fn validateHostPath(
-        host: &dyn FileSystemHost,
+        host: &VisualFileSystem,
         path: &str,
         toolName: &str,
         paramName: &str,
@@ -21,7 +21,7 @@ impl PathValidator {
                 toolName: toolName.to_string(),
                 success: false,
                 result: stringResultData(""),
-                error: Some(error.message),
+                error: Some(error),
             }),
         }
     }

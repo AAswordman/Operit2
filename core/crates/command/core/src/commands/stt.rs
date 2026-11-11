@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 use crate::output::CoreCommandOutput;
@@ -278,7 +277,7 @@ fn transcribe_current(
     language: Option<String>,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let (audioBytes, fileName, contentType) = readAudioInput(audioPath)?;
+    let (audioBytes, fileName, contentType) = readAudioInput(application, audioPath)?;
     let result = SttRecognitionService::getInstance(&application.hostManager).transcribeCurrent(
         audioBytes,
         fileName,
@@ -299,7 +298,7 @@ fn transcribe_config(
     language: Option<String>,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let (audioBytes, fileName, contentType) = readAudioInput(audioPath)?;
+    let (audioBytes, fileName, contentType) = readAudioInput(application, audioPath)?;
     let result = SttRecognitionService::getInstance(&application.hostManager)
         .transcribeWithConfigId(
             configId.to_string(),
@@ -315,9 +314,14 @@ fn transcribe_config(
 }
 
 /// Reads one CLI audio file and returns its explicit multipart metadata.
-fn readAudioInput(audioPath: &str) -> Result<(Vec<u8>, String, String), String> {
-    let path = Path::new(audioPath);
-    if !path.is_file() {
+fn readAudioInput(
+    application: &OperitApplication,
+    audioPath: &str,
+) -> Result<(Vec<u8>, String, String), String> {
+    let filesystem = application.hostManager.vfs()?;
+    let virtualPath = super::util::command_file_path(&application.hostManager, audioPath)?;
+    let path = Path::new(&virtualPath);
+    if !filesystem.fileExists(&virtualPath)?.exists {
         return Err(format!("STT audio file is missing: {}", path.display()));
     }
     let fileName = path
@@ -339,7 +343,7 @@ fn readAudioInput(audioPath: &str) -> Result<(Vec<u8>, String, String), String> 
         "flac" => "audio/flac",
         other => return Err(format!("unsupported STT audio extension: {other}")),
     };
-    let audioBytes = fs::read(path).map_err(|error| error.to_string())?;
+    let audioBytes = filesystem.readFileBytes(&virtualPath)?;
     if audioBytes.is_empty() {
         return Err("STT audio file is empty".to_string());
     }

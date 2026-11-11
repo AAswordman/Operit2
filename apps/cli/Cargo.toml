@@ -13,6 +13,8 @@ name = "operit2"
 path = "src/main.rs"
 
 [dependencies]
+operit-host-local-inference = { path = "../../hosts/common/operit-host-local-inference" }
+operit-vfs = { version = "0.1.0", path = "../../core/crates/foundation/vfs" }
 operit-host-data-rescue = { path = "../../hosts/common/operit-host-data-rescue" }
 arboard = "3"
 async-trait = "0.1"

@@ -10,8 +10,7 @@ use operit_host_api::{
 };
 use serde_json::{json, Map, Value};
 use url::Url;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 use operit_tools::tools::ToolResultDataClasses::{
     stringResultData, HttpResponseData, ToolResultData,
@@ -396,8 +395,7 @@ impl StandardHttpTools {
 
 #[allow(non_snake_case)]
 fn readUploadFile(vfs: &VisualFileSystem, directory: Option<&str>, path: &str) -> Result<Vec<u8>, String> {
-    let path = PathMapper::resolveFileResourcePath(directory, path)?;
-    vfs.readFileBytes(&path)
+    operit_host_api::FileSource::readBytes(&vfs.fileResource(directory, path)?).map_err(|error| error.message)
 }
 
 impl ToolExecutor for HttpToolExecutor {
@@ -885,9 +883,9 @@ mod binary_body_tests {
         use super::*;
         use operit_host_native_filesystem::PosixFileSystemHost;
         let root = std::env::temp_dir().join(format!("operit-upload-test-{}", uuid::Uuid::new_v4()));
-        let mapper = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
+
         let host = Arc::new(PosixFileSystemHost::new());
-        let vfs = VisualFileSystem::new(host.clone(), mapper.clone());
+        let vfs = VisualFileSystem::builtinOnly(host.clone(), root.clone(), root.join("workspaces"));
         vfs.makeDirectory("/operitapp/data/uploads", true).unwrap();
         vfs.writeFileBytes("/operitapp/data/uploads/file.bin", &[0, 255, 1]).unwrap();
         for path in ["/operitapp/data/uploads/file.bin", "/app/data/uploads/file.bin", "file.bin", "./file.bin", "../uploads/file.bin"] {

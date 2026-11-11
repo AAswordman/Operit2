@@ -54,8 +54,8 @@ use operit_store::SyncOperationStore::{
     SyncOperationSemantics, SyncOperationStore, SyncReceipt, DEFAULT_SYNC_PAGE_BYTES,
 };
 use sha2::{Digest, Sha256};
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VfsPath;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_tools::runtime_support::ToolRuntimeDependencies;
 use operit_tools::tools::mcp_runtime::plugins::MCPStarter::MCPStarter;
 use operit_tools::tools::PackageLoadingProgress::{
@@ -68,7 +68,7 @@ use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 pub use operit_tools::tools::PackageLoadingProgress::{PluginLoadingItem, PluginLoadingProgress};
 use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::Mutex as AsyncMutex;
@@ -140,44 +140,12 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn newWithContext(hostManager: HostManager) -> Self {
         if let Some(runtimeStorageHost) = hostManager.runtimeStorageHost.clone() {
-            let runtimeRoot = runtimeStorageHost
-                .runtimeRootDir()
-                .expect("runtime storage host must provide a runtime root directory");
-            let workspaceRoot = runtimeStorageHost
-                .workspaceRootDir()
-                .expect("runtime storage host must provide a workspace root directory");
-            let fileSystemHost = hostManager
-                .fileSystemHost
-                .clone()
-                .expect("runtime storage host requires a file-system host for logging");
-            let pathMapper = PathMapper::new(
-                runtimeRoot.clone(),
-                workspaceRoot.clone(),
-                runtimeStorageHost.clone(),
-            );
-            let logFile = pathMapper
-                .resolve("/operitapp/data/logs/operit.log")
-                .expect("runtime log path must resolve through the file-system host")
-                .physicalPath;
-            let packageLogFile = pathMapper
-                .resolve("/operitapp/data/logs/toolpkg.log")
-                .expect("ToolPkg log path must resolve through the file-system host")
-                .physicalPath;
-            if let Err(error) =
-                AppLogger::configure_log_files(fileSystemHost, logFile, packageLogFile)
-            {
-                AppLogger::w(
-                    "OperitApplication",
-                    &format!(
-                        "File logging unavailable; continuing with console and in-memory logs: {error}"
-                    ),
-                );
-            }
-            setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-                runtimeRoot,
-                workspaceRoot,
-            ));
-            setDefaultRuntimeStorageHost(runtimeStorageHost);
+            let filesystem = Arc::new(hostManager.vfs().expect("Runtime VFS must be configured for logging"));
+            AppLogger::configure_log_files(
+                filesystem,
+                "/operitapp/data/logs/operit.log".into(),
+                "/operitapp/data/logs/toolpkg.log".into(),
+            ).expect("Runtime VFS log files must be writable");            setDefaultRuntimeStorageHost(runtimeStorageHost);
         }
         if let Some(runtimeSqliteHost) = hostManager.runtimeSqliteHost.clone() {
             setDefaultRuntimeSqliteHost(runtimeSqliteHost);
@@ -214,12 +182,9 @@ impl OperitApplication {
                 .clone()
                 .expect("JavaScript runtime requires a HostJavaScriptRuntimeHost"),
         );
-        let chatFileSystemHost = hostManager
-            .fileSystemHost
-            .clone()
-            .expect("Chat runtime requires a FileSystemHost");
+        let chatFilesystem = Arc::new(hostManager.vfs().expect("Chat runtime requires VFS"));
         let chatRuntimeHolder = Arc::new(AsyncMutex::new(ChatRuntimeHolder::new(
-            chatFileSystemHost.clone(),
+            chatFilesystem.clone(),
         )));
         let runtimeToolSupport =
             ToolRuntimeSupportService::create(hostManager.clone(), chatRuntimeHolder.clone());
@@ -236,7 +201,7 @@ impl OperitApplication {
             .bindRuntimeServices(toolHandler.clone(), providerRuntimeContext.clone())
             .expect("tool runtime services must bind exactly once");
         let initializedChatRuntimeHolder = ChatRuntimeHolder::newWithRuntimeDependencies(
-            chatFileSystemHost,
+            chatFilesystem,
             toolHandler.clone(),
             providerRuntimeContext.clone(),
         );
@@ -293,7 +258,7 @@ impl OperitApplication {
         const CLEAN_ON_EXIT_PATH: &str = "/operitapp/data/temp/clean_on_exit";
         fileSystem.makeDirectory(CLEAN_ON_EXIT_PATH, true)?;
         for entry in fileSystem.listFiles(CLEAN_ON_EXIT_PATH)? {
-            let path = PathMapper::joinVfsPath(CLEAN_ON_EXIT_PATH, &entry.name)?;
+            let path = VfsPath::joinVfsPath(CLEAN_ON_EXIT_PATH, &entry.name)?;
             fileSystem.deleteFile(&path, entry.isDirectory)?;
         }
         Ok(())
@@ -301,38 +266,12 @@ impl OperitApplication {
 
     /// Builds the virtual file system backed by the configured runtime hosts.
     fn runtimeFileSystem(&self) -> Result<VisualFileSystem, String> {
-        let runtimeStorageHost = self
-            .hostManager
-            .runtimeStorageHost
-            .as_ref()
-            .ok_or_else(|| {
-                "RuntimeStorageHost is not registered for runtime file-system access".to_string()
-            })?;
-        let runtimeRoot = runtimeStorageHost.runtimeRootDir().ok_or_else(|| {
-            "RuntimeStorageHost runtime root is not configured for runtime file-system access"
-                .to_string()
-        })?;
-        let workspaceRoot = runtimeStorageHost.workspaceRootDir().ok_or_else(|| {
-            "RuntimeStorageHost workspace root is not configured for runtime file-system access"
-                .to_string()
-        })?;
-        let fileSystemHost = self.hostManager.fileSystemHost.clone().ok_or_else(|| {
-            "FileSystemHost is not registered for runtime file-system access".to_string()
-        })?;
-        Ok(VisualFileSystem::new(
-            fileSystemHost,
-            PathMapper::new(runtimeRoot, workspaceRoot, runtimeStorageHost.clone()),
-        ))
+        self.hostManager.vfs()
     }
 
     /// Ensures a mapped directory exists through the configured file-system host.
     fn ensureHostDirectory(&self, path: &std::path::Path) -> Result<(), String> {
-        let fileSystemHost = self.hostManager.fileSystemHost.as_ref().ok_or_else(|| {
-            "FileSystemHost is not registered for runtime directory creation".to_string()
-        })?;
-        fileSystemHost
-            .makeDirectory(&path.to_string_lossy(), true)
-            .map_err(|error| error.message)
+        self.runtimeFileSystem()?.makeDirectory(&path.to_string_lossy(), true)
     }
 
     /// Initializes persistent stores, prompt managers, tool handlers, plugins, and runtime events.
@@ -782,7 +721,7 @@ impl OperitApplication {
             .lock()
             .map_err(|error| error.to_string())?
             .prepareMarketArtifactDownload(&fileName)?;
-        let vfs = operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(&self.hostManager)?;
+        let vfs = (&self.hostManager).vfs()?;
         let directory = std::path::Path::new(&targetPath)
             .parent()
             .map(|path| path.to_string_lossy().to_string());

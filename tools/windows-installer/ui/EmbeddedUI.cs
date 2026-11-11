@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Web.Script.Serialization;
@@ -34,7 +35,11 @@ namespace Operit.Installer
             string version = session["OPERIT_RELEASE_VERSION"];
             bool installed = session.EvaluateCondition("Installed");
             bool removing = string.Equals(session["REMOVE"], "ALL", StringComparison.OrdinalIgnoreCase);
-            thread = new Thread(() => RunWindow(version, folder, installed, removing));
+            var operation = SetupOperationSelection.Resolve(removing,
+                Version.Parse(session["ProductVersion"]),
+                ProductInstallation.GetRelatedProducts(session["UpgradeCode"])
+                    .Where(product => product.IsInstalled).Select(product => product.ProductVersion));
+            thread = new Thread(() => RunWindow(version, folder, operation, installed));
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
             if (WaitHandle.WaitAny(new WaitHandle[] { start, exit }) == 1)
@@ -46,7 +51,7 @@ namespace Operit.Installer
                 throw new InstallCanceledException();
             }
             session["INSTALLFOLDER"] = window.InstallFolder;
-            if (window.Operation == SetupOperation.Repair)
+            if (installed && window.Operation == SetupOperation.Repair)
             {
                 session["REINSTALL"] = "ALL";
                 session["REINSTALLMODE"] = "amus";
@@ -75,11 +80,11 @@ namespace Operit.Installer
         }
 
         /// <summary>Creates the UI on its own STA thread and always releases initialization waiters.</summary>
-        private void RunWindow(string version, string folder, bool installed, bool removing)
+        private void RunWindow(string version, string folder, SetupOperation operation, bool installed)
         {
             try
             {
-                window = new SetupWindow(version, folder, installed, removing, start);
+                window = new SetupWindow(version, folder, operation, installed, start);
                 new Application { ShutdownMode = ShutdownMode.OnMainWindowClose }.Run(window);
             }
             catch (Exception error) { startupError = error; }

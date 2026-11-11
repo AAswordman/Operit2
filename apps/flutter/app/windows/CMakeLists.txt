@@ -111,6 +111,11 @@ endif()
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
+# Install Bash after the bundle prefix is configured so its target expression is
+# evaluated in the destination, alongside the other application runtime files.
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/runner/$<CONFIG>/bash"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+
 # Ship the compiler's redistributable DLLs so fresh Windows users can launch the app.
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
 include(InstallRequiredSystemLibraries)

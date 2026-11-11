@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use operit_host_api::FileSystemHost;
+
 use operit_host_api::HostManager::HostManager;
 use operit_model::SttConfig::{SttConfig, SttProviderType, SttRecognitionResult};
 use operit_providers::stt::SpeechToTextServiceFactory::SpeechToTextServiceFactory;
@@ -137,23 +137,19 @@ impl SttRecognitionService {
             ));
         }
         let inputDescription = audioInspection.describe();
-        let fileSystemHost = self
-            .context
-            .fileSystemHost
-            .as_ref()
-            .ok_or_else(|| "FileSystemHost is required for LOCAL_MODEL STT".to_string())?;
-        fileSystemHost
+        let filesystem = self.context.vfs()?;
+        filesystem
             .makeDirectory(&self.temporaryAudioDirectory.to_string_lossy(), true)
             .map_err(errorString)?;
         let audioPath = self
             .temporaryAudioDirectory
             .join(format!("local-stt-{}.wav", Uuid::new_v4()));
         let audioPath = audioPath.to_string_lossy().to_string();
-        fileSystemHost
+        filesystem
             .writeFileBytes(&audioPath, &audioBytes)
             .map_err(errorString)?;
         let recognition = localProvider.transcribeAudio(model, audioPath.clone(), language);
-        let cleanup = fileSystemHost
+        let cleanup = filesystem
             .deleteFile(&audioPath, false)
             .map_err(errorString);
         match (recognition, cleanup) {

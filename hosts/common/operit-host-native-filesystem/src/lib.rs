@@ -7,7 +7,7 @@ use globset::GlobBuilder;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 use ignore::WalkBuilder;
-use operit_host_api::{
+use operit_host_contract::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
     GrepCodeResult, GrepFileMatch, GrepLineMatch, HostEnvironmentDescriptor, HostError, HostResult,
 };
@@ -22,14 +22,14 @@ pub struct NativeFileAppendHandle {
 
 impl NativeFileAppendHandle {
     /// Opens one append-only file and reads its starting size once.
-    pub fn open(path: &str) -> HostResult<Box<dyn operit_host_api::FileAppendHandle>> {
+    pub fn open(path: &str) -> HostResult<Box<dyn operit_host_contract::FileAppendHandle>> {
         let file = fs::OpenOptions::new().create(true).append(true).open(path)?;
         let length = file.metadata()?.len();
         Ok(Box::new(Self { file, length }))
     }
 }
 
-impl operit_host_api::FileAppendHandle for NativeFileAppendHandle {
+impl operit_host_contract::FileAppendHandle for NativeFileAppendHandle {
     /// Returns the byte count maintained by the sole writer.
     fn byteLength(&self) -> u64 {
         self.length
@@ -114,7 +114,7 @@ impl Default for PosixFileSystemHost {
 
 impl FileSystemHost for PosixFileSystemHost {
     /// Opens a persistent append descriptor after validating the native path.
-    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn operit_host_api::FileAppendHandle>> {
+    fn openAppendFile(&self, path: &str) -> HostResult<Box<dyn operit_host_contract::FileAppendHandle>> {
         self.validatePath(path, "path")?;
         NativeFileAppendHandle::open(path)
     }

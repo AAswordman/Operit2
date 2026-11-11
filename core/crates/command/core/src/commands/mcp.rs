@@ -164,7 +164,7 @@ fn import_mcp_config(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let configArg = required_arg(args, 1, "operit2 mcp import <json-or-@file>")?;
-    let configJson = read_content_arg(configArg)?;
+    let configJson = read_content_arg(&context, configArg)?;
     let count = mcp_local_server(&context).mergeConfigFromJson(&configJson)?;
     output.push_stdout_line(format!("MCP servers imported: {count}"));
     output.setJsonStdout(serde_json::json!({"imported": count}));
@@ -343,7 +343,7 @@ fn save_mcp_config(
 ) -> Result<(), String> {
     let id = required_arg(args, 1, "operit2 mcp config-set <id> <json-or-@file>")?;
     let configArg = required_arg(args, 2, "operit2 mcp config-set <id> <json-or-@file>")?;
-    let configJson = read_content_arg(configArg)?;
+    let configJson = read_content_arg(&context, configArg)?;
     let saved = mcp_local_server(&context).savePluginConfig(id, &configJson)?;
     if !saved {
         return Err(format!("MCP config did not contain server: {id}"));
@@ -399,8 +399,8 @@ fn install_mcp_from_github(
     let usage = "operit2 mcp install-github <id> <repo-url> <name> <description-or-@file> <author> <version> [config-or-@file]";
     let id = required_arg(args, 1, usage)?.to_string();
     let repoUrl = required_arg(args, 2, usage)?.to_string();
-    let metadata = metadata_from_install_args(args, usage)?;
-    let mcpConfig = optional_content_arg(args.get(7))?;
+    let metadata = metadata_from_install_args(&context, args, usage)?;
+    let mcpConfig = optional_content_arg(&context, args.get(7))?;
     match MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
         .installMCPServerWithObject(
             id.clone(),
@@ -437,8 +437,8 @@ fn install_mcp_from_zip(
     let usage = "operit2 mcp install-zip <id> <zip-path> <name> <description-or-@file> <author> <version> [config-or-@file]";
     let id = required_arg(args, 1, usage)?.to_string();
     let zipPath = required_arg(args, 2, usage)?.to_string();
-    let metadata = metadata_from_install_args(args, usage)?;
-    let mcpConfig = optional_content_arg(args.get(7))?;
+    let metadata = metadata_from_install_args(&context, args, usage)?;
+    let mcpConfig = optional_content_arg(&context, args.get(7))?;
     match MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
         .installMCPServerFromZip(
             id.clone(),
@@ -494,7 +494,7 @@ fn save_mcp_metadata(
     let id = required_arg(args, 1, usage)?;
     require_mcp_server(&context, id)?;
     let name = required_arg(args, 2, usage)?.to_string();
-    let description = read_content_arg(required_arg(args, 3, usage)?)?;
+    let description = read_content_arg(&context, required_arg(args, 3, usage)?)?;
     let author = required_arg(args, 4, usage)?.to_string();
     let version = required_arg(args, 5, usage)?.to_string();
     let metadata = PluginMetadata {
@@ -602,18 +602,22 @@ fn parse_key_value(value: &str) -> Result<(String, String), String> {
     Ok((key, value[separator + 1..].to_string()))
 }
 
-fn metadata_from_install_args(args: &[String], usage: &str) -> Result<PluginMetadata, String> {
+fn metadata_from_install_args(
+    context: &HostManager,
+    args: &[String],
+    usage: &str,
+) -> Result<PluginMetadata, String> {
     Ok(PluginMetadata {
         name: required_arg(args, 3, usage)?.to_string(),
-        description: read_content_arg(required_arg(args, 4, usage)?)?,
+        description: read_content_arg(&context, required_arg(args, 4, usage)?)?,
         author: required_arg(args, 5, usage)?.to_string(),
         version: required_arg(args, 6, usage)?.to_string(),
     })
 }
 
-fn optional_content_arg(value: Option<&String>) -> Result<String, String> {
+fn optional_content_arg(context: &HostManager, value: Option<&String>) -> Result<String, String> {
     value
-        .map(|item| read_content_arg(item))
+        .map(|item| read_content_arg(&context, item))
         .transpose()
         .map(|item| item.unwrap_or_default())
 }

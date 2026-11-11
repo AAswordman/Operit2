@@ -126,7 +126,13 @@ impl FileSystemHost for AndroidFileSystemHost {
         self.inner.writeFileBytes(path, content)
     }
 
+    /// Appends transfer chunks through the backend that owns the file resource.
     fn appendFileBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        if isResource(path)? {
+            let value = crate::document_filesystem::call(json!({"operation": "writeFile", "path": path,
+                "content": base64::engine::general_purpose::STANDARD.encode(content), "append": true}))?;
+            return if value.is_null() { Ok(()) } else { Err(HostError::new("Invalid document operation response")) };
+        }
         self.inner.appendFileBytes(path, content)
     }
 

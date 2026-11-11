@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::{WebVisitHost, WebVisitRequest, WebVisitResult};
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use url::Url;
 
 use operit_tools::tools::ToolResultDataClasses::{
@@ -387,14 +387,14 @@ fn buildInlineContentPreview(fullContent: &str, savedPath: &str) -> String {
 mod storage_tests {
     use super::*;
     use operit_host_native_filesystem::PosixFileSystemHost;
-    use operit_tools::files::PathMapper::PathMapper;
+    use operit_vfs::VfsPath;
 
     #[test]
     fn long_visit_is_saved_through_vfs_and_readable_by_virtual_path() {
         let root = std::env::temp_dir().join(format!("operit-visit-test-{}", uuid::Uuid::new_v4()));
-        let mapper = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
+
         let host = Arc::new(PosixFileSystemHost::new());
-        let tool = StandardWebVisitTool::new(None, VisualFileSystem::new(host.clone(), mapper.clone()));
+        let tool = StandardWebVisitTool::new(None, VisualFileSystem::builtinOnly(host.clone(), root.clone(), root.join("workspaces")));
         let content = "page content ".repeat(2000);
         let result = webVisitResultToVisitData(WebVisitResult {
             url: "https://example.com/".into(), title: "Example".into(), content: content.clone(),
@@ -404,7 +404,7 @@ mod storage_tests {
         let path = result.contentSavedTo.unwrap();
         assert!(path.starts_with("/operitapp/data/temp/visit_web/"));
         assert!(result.contentTruncated);
-        let vfs = VisualFileSystem::new(host, mapper);
+        let vfs = VisualFileSystem::builtinOnly(host, root.clone(), root.join("workspaces"));
         assert!(vfs.readFile(&path).unwrap().contains(&content));
         std::fs::remove_dir_all(root).unwrap();
     }

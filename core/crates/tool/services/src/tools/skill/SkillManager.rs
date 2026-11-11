@@ -1,10 +1,11 @@
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_store::ExtensionStore::ExtensionStore;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use operit_host_api::{FileSystemHost, TimeUtils::currentLocalDateTime};
+use operit_host_api::{TimeUtils::currentLocalDateTime};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,7 @@ const QUICK_PLUGIN_CREATOR_SKILL_NAME: &str = "PackageBuilder";
 #[derive(Clone)]
 pub struct SkillManager {
     paths: RuntimeStorePaths,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,15 +29,15 @@ pub struct BundledExternalSkillCandidate {
 impl SkillManager {
     /// Creates a skill manager using the default runtime store paths.
     #[allow(non_snake_case)]
-    pub fn fromDefaultPaths(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
-        Self::new(RuntimeStorePaths::default(), fileSystemHost)
+    pub fn fromDefaultPaths(filesystem: Arc<VisualFileSystem>) -> Self {
+        Self::new(RuntimeStorePaths::default(), filesystem)
     }
 
     /// Creates a skill manager rooted at explicit runtime store paths.
-    pub fn new(paths: RuntimeStorePaths, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+    pub fn new(paths: RuntimeStorePaths, filesystem: Arc<VisualFileSystem>) -> Self {
         Self {
             paths,
-            fileSystemHost,
+            filesystem,
         }
     }
 
@@ -44,7 +45,7 @@ impl SkillManager {
     #[allow(non_snake_case)]
     pub fn getSkillsDirectoryPath(&self) -> String {
         let skillsDir = self.getSkillsRootDir();
-        skillsDir.to_string_lossy().to_string()
+        skillsDir.to_string_lossy().replace('\\', "/")
     }
 
     /// Scans both locations using the same skill parser and rejects conflicting names explicitly.
@@ -127,7 +128,7 @@ impl SkillManager {
         } else { None };
         let skillsPath = hostPath(&skillsDir);
 
-        if let Err(error) = self.fileSystemHost.makeDirectory(&skillsPath, true) {
+        if let Err(error) = self.filesystem.makeDirectory(&skillsPath, true) {
             skillLoadErrors.insert(
                 "skills".to_string(),
                 format!("Cannot access skills directory: {}", error),
@@ -135,7 +136,7 @@ impl SkillManager {
             return (availableSkills, skillLoadErrors);
         }
 
-        let children = match self.fileSystemHost.listFiles(&skillsPath) {
+        let children = match self.filesystem.listFiles(&skillsPath) {
             Ok(children) => children,
             Err(error) => {
                 skillLoadErrors.insert(
@@ -155,7 +156,7 @@ impl SkillManager {
             let childPath = skillsDir.join(&childName);
             let primarySkillFile = childPath.join("SKILL.md");
             let lowerSkillFile = childPath.join("skill.md");
-            let primaryInfo = match self.fileSystemHost.fileExists(&hostPath(&primarySkillFile)) {
+            let primaryInfo = match self.filesystem.fileExists(&hostPath(&primarySkillFile)) {
                 Ok(info) => info,
                 Err(error) => {
                     skillLoadErrors.insert(childName.clone(), error.to_string());
@@ -168,7 +169,7 @@ impl SkillManager {
                 lowerSkillFile
             };
 
-            let skillInfo = match self.fileSystemHost.fileExists(&hostPath(&skillFile)) {
+            let skillInfo = match self.filesystem.fileExists(&hostPath(&skillFile)) {
                 Ok(info) => info,
                 Err(error) => {
                     skillLoadErrors.insert(childName.clone(), error.to_string());
@@ -183,7 +184,7 @@ impl SkillManager {
                 continue;
             }
 
-            match parseSkillMetadata(self.fileSystemHost.as_ref(), &skillFile) {
+            match parseSkillMetadata(self.filesystem.as_ref(), &skillFile) {
                 Ok((name, description)) => {
                     let skillName = if name.trim().is_empty() {
                         childName.clone()
@@ -193,7 +194,7 @@ impl SkillManager {
                     if availableSkills.contains_key(&skillName) {
                         let existingDirName = match availableSkills.get(&skillName) {
                             Some(skill) => match skill.directory.file_name() {
-                                Some(name) => name.to_string_lossy().to_string(),
+                                Some(name) => name.to_string_lossy().replace('\\', "/"),
                                 None => skillName.clone(),
                             },
                             None => skillName.clone(),
@@ -316,14 +317,14 @@ impl SkillManager {
 
         let skillsRoot = self.getSkillsRootDir();
         let skillsRootPath = hostPath(&skillsRoot);
-        self.fileSystemHost
+        self.filesystem
             .makeDirectory(&skillsRootPath, true)
             .map_err(|error| format!("Cannot access skills directory: {}", error))?;
 
         let skillRoot = skillsRoot.join(skillName);
         let skillRootPath = hostPath(&skillRoot);
         let skillRootInfo = self
-            .fileSystemHost
+            .filesystem
             .fileExists(&skillRootPath)
             .map_err(|error| error.to_string())?;
         if skillRootInfo.exists && !skillRootInfo.isDirectory {
@@ -332,15 +333,15 @@ impl SkillManager {
                 skillRoot.to_string_lossy()
             ));
         }
-        self.fileSystemHost
+        self.filesystem
             .makeDirectory(&skillRootPath, true)
             .map_err(|error| format!("Failed to create skill directory: {}", error))?;
 
-        clearBundledSkillFiles(self.fileSystemHost.as_ref(), &skillRoot)?;
+        clearBundledSkillFiles(self.filesystem.as_ref(), &skillRoot)?;
         for asset in skillAssets {
             let normalizedPath = normalizeAssetRelativePath(asset.path)?;
             let outputFile = skillRoot.join(normalizedPath);
-            self.fileSystemHost
+            self.filesystem
                 .writeFileBytes(&hostPath(&outputFile), asset.bytes)
                 .map_err(|error| format!("Failed to write bundled skill asset: {}", error))?;
         }
@@ -352,7 +353,7 @@ impl SkillManager {
             let normalizedPath = normalizeAssetRelativePath(asset.path)?;
             let outputFile = skillRoot.join(normalizedPath);
             let bytes = asset.readBytes()?;
-            self.fileSystemHost
+            self.filesystem
                 .writeFileBytes(&hostPath(&outputFile), &bytes)
                 .map_err(|error| format!("Failed to write bundled skill package asset: {}", error))?;
         }
@@ -387,7 +388,7 @@ impl SkillManager {
     pub fn readSkillContent(&self, skillName: &str) -> Option<String> {
         let skills = self.getAvailableSkills();
         let skill = skills.get(skillName)?;
-        self.fileSystemHost
+        self.filesystem
             .readFile(&hostPath(&skill.skillFile))
             .ok()
     }
@@ -397,7 +398,7 @@ impl SkillManager {
     pub fn getSkillSystemPrompt(&self, skillName: &str) -> Option<String> {
         let skills = self.getAvailableSkills();
         let skill = skills.get(skillName)?;
-        let content = match self.fileSystemHost.readFile(&hostPath(&skill.skillFile)) {
+        let content = match self.filesystem.readFile(&hostPath(&skill.skillFile)) {
             Ok(value) => value,
             Err(_) => String::new(),
         };
@@ -419,7 +420,7 @@ impl SkillManager {
         ));
         prompt.push_str("Directory structure:\n");
         prompt.push_str(&buildDirectoryTreeText(
-            self.fileSystemHost.as_ref(),
+            self.filesystem.as_ref(),
             &skill.directory,
         ));
         prompt.push_str("\n\nSKILL.md:\n");
@@ -450,12 +451,12 @@ impl SkillManager {
     ) -> String {
         let skillsRoot = self.getSkillsRootDir();
         let skillsRootPath = hostPath(&skillsRoot);
-        if let Err(error) = self.fileSystemHost.makeDirectory(&skillsRootPath, true) {
+        if let Err(error) = self.filesystem.makeDirectory(&skillsRootPath, true) {
             return format!("Cannot access skills directory: {}", error);
         }
 
         let tmpDir = skillsRoot.join(format!(".import_tmp_{}", currentTimeMillis()));
-        if let Err(error) = self.fileSystemHost.makeDirectory(&hostPath(&tmpDir), true) {
+        if let Err(error) = self.filesystem.makeDirectory(&hostPath(&tmpDir), true) {
             return format!(
                 "Failed to create temporary import directory {}: {}",
                 tmpDir.to_string_lossy(),
@@ -470,7 +471,7 @@ impl SkillManager {
             &skillsRoot,
             &tmpDir,
         );
-        let _ = self.fileSystemHost.deleteFile(&hostPath(&tmpDir), true);
+        let _ = self.filesystem.deleteFile(&hostPath(&tmpDir), true);
         result
     }
 
@@ -483,7 +484,7 @@ impl SkillManager {
         skillsRoot: &Path,
         tmpDir: &Path,
     ) -> String {
-        if let Err(error) = unzipBytesToDirectory(self.fileSystemHost.as_ref(), zipBytes, tmpDir) {
+        if let Err(error) = unzipBytesToDirectory(self.filesystem.as_ref(), zipBytes, tmpDir) {
             return format!("Failed to import skill: {}", error);
         }
 
@@ -492,13 +493,13 @@ impl SkillManager {
             .map(|value| value.trim_matches('/').to_string())
             .filter(|value| !value.is_empty());
 
-        let zipRootDir = match singleChildDirectory(self.fileSystemHost.as_ref(), tmpDir) {
+        let zipRootDir = match singleChildDirectory(self.filesystem.as_ref(), tmpDir) {
             Some(path) => path,
             None => tmpDir.to_path_buf(),
         };
         let searchRoot = if let Some(subDir) = normalizedSubDir.as_ref() {
             match safeChildPath(&zipRootDir, subDir) {
-                Ok(path) => match self.fileSystemHost.fileExists(&hostPath(&path)) {
+                Ok(path) => match self.filesystem.fileExists(&hostPath(&path)) {
                     Ok(info) if info.exists && info.isDirectory => path,
                     Ok(_) => return format!("Import path not found: {}", subDir),
                     Err(error) => return format!("Failed to import skill: {}", error),
@@ -509,9 +510,9 @@ impl SkillManager {
             tmpDir.to_path_buf()
         };
 
-        let skillMdCandidates = match directSkillFile(self.fileSystemHost.as_ref(), &searchRoot) {
+        let skillMdCandidates = match directSkillFile(self.filesystem.as_ref(), &searchRoot) {
             Some(skillFile) => vec![skillFile],
-            None => findSkillFiles(self.fileSystemHost.as_ref(), &searchRoot, 10),
+            None => findSkillFiles(self.filesystem.as_ref(), &searchRoot, 10),
         };
         if skillMdCandidates.is_empty() {
             return if normalizedSubDir.is_some() {
@@ -527,7 +528,7 @@ impl SkillManager {
         };
 
         let (metaName, metaDesc) =
-            match parseSkillMetadata(self.fileSystemHost.as_ref(), &selectedSkillFile) {
+            match parseSkillMetadata(self.filesystem.as_ref(), &selectedSkillFile) {
                 Ok(value) => value,
                 Err(error) => return format!("Failed to import skill: {}", error),
             };
@@ -536,17 +537,17 @@ impl SkillManager {
             metaName.trim().to_string()
         } else if selectedSkillDir == tmpDir {
             match archiveLabel.file_stem() {
-                Some(value) => value.to_string_lossy().to_string(),
+                Some(value) => value.to_string_lossy().replace('\\', "/"),
                 None => "skill".to_string(),
             }
         } else {
             let dirName = selectedSkillDir
                 .file_name()
-                .map(|value| value.to_string_lossy().to_string());
+                .map(|value| value.to_string_lossy().replace('\\', "/"));
             match dirName {
                 Some(value) if !value.trim().is_empty() => value,
                 _ => match archiveLabel.file_stem() {
-                    Some(value) => value.to_string_lossy().to_string(),
+                    Some(value) => value.to_string_lossy().replace('\\', "/"),
                     None => "skill".to_string(),
                 },
             }
@@ -561,7 +562,7 @@ impl SkillManager {
         }
         let finalDir = skillsRoot.join(&finalDirName);
         let finalDirPath = hostPath(&finalDir);
-        let finalDirInfo = match self.fileSystemHost.fileExists(&finalDirPath) {
+        let finalDirInfo = match self.filesystem.fileExists(&finalDirPath) {
             Ok(info) => info,
             Err(error) => return format!("Failed to import skill: {}", error),
         };
@@ -569,7 +570,7 @@ impl SkillManager {
             return format!("Skill '{}' already exists", finalDirName);
         }
         if let Err(error) =
-            self.fileSystemHost
+            self.filesystem
                 .copyFile(&hostPath(selectedSkillDir), &finalDirPath, true)
         {
             return format!("Failed to import skill: {}", error);
@@ -590,10 +591,10 @@ impl SkillManager {
 
 #[allow(non_snake_case)]
 fn parseSkillMetadata(
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     skillFile: &Path,
 ) -> Result<(String, String), String> {
-    let content = fileSystemHost
+    let content = filesystem
         .readFile(&hostPath(skillFile))
         .map_err(|error| error.to_string())?;
     Ok(parseSkillMetadataContent(&content))
@@ -601,7 +602,7 @@ fn parseSkillMetadata(
 
 /// Converts a package metadata path into the corresponding host path string.
 fn hostPath(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[allow(non_snake_case)]
@@ -673,15 +674,15 @@ fn normalizeAssetRelativePath(path: &str) -> Result<PathBuf, String> {
 
 #[allow(non_snake_case)]
 fn clearBundledSkillFiles(
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     skillRoot: &Path,
 ) -> Result<(), String> {
-    let children = fileSystemHost
+    let children = filesystem
         .listFiles(&hostPath(skillRoot))
         .map_err(|error| format!("Failed to read bundled skill directory: {}", error))?;
     for child in children {
         let path = skillRoot.join(child.name);
-        fileSystemHost
+        filesystem
             .deleteFile(&hostPath(&path), child.isDirectory)
             .map_err(|error| format!("Failed to clear bundled skill entry: {}", error))?;
     }
@@ -689,9 +690,9 @@ fn clearBundledSkillFiles(
 }
 
 #[allow(non_snake_case)]
-fn buildDirectoryTreeText(fileSystemHost: &dyn FileSystemHost, rootDir: &Path) -> String {
+fn buildDirectoryTreeText(filesystem: &VisualFileSystem, rootDir: &Path) -> String {
     let mut output = String::new();
-    walkDirectory(fileSystemHost, rootDir, "", &mut output);
+    walkDirectory(filesystem, rootDir, "", &mut output);
     if output.trim().is_empty() {
         "(empty directory)".to_string()
     } else {
@@ -701,12 +702,12 @@ fn buildDirectoryTreeText(fileSystemHost: &dyn FileSystemHost, rootDir: &Path) -
 
 #[allow(non_snake_case)]
 fn walkDirectory(
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     dir: &Path,
     indent: &str,
     output: &mut String,
 ) {
-    let Ok(mut children) = fileSystemHost.listFiles(&hostPath(dir)) else {
+    let Ok(mut children) = filesystem.listFiles(&hostPath(dir)) else {
         return;
     };
     children.sort_by(|left, right| {
@@ -723,7 +724,7 @@ fn walkDirectory(
         output.push_str(&child.name);
         if child.isDirectory {
             output.push_str("/\n");
-            walkDirectory(fileSystemHost, &childPath, &format!("{indent}  "), output);
+            walkDirectory(filesystem, &childPath, &format!("{indent}  "), output);
         } else {
             output.push('\n');
         }
@@ -737,7 +738,7 @@ fn currentTimeMillis() -> u128 {
 
 #[allow(non_snake_case)]
 fn unzipBytesToDirectory(
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     zipBytes: &[u8],
     destinationDir: &Path,
 ) -> Result<(), String> {
@@ -753,7 +754,7 @@ fn unzipBytesToDirectory(
         let outPath = hostPath(&outFile);
 
         if entry.is_dir() {
-            fileSystemHost
+            filesystem
                 .makeDirectory(&outPath, true)
                 .map_err(|error| error.to_string())?;
         } else {
@@ -761,7 +762,7 @@ fn unzipBytesToDirectory(
             entry
                 .read_to_end(&mut content)
                 .map_err(|error| error.to_string())?;
-            fileSystemHost
+            filesystem
                 .writeFileBytes(&outPath, &content)
                 .map_err(|error| error.to_string())?;
         }
@@ -771,8 +772,8 @@ fn unzipBytesToDirectory(
 }
 
 #[allow(non_snake_case)]
-fn singleChildDirectory(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Option<PathBuf> {
-    let children = fileSystemHost.listFiles(&hostPath(root)).ok()?;
+fn singleChildDirectory(filesystem: &VisualFileSystem, root: &Path) -> Option<PathBuf> {
+    let children = filesystem.listFiles(&hostPath(root)).ok()?;
     if children.len() == 1 && children[0].isDirectory {
         Some(root.join(&children[0].name))
     } else {
@@ -781,17 +782,17 @@ fn singleChildDirectory(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Opt
 }
 
 #[allow(non_snake_case)]
-fn directSkillFile(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Option<PathBuf> {
+fn directSkillFile(filesystem: &VisualFileSystem, root: &Path) -> Option<PathBuf> {
     let primary = root.join("SKILL.md");
     if matches!(
-        fileSystemHost.fileExists(&hostPath(&primary)),
+        filesystem.fileExists(&hostPath(&primary)),
         Ok(info) if info.exists && !info.isDirectory
     ) {
         return Some(primary);
     }
     let lower = root.join("skill.md");
     if matches!(
-        fileSystemHost.fileExists(&hostPath(&lower)),
+        filesystem.fileExists(&hostPath(&lower)),
         Ok(info) if info.exists && !info.isDirectory
     ) {
         return Some(lower);
@@ -800,15 +801,15 @@ fn directSkillFile(fileSystemHost: &dyn FileSystemHost, root: &Path) -> Option<P
 }
 
 #[allow(non_snake_case)]
-fn findSkillFiles(fileSystemHost: &dyn FileSystemHost, root: &Path, limit: usize) -> Vec<PathBuf> {
+fn findSkillFiles(filesystem: &VisualFileSystem, root: &Path, limit: usize) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    findSkillFilesInner(fileSystemHost, root, limit, &mut result);
+    findSkillFilesInner(filesystem, root, limit, &mut result);
     result
 }
 
 #[allow(non_snake_case)]
 fn findSkillFilesInner(
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     root: &Path,
     limit: usize,
     result: &mut Vec<PathBuf>,
@@ -816,7 +817,7 @@ fn findSkillFilesInner(
     if result.len() >= limit {
         return;
     }
-    let Ok(children) = fileSystemHost.listFiles(&hostPath(root)) else {
+    let Ok(children) = filesystem.listFiles(&hostPath(root)) else {
         return;
     };
     for child in children {
@@ -831,7 +832,7 @@ fn findSkillFilesInner(
                 result.push(path);
             }
         } else {
-            findSkillFilesInner(fileSystemHost, &path, limit, result);
+            findSkillFilesInner(filesystem, &path, limit, result);
         }
     }
 }

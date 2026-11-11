@@ -13,7 +13,7 @@ use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 
 /// Retains scheduled work so the test can observe dispatch before any JS runtime is started.
 #[derive(Default)]
@@ -68,10 +68,7 @@ fn regenerated_replies_switch_and_delete_without_reusing_another_revision_stream
     let runtime = root.join("runtime");
     let workspaces = root.join("workspaces");
     std::fs::create_dir_all(&runtime).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        runtime.clone(),
-        workspaces.clone(),
-    ));
+
     let host = Arc::new(NativeRuntimeStorageHost::new(
         runtime.clone(),
         workspaces.clone(),
@@ -79,7 +76,7 @@ fn regenerated_replies_switch_and_delete_without_reusing_another_revision_stream
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host);
     setDefaultHostRuntimeTaskSchedulerHost(Arc::new(VariantScheduler::default()));
-    let database = AppDatabase::getDatabase(RuntimeStorePaths::new(runtime, workspaces)).unwrap();
+    let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
     database
         .chatDao()
         .insertChat(ChatEntity::new(

@@ -174,7 +174,7 @@ test('Android cannot bypass its host-owned creation boundary', () => {
 
 /** Requires the Kotlin producer to supply every shared Rust device field. */
 test('Android device JSON matches the required shared host schema', () => {
-  const api = source('core/crates/foundation/host-api/src/lib.rs');
+  const api = source('core/crates/foundation/host-contract/src/lib.rs');
   const contract = api.match(/#\[derive\(([^\n]+)\)\]\s*pub struct DeviceInfoData \{([^}]+)\}/);
   assert.ok(contract);
   assert.match(contract[1], /Serialize, Deserialize/);

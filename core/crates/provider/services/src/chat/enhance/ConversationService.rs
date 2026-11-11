@@ -17,7 +17,7 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
-use operit_tools::files::PathMapper::PathMapper;
+use operit_vfs::VfsPath;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
 use operit_util::stream::Stream::Stream;
 use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
@@ -194,7 +194,7 @@ impl ConversationService {
                     if !["/app/", "/operitapp/", "/mnt/", "/virtual/"].iter().any(|root| path.starts_with(root)) {
                         return capture[0].to_string();
                     }
-                    match PathMapper::relativeFileToolPath(base, &path) {
+                    match VfsPath::relativeFileToolPath(base, &path) {
                         Ok(relative) => format!("{}\"{}\"", &capture[1], relative.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;").replace('\'', "&#39;")),
                         Err(_) => capture[0].to_string(),
                     }
@@ -206,7 +206,7 @@ impl ConversationService {
                 let bodyStart = start + openEnd + 1;
                 let Some(closeStart) = content[bodyStart..end].rfind('<') else { continue; };
                 let bodyEnd = bodyStart + closeStart;
-                if let Ok(relative) = PathMapper::relativeFileToolPath(base, &content[bodyStart..bodyEnd]) {
+                if let Ok(relative) = VfsPath::relativeFileToolPath(base, &content[bodyStart..bodyEnd]) {
                     content.replace_range(bodyStart..bodyEnd, &relative);
                 }
             }
@@ -1087,7 +1087,7 @@ mod relative_attachment_tests {
         assert!(prepared(content, "/operitapp/outputs/family").contains(r#"path=".operit/attachments/id/file.pdf""#));
         let visible = prepared(content, "/operitapp/workspaces/project");
         let path = unescape_xml_attribute(&attr_value(&visible, "path").unwrap());
-        assert_eq!(PathMapper::resolveFileToolPath(Some("/operitapp/workspaces/project"), &path).unwrap(),
+        assert_eq!(VfsPath::resolveFileToolPath(Some("/operitapp/workspaces/project"), &path).unwrap(),
             "/operitapp/outputs/family/.operit/attachments/id/file.pdf");
     }
 

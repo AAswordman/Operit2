@@ -16,7 +16,7 @@ use operit_plugin_sdk::js_sdk::JsAsyncIterable;
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_tools::files::PathMapper::PathMapper;
+use operit_vfs::VfsPath;
 use operit_tools::tools::defaultTool::standard::StandardMediaTools::register_native_media;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPToolExecutor::MCPToolExecutor;
@@ -175,30 +175,24 @@ impl AIToolHandler {
             format!("{root}/namespaces/{name}")
         };
         let configDir = RuntimeStorePaths::default().runtime_storage_path(&path);
-        self.getContext()
-            .fileSystemHost
-            .as_ref()
-            .ok_or("FileSystemHost is required for plugin configuration")?
+        self.getContext().vfs()?
             .makeDirectory(&configDir.to_string_lossy(), true)
             .map_err(|error| error.to_string())?;
         let relative = path
             .strip_prefix("runtime/")
             .ok_or("Configuration is outside runtime storage")?;
-        PathMapper::joinVfsPath("/operitapp/data", relative)
+        VfsPath::joinVfsPath("/operitapp/data", relative)
     }
 
     /// Creates persistent local plugin data through the filesystem Host and returns its public VFS path.
     fn createPackageDataDirectory(&self, owner_id: &str, scope: &str) -> Result<String, String> {
         let path = operit_store::ExtensionStore::ExtensionStore::dataPathForScope(owner_id, scope)?;
         let directory = RuntimeStorePaths::default().runtime_storage_path(&path);
-        self.getContext()
-            .fileSystemHost
-            .as_ref()
-            .ok_or("FileSystemHost is required for local plugin data")?
+        self.getContext().vfs()?
             .makeDirectory(&directory.to_string_lossy(), true)
             .map_err(|error| error.to_string())?;
         let relative = path.strip_prefix("runtime/").ok_or("Local plugin data is outside runtime storage")?;
-        PathMapper::joinVfsPath("/operitapp/data", relative)
+        VfsPath::joinVfsPath("/operitapp/data", relative)
     }
 
     fn truncateLogValue(value: &str, maxChars: usize) -> String {
@@ -872,7 +866,7 @@ impl AIToolHandler {
                 error: Some(error.to_string()),
             })?;
         let context = self.getContext();
-        let workspaceBoundary = Self::checkWorkspaceBoundary(&mode, tool, &accessSpec, context.runtimeStorageHost.as_ref());
+        let workspaceBoundary = Self::checkWorkspaceBoundary(&mode, tool, &accessSpec, Some(&context));
         let policyOverrideReason = match (mode.allowsEffect(accessSpec.effect), workspaceBoundary) {
             (_, Err(WorkspaceBoundaryError::InvalidRequest(error))) => {
                 return Err(ToolResult {
@@ -955,7 +949,7 @@ impl AIToolHandler {
         mode: &AiPermissionMode,
         tool: &AITool,
         accessSpec: &ToolAccessSpec,
-        storage: Option<&Arc<dyn operit_host_api::RuntimeStorageHost>>,
+        context: Option<&HostManager>,
     ) -> Result<(), WorkspaceBoundaryError> {
         if *mode == AiPermissionMode::Full {
             return Ok(());
@@ -963,14 +957,14 @@ impl AIToolHandler {
         match &accessSpec.boundary {
             ToolBoundary::None => Ok(()),
             ToolBoundary::FilePath { effect } => {
-                Self::checkWorkspaceWritePath(tool, "path", *effect, storage)
+                Self::checkWorkspaceWritePath(tool, "path", *effect, context)
             }
             ToolBoundary::FilePair {
                 source,
                 destination,
             } => {
-                Self::checkWorkspaceWritePath(tool, "source", *source, storage)?;
-                Self::checkWorkspaceWritePath(tool, "destination", *destination, storage)
+                Self::checkWorkspaceWritePath(tool, "source", *source, context)?;
+                Self::checkWorkspaceWritePath(tool, "destination", *destination, context)
             }
         }
     }
@@ -980,7 +974,7 @@ impl AIToolHandler {
         tool: &AITool,
         parameterName: &str,
         effect: ToolEffect,
-        storage: Option<&Arc<dyn operit_host_api::RuntimeStorageHost>>,
+        context: Option<&HostManager>,
     ) -> Result<(), WorkspaceBoundaryError> {
         if effect == ToolEffect::READ {
             return Ok(());
@@ -1025,29 +1019,13 @@ impl AIToolHandler {
             ));
         }
 
-        let storage = storage.ok_or_else(|| WorkspaceBoundaryError::RequiresApproval(
-            "File tool execution requires its runtime storage Host".to_string()
-        ))?;
-        let runtimeRoot = storage.runtimeRootDir().ok_or_else(|| WorkspaceBoundaryError::InvalidRequest(
-            "Runtime storage Host does not expose its runtime root".to_string()
-        ))?;
-        let workspaceRoot = storage.workspaceRootDir().ok_or_else(|| WorkspaceBoundaryError::InvalidRequest(
-            "Runtime storage Host does not expose its workspace root".to_string()
-        ))?;
-        let mapper = PathMapper::new(runtimeRoot, workspaceRoot, storage.clone());
-        let path = PathMapper::resolveFileToolPath(runtimeContext.workspacePath.as_deref(), path)
-            .map_err(WorkspaceBoundaryError::InvalidRequest)?;
-        let resolvedPath = mapper
-            .resolve(&path)
+        let filesystem = context.ok_or_else(|| WorkspaceBoundaryError::RequiresApproval(
+            "File tool execution requires its runtime VFS".to_string()
+        ))?.vfs().map_err(WorkspaceBoundaryError::InvalidRequest)?;
+        let path = filesystem.resolveResourcePath(runtimeContext.workspacePath.as_deref(), path)
             .map_err(WorkspaceBoundaryError::InvalidRequest)?;
         for folder in &workspaceFolders {
-            let resolvedWorkspace = mapper
-                .resolve(folder)
-                .map_err(WorkspaceBoundaryError::InvalidRequest)?;
-            let relative =
-                PathMapper::relativePath(&resolvedWorkspace.vfsPath, &resolvedPath.vfsPath)
-                    .map_err(WorkspaceBoundaryError::InvalidRequest)?;
-            if relative.is_some() {
+            if filesystem.isWithin(folder, &path).map_err(WorkspaceBoundaryError::InvalidRequest)? {
                 return Ok(());
             }
         }
@@ -1487,17 +1465,8 @@ impl JsExecutionHost for AIToolHandler {
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
         let configDir = operit_util::OperitPaths::pluginConfigDir(plugin_id)?;
         let path = configDir.to_string_lossy().replace('\\', "/");
-        let absolute = RuntimeStorePaths::default().runtime_storage_path(&path);
-        self.getContext()
-            .fileSystemHost
-            .as_ref()
-            .ok_or("FileSystemHost is required for plugin configuration")?
-            .makeDirectory(&absolute.to_string_lossy(), true)
-            .map_err(|e| e.to_string())?;
-        let relative = path
-            .strip_prefix("runtime/")
-            .ok_or("Configuration is outside runtime storage")?;
-        PathMapper::joinVfsPath("/operitapp/data", relative)
+        self.getContext().vfs()?.makeDirectory(&path, true)?;
+        Ok(path)
     }
 
     /// Resolves the executing package owner while keeping arbitrary configuration aliases supported.
@@ -1981,16 +1950,16 @@ mod tests {
     /// Verifies accepted storage paths resolve to one canonical identity and reject escapes.
     #[test]
     fn directory_paths_resolve_to_canonical_owned_storage() {
-        let roots = RuntimeStorePaths::new(std::path::PathBuf::from("storage-root/runtime"), std::path::PathBuf::from("storage-root/workspaces"));
+        let roots = RuntimeStorePaths::default();
         for scope_path in ["device/example/cache.sqlite", "space/example/memory.sqlite"] {
             let relative = format!("plugin_data/{scope_path}");
             let expected = format!("runtime/{relative}");
-            for path in [format!("/operitapp/data/{relative}"), expected.clone(), format!("storage-root/runtime/{relative}")] {
-                assert_eq!(crate::tools::defaultTool::standard::StandardStorageTools::resolve_plugin_storage_path(&path, &roots).unwrap(), expected);
+            for path in [format!("/operitapp/data/{relative}"), expected.clone()] {
+                assert_eq!(crate::tools::defaultTool::standard::StandardStorageTools::resolve_plugin_storage_path(&path).unwrap(), expected);
             }
         }
-        for path in ["/operitapp/workspaces/example/cache.sqlite", "/operitapp/data/../../escape.sqlite", "storage-root/other/cache.sqlite", "/operitapp/database/cache.sqlite"] {
-            assert!(crate::tools::defaultTool::standard::StandardStorageTools::resolve_plugin_storage_path(path, &roots).is_err(), "{path}");
+        for path in ["/operitapp/workspaces/example/cache.sqlite", "/operitapp/data/../../escape.sqlite", "storage-root/runtime/cache.sqlite", "storage-root/other/cache.sqlite", "/operitapp/database/cache.sqlite"] {
+            assert!(crate::tools::defaultTool::standard::StandardStorageTools::resolve_plugin_storage_path(path).is_err(), "{path}");
         }
     }
 
@@ -2179,6 +2148,7 @@ mod tests {
     struct PipelineFixture {
         handler: AIToolHandler,
         root: std::path::PathBuf,
+        _cleanup: PipelineCleanup,
     }
     impl PipelineFixture {
         /// Builds only real registry, permission and storage components with rejecting business services.
@@ -2217,15 +2187,203 @@ mod tests {
                 invocationSnapshot: Default::default(),
                 webSocketSession: Default::default(), storageSession: Default::default(), chatObservations: Default::default(), coreRouteWatches: Default::default(), coreRoutePushes: Default::default(), deviceTransportScope: Default::default(),
             };
-            Self { handler, root }
+            Self { handler, root: root.clone(), _cleanup: PipelineCleanup(root) }
         }
     }
     impl Drop for PipelineFixture {
-        /// Removes only this test's checked unique temporary storage root.
+        /// Breaks the package-manager ownership cycle before releasing the fixture handler.
+        fn drop(&mut self) {
+            let (manager, executors, hooks) = {
+                let mut state = self.handler.inner.lock().unwrap();
+                (state.packageManager.take(), std::mem::take(&mut state.toolExecutors), std::mem::take(&mut state.hooks))
+            };
+            drop((executors, hooks));
+            if let Some(manager) = manager { manager.lock().unwrap().executionEngineShutdown()(); }
+        }
+    }
+
+    struct PipelineCleanup(std::path::PathBuf);
+    impl Drop for PipelineCleanup {
+        /// Removes the isolated root after the handler and its SQLite connections have dropped.
+        fn drop(&mut self) {
+            assert_eq!(self.0.parent(), Some(std::env::temp_dir().as_path()));
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    /// Rejects HTTP access so transfer tests exercise only their owning VFS.
+    struct TransferTestHttp;
+
+    impl operit_host_api::HttpStreamHost for TransferTestHttp {
+        /// Rejects streams unrelated to local transfer endpoints.
+        fn openHttpByteStream(
+            &self, _: String, _: operit_host_api::HttpRequestData,
+            _: operit_host_api::HttpStreamOpenedCallback,
+            _: operit_host_api::HttpStreamChunkCallback,
+            _: operit_host_api::HttpStreamClosedCallback,
+        ) -> operit_host_api::HostResult<()> { unreachable!() }
+
+        /// Rejects stream shutdown without a corresponding transfer HTTP request.
+        fn closeHttpByteStream(&self, _: &str) -> operit_host_api::HostResult<()> { unreachable!() }
+    }
+
+    impl operit_host_api::HttpHost for TransferTestHttp {
+        /// Rejects image delivery unrelated to byte transfers.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery { unreachable!() }
+
+        /// Rejects accidental buffered network reads in local transfer tests.
+        fn executeHttpRequest(&self, _: operit_host_api::HttpRequestData)
+            -> operit_host_api::HostResult<operit_host_api::HttpResponseData> { unreachable!() }
+
+        /// Rejects accidental bulk downloads in local transfer tests.
+        fn downloadFiles(
+            &self, _: operit_host_api::HttpDownloadRequest, _: operit_host_api::HttpDownloadControl,
+            _: operit_host_api::HttpDownloadProgressCallback,
+        ) -> operit_host_api::HostResult<operit_host_api::HttpDownloadResult> { unreachable!() }
+    }
+
+    struct TransferFixture {
+        tools: crate::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools,
+        files: operit_vfs::VisualFileSystem::VisualFileSystem,
+        root: std::path::PathBuf,
+    }
+
+    impl TransferFixture {
+        /// Creates only the storage and file services used by local transfer endpoints.
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("operit-vfs-transfer-{}", uuid::Uuid::new_v4()));
+            let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+                root.join("runtime"), root.join("workspaces"),
+            ));
+            let files = operit_vfs::VisualFileSystem::VisualFileSystem::fromStorage(
+                Arc::new(operit_host_native_filesystem::PosixFileSystemHost::new()), storage.clone(),
+            ).unwrap();
+            let tools = crate::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSystemTools::new(
+                files.clone(), Arc::new(TransferTestHttp), None, storage,
+                Arc::new(UnusedRuntimeSupport { package_assets: None }),
+            );
+            Self { tools, files, root }
+        }
+    }
+
+    impl Drop for TransferFixture {
+        /// Removes this test's unique transfer root after all file handles have closed.
         fn drop(&mut self) {
             assert_eq!(self.root.parent(), Some(std::env::temp_dir().as_path()));
             std::fs::remove_dir_all(&self.root).unwrap();
         }
+    }
+
+    /// Constructs an internal transfer request without translating its VFS arguments.
+    fn transfer_call(name: &str, parameters: &[(&str, &str)]) -> AITool {
+        AITool { name: name.into(), parameters: parameters.iter().map(|(name, value)| ToolParameter {
+            name: (*name).into(), value: (*value).into(),
+        }).collect() }
+    }
+
+    /// Requires the typed response emitted by a successful local transfer endpoint.
+    fn transfer_data(result: ToolResult) -> serde_json::Value {
+        assert!(result.success, "{:?}", result.error);
+        match result.result {
+            ToolResultData::JsonResultData(data) => data.value,
+            _ => panic!("Expected transfer JSON"),
+        }
+    }
+
+    /// Publishes verified bytes and keeps every externally returned destination virtual.
+    #[test]
+    fn vfs_transfer_publishes_verified_chunks_and_reads_bounded_ranges() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        use sha2::{Digest, Sha256};
+        let fixture = TransferFixture::new();
+        let tools = &fixture.tools;
+        let destination = "/operitapp/data/transfers/success.bin";
+        let begin = transfer_data(tools.fsTransferBegin(&transfer_call("__fs_transfer_begin", &[
+            ("destination_path", destination), ("expected_size", "11"),
+        ])));
+        assert_eq!(begin["destination"], destination);
+        let id = begin["transferId"].as_str().unwrap();
+        let files = &fixture.files;
+        assert!(!files.fileExists(destination).unwrap().exists);
+        for (offset, bytes) in [(0, b"hello ".as_slice()), (6, b"world".as_slice())] {
+            transfer_data(tools.fsTransferChunk(&transfer_call("__fs_transfer_chunk", &[
+                ("transfer_id", id), ("offset", &offset.to_string()), ("content_base64", &STANDARD.encode(bytes)),
+            ])));
+        }
+        let hash = format!("{:x}", Sha256::digest(b"hello world"));
+        let commit = transfer_data(tools.fsTransferCommit(&transfer_call("__fs_transfer_commit", &[
+            ("transfer_id", id), ("expected_sha256", &hash),
+        ])));
+        assert_eq!(commit["path"], destination);
+        assert_eq!(commit["size"], 11);
+        assert_eq!(commit["sha256"], hash);
+        assert_eq!(files.readFileBytes(destination).unwrap(), b"hello world");
+        let chunk = transfer_data(tools.fsReadChunk(&transfer_call("__fs_read_chunk", &[
+            ("source_path", destination), ("offset", "6"), ("length", "3"),
+        ])));
+        assert_eq!(STANDARD.decode(chunk["contentBase64"].as_str().unwrap()).unwrap(), b"wor");
+        assert_eq!(chunk["totalSize"], 11);
+        assert_eq!(chunk["eof"], false);
+        assert!(!tools.fsReadChunk(&transfer_call("__fs_read_chunk", &[
+            ("source_path", destination), ("offset", "0"), ("length", "524289"),
+        ])).success);
+    }
+
+    /// Failed size and hash checks discard partial sessions without publishing files.
+    #[test]
+    fn vfs_transfer_integrity_failure_discards_the_partial_session() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let fixture = TransferFixture::new();
+        let tools = &fixture.tools;
+        let files = &fixture.files;
+        for (name, expected, reason) in [("bad-hash", "3", "SHA-256 mismatch"), ("incomplete", "4", "Transfer incomplete")] {
+            let destination = format!("/operitapp/data/transfers/{name}.bin");
+            let begin = transfer_data(tools.fsTransferBegin(&transfer_call("__fs_transfer_begin", &[
+                ("destination_path", &destination), ("expected_size", expected),
+            ])));
+            let id = begin["transferId"].as_str().unwrap();
+            transfer_data(tools.fsTransferChunk(&transfer_call("__fs_transfer_chunk", &[
+                ("transfer_id", id), ("offset", "0"), ("content_base64", &STANDARD.encode(b"abc")),
+            ])));
+            let result = tools.fsTransferCommit(&transfer_call("__fs_transfer_commit", &[
+                ("transfer_id", id), ("expected_sha256", "invalid"),
+            ]));
+            assert!(!result.success);
+            assert!(result.error.unwrap().starts_with(reason));
+            assert!(!files.fileExists(&destination).unwrap().exists);
+            assert!(!files.fileExists(&format!("/operitapp/data/transfers/operit-part-{id}")).unwrap().exists);
+            let retry = tools.fsTransferCommit(&transfer_call("__fs_transfer_commit", &[
+                ("transfer_id", id), ("expected_sha256", "invalid"),
+            ]));
+            assert!(!retry.success);
+            assert!(retry.error.unwrap().starts_with("Unknown or finished transfer session"));
+        }
+    }
+
+    /// Uses the same invocation directory for transfer ingress and other file tools.
+    #[tokio::test]
+    async fn vfs_transfer_relative_paths_use_the_current_file_directory() {
+        let fixture = TransferFixture::new();
+        let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+            fixture.root.join("runtime"), fixture.root.join("workspaces"),
+        ));
+        let directory = operit_store::ChatOutputStore::ChatOutputStore::new(storage)
+            .bind("transfer-chat", 1_700_000_000_000, None).unwrap();
+        let context = ToolRuntimeContext {
+            callerChatId: Some("transfer-chat".into()), callerParticipantId: None,
+            workspacePath: None, workspaceFolders: Vec::new(),
+            toolExposureMode: ToolExposureMode::FULL, extensionOwner: "main".into(),
+            executionData: Default::default(),
+        };
+        assert_eq!(ToolExecutionManager::scopeToolRuntimeContext(context.clone(), async {
+            fixture.tools.transferPath("received.bin")
+        }).await.unwrap(), format!("{directory}/received.bin"));
+        let workspace = "/operitapp/workspaces/transfer";
+        let context = ToolRuntimeContext { workspacePath: Some(workspace.into()), ..context };
+        assert_eq!(ToolExecutionManager::scopeToolRuntimeContext(context, async {
+            fixture.tools.transferPath("received.bin")
+        }).await.unwrap(), format!("{workspace}/received.bin"));
+        assert!(fixture.tools.transferPath("received.bin").is_err());
     }
 
     /// Native projections replace model attributes and resolve only exact declarations.
@@ -2265,11 +2423,7 @@ mod tests {
             let context = fixture.handler.getContext();
             operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
             operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
-            operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
-                operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(
-                    fixture.root.join("runtime"), fixture.root.join("workspaces"),
-                ),
-            );
+
             let manager = fixture.handler.getOrCreatePackageManager();
             {
                 let mut guard = manager.lock().unwrap();
@@ -2350,16 +2504,12 @@ mod tests {
             fn getDeviceLocation(&self, timeout: i32, highAccuracy: bool, includeAddress: bool,) -> operit_host_api::HostResult<operit_host_api::LocationData> { panic!("Unexpected host call: getDeviceLocation") }
             fn getDeviceInfo(&self) -> operit_host_api::HostResult<operit_host_api::DeviceInfoData> { panic!("Unexpected host call: getDeviceInfo") }
             fn captureScreenshot(&self) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: captureScreenshot") }
-            fn recognizeText(&self, imagePath: &str, language: operit_host_api::OCRLanguage, quality: operit_host_api::OCRQuality,) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: recognizeText") }
+            fn recognizeText(&self, imagePath: &dyn operit_host_api::FileSource, language: operit_host_api::OCRLanguage, quality: operit_host_api::OCRQuality,) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: recognizeText") }
         }
         let mut fixture = PipelineFixture::with_package_assets(Some(assets));
         fixture.handler.authenticatedExtensionOwner = None;
         fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
-        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
-            operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(
-                fixture.root.join("runtime"), fixture.root.join("workspaces"),
-            ),
-        );
+
         let context = fixture.handler.getContext();
         operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
@@ -2407,6 +2557,10 @@ mod tests {
             }
             assert!(started.elapsed() < std::time::Duration::from_secs(5));
         }
+        drop(bound);
+        manager.executionEngineShutdown()();
+        drop(manager);
+        operit_store::db::AppDatabase::AppDatabase::closeDatabase();
     }
 
     /// A broken theme archive stays visible as an issue while unrelated packages and command snapshots work.
@@ -2441,7 +2595,7 @@ mod tests {
         let context = fixture.handler.getContext();
         setDefaultRuntimeStorageHost(context.runtimeStorageHost.clone().unwrap());
         setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.clone().unwrap());
-        let paths = RuntimeStorePaths::new(fixture.root.join("runtime"), fixture.root.join("workspaces"));
+        let paths = RuntimeStorePaths::default();
         let mut manager = RuntimePackageManager::new(paths, fixture.handler.clone());
         assert!(manager.claimInitialPackageRegistryLoad().unwrap());
         let readiness = manager.packageRegistryReadiness();
@@ -2858,11 +3012,7 @@ mod tests {
         let context = fixture.handler.getContext();
         operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
-        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
-            operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(
-                fixture.root.join("runtime"), fixture.root.join("workspaces"),
-            ),
-        );
+
         {
             let manager = fixture.handler.getOrCreatePackageManager();
             let mut manager = manager.lock().unwrap();
@@ -2962,16 +3112,12 @@ mod tests {
             fixture.handler.getToolPermissionSystem().setAsyncPermissionRequester(|_, _, _| async {
                 crate::tools::ToolPermissionSystem::PermissionRequestResult::ALLOW
             });
-            operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
-                operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(
-                    fixture.root.join("runtime"), fixture.root.join("workspaces"),
-                ),
-            );
+
             let context = fixture.handler.getContext();
             setDefaultRuntimeStorageHost(context.runtimeStorageHost.clone().unwrap());
             setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.clone().unwrap());
             let manager = RuntimePackageManager::new(
-                RuntimeStorePaths::new(fixture.root.join("runtime"), fixture.root.join("workspaces")),
+                RuntimeStorePaths::default(),
                 fixture.handler.clone(),
             );
             let invocations = [malformed.clone(), "{\"command\":".into(), corrected.clone()].into_iter().map(|params| {

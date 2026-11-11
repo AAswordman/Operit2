@@ -3141,9 +3141,7 @@ mod tests {
         operit_store::RuntimeStorageHost::setDefaultHostSecretStore(Arc::new(
             TestSecretStore::default(),
         ));
-        operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
-            operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(runtimeRoot, workspaceRoot),
-        );
+
         let chatRuntimeHolder = Arc::new(tokio::sync::Mutex::new(ChatRuntimeHolder::new(
             Arc::new(TestFileSystemHost),
         )));

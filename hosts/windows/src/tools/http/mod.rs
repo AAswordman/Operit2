@@ -73,9 +73,9 @@ impl HttpHost for WindowsHttpHost {
     fn downloadToFile(
         &self,
         request: HttpRequestData,
-        targetPath: String,
+        target: &dyn operit_host_api::FileTarget,
     ) -> HostResult<operit_host_api::HttpFileDownloadResult> {
-        self.inner.downloadToFile(request, targetPath)
+        self.inner.downloadToFile(request, target)
     }
 
     /// Downloads files through the native bounded worker pool.

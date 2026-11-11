@@ -78,26 +78,13 @@ impl FunctionalConfigManager {
         stringPreferencesKey("function_model_binding")
     }
 
-    /// Creates a manager rooted at the directory that owns functional configuration data.
-    pub fn new(root_dir: PathBuf) -> Self {
-        let path = RuntimeStorePaths::runtime_storage_path_from_root(
-            &root_dir,
-            operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
-        );
+    /// Opens function bindings in the owning runtime storage namespace.
+    pub fn default() -> Self {
         Self {
-            functionalConfigDataStore: Self::preferenceStore(
-                operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
-                operit_store::RuntimeStorageHost::runtimeStoragePath(&path),
-            ),
-            modelConfigManager: ModelConfigManager::new(root_dir),
+            functionalConfigDataStore: Self::preferenceStore(operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(), operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH),
+            modelConfigManager: ModelConfigManager::default(),
         }
     }
-
-    /// Creates a manager using the runtime data directory from API preferences.
-    pub fn default() -> Self {
-        Self::new(ApiPreferences::data_dir())
-    }
-
     /// Observes persisted bindings after initializing missing functions and their default model.
     pub fn functionModelBindingFlow(
         &self,
@@ -491,12 +478,11 @@ mod tests {
     }
 
     impl ConfigFixture {
+        /// Creates isolated preferences with a local catalog instead of making network requests.
         fn new() -> Self {
             use operit_host_native_storage::NativeRuntimeStorageHost;
             use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
-            use operit_util::RuntimeStoreRoot::{
-                setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig,
-            };
+
 
             let root = std::env::temp_dir()
                 .join(format!("operit-default-config-{}", uuid::Uuid::new_v4()));
@@ -507,12 +493,13 @@ mod tests {
                     runtime.clone(),
                     workspaces.clone(),
                 ));
-            setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-                runtime.clone(),
-                workspaces,
-            ));
+            let catalog = operit_util::RuntimeStorageLayout::RUNTIME_MODELS_DEV_CACHE_DIR_PATH;
+            storage.writeBytes(&format!("{catalog}/api.json"), br#"{"fixture":{"models":{}}}"#).unwrap();
+            storage.writeBytes(&format!("{catalog}/models.json"), b"{}").unwrap();
+            storage.writeBytes(&format!("{catalog}/downloaded.json"), br#"{"updatedAt":1}"#).unwrap();
+
             setDefaultRuntimeStorageHost(storage.clone());
-            let manager = FunctionalConfigManager::new(runtime);
+            let manager = FunctionalConfigManager::default();
             Self {
                 root,
                 storage,
@@ -618,7 +605,7 @@ mod tests {
             .data()
             .unwrap();
             assert_eq!(cold_models.get(&key).unwrap()["apiKey"], "test-persisted-key");
-            let reopened = FunctionalConfigManager::new(fixture.root.join("runtime"));
+            let reopened = FunctionalConfigManager::default();
             assert_eq!(
                 reopened
                     .getModelBindingForFunction(FunctionType::CHAT)

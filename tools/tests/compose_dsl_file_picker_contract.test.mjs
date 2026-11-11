@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { composeContextScript } from '../runtime/compose_scripts.mjs';
 
-const contract = JSON.parse(readFileSync(new URL('../../core/crates/foundation/host-api/tests/fixtures/compose_file_picker.json', import.meta.url), 'utf8'));
+const contract = JSON.parse(readFileSync(new URL('../../core/crates/foundation/host-contract/tests/fixtures/compose_file_picker.json', import.meta.url), 'utf8'));
 
 /** Verifies the production SDK emits the payload consumed by Rust. */
 for (const entry of contract.valid) {

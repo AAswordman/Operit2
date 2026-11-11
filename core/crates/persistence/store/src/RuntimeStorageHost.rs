@@ -68,6 +68,11 @@ pub fn defaultRuntimeSqliteHost() -> Arc<dyn RuntimeSqliteHost> {
     }
 }
 
+/// Returns the registered SQLite capability when runtime assembly has supplied it.
+#[allow(non_snake_case)]
+pub fn defaultRuntimeSqliteHostOption() -> Option<Arc<dyn RuntimeSqliteHost>> {
+    DEFAULT_RUNTIME_SQLITE_HOST.get()?.lock().ok()?.as_ref().map(Arc::clone)
+}
 /// Returns the registered host secret store.
 #[allow(non_snake_case)]
 pub fn defaultHostSecretStore() -> Arc<dyn HostSecretStore> {

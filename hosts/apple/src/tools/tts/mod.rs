@@ -55,6 +55,14 @@ impl AppleTtsPlaybackHost {
 }
 
 impl TtsSynthesisHost for AppleTtsSynthesisHost {
+    /// Exports synthesized audio while keeping temporary native files inside the host.
+    fn synthesizeSpeechBytes(&self, request: TtsSynthesisRequest) -> HostResult<Vec<u8>> {
+        let result = self.synthesizeSpeech(request)?;
+        let bytes = std::fs::read(&result.audioPath).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        std::fs::remove_file(&result.audioPath).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        Ok(bytes)
+    }
+
     /// Synthesizes one Apple system speech request into an audio file.
     fn synthesizeSpeech(&self, request: TtsSynthesisRequest) -> HostResult<TtsSynthesisResponse> {
         (self.synthesizer)(request)

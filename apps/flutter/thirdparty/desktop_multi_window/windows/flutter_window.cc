@@ -39,10 +39,14 @@ bool FlutterWindow::OnCreate() {
   return true;
 }
 
+/// Detaches message dispatch and unregisters host channels before engine teardown.
 void FlutterWindow::OnDestroy() {
-  if (flutter_controller_) {
-    flutter_controller_ = nullptr;
+  auto controller = std::move(flutter_controller_);
+  if (!controller) {
+    return;
   }
+  MultiWindowManager::Instance()->OnWindowDestroyed(controller.get());
+  controller.reset();
   MultiWindowManager::Instance()->RemoveManagedFlutterWindowLater(id_);
 }
 
@@ -58,12 +62,11 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd,
     if (result) {
       return *result;
     }
-  }
-
-  switch (message) {
-    case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
-      break;
+    switch (message) {
+      case WM_FONTCHANGE:
+        flutter_controller_->engine()->ReloadSystemFonts();
+        break;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

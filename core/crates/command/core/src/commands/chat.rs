@@ -60,7 +60,10 @@ async fn list_chats(
 ) -> Result<(), String> {
     let chats = {
         let mut holder = application.chatRuntimeHolder.lock().await;
-        holder.getCore(ChatRuntimeSlot::MAIN).chatHistoriesFlow().value()
+        holder
+            .getCore(ChatRuntimeSlot::MAIN)
+            .chatHistoriesFlow()
+            .value()
     };
     output.push_stdout_line(format!("Chats: {}", chats.len()));
     for chat in &chats {
@@ -589,7 +592,9 @@ async fn send_chat_message_with_application(
         if core.enhancedAiService.is_none() {
             core.enhancedAiService = Some(service);
         }
-        let chatId = sendArgs.chatId.clone()
+        let chatId = sendArgs
+            .chatId
+            .clone()
             .or_else(|| core.chatHistoryDelegate.currentChatIdFlow.value())
             .ok_or("Chat send has no selected conversation")?;
         core.chatHistoryDelegate.requireChatExists(&chatId)?;
@@ -601,11 +606,16 @@ async fn send_chat_message_with_application(
         let transfer = operit_runtime::services::AttachmentTransferManager::AttachmentTransferManager::getInstance(
             &application.hostManager,
         )?;
-        sendArgs.attachmentPaths.iter().map(|path| {
-            let source = std::fs::canonicalize(path)
-                .map_err(|error| format!("Attachment source is unavailable: {path}: {error}"))?;
-            transfer.importNativeAttachment(chatId.clone(), source.to_string_lossy().into_owned())
-        }).collect::<Result<Vec<_>, _>>()?
+        sendArgs
+            .attachmentPaths
+            .iter()
+            .map(|path| {
+                transfer.importNativeAttachment(
+                    chatId.clone(),
+                    super::util::command_file_path(&application.hostManager, path)?,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
     let request = RuntimeChatSendRequest {
         slot: RuntimeChatSlot::MAIN,

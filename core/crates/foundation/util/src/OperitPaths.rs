@@ -61,26 +61,16 @@ pub fn operitRootDir() -> Result<PathBuf, String> {
     Ok(default_runtime_dir())
 }
 
-/// Maps a virtual runtime storage path into a supplied physical runtime root.
+/// Returns a canonical VFS address without accepting an operating-system root.
 #[allow(non_snake_case)]
-pub fn runtimePathFromRoot(
-    runtimeRoot: &std::path::Path,
-    storagePath: &str,
-) -> Result<PathBuf, String> {
-    let runtimePrefix = format!("{}/", Layout::RUNTIME_ROOT_DIR_PATH);
-    let relativePath = storagePath.strip_prefix(&runtimePrefix).ok_or_else(|| {
-        format!("runtime storage path must start with {runtimePrefix}: {storagePath}")
-    })?;
-    Ok(runtimeRoot.join(relativePath))
+pub fn runtimePath(storagePath: &str) -> Result<PathBuf, String> {
+    operit_vfs::VfsPath::runtimeDataPath(storagePath).map(PathBuf::from)
 }
-
+/// Returns the virtual directory containing persisted preferences.
 #[allow(non_snake_case)]
 pub fn preferencesDir() -> Result<PathBuf, String> {
     relativeDir(CONFIG_PREFERENCES_DIR_PATH)
 }
-
-
-
 #[allow(non_snake_case)]
 /// Returns the directory used for imported UI theme assets.
 pub fn themeAssetsDir() -> Result<PathBuf, String> {
@@ -271,17 +261,17 @@ pub fn workspacePathSdcard(chatId: &str) -> Result<String, String> {
 
 #[allow(non_snake_case)]
 fn relativeDir(relativePath: &str) -> Result<PathBuf, String> {
-    runtimePathFromRoot(&default_runtime_dir(), relativePath)
+    runtimePath(relativePath)
 }
 
 #[allow(non_snake_case)]
 fn relativeFile(relativePath: &str) -> Result<PathBuf, String> {
-    runtimePathFromRoot(&default_runtime_dir(), relativePath)
+    runtimePath(relativePath)
 }
 
 #[allow(non_snake_case)]
 fn pathString(path: PathBuf) -> Result<String, String> {
-    Ok(path.to_string_lossy().to_string())
+    Ok(path.to_string_lossy().replace('\\', "/"))
 }
 
 #[allow(non_snake_case)]

@@ -1,5 +1,5 @@
 #![allow(non_snake_case)]
-use operit_host_api::RuntimeStorageHost;
+use operit_host_api::{HostManager::HostManager, RuntimeStorageHost};
 use operit_link::CoreCallRequest;
 use operit_local_models::LocalInference::LocalChatResponse;
 use operit_local_models::LocalModelProvider::LocalModelProvider;
@@ -33,14 +33,14 @@ pub(crate) fn ensureLocalLlmBinding(
 
 /// Uses the same Binding route and target execution permission as other Core calls.
 pub(crate) async fn generateRoutedLocalLlm(
-    storage: Arc<dyn RuntimeStorageHost>,
+    context: HostManager,
     bindingKey: String,
     modelBinding: String,
     requestJson: String,
     settingsJson: String,
 ) -> Result<LocalChatResponse, String> {
     generateWithRoute(
-        storage,
+        context,
         bindingKey,
         modelBinding,
         requestJson,
@@ -50,14 +50,19 @@ pub(crate) async fn generateRoutedLocalLlm(
     .await
 }
 
+/// Resolves the owning device before executing a local inference request.
 async fn generateWithRoute(
-    storage: Arc<dyn RuntimeStorageHost>,
+    context: HostManager,
     bindingKey: String,
     modelBinding: String,
     requestJson: String,
     settingsJson: String,
     route: Option<Arc<dyn operit_link::CoreRouteRuntime>>,
 ) -> Result<LocalChatResponse, String> {
+    let storage = context
+        .runtimeStorageHost
+        .clone()
+        .ok_or("Local inference requires runtime storage")?;
     let request = CoreCallRequest::new(
         operit_link::nextCoreRouteRequestId("generateLocalLlm"),
         operit_link::CORE_INTERNAL_TARGET,
@@ -91,39 +96,68 @@ async fn generateWithRoute(
             );
         }
     }
-    executeLocalLlm(storage, modelBinding, requestJson, settingsJson).await
+    executeLocalLlm(context, modelBinding, requestJson, settingsJson).await
 }
 
 /// Runs CPU-intensive native inference away from the runtime event loop.
 pub(crate) async fn executeLocalLlm(
-    storage: Arc<dyn RuntimeStorageHost>,
+    context: HostManager,
     modelBinding: String,
     requestJson: String,
     settingsJson: String,
 ) -> Result<LocalChatResponse, String> {
     let selection =
         super::LocalProviderService::LocalProviderService::parseModelBinding(modelBinding)?;
-    let body: Value = serde_json::from_str(&requestJson).map_err(|error| error.to_string())?;
-    let settings: LocalModelRuntimeSettings =
-        serde_json::from_str(&settingsJson).map_err(|error| error.to_string())?;
+    let storage = context
+        .runtimeStorageHost
+        .clone()
+        .ok_or("Local inference requires runtime storage")?;
     let provider =
         LocalModelProvider::forRuntimeStorage(storage).map_err(|error| error.to_string())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    return tokio::task::spawn_blocking(move || {
-        operit_local_models::LocalLlmInference::generateLocalChat(
-            &provider,
+    let runtime = provider
+        .resolve(
             &selection,
-            body,
-            serde_json::to_value(settings).map_err(|error| error.to_string())?,
+            operit_local_models::LocalModelManifest::LocalModelKind::Chat,
         )
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (provider, selection, body, settings);
-        Err("Local LLM inference requires a native device".into())
+        .map_err(|error| error.to_string())?;
+    let (engine, relative) = match runtime.model.manifest.driver.as_ref() {
+        Some(operit_local_models::LocalModelManifest::LocalModelDriver::LlamaCpp { model }) => {
+            ("llama-cpp", model)
+        }
+        Some(operit_local_models::LocalModelManifest::LocalModelDriver::Mnn { config }) => {
+            ("mnn", config)
+        }
+        _ => return Err("Local model has no supported chat driver".into()),
+    };
+    if relative.starts_with(['/', '\\']) || relative.as_bytes().get(1) == Some(&b':') {
+        return Err("Local model driver entry must be relative to its model directory".into());
     }
+    let modelPath = operit_vfs::VfsPath::joinVfsPath(&runtime.modelDirectory, relative)?;
+    let model = context.vfs()?.file(&modelPath)?;
+    let host = context
+        .localInferenceHost
+        .clone()
+        .ok_or("LocalInferenceHost is not configured")?;
+    let scheduler = context
+        .hostRuntimeTaskSchedulerHost
+        .clone()
+        .ok_or("Local inference requires a task scheduler")?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    scheduler
+        .scheduleHostRuntimeTask(
+            "local-llm-inference",
+            Box::new(move || {
+                let result = host
+                    .generateLocalChat(engine, &model, &requestJson, &settingsJson)
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        serde_json::from_str(&result).map_err(|error| error.to_string())
+                    });
+                let _ = sender.send(result);
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+    receiver.await.map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
@@ -170,8 +204,9 @@ mod tests {
             root.join("workspace"),
         ));
         let route = Arc::new(InferenceRoute::default());
+        let context = HostManager::default().withRuntimeStorageHost(storage);
         let response = generateWithRoute(
-            storage,
+            context,
             "remote-model-binding".into(),
             "qwen@revision".into(),
             r#"{"messages":[{"role":"user","content":"hello"}]}"#.into(),
@@ -203,8 +238,9 @@ mod tests {
             .unwrap()
             .create("remote-model", "another-node")
             .unwrap();
+        let context = HostManager::default().withRuntimeStorageHost(storage);
         let error = generateWithRoute(
-            storage,
+            context,
             "remote-model".into(),
             "qwen@revision".into(),
             "{}".into(),

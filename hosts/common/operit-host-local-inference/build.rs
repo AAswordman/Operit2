@@ -100,8 +100,8 @@ fn main() {
             std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
         let repo_root = manifest_dir
             .ancestors()
-            .nth(4)
-            .expect("Local models must be built from core/crates/provider/local-model");
+            .nth(3)
+            .expect("Local models must be built from hosts/common/operit-host-local-inference");
         config.out_dir(
             repo_root
                 .join("target/local-llm")

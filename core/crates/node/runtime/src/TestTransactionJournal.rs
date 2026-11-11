@@ -1,4 +1,5 @@
 //! An isolated real SQLite namespace for tests whose business files stay in memory.
+#![cfg(test)]
 use std::path::PathBuf;
 use operit_host_api::{HostResult, RuntimeSqliteConnection, RuntimeSqliteHost};
 use operit_host_native_storage::NativeRuntimeStorageHost;

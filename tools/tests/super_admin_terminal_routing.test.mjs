@@ -408,7 +408,7 @@ test('all terminal hosts implement exact typed creation using their own host com
   const windows = rustMethod(source(paths[1]), 'createOrGetTypedSession');
   assert.match(windows, /let \(normalizedTerminalType, kind\) = normalizeTerminalType\(terminalType\)\?/);
   assert.doesNotMatch(windows, /TerminalKind::PowerShell|PRIMARY_TERMINAL_TYPE/);
-  const hostApi = source('core/crates/foundation/host-api/src/lib.rs');
+  const hostApi = source('core/crates/foundation/host-contract/src/lib.rs');
   assert.match(hostApi, /fn createOrGetTypedSession\([\s\S]*?terminalType: &str,[\s\S]*?\) -> HostResult<TerminalSessionInfo>;/);
 });
 

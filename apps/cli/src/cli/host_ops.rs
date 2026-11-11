@@ -17,6 +17,14 @@ use super::{
     DownloadedUpdateInstallStatus, InstallMode, InstallOutput,
 };
 
+/// Resolves a storage-management selection only at the CLI platform configuration boundary.
+pub(crate) fn storage_target_native_path(path: &str) -> Result<PathBuf, String> {
+    let context = crate::bootstrap::create_cli_host_manager();
+    let filesystem = context.vfs()?;
+    let file = filesystem.file(path)?;
+    file.nativePath().map(PathBuf::from).map_err(|error| error.to_string())
+}
+
 /// Resolves the CLI release target at the existing native Host dispatch boundary.
 pub(crate) fn cli_update_target() -> Result<FullUpdateTarget, String> {
     FullUpdateTarget::new(

@@ -10,6 +10,7 @@ repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-plugin-sdk"
 
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../../foundation/vfs" }
 operit-plugin-sdk-macros = { version = "=2.0.0-preview.17", path = "../sdk-macros" }
 operit-plugin-theme = { path = "../theme" }
 chacha20poly1305 = "0.10"

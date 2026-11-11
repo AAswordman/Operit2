@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+
 use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::HostManager::HostManager;
@@ -81,7 +81,7 @@ struct LocalModelInstallOperation {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct LocalEngineInstallLockKey {
-    runtimeRoot: PathBuf,
+    storageIdentity: usize,
     engineId: String,
     version: String,
     target: String,
@@ -98,7 +98,8 @@ static LOCAL_ENGINE_INSTALL_LOCKS: OnceLock<
 #[derive(Clone)]
 /// Manages the local model and engine asset repository.
 pub struct LocalModelService {
-    runtimeRoot: PathBuf,
+    context: HostManager,
+    storageIdentity: usize,
     runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     httpHost: Arc<dyn HttpHost>,
 }
@@ -110,16 +111,15 @@ impl LocalModelService {
             .runtimeStorageHost
             .as_ref()
             .ok_or_else(|| "RuntimeStorageHost is required for local models".to_string())?;
-        let runtimeRoot = runtimeStorageHost
-            .runtimeRootDir()
-            .ok_or_else(|| "RuntimeStorageHost runtime root is not configured".to_string())?;
+        let storageIdentity = Arc::as_ptr(runtimeStorageHost) as *const () as usize;
         let httpHost = context
             .httpHost
             .as_ref()
             .ok_or_else(|| "HttpHost is required for local model downloads".to_string())?
             .clone();
         Ok(Self {
-            runtimeRoot,
+            context: context.clone(),
+            storageIdentity,
             runtimeStorageHost: runtimeStorageHost.clone(),
             httpHost,
         })
@@ -175,17 +175,14 @@ impl LocalModelService {
             self.runtimeStorageHost.clone(),
             &modelBinding,
         )?;
-        super::LocalLlmService::generateRoutedLocalLlm(self.runtimeStorageHost.clone(), key, modelBinding,
+        super::LocalLlmService::generateRoutedLocalLlm(self.context.clone(), key, modelBinding,
             serde_json::json!({"messages":[{"role":"user", "content":prompt}], "max_tokens":256, "enable_thinking":false}).to_string(),
             serde_json::to_string(&settings).map_err(errorString)?).await
     }
 
     /// Releases cached model weights on this device.
     pub async fn unloadChatModel(&self) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        tokio::task::spawn_blocking(operit_local_models::LocalLlmInference::unloadLocalChat)
-            .await
-            .map_err(errorString)?;
+        self.context.localInferenceHost.as_ref().ok_or("LocalInferenceHost is not configured")?.unloadLocalChat().map_err(errorString)?;
         Ok(())
     }
 
@@ -299,7 +296,7 @@ impl LocalModelService {
         })?;
         let operationId = installOperationId(&manifest.id, &manifest.version);
         let engineLock = engineInstallLock(engineInstallLockKey(
-            &self.runtimeRoot,
+            self.storageIdentity,
             &engineManifest,
             &target,
         ))?;
@@ -518,7 +515,7 @@ impl LocalModelService {
         removeTerminalInstallOperation(&operationId)?;
         let manifest = self.catalogModel(&modelId, &version)?;
         if manifest.kind == operit_local_models::LocalModelManifest::LocalModelKind::Chat {
-            operit_local_models::LocalLlmInference::unloadLocalChat();
+            self.context.localInferenceHost.as_ref().ok_or("LocalInferenceHost is not configured")?.unloadLocalChat().map_err(errorString)?;
         }
         let target = LocalPlatformTarget::current()?;
         let modelInstaller = self.modelInstaller()?;
@@ -631,18 +628,20 @@ impl LocalModelService {
 
     /// Creates a model installer for this runtime root.
     fn modelInstaller(&self) -> Result<LocalModelInstaller, String> {
-        LocalModelInstaller::forRuntimeStorage(
+        LocalModelInstaller::withFilesystem(
             self.runtimeStorageHost.clone(),
             self.httpHost.clone(),
+            self.context.vfs()?,
         )
         .map_err(errorString)
     }
 
     /// Creates an engine installer for this runtime root.
     fn engineInstaller(&self) -> Result<LocalEngineInstaller, String> {
-        LocalEngineInstaller::forRuntimeStorage(
+        LocalEngineInstaller::withFilesystem(
             self.runtimeStorageHost.clone(),
             self.httpHost.clone(),
+            self.context.vfs()?,
         )
         .map_err(errorString)
     }
@@ -697,12 +696,12 @@ fn engineInstallLock(key: LocalEngineInstallLockKey) -> Result<Arc<Mutex<()>>, S
 
 /// Builds the exact engine artifact location identity used for installation exclusion.
 fn engineInstallLockKey(
-    runtimeRoot: &Path,
+    storageIdentity: usize,
     engineManifest: &LocalEngineManifest,
     target: &LocalPlatformTarget,
 ) -> LocalEngineInstallLockKey {
     LocalEngineInstallLockKey {
-        runtimeRoot: runtimeRoot.to_path_buf(),
+        storageIdentity,
         engineId: engineManifest.id.trim().to_string(),
         version: engineManifest.version.trim().to_string(),
         target: target.storageSegment(),
@@ -940,12 +939,9 @@ mod tests {
     #[test]
     fn identicalEngineTargetsShareInstallLock() {
         let sequence = TEST_OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst);
-        let runtimeRoot = PathBuf::from(format!(
-            "test-engine-lock-{}-{sequence}",
-            std::process::id()
-        ));
+        let storageIdentity = sequence as usize;
         let key = LocalEngineInstallLockKey {
-            runtimeRoot: runtimeRoot.clone(),
+            storageIdentity,
             engineId: "engine-a".to_string(),
             version: "1".to_string(),
             target: "android-arm64".to_string(),
@@ -953,7 +949,7 @@ mod tests {
         let first = engineInstallLock(key.clone()).unwrap();
         let second = engineInstallLock(key).unwrap();
         let different = engineInstallLock(LocalEngineInstallLockKey {
-            runtimeRoot,
+            storageIdentity,
             engineId: "engine-a".to_string(),
             version: "1".to_string(),
             target: "android-x86_64".to_string(),

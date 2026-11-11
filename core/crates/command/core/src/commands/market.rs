@@ -1,5 +1,5 @@
 use std::env;
-use std::fs;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -564,7 +564,7 @@ fn run_comment(
             let comment_id = args.get(1).ok_or_else(|| "usage: operit2 market comment edit <commentId> <body-or-@file>".to_string())?;
             let body_arg = args.get(2).ok_or_else(|| "usage: operit2 market comment edit <commentId> <body-or-@file>".to_string())?;
             require_login(core)?;
-            let body = read_content_arg(body_arg)?;
+            let body = read_content_arg(&core.context, body_arg)?;
             core.api().edit_entry_comment(comment_id, &body)?;
             output.push_stdout_line(format!("Edited market comment: {comment_id}"));
             output.setJsonStdout(json!({
@@ -587,7 +587,7 @@ fn run_comment(
         Some(entry_id) => {
             let body_arg = args.get(1).ok_or_else(|| "usage: operit2 market comment <entryId> <body-or-@file>".to_string())?;
             require_login(core)?;
-            let body = read_content_arg(body_arg)?;
+            let body = read_content_arg(&core.context, body_arg)?;
             let comment_id = core.api().create_entry_comment(entry_id, &body)?;
             output.push_stdout_line(format!("Created market comment: {comment_id}"));
             output.setJsonStdout(json!({
@@ -630,9 +630,9 @@ fn publish_artifact_cli(
         return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]".to_string());
     }
     require_login(core)?;
-    let description = read_content_arg(&args[2])?;
-    let detail = read_content_arg(&args[3])?;
-    let changelog = parse_optional_content_arg(&args[8])?;
+    let description = read_content_arg(&core.context, &args[2])?;
+    let detail = read_content_arg(&core.context, &args[3])?;
+    let changelog = parse_optional_content_arg(&core.context, &args[8])?;
     let resp = core.api().publish_artifact(
         &args[0],
         &args[1],
@@ -670,9 +670,9 @@ fn publish_repo_cli(
         return Err("usage: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <changelog-or->".to_string());
     }
     require_login(core)?;
-    let description = read_content_arg(&args[2])?;
-    let detail = read_content_arg(&args[3])?;
-    let install_config = read_content_arg(&args[9])?;
+    let description = read_content_arg(&core.context, &args[2])?;
+    let detail = read_content_arg(&core.context, &args[3])?;
+    let install_config = read_content_arg(&core.context, &args[9])?;
     let resp = core.api().publish_repo_entry(
         &args[0],
         &args[1],
@@ -688,7 +688,10 @@ fn publish_repo_cli(
         &args[11],
         MARKET_MIN_APP_VERSION,
         Some(MARKET_MAX_APP_VERSION.to_string()),
-        parse_optional_content_arg(args.get(12).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(
+            &core.context,
+            args.get(12).map(String::as_str).unwrap_or("-"),
+        )?,
     )?;
     write_publish_response(resp, output);
     Ok(())
@@ -723,7 +726,7 @@ fn publish_artifact_version_cli(
         &args[2],
         MARKET_MIN_APP_VERSION,
         Some(MARKET_MAX_APP_VERSION.to_string()),
-        parse_optional_content_arg(&args[3])?,
+        parse_optional_content_arg(&core.context, &args[3])?,
         &args[4],
         &args[5],
         &args[6],
@@ -734,8 +737,14 @@ fn publish_artifact_version_cli(
         &args[11],
         &args[12],
         parse_optional_string_arg(args.get(13)),
-        parse_optional_content_arg(args.get(14).map(String::as_str).unwrap_or("-"))?,
-        parse_optional_content_arg(args.get(15).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(
+            &core.context,
+            args.get(14).map(String::as_str).unwrap_or("-"),
+        )?,
+        parse_optional_content_arg(
+            &core.context,
+            args.get(15).map(String::as_str).unwrap_or("-"),
+        )?,
         parse_optional_string_arg(args.get(16)),
         parse_optional_bool_arg(args.get(17))?,
         parse_optional_string_arg(args.get(18)),
@@ -754,20 +763,26 @@ fn publish_repo_version_cli(
         return Err("usage: operit2 market publish version repo <entryId> <version> <formatVer> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
     }
     require_login(core)?;
-    let install_config = read_content_arg(&args[6])?;
+    let install_config = read_content_arg(&core.context, &args[6])?;
     let resp = core.api().publish_repo_version(
         &args[0],
         &args[1],
         &args[2],
         MARKET_MIN_APP_VERSION,
         Some(MARKET_MAX_APP_VERSION.to_string()),
-        parse_optional_content_arg(&args[3])?,
+        parse_optional_content_arg(&core.context, &args[3])?,
         &args[4],
         &args[5],
         &install_config,
         parse_optional_string_arg(args.get(7)),
-        parse_optional_content_arg(args.get(8).map(String::as_str).unwrap_or("-"))?,
-        parse_optional_content_arg(args.get(9).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(
+            &core.context,
+            args.get(8).map(String::as_str).unwrap_or("-"),
+        )?,
+        parse_optional_content_arg(
+            &core.context,
+            args.get(9).map(String::as_str).unwrap_or("-"),
+        )?,
         parse_optional_string_arg(args.get(10)),
         parse_optional_bool_arg(args.get(11))?,
     )?;
@@ -788,8 +803,8 @@ fn update_entry_cli(
     let resp = core.api().update_entry(
         &args[0],
         parse_optional_string(&args[1]),
-        parse_optional_content_arg(&args[2])?,
-        parse_optional_content_arg(&args[3])?,
+        parse_optional_content_arg(&core.context, &args[2])?,
+        parse_optional_content_arg(&core.context, &args[3])?,
         parse_optional_string(&args[4]),
         parse_optional_bool_str(&args[5])?,
     )?;
@@ -833,15 +848,38 @@ fn install_entry(
     let entry = core.api().get_entry_by_id(entry_id)?;
     match entry.r#type.as_str() {
         "a2a" => {
-            let version = version_id.and_then(|id| entry.latest_version.as_ref().filter(|v| v.id == id))
-                .or_else(|| if version_id.is_none() { entry.latest_version.as_ref() } else { None })
+            let version = version_id
+                .and_then(|id| entry.latest_version.as_ref().filter(|v| v.id == id))
+                .or_else(|| {
+                    if version_id.is_none() {
+                        entry.latest_version.as_ref()
+                    } else {
+                        None
+                    }
+                })
                 .ok_or("A2A market version is not available")?;
-            let config = version.install_config.as_deref().or_else(|| entry.repo_version.as_ref().and_then(|repo| repo.install_config.as_deref())).ok_or("A2A market entry has no installation configuration")?;
-            let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(core.context.clone())?;
+            let config = version
+                .install_config
+                .as_deref()
+                .or_else(|| {
+                    entry
+                        .repo_version
+                        .as_ref()
+                        .and_then(|repo| repo.install_config.as_deref())
+                })
+                .ok_or("A2A market entry has no installation configuration")?;
+            let repository =
+                operit_tools::tools::a2a::A2ARepository::A2ARepository::new(core.context.clone())?;
             let ids = repository.import_market(config, &entry.id, &version.id)?;
-            core.tool_handler.getOrCreatePackageManager().lock().map_err(|e| e.to_string())?.reloadA2APackages();
+            core.tool_handler
+                .getOrCreatePackageManager()
+                .lock()
+                .map_err(|e| e.to_string())?
+                .reloadA2APackages();
             output.push_stdout_line(format!("Installed A2A: {}", ids.join(", ")));
-            output.setJsonStdout(json!({"type":"a2a", "ids":ids, "entryId":entry.id, "versionId":version.id}));
+            output.setJsonStdout(
+                json!({"type":"a2a", "ids":ids, "entryId":entry.id, "versionId":version.id}),
+            );
             Ok(())
         }
         "skill" => install_skill_from_entry(core, entry, output),
@@ -963,7 +1001,9 @@ fn install_artifact_from_entry(
     let temp_file = download_asset_to_temp_file(core, asset)?;
     let package_manager = core.package_manager();
     let import_result = package_manager.add_from_external(&temp_file.to_string_lossy());
-    fs::remove_file(&temp_file)
+    core.context
+        .vfs()?
+        .deleteFile(&temp_file.to_string_lossy(), false)
         .map_err(|error| format!("failed to remove market temp file: {error}"))?;
     let import_result = import_result?;
     write_external_package_import_result(&import_result, output);
@@ -1012,7 +1052,10 @@ fn download_asset_to_temp_file(
     let bytes = core.api().download_asset(&asset.id)?;
     verify_market_asset_sha256(&bytes, &asset.sha256)?;
     let tmp = market_asset_temp_path(asset)?;
-    fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    core.context
+        .vfs()?
+        .writeFileBytes(&tmp.to_string_lossy(), &bytes)
+        .map_err(|e| e.to_string())?;
     Ok(tmp)
 }
 
@@ -1044,7 +1087,7 @@ fn market_asset_temp_path(asset: &MarketEntryAsset) -> Result<PathBuf, String> {
     if asset_name.contains('/') || asset_name.contains('\\') {
         return Err("market asset name must not contain a path".to_string());
     }
-    let mut path = env::temp_dir();
+    let mut path = PathBuf::from("/operitapp/data/temp/clean_on_exit");
     path.push(format!("operit_market_{}_{}", current_millis(), asset_name));
     Ok(path)
 }
@@ -1127,9 +1170,12 @@ fn parse_optional_string_arg(value: Option<&String>) -> Option<String> {
 }
 
 /// Resolves an optional literal or file-backed content argument.
-fn parse_optional_content_arg(value: &str) -> Result<Option<String>, String> {
+fn parse_optional_content_arg(
+    context: &HostManager,
+    value: &str,
+) -> Result<Option<String>, String> {
     match parse_optional_string(value) {
-        Some(raw) => read_content_arg(&raw).map(Some),
+        Some(raw) => read_content_arg(context, &raw).map(Some),
         None => Ok(None),
     }
 }

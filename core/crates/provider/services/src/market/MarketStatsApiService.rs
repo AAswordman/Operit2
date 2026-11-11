@@ -1073,7 +1073,7 @@ impl MarketStatsApiService {
         &self,
         asset_id: &str,
         target_path: &str,
-        file_system: &operit_tools::files::VisualFileSystem::VisualFileSystem,
+        file_system: &operit_vfs::VisualFileSystem::VisualFileSystem,
     ) -> Result<u64, String> {
         let asset_id = asset_id.trim();
         if asset_id.is_empty() {

@@ -69,6 +69,7 @@ pub fn createRuntimeHostManager(
         runtimeStorageHost,
         runtimeSqliteHost,
     )
+    .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()))
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(LinuxHttpHost::new()))
     .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))

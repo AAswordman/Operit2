@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+operit-host-local-inference = { path = "../common/operit-host-local-inference" }
 async-trait = "0.1"
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-host-apple-native = { path = "../apple" }

@@ -85,7 +85,7 @@ pub fn createRuntimeHostManager(
     context.runtimeSqliteHost = Some(runtimeSqliteHost);
     context = context.withArchiveStagingHost(archiveStagingHost);
     context = context.withRuntimeStorageWriteHost(runtimeStorageWriteHost);
-    context = context.withLocalInferenceHost(Arc::new(OhosLocalInferenceHost::new()));
+    context = context.withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::withSpeech(Arc::new(OhosLocalInferenceHost::new()))));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(OhosHostRuntimeEventSchedulerHost::new()));
     context = context.withHostJavaScriptRuntimeHost(Arc::new(OhosHostJavaScriptRuntimeHost::new()));

@@ -3,7 +3,7 @@ use operit_plugin_sdk::execution_result::JsExecutionResult;
 use operit_plugin_sdk::js_sdk::{JsFuture, JsHostError};
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -159,7 +159,7 @@ pub fn register_test_runtime_storage(label: &str) {
         runtime_root.clone(),
         workspace_root.clone(),
     ));
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtime_root, workspace_root));
+
     setDefaultRuntimeStorageHost(host);
 }
 

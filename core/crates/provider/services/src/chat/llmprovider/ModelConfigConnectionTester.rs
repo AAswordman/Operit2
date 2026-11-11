@@ -90,7 +90,6 @@ impl ModelConfigConnectionTester {
 
     /// Runs model connection checks with an explicit provider runtime context.
     pub async fn run(
-        rootDir: PathBuf,
         providerId: &str,
         modelId: &str,
         runtimeContext: ProviderRuntimeContext,
@@ -98,10 +97,10 @@ impl ModelConfigConnectionTester {
         let config =
             runtimeContext
                 .support()
-                .resolvedModelConfig(rootDir.clone(), providerId, modelId)?;
+                .resolvedModelConfig(providerId, modelId)?;
         let mut items = Vec::new();
 
-        let mut serviceManager = MultiServiceManager::new(rootDir.clone(), runtimeContext);
+        let mut serviceManager = MultiServiceManager::new(runtimeContext);
         let bundleResult = serviceManager
             .createTransientServiceBundleForModel(providerId.to_string(), modelId.to_string());
         let (configForTest, parameters, serviceHandle) = match bundleResult {

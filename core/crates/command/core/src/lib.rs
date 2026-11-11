@@ -24,14 +24,48 @@ pub async fn run_core_command(
     args: &[String],
 ) -> Result<CoreCommandOutput, String> {
     let jsonMode = args.iter().any(|arg| arg == "--json");
-    let commandArgs = args
+    let mut commandArgs = args
         .iter()
         .filter(|arg| arg.as_str() != "--json")
         .cloned()
         .collect::<Vec<_>>();
+    let directory = if commandArgs.first().map(String::as_str) == Some("--cwd") {
+        let value = commandArgs.get(1).ok_or("--cwd requires a VFS directory")?;
+        let value = application
+            .hostManager
+            .vfs()?
+            .resolveResourcePath(None, value)?;
+        commandArgs.drain(..2);
+        Some(value)
+    } else {
+        None
+    };
     let mut output = CoreCommandOutput::new();
     output.setJsonMode(jsonMode);
-    commands::run_core_command(application, &commandArgs, &mut output).await?;
+    if let Some(directory) = directory {
+        use operit_tools::ToolExecutionManager::{
+            ToolExecutionManager, ToolExposureMode, ToolRuntimeContext,
+        };
+        let mut context =
+            ToolExecutionManager::currentToolRuntimeContext().unwrap_or(ToolRuntimeContext {
+                callerChatId: None,
+                callerParticipantId: None,
+                workspacePath: None,
+                workspaceFolders: Vec::new(),
+                toolExposureMode: ToolExposureMode::CLI,
+                extensionOwner: "core:cli".into(),
+                executionData: serde_json::Map::new(),
+            });
+        context.workspacePath = Some(directory.clone());
+        context.workspaceFolders = vec![directory];
+        ToolExecutionManager::scopeToolRuntimeContext(
+            context,
+            commands::run_core_command(application, &commandArgs, &mut output),
+        )
+        .await?;
+    } else {
+        commands::run_core_command(application, &commandArgs, &mut output).await?;
+    }
     output.finalizeJson()?;
     Ok(output)
 }

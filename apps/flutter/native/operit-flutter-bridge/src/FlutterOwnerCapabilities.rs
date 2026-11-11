@@ -179,13 +179,13 @@ pub(crate) fn ownerScreenshot() -> HostResult<String> {
 
 /// Recognizes text through the owner OCR boundary.
 pub(crate) fn ownerRecognizeText(
-    imagePath: &str,
+    source: &dyn operit_host_api::FileSource,
     language: OCRLanguage,
     quality: OCRQuality,
 ) -> HostResult<String> {
     requestOwnerSystemRecognizeText(
         RuntimeHostInteractionSystemRecognizeTextPayload {
-            imagePath: imagePath.to_string(),
+            imagePath: source.nativePath()?,
             language: language.asHostValue().to_string(),
             quality: quality.asHostValue().to_string(),
         },
@@ -256,7 +256,7 @@ pub(crate) struct FlutterSystemBindings {
     pub location: Arc<dyn Fn(i32, bool, bool) -> HostResult<LocationData> + Send + Sync>,
     pub deviceInfo: Arc<dyn Fn() -> HostResult<DeviceInfoData> + Send + Sync>,
     pub screenshot: Arc<dyn Fn() -> HostResult<String> + Send + Sync>,
-    pub recognition: Arc<dyn Fn(&str, OCRLanguage, OCRQuality) -> HostResult<String> + Send + Sync>,
+    pub recognition: Arc<dyn Fn(&dyn operit_host_api::FileSource, OCRLanguage, OCRQuality) -> HostResult<String> + Send + Sync>,
 }
 
 /// Adds owner authorization and UI operations to an already selected system host.
@@ -355,13 +355,22 @@ impl SystemOperationHost for FlutterSystemOperationBridge {
         (self.bindings.deviceInfo)()
     }
     /// Captures a screen through the callback selected at host assembly.
+    /// Writes image bytes through the selected VFS capability and removes native staging.
+    fn captureScreenshotTo(&self, target: &dyn operit_host_api::FileTarget) -> HostResult<()> {
+        let path = self.captureScreenshot()?;
+        let bytes = std::fs::read(&path).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        let written = target.writeBytes(&bytes);
+        std::fs::remove_file(&path).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        written
+    }
+
     fn captureScreenshot(&self) -> HostResult<String> {
         (self.bindings.screenshot)()
     }
     /// Recognizes text through the owner's OCR implementation.
     fn recognizeText(
         &self,
-        path: &str,
+        path: &dyn operit_host_api::FileSource,
         language: OCRLanguage,
         quality: OCRQuality,
     ) -> HostResult<String> {
@@ -552,6 +561,14 @@ impl TtsPlaybackHost for FlutterTtsPlaybackHost {
 pub(crate) struct FlutterTtsSynthesisHost;
 
 impl TtsSynthesisHost for FlutterTtsSynthesisHost {
+    /// Exports synthesized audio while keeping temporary native files inside the host.
+    fn synthesizeSpeechBytes(&self, request: TtsSynthesisRequest) -> HostResult<Vec<u8>> {
+        let result = self.synthesizeSpeech(request)?;
+        let bytes = std::fs::read(&result.audioPath).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        std::fs::remove_file(&result.audioPath).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        Ok(bytes)
+    }
+
     /// Forwards the exact synthesis request to the authorized owner.
     fn synthesizeSpeech(&self, request: TtsSynthesisRequest) -> HostResult<TtsSynthesisResponse> {
         let result = requestOwnerTtsSynthesis(

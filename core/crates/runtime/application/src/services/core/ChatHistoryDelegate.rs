@@ -24,7 +24,7 @@ use operit_providers::runtime_support::{
 use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 use operit_store::SyncOperationStore::SyncClock;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_tools::files::PathMapper::PathMapper;
+use operit_vfs::VfsPath;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
 use serde_json::Value;
@@ -1487,7 +1487,7 @@ impl ChatHistoryDelegate {
             participantId: None,
             promptFunctionType: PromptFunctionType::CHAT,
             defaultModelBinding: support
-                .modelBindingForFunction(support.dataDir()?, FunctionType::CHAT)?,
+                .modelBindingForFunction(FunctionType::CHAT)?,
             defaultTtsConfigId: support.defaultTtsConfigId()?,
         };
         let ownerExtension = draft
@@ -1970,15 +1970,15 @@ impl ChatHistoryDelegate {
     ) -> Result<operit_model::Workspace::Workspace, String> {
         let selection = folderPath.trim();
         let source = if let Some(json) =
-            selection.strip_prefix(operit_tools::files::MountRegistry::MOUNT_SOURCE_PREFIX)
+            selection.strip_prefix(operit_vfs::MountRegistry::MOUNT_SOURCE_PREFIX)
         {
             Some(
-                serde_json::from_str::<operit_tools::files::MountRegistry::MountSource>(json)
+                serde_json::from_str::<operit_vfs::MountRegistry::MountSource>(json)
                     .map_err(|e| format!("Invalid workspace mount source: {e}"))?,
             )
         } else if selection.starts_with("content://") {
             // Keep compatibility with callers that submit a raw authorized tree URI.
-            Some(operit_tools::files::MountRegistry::MountSource {
+            Some(operit_vfs::MountRegistry::MountSource {
                 namespace: "/virtual/android/documents".into(),
                 backend: "android_documents".into(),
                 root: selection.into(),
@@ -1990,7 +1990,7 @@ impl ChatHistoryDelegate {
         let (folderPath, mountedName) = match source {
             Some(source) => {
                 let host = operit_store::RuntimeStorageHost::defaultRuntimeStorageHost();
-                let mount = operit_tools::files::MountRegistry::MountRegistry::withStorage(host)
+                let mount = operit_vfs::MountRegistry::MountRegistry::withStorage(host)
                     .register(
                         &source.namespace,
                         &source.backend,
@@ -2001,7 +2001,7 @@ impl ChatHistoryDelegate {
             }
             None => (folderPath, None),
         };
-        let folderPath = PathMapper::normalizeWorkspaceBindingPath(&folderPath)?;
+        let folderPath = VfsPath::normalizeWorkspaceBindingPath(&folderPath)?;
         let folderName = match mountedName {
             Some(name) => name,
             None => operit_model::Workspace::Workspace::folderNameFromPath(&folderPath)?,

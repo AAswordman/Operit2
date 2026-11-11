@@ -32,9 +32,7 @@ impl ApiPreferences {
 
     /// Returns the root directory used for API preference storage.
     pub fn data_dir() -> PathBuf {
-        defaultRuntimeStorageHost()
-            .runtimeRootDir()
-            .expect("runtime storage host must provide an API preference root")
+        PathBuf::from("/operitapp/data")
     }
 
     /// Creates preferences using the default runtime data directory.
@@ -53,15 +51,6 @@ impl ApiPreferences {
     /// Reads the committed typed values for another owning runtime module.
     pub(crate) fn snapshot(&self) -> Result<Preferences, PreferencesDataStoreError> {
         self.apiDataStore.data()
-    }
-
-    /// Creates preferences rooted at the supplied directory.
-    pub fn new(root_dir: PathBuf) -> Self {
-        let path = OperitPaths::runtimePathFromRoot(&root_dir, OperitPaths::API_PREFERENCES_PATH)
-            .expect("API preferences path must use the runtime storage prefix");
-        Self {
-            apiDataStore: PreferencesDataStore::new(path).withMigration(3, Self::migration),
-        }
     }
 
     /// Drops the keys a version retires, then converts the remaining values.

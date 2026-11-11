@@ -14,8 +14,8 @@ use operit_store::{
 use serde::{Deserialize, Serialize};
 
 use operit_host_api::HostManager::HostManager;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VfsPath;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
 use operit_util::stream::Stream::{CollectFuture, Stream};
 
@@ -453,37 +453,14 @@ fn resolve_terminal_working_dir(
     terminalHost: &dyn TerminalHost,
     workingDir: &str,
 ) -> Result<String, String> {
-    let trimmed = workingDir.trim();
-    if ["/app", "/operitapp", "/mnt", "/virtual"].iter().any(|root| {
-        trimmed == *root || trimmed.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
-    })
-    {
-        return terminal_vfs(context)?
-            .resolvePath(trimmed)
-            .and_then(|path| path.terminalDirectory(terminalHost));
-    }
-    terminalHost.resolveNativeWorkingDirectory(trimmed).map_err(|error| error.message)
+    let filesystem = terminal_vfs(context)?;
+    let path = filesystem.resolveResourcePath(None, workingDir.trim())?;
+    filesystem.terminalDirectory(terminalHost, &path)
 }
 
 /// Builds the host VFS used only for directories owned by the current runtime.
 fn terminal_vfs(context: &HostManager) -> Result<VisualFileSystem, String> {
-    let runtimeStorageHost = context.runtimeStorageHost.as_ref().ok_or_else(|| {
-        "RuntimeStorageHost is not configured for terminal working directory".to_string()
-    })?;
-    let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir().ok_or_else(|| {
-        "RuntimeStorageHost runtime root is not configured for terminal working directory"
-            .to_string()
-    })?;
-    let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir().ok_or_else(|| {
-        "RuntimeStorageHost workspace root is not configured for terminal working directory"
-            .to_string()
-    })?;
-    Ok(VisualFileSystem::new(
-        context.fileSystemHost.clone().ok_or_else(|| {
-            "FileSystemHost is not registered for terminal working directory".to_string()
-        })?,
-        PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot, runtimeStorageHost.clone()),
-    ))
+    context.vfs()
 }
 
 #[cfg(test)]

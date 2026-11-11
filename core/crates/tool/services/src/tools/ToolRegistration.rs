@@ -27,7 +27,8 @@ use operit_tools::tools::defaultTool::standard::StandardMusicTools::{
     MusicToolExecutor, MusicToolOperation, StandardMusicTools,
 };
 use operit_tools::tools::defaultTool::standard::StandardSystemOperationTools::{
-    StandardSystemOperationTools, SystemOperationToolExecutor, SystemOperationToolOperation,
+    InstallAppToolExecutor, StandardSystemOperationTools, SystemOperationToolExecutor,
+    SystemOperationToolOperation,
 };
 use operit_tools::tools::defaultTool::standard::StandardTerminalTools::{
     StandardTerminalTools, TerminalToolExecutor, TerminalToolOperation,
@@ -273,7 +274,10 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
         Box::new(ToolGetter::getWebVisitTool(context)),
         ToolRegistrationVisibility::PUBLIC,
     );
-    registerSystemOperationTools(handler, ToolGetter::getSystemOperationTools(context));
+    registerSystemOperationTools(
+        handler,
+        ToolGetter::getSystemOperationTools(context, handler.runtimeSupport()),
+    );
     registerMusicTools(handler, ToolGetter::getMusicTools(context));
     registerBluetoothTools(handler, ToolGetter::getBluetoothTools(context));
     registerChatTools(
@@ -569,11 +573,12 @@ fn registerSystemOperationTools(
         BuiltinToolName::GetSystemSetting,
         SystemOperationToolOperation::GetSystemSetting,
     );
-    registerSystemOperationTool(
-        handler,
-        &systemOperationTools,
+    handler.registerBuiltinTool(
         BuiltinToolName::InstallApp,
-        SystemOperationToolOperation::InstallApp,
+        RegisteredToolExecutor::Asynchronous(Box::new(InstallAppToolExecutor {
+            tools: systemOperationTools.clone(),
+        })),
+        ToolRegistrationVisibility::INTERNAL,
     );
     registerSystemOperationTool(
         handler,

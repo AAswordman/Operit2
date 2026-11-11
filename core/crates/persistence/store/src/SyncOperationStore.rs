@@ -934,7 +934,7 @@ impl SyncOperationStore {
     #[cfg(feature = "full")]
     pub fn synchronizationSummary(&self) -> Result<String, SyncOperationStoreError> {
         let mut clock = self.currentLocalClock()?;
-        let sql = operit_util::RuntimeStoreRoot::default_runtime_store_root_config().map(|_| {
+        let sql = crate::RuntimeStorageHost::defaultRuntimeSqliteHostOption().map(|_| {
             crate::sync::SqlChatSyncStore::SqlChatSyncStore::default().and_then(|store| store.localClock()).map_err(|e|e.to_string())
         });
         if let Some(Ok(sql)) = &sql {

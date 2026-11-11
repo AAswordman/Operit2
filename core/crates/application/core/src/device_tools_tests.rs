@@ -15,7 +15,7 @@ use operit_tools::tools::ToolResultDataClasses::{
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{ToolEffect, ToolValidationResult};
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use operit_host_api::{
@@ -56,7 +56,7 @@ impl SystemOperationHost for TestSystemLocale {
         getDeviceLocation(timeout: i32, highAccuracy: bool, includeAddress: bool) -> LocationData;
         getDeviceInfo() -> DeviceInfoData;
         captureScreenshot() -> String;
-        recognizeText(imagePath: &str, language: OCRLanguage, quality: OCRQuality) -> String;
+        recognizeText(imagePath: &dyn operit_host_api::FileSource, language: OCRLanguage, quality: OCRQuality) -> String;
     }
 }
 
@@ -113,7 +113,7 @@ async fn device_tools_direct_calls_skip_ai_policy_and_preserve_transport_semanti
     let workspace = root.join("workspace");
     std::fs::create_dir_all(&data).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(data.clone(), workspace.clone()));
+
     let storage = Arc::new(NativeRuntimeStorageHost::new(data, workspace));
     let scheduler = Arc::new(NativeHostRuntimeTaskSchedulerHost::new());
     let speech_http=Arc::new(crate::speech_transport_tests::SpeechHttp::default());

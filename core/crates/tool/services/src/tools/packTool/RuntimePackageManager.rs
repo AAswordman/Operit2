@@ -1,3 +1,4 @@
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 #[path = "PackageRegistryReadiness.rs"]
 mod package_registry_readiness;
 pub use package_registry_readiness::{PackageRegistryLoadState, PackageRegistryReadiness};
@@ -46,7 +47,7 @@ use crate::tools::ToolJsRuntime::{JsExecutionEngine, JsExecutionProvider};
 use crate::tools::ToolResultDataClasses::stringResultData;
 use crate::ConversationMarkupManager::ToolResult;
 use operit_host_api::{
-    FileSystemHost, HostEnvironmentDescriptor, HostManager::HostManager, HostPlatform,
+    HostEnvironmentDescriptor, HostManager::HostManager, HostPlatform,
     TimeUtils::{currentLocalDateTime, currentTimeMillis},
 };
 use operit_plugin_sdk::javascript::{
@@ -286,7 +287,7 @@ pub struct RuntimePackageManager {
     composeDslSessions: Arc<Mutex<BTreeMap<(String, String), ToolPkgComposeDslSession>>>,
     dataStore: CoreNodeStateStore,
     storePaths: RuntimeStorePaths,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
     context: Arc<HostManager>,
     toolHandler: crate::tools::AIToolHandler::AIToolHandler,
     mcpManager: MCPManager,
@@ -305,17 +306,14 @@ impl RuntimePackageManager {
                 toolHandler: toolHandler.clone(),
                 jsExecutionProvider: runtimeDependencies.shared_js_execution_provider(),
             });
-        let fileSystemHost = context
-            .fileSystemHost
-            .clone()
-            .expect("RuntimePackageManager requires a FileSystemHost");
+        let filesystem = Arc::new(context.vfs().expect("RuntimePackageManager requires VFS"));
         let mut manager = Self {
             pluginPackageManager: PluginPackageManager::new(
                 toolPkgExecutionEngineFactory.clone(),
                 Arc::new(RuntimeToolPkgAssetSource {
                     runtimeSupport: runtimeDependencies.shared_runtime_support(),
                 }),
-                fileSystemHost.clone(),
+                filesystem.clone(),
                 Arc::new(RuntimePackageStateResolver {
                     hostEnvironment: context.hostEnvironment.clone(),
                 }),
@@ -344,7 +342,7 @@ impl RuntimePackageManager {
                 from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
             }),
             storePaths: paths,
-            fileSystemHost,
+            filesystem,
             mcpManager: MCPManager::getInstance(context.clone()),
             context: Arc::new(context),
             toolHandler,
@@ -728,8 +726,8 @@ impl RuntimePackageManager {
     }
 
     /// Returns the file-system host required by package-adjacent services.
-    pub fn fileSystemHost(&self) -> Arc<dyn FileSystemHost> {
-        self.fileSystemHost.clone()
+    pub fn filesystem(&self) -> Arc<VisualFileSystem> {
+        self.filesystem.clone()
     }
 
     #[allow(non_snake_case)]
@@ -807,8 +805,8 @@ impl RuntimePackageManager {
             None => self.marketToolPkgInstallationId()?,
         };
         let bytes = self
-            .fileSystemHost
-            .readFileBytes(&hostPath(file))
+            .filesystem
+            .readFileBytes(&vfsPathString(file))
             .map_err(|e| e.to_string())?;
         Ok(matches!(
             ToolPkgProtection::verifyMarketInstallSeal(&bytes, &installationId),
@@ -820,7 +818,7 @@ impl RuntimePackageManager {
     fn resourceReader(&self) -> resource_reader::ToolPkgResourceReader {
         resource_reader::ToolPkgResourceReader {
             storePaths: self.storePaths.clone(),
-            fileSystemHost: self.fileSystemHost.clone(),
+            filesystem: self.filesystem.clone(),
             runtimeSupport: self.toolHandler.runtimeSupport(),
             toolPkgCacheLock: self.toolPkgCacheLock.clone(),
             toolPkgTextResourceCache: self.toolPkgTextResourceCache.clone(),
@@ -877,8 +875,8 @@ impl RuntimePackageManager {
         };
         if let Some(parent) = destinationFile.parent() {
             if self
-                .fileSystemHost
-                .makeDirectory(&hostPath(parent), true)
+                .filesystem
+                .makeDirectory(&vfsPathString(parent), true)
                 .is_err()
             {
                 return false;
@@ -886,27 +884,27 @@ impl RuntimePackageManager {
         }
         if ToolPkgArchiveParser::isDirectoryResourceMime(Some(&resource.mime)) {
             if !self
-                .fileSystemHost
-                .fileExists(&hostPath(&resourceFile))
+                .filesystem
+                .fileExists(&vfsPathString(&resourceFile))
                 .map(|info| info.exists && info.isDirectory)
                 .unwrap_or(false)
             {
                 return false;
             }
-            self.fileSystemHost
-                .zipFiles(&hostPath(&resourceFile), &hostPath(destinationFile))
+            self.filesystem
+                .zipFiles(&vfsPathString(&resourceFile), &vfsPathString(destinationFile))
                 .is_ok()
         } else {
             if !self
-                .fileSystemHost
-                .fileExists(&hostPath(&resourceFile))
+                .filesystem
+                .fileExists(&vfsPathString(&resourceFile))
                 .map(|info| info.exists && !info.isDirectory)
                 .unwrap_or(false)
             {
                 return false;
             }
-            self.fileSystemHost
-                .copyFile(&hostPath(&resourceFile), &hostPath(destinationFile), false)
+            self.filesystem
+                .copyFile(&vfsPathString(&resourceFile), &vfsPathString(destinationFile), false)
                 .is_ok()
         }
     }
@@ -956,7 +954,7 @@ impl RuntimePackageManager {
             return self.generatePackageSystemPrompt(&selectedPackage);
         }
 
-        let skillManager = SkillManager::fromDefaultPaths(self.fileSystemHost());
+        let skillManager = SkillManager::fromDefaultPaths(self.filesystem());
         if skillManager
             .getAvailableSkills()
             .contains_key(&normalizedPackageName)
@@ -1008,7 +1006,7 @@ impl RuntimePackageManager {
             };
         }
 
-        let skillManager = SkillManager::fromDefaultPaths(self.fileSystemHost());
+        let skillManager = SkillManager::fromDefaultPaths(self.filesystem());
         if skillManager
             .getAvailableSkills()
             .contains_key(&normalizedPackageName)
@@ -1425,7 +1423,7 @@ impl RuntimePackageManager {
         // directly inside an installation directory, never an asset or a scan directory.
         let sourcePath = if installedScope.is_some() {
             let info = self
-                .fileSystemHost
+                .filesystem
                 .fileExists(&issue.sourcePath)
                 .map_err(|error| error.to_string())?;
             (info.exists && !info.isDirectory).then(|| issue.sourcePath.clone())
@@ -1472,11 +1470,11 @@ impl RuntimePackageManager {
         }
         if let Some(sourcePath) = target.sourcePath {
             let info = self
-                .fileSystemHost
+                .filesystem
                 .fileExists(&sourcePath)
                 .map_err(|error| error.to_string())?;
             if info.exists && !info.isDirectory {
-                self.fileSystemHost
+                self.filesystem
                     .deleteFile(&sourcePath, false)
                     .map_err(|error| error.to_string())?;
                 removed = true;
@@ -2061,8 +2059,8 @@ impl RuntimePackageManager {
             .runtime_storage_path(&root)
             .join(&record.sourceName);
         let installed = self
-            .fileSystemHost
-            .readFileBytes(&hostPath(&path))
+            .filesystem
+            .readFileBytes(&vfsPathString(&path))
             .map_err(|error| {
                 format!(
                     "Cannot read installed package {}: {error}",
@@ -2189,8 +2187,8 @@ impl RuntimePackageManager {
             &ExtensionStore::root("package", scope.as_str()).expect("Validated package scope"),
         );
         if let Err(error) = self
-            .fileSystemHost
-            .makeDirectory(&hostPath(&packagesDir), true)
+            .filesystem
+            .makeDirectory(&vfsPathString(&packagesDir), true)
         {
             return self.recordAndReturnPackageError(
                 &sourcePath,
@@ -2201,8 +2199,8 @@ impl RuntimePackageManager {
         }
         let destinationFile = packagesDir.join(&sourceFileName);
         if let Err(error) = self
-            .fileSystemHost
-            .writeFileBytes(&hostPath(&destinationFile), sourceAsset.bytes)
+            .filesystem
+            .writeFileBytes(&vfsPathString(&destinationFile), sourceAsset.bytes)
         {
             return self.recordAndReturnPackageError(
                 &sourcePath,
@@ -2250,7 +2248,7 @@ impl RuntimePackageManager {
             );
         }
         Arc::make_mut(&mut self.externalPackageScanCache)
-            .remove(&destinationFile.to_string_lossy().to_string());
+            .remove(&destinationFile.to_string_lossy().replace('\\', "/"));
         self.loadAvailablePackages();
         format!(
             "Successfully imported package: {}\nStored at: {}",
@@ -2507,7 +2505,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     /// Returns the external package storage path as display text.
     pub fn getExternalPackagesPath(&self) -> String {
-        self.storePaths.packages_dir().to_string_lossy().to_string()
+        self.storePaths.packages_dir().to_string_lossy().replace('\\', "/")
     }
 
     #[allow(non_snake_case)]
@@ -2607,8 +2605,8 @@ impl RuntimePackageManager {
                 continue;
             };
             if !self
-                .fileSystemHost
-                .fileExists(&hostPath(&sourceFile))
+                .filesystem
+                .fileExists(&vfsPathString(&sourceFile))
                 .map(|info| info.exists && !info.isDirectory)
                 .unwrap_or(false)
             {
@@ -2627,10 +2625,10 @@ impl RuntimePackageManager {
                 displayName,
                 description: toolPackage.description.resolve(false),
                 author: toolPackage.author,
-                sourcePath: sourceFile.to_string_lossy().to_string(),
+                sourcePath: sourceFile.to_string_lossy().replace('\\', "/"),
                 sourceFileName: sourceFile
                     .file_name()
-                    .map(|value| value.to_string_lossy().to_string())
+                    .map(|value| value.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default(),
                 fileExtension: sourceFile
                     .extension()
@@ -2648,8 +2646,8 @@ impl RuntimePackageManager {
             }
             let sourceFile = PathBuf::from(&runtime.sourcePath);
             if !self
-                .fileSystemHost
-                .fileExists(&hostPath(&sourceFile))
+                .filesystem
+                .fileExists(&vfsPathString(&sourceFile))
                 .map(|info| info.exists && !info.isDirectory)
                 .unwrap_or(false)
             {
@@ -2668,10 +2666,10 @@ impl RuntimePackageManager {
                 displayName,
                 description: runtime.description.resolve(false),
                 author: runtime.author,
-                sourcePath: sourceFile.to_string_lossy().to_string(),
+                sourcePath: sourceFile.to_string_lossy().replace('\\', "/"),
                 sourceFileName: sourceFile
                     .file_name()
-                    .map(|value| value.to_string_lossy().to_string())
+                    .map(|value| value.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default(),
                 fileExtension: sourceFile
                     .extension()
@@ -2739,8 +2737,8 @@ impl RuntimePackageManager {
                 ExtensionStore::root("package", scope).expect("Package scope constants are valid");
             let directory = self.storePaths.runtime_storage_path(&root);
             let scan = (|| -> Result<(), String> {
-                self.fileSystemHost
-                    .makeDirectory(&hostPath(&directory), true)
+                self.filesystem
+                    .makeDirectory(&vfsPathString(&directory), true)
                     .map_err(|e| e.to_string())?;
                 // Upgrade old bundles before scanning; a file arriving before its descriptor
                 // is staged data, not an unregistered device-local installation.
@@ -2757,8 +2755,8 @@ impl RuntimePackageManager {
                     None
                 };
                 let entries = self
-                    .fileSystemHost
-                    .listFiles(&hostPath(&directory))
+                    .filesystem
+                    .listFiles(&vfsPathString(&directory))
                     .map_err(|e| e.to_string())?;
                 files.extend(
                     entries
@@ -2776,7 +2774,7 @@ impl RuntimePackageManager {
             if let Err(error) = scan {
                 let mut snapshot = baseSnapshot.clone();
                 snapshot.toolPkgLoadIssues.push(newToolPkgLoadIssue(
-                    hostPath(&directory),
+                    vfsPathString(&directory),
                     None,
                     scope.to_string(),
                     "scan_failed",
@@ -2792,7 +2790,7 @@ impl RuntimePackageManager {
         let mut nextCache = BTreeMap::new();
         let mut results = Vec::new();
         for file in files {
-            let cacheKey = file.to_string_lossy().to_string();
+            let cacheKey = file.to_string_lossy().replace('\\', "/");
             let isMarketToolPkg = match self.isInstalledMarketToolPkg(&file) {
                 Ok(value) => value,
                 Err(error) => {
@@ -2802,7 +2800,7 @@ impl RuntimePackageManager {
                     result.issues.push(newToolPkgLoadIssue(
                         cacheKey.clone(),
                         None,
-                        hostPath(&file),
+                        vfsPathString(&file),
                         "scope_failed",
                         error,
                         packageLoadIssueKind(&cacheKey, false, false),
@@ -3064,7 +3062,7 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     fn parseExternalPackageCandidate(&self, path: &Path) -> PackageScanCandidateResult {
-        let sourcePath = path.to_string_lossy().to_string();
+        let sourcePath = path.to_string_lossy().replace('\\', "/");
         let mut result = PackageScanCandidateResult {
             phase: "external".to_string(),
             sourcePath: sourcePath.clone(),
@@ -3084,18 +3082,7 @@ impl RuntimePackageManager {
                 )),
             }
         } else if lowerPath.ends_with(".hjson") {
-            let parseResult = self
-                .context
-                .fileSystemHost
-                .as_ref()
-                .ok_or_else(|| {
-                    "FileSystemHost is required for external package loading".to_string()
-                })
-                .and_then(|fileSystemHost| {
-                    fileSystemHost
-                        .readFile(&sourcePath)
-                        .map_err(|error| error.to_string())
-                })
+            let parseResult = self.filesystem.readFile(&sourcePath)
                 .and_then(|content| JsPackageLoader::parse_metadata(&content, ""));
             match parseResult {
                 Ok(package) => result.toolPackage = Some(package),
@@ -3133,7 +3120,7 @@ impl RuntimePackageManager {
     /// Parses one locally sealed marketplace ToolPkg from the normal package storage directory.
     #[allow(non_snake_case)]
     fn parseMarketToolPkgCandidate(&self, path: &Path) -> PackageScanCandidateResult {
-        let sourcePath = path.to_string_lossy().to_string();
+        let sourcePath = path.to_string_lossy().replace('\\', "/");
         let mut result = PackageScanCandidateResult {
             phase: "external".to_string(),
             sourcePath: sourcePath.clone(),
@@ -3735,7 +3722,7 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     fn buildExternalPackageScanSignature(&self, file: &Path) -> String {
-        let metadata = self.fileSystemHost.fileInfo(&hostPath(file)).ok();
+        let metadata = self.filesystem.fileInfo(&vfsPathString(file)).ok();
         format!(
             "{}|{}|{}",
             file.to_string_lossy(),
@@ -3818,37 +3805,31 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn filesHaveSameContent(&self, left: &Path, right: &Path) -> Result<bool, String> {
         let leftBytes = self
-            .fileSystemHost
-            .readFileBytes(&hostPath(left))
+            .filesystem
+            .readFileBytes(&vfsPathString(left))
             .map_err(|error| error.to_string())?;
         let rightBytes = self
-            .fileSystemHost
-            .readFileBytes(&hostPath(right))
+            .filesystem
+            .readFileBytes(&vfsPathString(right))
             .map_err(|error| error.to_string())?;
         Ok(leftBytes == rightBytes)
     }
 
     /// Resolves caller file paths through the runtime VFS, preserving compatibility inputs.
     #[allow(non_snake_case)]
-    fn resolveInputFile(&self, path: &str) -> Result<(crate::files::VisualFileSystem::VisualFileSystem, String), String> {
+    fn resolveInputFile(&self, path: &str) -> Result<(operit_vfs::VisualFileSystem::VisualFileSystem, String), String> {
         let storage = self.context.runtimeStorageHost.clone().ok_or("Package import requires runtime storage")?;
         let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
         let directory = context.as_ref().map(|context| context.fileDirectory(storage)).transpose()?.flatten();
-        let path = crate::files::PathMapper::PathMapper::resolveFileResourcePath(directory.as_deref(), path)?;
-        Ok((crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?, path))
+        let vfs = (&self.context).vfs()?;
+        let path = vfs.resolveResourcePath(directory.as_deref(), path)?;
+        Ok((vfs, path))
     }
 
-    /// Archive registration requires a native file; materialize resource mounts only at this boundary.
-    #[allow(non_snake_case)]
-    fn resolveNativeImportFile(&self, path: &str) -> Result<NativePackageImportFile, String> {
-        let (vfs, path) = self.resolveInputFile(path)?;
-        let resolved = vfs.resolvePath(&path)?;
-        if let Ok(native) = resolved.nativePath() {
-            return Ok(NativePackageImportFile { path: native.into(), staging: None });
-        }
-        let bytes = vfs.readFileBytes(&path)?;
-        let name = path.rsplit('/').next().filter(|name| !name.is_empty()).ok_or("Invalid package filename")?;
-        NativePackageImportFile::stage(vfs, name, &bytes)
+    /// Keeps imported archives in the virtual namespace without native staging.
+    fn resolveImportFile(&self, path: &str) -> Result<PathBuf, String> {
+        let (_, path) = self.resolveInputFile(path)?;
+        Ok(path.into())
     }
 
     /// Imports a package file from external storage into package storage.
@@ -3882,11 +3863,11 @@ impl RuntimePackageManager {
         &mut self,
         filePath: &str,
     ) -> Result<ExternalPackageImportResult, String> {
-        let source = self.resolveNativeImportFile(filePath)?;
-        let filePath = source.path.to_str().ok_or("Package path is not UTF-8")?;
+        let source = self.resolveImportFile(filePath)?;
+        let filePath = source.to_str().ok_or("Package path is not UTF-8")?;
         let file = PathBuf::from(filePath);
         let downloadedFileExists = matches!(
-            self.fileSystemHost.fileExists(filePath),
+            self.filesystem.fileExists(filePath),
             Ok(info) if info.exists && !info.isDirectory
         );
         if !downloadedFileExists {
@@ -3904,8 +3885,8 @@ impl RuntimePackageManager {
 
         if isToolPkg {
             let bytes = self
-                .fileSystemHost
-                .readFileBytes(&hostPath(&file))
+                .filesystem
+                .readFileBytes(&vfsPathString(&file))
                 .map_err(|error| error.to_string())?;
             let scope = self.importedToolPkgScope(&bytes)?;
             let (loadResult, loadIssues) = self
@@ -3923,16 +3904,16 @@ impl RuntimePackageManager {
             let packageRoot = self
                 .storePaths
                 .runtime_storage_path(&ExtensionStore::root("package", scope.as_str())?);
-            self.fileSystemHost
-                .makeDirectory(&hostPath(&packageRoot), true)
+            self.filesystem
+                .makeDirectory(&vfsPathString(&packageRoot), true)
                 .map_err(|error| error.to_string())?;
             let fileName = file
                 .file_name()
                 .ok_or_else(|| "Error importing package: invalid file name".to_string())?;
             let destinationFile = packageRoot.join(fileName);
             if file != destinationFile {
-                self.fileSystemHost
-                    .copyFile(&hostPath(&file), &hostPath(&destinationFile), false)
+                self.filesystem
+                    .copyFile(&vfsPathString(&file), &vfsPathString(&destinationFile), false)
                     .map_err(|error| format!("Error importing package: {error}"))?;
             }
             let (importedLoadResult, importedLoadIssues) = self
@@ -3957,7 +3938,7 @@ impl RuntimePackageManager {
             return Ok(ExternalPackageImportResult {
                 packageName,
                 packageFormat: "toolpkg".to_string(),
-                storedPath: destinationFile.to_string_lossy().to_string(),
+                storedPath: destinationFile.to_string_lossy().replace('\\', "/"),
                 sourceNotice,
             });
         }
@@ -3971,8 +3952,8 @@ impl RuntimePackageManager {
         };
         let packageMetadata = if isHjson {
             let content = self
-                .fileSystemHost
-                .readFile(&hostPath(&file))
+                .filesystem
+                .readFile(&vfsPathString(&file))
                 .map_err(|error| format!("Error importing package: {error}"))?;
             JsPackageLoader::parse_metadata(&content, "")
                 .map_err(|error| format!("Error importing package: {error}"))?
@@ -3993,8 +3974,8 @@ impl RuntimePackageManager {
             ));
         }
 
-        self.storePaths
-            .ensure_packages_dir()
+        self.filesystem
+            .makeDirectory(&vfsPathString(&self.storePaths.packages_dir()), true)
             .map_err(|error| format!("Error importing package: {error}"))?;
         let fileName = file
             .file_name()
@@ -4005,18 +3986,18 @@ impl RuntimePackageManager {
             None => ToolPkgConfigScope::Device,
         };
         let packageRoot = self.storePaths.runtime_storage_path(&ExtensionStore::root("package", scope.as_str())?);
-        self.fileSystemHost.makeDirectory(&hostPath(&packageRoot), true).map_err(|error| error.to_string())?;
+        self.filesystem.makeDirectory(&vfsPathString(&packageRoot), true).map_err(|error| error.to_string())?;
         let destinationFile = packageRoot.join(fileName);
         if file != destinationFile {
-            self.fileSystemHost
-                .copyFile(&hostPath(&file), &hostPath(&destinationFile), false)
+            self.filesystem
+                .copyFile(&vfsPathString(&file), &vfsPathString(&destinationFile), false)
                 .map_err(|error| format!("Error importing package: {error}"))?;
         }
 
         let scriptMarketOrigin = if isJsLike {
             let script = self
-                .fileSystemHost
-                .readFile(&hostPath(&file))
+                .filesystem
+                .readFile(&vfsPathString(&file))
                 .map_err(|error| format!("Error importing package: {error}"))?;
             ToolPkgProtection::readScriptMarketOrigin(&script, &packageMetadata.name)
         } else {
@@ -4028,7 +4009,7 @@ impl RuntimePackageManager {
             ExtensionStore::default().customizePackage(
                 &packageMetadata.name, &fileName.to_string_lossy(), vec![packageMetadata.name.clone()],
             )?;
-            Arc::make_mut(&mut self.externalPackageScanCache).remove(&hostPath(&destinationFile));
+            Arc::make_mut(&mut self.externalPackageScanCache).remove(&vfsPathString(&destinationFile));
             self.loadAvailablePackages();
         } else {
             self.registerScope(
@@ -4052,7 +4033,7 @@ impl RuntimePackageManager {
         Ok(ExternalPackageImportResult {
             packageName: packageMetadata.name,
             packageFormat: packageFormat.to_string(),
-            storedPath: destinationFile.to_string_lossy().to_string(),
+            storedPath: destinationFile.to_string_lossy().replace('\\', "/"),
             sourceNotice,
         })
     }
@@ -4111,7 +4092,7 @@ impl RuntimePackageManager {
             return Ok(None);
         }
         if existing.sourceType == ToolPkgSourceType::EXTERNAL {
-            let bytes = self.fileSystemHost.readFileBytes(&existing.sourcePath)
+            let bytes = self.filesystem.readFileBytes(&existing.sourcePath)
                 .map_err(|error| error.to_string())?;
             if ToolPkgProtection::isMarketArchive(&bytes) {
                 let raw = ToolPkgProtection::unwrapMarketArchive(&bytes)?;
@@ -4211,7 +4192,7 @@ impl RuntimePackageManager {
             .toolPkgAssetBytes(&runtime.sourcePath)
             .ok_or_else(|| "Registered ToolPkg asset is missing".to_string()),
             ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => self
-                .fileSystemHost
+                .filesystem
                 .readFileBytes(&runtime.sourcePath)
                 .map_err(|error| error.to_string()),
         }
@@ -4299,14 +4280,14 @@ impl RuntimePackageManager {
         {
             return Err("Market artifact file name is invalid".to_string());
         }
-        let cache = crate::files::VisualFileSystem::VisualFileSystem::runtimePath(
+        let cache = operit_vfs::VisualFileSystem::VisualFileSystem::runtimePath(
             operit_util::RuntimeStorageLayout::RUNTIME_TOOLPKG_CACHE_DIR_PATH,
         )?;
-        let directory = crate::files::PathMapper::PathMapper::joinVfsPath(
+        let directory = operit_vfs::VfsPath::joinVfsPath(
             &cache, &format!(".market-download-{}", currentTimeMillis()),
         )?;
-        let path = crate::files::PathMapper::PathMapper::joinVfsPath(&directory, fileName)?;
-        let vfs = crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?;
+        let path = operit_vfs::VfsPath::joinVfsPath(&directory, fileName)?;
+        let vfs = (&self.context).vfs()?;
         vfs.makeDirectory(&directory, true)
             .map_err(|error| format!("Error preparing market artifact download: {error}"))?;
         Ok(path)
@@ -4356,8 +4337,8 @@ impl RuntimePackageManager {
     fn updateMarketScriptFile(&mut self, filePath: &str) -> Result<Option<ExternalPackageImportResult>, String> {
         let lower = filePath.to_ascii_lowercase();
         if !lower.ends_with(".js") && !lower.ends_with(".ts") { return Ok(None); }
-        let source = self.resolveNativeImportFile(filePath)?;
-        let bytes = self.fileSystemHost.readFileBytes(&hostPath(&source.path))
+        let source = self.resolveImportFile(filePath)?;
+        let bytes = self.filesystem.readFileBytes(&vfsPathString(&source))
             .map_err(|error| error.to_string())?;
         let text = ToolPkgProtection::decodeUtf8(&bytes)?;
         let package = JsPackageLoader::parse(&text)?;
@@ -4371,19 +4352,19 @@ impl RuntimePackageManager {
         let record = store.record("package", &package.name)?;
         let destination = self.storePaths.runtime_storage_path(&format!("{}/{}",
             ExtensionStore::root("package", &record.scope)?, record.sourceName));
-        let path = hostPath(&destination);
-        let previous = self.fileSystemHost.readFileBytes(&path).map_err(|error| error.to_string())?;
+        let path = vfsPathString(&destination);
+        let previous = self.filesystem.readFileBytes(&path).map_err(|error| error.to_string())?;
         let oldText = ToolPkgProtection::decodeUtf8(&previous)?;
         let Some(oldOrigin) = ToolPkgProtection::readScriptMarketOrigin(&oldText, &package.name) else {
             return Ok(None);
         };
         if !sameMarketOrigin(&oldOrigin, &origin, &package.name) { return Ok(None); }
         let outcome = (|| -> Result<(), String> {
-            if source.path != destination {
-                self.fileSystemHost.deleteFile(&path, false).map_err(|error| error.to_string())?;
-                self.fileSystemHost.moveFile(&hostPath(&source.path), &path).map_err(|error| error.to_string())?;
+            if source != destination {
+                self.filesystem.deleteFile(&path, false).map_err(|error| error.to_string())?;
+                self.filesystem.moveFile(&vfsPathString(&source), &path).map_err(|error| error.to_string())?;
             }
-            if self.fileSystemHost.readFileBytes(&path).map_err(|error| error.to_string())? != bytes {
+            if self.filesystem.readFileBytes(&path).map_err(|error| error.to_string())? != bytes {
                 return Err("Market script changed during installation".into());
             }
             Arc::make_mut(&mut self.externalPackageScanCache).remove(&path);
@@ -4396,7 +4377,7 @@ impl RuntimePackageManager {
             Ok(())
         })();
         if let Err(error) = outcome {
-            self.fileSystemHost.writeFileBytes(&path, &previous).map_err(|restore|
+            self.filesystem.writeFileBytes(&path, &previous).map_err(|restore|
                 format!("Market script update failed ({error}); restoring the previous script failed: {restore}"))?;
             Arc::make_mut(&mut self.externalPackageScanCache).remove(&path);
             self.loadAvailablePackages();
@@ -4417,14 +4398,14 @@ impl RuntimePackageManager {
         filePath: &str,
         expectedMarketAssetSha256: &str,
     ) -> String {
-        let source = match self.resolveNativeImportFile(filePath) {
+        let source = match self.resolveImportFile(filePath) {
             Ok(source) => source,
             Err(error) => return self.recordAndReturnPackageError(filePath, "market_import_failed", &error, "market_toolpkg"),
         };
-        let filePath = source.path.to_string_lossy();
+        let filePath = source.to_string_lossy();
         let filePath = filePath.as_ref();
         let downloadedFileExists = matches!(
-            self.fileSystemHost.fileExists(filePath),
+            self.filesystem.fileExists(filePath),
             Ok(info) if info.exists && !info.isDirectory
         );
         if !downloadedFileExists {
@@ -4452,7 +4433,7 @@ impl RuntimePackageManager {
                 "market_toolpkg",
             );
         }
-        let downloadedBytes = match self.fileSystemHost.readFileBytes(filePath) {
+        let downloadedBytes = match self.filesystem.readFileBytes(filePath) {
             Ok(bytes) => bytes,
             Err(error) => {
                 return self.recordAndReturnPackageError(
@@ -4535,8 +4516,8 @@ impl RuntimePackageManager {
             &ExtensionStore::root("package", scope.as_str()).expect("Validated package scope"),
         );
         if let Err(error) = self
-            .fileSystemHost
-            .makeDirectory(&hostPath(&packagesDir), true)
+            .filesystem
+            .makeDirectory(&vfsPathString(&packagesDir), true)
         {
             return self.recordAndReturnPackageError(
                 filePath,
@@ -4554,8 +4535,8 @@ impl RuntimePackageManager {
         let mut installed = false;
         let mut destinationStored = false;
         let outcome = (|| -> Result<String, String> {
-            self.fileSystemHost
-                .writeFileBytes(&hostPath(&stagingFile), &installedArchive)
+            self.filesystem
+                .writeFileBytes(&vfsPathString(&stagingFile), &installedArchive)
                 .map_err(|error| error.to_string())?;
             if !self.isInstalledMarketToolPkg(&stagingFile)? {
                 return Err("ToolPkg market installation authentication failed".to_string());
@@ -4572,20 +4553,20 @@ impl RuntimePackageManager {
             }
             if let Some(existing) = self.marketToolPkgUpdateRuntime(&preview)? {
                 destinationFile = PathBuf::from(&existing.sourcePath);
-                previousArchive = Some(self.fileSystemHost.readFileBytes(&existing.sourcePath)
+                previousArchive = Some(self.filesystem.readFileBytes(&existing.sourcePath)
                     .map_err(|error| error.to_string())?);
             }
             let destinationExists = matches!(
-                self.fileSystemHost.fileExists(&hostPath(&destinationFile)),
+                self.filesystem.fileExists(&vfsPathString(&destinationFile)),
                 Ok(info) if info.exists
             );
             if destinationExists {
-                self.fileSystemHost
-                    .deleteFile(&hostPath(&destinationFile), false)
+                self.filesystem
+                    .deleteFile(&vfsPathString(&destinationFile), false)
                     .map_err(|error| error.to_string())?;
             }
-            self.fileSystemHost
-                .moveFile(&hostPath(&stagingFile), &hostPath(&destinationFile))
+            self.filesystem
+                .moveFile(&vfsPathString(&stagingFile), &vfsPathString(&destinationFile))
                 .map_err(|error| error.to_string())?;
             destinationStored = true;
             let (loaded, loadedIssues) =
@@ -4601,29 +4582,29 @@ impl RuntimePackageManager {
             Ok(format!("Successfully imported toolpkg: {packageName}"))
         })();
         let stagingExists = matches!(
-            self.fileSystemHost.fileExists(&hostPath(&stagingFile)),
+            self.filesystem.fileExists(&vfsPathString(&stagingFile)),
             Ok(info) if info.exists
         );
         if stagingExists {
             let _ = self
-                .fileSystemHost
-                .deleteFile(&hostPath(&stagingFile), false);
+                .filesystem
+                .deleteFile(&vfsPathString(&stagingFile), false);
         }
         let destinationExists = matches!(
-            self.fileSystemHost.fileExists(&hostPath(&destinationFile)),
+            self.filesystem.fileExists(&vfsPathString(&destinationFile)),
             Ok(info) if info.exists
         );
         if !installed {
             if let Some(previous) = previousArchive {
-                if let Err(error) = self.fileSystemHost.writeFileBytes(&hostPath(&destinationFile), &previous) {
+                if let Err(error) = self.filesystem.writeFileBytes(&vfsPathString(&destinationFile), &previous) {
                     return self.recordAndReturnPackageError(filePath, "market_import_failed",
                         &format!("Market update failed ({outcome:?}); restoring the previous archive failed: {error}"),
                         "market_toolpkg");
                 }
-                Arc::make_mut(&mut self.externalPackageScanCache).remove(&hostPath(&destinationFile));
+                Arc::make_mut(&mut self.externalPackageScanCache).remove(&vfsPathString(&destinationFile));
                 self.loadAvailablePackages();
             } else if destinationStored && destinationExists {
-                let _ = self.fileSystemHost.deleteFile(&hostPath(&destinationFile), false);
+                let _ = self.filesystem.deleteFile(&vfsPathString(&destinationFile), false);
             }
         }
         match outcome {
@@ -5286,18 +5267,15 @@ impl RuntimePackageManager {
 
     #[allow(non_snake_case)]
     fn loadPackageFromJsFile(&self, file: &Path) -> Option<ToolPackage> {
-        let fileSystemHost = self.context.fileSystemHost.as_ref()?;
-        JsPackageLoader::load_from_file(fileSystemHost.as_ref(), &file.to_string_lossy()).ok()
+        let filesystem = &self.filesystem;
+        JsPackageLoader::load_from_file(filesystem.as_ref(), &file.to_string_lossy()).ok()
     }
 
     /// Loads one JavaScript package and preserves the parser error for the UI.
     #[allow(non_snake_case)]
     fn loadPackageFromJsFileResult(&self, file: &Path) -> Result<ToolPackage, String> {
-        let fileSystemHost =
-            self.context.fileSystemHost.as_ref().ok_or_else(|| {
-                "FileSystemHost is required for external package loading".to_string()
-            })?;
-        JsPackageLoader::load_from_file(fileSystemHost.as_ref(), &file.to_string_lossy())
+        let filesystem = self.filesystem.clone();
+        JsPackageLoader::load_from_file(filesystem.as_ref(), &file.to_string_lossy())
             .map_err(|error| error.to_string())
     }
 
@@ -5313,7 +5291,7 @@ impl RuntimePackageManager {
         }
         Err(format!(
             "Package source is outside installed scope directories: {}",
-            hostPath(path)
+            vfsPathString(path)
         ))
     }
 
@@ -5324,15 +5302,12 @@ impl RuntimePackageManager {
         file: &Path,
         configScope: ToolPkgConfigScope,
     ) -> Result<(ToolPkgLoadResult, Vec<ToolPkgLoadIssue>), String> {
-        let fileSystemHost =
-            self.context.fileSystemHost.as_ref().ok_or_else(|| {
-                "FileSystemHost is required for external ToolPkg loading".to_string()
-            })?;
-        let sourcePath = file.to_string_lossy().to_string();
+        let filesystem = self.filesystem.clone();
+        let sourcePath = file.to_string_lossy().replace('\\', "/");
         let issues = RefCell::new(Vec::new());
         let loadResult = self.withToolPkgRegistrationEngine(|registrationEngine| {
             ToolPkgLoader::loadToolPkgFromExternalFile(
-                fileSystemHost.as_ref(),
+                filesystem.as_ref(),
                 &sourcePath,
                 configScope,
                 registrationEngine,
@@ -5361,15 +5336,12 @@ impl RuntimePackageManager {
         if !self.isInstalledMarketToolPkg(file)? {
             return Err("ToolPkg market installation authentication failed".to_string());
         }
-        let fileSystemHost =
-            self.context.fileSystemHost.as_ref().ok_or_else(|| {
-                "FileSystemHost is required for market ToolPkg loading".to_string()
-            })?;
-        let sourcePath = file.to_string_lossy().to_string();
+        let filesystem = self.filesystem.clone();
+        let sourcePath = file.to_string_lossy().replace('\\', "/");
         let issues = RefCell::new(Vec::new());
         let loadResult = self.withToolPkgRegistrationEngine(|registrationEngine| {
             ToolPkgLoader::loadToolPkgFromMarketFile(
-                fileSystemHost.as_ref(),
+                filesystem.as_ref(),
                 &sourcePath,
                 configScope,
                 registrationEngine,
@@ -5560,11 +5532,8 @@ impl ToolPkgPackageHost for RuntimePackageManager {
 
     /// Returns the filesystem host owned by this package manager context.
     #[allow(non_snake_case)]
-    fn fileSystemHost(&self) -> Arc<dyn FileSystemHost> {
-        self.context
-            .fileSystemHost
-            .clone()
-            .expect("RuntimePackageManager requires a FileSystemHost")
+    fn filesystem(&self) -> Arc<VisualFileSystem> {
+        self.filesystem.clone()
     }
 
     /// Persists ToolPkg subpackage states for SDK state changes.
@@ -5704,9 +5673,9 @@ fn javaStringHashCodeHex(value: &str) -> String {
     format!("{:x}", hash as u32)
 }
 
-/// Converts a package metadata path into the corresponding host path string.
-fn hostPath(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+/// Serializes a virtual package path with portable separators.
+fn vfsPathString(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 #[allow(non_snake_case)]
@@ -5915,7 +5884,7 @@ fn packageProgressDisplayName(sourcePath: &str) -> String {
     Path::new(sourcePath)
         .file_stem()
         .or_else(|| Path::new(sourcePath).file_name())
-        .map(|value| value.to_string_lossy().to_string())
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| sourcePath.to_string())
 }
@@ -6306,54 +6275,5 @@ mod hook_timeout_notification_tests {
             notifyToolPkgHookTimeout(&context, "bridge.wechat", "before-send", "submit_requested");
         assert!(error.starts_with("TOOLPKG_BEFORE_HOOK_TIMEOUT: "));
         assert!(error.ends_with("超时提示显示失败：toast channel closed"));
-    }
-}
-
-/// Owns native staging only while a non-native VFS package is being imported.
-struct NativePackageImportFile {
-    path: PathBuf,
-    staging: Option<(crate::files::VisualFileSystem::VisualFileSystem, String)>,
-}
-
-impl NativePackageImportFile {
-    fn stage(vfs: crate::files::VisualFileSystem::VisualFileSystem, name: &str, bytes: &[u8]) -> Result<Self, String> {
-        let directory = format!("/operitapp/data/temp/package_imports/{}", uuid::Uuid::new_v4());
-        let staged = crate::files::PathMapper::PathMapper::joinVfsPath(&directory, name)?;
-        let native = vfs.resolvePath(&staged)?.nativePath()?;
-        vfs.makeDirectory(&directory, true)?;
-        let file = Self { path: native.into(), staging: Some((vfs.clone(), directory)) };
-        vfs.writeFileBytes(&staged, bytes)?;
-        Ok(file)
-    }
-}
-
-impl Drop for NativePackageImportFile {
-    fn drop(&mut self) {
-        if let Some((vfs, directory)) = &self.staging {
-            let _ = vfs.deleteFile(directory, true);
-        }
-    }
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod native_import_staging_tests {
-    use super::*;
-    use crate::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
-    use operit_host_native_filesystem::PosixFileSystemHost;
-
-    #[test]
-    fn package_staging_preserves_bytes_and_cleans_up_on_drop() {
-        let root = std::env::temp_dir().join(format!("operit-import-test-{}", uuid::Uuid::new_v4()));
-        let vfs = VisualFileSystem::new(
-            Arc::new(PosixFileSystemHost::new()),
-            PathMapper::builtinOnly(root.clone(), root.join("workspaces")),
-        );
-        let file = NativePackageImportFile::stage(vfs, "中文 package.toolpkg", &[0, 255, 1]).unwrap();
-        let path = file.path.clone();
-        assert_eq!(std::fs::read(&path).unwrap(), [0, 255, 1]);
-        assert_eq!(path.file_name().unwrap(), "中文 package.toolpkg");
-        drop(file);
-        assert!(!path.parent().unwrap().exists());
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

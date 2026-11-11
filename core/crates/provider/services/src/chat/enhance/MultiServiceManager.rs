@@ -60,7 +60,6 @@ struct ModelServiceInstance {
 
 /// Mutable service registry state protected by the manager mutex.
 struct MultiServiceManagerState {
-    pub rootDir: PathBuf,
     runtime_context: ProviderRuntimeContext,
     serviceInstances: HashMap<FunctionType, FunctionServiceInstance>,
     modelServiceInstances: HashMap<String, ModelServiceInstance>,
@@ -69,10 +68,9 @@ struct MultiServiceManagerState {
 
 impl MultiServiceManager {
     /// Creates a manager rooted at the supplied runtime data directory.
-    pub fn new(root_dir: PathBuf, runtime_context: ProviderRuntimeContext) -> Self {
+    pub fn new(runtime_context: ProviderRuntimeContext) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MultiServiceManagerState {
-                rootDir: root_dir,
                 runtime_context,
                 serviceInstances: HashMap::new(),
                 modelServiceInstances: HashMap::new(),
@@ -85,11 +83,7 @@ impl MultiServiceManager {
     pub fn from_runtime_context(
         runtime_context: ProviderRuntimeContext,
     ) -> Result<Self, AiServiceError> {
-        let root_dir = runtime_context
-            .support()
-            .dataDir()
-            .map_err(AiServiceError::RequestFailed)?;
-        Ok(Self::new(root_dir, runtime_context))
+        Ok(Self::new(runtime_context))
     }
 
     /// Returns a cached or newly created service for a functional model binding.
@@ -104,12 +98,12 @@ impl MultiServiceManager {
         let binding = inner
             .runtime_context
             .support()
-            .modelBindingForFunction(inner.rootDir.clone(), functionType.clone())
+            .modelBindingForFunction(functionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
         let config = inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
+            .resolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(AiServiceError::RequestFailed)?;
         if !Self::functionServiceMatchesBinding(
             inner.serviceInstances.get(&functionType),
@@ -154,7 +148,7 @@ impl MultiServiceManager {
         let config = inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
+            .resolvedModelConfig(&providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)?;
         if !Self::modelServiceMatchesConfig(inner.modelServiceInstances.get(&serviceKey), &config) {
             let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
@@ -199,12 +193,12 @@ impl MultiServiceManager {
         let binding = inner
             .runtime_context
             .support()
-            .modelBindingForFunction(inner.rootDir.clone(), functionType.clone())
+            .modelBindingForFunction(functionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
         let config = inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
+            .resolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
         if !Self::functionServiceMatchesBinding(
@@ -257,7 +251,7 @@ impl MultiServiceManager {
         let config = inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
+            .resolvedModelConfig(&providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
         if !Self::modelServiceMatchesConfig(inner.modelServiceInstances.get(&serviceKey), &config) {
@@ -299,7 +293,7 @@ impl MultiServiceManager {
         let config = inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
+            .resolvedModelConfig(&providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)?;
         let modelParameters = config.parameters.clone();
         let service = Self::createServiceFromResolvedConfigLocked(&inner, config.clone())?;
@@ -920,7 +914,7 @@ impl MultiServiceManager {
                 let config = inner
                     .runtime_context
                     .support()
-                    .resolvedModelConfig(inner.rootDir.clone(), &provider_id, &model_id)
+                    .resolvedModelConfig(&provider_id, &model_id)
                     .map_err(AiServiceError::RequestFailed)?;
                 Ok(Box::new(ToolPkgJsAiProviderService::new(
                     config,
@@ -942,7 +936,7 @@ impl MultiServiceManager {
                 let provider = inner
                     .runtime_context
                     .support()
-                    .providerProfile(inner.rootDir.clone(), &provider_id)
+                    .providerProfile(&provider_id)
                     .map_err(AiServiceError::RequestFailed)?;
                 let index = usize::try_from(provider.currentKeyIndex)
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
@@ -982,12 +976,12 @@ impl MultiServiceManager {
         let binding = inner
             .runtime_context
             .support()
-            .modelBindingForFunction(inner.rootDir.clone(), functionType)
+            .modelBindingForFunction(functionType)
             .map_err(AiServiceError::RequestFailed)?;
         inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &binding.providerId, &binding.modelId)
+            .resolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(AiServiceError::RequestFailed)
     }
 
@@ -1004,7 +998,7 @@ impl MultiServiceManager {
         inner
             .runtime_context
             .support()
-            .resolvedModelConfig(inner.rootDir.clone(), &providerId, &modelId)
+            .resolvedModelConfig(&providerId, &modelId)
             .map_err(AiServiceError::RequestFailed)
     }
 

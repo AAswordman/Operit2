@@ -19,7 +19,7 @@ use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_link::{
@@ -601,7 +601,7 @@ impl ChatSummaryTasks {
 pub struct MessageProcessingDelegate {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
-    pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
+    pub filesystem: Option<VisualFileSystem>,
     executionStateByChatIdFlow: MutableStateFlow<HashMap<String, ChatExecutionState>>,
     pub scrollToBottomEvent: Vec<()>,
     pub nonFatalErrorEvent: Vec<String>,
@@ -646,7 +646,7 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager,
             modelConfigManager,
-            fileSystemHost: None,
+            filesystem: None,
             executionStateByChatIdFlow: mutableStateFlow(HashMap::new()),
             scrollToBottomEvent: Vec::new(),
             nonFatalErrorEvent: Vec::new(),
@@ -670,9 +670,9 @@ impl MessageProcessingDelegate {
     pub fn clone_for_core(&self) -> Self {
         let rootDir = ApiPreferences::data_dir();
         Self {
-            functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
-            modelConfigManager: ModelConfigManager::new(rootDir),
-            fileSystemHost: self.fileSystemHost.clone(),
+            functionalConfigManager: FunctionalConfigManager::default(),
+            modelConfigManager: ModelConfigManager::default(),
+            filesystem: self.filesystem.clone(),
             executionStateByChatIdFlow: self.executionStateByChatIdFlow.clone(),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
@@ -1400,7 +1400,7 @@ impl MessageProcessingDelegate {
                 messageText: request.messageText,
                 proxySenderName: request.proxySenderNameOverride,
                 attachments: request.attachments,
-                fileSystemHost: self.fileSystemHost.clone(),
+                filesystem: self.filesystem.clone(),
                 workspacePath: request.workspacePath,
                 replyToMessage: request.replyToMessage,
                 enableDirectImageProcessing,
@@ -3535,8 +3535,8 @@ impl Default for MessageProcessingDelegate {
     fn default() -> Self {
         let rootDir = ApiPreferences::data_dir();
         Self::new(
-            FunctionalConfigManager::new(rootDir.clone()),
-            ModelConfigManager::new(rootDir),
+            FunctionalConfigManager::default(),
+            ModelConfigManager::default(),
         )
     }
 }

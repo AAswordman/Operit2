@@ -44,9 +44,9 @@ impl Operit1SnapshotImportManager {
             providers.iter().map(|provider| provider.models.len() as i32).sum(),
         );
         let content = serde_json::to_string(&providers).map_err(|error| error.to_string())?;
-        ModelConfigManager::new(self.paths.runtime_dir().to_path_buf())
+        ModelConfigManager::default()
             .importAllProvidersFromBackupContent(&content)?;
-        FunctionalConfigManager::new(self.paths.runtime_dir().to_path_buf())
+        FunctionalConfigManager::default()
             .saveFunctionModelBinding(bindings).map_err(|error| error.to_string())?;
         Ok(result)
     }

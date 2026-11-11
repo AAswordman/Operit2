@@ -15,6 +15,7 @@ use operit_util::TtsCleaner::TtsCleaner;
 #[derive(Clone)]
 /// Coordinates generated audio playback and host TTS playback controls.
 pub struct TtsPlaybackService {
+    filesystem: operit_vfs::VisualFileSystem::VisualFileSystem,
     ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
     ttsConfigManager: TtsConfigManager,
 }
@@ -24,6 +25,7 @@ impl TtsPlaybackService {
     pub fn getInstance(context: &HostManager) -> Result<Self, String> {
         let paths = RuntimeStorePaths::default();
         Ok(Self {
+            filesystem: context.vfs()?,
             ttsPlaybackHost: context.ttsPlaybackHost.clone(),
             ttsConfigManager: TtsConfigManager::new(paths),
         })
@@ -35,9 +37,8 @@ impl TtsPlaybackService {
         if path.is_empty() {
             return Err("audio path is empty".to_string());
         }
-        let status = self
-            .ttsPlaybackHost()?
-            .playAudio(path)
+        let file = self.filesystem.fileResource(None, path)?;
+        let status = self.ttsPlaybackHost()?.playFile(&file)
             .map_err(|error| error.to_string())?;
         Ok(TtsPlaybackResult {
             path: status.path,

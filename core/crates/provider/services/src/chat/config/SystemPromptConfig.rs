@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
 use operit_host_api::HostEnvironmentDescriptor;
-use operit_tools::files::PathMapper::ResolvedVfsPath;
+/// Describes a workspace by its portable public identity only.
+#[derive(Clone, Debug)]
+pub struct WorkspacePathMapping {
+    pub vfsPath: String,
+}
 use serde_json::{json, Value};
 
 use crate::chat::config::SystemToolPrompts::SystemToolPrompts;
@@ -139,7 +143,7 @@ pub struct SystemPromptOptions {
     pub output_path: Option<String>,
     pub workspace_folders: Vec<String>,
     /// VFS roots mapped to absolute host paths by the active file-tool mapper.
-    pub workspace_path_mappings: Vec<ResolvedVfsPath>,
+    pub workspace_path_mappings: Vec<WorkspacePathMapping>,
     pub terminal_path_mappings: Vec<TerminalPathMapping>,
     pub saf_bookmark_names: Vec<String>,
     pub use_english: bool,
@@ -420,7 +424,6 @@ impl SystemPromptConfig {
                     .iter()
                     .map(|mapping| json!({
                         "vfsPath": mapping.vfsPath,
-                        "physicalPath": mapping.physicalPath,
                     }))
                     .collect::<Vec<_>>()),
             ),
@@ -606,7 +609,7 @@ fn getWorkspaceGuidelines(
     let mounted_folders = std::iter::once(workspace_path)
         .chain(workspace_folders.iter().map(String::as_str))
         .filter(|folder| !folder.trim().is_empty())
-        .filter_map(|folder| operit_tools::files::PathMapper::PathMapper::relativeFileToolPath(workspace_path, folder).ok())
+        .filter_map(|folder| operit_vfs::VfsPath::relativeFileToolPath(workspace_path, folder).ok())
         .filter(|folder| seen.insert(folder.clone()))
         .map(|folder| format!("- `{folder}`"))
         .collect::<Vec<_>>()
@@ -649,7 +652,7 @@ fn buildWorkspaceTerminalPathSection(
     }
     let paths = mappings.iter().map(|mapping| {
         let label = format!("{}/{}", mapping.terminal, mapping.terminal_type);
-        let relative = operit_tools::files::PathMapper::PathMapper::relativeFileToolPath(primary, &mapping.vfs_path)
+        let relative = operit_vfs::VfsPath::relativeFileToolPath(primary, &mapping.vfs_path)
             .unwrap_or_else(|_| mapping.vfs_path.clone());
         match &mapping.path {
             Ok(_) if relative == "." => format!("- `{label}`: `.`"),
@@ -840,13 +843,11 @@ mod tests {
                 super::TerminalPathMapping { terminal: "native".into(), terminal_type: "shell".into(), vfs_path: "/operitapp/workspaces/library".into(), path: Ok("/Users/test/My Projects/library".into()) },
             ],
             workspace_path_mappings: vec![
-                super::ResolvedVfsPath {
+                super::WorkspacePathMapping {
                     vfsPath: "/operitapp/workspaces/main".into(),
-                    physicalPath: "/Users/test/My Projects/main".into(),
                 },
-                super::ResolvedVfsPath {
+                super::WorkspacePathMapping {
                     vfsPath: "/operitapp/workspaces/library".into(),
-                    physicalPath: "/Users/test/My Projects/library".into(),
                 },
             ],
             ..SystemPromptOptions::default()

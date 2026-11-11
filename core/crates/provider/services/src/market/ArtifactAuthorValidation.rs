@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::path::Path;
-use operit_tools::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
+use operit_vfs::{VfsPath, VisualFileSystem::VisualFileSystem};
 use operit_plugin_sdk::package::PublishablePackageSource;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgArchiveParser;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ impl ArtifactAuthorValidation {
         &self,
         source: PublishablePackageSource,
     ) -> Result<LocalArtifactAuthorDeclaration, String> {
-        let path = PathMapper::resolveFileResourcePath(None, &source.sourcePath)?;
+        let path = self.fileSystem.resolveResourcePath(None, &source.sourcePath)?;
         let sourceInfo = self.fileSystem.fileExists(&path)?;
         if !sourceInfo.exists || sourceInfo.isDirectory {
             return Ok(LocalArtifactAuthorDeclaration {

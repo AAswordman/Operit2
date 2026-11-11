@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use super::ToolArguments::{decodeArguments, RequestArguments};
-use crate::files::PathMapper::PathMapper;
+use operit_vfs::VfsPath;
 use crate::tools::ToolInvocation::prepareInvocation;
 use crate::tools::ToolResultDataClasses::{StorageRequestResultData, ToolResultData};
 use crate::ToolExecutionManager::{
@@ -9,7 +9,6 @@ use crate::ToolExecutionManager::{
 };
 use operit_plugin_sdk::js_sdk::storage::StorageRequest;
 
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SyncOperationStore::SyncOperationStore;
 use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 
@@ -58,7 +57,7 @@ pub(crate) async fn executePluginStorage(
         .runtimeStorageHost
         .ok_or("RuntimeStorageHost is not registered")?;
     if let StorageRequest::Open { path, .. } | StorageRequest::OpenPreferences { path, .. } = &mut request {
-        *path = resolve_plugin_storage_path(path, &RuntimeStorePaths::default())?;
+        *path = resolve_plugin_storage_path(path)?;
     }
     let session = &context.host().storageSession;
     let response = if session.isPreferencesRequest(&request).map_err(|error| error.to_string())? {
@@ -72,26 +71,23 @@ pub(crate) async fn executePluginStorage(
     Ok(StorageRequestResultData::from(response))
 }
 
-/// Converts supported public VFS, runtime-relative and Host paths to one canonical runtime storage identity.
+/// Converts virtual addresses and logical storage keys to one validated runtime storage identity.
 pub(crate) fn resolve_plugin_storage_path(
     path: &str,
-    roots: &RuntimeStorePaths,
 ) -> Result<String, String> {
     let normalized = path.replace('\\', "/");
     if normalized.starts_with("runtime/") {
-        return Ok(normalized);
+        let path = VfsPath::runtimeDataPath(&normalized)?;
+        let relative = VfsPath::relativePath("/operitapp/data", &path)?.ok_or("Storage path is outside runtime data")?;
+        return Ok(format!("runtime/{relative}"));
     }
     for root in ["/app/data", "/operitapp/data"] {
         if normalized != root && !normalized.starts_with(&format!("{root}/")) { continue; }
-        let relative = PathMapper::relativePath(root, &normalized)
+        let relative = VfsPath::relativePath(root, &normalized)
             .map_err(|error| error.to_string())?;
         if let Some(relative) = relative {
             return Ok(format!("runtime/{relative}"));
         }
     }
-    let root = roots.runtime_dir().to_string_lossy().replace('\\', "/");
-    let relative = normalized
-        .strip_prefix(&format!("{root}/"))
-        .ok_or_else(|| String::from("Storage path is not inside the runtime Host root"))?;
-    Ok(format!("runtime/{relative}"))
+    Err("Storage path must use a runtime VFS address or a registered runtime/ storage key".into())
 }

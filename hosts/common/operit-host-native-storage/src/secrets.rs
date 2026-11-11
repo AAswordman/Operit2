@@ -1,5 +1,5 @@
 //! File-backed secrets for explicitly configured native host profiles.
-use operit_host_api::{HostError, HostResult, HostSecretStore};
+use operit_host_contract::{HostError, HostResult, HostSecretStore};
 use std::{fs, io::Write, path::PathBuf};
 /// Stores secrets below a dedicated profile directory.
 /// Unix permissions are private; other platforms inherit the profile directory ACL.

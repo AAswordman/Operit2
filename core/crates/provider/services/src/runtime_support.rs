@@ -285,8 +285,7 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         Box::pin(async { Err("Local LLM runtime support is unavailable".to_string()) })
     }
 
-    /// Returns the root directory used by provider runtime data.
-    fn dataDir(&self) -> Result<PathBuf, String>;
+
 
     /// Records provider/model token usage.
     fn updateTokensForProviderModel(
@@ -315,14 +314,12 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     /// Returns the model binding for a function.
     fn modelBindingForFunction(
         &self,
-        rootDir: PathBuf,
         functionType: FunctionType,
     ) -> Result<ProviderFunctionModelBinding, String>;
 
     /// Returns the resolved model config for a provider/model pair.
     fn resolvedModelConfig(
         &self,
-        rootDir: PathBuf,
         providerId: &str,
         modelId: &str,
     ) -> Result<ResolvedModelConfig, String>;
@@ -345,7 +342,6 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     /// Returns the provider profile for a provider id.
     fn providerProfile(
         &self,
-        rootDir: PathBuf,
         providerId: &str,
     ) -> Result<ProviderProfile, String>;
 

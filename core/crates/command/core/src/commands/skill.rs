@@ -50,7 +50,7 @@ pub fn run_skill_command(
             let contentArg = args.get(3).ok_or_else(|| {
                 "usage: operit2 skill create <skill-id> <description> <content-or-@file> [attachment-path...]".to_string()
             })?;
-            let content = read_content_arg(contentArg)?;
+            let content = read_content_arg(&application.hostManager, contentArg)?;
             let attachmentPaths = args[4..].iter().map(PathBuf::from).collect::<Vec<_>>();
             let result = repository.importSkillFromDirectInput(
                 skillId,
@@ -169,7 +169,10 @@ fn load_more_skill(
     let skill = repository.importBundledExternalSkill(name)?;
     output.push_stdout_line(format!("Loaded skill {}", skill.name));
     output.push_stdout_line(format!("Description: {}", skill.description));
-    output.push_stdout_line(format!("Directory: {}", skill.directory.to_string_lossy()));
+    output.push_stdout_line(format!(
+        "Directory: {}",
+        skill.directory.to_string_lossy().replace('\\', "/")
+    ));
     output.setJsonStdout(serde_json::to_value(&skill).map_err(|error| error.to_string())?);
     Ok(())
 }
@@ -188,8 +191,8 @@ fn list_skills(repository: &SkillRepository, output: &mut CoreCommandOutput) -> 
         rows.push(json!({
             "name": name,
             "description": skill.description,
-            "directory": skill.directory,
-            "skillFile": skill.skillFile,
+            "directory": skill.directory.to_string_lossy().replace('\\', "/"),
+            "skillFile": skill.skillFile.to_string_lossy().replace('\\', "/"),
             "visible": visible
         }));
     }
@@ -217,8 +220,14 @@ fn show_skill(
     let content = repository.readSkillContent(name);
     output.push_stdout_line(format!("Skill {}", skill.name));
     output.push_stdout_line(format!("Description: {}", skill.description));
-    output.push_stdout_line(format!("Directory: {}", skill.directory.to_string_lossy()));
-    output.push_stdout_line(format!("Skill file: {}", skill.skillFile.to_string_lossy()));
+    output.push_stdout_line(format!(
+        "Directory: {}",
+        skill.directory.to_string_lossy().replace('\\', "/")
+    ));
+    output.push_stdout_line(format!(
+        "Skill file: {}",
+        skill.skillFile.to_string_lossy().replace('\\', "/")
+    ));
     output.push_stdout_line(format!("Visible to AI: {visible}"));
     if let Some(content) = content.as_ref() {
         output.push_stdout_line("");
@@ -228,8 +237,8 @@ fn show_skill(
     output.setJsonStdout(json!({
         "name": skill.name,
         "description": skill.description,
-        "directory": skill.directory,
-        "skillFile": skill.skillFile,
+        "directory": skill.directory.to_string_lossy().replace('\\', "/"),
+        "skillFile": skill.skillFile.to_string_lossy().replace('\\', "/"),
         "visible": visible,
         "content": content
     }));

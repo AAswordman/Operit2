@@ -7,7 +7,7 @@
 //! byte size and SHA-256 both match.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use std::sync::{Mutex, OnceLock};
 
 use base64::engine::general_purpose::STANDARD;
@@ -30,8 +30,6 @@ use crate::tools::defaultTool::standard::StandardFileSystemTools::StandardFileSy
 /// Chunk payload cap; base64 encoding stays far below the peer message limit.
 pub const TRANSFER_CHUNK_BYTES: usize = 512 * 1024;
 const SESSION_TIMEOUT_MS: i64 = 10 * 60 * 1000;
-/// Resource-backed sources have no seekable native path; read them whole, once.
-const MAX_RESOURCE_SOURCE_BYTES: i64 = 256 * 1024 * 1024;
 
 pub const FS_TRANSFER_BEGIN_TOOL: &str = "__fs_transfer_begin";
 pub const FS_TRANSFER_CHUNK_TOOL: &str = "__fs_transfer_chunk";
@@ -40,7 +38,8 @@ pub const FS_READ_CHUNK_TOOL: &str = "__fs_read_chunk";
 pub const FS_PUSH_FILE_TOOL: &str = "__fs_push_file";
 
 struct TransferSession {
-    tempPath: PathBuf,
+    filesystem: VisualFileSystem,
+    tempPath: String,
     destinationPath: String,
     expectedSize: i64,
     received: i64,
@@ -66,11 +65,8 @@ fn takeSession(transferId: &str) -> Result<TransferSession, String> {
 }
 
 fn restoreSession(session: TransferSession) {
-    let transferId = session
-        .tempPath
-        .file_name()
-        .map(|name| name.to_string_lossy().trim_start_matches("operit-part-").to_string())
-        .unwrap_or_default();
+    let transferId = session.tempPath.rsplit('/').next().expect("validated transfer path")
+        .trim_start_matches("operit-part-").to_string();
     sessions()
         .lock()
         .expect("transfer sessions mutex poisoned")
@@ -195,7 +191,7 @@ impl StandardFileSystemTools {
             .collect();
         for id in expired {
             if let Some(session) = guard.remove(&id) {
-                drop(self.host.deleteFile(&session.tempPath.to_string_lossy(), false));
+                drop(session.filesystem.deleteFile(&session.tempPath, false));
             }
         }
     }
@@ -213,40 +209,31 @@ impl StandardFileSystemTools {
             return toolError(tool, "expected_size must not be negative".to_string());
         }
         let vfs = self.transferVfs();
-        let resolved = match vfs.resolvePath(&destinationPath) {
-            Ok(resolved) => resolved,
+        let destination = match vfs.file(&destinationPath) {
+            Ok(file) => file,
             Err(error) => return toolError(tool, format!("Invalid destination: {error}")),
         };
-        let physicalPath = match resolved.nativePath() {
-            Ok(path) => path,
-            Err(_) => {
-                return toolError(
-                    tool,
-                    "Transfer destinations must resolve to a native file path".to_string(),
-                )
-            }
+        let destinationPath = operit_host_api::FileTarget::vfsPath(&destination).to_owned();
+        let Some((parent, _)) = destinationPath.rsplit_once('/') else {
+            return toolError(tool, "Invalid destination parent".into());
         };
-        if let Some(parent) = std::path::Path::new(&physicalPath).parent() {
-            if let Err(error) = self.host.makeDirectory(&parent.to_string_lossy(), true) {
-                return toolError(tool, format!("Cannot create destination directory: {error}"));
-            }
+        if parent.is_empty() {
+            return toolError(tool, "Invalid destination parent".into());
+        }
+        if let Err(error) = vfs.makeDirectory(parent, true) {
+            return toolError(tool, format!("Cannot create destination directory: {error}"));
         }
         let transferId = uuid::Uuid::new_v4().to_string();
-        let tempPath = match std::path::Path::new(&physicalPath)
-            .parent()
-            .map(|parent| parent.join(format!("operit-part-{transferId}")))
-        {
-            Some(path) => path,
-            None => return toolError(tool, "Invalid destination parent".to_string()),
-        };
-        if let Err(error) = self.host.writeFileBytes(&tempPath.to_string_lossy(), &[]) {
+        let tempPath = format!("{parent}/operit-part-{transferId}");
+        if let Err(error) = vfs.writeFileBytes(&tempPath, &[]) {
             return toolError(tool, format!("Cannot create transfer temp file: {error}"));
         }
         sessions().lock().expect("transfer sessions mutex poisoned").insert(
             transferId.clone(),
             TransferSession {
+                filesystem: vfs,
                 tempPath,
-                destinationPath: physicalPath.clone(),
+                destinationPath: destinationPath.clone(),
                 expectedSize,
                 received: 0,
                 hasher: Sha256::new(),
@@ -257,7 +244,7 @@ impl StandardFileSystemTools {
             tool,
             jsonResult(serde_json::json!({
                 "transferId": transferId,
-                "destination": physicalPath,
+                "destination": destinationPath,
             })),
         )
     }
@@ -299,7 +286,7 @@ impl StandardFileSystemTools {
                 ),
             );
         }
-        let append = self.host.appendFileBytes(&session.tempPath.to_string_lossy(), &bytes);
+        let append = session.filesystem.appendFileBytes(&session.tempPath, &bytes);
         if let Err(error) = append {
             restoreSession(session);
             return toolError(tool, format!("Cannot append chunk: {error}"));
@@ -316,15 +303,13 @@ impl StandardFileSystemTools {
     pub fn fsTransferCommit(&self, tool: &AITool) -> ToolResult {
         let transferId = parameterValue(tool, "transfer_id");
         let expectedSha256 = parameterValue(tool, "expected_sha256").to_ascii_lowercase();
-        let mut session = match takeSession(&transferId) {
+        let session = match takeSession(&transferId) {
             Ok(session) => session,
             Err(error) => return toolError(tool, error),
         };
         if session.received != session.expectedSize {
             let (received, expected) = (session.received, session.expectedSize);
-            let partial = session.tempPath.clone();
-            restoreSession(session);
-            let _ = self.host.deleteFile(&partial.to_string_lossy(), false);
+            let _ = session.filesystem.deleteFile(&session.tempPath, false);
             return toolError(
                 tool,
                 format!("Transfer incomplete: received {received} of {expected} bytes"),
@@ -332,17 +317,13 @@ impl StandardFileSystemTools {
         }
         let actualSha256 = format!("{:x}", session.hasher.clone().finalize());
         if actualSha256 != expectedSha256 {
-            let partial = session.tempPath.clone();
-            restoreSession(session);
-            let _ = self.host.deleteFile(&partial.to_string_lossy(), false);
+            let _ = session.filesystem.deleteFile(&session.tempPath, false);
             return toolError(
                 tool,
                 format!("SHA-256 mismatch: expected {expectedSha256}, received {actualSha256}"),
             );
         }
-        if let Err(error) = self
-            .host
-            .moveFile(&session.tempPath.to_string_lossy(), &session.destinationPath)
+        if let Err(error) = session.filesystem.moveFile(&session.tempPath, &session.destinationPath)
         {
             restoreSession(session);
             return toolError(tool, format!("Cannot publish destination: {error}"));
@@ -376,37 +357,12 @@ impl StandardFileSystemTools {
             );
         }
         let vfs = self.transferVfs();
-        let resolved = match vfs.resolvePath(&sourcePath) {
-            Ok(resolved) => resolved,
-            Err(error) => return toolError(tool, format!("Invalid source: {error}")),
-        };
         let totalSize = match vfs.fileInfo(&sourcePath) {
             Ok(info) if info.exists && info.fileType != "directory" => info.size,
             Ok(_) => return toolError(tool, format!("Source is not a file: {sourcePath}")),
             Err(error) => return toolError(tool, error),
         };
-        let bytes: Result<Vec<u8>, String> = match resolved.nativePath() {
-            Ok(nativePath) => self
-                .host
-                .readFileBytesRange(&nativePath, offset as u64, length as usize)
-                .map_err(|error| error.to_string()),
-            Err(_) => {
-                // Resource-backed sources have no seekable native path; read once.
-                if totalSize > MAX_RESOURCE_SOURCE_BYTES {
-                    return toolError(
-                        tool,
-                        format!(
-                            "Resource-backed source exceeds the {MAX_RESOURCE_SOURCE_BYTES} byte transfer cap"
-                        ),
-                    );
-                }
-                vfs.readFileBytes(&sourcePath).map(|all| {
-                    let start = (offset as usize).min(all.len());
-                    let end = (offset as usize + length as usize).min(all.len());
-                    all[start..end].to_vec()
-                })
-            }
-        };
+        let bytes = vfs.readFileBytesRange(&sourcePath, offset as u64, length as usize);
         let bytes = match bytes {
             Ok(bytes) => bytes,
             Err(error) => return toolError(tool, format!("Cannot read source: {error}")),
@@ -430,10 +386,6 @@ impl StandardFileSystemTools {
         let sourcePath = parameterValue(tool, "source_path");
         let destinationPath = parameterValue(tool, "destination_path");
         let vfs = self.transferVfs();
-        let resolved = match vfs.resolvePath(&sourcePath) {
-            Ok(resolved) => resolved,
-            Err(error) => return toolError(tool, format!("Invalid source: {error}")),
-        };
         let sourceInfo = match vfs.fileInfo(&sourcePath) {
             Ok(info) if info.exists && info.fileType != "directory" => info,
             Ok(_) => return toolError(tool, format!("Source is not a file: {sourcePath}")),
@@ -462,37 +414,11 @@ impl StandardFileSystemTools {
             return toolError(tool, "Target device returned no transfer id".to_string());
         }
 
-        let nativePath = resolved.nativePath().ok();
         let mut hasher = Sha256::new();
         let mut pushed: i64 = 0;
-        let pushResult = if let Some(nativePath) = nativePath {
-            self.pushNativeChunks(
-                &targetNodeId,
-                &transferId,
-                &nativePath,
-                &mut hasher,
-                &mut pushed,
-            )
-            .await
-        } else if sourceInfo.size > MAX_RESOURCE_SOURCE_BYTES {
-            Err(format!(
-                "Resource-backed source exceeds the {MAX_RESOURCE_SOURCE_BYTES} byte transfer cap"
-            ))
-        } else {
-            match vfs.readFileBytes(&sourcePath) {
-                Ok(all) => {
-                    self.pushBufferedChunks(
-                        &targetNodeId,
-                        &transferId,
-                        &all,
-                        &mut hasher,
-                        &mut pushed,
-                    )
-                    .await
-                }
-                Err(error) => Err(error),
-            }
-        };
+        let pushResult = self.pushFileChunks(
+            &targetNodeId, &transferId, &vfs, &sourcePath, &mut hasher, &mut pushed,
+        ).await;
         if let Err(error) = pushResult {
             // Best-effort abort; the commit with an empty hash never publishes.
             drop(
@@ -552,22 +478,20 @@ impl StandardFileSystemTools {
         )
     }
 
-    /// Streams a seekable native source to the target chunk by chunk.
+    /// Streams bounded VFS reads through the owning backend.
     #[allow(non_snake_case)]
-    async fn pushNativeChunks(
+    async fn pushFileChunks(
         &self,
         targetNodeId: &str,
         transferId: &str,
-        nativePath: &str,
+        filesystem: &VisualFileSystem,
+        path: &str,
         hasher: &mut Sha256,
         pushed: &mut i64,
     ) -> Result<(), String> {
         let mut offset: u64 = 0;
         loop {
-            let buffer = self
-                .host
-                .readFileBytesRange(nativePath, offset, TRANSFER_CHUNK_BYTES)
-                .map_err(|error| error.to_string())?;
+            let buffer = filesystem.readFileBytesRange(path, offset, TRANSFER_CHUNK_BYTES)?;
             if buffer.is_empty() {
                 break;
             }
@@ -576,24 +500,6 @@ impl StandardFileSystemTools {
             hasher.update(&buffer);
             *pushed += chunkBytes as i64;
             offset += chunkBytes as u64;
-        }
-        Ok(())
-    }
-
-    /// Streams an in-memory (resource-backed) source to the target.
-    #[allow(non_snake_case)]
-    async fn pushBufferedChunks(
-        &self,
-        targetNodeId: &str,
-        transferId: &str,
-        all: &[u8],
-        hasher: &mut Sha256,
-        pushed: &mut i64,
-    ) -> Result<(), String> {
-        for chunk in all.chunks(TRANSFER_CHUNK_BYTES) {
-            self.pushOneChunk(targetNodeId, transferId, *pushed, chunk).await?;
-            hasher.update(chunk);
-            *pushed += chunk.len() as i64;
         }
         Ok(())
     }
@@ -627,18 +533,16 @@ impl StandardFileSystemTools {
         &self,
         sourceNodeId: &str,
         sourceInnerPath: &str,
-        destinationPhysical: &str,
+        destinationPath: &str,
     ) -> Result<(i64, String), String> {
-        let destination = std::path::Path::new(destinationPhysical);
-        if let Some(parent) = destination.parent() {
-            self.host
-                .makeDirectory(&parent.to_string_lossy(), true)
-                .map_err(|error| format!("Cannot create destination directory: {error}"))?;
-        }
-        let tempPath = destination
-            .parent()
-            .map(|parent| parent.join(format!("operit-part-{}", uuid::Uuid::new_v4())))
-            .ok_or("Invalid destination parent")?;
+        let filesystem = self.transferVfs();
+        let destinationPath = filesystem.fileResource(None, destinationPath)?;
+        let destinationPath = operit_host_api::FileSource::vfsPath(&destinationPath);
+        let (parent, _) = destinationPath.rsplit_once('/').ok_or("Invalid destination parent")?;
+        if parent.is_empty() { return Err("Invalid destination parent".into()); }
+        filesystem.makeDirectory(parent, true)
+            .map_err(|error| format!("Cannot create destination directory: {error}"))?;
+        let tempPath = format!("{parent}/operit-part-{}", uuid::Uuid::new_v4());
         let first = self
             .executeInternalTool(
                 sourceNodeId,
@@ -654,8 +558,8 @@ impl StandardFileSystemTools {
             .get("totalSize")
             .and_then(serde_json::Value::as_i64)
             .ok_or("Source device returned no total size")?;
-        self.host
-            .writeFileBytes(&tempPath.to_string_lossy(), &[])
+        filesystem
+            .writeFileBytes(&tempPath, &[])
             .map_err(|error| format!("Cannot open transfer temp file: {error}"))?;
         let mut hasher = Sha256::new();
         let mut offset: i64 = 0;
@@ -691,8 +595,8 @@ impl StandardFileSystemTools {
                 break;
             }
             hasher.update(&bytes);
-            self.host
-                .appendFileBytes(&tempPath.to_string_lossy(), &bytes)
+            filesystem
+                .appendFileBytes(&tempPath, &bytes)
                 .map_err(|error| format!("Cannot write transfer temp file: {error}"))?;
             offset += bytes.len() as i64;
             if offset >= totalSize {
@@ -700,14 +604,14 @@ impl StandardFileSystemTools {
             }
         }
         if offset != totalSize {
-            drop(self.host.deleteFile(&tempPath.to_string_lossy(), false));
+            drop(filesystem.deleteFile(&tempPath, false));
             return Err(format!(
                 "Transfer incomplete: received {offset} of {totalSize} bytes"
             ));
         }
         let sha256 = format!("{:x}", hasher.finalize());
-        self.host
-            .moveFile(&tempPath.to_string_lossy(), destinationPhysical)
+        filesystem
+            .moveFile(&tempPath, destinationPath)
             .map_err(|error| format!("Cannot publish destination: {error}"))?;
         Ok((totalSize, sha256))
     }
@@ -801,11 +705,7 @@ impl StandardFileSystemTools {
                 })?;
                 match state.resolveQualifiedVfsPath(&value)? {
                     crate::runtime_support::QualifiedVfsResolution::LocalPath(innerPath) => {
-                        let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
-                        let innerPath = crate::files::PathMapper::PathMapper::resolveFileToolPath(
-                            context.as_ref().and_then(|context| context.workspacePath.as_deref()),
-                            &innerPath,
-                        )?;
+                        let innerPath = self.transferPath(&innerPath)?;
                         endpoints.push(TransferEndpoint {
                             nodeId: None,
                             innerPath,
@@ -837,11 +737,7 @@ impl StandardFileSystemTools {
                     }
                 }
             } else {
-                let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
-                let innerPath = crate::files::PathMapper::PathMapper::resolveFileToolPath(
-                    context.as_ref().and_then(|context| context.workspacePath.as_deref()),
-                    &value,
-                )?;
+                let innerPath = self.transferPath(&value)?;
                 endpoints.push(TransferEndpoint {
                     nodeId: None,
                     innerPath,
@@ -906,20 +802,11 @@ impl StandardFileSystemTools {
             return extractTransferSizeSha(result);
         }
         if destination.nodeId.is_none() {
-            let vfs = self.transferVfs();
-            let resolved = vfs
-                .resolvePath(&destination.innerPath)
-                .map_err(|error| format!("Invalid destination: {error}"))?;
-            let physicalPath = resolved
-                .nativePath()
-                .map_err(|_| {
-                    "Transfer destinations must resolve to a native file path".to_string()
-                })?;
             return self
                 .fsPullFromRemote(
                     source.nodeId.as_deref().unwrap_or_default(),
                     &source.innerPath,
-                    &physicalPath,
+                    &destination.innerPath,
                 )
                 .await;
         }

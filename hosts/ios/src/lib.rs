@@ -67,6 +67,7 @@ pub fn createRuntimeHostManager(
     hostManager.managedRuntimeHost = Some(managedRuntimeHost);
     hostManager.runtimeStorageHost = Some(runtimeStorageHost);
     hostManager.runtimeSqliteHost = Some(runtimeSqliteHost);
+    hostManager = hostManager.withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()));
     hostManager = hostManager.withHostSecretStore(hostSecretStore);
     hostManager = hostManager.withArchiveStagingHost(archiveStagingHost);
     hostManager = hostManager.withRuntimeStorageWriteHost(runtimeStorageWriteHost);

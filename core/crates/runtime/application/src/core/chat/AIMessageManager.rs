@@ -6,7 +6,7 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingHookParams, MessageProcessingPluginRegistry,
 };
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
@@ -52,7 +52,7 @@ pub struct BuildUserMessageContentRequest {
     pub messageText: String,
     pub proxySenderName: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
-    pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
+    pub filesystem: Option<VisualFileSystem>,
     pub workspacePath: Option<String>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableDirectImageProcessing: bool,
@@ -274,7 +274,7 @@ impl AIMessageManager {
             .map(|attachment| {
                 Self::buildAttachmentTag(
                     attachment,
-                    request.fileSystemHost.as_deref(),
+                    request.filesystem.as_ref(),
                     request.enableDirectImageProcessing,
                     request.enableDirectAudioProcessing,
                     request.enableDirectVideoProcessing,
@@ -790,22 +790,19 @@ impl AIMessageManager {
     /// Builds the serialized markup for one attachment.
     fn buildAttachmentTag(
         attachment: &AttachmentInfo,
-        fileSystemHost: Option<&dyn FileSystemHost>,
+        filesystem: Option<&VisualFileSystem>,
         enableDirectImageProcessing: bool,
         enableDirectAudioProcessing: bool,
         enableDirectVideoProcessing: bool,
     ) -> Result<String, String> {
         // A synchronized attachment has a device-independent VFS locator. Resolve
         // that exact shared path locally before considering its original host path.
-        let replica = fileSystemHost.and_then(|host| {
+        let replica = filesystem.and_then(|files| {
             let path = attachment.fileToolPath();
             if !["/operitapp/outputs/", "/operitapp/workspaces/", "/operitapp/data/data/chat_attachments/", "/app/workspaces/", "/app/outputs/", "/app/data/data/chat_attachments/"].iter().any(|root| path.starts_with(root)) { return None; }
-            let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHostOption()?;
-            let mapper = operit_tools::files::PathMapper::PathMapper::new(storage.runtimeRootDir()?, storage.workspaceRootDir()?, storage);
-            let physical = mapper.resolve(&path).ok()?.nativePath().ok()?;
-            let found = host.fileExists(&physical).ok()?;
+            let found = files.fileExists(&path).ok()?;
             if !found.exists || found.isDirectory || found.size != attachment.fileSize { return None; }
-            let mut local = attachment.clone(); local.filePath = physical;
+            let mut local = attachment.clone(); local.filePath = path;
             Some(local)
         });
         let attachment = replica.as_ref().unwrap_or(attachment);
@@ -825,7 +822,7 @@ impl AIMessageManager {
                 .to_ascii_lowercase()
                 .starts_with("image/")
         {
-            match Self::buildDirectImageAttachmentTag(attachment, fileSystemHost) {
+            match Self::buildDirectImageAttachmentTag(attachment, filesystem) {
                 Ok(tag) => return Ok(tag),
                 Err(error) => {
                     // Match the Kotlin chain: a failed image-pool registration must fall
@@ -846,7 +843,7 @@ impl AIMessageManager {
                 .to_ascii_lowercase()
                 .starts_with("audio/")
         {
-            return Self::buildDirectMediaAttachmentTag(attachment, fileSystemHost, "audio");
+            return Self::buildDirectMediaAttachmentTag(attachment, filesystem, "audio");
         }
         if enableDirectVideoProcessing
             && attachment
@@ -854,7 +851,7 @@ impl AIMessageManager {
                 .to_ascii_lowercase()
                 .starts_with("video/")
         {
-            return Self::buildDirectMediaAttachmentTag(attachment, fileSystemHost, "video");
+            return Self::buildDirectMediaAttachmentTag(attachment, filesystem, "video");
         }
 
         let attributes = Self::buildAttachmentAttributes(attachment);
@@ -867,10 +864,10 @@ impl AIMessageManager {
     /// Builds an attachment tag and media link for a direct image attachment.
     fn buildDirectImageAttachmentTag(
         attachment: &AttachmentInfo,
-        fileSystemHost: Option<&dyn FileSystemHost>,
+        filesystem: Option<&VisualFileSystem>,
     ) -> Result<String, String> {
         let attributes = Self::buildAttachmentAttributes(attachment);
-        let imageId = Self::registerDirectImageAttachment(attachment, fileSystemHost)?;
+        let imageId = Self::registerDirectImageAttachment(attachment, filesystem)?;
         let imageLink = MediaLinkBuilder::image(&imageId);
         let mut attachedContent = "Image content has been attached as multimodal input with this message. Do not call file reading tools to read this path.".to_string();
         if !attachment.content.trim().is_empty() {
@@ -885,14 +882,13 @@ impl AIMessageManager {
     /// Registers an image attachment in the process image pool.
     fn registerDirectImageAttachment(
         attachment: &AttachmentInfo,
-        fileSystemHost: Option<&dyn FileSystemHost>,
+        filesystem: Option<&VisualFileSystem>,
     ) -> Result<String, String> {
-        let Some(fileSystemHost) = fileSystemHost else {
-            return Err("FileSystemHost is required for direct image attachment".to_string());
+        let Some(filesystem) = filesystem else {
+            return Err("VFS is required for direct image attachment".to_string());
         };
-        let bytes = fileSystemHost
-            .readFileBytes(&attachment.filePath)
-            .map_err(|error| error.message)?;
+        let source = filesystem.fileResource(None, &attachment.filePath)?;
+        let bytes = operit_host_api::FileSource::readBytes(&source).map_err(|error| error.message)?;
         if bytes.is_empty() {
             return Err(format!(
                 "image attachment is empty: {}",
@@ -912,10 +908,10 @@ impl AIMessageManager {
     /// Builds a canonical audio or video media link backed by the process media pool.
     fn buildDirectMediaAttachmentTag(
         attachment: &AttachmentInfo,
-        fileSystemHost: Option<&dyn FileSystemHost>,
+        filesystem: Option<&VisualFileSystem>,
         mediaType: &str,
     ) -> Result<String, String> {
-        let mediaId = Self::registerDirectMediaAttachment(attachment, fileSystemHost, mediaType)?;
+        let mediaId = Self::registerDirectMediaAttachment(attachment, filesystem, mediaType)?;
         let mediaLink = match mediaType {
             "audio" => MediaLinkBuilder::audio(&mediaId),
             "video" => MediaLinkBuilder::video(&mediaId),
@@ -930,17 +926,16 @@ impl AIMessageManager {
     /// Registers an audio or video attachment in the process media pool.
     fn registerDirectMediaAttachment(
         attachment: &AttachmentInfo,
-        fileSystemHost: Option<&dyn FileSystemHost>,
+        filesystem: Option<&VisualFileSystem>,
         mediaType: &str,
     ) -> Result<String, String> {
-        let Some(fileSystemHost) = fileSystemHost else {
+        let Some(filesystem) = filesystem else {
             return Err(format!(
-                "FileSystemHost is required for direct {mediaType} attachment"
+                "VFS is required for direct {mediaType} attachment"
             ));
         };
-        let bytes = fileSystemHost
-            .readFileBytes(&attachment.filePath)
-            .map_err(|error| error.message)?;
+        let source = filesystem.fileResource(None, &attachment.filePath)?;
+        let bytes = operit_host_api::FileSource::readBytes(&source).map_err(|error| error.message)?;
         if bytes.is_empty() {
             return Err(format!(
                 "{mediaType} attachment is empty: {}",

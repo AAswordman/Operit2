@@ -31,19 +31,21 @@ test('HTTP Hosts provide response streams instead of target-selected delivery mo
     assert.match(source(host), /fn openHttpResponseStream[\s\S]*?self\.inner\s*\.openHttpResponseStream/, host);
   }
   assert.match(source('hosts/web/src/tools/http/mod.rs'), /fn openHttpResponseStream/);
-  assert.doesNotMatch(source('core/crates/foundation/host-api/src/lib.rs'), /HttpResponseDelivery|responseDelivery/);
+  assert.doesNotMatch(source('core/crates/foundation/host-contract/src/lib.rs'), /HttpResponseDelivery|responseDelivery/);
   assert.match(source('apps/flutter/app/web/runtime/src/operit_runtime_bridge.ts'), /\.\.\.httpStreamHost/);
   assert.match(source('apps/flutter/app/hook/build.dart'), /'browser_http_stream\.js'/);
 });
 
 test('mount persistence and permission checks never select a global storage Host', () => {
-  const mounts = source('core/crates/tool/services/src/files/MountRegistry.rs');
+  const mounts = source('core/crates/foundation/vfs/src/MountRegistry.rs');
   assert.doesNotMatch(mounts, /defaultRuntimeStorageHost/);
   const handler = source('core/crates/tool/services/src/tools/AIToolHandler.rs');
   const start = handler.indexOf('fn checkWorkspaceWritePath(');
   const end = handler.indexOf('\n    fn ', start + 1);
   const check = handler.slice(start, end === -1 ? undefined : end);
-  assert.match(check, /PathMapper::new\(runtimeRoot, workspaceRoot, storage\.clone\(\)\)/);
+  assert.match(check, /\.vfs\(\)/);
+  assert.match(check, /filesystem\.isWithin\(folder, &path\)/);
+  assert.doesNotMatch(check, /PathMapper|runtimeRootDir|workspaceRootDir/);
   assert.doesNotMatch(check, /RuntimeStorePaths::default\(\)/);
 });
 
@@ -60,7 +62,7 @@ test('peer watch-close scheduling retains the channel Host instead of using Toki
 });
 
 test('persistent path mappers require their storage Host at construction', () => {
-  const mapper = production('core/crates/tool/services/src/files/PathMapper.rs');
+  const mapper = production('core/crates/foundation/vfs/src/PathMapper.rs');
   assert.match(mapper, /pub fn new\([\s\S]*?storage: Arc<dyn RuntimeStorageHost>/);
   assert.doesNotMatch(mapper, /pub fn withMount(?:Storage|Registry)|impl Default for PathMapper/);
   assert.match(mapper, /pub fn builtinOnly\(/);

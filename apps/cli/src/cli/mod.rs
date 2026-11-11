@@ -62,7 +62,7 @@ pub(crate) use host_ops::install_downloaded_cli_update;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
 #[cfg(test)]
 use host_ops::extract_cli_binary_from_zip;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use link::run_link_command;
 use transfer::{run_backup_command, run_export_command, run_import_command};
 use web::run_web_command;
@@ -152,7 +152,7 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     }
 
     let localArgs = scope_cli_storage_command_args(args)?;
-    if let Some(result) = crate::daemon::try_run_cli_command(&localArgs, cli_json_mode()).await {
+    if let Some(result) = crate::daemon::try_run_cli_command(&cli_core_command_args(&localArgs)?, cli_json_mode()).await {
         return result;
     }
     let mut core = local_cli_core().await?;
@@ -676,7 +676,7 @@ async fn run_update_with_progress(
             )
             .await?;
             let package_path =
-                operit_tools::files::VisualFileSystem::VisualFileSystem::runtimePath(
+                operit_vfs::VisualFileSystem::VisualFileSystem::runtimePath(
                     &package_path,
                 )?;
             let mut last_line_len = last_line_len
@@ -686,7 +686,7 @@ async fn run_update_with_progress(
             let mut install_status = None;
             if apply_mode == UpdateApplyMode::InstallCurrentTarget {
                 let vfs =
-                    operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(context)?;
+                    (context).vfs()?;
                 install_status = Some(handle_downloaded_update_package(
                     &target_for_install,
                     &vfs,
@@ -796,7 +796,7 @@ fn handle_downloaded_update_package(
     vfs: &VisualFileSystem,
     package_path: &str,
 ) -> Result<DownloadedUpdateInstallStatus, String> {
-    let source = vfs.resolvePath(package_path)?;
+    let source = vfs.file(package_path)?;
     let status = install_downloaded_cli_update(
         target,
         &source,
@@ -1439,11 +1439,19 @@ fn rewrite_cli_usage_message(message: String) -> String {
     }
 }
 
+/// Carries the caller's current directory across local and daemon command dispatch.
+fn cli_core_command_args(args: &[String]) -> Result<Vec<String>, String> {
+    let directory = std::env::current_dir().map_err(|error| error.to_string())?;
+    let directory = operit_vfs::VfsPath::normalizeWorkspaceBindingPath(&directory.to_string_lossy())?;
+    let mut command = vec!["--cwd".into(), directory];
+    command.extend_from_slice(args);
+    Ok(command)
+}
 async fn run_core_command_and_print(
     core: &mut crate::core_proxy::CliCore,
     args: &[String],
 ) -> Result<(), String> {
-    let mut commandArgs = args.to_vec();
+    let mut commandArgs = cli_core_command_args(args)?;
     if cli_json_mode() {
         commandArgs.push("--json".to_string());
     }
@@ -1687,7 +1695,7 @@ async fn run_local_core_command_and_print(
     core: &mut crate::core_proxy::CliCore,
     args: &[String],
 ) -> Result<(), String> {
-    let mut commandArgs = args.to_vec();
+    let mut commandArgs = cli_core_command_args(args)?;
     if cli_json_mode() {
         commandArgs.push("--json".to_string());
     }

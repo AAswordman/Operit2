@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/theme/ThemeAppearanceErrorScreen.dart';
 
 /// Verifies that appearance recovery requires a user action and exposes operation errors.
 void main() {
+  setUp(ClientLogger.initialize);
   testWidgets(
     'error screen offers explicit retry and reset without mutating appearance',
     (tester) async {

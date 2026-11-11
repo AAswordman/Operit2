@@ -27,7 +27,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 };
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use serde_json::{json, Value};
 
 struct OwnerInteractionBrowserHost;
@@ -249,10 +249,7 @@ fn register_test_runtime_roots() -> Arc<TestRuntimeStorageHost> {
     let workspace_root = root.join(WORKSPACE_DIR_PATH);
     std::fs::create_dir_all(&runtime_root).expect("test runtime root must be created");
     std::fs::create_dir_all(&workspace_root).expect("test workspace root must be created");
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        runtime_root.clone(),
-        workspace_root.clone(),
-    ));
+
     Arc::new(TestRuntimeStorageHost::new(runtime_root, workspace_root))
 }
 

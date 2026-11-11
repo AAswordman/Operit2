@@ -1,7 +1,7 @@
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil};
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 /// Runs full-update commands.
 pub async fn run_update_command(

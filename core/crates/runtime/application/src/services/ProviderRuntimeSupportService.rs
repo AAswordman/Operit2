@@ -250,7 +250,7 @@ impl ChatConfigurationApi {
             tool_handler: self.toolHandler.clone(),
         };
         let binding = &request.defaultModelBinding;
-        let model = support.resolvedModelConfig(support.dataDir()?, &binding.providerId, &binding.modelId)?;
+        let model = support.resolvedModelConfig(&binding.providerId, &binding.modelId)?;
         if request.defaultTtsConfigId.trim().is_empty() {
             return Err("Model conversation speech configuration is empty".into());
         }
@@ -470,7 +470,7 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
                                 bindingKey
                             };
                             let response = super::LocalLlmService::generateRoutedLocalLlm(
-                                storage,
+                                context,
                                 key,
                                 modelBinding,
                                 request.to_string(),
@@ -490,18 +490,6 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
                 .await
                 .map_err(|error| format!("Local inference task ended: {error}"))?
         })
-    }
-
-    /// Returns the root directory used by runtime data.
-    fn dataDir(&self) -> Result<PathBuf, String> {
-        let context = self.tool_handler.getContext();
-        let storage = context
-            .runtimeStorageHost
-            .as_ref()
-            .ok_or("Provider runtime has no storage host")?;
-        storage
-            .runtimeRootDir()
-            .ok_or_else(|| "Provider runtime storage host has no data root".to_string())
     }
 
     /// Records provider/model token usage.
@@ -586,10 +574,9 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     /// Returns the model binding for a function.
     fn modelBindingForFunction(
         &self,
-        rootDir: PathBuf,
         functionType: FunctionType,
     ) -> Result<ProviderFunctionModelBinding, String> {
-        let binding = FunctionalConfigManager::new(rootDir)
+        let binding = FunctionalConfigManager::default()
             .getModelBindingForFunction(functionType)
             .map_err(|error| error.to_string())?;
         Ok(ProviderFunctionModelBinding {
@@ -601,11 +588,10 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     /// Returns the resolved model config for a provider/model pair.
     fn resolvedModelConfig(
         &self,
-        rootDir: PathBuf,
         providerId: &str,
         modelId: &str,
     ) -> Result<ResolvedModelConfig, String> {
-        ModelConfigManager::new(rootDir)
+        ModelConfigManager::default()
             .getResolvedModelConfig(providerId, modelId)
             .map_err(|error| error.to_string())
     }
@@ -631,10 +617,9 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     /// Returns a provider profile by id.
     fn providerProfile(
         &self,
-        rootDir: PathBuf,
         providerId: &str,
     ) -> Result<ProviderProfile, String> {
-        ModelConfigManager::new(rootDir)
+        ModelConfigManager::default()
             .getProviderProfile(providerId)
             .map_err(|error| error.to_string())
     }

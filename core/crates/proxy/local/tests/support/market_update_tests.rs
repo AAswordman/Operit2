@@ -130,7 +130,7 @@ async fn external_manifest_origin_alone_cannot_authorize_market_replacement() {
         .prepareMarketArtifactDownload("ordinary.toolpkg")
         .unwrap();
     assert!(path.starts_with("/operitapp/data/cache/toolpkg/"));
-    let vfs = operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(&app.hostManager).unwrap();
+    let vfs = (&app.hostManager).vfs().unwrap();
     vfs.writeFileBytes(&path, &original).unwrap();
     let result = manager.addPackageFileFromExternalStorage(&path);
     assert!(result.starts_with("Successfully"), "{result}");
@@ -167,7 +167,7 @@ fn verify_market_update(legacy: bool) {
         let path = manager
             .prepareMarketArtifactDownload("plugin.toolpkg")
             .unwrap();
-        let vfs = operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(&app.hostManager).unwrap();
+        let vfs = (&app.hostManager).vfs().unwrap();
         vfs.writeFileBytes(&path, &first).unwrap();
         // Reproduce the old release's generic import route exactly.
         manager.addPackageFileFromExternalStorage(&path)

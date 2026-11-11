@@ -278,11 +278,24 @@ mod tests {
                 .all(|artifact| artifact.delivery == LocalEngineDelivery::Embedded));
         }
     }
+
+    /// Keeps engine metadata available when native compilation is owned by the Host crate.
+    #[test]
+    fn embedded_chat_engines_are_declared_without_core_build_features() {
+        for engine in [LocalEngineCatalog::llamaCpp(), LocalEngineCatalog::mnn()] {
+            for platform in [LocalPlatform::Windows, LocalPlatform::Linux, LocalPlatform::Macos,
+                LocalPlatform::Android, LocalPlatform::Ohos, LocalPlatform::Ios] {
+                assert!(engine.artifacts.iter().any(|artifact|
+                    artifact.target.platform == platform && artifact.delivery == LocalEngineDelivery::Embedded));
+            }
+            assert!(engine.artifacts.iter().all(|artifact| artifact.target.platform != LocalPlatform::Web));
+        }
+    }
 }
 
 /// Native LLM engines are linked into the application; only weights are downloaded.
 fn embeddedLlmEngine(id: &str, version: &str, name: &str, license: &str) -> LocalEngineManifest {
-    let artifacts = if cfg!(feature = "native-llm") {
+    let artifacts = {
         [LocalPlatform::Windows, LocalPlatform::Linux, LocalPlatform::Macos,
          LocalPlatform::Android, LocalPlatform::Ohos, LocalPlatform::Ios].into_iter()
         .flat_map(|platform| [LocalArchitecture::X86_64, LocalArchitecture::Aarch64,
@@ -296,7 +309,7 @@ fn embeddedLlmEngine(id: &str, version: &str, name: &str, license: &str) -> Loca
                 androidLibraryDir: None, ohosLibraryDir: None, iosFrameworkDir: None, webRuntimeDir: None,
             }
         })).collect()
-    } else { Vec::new() };
+    };
     LocalEngineManifest {
         id: id.to_string(), version: version.to_string(), displayName: name.to_string(),
         description: format!("Embedded {name} local chat inference"), license: license.to_string(),

@@ -167,6 +167,7 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
         runtimeStorageHost,
         runtimeSqliteHost,
     )
+    .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()))
     .withToastHost(toastHost)
     .withHostSecretStore(hostSecretStore)
     .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
@@ -463,9 +464,10 @@ pub(crate) fn scope_cli_storage_command_args(args: &[String]) -> Result<Vec<Stri
                 let root = scoped
                     .get_mut(index)
                     .ok_or_else(|| "storage migrate root is missing".to_string())?;
-                *root = identityRoot(&PathBuf::from(root.as_str()), &identityId)
-                    .to_string_lossy()
-                    .into_owned();
+                let directory = operit_vfs::VfsPath::normalizeWorkspaceBindingPath(&std::env::current_dir().map_err(|error| error.to_string())?.to_string_lossy())?;
+                let absolute = operit_vfs::VfsPath::resolveFileToolPath(Some(&directory), root)?;
+                let location = operit_vfs::VfsPath::storageLocationPath(&absolute)?;
+                *root = operit_vfs::VfsPath::joinVfsPath(&location, &format!("identities/{identityId}"))?;
             }
             argument => {
                 return Err(format!("unknown storage migrate argument: {argument}"));
@@ -508,8 +510,8 @@ pub(crate) fn persist_cli_storage_config_json(stdout: &str) -> Result<(), String
         .ok_or_else(|| "storage migrate JSON output missed workspaceRoot".to_string())?;
     let mut config = CliStorageConfig::read();
     let identityId = config.activeIdentity().id.clone();
-    config.runtimeRoot = identityBaseRoot(PathBuf::from(runtimeRoot), &identityId)?;
-    config.workspaceRoot = identityBaseRoot(PathBuf::from(workspaceRoot), &identityId)?;
+    config.runtimeRoot = identityBaseRoot(crate::cli::host_ops::storage_target_native_path(runtimeRoot)?, &identityId)?;
+    config.workspaceRoot = identityBaseRoot(crate::cli::host_ops::storage_target_native_path(workspaceRoot)?, &identityId)?;
     write_cli_storage_config(&config)
 }
 
@@ -523,8 +525,8 @@ fn parse_storage_migration_output(stdout: &str) -> Result<Option<CliStorageConfi
             continue;
         };
         match key {
-            "runtimeRoot" => runtimeRoot = Some(PathBuf::from(value)),
-            "workspaceRoot" => workspaceRoot = Some(PathBuf::from(value)),
+            "runtimeRoot" => runtimeRoot = Some(value.to_string()),
+            "workspaceRoot" => workspaceRoot = Some(value.to_string()),
             "storageConfig" if value == "updated" => changed = true,
             _ => {}
         }
@@ -535,11 +537,11 @@ fn parse_storage_migration_output(stdout: &str) -> Result<Option<CliStorageConfi
     let current = CliStorageConfig::read();
     let identityId = current.activeIdentity().id.clone();
     let runtimeRoot = identityBaseRoot(
-        runtimeRoot.ok_or_else(|| "storage migrate output missed runtimeRoot".to_string())?,
+        crate::cli::host_ops::storage_target_native_path(&runtimeRoot.ok_or_else(|| "storage migrate output missed runtimeRoot".to_string())?)?,
         &identityId,
     )?;
     let workspaceRoot = identityBaseRoot(
-        workspaceRoot.ok_or_else(|| "storage migrate output missed workspaceRoot".to_string())?,
+        crate::cli::host_ops::storage_target_native_path(&workspaceRoot.ok_or_else(|| "storage migrate output missed workspaceRoot".to_string())?)?,
         &identityId,
     )?;
     Ok(Some(CliStorageConfig {

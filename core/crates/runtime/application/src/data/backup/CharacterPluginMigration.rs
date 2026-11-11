@@ -388,7 +388,7 @@ pub(crate) fn publicResourcePath(path: &str) -> Result<String, String> {
         ("workspaces/", "/operitapp/workspaces"),
     ] {
         if let Some(relative) = path.strip_prefix(storage) {
-            return operit_tools::files::PathMapper::PathMapper::joinVfsPath(public, relative);
+            return operit_vfs::VfsPath::joinVfsPath(public, relative);
         }
     }
     Err(format!("Resource is outside public runtime roots: {path}"))

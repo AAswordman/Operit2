@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../../foundation/vfs" }
 operit-edge-contract = { path = "../../../../edge/sdk/contract" }
 operit-node-runtime = { path = "../../node/runtime" }
 operit-peer-link = { path = "../../node/peer-link" }

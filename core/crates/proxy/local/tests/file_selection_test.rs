@@ -4,8 +4,8 @@ use std::sync::Arc;
 use operit_host_api::HostManager::HostManager;
 use operit_host_native_common::{NativeRuntimeStorageHost, PosixFileSystemHost};
 use operit_runtime::services::FileSelectionService::FileSelectionService;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VfsPath;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_util::stream::ReverseStream::ReverseStream;
 
 /// Owns an isolated host filesystem used by the picker and the VFS reader.
@@ -43,7 +43,7 @@ impl Fixture {
         Self {
             root,
             service: FileSelectionService::getInstance(&host).unwrap(),
-            vfs: VisualFileSystem::new(files, PathMapper::new(runtime, workspaces, storage)),
+            vfs: VisualFileSystem::fromStorage(files, storage).unwrap(),
         }
     }
 }

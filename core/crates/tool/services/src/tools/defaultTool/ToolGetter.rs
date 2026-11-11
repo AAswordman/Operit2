@@ -21,20 +21,16 @@ impl ToolGetter {
         context: &HostManager,
         runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     ) -> Option<StandardFileSystemTools> {
-        context.fileSystemHost.clone().and_then(|fileSystemHost| {
+        context.vfs().ok().and_then(|filesystem| {
             let runtimeStorageHost = context.runtimeStorageHost.as_ref()?;
-            let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir()?;
-            let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir()?;
             Some(StandardFileSystemTools::new(
-                fileSystemHost,
+                filesystem,
                 context
                     .httpHost
                     .clone()
                     .expect("HTTP host must be configured before registering file download tool"),
                 context.systemOperationHost.clone(),
                 runtimeStorageHost.clone(),
-                runtimeStoreRoot,
-                workspaceCollectionRoot,
                 runtimeSupport,
             ))
         })
@@ -65,8 +61,8 @@ impl ToolGetter {
 
     /// Binds file consumers to the owning runtime's VFS and registered mounts.
     #[allow(non_snake_case)]
-    fn getVirtualFileSystem(context: &HostManager) -> operit_tools::files::VisualFileSystem::VisualFileSystem {
-        operit_tools::files::VisualFileSystem::VisualFileSystem::fromContext(context)
+    fn getVirtualFileSystem(context: &HostManager) -> operit_vfs::VisualFileSystem::VisualFileSystem {
+        (context).vfs()
             .expect("Runtime VFS must be configured before registering file consumers")
     }
 
@@ -83,12 +79,21 @@ impl ToolGetter {
 
     /// Creates system-operation tools from the optional platform operation host.
     #[allow(non_snake_case)]
-    pub fn getSystemOperationTools(context: &HostManager) -> StandardSystemOperationTools {
+    pub fn getSystemOperationTools(
+        context: &HostManager,
+        runtimeSupport: Arc<dyn ToolRuntimeSupport>,
+    ) -> StandardSystemOperationTools {
         StandardSystemOperationTools::new(
             context.systemOperationHost.clone(),
             context.toastHost.clone(),
             context.clipboardHost.clone(),
             Self::getVirtualFileSystem(context),
+            crate::files::FileToolRouting::FileToolRouting::new(
+                Self::getVirtualFileSystem(context),
+                context.runtimeStorageHost.clone()
+                    .expect("Runtime storage must be configured before registering system tools"),
+                crate::files::RemoteFileGateway::toolRuntimeFileGateway(runtimeSupport),
+            ),
         )
     }
 
@@ -98,17 +103,13 @@ impl ToolGetter {
         let tools = StandardTerminalTools::new(context.terminalHost.clone());
         let Some(storage) = context.runtimeStorageHost.as_ref() else { return tools; };
         let tools = tools.withStorage(storage.clone());
-        let (Some(runtimeRoot), Some(workspaceRoot)) =
-            (storage.runtimeRootDir(), storage.workspaceRootDir()) else { return tools; };
-        tools.withPathMapper(operit_tools::files::PathMapper::PathMapper::new(
-            runtimeRoot, workspaceRoot, storage.clone(),
-        ))
+        tools.withVfs(context.vfs().expect("Runtime VFS must be configured for terminal tools"))
     }
 
     /// Creates music playback tools from the optional audio playback host.
     #[allow(non_snake_case)]
     pub fn getMusicTools(context: &HostManager) -> StandardMusicTools {
-        StandardMusicTools::new(context.audioPlaybackHost.clone())
+        StandardMusicTools::new(context.audioPlaybackHost.clone(), context.vfs().expect("Music tools require VFS"), context.runtimeStorageHost.clone().expect("Music tools require storage"))
     }
 
     /// Creates Bluetooth tools from the optional Bluetooth host.

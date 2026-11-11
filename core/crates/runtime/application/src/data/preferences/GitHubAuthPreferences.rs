@@ -38,9 +38,7 @@ impl GitHubAuthPreferences {
 
     /// Returns the runtime directory that owns GitHub authentication preferences.
     pub fn data_dir() -> PathBuf {
-        defaultRuntimeStorageHost()
-            .runtimeRootDir()
-            .expect("runtime storage host must provide a GitHub preference root")
+        PathBuf::from("/operitapp/data")
     }
 
     /// Opens GitHub authentication preferences from the default runtime directory.
@@ -58,18 +56,6 @@ impl GitHubAuthPreferences {
     pub(crate) fn store(storage: std::sync::Arc<dyn RuntimeStorageHost>) -> CoreNodeSecretStore {
         CoreNodeSecretStore::newWithStorage(storage, OperitPaths::GITHUB_AUTH_PREFERENCES_PATH)
             .withSchema(2, Self::migratePreferences)
-    }
-
-    /// Creates a GitHub authentication preference manager rooted at a directory.
-    pub fn new(root_dir: PathBuf) -> Self {
-        let path =
-            OperitPaths::runtimePathFromRoot(&root_dir, OperitPaths::GITHUB_AUTH_PREFERENCES_PATH)
-                .expect(
-                    "GitHub authentication preferences path must use the runtime storage prefix",
-                );
-        Self {
-            dataStore: CoreNodeSecretStore::new(path).withSchema(2, Self::migratePreferences),
-        }
     }
 
     /// Migrates GitHub-owned typed session fields at version one.

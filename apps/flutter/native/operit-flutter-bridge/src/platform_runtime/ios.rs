@@ -29,6 +29,11 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
         managed,
     )
     .withTerminalHost(terminal);
+    context = context.withLocalInferenceHost(Arc::new(
+        operit_host_local_inference::NativeLocalInferenceHost::withSpeech(Arc::new(
+            crate::FlutterOwnerCapabilities::FlutterLocalInferenceHost,
+        )),
+    ));
     context.fileSystemHost = Some(Arc::new(IosFileSystemHost::fromFileOpener(Arc::new(
         ownerFileOpen,
     ))));

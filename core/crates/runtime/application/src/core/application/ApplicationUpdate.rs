@@ -3,7 +3,7 @@ use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostMana
 use operit_host_api::HttpDownloadControl;
 use operit_host_api::{AppInstallTiming, AppOperationData, SystemOperationHost};
 use operit_store::PreferencesDataStore::StateFlow;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil, ReleaseInfo,
 };
@@ -143,7 +143,7 @@ impl ApplicationUpdateManager {
         version: String,
         context: HostManager,
     ) -> Result<String, String> {
-        let vfs = VisualFileSystem::fromContext(&context)?;
+        let vfs = (&context).vfs()?;
         let _busy = self.begin()?;
         let (release, control) = {
             let mut state = self.state.lock().map_err(|e| e.to_string())?;
@@ -227,14 +227,14 @@ impl ApplicationUpdateManager {
                     return Ok(ApplicationUpdateInstallResult::fromOperation(result));
                 }
             }
-            let vfs = VisualFileSystem::fromContext(&context)?;
+            let vfs = (&context).vfs()?;
             let entry = vfs.fileExists(&prepared.vfsPath)?;
             if !entry.exists || entry.isDirectory {
                 return Err(
                     "UPDATE_PACKAGE_MISSING: downloaded package was removed; download again".into(),
                 );
             }
-            (vfs.resolvePath(&prepared.vfsPath)?, state.installTiming)
+            (vfs.file(&prepared.vfsPath)?, state.installTiming)
         };
         let host = context
             .systemOperationHost.as_deref()

@@ -14,7 +14,7 @@ use operit_runtime::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, C
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::db::AppDatabase::AppDatabase;
-use operit_util::RuntimeStoreRoot::{RuntimeStoreRootConfig, setDefaultRuntimeStoreRootConfig};
+
 
 /// Retains plugin hooks while delivering preference notifications synchronously.
 #[derive(Default)]
@@ -62,10 +62,7 @@ fn summary_insertion_respects_latest_summary_in_selected_range() {
     let runtime = root.join("runtime");
     let workspaces = root.join("workspaces");
     std::fs::create_dir_all(&runtime).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        runtime.clone(),
-        workspaces.clone(),
-    ));
+
     let host = Arc::new(NativeRuntimeStorageHost::new(
         runtime.clone(),
         workspaces.clone(),
@@ -73,7 +70,7 @@ fn summary_insertion_respects_latest_summary_in_selected_range() {
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host);
     setDefaultHostRuntimeTaskSchedulerHost(Arc::new(SummaryRangeScheduler::default()));
-    let database = AppDatabase::getDatabase(RuntimeStorePaths::new(runtime, workspaces)).unwrap();
+    let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
     database
         .chatDao()
         .insertChat(ChatEntity::new("chat".into(), "Summary range".into(), 1))

@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 #[cfg(windows)]
 use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
 
-use operit_host_api::{
+use operit_host_contract::{
     ArchiveStagingHost, HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost,
     RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, RuntimeStorageWriteHost,
     RuntimeStorageWriteSession, SqliteRow, SqliteValue,
@@ -137,7 +137,7 @@ impl Drop for NativeArchiveFiles {
     /// Releases unpublished and sealed archives when their final Host owner closes.
     fn drop(&mut self) {
         if let Err(error) = self.remove() {
-            operit_host_api::logHostError("ArchiveStagingCleanup", &error.message);
+            operit_host_contract::logHostError("ArchiveStagingCleanup", &error.message);
         }
     }
 }
@@ -636,11 +636,11 @@ impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for NativeRuntimeStorageHost {
-    fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_api::RuntimeStorageWriteSession>>> {
+    fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_contract::RuntimeStorageWriteSession>>> {
         Ok(Some(self.createWriteSessionInternal(path, false)?))
     }
 
-    fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+    fn openTransactionDatabase(&self, path: &str) -> operit_host_contract::HostResult<Box<dyn operit_host_contract::RuntimeSqliteConnection>> {
         RuntimeSqliteHost::openSqliteDatabase(self, path)
     }
 
@@ -1179,7 +1179,7 @@ mod tests {
     use std::path::Path;
     use std::time::{Duration, SystemTime};
 
-    use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
+    use operit_host_contract::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
 
@@ -1202,7 +1202,7 @@ mod tests {
     /// connections cannot deadlock while upgrading a read lock to a write lock.
     #[test]
     fn sqlite_transactions_reserve_the_writer_before_reading() {
-        use operit_host_api::RuntimeSqliteHost;
+        use operit_host_contract::RuntimeSqliteHost;
         let root =
             std::env::temp_dir().join(format!("operit-sqlite-lock-{}", uuid::Uuid::new_v4()));
         let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));

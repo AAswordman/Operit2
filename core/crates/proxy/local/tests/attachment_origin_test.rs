@@ -14,7 +14,7 @@ use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_util::RuntimeStorageLayout::{RuntimeStorageOwnership, runtimeStorageOwnership};
-use operit_util::RuntimeStoreRoot::{RuntimeStoreRootConfig, setDefaultRuntimeStoreRootConfig};
+
 use serde_json::json;
 
 /// Exercise the same generated import boundary that Flutter uses, before chat-send routing.
@@ -34,10 +34,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             let workspace_root = root.join("workspaces");
             std::fs::create_dir_all(&runtime_root).unwrap();
             std::fs::create_dir_all(&workspace_root).unwrap();
-            setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-                runtime_root.clone(),
-                workspace_root.clone(),
-            ));
+
             let storage = Arc::new(NativeRuntimeStorageHost::new(
                 runtime_root.clone(),
                 workspace_root,
@@ -56,6 +53,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
                 )),
                 ..HostManager::default()
             };
+            let filesystem = host_manager.vfs().unwrap();
             let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
             let target = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain").unwrap();
             let expected_chat_id = {
@@ -104,8 +102,8 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
                 CoreCallRequest::new("complete-file", transfer_target, "completeSelectedAttachment",
                     toCoreValue(json!({"chatId": expected_chat_id, "uploadId": upload_id, "fileName": "文档.pdf", "expectedByteLength": 3})).unwrap()),
             ).await.result.unwrap()).unwrap();
-            let committed_path = std::path::PathBuf::from(&imported.filePath);
-            assert!(committed_path.starts_with(runtime_root.join("data/chat_outputs")));
+            let committed_path = imported.filePath.clone();
+            assert!(filesystem.isWithin("/operitapp/data/data/chat_outputs", &committed_path).unwrap());
             CoreLinkSharedClient::call(
                 &proxy,
                 CoreCallRequest::new("attach-file", target, "attachUploadedFile",
@@ -120,12 +118,11 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             let attachment = &attachments[0];
             assert!(attachment.vfsPath.as_deref().unwrap().contains("/.operit/attachments/"));
             assert_eq!(attachment.nodeId.as_deref(), Some("core-source-b"));
-            assert_eq!(std::fs::read(&attachment.filePath).unwrap(), [0, 1, 255]);
-            assert!(std::path::Path::new(&attachment.filePath)
-                .starts_with(runtime_root.join("data/chat_outputs")));
+            assert_eq!(filesystem.readFileBytes(&attachment.filePath).unwrap(), [0, 1, 255]);
+            assert!(filesystem.isWithin("/operitapp/data/data/chat_outputs", &attachment.filePath).unwrap());
             assert_eq!(std::path::Path::new(&attachment.filePath).file_name().unwrap(), "文档.pdf");
-            assert_eq!(std::path::Path::new(&attachment.filePath), committed_path);
-            assert!(committed_path.exists(), "registration must retain the directly committed file");
+            assert_eq!(attachment.filePath, committed_path);
+            assert!(filesystem.fileExists(&committed_path).unwrap().exists, "registration must retain the directly committed file");
             assert!(attachment
                 .fileToolPath()
                 .starts_with("/operitapp/outputs/"));
@@ -136,7 +133,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             CoreLinkSharedClient::call(&proxy, CoreCallRequest::new("reattach-file", target, "attachUploadedFile",
                 toCoreValue(json!({"attachment": attachment, "expectedChatId": expected_chat_id})).unwrap()))
                 .await.result.expect("registering an existing final attachment must be idempotent");
-            assert!(committed_path.exists());
+            assert!(filesystem.fileExists(&committed_path).unwrap().exists);
 
             let stale_chat = CoreLinkSharedClient::call(
                 &proxy,
@@ -189,12 +186,11 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             assert_eq!(attachments.len(), 4);
             assert_ne!(attachments[2].filePath, attachments[3].filePath);
             for attachment in &attachments[2..] {
-                assert!(std::path::Path::new(&attachment.filePath).starts_with(
-                    runtime_root.join("data/chat_outputs")));
+                assert!(filesystem.isWithin("/operitapp/data/data/chat_outputs", &attachment.filePath).unwrap());
                 assert!(attachment.vfsPath.as_deref().unwrap().starts_with("/operitapp/outputs/"));
                 assert!(attachment.vfsPath.as_deref().unwrap().contains("/.operit/attachments/"));
                 assert_eq!(std::path::Path::new(&attachment.filePath).file_name().unwrap(), "report.pdf");
-                assert_eq!(std::fs::read(&attachment.filePath).unwrap(), [1, 2, 3]);
+                assert_eq!(filesystem.readFileBytes(&attachment.filePath).unwrap(), [1, 2, 3]);
             }
             drop(holder);
             let pasted = json!({"fileName": "pasted.png", "mimeType": "image/png", "fileSize": 3, "base64Content": "AAH/"});
@@ -207,7 +203,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
                 holder.coreForTarget(target).unwrap().attachments().last().cloned().unwrap()
             };
             assert_eq!(pasted.fileName, "pasted.png");
-            assert_eq!(std::fs::read(&pasted.filePath).unwrap(), [0, 1, 255]);
+            assert_eq!(filesystem.readFileBytes(&pasted.filePath).unwrap(), [0, 1, 255]);
             assert!(pasted.vfsPath.as_deref().unwrap().starts_with("/operitapp/outputs/"));
             assert!(pasted.vfsPath.as_deref().unwrap().contains("/.operit/attachments/"));
             // The browser and manual terminal receive the exact same persisted output base.
@@ -255,8 +251,9 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             assert_eq!(native_attachment.fileName, "large-native.txt.operit-ref.json");
             assert!(native_attachment.content.is_empty());
             let native_reference: operit_store::FileSyncPolicy::FileReference =
-                serde_json::from_slice(&std::fs::read(&native_attachment.filePath).unwrap()).unwrap();
-            assert!(native_reference.path.starts_with("/virtual/local/attachments/"));
+                serde_json::from_slice(&filesystem.readFileBytes(&native_attachment.filePath).unwrap()).unwrap();
+            assert_eq!(native_reference.path, operit_vfs::VfsPath::resolveFileResourcePath(None, &native_source.to_string_lossy()).unwrap());
+            assert_eq!(filesystem.readFileBytes(&native_reference.path).unwrap(), vec![255u8; 1024]);
             assert_eq!(native_reference.fileSize, 1024);
             assert_eq!(std::fs::read(&native_source).unwrap(), vec![255u8; 1024]);
             let upload_id: String = fromCoreValue(CoreLinkSharedClient::call(&proxy,
@@ -287,7 +284,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             assert_eq!(locator.fileName, "large.bin.operit-ref.json");
             assert_eq!(locator.mimeType, "application/json");
             assert!(locator.vfsPath.as_deref().unwrap().starts_with(&format!("{directory}/.operit/attachments/")));
-            let reference: operit_store::FileSyncPolicy::FileReference = serde_json::from_slice(&std::fs::read(&locator.filePath).unwrap()).unwrap();
+            let reference: operit_store::FileSyncPolicy::FileReference = serde_json::from_slice(&filesystem.readFileBytes(&locator.filePath).unwrap()).unwrap();
             reference.validate().unwrap();
             assert_eq!(reference.fileName, "large.bin");
             assert_eq!(reference.fileSize, 1024);
@@ -308,7 +305,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
             };
             assert_eq!(locator.fileName, "large.png.operit-ref.json");
             assert_eq!(locator.mimeType, "application/json", "a locator must not be sent to image decoding");
-            let reference: operit_store::FileSyncPolicy::FileReference = serde_json::from_slice(&std::fs::read(&locator.filePath).unwrap()).unwrap();
+            let reference: operit_store::FileSyncPolicy::FileReference = serde_json::from_slice(&filesystem.readFileBytes(&locator.filePath).unwrap()).unwrap();
             let source = runtime_root.join(reference.path.strip_prefix("/operitapp/data/").unwrap());
             assert_eq!(std::fs::read(source).unwrap(), vec![5u8; 1024]);
 

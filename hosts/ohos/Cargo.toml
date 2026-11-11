@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+operit-host-local-inference = { path = "../common/operit-host-local-inference" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["tcp", "serial", "fs", "http", "scheduler", "storage", "terminal"] }
 operit-local-models = { path = "../../core/crates/provider/local-model" }

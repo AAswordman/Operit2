@@ -540,13 +540,13 @@ impl Operit1SnapshotImportManager {
             ModelConfigDefaults::DEFAULT_PROVIDER_ID.to_string(),
         )?;
 
-        let modelConfigManager = ModelConfigManager::new(self.paths.runtime_dir().to_path_buf());
+        let modelConfigManager = ModelConfigManager::default();
         modelConfigManager
             .replaceDefaultProviderProfile(provider.clone())
             .map_err(|error| error.to_string())?;
 
         let functionalConfigManager =
-            FunctionalConfigManager::new(self.paths.runtime_dir().to_path_buf());
+            FunctionalConfigManager::default();
         functionalConfigManager
             .setModelForFunction(
                 FunctionType::CHAT,

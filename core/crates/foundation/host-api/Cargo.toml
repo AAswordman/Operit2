@@ -4,19 +4,9 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = true
-description = "Host capability contracts and host management for Operit."
-readme = "README.md"
+description = "Runtime host capability assembly for Operit."
 repository = "https://github.com/AAswordman/Operit2"
-documentation = "https://docs.rs/operit-host-api"
 
 [dependencies]
-chrono.workspace = true
-bytes = "1"
-http = "1"
-http-body-util = "0.1"
-async-trait.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "0.3"
+operit-host-contract = { version = "0.1.0", path = "../host-contract" }
+operit-vfs = { version = "0.1.0", path = "../vfs" }

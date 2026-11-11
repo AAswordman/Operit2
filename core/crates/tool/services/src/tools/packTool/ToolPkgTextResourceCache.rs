@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_plugin_sdk::toolpkg::{ToolPkgParser::ToolPkgArchiveParser, ToolPkgProtection};
 
 type TextResources = Arc<BTreeMap<String, String>>;
@@ -127,11 +127,11 @@ impl ToolPkgTextResourceCache {
 
 /// Reads from one validated cache directory without reentering package cache validation.
 pub(super) fn read_text_resources(
-    host: &dyn FileSystemHost,
+    host: &VisualFileSystem,
     directory: &Path,
 ) -> Result<BTreeMap<String, String>, String> {
     fn collect(
-        host: &dyn FileSystemHost,
+        host: &VisualFileSystem,
         root: &Path,
         directory: &Path,
         resources: &mut BTreeMap<String, String>,

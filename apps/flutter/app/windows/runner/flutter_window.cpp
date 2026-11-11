@@ -79,8 +79,10 @@ void RegisterWindowChromeChannel(flutter::FlutterEngine* engine, HWND view) {
 FlutterWindow::FlutterWindow(const flutter::DartProject& project, bool data_rescue)
     : project_(project), data_rescue_(data_rescue) {}
 
-/// Destroys the window after Win32 teardown has released hosted content.
-FlutterWindow::~FlutterWindow() {}
+/// Releases hosted engines before C++ destroys the controller member.
+FlutterWindow::~FlutterWindow() {
+  Destroy();
+}
 
 /// Initializes Flutter, plugins, and native channels for the window.
 bool FlutterWindow::OnCreate() {
@@ -121,6 +123,11 @@ bool FlutterWindow::OnCreate() {
         flutter_view_controller->engine(),
         flutter_view_controller->view()->GetNativeWindow());
     });
+    DesktopMultiWindowSetWindowDestroyedCallback([](void* controller) {
+      auto* flutter_view_controller =
+          static_cast<flutter::FlutterViewController*>(controller);
+      ShutdownOperitEngineChannels(flutter_view_controller->engine());
+    });
   }
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
@@ -136,14 +143,16 @@ bool FlutterWindow::OnCreate() {
   return true;
 }
 
-/// Releases native channels before destroying the Flutter controller.
+/// Closes secondary engines before releasing the runtime and main controller.
 void FlutterWindow::OnDestroy() {
-  if (flutter_controller_) {
+  auto controller = std::move(flutter_controller_);
+  if (controller) {
+    DesktopMultiWindowShutdown();
     ShutdownOperitRuntimeChannel();
     ShutdownAllOperitEngineChannels();
     ShutdownSystemAudioInputChannel();
     ShutdownOperitCrashChannel();
-    flutter_controller_ = nullptr;
+    controller.reset();
   }
 
   Win32Window::OnDestroy();

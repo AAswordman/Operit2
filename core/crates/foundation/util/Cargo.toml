@@ -14,6 +14,7 @@ default = ["full"]
 full = ["dep:flate2", "dep:regex", "dep:zip"]
 
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../vfs" }
 operit-host-api = { version = "0.1.0", path = "../host-api" }
 base64.workspace = true
 chrono.workspace = true

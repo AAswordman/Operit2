@@ -89,9 +89,7 @@ struct TestRuntimeSupport;
 
 impl ProviderRuntimeSupport for TestRuntimeSupport {
     /// Returns no filesystem root in the isolated test runtime.
-    fn dataDir(&self) -> Result<PathBuf, String> {
-        Err("test runtime does not expose a data directory".to_string())
-    }
+
 
     /// Accepts token updates without persisting them.
     fn updateTokensForProviderModel(
@@ -132,7 +130,6 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
     /// Returns no function binding in the isolated test runtime.
     fn modelBindingForFunction(
         &self,
-        _rootDir: PathBuf,
         _functionType: FunctionType,
     ) -> Result<ProviderFunctionModelBinding, String> {
         Err("test runtime does not expose model bindings".to_string())
@@ -141,7 +138,6 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
     /// Returns no model configuration in the isolated test runtime.
     fn resolvedModelConfig(
         &self,
-        _rootDir: PathBuf,
         _providerId: &str,
         _modelId: &str,
     ) -> Result<ResolvedModelConfig, String> {
@@ -151,7 +147,6 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
     /// Returns no provider profile in the isolated test runtime.
     fn providerProfile(
         &self,
-        _rootDir: PathBuf,
         _providerId: &str,
     ) -> Result<ProviderProfile, String> {
         Err("test runtime does not expose provider profiles".to_string())

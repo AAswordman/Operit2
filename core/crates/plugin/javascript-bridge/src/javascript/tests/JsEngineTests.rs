@@ -19,7 +19,7 @@ use operit_plugin_sdk::javascript::{
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -1277,7 +1277,7 @@ pub(super) fn ensure_test_runtime_root() {
         runtime_root.clone(),
         workspace_root.clone(),
     ));
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtime_root, workspace_root));
+
     setDefaultRuntimeStorageHost(host);
 }
 

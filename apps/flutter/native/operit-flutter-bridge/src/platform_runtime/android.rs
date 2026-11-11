@@ -66,7 +66,7 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
         ),
     ))));
     if module.is_some() {
-        context = context.withLocalInferenceHost(Arc::new(FlutterLocalInferenceHost));
+        context = context.withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::withSpeech(Arc::new(FlutterLocalInferenceHost))));
     }
     let system = context
         .systemOperationHost

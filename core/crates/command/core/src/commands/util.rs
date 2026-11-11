@@ -1,4 +1,4 @@
-use std::fs;
+use operit_host_api::HostManager::HostManager;
 
 pub fn parse_bool_arg(value: Option<&String>, usage: &str) -> Result<bool, String> {
     match value.ok_or_else(|| usage.to_string())?.as_str() {
@@ -49,9 +49,27 @@ pub fn parse_on_off_arg(value: Option<&String>, usage: &str) -> Result<bool, Str
     }
 }
 
-pub fn read_content_arg(value: &str) -> Result<String, String> {
+/// Resolves command file input against the invocation's explicit virtual directory.
+pub fn command_file_path(context: &HostManager, path: &str) -> Result<String, String> {
+    let storage = context
+        .runtimeStorageHost
+        .clone()
+        .ok_or("Command file access requires runtime storage")?;
+    let directory =
+        operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext()
+            .map(|turn| turn.fileDirectory(storage))
+            .transpose()?
+            .flatten();
+    context
+        .vfs()?
+        .resolveResourcePath(directory.as_deref(), path)
+}
+/// Reads literal content or a file through the owning runtime VFS.
+pub fn read_content_arg(context: &HostManager, value: &str) -> Result<String, String> {
     if let Some(path) = value.strip_prefix('@') {
-        return fs::read_to_string(path).map_err(|error| error.to_string());
+        let filesystem = context.vfs()?;
+        let path = command_file_path(context, path)?;
+        return filesystem.readFile(&path);
     }
     Ok(value.to_string())
 }

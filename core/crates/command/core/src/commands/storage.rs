@@ -1,10 +1,14 @@
-use std::fs;
+use operit_vfs::{VfsPath, VisualFileSystem::VisualFileSystem};
 use std::path::{Path, PathBuf};
 
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_util::RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH;
-use operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig;
+/// Describes virtual storage roots exposed by the command interface.
+struct StoragePaths {
+    runtime_root: PathBuf,
+    workspace_root: PathBuf,
+}
 
 /// Runs storage path inspection and migration commands.
 pub fn run_storage_command(
@@ -24,10 +28,17 @@ pub fn run_storage_command(
 }
 
 /// Registers native folders or platform resource backends without adding VFS special cases.
-fn run_mount_command(application: &OperitApplication, args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    let storage = application.hostManager.runtimeStorageHost.clone()
+fn run_mount_command(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let storage = application
+        .hostManager
+        .runtimeStorageHost
+        .clone()
         .ok_or("RuntimeStorageHost is not registered for mount commands")?;
-    let registry = operit_tools::files::MountRegistry::MountRegistry::withStorage(storage);
+    let registry = operit_vfs::MountRegistry::MountRegistry::withStorage(storage);
     match args.first().map(String::as_str) {
         Some("list") if args.len() == 1 => {
             output.setJsonStdout(serde_json::json!({"mounts": registry.list()?}));
@@ -54,11 +65,19 @@ fn print_storage_paths(
     let config = storage_root_config(application)?;
     let runtimeRoot = config.runtime_root.display().to_string();
     let workspaceRoot = config.workspace_root.display().to_string();
+    let locations = application.hostManager.vfs()?.storageLocations()?;
     output.push_stdout_line(format!("Runtime root: {runtimeRoot}"));
     output.push_stdout_line(format!("Workspace root: {workspaceRoot}"));
+    for location in &locations {
+        output.push_stdout_line(format!(
+            "{} = {} ({})",
+            location.vfsPath, location.displayPath, location.locationVfsPath
+        ));
+    }
     output.setJsonStdout(serde_json::json!({
         "runtimeRoot": runtimeRoot,
         "workspaceRoot": workspaceRoot,
+        "locations": locations,
     }));
     Ok(())
 }
@@ -71,14 +90,17 @@ fn migrate_storage_roots(
 ) -> Result<(), String> {
     let plan = parse_migrate_args(args)?;
     let current = storage_root_config(application)?;
+    let filesystem = application.hostManager.vfs()?;
 
     let runtimeOperation = migrate_named_root(
+        &filesystem,
         RUNTIME_ROOT_DIR_PATH,
         &current.runtime_root,
         &plan.runtime_root,
         output,
     )?;
     let workspaceOperation = migrate_named_root(
+        &filesystem,
         "workspace",
         &current.workspace_root,
         &plan.workspace_root,
@@ -89,7 +111,9 @@ fn migrate_storage_roots(
     let workspaceRoot = plan.workspace_root.display().to_string();
     output.push_stdout_line(format!("Runtime root: {runtimeRoot}"));
     output.push_stdout_line(format!("Workspace root: {workspaceRoot}"));
-    output.push_stdout_line("Storage config updated.");
+    output.push_stdout_line(format!("runtimeRoot={runtimeRoot}"));
+    output.push_stdout_line(format!("workspaceRoot={workspaceRoot}"));
+    output.push_stdout_line("storageConfig=updated");
     output.setJsonStdout(serde_json::json!({
         "runtimeRoot": runtimeRoot,
         "workspaceRoot": workspaceRoot,
@@ -100,19 +124,12 @@ fn migrate_storage_roots(
 }
 
 /// Returns the root configuration exposed by the active runtime storage host.
-fn storage_root_config(application: &OperitApplication) -> Result<RuntimeStoreRootConfig, String> {
-    let host = application
-        .hostManager
-        .runtimeStorageHost
-        .as_ref()
-        .ok_or_else(|| "RuntimeStorageHost is not registered".to_string())?;
-    let runtime_root = host
-        .runtimeRootDir()
-        .ok_or_else(|| "RuntimeStorageHost runtime root is not configured".to_string())?;
-    let workspace_root = host
-        .workspaceRootDir()
-        .ok_or_else(|| "RuntimeStorageHost workspace root is not configured".to_string())?;
-    Ok(RuntimeStoreRootConfig::new(runtime_root, workspace_root))
+fn storage_root_config(application: &OperitApplication) -> Result<StoragePaths, String> {
+    application.hostManager.vfs()?;
+    Ok(StoragePaths {
+        runtime_root: "/operitapp/data".into(),
+        workspace_root: "/operitapp/workspaces".into(),
+    })
 }
 
 #[derive(Debug)]
@@ -157,15 +174,12 @@ fn parse_target_root(value: Option<&String>, flag: &str) -> Result<PathBuf, Stri
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("missing path after {flag}"))?;
-    let path = PathBuf::from(value);
-    if !path.is_absolute() {
-        return Err(format!("{flag} path must be absolute: {value}"));
-    }
-    Ok(path)
+    Ok(PathBuf::from(VfsPath::storageLocationPath(value)?))
 }
 
 /// Migrates one named storage root into a target directory.
 fn migrate_named_root(
+    filesystem: &VisualFileSystem,
     name: &str,
     source: &Path,
     target: &Path,
@@ -173,7 +187,9 @@ fn migrate_named_root(
 ) -> Result<serde_json::Value, String> {
     let sourcePath = source.display().to_string();
     let targetPath = target.display().to_string();
-    if source == target {
+    if filesystem.isWithin(&sourcePath, &targetPath)?
+        && filesystem.isWithin(&targetPath, &sourcePath)?
+    {
         output.push_stdout_line(format!("{name}: already using {targetPath}"));
         return Ok(serde_json::json!({
             "name": name,
@@ -182,8 +198,8 @@ fn migrate_named_root(
             "target": targetPath,
         }));
     }
-    if !source.exists() {
-        fs::create_dir_all(target).map_err(|error| error.to_string())?;
+    if !filesystem.fileExists(&sourcePath)?.exists {
+        filesystem.makeDirectory(&targetPath, true)?;
         output.push_stdout_line(format!("{name}: created {targetPath}"));
         return Ok(serde_json::json!({
             "name": name,
@@ -192,14 +208,17 @@ fn migrate_named_root(
             "target": targetPath,
         }));
     }
-    if source.is_file() {
+    if !filesystem.fileExists(&sourcePath)?.isDirectory {
         return Err(format!(
             "{name} source root must be a directory: {}",
             source.display()
         ));
     }
-    fs::create_dir_all(target).map_err(|error| error.to_string())?;
-    copy_directory_contents(source, target)?;
+    if filesystem.isWithin(&sourcePath, &targetPath)? {
+        return Err("storage migration target cannot be inside its source".into());
+    }
+    filesystem.makeDirectory(&targetPath, true)?;
+    filesystem.copyFile(&sourcePath, &targetPath, true)?;
     output.push_stdout_line(format!("{name}: migrated {sourcePath} -> {targetPath}"));
     Ok(serde_json::json!({
         "name": name,
@@ -207,37 +226,6 @@ fn migrate_named_root(
         "source": sourcePath,
         "target": targetPath,
     }))
-}
-
-/// Copies every entry under one directory into another directory.
-fn copy_directory_contents(source: &Path, target: &Path) -> Result<(), String> {
-    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        copy_storage_entry(&source_path, &target_path)?;
-    }
-    Ok(())
-}
-
-/// Copies one file-system entry into a target path.
-fn copy_storage_entry(source: &Path, target: &Path) -> Result<(), String> {
-    let metadata = fs::metadata(source).map_err(|error| error.to_string())?;
-    if metadata.is_dir() {
-        fs::create_dir_all(target).map_err(|error| error.to_string())?;
-        return copy_directory_contents(source, target);
-    }
-    if metadata.is_file() {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::copy(source, target).map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-    Err(format!(
-        "unsupported storage entry type: {}",
-        source.display()
-    ))
 }
 
 /// Prints storage command usage.
@@ -253,4 +241,33 @@ fn print_storage_usage(output: &mut CoreCommandOutput) {
         output.push_stdout_line(line);
     }
     output.setJsonStdout(serde_json::json!({"usage": lines}));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_target_root;
+
+    /// Accepts a storage picker location at the management boundary and enters the VFS.
+    #[test]
+    fn selected_storage_locations_enter_the_mounted_namespace() {
+        let selected = "D:\\用户目录\\Operit data".to_string();
+        let target = parse_target_root(Some(&selected), "--runtime").unwrap();
+        assert_eq!(
+            target.to_str().unwrap(),
+            "/virtual/windows/d/用户目录/Operit data"
+        );
+        let mounted = "/virtual/windows/d/用户目录/Operit data".to_string();
+        assert_eq!(
+            parse_target_root(Some(&mounted), "--runtime").unwrap(),
+            target
+        );
+        let alias = "/operitapp/data".to_string();
+        assert_eq!(
+            parse_target_root(Some(&alias), "--runtime")
+                .unwrap()
+                .to_str(),
+            Some(alias.as_str())
+        );
+        assert!(parse_target_root(Some(&"relative".to_string()), "--runtime").is_err());
+    }
 }

@@ -136,7 +136,7 @@ fn rewriteOperit1ChatWorkspacePath(
     if path.is_empty() {
         return Ok(None);
     }
-    let path = operit_tools::files::PathMapper::PathMapper::canonicalizeVfsPath(path)?;
+    let path = operit_vfs::VfsPath::canonicalizeVfsPath(path)?;
     if path == "/" {
         return Ok(None);
     }

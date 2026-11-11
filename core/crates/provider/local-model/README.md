@@ -5,9 +5,9 @@ crate to `operit-providers`: provider code talks to remote APIs and external
 services, while this crate describes model files installed on the user's device
 and the local inference sessions that consume them.
 
-The crate implements STT/TTS asset management and embedded CPU text inference
-using llama.cpp and MNN. Model download, verification, installation inventory,
-and engine selection stay in one local-model boundary.
+The crate implements STT/TTS asset management, model download, verification,
+installation inventory and engine selection. Native inference and engine processes
+belong to `operit-host-local-inference`; Core sends VFS file capabilities to that Host.
 
 The crate intentionally models local assets, not cloud API providers. A model
 entry names its kind, compatible engine, license, declared files, byte sizes,
@@ -182,7 +182,7 @@ GPU backends, multimodal inputs, and split GGUF files are not supported.
 
 ## Building and testing the embedded engines
 
-The default `native-llm` feature builds static CPU backends with CMake 3.22+,
+The platform Host's default `native-llm` feature builds CPU backends with CMake 3.22+,
 a C++17 compiler, and Ninja for Android/OpenHarmony cross builds. The first native build downloads SHA-256 checked source archives
 for llama.cpp `b11829` and MNN `3.6.1`. Set `OPERIT_LLAMA_SOURCE` and
 `OPERIT_MNN_SOURCE` to pre-extracted source directories for offline builds.

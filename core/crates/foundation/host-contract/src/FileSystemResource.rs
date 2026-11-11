@@ -7,7 +7,25 @@ pub const RESOURCE_PREFIX: &str = "operit-resource:";
 
 /// A file reference whose native location is resolved by the consuming platform provider.
 pub trait FileSource: Send + Sync {
+    /// Returns the stable virtual address without exposing a platform locator.
+    fn vfsPath(&self) -> &str;
+    /// Reads this file through the owning VFS backend.
+    fn readBytes(&self) -> HostResult<Vec<u8>>;
+    /// Reads a bounded range without materializing the complete file.
+    fn readBytesRange(&self, offset: u64, length: usize) -> HostResult<Vec<u8>>;
+    /// Returns metadata whose path remains virtual.
+    fn fileInfo(&self) -> HostResult<crate::FileInfo>;
     /// Resolves a native file location, rejecting document resources without native access.
+    fn nativePath(&self) -> HostResult<String>;
+}
+
+/// A writable file capability bound to the runtime that owns its virtual address.
+pub trait FileTarget: Send + Sync {
+    /// Returns the destination's portable identity.
+    fn vfsPath(&self) -> &str;
+    /// Publishes bytes through the owning filesystem backend.
+    fn writeBytes(&self, bytes: &[u8]) -> HostResult<()>;
+    /// Resolves native interoperation at the platform consumer boundary.
     fn nativePath(&self) -> HostResult<String>;
 }
 

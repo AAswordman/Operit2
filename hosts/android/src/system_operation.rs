@@ -190,6 +190,15 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         ))
     }
 
+    /// Writes image bytes through the selected VFS capability and removes native staging.
+    fn captureScreenshotTo(&self, target: &dyn operit_host_api::FileTarget) -> HostResult<()> {
+        let path = self.captureScreenshot()?;
+        let bytes = std::fs::read(&path).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        let written = target.writeBytes(&bytes);
+        std::fs::remove_file(&path).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        written
+    }
+
     fn captureScreenshot(&self) -> HostResult<String> {
         Err(HostError::new(
             "Android capture_screenshot requires the Android screen capture host bridge",
@@ -198,12 +207,13 @@ impl SystemOperationHost for AndroidSystemOperationHost {
 
     fn recognizeText(
         &self,
-        imagePath: &str,
+        imagePath: &dyn operit_host_api::FileSource,
         language: OCRLanguage,
         quality: OCRQuality,
     ) -> HostResult<String> {
         Err(HostError::new(format!(
-            "Android OCR requires the Android OCR host bridge: path={imagePath}, language={}, quality={}",
+            "Android OCR requires the Android OCR host bridge: path={}, language={}, quality={}",
+            imagePath.vfsPath(),
             language.asHostValue(),
             quality.asHostValue()
         )))
@@ -242,6 +252,14 @@ mod tests {
         );
         struct PackageSource;
         impl operit_host_api::FileSource for PackageSource {
+            /// Identifies the package in its owning VFS.
+            fn vfsPath(&self) -> &str { "/operitapp/data/example.apk" }
+            /// Rejects file reads outside the package forwarding test.
+            fn readBytes(&self) -> HostResult<Vec<u8>> { unreachable!() }
+            /// Rejects ranged reads outside the package forwarding test.
+            fn readBytesRange(&self, _: u64, _: usize) -> HostResult<Vec<u8>> { unreachable!() }
+            /// Rejects metadata reads outside the package forwarding test.
+            fn fileInfo(&self) -> HostResult<operit_host_api::FileInfo> { unreachable!() }
             /// Supplies the native file only when the Android provider consumes the reference.
             fn nativePath(&self) -> HostResult<String> { Ok("/tmp/example.apk".into()) }
         }

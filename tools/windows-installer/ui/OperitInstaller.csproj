@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../shared/UserDataCleanup.cs" Link="UserDataCleanup.cs" />
+    <Compile Include="../shared/SetupOperation.cs" Link="SetupOperation.cs" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Web" />
     <Reference Include="Microsoft.CSharp" />

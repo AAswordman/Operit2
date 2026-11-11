@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use regex::Regex;
 use serde_json::Value;
 
@@ -33,13 +33,13 @@ pub struct ProjectStructure {
 }
 
 pub struct MCPProjectAnalyzer {
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
 }
 
 impl MCPProjectAnalyzer {
     /// Creates an MCP project analyzer backed by the supplied file-system host.
-    pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
-        Self { fileSystemHost }
+    pub fn new(filesystem: Arc<VisualFileSystem>) -> Self {
+        Self { filesystem }
     }
 
     #[allow(non_snake_case)]
@@ -116,7 +116,7 @@ impl MCPProjectAnalyzer {
                 return Some(candidate);
             }
         }
-        self.fileSystemHost
+        self.filesystem
             .listFiles(pluginDir.to_str()?)
             .ok()?
             .into_iter()
@@ -133,7 +133,7 @@ impl MCPProjectAnalyzer {
     /// Returns whether a host-owned path is an existing file.
     fn fileExists(&self, path: &Path) -> bool {
         path.to_str()
-            .and_then(|path| self.fileSystemHost.fileExists(path).ok())
+            .and_then(|path| self.filesystem.fileExists(path).ok())
             .is_some_and(|entry| entry.exists && !entry.isDirectory)
     }
 
@@ -142,7 +142,7 @@ impl MCPProjectAnalyzer {
         let Some(path) = dir.to_str() else {
             return Vec::new();
         };
-        self.fileSystemHost
+        self.filesystem
             .listFiles(path)
             .unwrap_or_default()
             .into_iter()
@@ -163,7 +163,7 @@ impl MCPProjectAnalyzer {
 
     /// Reads and parses one JSON project file through the host file system.
     fn readJsonFile(&self, path: &Path) -> Option<Value> {
-        let text = self.fileSystemHost.readFile(path.to_str()?).ok()?;
+        let text = self.filesystem.readFile(path.to_str()?).ok()?;
         serde_json::from_str::<Value>(&text).ok()
     }
 
@@ -172,10 +172,10 @@ impl MCPProjectAnalyzer {
         let srcDir = pluginDir.join("src");
         if srcDir
             .to_str()
-            .and_then(|path| self.fileSystemHost.fileExists(path).ok())
+            .and_then(|path| self.filesystem.fileExists(path).ok())
             .is_some_and(|entry| entry.exists && entry.isDirectory)
         {
-            for entry in self.fileSystemHost.listFiles(srcDir.to_str()?).ok()? {
+            for entry in self.filesystem.listFiles(srcDir.to_str()?).ok()? {
                 let path = srcDir.join(&entry.name);
                 if entry.isDirectory && self.fileExists(&path.join("__init__.py")) {
                     return Some(entry.name);
@@ -254,7 +254,7 @@ impl MCPProjectAnalyzer {
     fn parsePyprojectToml(&self, pluginDir: &Path) -> Option<String> {
         parsePyprojectTomlContent(
             &self
-                .fileSystemHost
+                .filesystem
                 .readFile(pluginDir.join("pyproject.toml").to_str()?)
                 .ok()?,
         )

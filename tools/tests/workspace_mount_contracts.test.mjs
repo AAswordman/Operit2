@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const root = new URL('../../', import.meta.url);
-const mapperPath = 'core/crates/tool/services/src/files/PathMapper.rs';
+const mapperPath = 'core/crates/foundation/vfs/src/PathMapper.rs';
 const servicePath = 'core/crates/runtime/application/src/services/ChatServiceCore.rs';
 const delegatePath = 'core/crates/runtime/application/src/services/core/ChatHistoryDelegate.rs';
 
@@ -39,7 +39,7 @@ test('workspace binding uses the fallible folder-mount operation', () => {
   assert.doesNotMatch(binding, /\.bindChatToWorkspace\(|\.expect\(|\.unwrap\(|unwrap_or|normalizeWorkspaceBindingPath/);
 
   const mount = section(source(delegatePath), 'pub fn bindChatToFolderPath(', 'pub fn primaryWorkspacePathForChat(');
-  assert.match(mount, /PathMapper::normalizeWorkspaceBindingPath\(&folderPath\)\?/);
+  assert.match(mount, /VfsPath::normalizeWorkspaceBindingPath\(&folderPath\)\?/);
   assert.match(mount, /Workspace::folderNameFromPath\(&folderPath\)\?/);
   assert.match(mount, /\.getWorkspaceForChat\(&chatId\)\s*\.map_err\(\|error\| error\.to_string\(\)\)\?/);
   assert.doesNotMatch(mount, /\.expect\(|\.unwrap\(|unwrap_or/);
@@ -51,7 +51,7 @@ test('shared-storage workspace mounts resolve through the host filesystem', () =
   const resolve = section(mapper, 'pub fn resolve(', 'pub fn mapPhysicalChildToVfs(');
   const android = section(resolve, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD,', '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX,');
   assert.match(android, /physicalPath: physicalPathString\(joinUnixPhysical\("\/sdcard", rest\)\)/);
-  const vfs = source('core/crates/tool/services/src/files/VisualFileSystem.rs');
+  const vfs = source('core/crates/foundation/vfs/src/VisualFileSystem.rs');
   const list = section(vfs, 'pub fn listFiles(', 'pub fn readFile(');
   assert.match(list, /self\.host\s*\.listFiles\(&resolved\.physicalPath\)/);
 });
@@ -87,7 +87,7 @@ test('Android root is mapped to slash and remains bindable', () => {
 
 /** Catalog backends remain generic rather than hardcoding Termux into the mapper. */
 test('persistent mounts use an opaque generic host resource contract', () => {
-  const catalog = source('core/crates/tool/services/src/files/MountRegistry.rs');
+  const catalog = source('core/crates/foundation/vfs/src/MountRegistry.rs');
   assert.match(catalog, /pub backend: String/);
   assert.match(catalog, /pub root: String/);
   assert.match(catalog, /config\/vfs_mounts\.json/);
@@ -98,12 +98,13 @@ test('persistent mounts use an opaque generic host resource contract', () => {
   assert.doesNotMatch(mapper.split('#[cfg(test)]')[0], /com\.termux\.documents/);
 });
 
-/** Workspace capabilities do not leak into APIs that require actual OS paths. */
-test('terminal commands reject resource-backed working directories', () => {
+/** The selected terminal host owns resource-backed directory conversion. */
+test('terminal commands resolve directories through the selected host', () => {
   const mapper = source(mapperPath);
   assert.match(mapper, /pub fn nativePath\(&self\) -> Result<String, String>/);
   const terminal = source('core/crates/runtime/application/src/services/RuntimeTerminalService.rs');
-  assert.match(terminal, /\.and_then\(\|path\| path\.nativePath\(\)\)/);
+  assert.match(terminal, /filesystem\.terminalDirectory\(terminalHost, &path\)/);
   const command = source('core/crates/command/core/src/commands/workspace.rs');
-  assert.match(command, /resolvePath\(&workingDirPath\)\?\.nativePath\(\)/);
+  assert.match(command, /host\s*\.runRuntimeCommandAt\(/);
+  assert.doesNotMatch(command, /\.resolvePath\(|\.nativePath\(/);
 });

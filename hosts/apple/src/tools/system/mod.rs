@@ -342,6 +342,15 @@ impl SystemOperationHost for AppleSystemOperationHost {
         get_apple_device_info()
     }
 
+    /// Writes image bytes through the selected VFS capability and removes native staging.
+    fn captureScreenshotTo(&self, target: &dyn operit_host_api::FileTarget) -> HostResult<()> {
+        let path = self.captureScreenshot()?;
+        let bytes = std::fs::read(&path).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        let written = target.writeBytes(&bytes);
+        std::fs::remove_file(&path).map_err(|error| operit_host_api::HostError::new(error.to_string()))?;
+        written
+    }
+
     fn captureScreenshot(&self) -> HostResult<String> {
         #[cfg(target_os = "macos")]
         {
@@ -376,13 +385,13 @@ impl SystemOperationHost for AppleSystemOperationHost {
 
     fn recognizeText(
         &self,
-        imagePath: &str,
+        imagePath: &dyn operit_host_api::FileSource,
         language: OCRLanguage,
         _quality: OCRQuality,
     ) -> HostResult<String> {
         #[cfg(target_os = "macos")]
         {
-            let imagePath = non_blank(imagePath, "image_path")?;
+            let imagePath = non_blank(&imagePath.nativePath()?, "image_path")?;
             let languageHint = match language {
                 OCRLanguage::Latin => "en-US",
                 OCRLanguage::Chinese => "zh-Hans",

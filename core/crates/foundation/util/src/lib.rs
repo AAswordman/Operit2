@@ -34,8 +34,7 @@ pub mod OCRUtils;
 pub mod OperitPaths;
 pub mod PortProcessKiller;
 pub mod PluginStoragePaths;
-#[path = "RuntimeStorageLayout.rs"]
-pub mod RuntimeStorageLayout;
+pub use operit_host_api::RuntimeStorageLayout;
 #[path = "RuntimeStoreRoot.rs"]
 pub mod RuntimeStoreRoot;
 pub mod SerializationSetup;

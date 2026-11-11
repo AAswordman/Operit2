@@ -13,6 +13,7 @@ import 'package:operit2/core/bridge/FfiCoreTransport.dart';
 import 'package:operit2/core/bridge/CoreByteTransport.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 
 typedef _FixtureSendNative =
     Bool Function(
@@ -452,6 +453,10 @@ void main() {
   late List<String> platformMethods;
 
   setUpAll(_loadPortFixture);
+  setUp(() async {
+    await ClientLogger.initialize();
+    await ClientLogger.clear();
+  });
 
   setUp(() {
     platformMethods = [];
@@ -778,6 +783,8 @@ void main() {
         proxy.call(_call('two', 'echo', null)),
         throwsStateError,
       );
+      final log = await ClientLogger.readText();
+      expect(log, isNot(contains('Core FFI connection failed')));
     },
   );
 
@@ -829,6 +836,10 @@ void main() {
         proxy.call(_call('two', 'echo', null)),
         throwsStateError,
       );
+      final log = await ClientLogger.readText();
+      expect(log, contains('Core FFI connection failed pendingRequests=1'));
+      expect(log, contains('Unknown Core FFI frame type: 255'));
+      expect(log, contains('stackTrace='));
     },
   );
 }

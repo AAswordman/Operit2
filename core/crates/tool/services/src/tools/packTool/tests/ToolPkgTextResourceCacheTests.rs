@@ -1,5 +1,5 @@
 use super::*;
-use operit_host_api::{
+use operit_host_api::{FileSystemHost,
     FileEntry, FileExistence, FileInfo, FindFilesRequest, GrepCodeRequest, GrepCodeResult,
     HostEnvironmentDescriptor, HostResult,
 };
@@ -232,17 +232,17 @@ impl FileSystemHost for ResourceHost {
 
 #[test]
 fn prepared_directory_reads_each_file_once_and_preserves_protected_resources() {
-    let host = ResourceHost::default();
+    let host = Arc::new(ResourceHost::default());
     let cache = ToolPkgTextResourceCache::default();
     let (resources, hit) = cache
         .get_or_load("roles", "v1", || {
-            read_text_resources(&host, Path::new("/cache"))
+            read_text_resources(&operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(host.clone(), "/".into(), "/workspaces".into()), Path::new("/operitapp/data/cache"))
         })
         .unwrap();
     assert!(!hit);
     let (reopened, hit) = cache
         .get_or_load("roles", "v1", || {
-            read_text_resources(&host, Path::new("/cache"))
+            read_text_resources(&operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(host.clone(), "/".into(), "/workspaces".into()), Path::new("/operitapp/data/cache"))
         })
         .unwrap();
     assert!(hit);
@@ -255,33 +255,33 @@ fn prepared_directory_reads_each_file_once_and_preserves_protected_resources() {
 
 #[test]
 fn unreadable_resource_fails_snapshot_instead_of_publishing_incomplete_modules() {
-    let host = ResourceHost {
+    let host = Arc::new(ResourceHost {
         fail: true,
         ..Default::default()
-    };
-    assert!(read_text_resources(&host, Path::new("/cache"))
+    });
+    assert!(read_text_resources(&operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(host.clone(), "/".into(), "/workspaces".into()), Path::new("/operitapp/data/cache"))
         .unwrap_err()
         .contains("read failed"));
 }
 
 #[test]
 fn malformed_protected_resource_fails_the_snapshot() {
-    let host = ResourceHost {
+    let host = Arc::new(ResourceHost {
         corrupt_protection: true,
         ..Default::default()
-    };
-    assert!(read_text_resources(&host, Path::new("/cache"))
+    });
+    assert!(read_text_resources(&operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(host.clone(), "/".into(), "/workspaces".into()), Path::new("/operitapp/data/cache"))
         .unwrap_err()
         .contains("Cannot decrypt"));
 }
 
 #[test]
 fn directory_entries_cannot_escape_the_validated_resource_root() {
-    let host = ResourceHost {
+    let host = Arc::new(ResourceHost {
         invalid_name: true,
         ..Default::default()
-    };
-    assert!(read_text_resources(&host, Path::new("/cache"))
+    });
+    assert!(read_text_resources(&operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(host.clone(), "/".into(), "/workspaces".into()), Path::new("/operitapp/data/cache"))
         .unwrap_err()
         .contains("Invalid ToolPkg resource name"));
     assert!(host.reads.lock().unwrap().is_empty());

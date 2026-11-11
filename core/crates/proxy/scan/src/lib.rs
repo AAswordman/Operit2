@@ -52,7 +52,7 @@ impl CoreProxyRegisteredRoots {
             util_src: proxy_manifest_dir.join("../../foundation/util/src"),
             tools_src: proxy_manifest_dir.join("../../tool/services/src"),
             providers_src: proxy_manifest_dir.join("../../provider/services/src"),
-            host_api_src: proxy_manifest_dir.join("../../foundation/host-api/src"),
+            host_api_src: proxy_manifest_dir.join("../../foundation/host-contract/src"),
             javascript_bridge_src: proxy_manifest_dir.join("../../plugin/javascript-bridge/src"),
             plugin_theme_src: proxy_manifest_dir.join("../../plugin/theme/src"),
             proxy_manifest_dir,

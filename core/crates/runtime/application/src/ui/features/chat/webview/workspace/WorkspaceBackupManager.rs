@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 
 use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::GitIgnoreFilter;
 use operit_host_api::HostManager::HostManager;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VfsPath;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::AIToolHook::AIToolHook;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::AITool;
@@ -256,24 +256,7 @@ impl WorkspaceBackupManager {
     }
 
     fn vfs(&self) -> VisualFileSystem {
-        let runtimeStorageHost = self
-            .context
-            .runtimeStorageHost
-            .as_ref()
-            .expect("RuntimeStorageHost must be configured for WorkspaceBackupManager");
-        let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir().expect(
-            "RuntimeStorageHost runtime root must be configured for WorkspaceBackupManager",
-        );
-        let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir().expect(
-            "RuntimeStorageHost workspace root must be configured for WorkspaceBackupManager",
-        );
-        VisualFileSystem::new(
-            self.context
-                .fileSystemHost
-                .clone()
-                .expect("FileSystemHost must be configured for WorkspaceBackupManager"),
-            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot, runtimeStorageHost.clone()),
-        )
+        self.context.vfs().expect("VFS must be configured for WorkspaceBackupManager")
     }
 
     fn chatBackupDir(&self, workspacePath: &str, chatId: Option<&str>) -> String {

@@ -13,7 +13,7 @@ use operit_runtime::plugins::toolpkg::{
     ToolPkgChatInputHookBridge::ToolPkgChatInputHookBridge,
     ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime,
 };
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use serde_json::json;
 
 /// A widget submit waiting for plugins must release Holder so the plugin's native send can reenter it.
@@ -24,7 +24,7 @@ async fn pending_widget_submit_releases_holder_and_preserves_registry_failure() 
     let workspace = root.join("workspace");
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&workspace).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtime.clone(), workspace.clone()));
+
     let storage = Arc::new(NativeRuntimeStorageHost::new(runtime, workspace));
     let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
     hosts.runtimeStorageHost = Some(storage.clone());

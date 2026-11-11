@@ -46,24 +46,23 @@ pub fn run_local_models_command(
         Some("engine-delete") if args.len() == 3 => {
             delete_installed_engine(application, &args[1], &args[2], output)
         }
-        Some("source-get") if args.len() == 1 => {
-            print_preferred_source(application, output)
-        }
+        Some("source-get") if args.len() == 1 => print_preferred_source(application, output),
         Some("source-set") if args.len() == 2 => {
             set_preferred_source(application, &args[1], output)
         }
-        Some("hub-search") if args.len() == 2 || args.len() == 3 => {
-            search_hub_models(application, &args[1], args.get(2).map(String::as_str), output)
-        }
-        Some("hub-import") if (2..=4).contains(&args.len()) => {
-            import_hub_model(
-                application,
-                &args[1],
-                args.get(2).map(String::as_str),
-                args.get(3).map(String::as_str),
-                output,
-            )
-        }
+        Some("hub-search") if args.len() == 2 || args.len() == 3 => search_hub_models(
+            application,
+            &args[1],
+            args.get(2).map(String::as_str),
+            output,
+        ),
+        Some("hub-import") if (2..=4).contains(&args.len()) => import_hub_model(
+            application,
+            &args[1],
+            args.get(2).map(String::as_str),
+            args.get(3).map(String::as_str),
+            output,
+        ),
         Some("custom-remove") if args.len() == 3 => {
             remove_custom_model(application, &args[1], &args[2], output)
         }
@@ -328,13 +327,8 @@ fn local_model_service(application: &OperitApplication) -> Result<LocalModelServ
 
 /// Returns the runtime root directory from the active storage host.
 fn runtime_root_dir(application: &OperitApplication) -> Result<PathBuf, String> {
-    let host = application
-        .hostManager
-        .runtimeStorageHost
-        .as_ref()
-        .ok_or_else(|| "RuntimeStorageHost is not registered".to_string())?;
-    host.runtimeRootDir()
-        .ok_or_else(|| "RuntimeStorageHost runtime root is not configured".to_string())
+    application.hostManager.vfs()?;
+    Ok(PathBuf::from("/operitapp/data"))
 }
 
 /// Maps a runtime-layout path into a native path below the runtime root.
@@ -343,7 +337,7 @@ fn runtime_layout_path(runtime_root: &Path, layout_path: &str) -> Result<PathBuf
         .trim()
         .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .ok_or_else(|| format!("invalid runtime layout path: {layout_path}"))?;
-    Ok(runtime_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)))
+    operit_vfs::VfsPath::joinVfsPath(&runtime_root.to_string_lossy(), relative).map(PathBuf::from)
 }
 
 /// Returns one catalog status matching an exact model id and version.
@@ -442,10 +436,8 @@ fn remove_custom_model(
     version: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    local_model_service(application)?.removeCustomModel(
-        model_id.to_string(),
-        version.to_string(),
-    )?;
+    local_model_service(application)?
+        .removeCustomModel(model_id.to_string(), version.to_string())?;
     output.push_stdout_line(format!("Removed custom model: {model_id}@{version}"));
     output.setJsonStdout(json!({
         "removed": true,

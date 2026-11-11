@@ -265,11 +265,11 @@ impl SystemOperationHost for WebSystemOperationHost {
     /// Sends runtime-owned image bytes to the browser UI OCR host.
     fn recognizeText(
         &self,
-        imagePath: &str,
+        imagePath: &dyn operit_host_api::FileSource,
         language: OCRLanguage,
         quality: OCRQuality,
     ) -> HostResult<String> {
-        let bytes = WebFileSystemHost::new().readFileBytes(imagePath)?;
+        let bytes = imagePath.readBytes()?;
         read_string_property(
             &call_system(
                 "recognizeText",

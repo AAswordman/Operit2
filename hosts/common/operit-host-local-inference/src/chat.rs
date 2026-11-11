@@ -1,40 +1,9 @@
-use crate::LocalInference::{LocalChatResponse, LocalModelSelection};
-use crate::LocalModelManifest::{LocalModelDriver, LocalModelKind};
-use crate::LocalModelProvider::LocalModelProvider;
+#![allow(non_snake_case)]
+use operit_local_models::LocalInference::LocalChatResponse;
 use serde_json::Value;
 
-/// Resolves exact installed weights and executes a native text chat request.
-pub fn generateLocalChat(
-    provider: &LocalModelProvider,
-    selection: &LocalModelSelection,
-    body: Value,
-    settings: Value,
-) -> Result<LocalChatResponse, String> {
-    validateChatRequest(&body, &settings)?;
-    let runtime = provider
-        .resolve(selection, LocalModelKind::Chat)
-        .map_err(|error| error.to_string())?;
-    let (engine, relative) = match runtime.model.manifest.driver.as_ref() {
-        Some(LocalModelDriver::LlamaCpp { model }) => ("llama-cpp", model),
-        Some(LocalModelDriver::Mnn { config }) => ("mnn", config),
-        _ => return Err("Local model has no supported chat driver".into()),
-    };
-    let relativePath = std::path::Path::new(relative);
-    if relativePath.is_absolute()
-        || relativePath
-            .components()
-            .any(|part| !matches!(part, std::path::Component::Normal(_)))
-    {
-        return Err("Local model entry path escapes its installation directory".into());
-    }
-    let path = std::path::Path::new(&runtime.modelDirectory).join(relativePath);
-    if !path.is_file() {
-        return Err(format!("Local model file is missing: {}", path.display()));
-    }
-    nativeGenerate(engine, &path.to_string_lossy(), &body, &settings)
-}
-
-fn validateChatRequest(body: &Value, settings: &Value) -> Result<(), String> {
+/// Validates bounded inference input before entering a native engine.
+pub(crate) fn validateChatRequest(body: &Value, settings: &Value) -> Result<(), String> {
     let messages = body
         .get("messages")
         .and_then(Value::as_array)
@@ -95,7 +64,8 @@ fn validateChatRequest(body: &Value, settings: &Value) -> Result<(), String> {
 }
 
 #[cfg(all(feature = "native-llm", not(target_arch = "wasm32")))]
-fn nativeGenerate(
+/// Runs the configured native inference engine and takes ownership of its response.
+pub(crate) fn nativeGenerate(
     engine: &str,
     path: &str,
     body: &Value,
@@ -138,7 +108,13 @@ fn nativeGenerate(
 }
 
 #[cfg(not(all(feature = "native-llm", not(target_arch = "wasm32"))))]
-fn nativeGenerate(_: &str, _: &str, _: &Value, _: &Value) -> Result<LocalChatResponse, String> {
+/// Runs the configured native inference engine and takes ownership of its response.
+pub(crate) fn nativeGenerate(
+    _: &str,
+    _: &str,
+    _: &Value,
+    _: &Value,
+) -> Result<LocalChatResponse, String> {
     Err("Native local LLM inference is unavailable in this build".into())
 }
 

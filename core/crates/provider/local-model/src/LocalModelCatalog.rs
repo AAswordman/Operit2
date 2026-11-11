@@ -889,10 +889,7 @@ mod tests {
                 LocalPlatform::Ios,
                 LocalPlatform::Ohos,
             ] {
-                assert_eq!(
-                    manifest.supportsPlatform(&platform),
-                    cfg!(feature = "native-llm")
-                );
+                assert!(manifest.supportsPlatform(&platform));
             }
             let entryPath = match manifest.driver.as_ref().unwrap() {
                 LocalModelDriver::LlamaCpp { model } => model,

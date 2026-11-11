@@ -15,7 +15,7 @@ use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolExecutionManager, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
 };
-use operit_tools::files::PathMapper::PathMapper;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_host_api::TerminalWorkingDirectory::{directoryChangeCommand, enterTerminalDirectory};
 
 const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
@@ -24,7 +24,7 @@ const HIDDEN_TERMINAL_TIMEOUT_MS: u64 = 120000;
 /// Terminal tool facade backed by the host terminal API.
 pub struct StandardTerminalTools {
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
-    pathMapper: Option<PathMapper>,
+    filesystem: Option<VisualFileSystem>,
     storage: Option<Arc<dyn operit_host_api::RuntimeStorageHost>>,
 }
 
@@ -67,9 +67,9 @@ impl StandardTerminalTools {
         let directory = self.fileDirectory()?.map(|workspace| {
             operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
                 host, Some(terminalType), &workspace, &|path| {
-                    self.pathMapper.as_ref()
+                    self.filesystem.as_ref()
                         .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
-                        .resolve(path).and_then(|path| path.terminalDirectory(host)).map_err(HostError::new)
+                        .terminalDirectory(host, path).map_err(HostError::new)
                 },
             )
         }).transpose()?;
@@ -85,12 +85,12 @@ impl StandardTerminalTools {
 
     /// Creates terminal tools from an optional host implementation.
     pub fn new(terminalHost: Option<Arc<dyn TerminalHost>>) -> Self {
-        Self { terminalHost, pathMapper: None, storage: None }
+        Self { terminalHost, filesystem: None, storage: None }
     }
 
     /// Supplies the runtime VFS for the current chat file directory.
-    pub fn withPathMapper(mut self, mapper: PathMapper) -> Self {
-        self.pathMapper = Some(mapper);
+    pub fn withVfs(mut self, filesystem: VisualFileSystem) -> Self {
+        self.filesystem = Some(filesystem);
         self
     }
 
@@ -118,10 +118,9 @@ impl StandardTerminalTools {
         &self, host: &dyn TerminalHost, terminal: &str, terminalType: &str, path: &str,
     ) -> HostResult<String> {
         host.resolveWorkingDirectory(terminal, terminalType, path, &|path| {
-            self.pathMapper.as_ref()
+            self.filesystem.as_ref()
                 .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
-                .resolve(path)
-                .and_then(|path| path.terminalDirectory(host))
+                .terminalDirectory(host, path)
                 .map_err(HostError::new)
         })
     }
@@ -750,14 +749,12 @@ mod tests {
         let output = operit_store::ChatOutputStore::ChatOutputStore::new(storage.clone())
             .bind("chat", 1793740800123, None)
             .unwrap();
-        let mapper = PathMapper::new(
-            root.join("runtime"),
-            root.join("workspaces"),
-            storage.clone(),
-        );
+        let filesystem = VisualFileSystem::fromStorage(
+            Arc::new(operit_host_native_filesystem::PosixFileSystemHost::new()), storage.clone(),
+        ).unwrap();
         let host = Arc::new(NativePtyTerminalHost::loginShell("/bin/bash", "bash", "/").unwrap());
         let tools = StandardTerminalTools::new(Some(host.clone()))
-            .withPathMapper(mapper.clone())
+            .withVfs(filesystem.clone())
             .withStorage(storage.clone());
         let tool = |name: &str, params: &[(&str, &str)]| AITool {
             name: name.into(),
@@ -803,7 +800,7 @@ mod tests {
                 };
                 let base = workspace.unwrap_or(&output);
                 let pwd_command = "printf '__operit_pwd__%s__operit_pwd_end__\\n' \"$PWD\"";
-                let expected = mapper.resolve(base).unwrap().nativePath().unwrap();
+                let expected = operit_host_api::FileSource::nativePath(&filesystem.file(base).unwrap()).unwrap();
                 let command = host.executeInSession(&session.sessionId, pwd_command, 5000).unwrap();
                 assert_eq!(command.exitCode, 0);
                 assert!(

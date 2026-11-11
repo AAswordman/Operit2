@@ -3,14 +3,14 @@ use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgSourceType,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 use super::text_resource_cache::{read_text_resources, ToolPkgTextResourceCache};
-use super::{bundledPluginAssetByName, hostPath, javaStringHashCodeHex};
+use super::{bundledPluginAssetByName, vfsPathString, javaStringHashCodeHex};
 use crate::runtime_support::ToolRuntimeSupport;
 
 use super::TOOLPKG_CACHE_SIGNATURE_FILE;
@@ -20,18 +20,18 @@ use super::TOOLPKG_CACHE_SIGNATURE_FILE;
 #[allow(non_snake_case)]
 pub(super) struct ToolPkgResourceReader {
     pub(super) storePaths: RuntimeStorePaths,
-    pub(super) fileSystemHost: Arc<dyn FileSystemHost>,
+    pub(super) filesystem: Arc<VisualFileSystem>,
     pub(super) runtimeSupport: Arc<dyn ToolRuntimeSupport>,
     pub(super) toolPkgCacheLock: Arc<Mutex<()>>,
     pub(super) toolPkgTextResourceCache: Arc<ToolPkgTextResourceCache>,
 }
 
 impl ToolPkgResourceReader {
-    /// Returns the host cache root for package resources.
+    /// Returns the virtual cache root for package resources.
     #[allow(non_snake_case)]
     fn toolPkgCacheRootDir(&self) -> PathBuf {
         let dir = self.storePaths.toolpkg_cache_dir();
-        let _ = self.fileSystemHost.makeDirectory(&hostPath(&dir), true);
+        let _ = self.filesystem.makeDirectory(&vfsPathString(&dir), true);
         dir
     }
 
@@ -80,7 +80,7 @@ impl ToolPkgResourceReader {
     #[allow(non_snake_case)]
     fn deleteToolPkgCacheDirLocked(&self, packageName: &str) {
         let dir = self.toolPkgCacheDir(packageName);
-        let _ = self.fileSystemHost.deleteFile(&hostPath(&dir), true);
+        let _ = self.filesystem.deleteFile(&vfsPathString(&dir), true);
     }
 
     /// Validates or extracts a package revision under the shared cache lock.
@@ -98,18 +98,18 @@ impl ToolPkgResourceReader {
         let cacheDir = self.toolPkgCacheDir(packageName);
         let signatureFile = cacheDir.join(TOOLPKG_CACHE_SIGNATURE_FILE);
         let cacheDirExists = self
-            .fileSystemHost
-            .fileExists(&hostPath(&cacheDir))
+            .filesystem
+            .fileExists(&vfsPathString(&cacheDir))
             .map(|info| info.exists && info.isDirectory)
             .unwrap_or(false);
         let signatureFileExists = self
-            .fileSystemHost
-            .fileExists(&hostPath(&signatureFile))
+            .filesystem
+            .fileExists(&vfsPathString(&signatureFile))
             .map(|info| info.exists && !info.isDirectory)
             .unwrap_or(false);
         let signatureMatches = if signatureFileExists {
-            self.fileSystemHost
-                .readFile(&hostPath(&signatureFile))
+            self.filesystem
+                .readFile(&vfsPathString(&signatureFile))
                 .map(|text| text == signature)
                 .unwrap_or(false)
         } else {
@@ -117,8 +117,8 @@ impl ToolPkgResourceReader {
         };
         let mainScriptFile = cacheDir.join(mainEntry);
         let mainScriptExists = self
-            .fileSystemHost
-            .fileExists(&hostPath(&mainScriptFile))
+            .filesystem
+            .fileExists(&vfsPathString(&mainScriptFile))
             .map(|info| info.exists && !info.isDirectory)
             .unwrap_or(false);
 
@@ -128,8 +128,8 @@ impl ToolPkgResourceReader {
 
         self.deleteToolPkgCacheDirLocked(packageName);
         if self
-            .fileSystemHost
-            .makeDirectory(&hostPath(&cacheDir), true)
+            .filesystem
+            .makeDirectory(&vfsPathString(&cacheDir), true)
             .is_err()
         {
             return None;
@@ -139,8 +139,8 @@ impl ToolPkgResourceReader {
             return None;
         }
         if self
-            .fileSystemHost
-            .writeFile(&hostPath(&signatureFile), signature, false)
+            .filesystem
+            .writeFile(&vfsPathString(&signatureFile), signature, false)
             .is_err()
         {
             self.deleteToolPkgCacheDirLocked(packageName);
@@ -162,7 +162,7 @@ impl ToolPkgResourceReader {
         match sourceType {
             ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
                 let sourceFile = PathBuf::from(sourcePath);
-                let metadata = self.fileSystemHost.fileInfo(sourcePath).ok()?;
+                let metadata = self.filesystem.fileInfo(sourcePath).ok()?;
                 if !metadata.exists {
                     return None;
                 }
@@ -218,18 +218,18 @@ impl ToolPkgResourceReader {
         match runtime.sourceType {
             ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
                 if self
-                    .fileSystemHost
+                    .filesystem
                     .fileExists(&runtime.sourcePath)
                     .map(|info| info.exists && info.isDirectory)
                     .unwrap_or(false)
                 {
                     return self
-                        .fileSystemHost
-                        .copyFile(&runtime.sourcePath, &hostPath(destinationDir), true)
+                        .filesystem
+                        .copyFile(&runtime.sourcePath, &vfsPathString(destinationDir), true)
                         .is_ok();
                 }
                 ToolPkgArchiveParser::extractZipEntriesFromExternal(
-                    self.fileSystemHost.as_ref(),
+                    self.filesystem.as_ref(),
                     &runtime.sourcePath,
                     &destinationDir.to_string_lossy(),
                 )
@@ -242,7 +242,7 @@ impl ToolPkgResourceReader {
                 };
                 ToolPkgArchiveParser::extractZipEntriesFromAssetBytes(
                     asset.bytes,
-                    self.fileSystemHost.as_ref(),
+                    self.filesystem.as_ref(),
                     &destinationDir.to_string_lossy(),
                 )
             }
@@ -291,7 +291,7 @@ impl ToolPkgResourceReader {
                     // not rehash the archive or recheck its on-disk signature.
                     let directorySource = runtime.sourceType != ToolPkgSourceType::ASSET
                         && self
-                            .fileSystemHost
+                            .filesystem
                             .fileExists(&runtime.sourcePath)
                             .map_err(|error| error.to_string())?
                             .isDirectory;
@@ -310,7 +310,7 @@ impl ToolPkgResourceReader {
                             format!("ToolPkg package cache is unavailable: {packageName}")
                         })?
                     };
-                    read_text_resources(self.fileSystemHost.as_ref(), &cacheDir)
+                    read_text_resources(self.filesystem.as_ref(), &cacheDir)
                 })?;
         Ok(resources)
     }
@@ -371,7 +371,7 @@ impl ToolPkgResourceReader {
             }
             ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
                 let source = self
-                    .fileSystemHost
+                    .filesystem
                     .fileExists(&runtime.sourcePath)
                     .map_err(|error| error.to_string())?;
                 if !source.exists {
@@ -383,8 +383,8 @@ impl ToolPkgResourceReader {
                 if source.isDirectory {
                     let resource = PathBuf::from(&runtime.sourcePath).join(path);
                     let bytes = self
-                        .fileSystemHost
-                        .readFileBytes(&hostPath(&resource))
+                        .filesystem
+                        .readFileBytes(&vfsPathString(&resource))
                         .map_err(|error| format!("Cannot read ToolPkg resource {path}: {error}"))?;
                     return operit_plugin_sdk::toolpkg::ToolPkgProtection::decodeUtf8(&bytes)
                         .map_err(|error| {
@@ -392,7 +392,7 @@ impl ToolPkgResourceReader {
                         });
                 }
                 let bytes = self
-                    .fileSystemHost
+                    .filesystem
                     .readFileBytes(&runtime.sourcePath)
                     .map_err(|error| {
                         format!(
@@ -445,8 +445,8 @@ impl ToolPkgResourceReader {
         let cacheDir = self.ensureToolPkgCacheLocked(runtime)?;
         let resourceFile = cacheDir.join(normalizedPath);
         if !self
-            .fileSystemHost
-            .fileExists(&hostPath(&resourceFile))
+            .filesystem
+            .fileExists(&vfsPathString(&resourceFile))
             .map(|info| info.exists)
             .unwrap_or(false)
         {
@@ -469,16 +469,16 @@ impl ToolPkgResourceReader {
         let resourceFile =
             self.resolveToolPkgResourceFileLocked(runtime, normalizedResourcePath)?;
         if !self
-            .fileSystemHost
-            .fileExists(&hostPath(&resourceFile))
+            .filesystem
+            .fileExists(&vfsPathString(&resourceFile))
             .map(|info| info.exists && !info.isDirectory)
             .unwrap_or(false)
         {
             return None;
         }
         let bytes = self
-            .fileSystemHost
-            .readFileBytes(&hostPath(&resourceFile))
+            .filesystem
+            .readFileBytes(&vfsPathString(&resourceFile))
             .ok()?;
         operit_plugin_sdk::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok()
     }

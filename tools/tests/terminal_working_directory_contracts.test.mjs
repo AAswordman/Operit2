@@ -25,7 +25,7 @@ test('manual PTY creation resolves the selected terminal namespace first', () =>
   assert.match(create, /\.resolveWorkingDirectory\(/);
   assert.ok(create.indexOf('.resolveWorkingDirectory(') < create.indexOf('.startPtySession('));
   assert.doesNotMatch(create, /resolve_terminal_working_dir\(&self\.context, &workingDir\)/);
-  const api = source('core/crates/foundation/host-api/src/lib.rs');
+  const api = source('core/crates/foundation/host-contract/src/lib.rs');
   assert.match(api, /fn resolveWorkingDirectory\([\s\S]*?\) -> HostResult<String>;/);
 });
 
@@ -41,7 +41,7 @@ test('Linux guest hosts own guest working directory resolution', () => {
     assert.match(resolve, /resolveLinuxGuestDirectory\(/);
     assert.match(resolve, /resolveHostDirectory\(workingDir\)/);
   }
-  const guest = source('core/crates/foundation/host-api/src/TerminalWorkingDirectory.rs');
+  const guest = source('core/crates/foundation/host-contract/src/TerminalWorkingDirectory.rs');
   const resolve = section(guest, 'pub fn resolveLinuxGuestDirectory(', 'pub fn resolveSessionDirectory(');
   assert.match(resolve, /strip_prefix\("\/virtual\/linux"\)/);
   assert.match(resolve, /strip_prefix\("\/mnt\/linux"\)/);
@@ -101,10 +101,10 @@ test('Android startup errors return the real process output', () => {
 /** Document mounts must reach the exact terminal host through every launch entry point. */
 test('document-backed terminal directories reach Android instead of nativePath rejection', () => {
   const runtime = source('core/crates/runtime/application/src/services/RuntimeTerminalService.rs');
-  assert.match(runtime, /path\.terminalDirectory\(terminalHost\)/);
+  assert.match(runtime, /filesystem\.terminalDirectory\(terminalHost, &path\)/);
   const tools = source('core/crates/tool/services/src/tools/defaultTool/standard/StandardTerminalTools.rs');
-  assert.equal((tools.match(/path\.terminalDirectory\(host\)/g) ?? []).length, 2);
-  const mapper = source('core/crates/tool/services/src/files/PathMapper.rs');
+  assert.equal((tools.match(/\.terminalDirectory\(host, path\)/g) ?? []).length, 2);
+  const mapper = source('core/crates/foundation/vfs/src/PathMapper.rs');
   assert.match(mapper, /host\.resolveNativeWorkingDirectory\(&self\.physicalPath\)/);
   const wrapper = source('apps/flutter/native/operit-flutter-bridge/src/FlutterOwnerCapabilities.rs');
   assert.match(wrapper, /self\.inner\.resolveNativeWorkingDirectory\(path\)/);

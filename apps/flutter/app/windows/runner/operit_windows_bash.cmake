@@ -30,6 +30,3 @@ add_custom_command(
   VERBATIM
 )
 add_custom_target(operit_windows_bash DEPENDS ${OPERIT_BASH_OUTPUTS})
-
-# Relative installation also supports a custom prefix outside the runner directory.
-install(DIRECTORY "${OPERIT_BASH_DIRECTORY}" DESTINATION "." COMPONENT Runtime)

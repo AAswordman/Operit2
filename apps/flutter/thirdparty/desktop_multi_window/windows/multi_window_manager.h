@@ -26,6 +26,12 @@ class MultiWindowManager {
 
   void RemoveManagedFlutterWindowLater(const std::string& window_id);
 
+  /// Releases engine-owned resources before destroying a secondary controller.
+  void OnWindowDestroyed(flutter::FlutterViewController* controller);
+
+  /// Destroys all secondary windows before application services shut down.
+  void Shutdown();
+
   flutter::EncodableList GetAllWindows();
 
   std::vector<std::string> GetAllWindowIds();
@@ -39,6 +45,7 @@ class MultiWindowManager {
   std::map<std::string, std::unique_ptr<FlutterWindow>>
       managed_flutter_windows_;
   std::vector<std::string> pending_remove_ids_;
+  bool shutting_down_ = false;
 };
 
 #endif  // DESKTOP_MULTI_WINDOW_WINDOWS_MULTI_WINDOW_MANAGER_H_

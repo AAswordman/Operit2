@@ -1,3 +1,4 @@
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 #[cfg(not(target_os = "espidf"))]
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
@@ -6,7 +7,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 
 #[cfg(not(target_os = "espidf"))]
 use chrono::{DateTime, Local, Utc};
-use operit_host_api::{FileAppendHandle, FileSystemHost};
+use operit_host_api::{FileAppendHandle};
 use serde::{Deserialize, Serialize};
 
 /// Android-compatible verbose log priority.
@@ -70,14 +71,14 @@ struct LoggerState {
 
 /// Owns the configured host and append descriptor for one exclusively managed log.
 struct LogFile {
-    host: Arc<dyn FileSystemHost>,
+    host: Arc<VisualFileSystem>,
     path: String,
     writer: Mutex<Option<Box<dyn FileAppendHandle>>>,
 }
 
 impl LogFile {
     /// Binds a log path; its descriptor is opened on the first append.
-    fn new(host: Arc<dyn FileSystemHost>, path: &str) -> Arc<Self> {
+    fn new(host: Arc<VisualFileSystem>, path: &str) -> Arc<Self> {
         Arc::new(Self {
             host,
             path: path.into(),
@@ -271,7 +272,7 @@ impl AppLogger {
     /// Configures runtime and ToolPkg logs through the supplied file-system host.
     /// Returns preparation failures and disables unprepared file sinks.
     pub fn configure_log_files(
-        file_system_host: Arc<dyn FileSystemHost>,
+        file_system_host: Arc<VisualFileSystem>,
         log_file: String,
         package_log_file: String,
     ) -> Result<(), String> {
@@ -370,7 +371,7 @@ impl AppLogger {
             .map_err(|_| "AppLogger file mutex poisoned".to_string())?;
         file_system_host
             .readFile(&path)
-            .map_err(|error| error.message)
+            .map_err(|error| error.to_string())
     }
 
     /// Reads the ToolPkg log file as text.
@@ -381,7 +382,7 @@ impl AppLogger {
             .map_err(|_| "AppLogger file mutex poisoned".to_string())?;
         file_system_host
             .readFile(&path)
-            .map_err(|error| error.message)
+            .map_err(|error| error.to_string())
     }
 
     /// Writes process or configuration lifecycle diagnostics at Verbose level one.
@@ -606,7 +607,7 @@ fn append_line_with_rotation_cap(
         *writer = Some(
             file.host
                 .openAppendFile(&file.path)
-                .map_err(|error| report_log_io_error("open-append", &file.path, &error.message))?,
+                .map_err(|error| report_log_io_error("open-append", &file.path, &error.to_string()))?,
         );
     }
     if writer.as_ref().unwrap().byteLength() > rotate_bytes as u64 {
@@ -615,13 +616,13 @@ fn append_line_with_rotation_cap(
         *writer = Some(
             file.host
                 .openAppendFile(&file.path)
-                .map_err(|error| report_log_io_error("open-append", &file.path, &error.message))?,
+                .map_err(|error| report_log_io_error("open-append", &file.path, &error.to_string()))?,
         );
     }
     if let Err(error) = writer.as_mut().unwrap().append(line.as_bytes()) {
         // A partial write invalidates the cached length; do not retry the record.
         writer.take();
-        return Err(report_log_io_error("append", &file.path, &error.message));
+        return Err(report_log_io_error("append", &file.path, &error.to_string()));
     }
     Ok(())
 }
@@ -631,7 +632,7 @@ const LOG_ROTATE_BYTES: i64 = LOG_FILE_MAX_BYTES;
 
 /// Rotates one log file once it exceeds the size cap, keeping a single `.1` archive.
 /// Returns an error before appending when any rotation operation fails.
-fn rotate_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Result<(), ()> {
+fn rotate_log_file(file_system_host: &Arc<VisualFileSystem>, path: &str) -> Result<(), ()> {
     let archive = format!("{path}.1");
     // Only touch a stale archive that actually exists — a missing archive is
     // the normal first rotation, not a failure worth reporting.
@@ -640,22 +641,22 @@ fn rotate_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Re
         Ok(_) => {
             file_system_host
                 .deleteFile(&archive, false)
-                .map_err(|error| report_log_io_error("delete-archive", &archive, &error.message))?;
+                .map_err(|error| report_log_io_error("delete-archive", &archive, &error.to_string()))?;
         }
         Err(error) => {
             return Err(report_log_io_error(
                 "inspect-archive",
                 &archive,
-                &error.message,
+                &error.to_string(),
             ));
         }
     }
     file_system_host
         .moveFile(path, &archive)
-        .map_err(|error| report_log_io_error("rotate-move", path, &error.message))?;
+        .map_err(|error| report_log_io_error("rotate-move", path, &error.to_string()))?;
     file_system_host
         .writeFile(path, "", false)
-        .map_err(|error| report_log_io_error("rotate-recreate", path, &error.message))
+        .map_err(|error| report_log_io_error("rotate-recreate", path, &error.to_string()))
 }
 
 /// Reports file I/O failures to the host console and stderr without re-entering the logger.
@@ -678,18 +679,18 @@ fn push_entry_capped(entries: &mut Vec<LogEntry>, entry: LogEntry) {
 /// Drops the oldest records of one log file once it exceeds the size cap.
 /// Returns preparation failures without re-entering the logger.
 fn evict_log_file_oldest(
-    file_system_host: &Arc<dyn FileSystemHost>,
+    file_system_host: &Arc<VisualFileSystem>,
     path: &str,
 ) -> Result<(), String> {
     let metadata = file_system_host
         .fileExists(path)
-        .map_err(|error| error.message)?;
+        .map_err(|error| error.to_string())?;
     if !metadata.exists || metadata.isDirectory || metadata.size <= LOG_FILE_MAX_BYTES {
         return Ok(());
     }
     let content = file_system_host
         .readFile(path)
-        .map_err(|error| error.message)?;
+        .map_err(|error| error.to_string())?;
     let Some(kept) = newest_log_records(&content, LOG_FILE_KEEP_BYTES as usize) else {
         return Err(format!(
             "Oversized log contains no complete records to retain: '{path}'"
@@ -702,7 +703,7 @@ fn evict_log_file_oldest(
     trimmed.push_str(&kept);
     file_system_host
         .writeFile(path, &trimmed, false)
-        .map_err(|error| error.message)
+        .map_err(|error| error.to_string())
 }
 
 /// Returns the newest records of one log text, keeping at most `keep_bytes`
@@ -722,13 +723,13 @@ fn newest_log_records(content: &str, keep_bytes: usize) -> Option<String> {
 }
 
 /// Creates an empty log file through the host when the path is absent.
-fn ensure_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Result<(), String> {
+fn ensure_log_file(file_system_host: &Arc<VisualFileSystem>, path: &str) -> Result<(), String> {
     let _file_guard = FILE_WRITE_LOCK
         .lock()
         .map_err(|_| "AppLogger file mutex poisoned".to_string())?;
     let metadata = file_system_host
         .fileExists(path)
-        .map_err(|error| format!("Cannot inspect log file '{path}': {}", error.message))?;
+        .map_err(|error| format!("Cannot inspect log file '{path}': {}", error.to_string()))?;
     if metadata.exists && metadata.isDirectory {
         return Err(format!("Log file path is a directory: '{path}'"));
     }
@@ -739,13 +740,13 @@ fn ensure_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Re
                 file_system_host
                     .makeDirectory(&parent, true)
                     .map_err(|error| {
-                        format!("Cannot create log directory '{parent}': {}", error.message)
+                        format!("Cannot create log directory '{parent}': {}", error.to_string())
                     })?;
             }
         }
         file_system_host
             .writeFile(path, "", false)
-            .map_err(|error| format!("Cannot create log file '{path}': {}", error.message))?;
+            .map_err(|error| format!("Cannot create log file '{path}': {}", error.to_string()))?;
     } else if !metadata.isDirectory {
         // Trims oversized logs left behind by previous runs at bind time.
         evict_log_file_oldest(file_system_host, path)?;
@@ -754,7 +755,7 @@ fn ensure_log_file(file_system_host: &Arc<dyn FileSystemHost>, path: &str) -> Re
 }
 
 /// Returns the host and path for one configured runtime or ToolPkg log file.
-fn log_file_access(package_log: bool) -> Result<(Arc<dyn FileSystemHost>, String), String> {
+fn log_file_access(package_log: bool) -> Result<(Arc<VisualFileSystem>, String), String> {
     let guard = state().lock().expect("AppLogger mutex poisoned");
     let file = if package_log {
         guard.package_log_file.clone()

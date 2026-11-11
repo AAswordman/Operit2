@@ -19,11 +19,9 @@ fn snapshotImportManager(root: &std::path::Path) -> (Operit1SnapshotImportManage
     operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
         operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
     ));
-    let paths = RuntimeStorePaths::new(root.join("runtime"), root.join("workspaces"));
+    let paths = RuntimeStorePaths::default();
     let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
-    operit_util::RuntimeStoreRoot::setDefaultRuntimeStoreRootConfig(
-        operit_util::RuntimeStoreRoot::RuntimeStoreRootConfig::new(root.join("runtime"), root.join("workspaces")),
-    );
+
     operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(host.clone());
     operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(host.clone());
     operit_store::RuntimeStorageHost::setDefaultHostSecretStore(Arc::new(
@@ -52,7 +50,7 @@ fn diagnose_external_operit1_snapshot() {
     let preview = manager.inspectSnapshotSource(fixture.clone()).expect("snapshot inspection");
     let imported = manager.importSnapshotSource(fixture).expect("full snapshot import");
     themes.watch().first().expect("imported appearance and saved theme selection must be consistent");
-    let providers = ModelConfigManager::new(root.join("runtime")).getProviderProfiles().unwrap();
+    let providers = ModelConfigManager::default().getProviderProfiles().unwrap();
     for config in &expected.configs {
         let provider = providers.iter().find(|provider| provider.id == operit1ProviderId(&config.id)).expect("every source API configuration must be imported");
         assert!(provider.apiKey == config.apiKey, "Imported API key differs from source");
@@ -282,7 +280,7 @@ fn full_model_import_preserves_all_providers_and_function_bindings() {
     let result = manager.importAllModelConfigsFromParsed(&parsed).unwrap();
     assert_eq!(result.importedModelCount, 3);
     assert_eq!(result.modelId, "second");
-    let providers = ModelConfigManager::new(root.join("runtime")).getProviderProfiles().unwrap();
+    let providers = ModelConfigManager::default().getProviderProfiles().unwrap();
     assert_eq!(providers.len(), 3);
     for config in &parsed.configs {
         let provider = providers.iter().find(|provider| provider.id == operit1ProviderId(&config.id)).unwrap();
@@ -291,7 +289,7 @@ fn full_model_import_preserves_all_providers_and_function_bindings() {
         assert_eq!(provider.apiKeyPool.len(), config.apiKeyPool.len());
         assert_eq!(provider.models.iter().map(|model| model.id.clone()).collect::<Vec<_>>(), splitModelIds(&config.modelName));
     }
-    let bindings = FunctionalConfigManager::new(root.join("runtime")).functionModelBindingFlow().unwrap().first().unwrap();
+    let bindings = FunctionalConfigManager::default().functionModelBindingFlow().unwrap().first().unwrap();
     assert_eq!(bindings[&FunctionType::CHAT].modelId, "second");
     assert_eq!(bindings[&FunctionType::IMAGE_RECOGNITION].providerId, "vision-provider");
     let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
@@ -681,7 +679,7 @@ fn mixed_preferences_skip_domain_adoption_without_rejecting_or_guessing_source_k
     for key in ["language", "model_name", "tts_http_config", "workspace_state_demo", "memory_usage_display", "custom_character_count", "new_unknown_source_key"] {
         assert!(!isOperit1UnadoptedPreferenceKey(key), "{key}");
     }
-    let paths = RuntimeStorePaths::new(PathBuf::from("test-runtime"), PathBuf::from("test-workspaces"));
+    let paths = RuntimeStorePaths::default();
     let mappings = datastorePreferenceMappings(&paths);
     for entry in [ENTRY_CHARACTER_CARDS, ENTRY_CHARACTER_GROUPS, ENTRY_PROMPT_TAGS, "payload/files/datastore/persona_card_chat_history.preferences_pb"] {
         assert!(!mappings.contains_key(entry));
@@ -815,7 +813,7 @@ fn user_preference_import_completes_theme_migrations_after_native_values() {
     let root = std::env::temp_dir().join(format!("operit1-theme-import-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     {
-        let paths = RuntimeStorePaths::new(root.join("runtime"), root.join("workspaces"));
+        let paths = RuntimeStorePaths::default();
         let host = Arc::new(NativeRuntimeStorageHost::new(
             root.join("runtime"), root.join("workspaces"),
         ));

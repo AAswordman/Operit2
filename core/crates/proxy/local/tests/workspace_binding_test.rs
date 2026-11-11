@@ -10,7 +10,7 @@ use operit_link::{toCoreValue, CoreCallRequest, CoreLinkSharedClient};
 use operit_model::ChatMessage::ChatMessage;
 use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use serde_json::json;
 
 /// Exercises Flutter's generated proxy route, not just the CLI's direct Core calls.
@@ -30,10 +30,7 @@ async fn flutter_workspace_binding_is_idempotent_and_errors_remain_recoverable()
             let workspace_root = root.join("workspaces");
             std::fs::create_dir_all(&runtime_root).unwrap();
             std::fs::create_dir_all(&workspace_root).unwrap();
-            setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-                runtime_root.clone(),
-                workspace_root.clone(),
-            ));
+
             let storage = Arc::new(NativeRuntimeStorageHost::new(runtime_root, workspace_root));
             let host_manager = HostManager {
                 fileSystemHost: Some(Arc::new(PosixFileSystemHost::new())),

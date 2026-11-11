@@ -91,7 +91,7 @@ pub fn createRuntimeHostManager(
         systemOperationHost,
     )
     .withHostSecretStore(secrets)
-    .withLocalInferenceHost(Arc::new(AndroidLocalInferenceHost::new()))
+    .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::withSpeech(Arc::new(AndroidLocalInferenceHost::new()))))
     .withHostRuntimeEventSchedulerHost(Arc::new(AndroidHostRuntimeEventSchedulerHost::new()))
     .withServiceDiscoveryHost(Arc::new(
         operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::withNetworkLease(

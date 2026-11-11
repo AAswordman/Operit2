@@ -14,7 +14,7 @@ use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataSt
 use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::sync::SqlChatSyncStore::SqlChatSyncStore;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 
 /// Delivers preference observers without starting plugin tasks in this isolated startup test.
 struct StartupScheduler;
@@ -54,12 +54,12 @@ fn deleted_selected_chat_is_cleared_after_upgrade_without_hiding_unknown_missing
     let runtimeRoot = root.join("runtime");
     let workspaceRoot = root.join("workspaces");
     fs::create_dir_all(&runtimeRoot).unwrap();
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtimeRoot.clone(), workspaceRoot.clone()));
+
     let host = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot.clone(), workspaceRoot.clone()));
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host);
     setDefaultHostRuntimeTaskSchedulerHost(Arc::new(StartupScheduler));
-    let paths = RuntimeStorePaths::new(runtimeRoot, workspaceRoot);
+    let paths = RuntimeStorePaths::default();
     let database = AppDatabase::getDatabase(paths.clone()).unwrap();
     database.chatDao().insertChat(ChatEntity::new("deleted-chat".into(), "Old selection".into(), 1)).unwrap();
     database.chatDao().insertChat(ChatEntity::new("live-chat".into(), "Keep this".into(), 2)).unwrap();

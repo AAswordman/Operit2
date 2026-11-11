@@ -4,7 +4,7 @@ extern crate self as operit_proxy_local;
 
 use async_trait::async_trait;
 use operit_host_api::HostManager::HostManager;
-use operit_host_api::{FileSystemHost, RuntimeStorageHost};
+use operit_host_api::RuntimeStorageHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreValue, CoreWatchRequest,
@@ -280,11 +280,8 @@ impl LocalCoreProxy {
 
     /// Returns the file-system capability owned by this local core.
     #[allow(non_snake_case)]
-    pub fn fileSystemHost(&self) -> Arc<dyn FileSystemHost> {
-        self.hostManager
-            .fileSystemHost
-            .clone()
-            .expect("LocalCoreProxy requires a FileSystemHost")
+    pub fn filesystem(&self) -> Arc<operit_vfs::VisualFileSystem::VisualFileSystem> {
+        Arc::new(self.hostManager.vfs().expect("LocalCoreProxy requires VFS"))
     }
 }
 
@@ -489,7 +486,7 @@ mod tests {
         CoreEventKind, CoreStreamAttachment, CoreStreamSource, CORE_STREAM_TARGET,
     };
     use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
-    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
     use std::collections::BTreeMap;
 
     /// Keeps factory calls and watches independent of the application lock and stream pool.
@@ -504,10 +501,7 @@ mod tests {
         let workspaceRoot = root.join(WORKSPACE_DIR_PATH);
         std::fs::create_dir_all(&runtimeRoot).expect("test runtime root must be created");
         std::fs::create_dir_all(&workspaceRoot).expect("test workspace root must be created");
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-            runtimeRoot.clone(),
-            workspaceRoot.clone(),
-        ));
+
         let storageHost = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
         hostManager.runtimeStorageHost = Some(storageHost.clone());
         hostManager.runtimeSqliteHost = Some(storageHost);

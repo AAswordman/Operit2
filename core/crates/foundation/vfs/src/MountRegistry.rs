@@ -1,10 +1,10 @@
 //! Identity-local persistent mount catalog, independent of platform filesystem backends.
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use operit_host_api::RuntimeStorageHost;
+use operit_host_contract::RuntimeStorageHost;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use operit_host_api::FileSystemResource::FileSystemResource;
+use operit_host_contract::FileSystemResource::FileSystemResource;
 
 pub const MOUNT_SOURCE_PREFIX: &str = "operit-mount:";
 
@@ -160,55 +160,56 @@ mod tests {
     }
     impl RuntimeStorageHost for VirtualStorage {
         /// Confirms synchronous in-memory publication without copying or rewriting bytes.
-        fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {
+        fn flushFile(&self, path: &str) -> operit_host_contract::HostResult<()> {
             if !self.exists(path)? {
-                return Err(operit_host_api::HostError::new("runtime storage entry not found"));
+                return Err(operit_host_contract::HostError::new("runtime storage entry not found"));
             }
             Ok(())
         }
 
         fn runtimeRootDir(&self) -> Option<PathBuf> { Some(PathBuf::from("runtime")) }
         fn workspaceRootDir(&self) -> Option<PathBuf> { Some(PathBuf::from("workspaces")) }
-        fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+        fn readBytes(&self, path: &str) -> operit_host_contract::HostResult<Vec<u8>> {
             assert_eq!(path, CATALOG_PATH);
-            self.bytes.lock().unwrap().clone().ok_or_else(|| operit_host_api::HostError::new("missing catalog"))
+            self.bytes.lock().unwrap().clone().ok_or_else(|| operit_host_contract::HostError::new("missing catalog"))
         }
-        fn writeBytes(&self, _: &str, _: &[u8]) -> operit_host_api::HostResult<()> {
+        fn writeBytes(&self, _: &str, _: &[u8]) -> operit_host_contract::HostResult<()> {
             panic!("catalog must use atomic publication")
         }
-        fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+        fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_contract::HostResult<()> {
             assert_eq!(path, CATALOG_PATH);
             if self.rejectWrites.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(operit_host_api::HostError::new("scripted write failure"));
+                return Err(operit_host_contract::HostError::new("scripted write failure"));
             }
             *self.bytes.lock().unwrap() = Some(content.to_vec());
             Ok(())
         }
-        fn appendBytes(&self, _: &str, _: &[u8]) -> operit_host_api::HostResult<()> { unreachable!() }
-        fn delete(&self, _: &str, _: bool) -> operit_host_api::HostResult<()> { unreachable!() }
-        fn exists(&self, path: &str) -> operit_host_api::HostResult<bool> {
+        fn appendBytes(&self, _: &str, _: &[u8]) -> operit_host_contract::HostResult<()> { unreachable!() }
+        fn delete(&self, _: &str, _: bool) -> operit_host_contract::HostResult<()> { unreachable!() }
+        fn exists(&self, path: &str) -> operit_host_contract::HostResult<bool> {
             assert_eq!(path, CATALOG_PATH);
             Ok(self.bytes.lock().unwrap().is_some())
         }
-        fn list(&self, _: &str) -> operit_host_api::HostResult<Vec<operit_host_api::RuntimeStorageEntry>> { unreachable!() }
+        fn list(&self, _: &str) -> operit_host_contract::HostResult<Vec<operit_host_contract::RuntimeStorageEntry>> { unreachable!() }
     }
 
     #[test]
     fn catalog_preserves_namespaces_and_shares_both_mount_roots() {
         let host = Arc::new(VirtualStorage::default());
-        *host.bytes.lock().unwrap() = Some(br#"{"version":1,"mounts":[{"id":"legacy","namespace":"/mnt/test/folders","name":"Old","backend":"native","root":"/mnt/physical-root"}]}"#.to_vec());
+        let root = std::env::temp_dir().join("operit-mount-catalog-root").to_string_lossy().into_owned();
+        *host.bytes.lock().unwrap() = Some(serde_json::to_vec(&serde_json::json!({"version":1,"mounts":[{"id":"legacy","namespace":"/mnt/test/folders","name":"Old","backend":"native","root":root}]})).unwrap());
         let registry = MountRegistry::withStorage(host.clone());
         let mounts = registry.list().unwrap();
         assert_eq!(mounts[0].vfsPath(), "/mnt/test/folders/legacy");
-        assert_eq!(mounts[0].root, "/mnt/physical-root");
-        let same = registry.register("/virtual/test/folders", "native", "/mnt/physical-root", "Old").unwrap();
+        assert_eq!(mounts[0].root, root);
+        let same = registry.register("/virtual/test/folders", "native", &root, "Old").unwrap();
         assert_eq!(same, mounts[0]);
         registry.register("/virtual/test/folders", "test", "opaque", "New").unwrap();
         let bytes = host.bytes.lock().unwrap().clone().unwrap();
         let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(saved["mounts"][0]["namespace"], "/mnt/test/folders");
         assert_eq!(saved["mounts"][1]["namespace"], "/virtual/test/folders");
-        assert_eq!(saved["mounts"][0]["root"], "/mnt/physical-root");
+        assert_eq!(saved["mounts"][0]["root"], root);
         registry.remove("/virtual/test/folders/legacy").unwrap();
         assert_eq!(registry.list().unwrap().len(), 1);
     }

@@ -3,7 +3,7 @@ use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use serde_json::{json, Value};
 
 use crate::ui::features::chat::webview::workspace::WorkspaceTemplateAssets::WORKSPACE_TEMPLATE_ASSETS;
-use operit_tools::files::PathMapper::PathMapper;
+use operit_vfs::VfsPath;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProjectType {
@@ -43,7 +43,7 @@ fn createDefaultWorkspace(chatId: String, projectType: Option<String>) -> Result
     createProjectConfigIfNeeded(&workspaceRelativePath, projectType)?;
     operit_store::FileSyncPolicy::FileSyncPolicy::ensure(defaultRuntimeStorageHost().as_ref(), &workspaceRelativePath)?;
 
-    PathMapper::workspacePath(&chatId)
+    VfsPath::workspacePath(&chatId)
 }
 
 #[allow(non_snake_case)]
@@ -53,7 +53,7 @@ pub fn createAndResetWorkspaceDirectory(chatId: String) -> Result<String, String
     workspaceSyncStore().track(|| storage
         .delete(&workspaceRelativePath, true)
         .map_err(|error| error.to_string()))?;
-    PathMapper::workspacePath(&chatId)
+    VfsPath::workspacePath(&chatId)
 }
 
 /// Deletes app-owned folders and releases mounts unused by surviving workspaces.
@@ -64,7 +64,7 @@ pub(crate) fn deleteWorkspaceFiles(
     others: &[operit_model::Workspace::Workspace],
 ) -> Result<(), String> {
     let storage = defaultRuntimeStorageHost();
-    let registry = operit_tools::files::MountRegistry::MountRegistry::withStorage(storage.clone());
+    let registry = operit_vfs::MountRegistry::MountRegistry::withStorage(storage.clone());
     let mounts = registry.list()?;
     let otherPaths = others
         .iter()
@@ -78,7 +78,7 @@ pub(crate) fn deleteWorkspaceFiles(
     let mut ownedPaths = std::collections::BTreeSet::new();
     for folder in &workspace.folders {
         let Some(relative) =
-            PathMapper::relativePath(PathMapper::workspaceCollectionPath(), &folder.path)?
+            VfsPath::relativePath(VfsPath::workspaceCollectionPath(), &folder.path)?
         else {
             continue;
         };
@@ -86,7 +86,7 @@ pub(crate) fn deleteWorkspaceFiles(
         if relative.is_empty() || relative.contains('/') {
             continue;
         }
-        PathMapper::workspacePath(&relative)?;
+        VfsPath::workspacePath(&relative)?;
         if !otherPaths.iter().any(|other| overlaps(&folder.path, other)) {
             ownedPaths.insert(format!("{WORKSPACE_DIR_PATH}/{relative}"));
         }

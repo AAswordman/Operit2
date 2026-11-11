@@ -1,9 +1,10 @@
 #![allow(non_snake_case)]
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 use std::sync::Arc;
 
 use operit_host_api::HostManager::HostManager;
-use operit_host_api::{FileSystemHost, RuntimeStorageHost, RuntimeStorageWriteHost};
+use operit_host_api::{RuntimeStorageHost, RuntimeStorageWriteHost};
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_util::stream::ReverseStream::ReverseStream;
@@ -19,13 +20,14 @@ const ATTACHMENT_UPLOAD_MAX_CHUNK_BYTES: usize = 1024 * 1024;
 pub struct AttachmentTransferManager {
     storageHost: Arc<dyn RuntimeStorageHost>,
     storageWriteHost: Arc<dyn RuntimeStorageWriteHost>,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: VisualFileSystem,
 }
 
 impl AttachmentTransferManager {
     /// Binds attachment writes to the receiving runtime's Host, not the picker device.
     pub fn getInstance(hostManager: &HostManager) -> Result<Self, String> {
         Ok(Self {
+            filesystem: hostManager.vfs()?,
             storageHost: hostManager
                 .runtimeStorageHost
                 .clone()
@@ -34,10 +36,6 @@ impl AttachmentTransferManager {
                 .runtimeStorageWriteHost
                 .clone()
                 .ok_or("RuntimeStorageWriteHost is not registered for attachment uploads")?,
-            fileSystemHost: hostManager
-                .fileSystemHost
-                .clone()
-                .ok_or("FileSystemHost is not registered for attachment uploads")?,
         })
     }
 
@@ -79,8 +77,9 @@ impl AttachmentTransferManager {
         chatId: String,
         filePath: String,
     ) -> Result<AttachmentInfo, String> {
+        let filePath = self.filesystem.resolveResourcePath(None, &filePath)?;
         let source = self
-            .fileSystemHost
+            .filesystem
             .fileExists(&filePath)
             .map_err(|e| e.to_string())?;
         if !source.exists || source.isDirectory || source.size < 0 {
@@ -94,9 +93,10 @@ impl AttachmentTransferManager {
         validateAttachmentFileName(&name)?;
         let policy = self.chatPolicy(&chatId)?;
         if source.size as u64 > policy.maxFileBytes.min(policy.maxTotalBytes) {
-            let reference = self.registerAttachmentSource(serde_json::json!({
-                    "namespace": "/virtual/local/attachments", "backend": "native", "root": filePath, "name": name,
-                }).to_string(), name, source.size)?;
+            let reference = operit_store::FileSyncPolicy::FileReference::new(
+                self.storageHost.clone(), filePath, name, source.size, None,
+            )?;
+            let reference = String::from_utf8(reference.bytes()?).map_err(|error| error.to_string())?;
             return self.createReferenceAttachment(chatId, reference);
         }
         let id = Uuid::new_v4().simple().to_string();
@@ -110,7 +110,7 @@ impl AttachmentTransferManager {
             while offset < source.size as u64 {
                 let length = (source.size as u64 - offset).min(64 * 1024) as usize;
                 let bytes = self
-                    .fileSystemHost
+                    .filesystem
                     .readFileBytesRange(&filePath, offset, length)
                     .map_err(|e| e.to_string())?;
                 if bytes.is_empty() || bytes.len() > length {
@@ -120,7 +120,7 @@ impl AttachmentTransferManager {
                 offset += bytes.len() as u64;
             }
             if !self
-                .fileSystemHost
+                .filesystem
                 .readFileBytesRange(&filePath, offset, 1)
                 .map_err(|e| e.to_string())?
                 .is_empty()
@@ -148,31 +148,20 @@ impl AttachmentTransferManager {
     ) -> Result<String, String> {
         validateAttachmentFileName(&fileName)?;
         validateLength(Some(expectedByteLength))?;
-        let source: operit_tools::files::MountRegistry::MountSource =
+        let source: operit_vfs::MountRegistry::MountSource =
             serde_json::from_str(&sourceJson).map_err(|e| e.to_string())?;
         let mount =
-            operit_tools::files::MountRegistry::MountRegistry::withStorage(self.storageHost.clone())
+            operit_vfs::MountRegistry::MountRegistry::withStorage(self.storageHost.clone())
                 .register(
                     &source.namespace,
                     &source.backend,
                     &source.root,
                     &source.name,
                 )?;
-        let mapper = operit_tools::files::PathMapper::PathMapper::new(
-            self.storageHost
-                .runtimeRootDir()
-                .ok_or("Missing runtime root")?,
-            self.storageHost
-                .workspaceRootDir()
-                .ok_or("Missing workspace root")?,
-            self.storageHost.clone(),
-        );
         let path = mount.vfsPath();
-        let resolved = mapper.resolve(&path)?;
         let metadata = self
-            .fileSystemHost
-            .fileExists(&resolved.physicalPath)
-            .map_err(|e| e.to_string())?;
+            .filesystem
+            .fileExists(&path)?;
         if !metadata.exists || metadata.isDirectory || metadata.size != expectedByteLength {
             return Err("Selected source is unavailable or its size changed".into());
         }
@@ -401,15 +390,6 @@ impl AttachmentTransferManager {
         fileSize: i64,
     ) -> Result<AttachmentInfo, String> {
         let vfsPath = operit_store::WorkspaceFileSyncStore::managedVfsPath(path)?;
-        let mapper = operit_tools::files::PathMapper::PathMapper::new(
-            self.storageHost
-                .runtimeRootDir()
-                .ok_or("Missing runtime root")?,
-            self.storageHost
-                .workspaceRootDir()
-                .ok_or("Missing workspace root")?,
-            self.storageHost.clone(),
-        );
         Ok(AttachmentInfo {
             vfsPath: Some(vfsPath.clone()),
             nodeId: Some(
@@ -417,7 +397,7 @@ impl AttachmentTransferManager {
                     .identity()?
                     .nodeId,
             ),
-            filePath: mapper.resolve(&vfsPath)?.nativePath()?,
+            filePath: vfsPath.clone(),
             mimeType: getMimeTypeFromPath(Path::new(&fileName)).to_string(),
             fileName,
             fileSize,

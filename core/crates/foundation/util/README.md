@@ -16,7 +16,7 @@ or store ownership.
 
 ## Main Modules
 
-- `src/RuntimeStorageLayout.rs`: canonical relative runtime storage layout.
+- `RuntimeStorageLayout`: reexport of canonical storage definitions owned by `operit-host-contract`.
 - `src/RuntimeStoreRoot.rs`: configured runtime data root.
 - `src/OperitPaths.rs`: runtime path helpers built from the configured root.
 - `src/stream/`: shared stream abstractions and operators.

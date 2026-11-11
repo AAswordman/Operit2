@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use operit_host_api::FileSystemHost;
-use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use serde::{Deserialize, Serialize};
@@ -14,8 +12,8 @@ use operit_model::Workspace::Workspace;
 use operit_store::dao::ChatDao::ChatDao;
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::repository::WorkspacePreferenceStore::WorkspacePreferenceStore;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VfsPath;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 const MAX_MENTION_FILE_SUGGESTIONS: usize = 10;
 
@@ -57,10 +55,8 @@ pub struct WorkspaceManagementSummary {
 pub struct WorkspaceService {
     chatDao: ChatDao,
     workspaceStore: WorkspacePreferenceStore,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: VisualFileSystem,
     runtimeStorageHost: Arc<dyn operit_host_api::RuntimeStorageHost>,
-    runtimeStoreRoot: std::path::PathBuf,
-    workspaceCollectionRoot: std::path::PathBuf,
 }
 
 impl WorkspaceService {
@@ -73,22 +69,11 @@ impl WorkspaceService {
             .runtimeStorageHost
             .as_ref()
             .expect("RuntimeStorageHost must be configured for WorkspaceService");
-        let runtimeStoreRoot = runtimeStorageHost
-            .runtimeRootDir()
-            .expect("RuntimeStorageHost runtime root must be configured for WorkspaceService");
-        let workspaceCollectionRoot = runtimeStorageHost
-            .workspaceRootDir()
-            .expect("RuntimeStorageHost workspace root must be configured for WorkspaceService");
         Self {
             chatDao: database.chatDao(),
             workspaceStore: WorkspacePreferenceStore::getInstance(),
-            fileSystemHost: context
-                .fileSystemHost
-                .clone()
-                .expect("FileSystemHost must be configured for WorkspaceService"),
+            filesystem: context.vfs().expect("VFS must be configured for WorkspaceService"),
             runtimeStorageHost: runtimeStorageHost.clone(),
-            runtimeStoreRoot,
-            workspaceCollectionRoot,
         }
     }
 
@@ -100,7 +85,7 @@ impl WorkspaceService {
         relativePath: String,
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
         let workspace = self.boundWorkspace(&chatId)?;
-        let relativePath = PathMapper::normalizeRelativePath(&relativePath)?;
+        let relativePath = VfsPath::normalizeRelativePath(&relativePath)?;
         if let Some(workspace) = workspace.as_ref().filter(|_| relativePath.is_empty()) {
             let mut workspaceEntries = workspace
                 .folders
@@ -119,12 +104,12 @@ impl WorkspaceService {
             return Ok(workspaceEntries);
         }
         let directoryPath = self.filePathForChat(&chatId, &relativePath)?;
-        let vfs = self.vfsForWorkspace(&directoryPath);
+        let vfs = self.vfs();
         let entries = vfs.listFiles(&directoryPath)?;
         let mut workspaceEntries = Vec::new();
         for entry in entries {
             let childRelativePath = joinRelativePath(&relativePath, &entry.name)?;
-            let path = PathMapper::joinVfsPath(&directoryPath, &entry.name)?;
+            let path = VfsPath::joinVfsPath(&directoryPath, &entry.name)?;
             workspaceEntries.push(WorkspaceFileEntry {
                 name: entry.name,
                 path,
@@ -152,7 +137,7 @@ impl WorkspaceService {
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
         let workspace = self.boundWorkspace(&chatId)?
             .ok_or_else(|| format!("Chat has no bound workspace: {chatId}"))?;
-        let vfs = self.vfsForWorkspace(&workspace.primaryFolder().path);
+        let vfs = self.vfs();
         let normalizedQuery = searchQuery.trim().to_ascii_lowercase();
         let recursive = !normalizedQuery.is_empty();
         let mut suggestions = Vec::<MentionWorkspaceSuggestion>::new();
@@ -189,15 +174,15 @@ impl WorkspaceService {
         &self,
         path: String,
     ) -> Result<Vec<WorkspaceFileEntry>, String> {
-        let directoryPath = PathMapper::normalizeVfsPath(&path)?;
-        let vfs = self.vfsForWorkspace(&directoryPath);
+        let directoryPath = VfsPath::normalizeVfsPath(&path)?;
+        let vfs = self.vfs();
         let entries = vfs.listFiles(&directoryPath)?;
         let mut directoryEntries = Vec::new();
         for entry in entries {
             if !entry.isDirectory {
                 continue;
             }
-            let childPath = PathMapper::joinVfsPath(&directoryPath, &entry.name)?;
+            let childPath = VfsPath::joinVfsPath(&directoryPath, &entry.name)?;
             directoryEntries.push(WorkspaceFileEntry {
                 name: entry.name,
                 path: childPath.clone(),
@@ -226,7 +211,7 @@ impl WorkspaceService {
         relativePath: String,
     ) -> Result<String, String> {
         let filePath = self.filePathForChat(&chatId, &relativePath)?;
-        self.vfsForWorkspace(&filePath).readFile(&filePath)
+        self.vfs().readFile(&filePath)
     }
 
     /// Reads a binary file from a chat-bound workspace as base64.
@@ -237,7 +222,7 @@ impl WorkspaceService {
         relativePath: String,
     ) -> Result<WorkspaceFileBytes, String> {
         let filePath = self.filePathForChat(&chatId, &relativePath)?;
-        let bytes = self.vfsForWorkspace(&filePath).readFileBytes(&filePath)?;
+        let bytes = self.vfs().readFileBytes(&filePath)?;
         Ok(WorkspaceFileBytes {
             base64Content: STANDARD.encode(bytes),
         })
@@ -252,7 +237,7 @@ impl WorkspaceService {
         content: String,
     ) -> Result<(), String> {
         let filePath = self.filePathForChat(&chatId, &relativePath)?;
-        self.trackWorkspaceChange(&filePath, || self.vfsForWorkspace(&filePath)
+        self.trackWorkspaceChange(&filePath, || self.vfs()
             .writeFile(&filePath, &content, false))
     }
 
@@ -268,7 +253,7 @@ impl WorkspaceService {
         let bytes = STANDARD
             .decode(base64Content.as_bytes())
             .map_err(|error| error.to_string())?;
-        self.trackWorkspaceChange(&filePath, || self.vfsForWorkspace(&filePath)
+        self.trackWorkspaceChange(&filePath, || self.vfs()
             .writeFileBytes(&filePath, &bytes))
     }
 
@@ -276,7 +261,7 @@ impl WorkspaceService {
     #[allow(non_snake_case)]
     pub fn openWorkspaceFile(&self, chatId: String, relativePath: String) -> Result<(), String> {
         let filePath = self.filePathForChat(&chatId, &relativePath)?;
-        self.vfsForWorkspace(&filePath).openFile(&filePath)
+        self.vfs().openFile(&filePath)
     }
 
     /// Builds the workspace-management summary for chat bindings and stored workspace folders.
@@ -286,7 +271,7 @@ impl WorkspaceService {
             .chatDao
             .getAllChatsDirectly()
             .map_err(|error| error.to_string())?;
-        let workspaceRootText = self.workspaceCollectionRoot.to_string_lossy().to_string();
+        let workspaceRootText = VfsPath::workspaceCollectionPath().to_string();
         let mut boundWorkspaceNames = std::collections::HashSet::new();
         let mut boundChatCount = 0i32;
 
@@ -304,7 +289,7 @@ impl WorkspaceService {
             };
             for folder in &workspace.folders {
                 let Some(relativePath) =
-                    PathMapper::relativePath(PathMapper::workspaceCollectionPath(), &folder.path)?
+                    VfsPath::relativePath(VfsPath::workspaceCollectionPath(), &folder.path)?
                 else {
                     continue;
                 };
@@ -317,7 +302,7 @@ impl WorkspaceService {
         }
 
         let mut unboundWorkspaces = Vec::new();
-        for entry in defaultRuntimeStorageHost()
+        for entry in self.runtimeStorageHost
             .list(WORKSPACE_DIR_PATH)
             .map_err(|error| error.to_string())?
         {
@@ -329,7 +314,7 @@ impl WorkspaceService {
                 continue;
             }
             unboundWorkspaces.push(WorkspaceManagementEntry {
-                fullPath: PathMapper::workspacePath(&name)?,
+                fullPath: VfsPath::workspacePath(&name)?,
                 name,
                 size: entry.size,
             });
@@ -353,7 +338,7 @@ impl WorkspaceService {
             .into_iter()
             .map(|workspace| workspace.name)
             .collect::<std::collections::HashSet<_>>();
-        let storage = defaultRuntimeStorageHost();
+        let storage = self.runtimeStorageHost.clone();
         let mut deletedCount = 0i32;
         for workspaceName in workspaceNames {
             validateWorkspaceName(&workspaceName)?;
@@ -393,11 +378,11 @@ impl WorkspaceService {
         let manager = operit_store::repository::ChatHistoryManager::ChatHistoryManager::default()
             .map_err(|error| error.to_string())?;
         let directory = manager.fileDirectoryForChat(chatId).map_err(|error| error.to_string())?;
-        PathMapper::joinVfsPath(&directory, relativePath)
+        VfsPath::joinVfsPath(&directory, relativePath)
     }
 
     fn trackWorkspaceChange<T>(&self, path: &str, change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        let relative = PathMapper::relativePath(PathMapper::workspaceCollectionPath(), path)?;
+        let relative = VfsPath::relativePath(VfsPath::workspaceCollectionPath(), path)?;
         let workspacePath = relative
             .filter(|relative| !relative.is_empty())
             .map(|relative| format!("workspaces/{relative}"))
@@ -417,15 +402,8 @@ impl WorkspaceService {
 
     /// Creates a VFS instance scoped to the configured workspace roots.
     #[allow(non_snake_case)]
-    fn vfsForWorkspace(&self, workspaceRoot: &str) -> VisualFileSystem {
-        VisualFileSystem::new(
-            self.fileSystemHost.clone(),
-            PathMapper::new(
-                self.runtimeStoreRoot.clone(),
-                self.workspaceCollectionRoot.clone(),
-                self.runtimeStorageHost.clone(),
-            ),
-        )
+    fn vfs(&self) -> VisualFileSystem {
+        self.filesystem.clone()
     }
 
 }
@@ -435,7 +413,7 @@ fn resolveWorkspaceRelativePath(
     workspace: &Workspace,
     relativePath: &str,
 ) -> Result<String, String> {
-    let relativePath = PathMapper::normalizeRelativePath(relativePath)?;
+    let relativePath = VfsPath::normalizeRelativePath(relativePath)?;
     if relativePath.is_empty() {
         return Err("workspace-relative path must include a folder name".to_string());
     }
@@ -446,14 +424,14 @@ fn resolveWorkspaceRelativePath(
     let folder = workspace
         .folderByName(folderName)
         .ok_or_else(|| format!("workspace folder not found: {folderName}"))?;
-    PathMapper::joinVfsPath(&folder.path, rest)
+    VfsPath::joinVfsPath(&folder.path, rest)
 }
 
 /// Joins two workspace-relative path segments.
 #[allow(non_snake_case)]
 fn joinRelativePath(parent: &str, child: &str) -> Result<String, String> {
-    let parent = PathMapper::normalizeRelativePath(parent)?;
-    let child = PathMapper::normalizeRelativePath(child)?;
+    let parent = VfsPath::normalizeRelativePath(parent)?;
+    let child = VfsPath::normalizeRelativePath(child)?;
     if parent.is_empty() {
         Ok(child)
     } else {
@@ -488,7 +466,7 @@ fn collectMentionWorkspaceSuggestions(
             continue;
         }
 
-        let childPath = PathMapper::joinVfsPath(directoryVfsPath, &entry.name)?;
+        let childPath = VfsPath::joinVfsPath(directoryVfsPath, &entry.name)?;
         let parentPath = parentRelativePath(&childRelativePath);
         let score = scoreMentionWorkspaceEntry(
             &childRelativePath,
@@ -589,7 +567,7 @@ fn workspaceGitignoreRules(
     vfs: &VisualFileSystem,
     workspaceRoot: &str,
 ) -> Result<Vec<String>, String> {
-    let gitignorePath = PathMapper::joinVfsPath(workspaceRoot, ".gitignore")?;
+    let gitignorePath = VfsPath::joinVfsPath(workspaceRoot, ".gitignore")?;
     let gitignoreInfo = vfs.fileExists(&gitignorePath)?;
     if gitignoreInfo.exists && !gitignoreInfo.isDirectory {
         let content = vfs.readFile(&gitignorePath)?;

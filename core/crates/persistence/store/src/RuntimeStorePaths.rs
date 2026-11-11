@@ -1,5 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -8,28 +6,14 @@ use operit_util::RuntimeStoreRoot::{default_runtime_dir, default_workspace_dir};
 
 #[derive(Clone, Debug)]
 /// Resolves persisted runtime and workspace paths from two explicit roots.
-pub struct RuntimeStorePaths {
-    runtime_dir: PathBuf,
-    workspace_dir: PathBuf,
-}
+pub struct RuntimeStorePaths;
 
 impl RuntimeStorePaths {
-    /// Creates path helpers from explicit runtime and workspace roots.
-    pub fn new(runtime_dir: PathBuf, workspace_dir: PathBuf) -> Self {
-        Self {
-            runtime_dir,
-            workspace_dir,
-        }
-    }
-
-    /// Creates path helpers from the configured default roots.
-    pub fn default() -> Self {
-        Self::new(default_runtime_dir(), default_workspace_dir())
-    }
-
+    /// Creates path helpers for the canonical virtual storage namespaces.
+    pub fn default() -> Self { Self }
     /// Returns the directory used for runtime files.
     pub fn runtime_dir(&self) -> &Path {
-        &self.runtime_dir
+        Path::new("/operitapp/data")
     }
 
     /// Returns the model configuration preferences path.
@@ -118,7 +102,7 @@ impl RuntimeStorePaths {
 
     /// Returns the root workspace directory.
     pub fn workspace_dir(&self) -> PathBuf {
-        self.workspace_dir.clone()
+        default_workspace_dir()
     }
 
     /// Returns the workspace directory bound to a chat identifier.
@@ -133,7 +117,7 @@ impl RuntimeStorePaths {
 
     /// Returns the adjacent sync directory used by legacy sync files.
     pub fn adjacent_sync_dir(&self) -> PathBuf {
-        self.runtime_dir.join("sync")
+        self.runtime_dir().join("sync")
     }
 
     /// Returns the model connection test cache directory.
@@ -151,28 +135,17 @@ impl RuntimeStorePaths {
         self.runtime_storage_path(RUNTIME_TTS_AUDIO_DIR_PATH)
     }
 
-    /// Ensures the package extension directory exists.
-    pub fn ensure_packages_dir(&self) -> std::io::Result<()> {
-        ensureRuntimeDirectory(self.packages_dir())
-    }
-
-    /// Ensures the MCP extension directory exists.
-    pub fn ensure_mcp_plugins_dir(&self) -> std::io::Result<()> {
-        ensureRuntimeDirectory(self.mcp_plugins_dir())
-    }
-
-    /// Maps a virtual runtime storage path into the configured physical runtime root.
+    /// Returns the canonical VFS address of a runtime storage key.
     pub fn runtime_storage_path(&self, storage_path: &str) -> PathBuf {
-        Self::runtime_storage_path_from_root(&self.runtime_dir, storage_path)
+        operit_util::OperitPaths::runtimePath(storage_path).expect("runtime storage key must be valid")
     }
-
     /// Converts one physical runtime path into its host-relative storage key.
     pub fn runtime_storage_key(&self, path: &Path) -> Result<String, String> {
-        let relative = path.strip_prefix(&self.runtime_dir).map_err(|_| {
+        let relative = path.strip_prefix(Path::new("/operitapp/data")).map_err(|_| {
             format!(
                 "runtime path {} is outside {}",
                 path.display(),
-                self.runtime_dir.display()
+                self.runtime_dir().display()
             )
         })?;
         let mut segments = Vec::new();
@@ -195,24 +168,4 @@ impl RuntimeStorePaths {
         Ok(format!("{RUNTIME_ROOT_DIR_PATH}/{}", segments.join("/")))
     }
 
-    /// Maps a virtual runtime storage path into an explicit physical runtime root.
-    pub fn runtime_storage_path_from_root(runtime_dir: &Path, storage_path: &str) -> PathBuf {
-        let runtime_prefix = format!("{RUNTIME_ROOT_DIR_PATH}/");
-        let relative = storage_path
-            .strip_prefix(&runtime_prefix)
-            .expect("runtime storage path must start with runtime/");
-        runtime_dir.join(relative)
-    }
-}
-
-#[allow(non_snake_case)]
-#[cfg(not(target_arch = "wasm32"))]
-fn ensureRuntimeDirectory(path: PathBuf) -> std::io::Result<()> {
-    fs::create_dir_all(path)
-}
-
-#[allow(non_snake_case)]
-#[cfg(target_arch = "wasm32")]
-fn ensureRuntimeDirectory(_path: PathBuf) -> std::io::Result<()> {
-    Ok(())
 }

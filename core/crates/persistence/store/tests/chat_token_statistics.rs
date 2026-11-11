@@ -14,7 +14,7 @@ use operit_store::{
     RuntimeStorePaths::RuntimeStorePaths,
     SyncOperationStore::SyncClock,
 };
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 
 /// Exercises the repository and its persisted/synchronized totals through a real storage host.
 #[test]
@@ -23,11 +23,8 @@ fn assistant_usage_updates_conversation_totals_once_with_or_without_a_window() {
     let runtime = root.join("runtime");
     let workspaces = root.join("workspaces");
     std::fs::create_dir_all(&runtime).unwrap();
-    let paths = RuntimeStorePaths::new(runtime.clone(), workspaces.clone());
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        runtime.clone(),
-        workspaces.clone(),
-    ));
+    let paths = RuntimeStorePaths::default();
+
     let host = Arc::new(NativeRuntimeStorageHost::new(runtime, workspaces));
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host.clone());

@@ -42,6 +42,3 @@ pub use LocalModelProvider::*;
 pub use LocalModelRegistry::*;
 pub use LocalModelRegistryStore::*;
 pub use LocalModelStorage::*;
-
-#[path = "LocalLlmInference.rs"]
-pub mod LocalLlmInference;

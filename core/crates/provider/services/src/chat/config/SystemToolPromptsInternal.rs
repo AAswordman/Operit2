@@ -1166,10 +1166,10 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "install_app",
-                    "Request app installation through the current host.",
+                    "Request app installation on the device selected by the package path.",
                     "",
                     vec![
-                        param("path", "string", "installer file path for the current host, for example Android APK, Windows MSI/MSIX/EXE, or Linux desktop installer file", true, None)
+                        param("path", "string", "installer file path: absolute VFS path, path relative to the current file directory, or node:/VFS/path to install on that device; package format must match the target host, for example Android APK, Windows MSI/MSIX/EXE, or Linux desktop installer file", true, None)
                     ],
                     "",
                     "",
@@ -2402,10 +2402,10 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "install_app",
-                    "通过当前 host 请求安装应用（需要用户确认）。",
+                    "在安装文件路径指定的设备上请求安装应用（需要用户确认）。",
                     "",
                     vec![
-                        param("path", "string", "当前 host 的安装文件路径，例如 Android APK、Windows MSI/MSIX/EXE 或 Linux 桌面安装文件", true, None)
+                        param("path", "string", "安装文件路径：绝对 VFS 路径、相对于当前文件目录的路径，或 节点:/VFS/路径（在该设备安装）；安装包格式须匹配目标 host，例如 Android APK、Windows MSI/MSIX/EXE 或 Linux 桌面安装文件", true, None)
                     ],
                     "",
                     "",

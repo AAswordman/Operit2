@@ -1,3 +1,4 @@
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use crate::tools::mcp_runtime::MCPLocalServer::{
     MCPConfig, MCPLocalServer, PluginMetadata, ServerConfig,
 };
 use operit_host_api::{
-    FileSystemHost, HostManager::defaultHttpHost, HostManager::HostManager, HttpRequestData,
+    HostManager::defaultHttpHost, HostManager::HostManager, HttpRequestData,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use url::Url;
@@ -25,7 +26,7 @@ const READ_TIMEOUT_SECONDS: u64 = 30;
 pub struct MCPRepository {
     context: HostManager,
     mcpLocalServer: MCPLocalServer,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
     pluginsBaseDir: String,
     runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
@@ -57,18 +58,15 @@ impl MCPRepository {
     #[allow(non_snake_case)]
     pub fn getInstance(context: &HostManager, runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
         let paths = RuntimeStorePaths::default();
-        let fileSystemHost = context
-            .fileSystemHost
-            .clone()
-            .expect("MCPRepository requires a FileSystemHost");
-        let pluginsBaseDir = paths.mcp_plugins_dir().to_string_lossy().to_string();
-        fileSystemHost
+        let filesystem = Arc::new(context.vfs().expect("Plugin installation requires VFS"));
+        let pluginsBaseDir = paths.mcp_plugins_dir().to_string_lossy().replace('\\', "/");
+        filesystem
             .makeDirectory(&pluginsBaseDir, true)
             .expect("MCPRepository cannot create the MCP plugin directory");
         Self {
             context: context.clone(),
             mcpLocalServer: MCPLocalServer::getInstance(context),
-            fileSystemHost,
+            filesystem,
             pluginsBaseDir,
             runtimeSupport,
         }
@@ -171,15 +169,8 @@ impl MCPRepository {
         progressCallback(InstallProgress::Preparing);
 
         let pluginDir = joinHostPath(&self.pluginsBaseDir, pluginId);
-        if let Err(error) = self.fileSystemHost.deleteFile(&pluginDir, true) {
-            return InstallResult::Error {
-                message: format!("Failed to reset plugin directory: {error}"),
-            };
-        }
-        if let Err(error) = self.fileSystemHost.makeDirectory(&pluginDir, true) {
-            return InstallResult::Error {
-                message: format!("Failed to create plugin directory: {error}"),
-            };
+        if let Err(message) = self.preparePluginDirectory(&pluginDir) {
+            return InstallResult::Error { message };
         }
 
         let Some((owner, repoName)) = extractOwnerAndRepo(repoUrl) else {
@@ -201,10 +192,10 @@ impl MCPRepository {
         if let Err(error) = extractZipBytes(
             &zipBytes,
             &pluginDir,
-            self.fileSystemHost.as_ref(),
+            self.filesystem.as_ref(),
             progressCallback,
         ) {
-            let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+            let _ = self.filesystem.deleteFile(&pluginDir, true);
             return InstallResult::Error {
                 message: format!("Failed to extract repository: {error}"),
             };
@@ -212,7 +203,7 @@ impl MCPRepository {
         let mainDir = match self.resolvePluginRoot(&pluginDir) {
             Ok(path) => path,
             Err(error) => {
-                let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+                let _ = self.filesystem.deleteFile(&pluginDir, true);
                 return InstallResult::Error { message: error };
             }
         };
@@ -237,8 +228,8 @@ impl MCPRepository {
             let storage = self.context.runtimeStorageHost.clone().ok_or("Runtime storage is required for MCP import")?;
             let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
             let directory = context.as_ref().map(|context| context.fileDirectory(storage)).transpose()?.flatten();
-            let path = crate::files::PathMapper::PathMapper::resolveFileResourcePath(directory.as_deref(), zipPath)?;
-            let vfs = crate::files::VisualFileSystem::VisualFileSystem::fromContext(&self.context)?;
+            let vfs = (&self.context).vfs()?;
+            let path = vfs.resolveResourcePath(directory.as_deref(), zipPath)?;
             Ok((vfs, path))
         })();
         let (vfs, sourcePath) = match source {
@@ -265,22 +256,15 @@ impl MCPRepository {
         }
 
         let pluginDir = joinHostPath(&self.pluginsBaseDir, pluginId);
-        if let Err(error) = self.fileSystemHost.deleteFile(&pluginDir, true) {
-            return InstallResult::Error {
-                message: format!("Failed to reset plugin directory: {error}"),
-            };
-        }
-        if let Err(error) = self.fileSystemHost.makeDirectory(&pluginDir, true) {
-            return InstallResult::Error {
-                message: format!("Failed to create plugin directory: {error}"),
-            };
+        if let Err(message) = self.preparePluginDirectory(&pluginDir) {
+            return InstallResult::Error { message };
         }
 
         progressCallback(InstallProgress::Extracting(0));
         let zipBytes = match vfs.readFileBytes(&sourcePath) {
             Ok(bytes) => bytes,
             Err(error) => {
-                let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+                let _ = self.filesystem.deleteFile(&pluginDir, true);
                 return InstallResult::Error {
                     message: format!("Failed to read MCP zip: {error}"),
                 };
@@ -289,10 +273,10 @@ impl MCPRepository {
         if let Err(error) = extractZipBytes(
             &zipBytes,
             &pluginDir,
-            self.fileSystemHost.as_ref(),
+            self.filesystem.as_ref(),
             progressCallback,
         ) {
-            let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+            let _ = self.filesystem.deleteFile(&pluginDir, true);
             return InstallResult::Error {
                 message: format!("Failed to extract MCP zip: {error}"),
             };
@@ -301,7 +285,7 @@ impl MCPRepository {
         let mainDir = match self.resolvePluginRoot(&pluginDir) {
             Ok(path) => path,
             Err(error) => {
-                let _ = self.fileSystemHost.deleteFile(&pluginDir, true);
+                let _ = self.filesystem.deleteFile(&pluginDir, true);
                 return InstallResult::Error { message: error };
             }
         };
@@ -333,7 +317,7 @@ impl MCPRepository {
     #[allow(non_snake_case)]
     fn resolvePluginRoot(&self, pluginDir: &str) -> Result<String, String> {
         let roots = self
-            .fileSystemHost
+            .filesystem
             .listFiles(pluginDir)
             .map_err(|error| error.to_string())?
             .into_iter()
@@ -389,17 +373,17 @@ impl MCPRepository {
     ) -> Result<String, String> {
         let pluginDir = PathBuf::from(pluginPath);
         let pluginInfo = self
-            .fileSystemHost
+            .filesystem
             .fileExists(pluginPath)
             .map_err(|error| error.to_string())?;
         if !pluginInfo.exists || !pluginInfo.isDirectory {
             return Err(format!("MCP plugin directory not found: {pluginPath}"));
         }
-        let analyzer = MCPProjectAnalyzer::new(self.fileSystemHost.clone());
+        let analyzer = MCPProjectAnalyzer::new(self.filesystem.clone());
         let readmeContent = analyzer
             .findReadmeFile(&pluginDir)
             .map(|path| {
-                self.fileSystemHost
+                self.filesystem
                     .readFile(
                         path.to_str()
                             .ok_or_else(|| "MCP README path is not valid UTF-8".to_string())?,
@@ -446,6 +430,19 @@ impl MCPRepository {
             return Err("Generated description is empty".to_string());
         }
         Ok(generatedDescription)
+    }
+
+    /// Clears an installed directory when replacing it and creates the VFS destination.
+    #[allow(non_snake_case)]
+    fn preparePluginDirectory(&self, directory: &str) -> Result<(), String> {
+        let existing = self.filesystem.fileExists(directory)?;
+        if existing.exists {
+            self.filesystem.deleteFile(directory, true)
+                .map_err(|error| format!("Failed to reset plugin directory: {error}"))?;
+        }
+        self.filesystem.makeDirectory(directory, true)
+            .map_err(|error| format!("Failed to create plugin directory: {error}"))?;
+        Ok(())
     }
 
     /// Collects tool descriptions from cached metadata or the live MCP bridge.
@@ -615,7 +612,7 @@ fn downloadArchiveBytes(
 fn extractZipBytes(
     zipBytes: &[u8],
     targetDir: &str,
-    fileSystemHost: &dyn FileSystemHost,
+    filesystem: &VisualFileSystem,
     progressCallback: &impl Fn(InstallProgress),
 ) -> Result<(), String> {
     let mut archive = ZipArchive::new(Cursor::new(zipBytes)).map_err(|error| error.to_string())?;
@@ -631,7 +628,7 @@ fn extractZipBytes(
         };
         let outPath = joinHostPath(targetDir, &enclosedName.to_string_lossy());
         if entry.is_dir() {
-            fileSystemHost
+            filesystem
                 .makeDirectory(&outPath, true)
                 .map_err(|error| error.to_string())?;
         } else {
@@ -639,7 +636,7 @@ fn extractZipBytes(
             entry
                 .read_to_end(&mut bytes)
                 .map_err(|error| error.to_string())?;
-            fileSystemHost
+            filesystem
                 .writeFileBytes(&outPath, &bytes)
                 .map_err(|error| error.to_string())?;
         }

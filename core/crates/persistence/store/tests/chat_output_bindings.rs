@@ -12,7 +12,7 @@ use operit_store::{
     CoreNodeIdentityStore::CoreNodeIdentityStore,
     RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost},
 };
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use std::sync::Arc;
 
 fn draft(
@@ -43,10 +43,7 @@ fn output_bindings_survive_branches_promotion_deletion_and_workspace_changes() {
         root.join("runtime"),
         root.join("workspaces"),
     ));
-    setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-        root.join("runtime"),
-        root.join("workspaces"),
-    ));
+
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host.clone());
     CoreNodeIdentityStore::new(host.clone())

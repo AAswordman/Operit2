@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use operit_host_api::{FileEntry, RuntimeStorageHost};
-use operit_host_api::FileSystemResource::FileSystemResource;
+use operit_host_contract::{FileEntry, RuntimeStorageHost};
+use operit_host_contract::FileSystemResource::FileSystemResource;
 use super::MountRegistry::{mountRelativePath, MountRegistry};
-use operit_util::RuntimeStorageLayout::{
+use operit_host_contract::RuntimeStorageLayout::{
     EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, EXTENSIONS_PLUGIN_DATA_DIR_PATH,
     RUNTIME_ROOT_PATH_PREFIX, WORKSPACE_DIR_PATH,
 };
@@ -53,7 +53,7 @@ pub struct ResolvedVfsPath {
 
 impl ResolvedVfsPath {
     /// Lets the selected terminal host translate supported document-backed directories.
-    pub fn terminalDirectory(&self, host: &dyn operit_host_api::TerminalHost) -> Result<String, String> {
+    pub fn terminalDirectory(&self, host: &dyn operit_host_contract::TerminalHost) -> Result<String, String> {
         host.resolveNativeWorkingDirectory(&self.physicalPath)
             .map_err(|error| format!("{}: {}", self.vfsPath, error.message))
     }
@@ -64,13 +64,6 @@ impl ResolvedVfsPath {
             return Err(format!("{} is a document/resource mount, not a native working directory", self.vfsPath));
         }
         Ok(self.physicalPath.clone())
-    }
-}
-
-impl operit_host_api::FileSource for ResolvedVfsPath {
-    /// Resolves this VFS file reference only when a native provider consumes it.
-    fn nativePath(&self) -> operit_host_api::HostResult<String> {
-        ResolvedVfsPath::nativePath(self).map_err(operit_host_api::HostError::new)
     }
 }
 
@@ -87,13 +80,13 @@ impl PathMapper {
     /// Omitting the Host is a compile error rather than silently hiding persistent mounts.
     ///
     /// ```compile_fail
-    /// use operit_tools::files::PathMapper::PathMapper;
+    /// use crate::PathMapper::PathMapper;
     /// let mapper = PathMapper::new("runtime".into(), "workspaces".into());
     /// ```
     ///
     /// A default mapper cannot bypass the required Host either.
     /// ```compile_fail
-    /// use operit_tools::files::PathMapper::PathMapper;
+    /// use crate::PathMapper::PathMapper;
     /// let mapper: PathMapper = Default::default();
     /// ```
     pub fn new(

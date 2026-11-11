@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::sync::{Arc, Mutex, RwLock};
 
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde_json::Value;
 
 use crate::javascript::{JsExecutionFuture, JsExecutionEngine, ToolPkgExecutionContext, ToolPkgTextResourceHost};
@@ -92,7 +92,7 @@ pub struct ToolPkgManager {
     toolPkgExecutionEngines: Arc<Mutex<ToolPkgExecutionEngineRegistry>>,
     executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     assetSource: Arc<dyn ToolPkgAssetSource>,
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
 }
 
 impl ToolPkgManager {
@@ -100,7 +100,7 @@ impl ToolPkgManager {
     pub fn new(
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
         assetSource: Arc<dyn ToolPkgAssetSource>,
-        fileSystemHost: Arc<dyn FileSystemHost>,
+        filesystem: Arc<VisualFileSystem>,
     ) -> Self {
         Self {
             containers: Arc::new(RwLock::new(BTreeMap::new())),
@@ -110,7 +110,7 @@ impl ToolPkgManager {
             toolPkgExecutionEngines: Arc::new(Mutex::new(ToolPkgExecutionEngineRegistry::default())),
             executionEngineFactory,
             assetSource,
-            fileSystemHost,
+            filesystem,
         }
     }
 
@@ -341,18 +341,18 @@ impl ToolPkgManager {
     fn hashSource(&self, path: &str, depth: usize, hash: &mut impl Hasher) -> Option<()> {
         // Fail closed on pathological/symlink directory trees rather than recurse forever.
         if depth > 64 { return None; }
-        let info = self.fileSystemHost.fileExists(path).ok()?;
+        let info = self.filesystem.fileExists(path).ok()?;
         if !info.exists { return None; }
         path.hash(hash);
         if info.isDirectory {
-            let mut entries = self.fileSystemHost.listFiles(path).ok()?;
+            let mut entries = self.filesystem.listFiles(path).ok()?;
             entries.sort_by(|a, b| a.name.cmp(&b.name));
             for entry in entries {
                 if entry.name == "." || entry.name == ".." { continue; }
                 self.hashSource(&joinToolPkgSourcePath(path, &entry.name), depth + 1, hash)?;
             }
         } else {
-            self.fileSystemHost.readFileBytes(path).ok()?.hash(hash);
+            self.filesystem.readFileBytes(path).ok()?.hash(hash);
         }
         Some(())
     }
@@ -862,11 +862,11 @@ impl ToolPkgManager {
         let normalizedResourcePath = normalizeToolPkgEntryPath(resourcePath)?;
         match runtime.sourceType {
             ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
-                let sourceInfo = self.fileSystemHost.fileExists(&runtime.sourcePath).ok()?;
+                let sourceInfo = self.filesystem.fileExists(&runtime.sourcePath).ok()?;
                 if sourceInfo.isDirectory {
                     let resourceFile =
                         joinToolPkgSourcePath(&runtime.sourcePath, &normalizedResourcePath);
-                    let bytes = self.fileSystemHost.readFileBytes(&resourceFile).ok()?;
+                    let bytes = self.filesystem.readFileBytes(&resourceFile).ok()?;
                     return crate::toolpkg::ToolPkgProtection::decryptIfNeeded(&bytes).ok();
                 }
                 if sourceInfo.exists
@@ -876,7 +876,7 @@ impl ToolPkgManager {
                         .ends_with(".toolpkg")
                 {
                     let archiveBytes = self
-                        .fileSystemHost
+                        .filesystem
                         .readFileBytes(&runtime.sourcePath)
                         .ok()?;
                     let mut archive =
@@ -1153,6 +1153,7 @@ fn normalizeToolPkgEntryPath(rawPath: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use operit_host_api::FileSystemHost;
     /// Asserts that an immediate mock completion is ready on its first poll.
     fn pollReadyCompletion<T>(mut completion: crate::javascript::JsExecutionCompletion<T>) -> T {
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -1509,7 +1510,7 @@ mod tests {
         let mut manager = ToolPkgManager::new(
             factory.clone(),
             Arc::new(EmptyAssetSource),
-            Arc::new(TestFileSystemHost::default()),
+            Arc::new(operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(Arc::new(TestFileSystemHost::default()), "/".into(), "/workspaces".into())),
         );
         // Engine ownership checks require genuine registered containers, not
         // fabricated engines for undeclared package IDs.
@@ -1633,7 +1634,7 @@ mod tests {
         let manager = ToolPkgManager::new(
             factory.clone(),
             Arc::new(SnapshotAssetSource),
-            Arc::new(TestFileSystemHost::default()),
+            Arc::new(operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(Arc::new(TestFileSystemHost::default()), "/".into(), "/workspaces".into())),
         );
         (manager, factory)
     }
@@ -2187,10 +2188,10 @@ mod tests {
             let new = "exports.read = () => 2;";
             let bytes = if archived { mainScriptArchive(old) } else { old.as_bytes().to_vec() };
             fs.files.lock().unwrap().insert(file.into(), bytes);
-            manager.fileSystemHost = fs.clone();
+            manager.filesystem = Arc::new(operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(fs.clone(), "/".into(), "/workspaces".into()));
             let mut runtime = manager.getToolPkgContainerRuntime("package_a").unwrap();
             runtime.sourceType = ToolPkgSourceType::EXTERNAL;
-            runtime.sourcePath = source.into();
+            runtime.sourcePath = format!("/operitapp/data{source}");
             runtime.mainEntry = "main.js".into();
             manager.registerToolPkg(ToolPkgLoadResult {
                 containerPackage: ToolPackage { name: "package_a".into(), ..ToolPackage::default() },
@@ -2221,10 +2222,10 @@ mod tests {
             let fs = Arc::new(TestFileSystemHost::default());
             let file = if source.ends_with(".toolpkg") { source.to_string() } else { format!("{source}/main.js") };
             fs.files.lock().unwrap().insert(file.clone(), b"old-code".to_vec());
-            manager.fileSystemHost = fs.clone();
+            manager.filesystem = Arc::new(operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(fs.clone(), "/".into(), "/workspaces".into()));
             let mut runtime = manager.getToolPkgContainerRuntime("package_a").unwrap();
             runtime.sourceType = ToolPkgSourceType::EXTERNAL;
-            runtime.sourcePath = source.to_string();
+            runtime.sourcePath = format!("/operitapp/data{source}");
             manager.registerToolPkg(ToolPkgLoadResult {
                 containerPackage: ToolPackage { name: "package_a".into(), ..ToolPackage::default() },
                 containerRuntime: runtime, ..ToolPkgLoadResult::default()

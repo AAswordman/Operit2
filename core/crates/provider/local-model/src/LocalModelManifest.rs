@@ -104,7 +104,7 @@ impl LocalModelDriver {
     pub fn supportsPlatform(&self, platform: &LocalPlatform) -> bool {
         match self {
             Self::LlamaCpp { .. } | Self::Mnn { .. } => {
-                cfg!(feature = "native-llm") && *platform != LocalPlatform::Web
+                *platform != LocalPlatform::Web
             }
             Self::SherpaOnnxStreamingTransducer { .. }
             | Self::SherpaOnnxVits { .. }

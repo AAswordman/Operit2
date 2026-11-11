@@ -176,6 +176,13 @@ pub struct HostManager {
 }
 
 impl HostManager {
+    /// Returns this runtime's VFS without exposing path resolution to its consumers.
+    pub fn vfs(&self) -> Result<operit_vfs::VisualFileSystem::VisualFileSystem, String> {
+        let storage = self.runtimeStorageHost.clone().ok_or("RuntimeStorageHost is required for VFS")?;
+        let backend = self.fileSystemHost.clone().ok_or("FileSystemHost is required for VFS")?;
+        operit_vfs::VisualFileSystem::VisualFileSystem::fromStorage(backend, storage)
+    }
+
     /// Installs the host-owned service discovery capability.
     pub fn withServiceDiscoveryHost(mut self, host: Arc<dyn ServiceDiscoveryHost>) -> Self {
         self.serviceDiscoveryHost = Some(host);

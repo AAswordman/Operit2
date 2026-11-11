@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use operit_host_api::{
+use operit_host_contract::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
     GrepCodeResult, GrepFileMatch, HostError, HttpHost, HttpRequestData,
 };
 
-use operit_tools::files::PathMapper::{PathMapper, ResolvedVfsPath};
+use crate::PathMapper::{PathMapper, ResolvedVfsPath};
 
 /// Presents host file APIs through normalized virtual file-system paths.
 #[derive(Clone)]
@@ -15,29 +15,133 @@ pub struct VisualFileSystem {
 }
 
 impl VisualFileSystem {
-    /// Binds a VFS to one runtime's storage roots and registered mounts.
-    #[allow(non_snake_case)]
-    pub fn fromContext(context: &operit_host_api::HostManager::HostManager) -> Result<Self, String> {
-        let storage = context.runtimeStorageHost.clone().ok_or("RuntimeStorageHost is required for VFS")?;
-        let runtimeRoot = storage.runtimeRootDir().ok_or("Runtime storage root is unavailable")?;
-        let workspaceRoot = storage.workspaceRootDir().ok_or("Workspace storage root is unavailable")?;
-        let host = context.fileSystemHost.clone().ok_or("FileSystemHost is required for VFS")?;
-        Ok(Self::new(host, PathMapper::new(runtimeRoot, workspaceRoot, storage)))
+    /// Validates a virtual address at the backend boundary without exposing its locator.
+    pub fn validatePath(&self, path: &str, parameter: &str) -> Result<(), String> {
+        let resolved = self.resolvePath(path)?;
+        self.host
+            .validatePath(&resolved.physicalPath, parameter)
+            .map_err(hostErrorMessage)
     }
 
-    /// Creates a VFS wrapper around a host file system and path mapper.
-    pub fn new(host: Arc<dyn FileSystemHost>, mapper: PathMapper) -> Self {
+    /// Opens a backend-owned append handle while keeping the file address virtual.
+    pub fn openAppendFile(
+        &self,
+        path: &str,
+    ) -> Result<Box<dyn operit_host_contract::FileAppendHandle>, String> {
+        let resolved = self.resolvePath(path)?;
+        self.host
+            .openAppendFile(&resolved.physicalPath)
+            .map_err(hostErrorMessage)
+    }
+
+    /// Describes the filesystem backend without granting direct backend access.
+    pub fn environmentDescriptor(&self) -> operit_host_contract::HostEnvironmentDescriptor {
+        self.host.environmentDescriptor()
+    }
+
+    /// Returns the backend's display label without exposing platform paths.
+    pub fn envLabel(&self) -> &str {
+        self.host.envLabel()
+    }
+
+    /// Returns a portable file capability; platform consumers resolve its backing resource.
+    pub fn file(&self, path: &str) -> Result<crate::VfsFile, String> {
+        crate::VfsFile::new(self.clone(), path)
+    }
+
+    /// Converts an ingress resource path into a reference owned by this VFS.
+    pub fn fileResource(
+        &self,
+        directory: Option<&str>,
+        path: &str,
+    ) -> Result<crate::VfsFile, String> {
+        self.file(&PathMapper::resolveFileResourcePath(directory, path)?)
+    }
+
+    /// Assembles one filesystem from its backend and owning storage capability.
+    pub fn fromStorage(
+        host: Arc<dyn FileSystemHost>,
+        storage: Arc<dyn operit_host_contract::RuntimeStorageHost>,
+    ) -> Result<Self, String> {
+        let runtimeRoot = storage
+            .runtimeRootDir()
+            .ok_or("Runtime storage root is unavailable")?;
+        let workspaceRoot = storage
+            .workspaceRootDir()
+            .ok_or("Workspace storage root is unavailable")?;
+        Ok(Self::new(
+            host,
+            PathMapper::new(runtimeRoot, workspaceRoot, storage),
+        ))
+    }
+
+    /// Creates an explicitly nonpersistent filesystem for isolated hosts and fixtures.
+    pub fn builtinOnly(
+        host: Arc<dyn FileSystemHost>,
+        runtimeRoot: std::path::PathBuf,
+        workspaceRoot: std::path::PathBuf,
+    ) -> Self {
+        Self::new(host, PathMapper::builtinOnly(runtimeRoot, workspaceRoot))
+    }
+
+    /// Builds the internal mapping boundary; callers never construct a mapper themselves.
+    pub(crate) fn new(host: Arc<dyn FileSystemHost>, mapper: PathMapper) -> Self {
         Self { host, mapper }
     }
 
-    /// Returns the mapper used to translate between VFS and host paths.
-    pub fn mapper(&self) -> &PathMapper {
-        &self.mapper
+    /// Normalizes an ingress path once against its explicit current directory.
+    pub fn resolveResourcePath(
+        &self,
+        directory: Option<&str>,
+        path: &str,
+    ) -> Result<String, String> {
+        PathMapper::resolveFileResourcePath(directory, path)
+    }
+
+    /// Resolves a terminal directory through the selected platform consumer.
+    pub fn terminalDirectory(
+        &self,
+        host: &dyn operit_host_contract::TerminalHost,
+        path: &str,
+    ) -> Result<String, String> {
+        self.resolvePath(path)?.terminalDirectory(host)
+    }
+
+    /// Checks workspace containment using canonical mount identities within this VFS.
+    pub fn isWithin(&self, root: &str, path: &str) -> Result<bool, String> {
+        let root = self.resolvePath(root)?;
+        let path = self.resolvePath(path)?;
+        use operit_host_contract::FileSystemResource::FileSystemResource;
+        match (
+            FileSystemResource::parse(&root.physicalPath).map_err(hostErrorMessage)?,
+            FileSystemResource::parse(&path.physicalPath).map_err(hostErrorMessage)?,
+        ) {
+            (Some(root), Some(path)) if root.backend == path.backend && root.root == path.root => {
+                Ok(PathMapper::relativePath(
+                    &format!("/{}", root.path),
+                    &format!("/{}", path.path),
+                )?
+                .is_some())
+            }
+            (Some(_), _) | (_, Some(_)) => Ok(false),
+            (None, None) => {
+                let root = PathMapper::resolveFileResourcePath(None, &root.physicalPath)?;
+                let path = PathMapper::resolveFileResourcePath(None, &path.physicalPath)?;
+                let (root, path) = if root.starts_with("/virtual/windows/")
+                    && path.starts_with("/virtual/windows/")
+                {
+                    (root.to_lowercase(), path.to_lowercase())
+                } else {
+                    (root, path)
+                };
+                Ok(PathMapper::relativePath(&root, &path)?.is_some())
+            }
+        }
     }
 
     /// Resolves a virtual path into the mapped host path and VFS metadata.
     #[allow(non_snake_case)]
-    pub fn resolvePath(&self, path: &str) -> Result<ResolvedVfsPath, String> {
+    pub(crate) fn resolvePath(&self, path: &str) -> Result<ResolvedVfsPath, String> {
         self.mapper.resolve(path)
     }
 
@@ -49,12 +153,39 @@ impl VisualFileSystem {
 
     /// Downloads into a VFS destination while keeping host locators inside this boundary.
     #[allow(non_snake_case)]
-    pub fn downloadFile(&self, http: &dyn HttpHost, request: HttpRequestData, path: &str) -> Result<u64, String> {
-        let resolved = self.resolvePath(path)?;
-        let result = http.downloadToFile(request, resolved.physicalPath).map_err(hostErrorMessage)?;
+    pub fn downloadFile(
+        &self,
+        http: &dyn HttpHost,
+        request: HttpRequestData,
+        path: &str,
+    ) -> Result<u64, String> {
+        let target = self.file(path)?;
+        self.resolvePath(path)?;
+        let result = http
+            .downloadToFile(request, &target)
+            .map_err(hostErrorMessage)?;
         Ok(result.downloadedBytes)
     }
 
+    /// Downloads a batch through file capabilities owned by this filesystem.
+    pub fn downloadFiles(
+        &self,
+        http: &dyn HttpHost,
+        request: operit_host_contract::HttpDownloadRequest,
+        control: operit_host_contract::HttpDownloadControl,
+        progress: operit_host_contract::HttpDownloadProgressCallback,
+    ) -> operit_host_contract::HostResult<operit_host_contract::HttpDownloadResult> {
+        let targets = request
+            .files
+            .iter()
+            .map(|file| self.file(&file.targetPath).map_err(HostError::new))
+            .collect::<Result<Vec<_>, _>>()?;
+        let references = targets
+            .iter()
+            .map(|target| target as &dyn operit_host_contract::FileTarget)
+            .collect::<Vec<_>>();
+        http.downloadFilesTo(request, &references, control, progress)
+    }
     /// Lists child entries for a virtual directory.
     #[allow(non_snake_case)]
     pub fn listFiles(&self, path: &str) -> Result<Vec<FileEntry>, String> {
@@ -107,6 +238,19 @@ impl VisualFileSystem {
             .map_err(hostErrorMessage)
     }
 
+    /// Reads a bounded byte range directly from the selected backend.
+    pub fn readFileBytesRange(
+        &self,
+        path: &str,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, String> {
+        let resolved = self.resolvePath(path)?;
+        self.host
+            .readFileBytesRange(&resolved.physicalPath, offset, length)
+            .map_err(hostErrorMessage)
+    }
+
     /// Writes text to a mapped host file.
     #[allow(non_snake_case)]
     pub fn writeFile(&self, path: &str, content: &str, append: bool) -> Result<(), String> {
@@ -122,6 +266,14 @@ impl VisualFileSystem {
         let resolved = self.resolvePath(path)?;
         self.host
             .writeFileBytes(&resolved.physicalPath, content)
+            .map_err(hostErrorMessage)
+    }
+
+    /// Appends a bounded chunk through the selected filesystem backend.
+    pub fn appendFileBytes(&self, path: &str, content: &[u8]) -> Result<(), String> {
+        let resolved = self.resolvePath(path)?;
+        self.host
+            .appendFileBytes(&resolved.physicalPath, content)
             .map_err(hostErrorMessage)
     }
 
@@ -300,66 +452,121 @@ fn virtualDirectoryInfo(path: String) -> FileInfo {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use operit_host_api::{HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
-        HttpDownloadResult, HttpFileDownloadResult, HttpImageDelivery, HttpResponseData, HttpStreamHost,
-        HttpStreamOpenedCallback, HttpStreamChunkCallback, HttpStreamClosedCallback};
+    use operit_host_contract::{
+        HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
+        HttpDownloadResult, HttpFileDownloadResult, HttpImageDelivery, HttpResponseData,
+        HttpStreamChunkCallback, HttpStreamClosedCallback, HttpStreamHost,
+        HttpStreamOpenedCallback,
+    };
     use operit_host_native_filesystem::PosixFileSystemHost;
     use operit_host_native_storage::NativeRuntimeStorageHost;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    struct DownloadHost { calls: AtomicUsize }
+    struct DownloadHost {
+        calls: AtomicUsize,
+    }
 
     impl HttpStreamHost for DownloadHost {
         /// Rejects stream operations outside this download boundary test.
-        fn openHttpByteStream(&self, _: String, _: HttpRequestData, _: HttpStreamOpenedCallback,
-            _: HttpStreamChunkCallback, _: HttpStreamClosedCallback) -> HostResult<()> { unreachable!() }
+        fn openHttpByteStream(
+            &self,
+            _: String,
+            _: HttpRequestData,
+            _: HttpStreamOpenedCallback,
+            _: HttpStreamChunkCallback,
+            _: HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            unreachable!()
+        }
         /// Rejects stream cancellation outside this download boundary test.
-        fn closeHttpByteStream(&self, _: &str) -> HostResult<()> { unreachable!() }
+        fn closeHttpByteStream(&self, _: &str) -> HostResult<()> {
+            unreachable!()
+        }
     }
 
     impl HttpHost for DownloadHost {
         /// Declares the test host's ordinary byte delivery capability.
-        fn imageDelivery(&self) -> HttpImageDelivery { HttpImageDelivery::Bytes }
+        fn imageDelivery(&self) -> HttpImageDelivery {
+            HttpImageDelivery::Bytes
+        }
         /// Rejects buffered requests so a download cannot silently change transport.
-        fn executeHttpRequest(&self, _: HttpRequestData) -> HostResult<HttpResponseData> { unreachable!() }
-        /// Writes only the physical destination delivered at the VFS boundary.
-        fn downloadToFile(&self, request: HttpRequestData, targetPath: String) -> HostResult<HttpFileDownloadResult> {
+        fn executeHttpRequest(&self, _: HttpRequestData) -> HostResult<HttpResponseData> {
+            unreachable!()
+        }
+        /// Consumes the virtual destination without extracting its backend locator.
+        fn downloadToFile(
+            &self,
+            request: HttpRequestData,
+            target: &dyn operit_host_contract::FileTarget,
+        ) -> HostResult<HttpFileDownloadResult> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            if request.method != "GET" { return Err(HostError::new("original download failure")); }
-            std::fs::write(&targetPath, b"downloaded through VFS").map_err(|error| HostError::new(error.to_string()))?;
-            Ok(HttpFileDownloadResult { finalUrl: request.url, targetPath, downloadedBytes: 22 })
+            if request.method != "GET" {
+                return Err(HostError::new("original download failure"));
+            }
+            target.writeBytes(b"downloaded through VFS")?;
+            Ok(HttpFileDownloadResult {
+                finalUrl: request.url,
+                targetPath: target.vfsPath().into(),
+                downloadedBytes: 22,
+            })
         }
         /// Rejects unrelated batch downloads.
-        fn downloadFiles(&self, _: HttpDownloadRequest, _: HttpDownloadControl,
-            _: HttpDownloadProgressCallback) -> HostResult<HttpDownloadResult> { unreachable!() }
+        fn downloadFiles(
+            &self,
+            _: HttpDownloadRequest,
+            _: HttpDownloadControl,
+            _: HttpDownloadProgressCallback,
+        ) -> HostResult<HttpDownloadResult> {
+            unreachable!()
+        }
     }
 
     /// Verifies downloads, ordinary reads and cleanup share the same VFS identity and error boundary.
     #[test]
     fn downloads_share_file_io_paths_and_preserve_host_errors() {
         let (vfs, root) = vfs();
-        let http = DownloadHost { calls: AtomicUsize::new(0) };
-        let directory = VisualFileSystem::runtimePath("runtime/cache/toolpkg/download-test").unwrap();
+        let http = DownloadHost {
+            calls: AtomicUsize::new(0),
+        };
+        let directory =
+            VisualFileSystem::runtimePath("runtime/cache/toolpkg/download-test").unwrap();
         vfs.makeDirectory(&directory, true).unwrap();
         let path = PathMapper::joinVfsPath(&directory, "plugin.toolpkg").unwrap();
-        let request = HttpRequestData { url: "https://market.test/asset".into(), method: "GET".into(),
-            headers: vec![], body: vec![], formFields: vec![], fileParts: vec![], connectTimeoutSeconds: 1,
-            readTimeoutSeconds: 1, followRedirects: true, ignoreSsl: false, proxyHost: String::new(), proxyPort: 0 };
+        let request = HttpRequestData {
+            url: "https://market.test/asset".into(),
+            method: "GET".into(),
+            headers: vec![],
+            body: vec![],
+            formFields: vec![],
+            fileParts: vec![],
+            connectTimeoutSeconds: 1,
+            readTimeoutSeconds: 1,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        };
         let bytes = vfs.downloadFile(&http, request.clone(), &path).unwrap();
         assert_eq!(bytes as usize, vfs.readFileBytes(&path).unwrap().len());
         assert_eq!(vfs.readFile(&path).unwrap(), "downloaded through VFS");
-        assert!(vfs.downloadFile(&http, request.clone(), "/unknown/download").is_err());
+        assert!(vfs
+            .downloadFile(&http, request.clone(), "/unknown/download")
+            .is_err());
         assert_eq!(http.calls.load(Ordering::SeqCst), 1);
-        let mut failed = request; failed.method = "FAIL".into();
-        assert_eq!(vfs.downloadFile(&http, failed, &path).unwrap_err(), "original download failure");
+        let mut failed = request;
+        failed.method = "FAIL".into();
+        assert_eq!(
+            vfs.downloadFile(&http, failed, &path).unwrap_err(),
+            "original download failure"
+        );
         vfs.deleteFile(&directory, true).unwrap();
         assert!(!vfs.fileExists(&path).unwrap().exists);
         std::fs::remove_dir_all(root).unwrap();
     }
 
     fn vfs() -> (VisualFileSystem, PathBuf) {
-        let root = std::env::temp_dir()
-            .join(format!("operit-vfs-tools-test-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("operit-vfs-tools-test-{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(NativeRuntimeStorageHost::new(
             root.clone(),
             root.join("workspaces"),
@@ -375,12 +582,23 @@ mod tests {
     fn resource_inputs_keep_vfs_native_and_relative_compatibility() {
         let (vfs, root) = vfs();
         vfs.makeDirectory("/operitapp/data/uploads", true).unwrap();
-        vfs.writeFile("/operitapp/data/uploads/input.txt", "through VFS", false).unwrap();
-        for input in ["/operitapp/data/uploads/input.txt", "/app/data/uploads/input.txt", "input.txt", "./input.txt", "../uploads/input.txt"] {
-            let path = PathMapper::resolveFileResourcePath(Some("/operitapp/data/uploads"), input).unwrap();
+        vfs.writeFile("/operitapp/data/uploads/input.txt", "through VFS", false)
+            .unwrap();
+        for input in [
+            "/operitapp/data/uploads/input.txt",
+            "/app/data/uploads/input.txt",
+            "input.txt",
+            "./input.txt",
+            "../uploads/input.txt",
+        ] {
+            let path = PathMapper::resolveFileResourcePath(Some("/operitapp/data/uploads"), input)
+                .unwrap();
             assert_eq!(vfs.readFile(&path).unwrap(), "through VFS", "{input}");
         }
-        let native = root.join("uploads/input.txt").to_string_lossy().into_owned();
+        let native = root
+            .join("uploads/input.txt")
+            .to_string_lossy()
+            .into_owned();
         let path = PathMapper::resolveFileResourcePath(None, &native).unwrap();
         assert_eq!(vfs.readFile(&path).unwrap(), "through VFS");
         assert_eq!(PathMapper::resolveFileResourcePath(None, "/").unwrap(), "/");
@@ -392,30 +610,57 @@ mod tests {
     fn both_root_mounts_share_files_and_preserve_result_paths() {
         let (vfs, root) = vfs();
         vfs.makeDirectory("/app/workspaces/demo", true).unwrap();
-        vfs.writeFile("/app/workspaces/demo/file.txt", "shared", false).unwrap();
-        assert_eq!(vfs.readFile("/operitapp/workspaces/demo/file.txt").unwrap(), "shared");
-        vfs.writeFile("/operitapp/workspaces/demo/file.txt", "updated", false).unwrap();
-        assert_eq!(vfs.readFile("/app/workspaces/demo/file.txt").unwrap(), "updated");
+        vfs.writeFile("/app/workspaces/demo/file.txt", "shared", false)
+            .unwrap();
+        assert_eq!(
+            vfs.readFile("/operitapp/workspaces/demo/file.txt").unwrap(),
+            "shared"
+        );
+        vfs.writeFile("/operitapp/workspaces/demo/file.txt", "updated", false)
+            .unwrap();
+        assert_eq!(
+            vfs.readFile("/app/workspaces/demo/file.txt").unwrap(),
+            "updated"
+        );
         for base in ["/app", "/operitapp"] {
             let path = format!("{base}/workspaces/demo/file.txt");
             assert_eq!(vfs.fileInfo(&path).unwrap().path, path);
             assert_eq!(vfs.fileInfo(base).unwrap().path, base);
         }
-        let names: Vec<_> = vfs.listFiles("/").unwrap().into_iter().map(|entry| entry.name).collect();
+        let names: Vec<_> = vfs
+            .listFiles("/")
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
         assert!(names.iter().any(|name| name == "operitapp"));
-        assert!(!names.iter().any(|name| matches!(name.as_str(), "app" | "mnt" | "sdcard" | "data")));
-        assert_eq!(vfs.listFiles("/app").unwrap(), vfs.listFiles("/operitapp").unwrap());
+        assert!(!names
+            .iter()
+            .any(|name| matches!(name.as_str(), "app" | "mnt" | "sdcard" | "data")));
+        assert_eq!(
+            vfs.listFiles("/app").unwrap(),
+            vfs.listFiles("/operitapp").unwrap()
+        );
         let registry = super::super::MountRegistry::MountRegistry::withStorage(Arc::new(
             NativeRuntimeStorageHost::new(root.clone(), root.join("workspaces")),
         ));
         // Either registry spelling must appear in both directory trees.
         for namespace in ["/mnt/test/folders", "/virtual/test/other"] {
-            let mount = registry.register(namespace, "native", root.to_str().unwrap(), "Shared").unwrap();
+            let mount = registry
+                .register(namespace, "native", root.to_str().unwrap(), "Shared")
+                .unwrap();
             assert!(mount.vfsPath().starts_with(namespace));
-            let names: Vec<_> = vfs.listFiles("/").unwrap().into_iter().map(|entry| entry.name).collect();
+            let names: Vec<_> = vfs
+                .listFiles("/")
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect();
             assert!(names.iter().any(|name| name == "virtual"));
             assert!(!names.iter().any(|name| name == "mnt" || name == "app"));
-            let relative = super::super::MountRegistry::mountRelativePath(&mount.vfsPath()).unwrap().to_string();
+            let relative = super::super::MountRegistry::mountRelativePath(&mount.vfsPath())
+                .unwrap()
+                .to_string();
             let first = format!("/mnt/{relative}/mounted.txt");
             let second = format!("/virtual/{relative}/mounted.txt");
             vfs.writeFile(&first, "mounted", false).unwrap();
@@ -425,35 +670,60 @@ mod tests {
             for path in [&first, &second] {
                 assert_eq!(vfs.fileInfo(path).unwrap().path, *path);
             }
-            assert_eq!(vfs.listFiles("/mnt/test").unwrap(), vfs.listFiles("/virtual/test").unwrap());
+            assert_eq!(
+                vfs.listFiles("/mnt/test").unwrap(),
+                vfs.listFiles("/virtual/test").unwrap()
+            );
             registry.remove(&format!("/virtual/{relative}")).unwrap();
         }
-        assert_eq!(vfs.listFiles("/mnt").unwrap(), vfs.listFiles("/virtual").unwrap());
+        assert_eq!(
+            vfs.listFiles("/mnt").unwrap(),
+            vfs.listFiles("/virtual").unwrap()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
-
 
     /// move/copy/file_info resolve VFS paths to the workspace collection root
     /// and keep echoing VFS paths in metadata.
     #[test]
     fn moveCopyFileInfoRoundTripThroughVfsWorkspacePaths() {
         let (vfs, root) = vfs();
-        vfs.makeDirectory("/operitapp/workspaces/ws-a", true).unwrap();
-        vfs.writeFile("/operitapp/workspaces/ws-a/src.txt", "hello vfs", false).unwrap();
+        vfs.makeDirectory("/operitapp/workspaces/ws-a", true)
+            .unwrap();
+        vfs.writeFile("/operitapp/workspaces/ws-a/src.txt", "hello vfs", false)
+            .unwrap();
 
         let info = vfs.fileInfo("/operitapp/workspaces/ws-a/src.txt").unwrap();
         assert!(info.exists);
         assert_eq!(info.path, "/operitapp/workspaces/ws-a/src.txt");
         assert_eq!(info.size, "hello vfs".len() as i64);
 
-        vfs.copyFile("/operitapp/workspaces/ws-a/src.txt", "/operitapp/workspaces/ws-a/copy.txt", false)
-            .unwrap();
-        assert_eq!(vfs.readFile("/operitapp/workspaces/ws-a/copy.txt").unwrap(), "hello vfs");
+        vfs.copyFile(
+            "/operitapp/workspaces/ws-a/src.txt",
+            "/operitapp/workspaces/ws-a/copy.txt",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            vfs.readFile("/operitapp/workspaces/ws-a/copy.txt").unwrap(),
+            "hello vfs"
+        );
 
-        vfs.moveFile("/operitapp/workspaces/ws-a/src.txt", "/operitapp/workspaces/ws-a/renamed.txt")
-            .unwrap();
-        assert!(!vfs.fileExists("/operitapp/workspaces/ws-a/src.txt").unwrap().exists);
-        assert_eq!(vfs.readFile("/operitapp/workspaces/ws-a/renamed.txt").unwrap(), "hello vfs");
+        vfs.moveFile(
+            "/operitapp/workspaces/ws-a/src.txt",
+            "/operitapp/workspaces/ws-a/renamed.txt",
+        )
+        .unwrap();
+        assert!(
+            !vfs.fileExists("/operitapp/workspaces/ws-a/src.txt")
+                .unwrap()
+                .exists
+        );
+        assert_eq!(
+            vfs.readFile("/operitapp/workspaces/ws-a/renamed.txt")
+                .unwrap(),
+            "hello vfs"
+        );
 
         let dirInfo = vfs.fileInfo("/operitapp/workspaces/ws-a").unwrap();
         assert!(dirInfo.exists && dirInfo.fileType == "directory");

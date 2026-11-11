@@ -516,7 +516,7 @@ impl MCPBridge {
             }
         } else {
             match context.managedRuntimeHost.as_ref() {
-                Some(host) => startLocalServiceProcess(host.as_ref(), &registered, scheduler),
+                Some(host) => startLocalServiceProcess(context, host.as_ref(), &registered, scheduler),
                 None => Err("Managed runtime host is not configured".into()),
             }
         };
@@ -703,19 +703,23 @@ fn bridgeState() -> &'static Mutex<MCPBridgeState> {
 
 #[allow(non_snake_case)]
 fn startLocalServiceProcess(
+    context: &HostManager,
     host: &dyn ManagedRuntimeHost,
     service: &RegisteredService,
     scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
 ) -> Result<ActiveService, String> {
     let runtime = resolveMcpRuntimeCommand(&service.command, &service.args)?;
+    let filesystem = context.vfs()?;
+    let directory = service.cwd.as_deref().map(|path| filesystem.fileResource(None, path)).transpose()?;
+    let executable = runtime.executablePath.as_deref().map(|path| filesystem.fileResource(service.cwd.as_deref(), path)).transpose()?;
     let process = host
-        .startRuntimeProcess(RuntimeProcessRequest {
+        .startRuntimeProcessWithFiles(RuntimeProcessRequest {
             program: runtime.program,
             executablePath: runtime.executablePath,
             args: runtime.args,
-            cwd: service.cwd.as_deref().map(expandPath),
+            cwd: None,
             env: buildRuntimeEnv(service),
-        })
+        }, directory.as_ref().map(|file| file as &dyn operit_host_api::FileSource), executable.as_ref().map(|file| file as &dyn operit_host_api::FileSource))
         .map_err(|error| error.to_string())?;
     Ok(ActiveService {
         scheduler,
@@ -743,7 +747,7 @@ fn resolveMcpRuntimeCommand(
     command: &str,
     args: &[String],
 ) -> Result<ResolvedRuntimeCommand, String> {
-    let expanded = expandPath(command).trim().to_string();
+    let expanded = command.trim().to_string();
     if expanded.is_empty() {
         return Err("MCP command must not be empty".to_string());
     }
@@ -758,11 +762,7 @@ fn resolveMcpRuntimeCommand(
 #[allow(non_snake_case)]
 fn buildRuntimeEnv(service: &RegisteredService) -> BTreeMap<String, String> {
     let mut env = service.env.clone();
-    if let Some(cwd) = &service.cwd {
-        let cwd = expandPath(cwd);
-        env.entry("npm_config_cache".to_string())
-            .or_insert_with(|| format!("{cwd}/.npm-cache"));
-    }
+    env.entry("npm_config_cache".to_string()).or_insert_with(|| ".npm-cache".to_string());
     env.entry("npm_config_prefer_offline".to_string())
         .or_insert_with(|| "true".to_string());
     // npx cold-cache install prompts hang headless stdio servers; npm honors
@@ -771,38 +771,7 @@ fn buildRuntimeEnv(service: &RegisteredService) -> BTreeMap<String, String> {
         .or_insert_with(|| "true".to_string());
     env.entry("UV_LINK_MODE".to_string())
         .or_insert_with(|| "copy".to_string());
-    #[cfg(target_os = "linux")]
-    {
-        env.entry("NODE_OPTIONS".to_string())
-            .or_insert_with(|| "--openssl-legacy-provider".to_string());
-    }
     env
-}
-
-#[allow(non_snake_case)]
-fn expandPath(filePath: &str) -> String {
-    let trimmed = filePath.trim();
-    if trimmed == "~" {
-        return homeDir()
-            .expect("managed runtime host home directory must be available")
-            .to_string_lossy()
-            .to_string();
-    }
-    if let Some(rest) = trimmed.strip_prefix("~/") {
-        return homeDir()
-            .expect("managed runtime host home directory must be available")
-            .join(rest)
-            .to_string_lossy()
-            .to_string();
-    }
-    trimmed.to_string()
-}
-
-#[allow(non_snake_case)]
-fn homeDir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
 }
 
 /// Initializes a remote session within the shared startup deadline.

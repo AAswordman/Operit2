@@ -12,6 +12,8 @@ use operit_tools::ToolExecutionManager::{
 
 #[derive(Clone)]
 pub struct StandardMusicTools {
+    filesystem: operit_vfs::VisualFileSystem::VisualFileSystem,
+    storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
     audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
 }
 
@@ -33,8 +35,17 @@ pub struct MusicToolExecutor {
 }
 
 impl StandardMusicTools {
-    pub fn new(audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>) -> Self {
-        Self { audioPlaybackHost }
+    /// Binds local audio resources to the owning virtual filesystem.
+    pub fn new(
+        audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
+        filesystem: operit_vfs::VisualFileSystem::VisualFileSystem,
+        storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
+    ) -> Self {
+        Self {
+            audioPlaybackHost,
+            filesystem,
+            storage,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -55,7 +66,26 @@ impl StandardMusicTools {
             volume: numberParameterValue(tool, "volume", 1.0),
             startPositionMs: integerParameterValue(tool, "start_position_ms", 0),
         };
-        match self.host().and_then(|host| host.playMusic(request)) {
+        let playback = self.host().and_then(|host| {
+            if request.sourceType == "path" {
+                let context =
+                    crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+                let directory = context
+                    .as_ref()
+                    .map(|context| context.fileDirectory(self.storage.clone()))
+                    .transpose()
+                    .map_err(HostError::new)?
+                    .flatten();
+                let file = self
+                    .filesystem
+                    .fileResource(directory.as_deref(), &request.source)
+                    .map_err(HostError::new)?;
+                host.playMusicFile(request, &file)
+            } else {
+                host.playMusic(request)
+            }
+        });
+        match playback {
             Ok(data) => toolSuccessData(
                 tool,
                 ToolResultData::MusicPlaybackResultData(MusicPlaybackResultData::from_host(data)),

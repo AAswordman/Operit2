@@ -4,8 +4,6 @@ use std::path::Path;
 
 use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::js_sdk::results::MediaRegistrationResultData;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_util::MediaLinkBuilder::MediaLinkBuilder;
 use operit_util::MediaRegistration::{register_media_base64, register_media_bytes, RegisteredMedia};
 use serde::Deserialize;
@@ -167,25 +165,7 @@ fn read_vfs_bytes(host: &HostManager, path: &str) -> Result<Vec<u8>, String> {
             "media_register_from_path does not support cross-device paths; copy the file to this device first".to_string(),
         );
     }
-    let file_system = host
-        .fileSystemHost
-        .clone()
-        .ok_or("FileSystemHost is required for media registration")?;
-    let storage = host
-        .runtimeStorageHost
-        .clone()
-        .ok_or("Runtime storage is required for media registration")?;
-    let runtime_root = storage
-        .runtimeRootDir()
-        .ok_or("Runtime root is unavailable")?;
-    let workspace_root = storage
-        .workspaceRootDir()
-        .ok_or("Workspace root is unavailable")?;
-    VisualFileSystem::new(
-        file_system,
-        PathMapper::new(runtime_root, workspace_root, storage),
-    )
-    .readFileBytes(path)
+    host.vfs()?.readFileBytes(path)
 }
 
 #[cfg(test)]

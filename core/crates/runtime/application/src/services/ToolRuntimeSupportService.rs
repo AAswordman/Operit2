@@ -384,7 +384,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                     description: package.description.resolve(false),
                 })
                 .collect();
-            let (skillPackages, errors) = SkillManager::fromDefaultPaths(manager.fileSystemHost())
+            let (skillPackages, errors) = SkillManager::fromDefaultPaths(manager.filesystem())
                 .getAvailableSkillsSnapshot();
             if !errors.is_empty() {
                 return Err(serde_json::to_string(&errors).map_err(|error| error.to_string())?);
@@ -513,10 +513,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     #[allow(non_snake_case)]
     fn aiVisibleSkillPackages(&self) -> Vec<RuntimeSkillCatalogEntry> {
         SkillManager::fromDefaultPaths(
-            self.hostManager
-                .fileSystemHost
-                .clone()
-                .expect("ToolRuntimeSupportService requires a FileSystemHost"),
+            Arc::new(self.hostManager.vfs().expect("ToolRuntimeSupportService requires VFS")),
         )
         .getAvailableSkills()
         .into_iter()

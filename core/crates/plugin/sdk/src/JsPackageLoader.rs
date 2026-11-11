@@ -2,7 +2,7 @@ use crate::package::{
     EnvVar, LocalizedText, PackageTool, PackageToolParameter, ToolPackage, ToolPackageState,
 };
 use crate::toolpkg::ToolPkgProtection;
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 /// Loads and parses standalone JavaScript plugin packages.
 pub struct JsPackageLoader;
@@ -10,10 +10,10 @@ pub struct JsPackageLoader;
 impl JsPackageLoader {
     /// Loads a JavaScript package through the supplied file-system host.
     pub fn load_from_file(
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         sourcePath: &str,
     ) -> Result<ToolPackage, String> {
-        let source_bytes = fileSystemHost
+        let source_bytes = filesystem
             .readFileBytes(sourcePath)
             .map_err(|error| error.to_string())?;
         let js_content = ToolPkgProtection::decodeUtf8(&source_bytes)?;

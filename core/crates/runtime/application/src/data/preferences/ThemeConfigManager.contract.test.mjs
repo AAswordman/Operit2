@@ -16,7 +16,7 @@ const appearanceUi = readFileSync(resolve(repository, 'apps/flutter/app/lib/ui/f
 const application = readFileSync(resolve(repository, 'core/crates/runtime/application/src/core/application/OperitApplication.rs'), 'utf8');
 const modules = readFileSync(resolve(here, 'mod.rs'), 'utf8');
 const store = readFileSync(resolve(repository, 'core/crates/persistence/store/src/PreferencesDataStore.rs'), 'utf8');
-const paths = readFileSync(resolve(repository, 'core/crates/foundation/util/src/RuntimeStorageLayout.rs'), 'utf8');
+const paths = readFileSync(resolve(repository, 'core/crates/foundation/host-contract/src/RuntimeStorageLayout.rs'), 'utf8');
 const factoryScanner = readFileSync(resolve(repository, 'core/crates/proxy/scan/src/build_scanner.rs'), 'utf8');
 
 const jsonStart = dart.indexOf('Map<String, Object?> toJson()');

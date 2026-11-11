@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../../foundation/vfs" }
 operit-runtime = { path = "../../runtime/application" }
 operit-providers = { path = "../../provider/services" }
 operit-store = { path = "../../persistence/store" }

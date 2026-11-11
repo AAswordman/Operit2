@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 android-module-app = []
 
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../../../../core/crates/foundation/vfs" }
 operit-data-rescue = { path = "../../../../core/crates/persistence/rescue" }
 operit-core-application = { path = "../../../../core/crates/application/core" }
 operit-proxy-local = { path = "../../../../core/crates/proxy/local" }
@@ -29,6 +30,7 @@ serde_json = "1"
 base64 = "0.22"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+operit-host-local-inference = { path = "../../../../hosts/common/operit-host-local-inference" }
 operit-host-data-rescue = { path = "../../../../hosts/common/operit-host-data-rescue" }
 operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common" }
 axum = { version = "0.7", features = ["ws"] }

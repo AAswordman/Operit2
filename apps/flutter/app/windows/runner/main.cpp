@@ -268,10 +268,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       ::DispatchMessage(&msg);
     }
 
-    ShutdownOperitRuntimeChannel();
-    ShutdownAllOperitEngineChannels();
-    ShutdownSystemAudioInputChannel();
-    ShutdownOperitCrashChannel();
+    // Destroy all Flutter windows while their host services and COM are alive.
+    window.Destroy();
     ::CoUninitialize();
     return EXIT_SUCCESS;
   } catch (const std::exception& error) {

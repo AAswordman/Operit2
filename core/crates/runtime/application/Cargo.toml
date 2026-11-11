@@ -10,6 +10,7 @@ default = ["javascript"]
 javascript = ["dep:operit-js-bridge", "operit-tools/javascript"]
 
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../../foundation/vfs" }
 operit-edge-contract = { path = "../../../../edge/sdk/contract" }
 async-trait.workspace = true
 aes = "0.8"

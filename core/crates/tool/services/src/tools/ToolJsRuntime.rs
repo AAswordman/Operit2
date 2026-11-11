@@ -132,15 +132,12 @@ pub fn materializeToolPkgResource(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "ToolPkg resource output file name is invalid".to_string())?;
-    let fileSystemHost = toolHandler
-        .getContext()
-        .fileSystemHost
-        .ok_or_else(|| "FileSystemHost is required for ToolPkg resource export".to_string())?;
+    let filesystem = toolHandler.getContext().vfs()?;
     let outputDir = OperitPaths::toolPkgResourceExportsDir(request.internal)?;
     let outputDirPath = outputDir
         .to_str()
         .ok_or_else(|| "ToolPkg resource export directory is not valid UTF-8".to_string())?;
-    fileSystemHost
+    filesystem
         .makeDirectory(outputDirPath, true)
         .map_err(|error| error.to_string())?;
     let outputFile = outputDir.join(safeName);
@@ -176,8 +173,8 @@ pub fn materializeToolPkgResource(
         .strip_prefix(operit_util::RuntimeStorageLayout::RUNTIME_ROOT_PATH_PREFIX)
         .expect("ToolPkg exports must belong to runtime storage");
     let exportRoot =
-        crate::files::PathMapper::PathMapper::joinVfsPath("/operitapp/data", relativeDirectory)?;
-    crate::files::PathMapper::PathMapper::joinVfsPath(&exportRoot, safeName)
+        operit_vfs::VfsPath::joinVfsPath("/operitapp/data", relativeDirectory)?;
+    operit_vfs::VfsPath::joinVfsPath(&exportRoot, safeName)
 }
 
 /// Resolves one JavaScript tool name through concrete package state.

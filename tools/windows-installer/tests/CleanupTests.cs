@@ -15,6 +15,7 @@ public static class CleanupTests
     {
         try
         {
+            Check("MSI versions distinguish fresh install, update, repair, removal, and downgrade", SetupOperations);
             Check("default and configured data deleted; unrelated siblings preserved", DeleteExpectedData);
             Check("configuration changes invalidate consent before deletion", RejectChangedPlan);
             Check("malformed bootstrap prevents any deletion", RejectBrokenConfig);
@@ -31,6 +32,25 @@ public static class CleanupTests
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    /// <summary>Checks version transitions including different ProductCodes and preview revision ordering.</summary>
+    private static void SetupOperations()
+    {
+        var current = new Version("2.0.231");
+        var older = new Version("2.0.230");
+        var newer = new Version("2.0.232");
+        Require(SetupOperationSelection.Resolve(false, current, new Version[0]) == SetupOperation.Install);
+        Require(SetupOperationSelection.Resolve(false, current, new[] { older }) == SetupOperation.Update);
+        Require(SetupOperationSelection.Resolve(false, current, new[] { current }) == SetupOperation.Repair);
+        Require(SetupOperationSelection.Resolve(true, older, new[] { newer }) == SetupOperation.Remove);
+        Require(SetupOperationSelection.Resolve(false, newer, new[] { older, current }) == SetupOperation.Update);
+        try
+        {
+            SetupOperationSelection.Resolve(false, current, new[] { older, newer });
+        }
+        catch (InvalidOperationException) { return; }
+        throw new InvalidOperationException("An older MSI must not offer to repair or replace a newer installation.");
     }
 
     /// <summary>Handles a fresh installation before custom directories have been confirmed.</summary>

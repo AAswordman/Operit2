@@ -18,7 +18,7 @@ use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_store::ExtensionStore::ExtensionStore;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use serde_json::{json, Value};
 
 const SCRIPT: &str = r#"/* METADATA
@@ -72,8 +72,9 @@ impl HttpHost for MarketHttpHost {
     fn downloadToFile(
         &self,
         request: HttpRequestData,
-        targetPath: String,
+        target: &dyn operit_host_api::FileTarget,
     ) -> HostResult<HttpFileDownloadResult> {
+        let targetPath = target.nativePath()?;
         std::fs::write(&targetPath, &self.payload)
             .map_err(|error| HostError::new(error.to_string()))?;
         Ok(HttpFileDownloadResult {
@@ -117,7 +118,7 @@ async fn market_install_markers_survive_reentry_and_do_not_mark_failed_updates_a
         let workspace_root = root.join("workspaces");
         std::fs::create_dir_all(&runtime_root).unwrap();
         std::fs::create_dir_all(&workspace_root).unwrap();
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtime_root.clone(), workspace_root.clone()));
+
         let storage = Arc::new(NativeRuntimeStorageHost::new(runtime_root.clone(), workspace_root));
         let http = Arc::new(MarketHttpHost {
             entry: Mutex::new(json!({

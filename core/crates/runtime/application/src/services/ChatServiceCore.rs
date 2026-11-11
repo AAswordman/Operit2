@@ -30,7 +30,7 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
     CoreEvent, CoreEventKind, CoreEventStream, CoreStream, CoreStreamSource, CoreValue,
@@ -61,8 +61,8 @@ use operit_store::PreferencesDataStore::{
     combine2, combine4, combine5, mutableStateFlow, MutableStateFlow, StateFlow,
 };
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_vfs::VfsPath;
+
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -236,7 +236,7 @@ impl PendingChatQueueStore {
 }
 
 pub struct ChatServiceCore {
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
     pub selectionMode: ChatSelectionMode,
     /// Carries the factory-authored slot supported by the current plugin send contract.
     pub(crate) chatInputRuntime: Option<operit_plugin_sdk::js_sdk::chat::ChatRuntime>,
@@ -256,7 +256,7 @@ pub struct ChatServiceCore {
 
 impl ChatServiceCore {
     /// Creates a chat service core for the selected chat target mode.
-    pub fn new(selectionMode: ChatSelectionMode, fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+    pub fn new(selectionMode: ChatSelectionMode, filesystem: Arc<VisualFileSystem>) -> Self {
         let chatInputRuntime = Some(match selectionMode {
             ChatSelectionMode::FOLLOW_GLOBAL => operit_plugin_sdk::js_sdk::chat::ChatRuntime::Main,
             ChatSelectionMode::LOCAL_ONLY => operit_plugin_sdk::js_sdk::chat::ChatRuntime::Floating,
@@ -264,7 +264,7 @@ impl ChatServiceCore {
         Self::newWithPendingQueueStore(
             selectionMode,
             chatInputRuntime,
-            fileSystemHost,
+            filesystem,
             Arc::new(PendingChatQueueStore::new()),
         )
     }
@@ -273,11 +273,11 @@ impl ChatServiceCore {
     pub(crate) fn newWithPendingQueueStore(
         selectionMode: ChatSelectionMode,
         chatInputRuntime: Option<operit_plugin_sdk::js_sdk::chat::ChatRuntime>,
-        fileSystemHost: Arc<dyn FileSystemHost>,
+        filesystem: Arc<VisualFileSystem>,
         pendingQueueStore: Arc<PendingChatQueueStore>,
     ) -> Self {
         let mut core = Self {
-            fileSystemHost,
+            filesystem,
             selectionMode: selectionMode.clone(),
             chatInputRuntime,
             enhancedAiService: None,
@@ -313,7 +313,7 @@ impl ChatServiceCore {
         let _ = bindingKey;
         let context = self.runtimeToolHandler().getContext();
         let storage = context.runtimeStorageHost.clone().ok_or("Local inference requires runtime storage")?;
-        super::LocalLlmService::executeLocalLlm(storage, modelBinding, requestJson, settingsJson).await
+        super::LocalLlmService::executeLocalLlm(context, modelBinding, requestJson, settingsJson).await
     }
 
     /// Clones the plugin execution host before releasing the borrowed chat core.
@@ -389,7 +389,7 @@ impl ChatServiceCore {
     fn initializeDelegates(&mut self) {
         self.chatHistoryDelegate = ChatHistoryDelegate::new(self.selectionMode.clone());
         self.messageProcessingDelegate = MessageProcessingDelegate::default();
-        self.messageProcessingDelegate.fileSystemHost = Some(self.fileSystemHost.clone());
+        self.messageProcessingDelegate.filesystem = Some(self.filesystem.as_ref().clone());
         let summaryCancellationDelegate = self.messageProcessingDelegate.clone_for_core();
         self.chatHistoryDelegate.setBeforeDestructiveHistoryMutation(move |chatId| {
             summaryCancellationDelegate.cancelSummaryTasks(Some(&chatId));
@@ -817,7 +817,7 @@ impl ChatServiceCore {
                 participantId: Some(resumeContext.participantId.clone()),
                 promptFunctionType: resumeContext.promptFunctionType.clone(),
                 defaultModelBinding: support
-                    .modelBindingForFunction(support.dataDir()?, FunctionType::CHAT)?,
+                    .modelBindingForFunction(FunctionType::CHAT)?,
                 defaultTtsConfigId: support.defaultTtsConfigId()?,
             })
             .await?;
@@ -1129,7 +1129,7 @@ impl ChatServiceCore {
             chatExtension: None,
             participantId: None,
             promptFunctionType: PromptFunctionType::CHAT,
-            defaultModelBinding: support.modelBindingForFunction(support.dataDir()?,FunctionType::CHAT)?,
+            defaultModelBinding: support.modelBindingForFunction(FunctionType::CHAT)?,
             defaultTtsConfigId: support.defaultTtsConfigId()?,
         }).await?;
         self.chatHistoryDelegate
@@ -1170,7 +1170,7 @@ impl ChatServiceCore {
             participantId,
             promptFunctionType: PromptFunctionType::CHAT,
             defaultModelBinding: support
-                .modelBindingForFunction(support.dataDir()?, FunctionType::CHAT)?,
+                .modelBindingForFunction(FunctionType::CHAT)?,
             defaultTtsConfigId: support.defaultTtsConfigId()?,
         })
         .await
@@ -1675,7 +1675,7 @@ impl ChatServiceCore {
         chatId: String,
         name: String,
     ) -> Result<String, String> {
-        PathMapper::workspacePath(&name)?;
+        VfsPath::workspacePath(&name)?;
         let workspacePath =
             WorkspaceUtils::createAndGetDefaultWorkspace(name.clone(), Some("blank".to_string()))?;
         let folderName = operit_model::Workspace::Workspace::folderNameFromPath(&workspacePath)?;
@@ -1745,7 +1745,7 @@ impl ChatServiceCore {
         newWorkspace: String,
         newTitle: String,
     ) {
-        let newWorkspace = PathMapper::normalizeWorkspaceBindingPath(&newWorkspace).expect(
+        let newWorkspace = VfsPath::normalizeWorkspaceBindingPath(&newWorkspace).expect(
             "ChatServiceCore.renameWorkspaceAndChat requires a workspace path that maps to VFS",
         );
         self.chatHistoryDelegate
@@ -2136,11 +2136,11 @@ impl ChatServiceCore {
             return;
         }
 
-        let screenshotBytes = match self.fileSystemHost.readFileBytes(&screenshotPath) {
+        let screenshotBytes = match self.filesystem.readFileBytes(&screenshotPath) {
             Ok(bytes) => bytes,
             Err(error) => {
                 self.messageProcessingDelegate
-                    .showToast(format!("添加屏幕内容失败: {}", error.message));
+                    .showToast(format!("添加屏幕内容失败: {}", error.to_string()));
                 return;
             }
         };
@@ -2176,10 +2176,10 @@ impl ChatServiceCore {
         self.messageProcessingDelegate
             .showToast("已添加屏幕内容".to_string());
 
-        if let Err(error) = self.fileSystemHost.deleteFile(&screenshotPath, false) {
+        if let Err(error) = self.filesystem.deleteFile(&screenshotPath, false) {
             AppLogger::w(
                 "ChatServiceCore",
-                &format!("cannot remove captured screenshot: {}", error.message),
+                &format!("cannot remove captured screenshot: {}", error.to_string()),
             );
         }
     }
@@ -2342,13 +2342,13 @@ impl ChatServiceCore {
     /// Adds a workspace mention as an in-memory plain-text attachment.
     #[allow(non_snake_case)]
     fn attachWorkspaceMentionInternal(&mut self, relativePath: &str) -> Result<String, String> {
-        let normalizedRelativePath = PathMapper::normalizeRelativePath(relativePath)?;
+        let normalizedRelativePath = VfsPath::normalizeRelativePath(relativePath)?;
         if normalizedRelativePath.is_empty() {
             return Err("无法添加工作区引用: 路径为空".to_string());
         }
         let workspaceRoot = self.currentWorkspaceRoot()?;
         let vfs = self.vfsForWorkspace()?;
-        let targetPath = PathMapper::joinVfsPath(&workspaceRoot, &normalizedRelativePath)?;
+        let targetPath = VfsPath::joinVfsPath(&workspaceRoot, &normalizedRelativePath)?;
         let targetInfo = vfs.fileExists(&targetPath)?;
         if !targetInfo.exists {
             return Err("工作区路径不存在".to_string());
@@ -2401,17 +2401,7 @@ impl ChatServiceCore {
     /// Creates a VFS instance for chat workspace attachment reads.
     #[allow(non_snake_case)]
     fn vfsForWorkspace(&self) -> Result<VisualFileSystem, String> {
-        let runtimeStorageHost = defaultRuntimeStorageHost();
-        let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir().ok_or_else(|| {
-            "RuntimeStorageHost runtime root is not configured for workspace mentions".to_string()
-        })?;
-        let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir().ok_or_else(|| {
-            "RuntimeStorageHost workspace root is not configured for workspace mentions".to_string()
-        })?;
-        Ok(VisualFileSystem::new(
-            self.fileSystemHost.clone(),
-            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot, runtimeStorageHost.clone()),
-        ))
+        self.runtimeToolHandler().getContext().vfs()
     }
 
     /// Requires a real chat before allocating any persistent attachment files.
@@ -2449,7 +2439,7 @@ impl ChatServiceCore {
             return Err("Uploaded attachment does not belong to this runtime".to_string());
         }
         let stored = self
-            .fileSystemHost
+            .filesystem
             .fileExists(&attachment.filePath)
             .map_err(|error| error.to_string())?;
         if !stored.exists || stored.isDirectory || stored.size != attachment.fileSize {
@@ -2460,7 +2450,7 @@ impl ChatServiceCore {
         if !super::AttachmentTransferManager::isSelectedAttachment(&attachment, &chatId)? {
             return Err("Attachment must be imported into the current chat file directory before registration".into());
         }
-        let resolved = self.vfsForWorkspace()?.resolvePath(&attachment.fileToolPath())?.nativePath()?;
+        let resolved = self.vfsForWorkspace()?.resolveResourcePath(None, &attachment.fileToolPath())?;
         if resolved != attachment.filePath {
             return Err("Attachment VFS locator does not match its stored file".into());
         }
@@ -3569,7 +3559,7 @@ mod chat_deletion_tests {
     use operit_store::RuntimeStorePaths::RuntimeStorePaths;
     use operit_store::db::AppDatabase::AppDatabase;
     use operit_store::sync::SqlChatSyncStore::SqlChatSyncStore;
-    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
     use operit_util::stream::HotStream::mutable_shared_stream;
     use crate::services::core::MessageProcessingDelegate::ChatRuntime;
 
@@ -3612,15 +3602,16 @@ mod chat_deletion_tests {
         let runtimeRoot = root.join("runtime");
         let workspaceRoot = root.join("workspaces");
         std::fs::create_dir_all(&runtimeRoot).unwrap();
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtimeRoot.clone(), workspaceRoot.clone()));
+
         let host = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot.clone(), workspaceRoot.clone()));
         setDefaultRuntimeStorageHost(host.clone());
-        setDefaultRuntimeSqliteHost(host);
-        let database = AppDatabase::getDatabase(RuntimeStorePaths::new(runtimeRoot, workspaceRoot)).unwrap();
+        setDefaultRuntimeSqliteHost(host.clone());
+        let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
         for id in ["deleted-chat", "live-chat"] {
             database.chatDao().insertChat(ChatEntity::new(id.into(), id.into(), 1)).unwrap();
         }
-        let mut core = ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(PosixFileSystemHost::new()));
+        let filesystem = VisualFileSystem::fromStorage(Arc::new(PosixFileSystemHost::new()), host).unwrap();
+        let mut core = ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(filesystem));
         core.chatHistoryDelegate.openChatHistory("deleted-chat".into(), true).unwrap();
         let deletedFlow = core.chatHistoryDelegate.chatMessageFlowForChat("deleted-chat".into());
         core.chatHistoryDelegate.chatMessageFlowsByChatId.lock().unwrap()["deleted-chat"].set_value(vec![

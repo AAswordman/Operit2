@@ -10,6 +10,7 @@ default = []
 daemon = ["dep:tokio", "operit-host-native-common/daemon", "windows-sys/Win32_Security_Authorization", "windows-sys/Win32_System_Console"]
 
 [dependencies]
+operit-host-local-inference = { path = "../common/operit-host-local-inference" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"], optional = true }
 base64 = "0.22"
 globset = "0.4.18"

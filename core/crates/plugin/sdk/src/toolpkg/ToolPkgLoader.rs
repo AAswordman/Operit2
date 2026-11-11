@@ -6,7 +6,7 @@ use crate::toolpkg::ToolPkgParser::{
     ToolPkgArchiveParser, ToolPkgLoadResult, ToolPkgMainRegistrationParseResult, ToolPkgSourceType,
 };
 use crate::JsPackageLoader::JsPackageLoader;
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 
 /// Loads ToolPkg archives and executes their main registration scripts.
 pub struct ToolPkgLoader;
@@ -15,7 +15,7 @@ impl ToolPkgLoader {
     /// Loads a ToolPkg archive through the supplied file-system host.
     #[allow(non_snake_case)]
     pub fn loadToolPkgFromExternalFile<FReportPackageLoadError>(
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         sourcePath: &str,
         configScope: ToolPkgConfigScope,
         jsEngine: &dyn JsExecutionEngine,
@@ -24,7 +24,7 @@ impl ToolPkgLoader {
     where
         FReportPackageLoadError: Fn(&str, &str),
     {
-        let archiveBytes = fileSystemHost
+        let archiveBytes = filesystem
             .readFileBytes(sourcePath)
             .map_err(|error| error.to_string())?;
         Self::loadToolPkgFromArchiveBytes(
@@ -89,7 +89,7 @@ impl ToolPkgLoader {
     /// Loads a raw protected ToolPkg ZIP after its local market installation seal has verified.
     #[allow(non_snake_case)]
     pub fn loadToolPkgFromMarketFile<FReportPackageLoadError>(
-        fileSystemHost: &dyn FileSystemHost,
+        filesystem: &VisualFileSystem,
         sourcePath: &str,
         configScope: ToolPkgConfigScope,
         jsEngine: &dyn JsExecutionEngine,
@@ -98,7 +98,7 @@ impl ToolPkgLoader {
     where
         FReportPackageLoadError: Fn(&str, &str),
     {
-        let archiveBytes = fileSystemHost
+        let archiveBytes = filesystem
             .readFileBytes(sourcePath)
             .map_err(|error| error.to_string())?;
         Self::loadToolPkgFromArchiveBytes(

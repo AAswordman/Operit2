@@ -39,7 +39,7 @@ impl SystemOperationHost for TestSystemLocale {
         getDeviceLocation(timeout: i32, highAccuracy: bool, includeAddress: bool) -> LocationData;
         getDeviceInfo() -> DeviceInfoData;
         captureScreenshot() -> String;
-        recognizeText(imagePath: &str, language: OCRLanguage, quality: OCRQuality) -> String;
+        recognizeText(imagePath: &dyn operit_host_api::FileSource, language: OCRLanguage, quality: OCRQuality) -> String;
     }
 }
 

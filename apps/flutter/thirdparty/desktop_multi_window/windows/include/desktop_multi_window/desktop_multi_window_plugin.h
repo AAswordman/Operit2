@@ -20,6 +20,14 @@ FLUTTER_PLUGIN_EXPORT void DesktopMultiWindowPluginRegisterWithRegistrar(
 typedef void (*WindowCreatedCallback)(void *flutter_view_controller);
 FLUTTER_PLUGIN_EXPORT void DesktopMultiWindowSetWindowCreatedCallback(WindowCreatedCallback callback);
 
+// Runs before a secondary window releases its Flutter view controller.
+typedef void (*WindowDestroyedCallback)(void* flutter_view_controller);
+FLUTTER_PLUGIN_EXPORT void DesktopMultiWindowSetWindowDestroyedCallback(
+    WindowDestroyedCallback callback);
+
+// Closes all secondary windows while the application's native services are alive.
+FLUTTER_PLUGIN_EXPORT void DesktopMultiWindowShutdown();
+
 #if defined(__cplusplus)
 }  // extern "C"
 #endif

@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 
 import '../link/CoreLinkCodec.dart';
+import '../logging/ClientLogger.dart';
 import 'CoreByteTransport.dart';
 import 'FfiCoreAddress.dart';
 
@@ -407,6 +408,15 @@ class _FfiConnection implements Finalizable {
   void close([Object? error, StackTrace? stack]) {
     if (_closed) return;
     _closed = true;
+    if (error != null) {
+      ClientLogger.e(
+        'Core FFI connection failed pendingRequests=${_pending.length} '
+        'activeWatches=${_watches.length}',
+        tag: 'CoreFfiTransport',
+        error: error,
+        stackTrace: stack,
+      );
+    }
     final failure = error ?? StateError('Core FFI connection is closed');
     _port.close();
     _finalizer.detach(this);

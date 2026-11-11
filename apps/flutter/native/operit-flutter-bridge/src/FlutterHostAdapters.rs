@@ -20,7 +20,7 @@ use operit_host_api::{
     BrowserAutomationRequest, BrowserAutomationResponse, HostError, HostResult,
 };
 
-use operit_tools::files::{PathMapper::PathMapper, VisualFileSystem::VisualFileSystem};
+use operit_vfs::{VfsPath, VisualFileSystem::VisualFileSystem};
 
 use crate::current_time_millis_u64;
 
@@ -35,7 +35,7 @@ impl FlutterBrowserAutomationBridge {
     /// Creates the owner bridge with the VFS and storage of its runtime.
     pub(crate) fn new(context: &operit_host_api::HostManager::HostManager) -> HostResult<Self> {
         Ok(Self {
-            fileSystem: VisualFileSystem::fromContext(context).map_err(HostError::new)?,
+            fileSystem: (context).vfs().map_err(HostError::new)?,
             storage: context.runtimeStorageHost.clone().ok_or_else(|| HostError::new("Browser uploads require runtime storage"))?,
         })
     }
@@ -58,7 +58,7 @@ impl FlutterBrowserAutomationBridge {
                         let context = operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
                         let directory = context.as_ref().map(|context| context.fileDirectory(self.storage.clone()))
                             .transpose().map_err(HostError::new)?.flatten();
-                        let path = PathMapper::resolveFileResourcePath(directory.as_deref(), path).map_err(HostError::new)?;
+                        let path = self.fileSystem.resolveResourcePath(directory.as_deref(), path).map_err(HostError::new)?;
                         BrowserUploadFile::read(&self.fileSystem, &path)
                     })
                     .collect::<HostResult<Vec<_>>>()
@@ -404,7 +404,7 @@ impl FlutterComposeDslWebViewBridge {
     /// Binds Compose host responses to the owning runtime's VFS capabilities.
     pub(crate) fn new(host: &operit_host_api::HostManager::HostManager) -> HostResult<Self> {
         Ok(Self {
-            vfs: VisualFileSystem::fromContext(host).map_err(HostError::new)?,
+            vfs: (host).vfs().map_err(HostError::new)?,
         })
     }
 
@@ -437,8 +437,8 @@ impl FlutterComposeDslWebViewBridge {
                     "Selected resource URI must identify its VFS path",
                 ));
             }
-            let resolved = self.vfs.resolvePath(path).map_err(HostError::new)?;
-            if resolved.vfsPath != path {
+            let canonical = operit_vfs::VfsPath::canonicalizeVfsPath(path).map_err(HostError::new)?;
+            if canonical != path {
                 return Err(HostError::new(
                     "Selected resource requires a canonical VFS path",
                 ));
@@ -531,9 +531,9 @@ mod browser_upload_tests {
     fn upload_reads_binary_files_from_vfs() {
         use operit_host_native_filesystem::PosixFileSystemHost;
         let root = std::env::temp_dir().join(format!("operit-browser-upload-{}", uuid::Uuid::new_v4()));
-        let vfs = VisualFileSystem::new(
+        let vfs = VisualFileSystem::builtinOnly(
             Arc::new(PosixFileSystemHost::new()),
-            PathMapper::builtinOnly(root.clone(), root.join("workspaces")),
+            root.clone(), root.join("workspaces"),
         );
         let path = "/operitapp/data/uploads/中文 file.bin";
         vfs.makeDirectory("/operitapp/data/uploads", true).unwrap();

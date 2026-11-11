@@ -99,11 +99,28 @@
     {
       "version": 15,
       "hash": "6e1cd3450e8812471bfd25830cf769c1ce2e2181387b3b1a1357ea259952e80d"
+    },
+    {
+      "version": 16,
+      "hash": "715ec7e1cefe4abb553e34208b0344665969ab1a1e9ad3416ed0a6fafabdf9bb"
+    },
+    {
+      "version": 17,
+      "hash": "b392a0bf17280a53cfea021b954a1e52c11c0b72075b7cf04374be059758437a"
+    },
+    {
+      "version": 18,
+      "hash": "66c6bf40ffc6a4a8dd7d23080133abf03b7414f003054f89fcccb5762708cc45"
+    },
+    {
+      "version": 19,
+      "hash": "39d74dfd26054fb2c749c4b2175735b301e2ed646ebd54aa1285aebb2310c768"
     }
   ],
   "schemaRoots": [
     "core/crates/foundation/model/src",
-    "core/crates/foundation/host-api/src",
+    "core/crates/foundation/host-contract/src",
+    "core/crates/foundation/vfs/src",
     "core/crates/runtime/application/src",
     "core/crates/provider/services/src",
     "core/crates/tool/services/src",

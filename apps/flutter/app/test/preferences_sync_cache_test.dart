@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/layout/ApplicationZoomPreferences.dart';
@@ -21,6 +22,7 @@ const _dockFile = 'sidebar_dock.preferences.json';
 /// Verifies committed peer changes reach existing application-level caches.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(ClientLogger.initialize);
 
   test(
     'peer preferences refresh the live theme without restarting it',

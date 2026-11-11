@@ -526,6 +526,11 @@ pub(crate) async fn try_run_cli_command(args: &[String], json: bool) -> Option<R
 /// Commands that must run in the invoking process: interactive shells, local
 /// storage/OAuth flows, and link operations that own their own listener.
 fn route_supported(args: &[String]) -> bool {
+    let args = if args.first().map(String::as_str) == Some("--cwd") {
+        &args[args.len().min(2)..]
+    } else {
+        args
+    };
     let Some(command) = args.first().map(String::as_str) else {
         return false;
     };

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
@@ -16,6 +17,7 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 /// Verifies synchronized ordinary appearance through generated clients.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(ClientLogger.initialize);
 
   OperitThemeController controller(_SharedThemeBridge bridge) {
     final clients = GeneratedCoreProxyClients(bridge);
@@ -170,6 +172,10 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(theme.themeLoadError, isNotNull);
       expect(theme.hasLoadedTheme, isFalse);
+      final log = await ClientLogger.readText();
+      expect(log, contains('Appearance load failed stage=validate_palette'));
+      expect(log, contains('FormatException'));
+      expect(log, contains('stackTrace='));
       expect(bridge.preferences['theme_palette_json'], 'not json');
       expect(bridge.calls, isNot(contains('useCustomAppearance')));
       await theme.reloadTheme();
@@ -187,6 +193,27 @@ void main() {
         bridge.calls.where((call) => call == 'useCustomAppearance'),
         hasLength(1),
       );
+    },
+  );
+
+  test(
+    'preference stream failures retain their original diagnostic stack',
+    () async {
+      final bridge = _SharedThemeBridge();
+      final theme = controller(bridge);
+      addTearDown(theme.dispose);
+      addTearDown(bridge.close);
+      await theme.start();
+      final error = StateError('Preference connection disconnected');
+      final stack = StackTrace.fromString('preference-disconnect-origin');
+      bridge._events.addError(error, stack);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(theme.themeLoadError, same(error));
+      final log = await ClientLogger.readText();
+      expect(log, contains('Appearance preference subscription failed'));
+      expect(log, contains('Preference connection disconnected'));
+      expect(log, contains('preference-disconnect-origin'));
     },
   );
 }

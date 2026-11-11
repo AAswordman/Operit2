@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde_json::Value;
 
 use crate::toolpkg::ToolPkgCommonPluginConstants::{
@@ -56,7 +56,7 @@ pub trait ToolPkgPackageHost: Send + Sync {
 
     /// Returns the filesystem capability owned by the embedding runtime.
     #[allow(non_snake_case)]
-    fn fileSystemHost(&self) -> std::sync::Arc<dyn FileSystemHost>;
+    fn filesystem(&self) -> std::sync::Arc<VisualFileSystem>;
 
     /// Persists the complete ToolPkg subpackage state map.
     #[allow(non_snake_case)]
@@ -520,8 +520,8 @@ impl<'a> ToolPkgPackageService<'a> {
         templateId: &str,
         destinationDir: &Path,
     ) -> Result<ToolPkgWorkspaceTemplateImportResult, String> {
-        let fileSystemHost = self.packageManager.fileSystemHost();
-        let destinationPath = destinationDir.to_string_lossy().to_string();
+        let filesystem = self.packageManager.filesystem();
+        let destinationPath = destinationDir.to_string_lossy().replace('\\', "/");
         self.packageManager.ensureInitialized();
         let normalizedContainerPackageName = self
             .packageManager
@@ -560,7 +560,7 @@ impl<'a> ToolPkgPackageService<'a> {
                 template.resource_key
             ));
         }
-        let destinationInfo = fileSystemHost
+        let destinationInfo = filesystem
             .fileExists(&destinationPath)
             .map_err(|error| error.to_string())?;
         if destinationInfo.exists {
@@ -570,7 +570,7 @@ impl<'a> ToolPkgPackageService<'a> {
                     destinationDir.display()
                 ));
             }
-            if !fileSystemHost
+            if !filesystem
                 .listFiles(&destinationPath)
                 .map_err(|error| error.to_string())?
                 .is_empty()
@@ -581,7 +581,7 @@ impl<'a> ToolPkgPackageService<'a> {
                 ));
             }
         } else {
-            fileSystemHost
+            filesystem
                 .makeDirectory(&destinationPath, true)
                 .map_err(|error| {
                     format!(
@@ -600,8 +600,8 @@ impl<'a> ToolPkgPackageService<'a> {
                     template.resource_key
                 )
             })?;
-        let resourceDirPath = resourceDir.to_string_lossy().to_string();
-        let resourceInfo = fileSystemHost
+        let resourceDirPath = resourceDir.to_string_lossy().replace('\\', "/");
+        let resourceInfo = filesystem
             .fileExists(&resourceDirPath)
             .map_err(|error| error.to_string())?;
         if !resourceInfo.exists || !resourceInfo.isDirectory {
@@ -610,18 +610,18 @@ impl<'a> ToolPkgPackageService<'a> {
                 template.resource_key
             ));
         }
-        for entry in fileSystemHost
+        for entry in filesystem
             .listFiles(&resourceDirPath)
             .map_err(|error| error.to_string())?
         {
             let sourcePath = joinHostPath(&resourceDirPath, &entry.name);
             let destinationEntryPath = joinHostPath(&destinationPath, &entry.name);
-            fileSystemHost
+            filesystem
                 .copyFile(&sourcePath, &destinationEntryPath, true)
                 .map_err(|error| error.to_string())?;
         }
         let configPath = joinHostPath(&destinationPath, ".operit/config.json");
-        let configInfo = fileSystemHost
+        let configInfo = filesystem
             .fileExists(&configPath)
             .map_err(|error| error.to_string())?;
         if !configInfo.exists || configInfo.isDirectory {
@@ -630,7 +630,7 @@ impl<'a> ToolPkgPackageService<'a> {
                 template.id
             ));
         }
-        let workspaceConfig = fileSystemHost
+        let workspaceConfig = filesystem
             .readFile(&configPath)
             .map_err(|error| error.to_string())
             .and_then(|text| {
@@ -640,7 +640,7 @@ impl<'a> ToolPkgPackageService<'a> {
             containerPackageName: runtime.packageName.clone(),
             toolPkgId: runtime.packageName.clone(),
             templateId: template.id.clone(),
-            workspacePath: destinationDir.to_string_lossy().to_string(),
+            workspacePath: destinationDir.to_string_lossy().replace('\\', "/"),
             workspaceConfig,
         })
     }

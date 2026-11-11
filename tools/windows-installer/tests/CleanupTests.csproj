@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../shared/UserDataCleanup.cs" Link="UserDataCleanup.cs" />
+    <Compile Include="../shared/SetupOperation.cs" Link="SetupOperation.cs" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="Microsoft.CSharp" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::services::core::ChatHistoryDelegate::ChatSelectionMode;
 use crate::services::ChatServiceCore::{ChatServiceCore, PendingChatQueueStore};
-use operit_host_api::FileSystemHost;
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -17,16 +17,16 @@ struct ChatRuntimeDependencies {
 
 /// Builds chat service cores for each runtime slot.
 pub struct ChatRuntimeCoreFactory {
-    fileSystemHost: Arc<dyn FileSystemHost>,
+    filesystem: Arc<VisualFileSystem>,
     runtimeDependencies: Option<ChatRuntimeDependencies>,
     pendingQueueStore: Arc<PendingChatQueueStore>,
 }
 
 impl ChatRuntimeCoreFactory {
     /// Creates a factory used before host capabilities have been installed.
-    pub fn bootstrap(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
+    pub fn bootstrap(filesystem: Arc<VisualFileSystem>) -> Self {
         Self {
-            fileSystemHost,
+            filesystem,
             runtimeDependencies: None,
             pendingQueueStore: Arc::new(PendingChatQueueStore::new()),
         }
@@ -34,12 +34,12 @@ impl ChatRuntimeCoreFactory {
 
     /// Creates a factory that wires chat cores to runtime dependencies.
     pub fn new(
-        fileSystemHost: Arc<dyn FileSystemHost>,
+        filesystem: Arc<VisualFileSystem>,
         toolHandler: AIToolHandler,
         providerRuntimeContext: ProviderRuntimeContext,
     ) -> Self {
         Self {
-            fileSystemHost,
+            filesystem,
             runtimeDependencies: Some(ChatRuntimeDependencies {
                 toolHandler,
                 providerRuntimeContext,
@@ -62,7 +62,7 @@ impl ChatRuntimeCoreFactory {
                 ChatRuntimeSlot::FLOATING => Some(operit_plugin_sdk::js_sdk::chat::ChatRuntime::Floating),
                 ChatRuntimeSlot::DETACHED(_) => None,
             },
-            self.fileSystemHost.clone(),
+            self.filesystem.clone(),
             self.pendingQueueStore.clone(),
         );
         if let Some(runtimeDependencies) = &self.runtimeDependencies {
@@ -100,19 +100,19 @@ impl ChatRuntimeHolder {
     }
 
     /// Creates a holder using bootstrap cores without host-backed enhanced AI services.
-    pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
-        Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap(fileSystemHost))
+    pub fn new(filesystem: Arc<VisualFileSystem>) -> Self {
+        Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap(filesystem))
     }
 
     /// Creates a holder that injects runtime dependencies into newly created cores.
     #[allow(non_snake_case)]
     pub fn newWithRuntimeDependencies(
-        fileSystemHost: Arc<dyn FileSystemHost>,
+        filesystem: Arc<VisualFileSystem>,
         toolHandler: AIToolHandler,
         providerRuntimeContext: ProviderRuntimeContext,
     ) -> Self {
         Self::newWithFactory(ChatRuntimeCoreFactory::new(
-            fileSystemHost,
+            filesystem,
             toolHandler,
             providerRuntimeContext,
         ))

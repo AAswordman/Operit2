@@ -9,14 +9,8 @@ readme = "README.md"
 repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-local-models"
 
-[features]
-default = ["native-llm"]
-native-llm = ["dep:cmake"]
-
-[build-dependencies]
-cmake = { version = "0.1", optional = true }
-
 [dependencies]
+operit-vfs = { version = "0.1.0", path = "../../foundation/vfs" }
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
 operit-util = { version = "2.0.0-preview.17", path = "../../foundation/util" }
 serde.workspace = true
@@ -28,5 +22,6 @@ bzip2-rs.workspace = true
 tar.workspace = true
 
 [dev-dependencies]
+operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
 tokio = { workspace = true, features = ["rt"] }
 bzip2.workspace = true

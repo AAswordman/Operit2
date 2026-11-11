@@ -7,7 +7,7 @@ use operit_host_native_common::{
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreLinkSharedClient};
 use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
@@ -139,7 +139,7 @@ async fn a2a_is_a_managed_package_with_resumable_tasks_and_market_ownership() {
         let root = std::env::temp_dir().join(format!("operit-a2a-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let runtime = root.join("runtime"); let workspace = root.join("workspace");
         std::fs::create_dir_all(&runtime).unwrap(); std::fs::create_dir_all(&workspace).unwrap();
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(runtime.clone(),workspace.clone()));
+
         let storage = Arc::new(NativeRuntimeStorageHost::new(runtime.clone(),workspace));
         let http = Arc::new(AgentHost::default());
         let application = OperitApplication::newWithContext(HostManager {
