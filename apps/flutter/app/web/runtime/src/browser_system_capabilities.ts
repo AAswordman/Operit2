@@ -1,3 +1,18 @@
+/** Validates the browser prerequisites of the runtime's synchronous Host channels. */
+export function requireBrowserSharedMemory(): void {
+  if (!globalThis.isSecureContext) {
+    throw new Error("Operit2 Web requires HTTPS or localhost. Open https://web.operit.app/ directly.");
+  }
+  if (globalThis.crossOriginIsolated !== true) {
+    throw new Error("Operit2 Web requires cross-origin isolation. Open https://web.operit.app/ directly; " +
+      "the server must send Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp.");
+  }
+  if (typeof globalThis.SharedArrayBuffer !== "function") {
+    throw new Error("This browser does not expose SharedArrayBuffer, required by Operit2 Web's Host and plugin runtime. " +
+      "Open this page in an up-to-date browser with shared memory enabled.");
+  }
+}
+
 /** Describes the local Tesseract worker boundary used by the browser host. */
 export interface BrowserOcrWorker {
   recognize(image: Blob): Promise<{ data: { text: string } }>;

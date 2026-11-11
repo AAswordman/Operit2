@@ -90,7 +90,7 @@ struct PeerSyncGate {
     /// Business failures keep receiving new data without arming connection failure backoff.
     pendingWork: bool,
     /// A deterministic failure is attempted again only after either peer's state changes.
-    failedState: Option<(Result<String, String>, Result<String, String>)>,
+    failedState: Option<((Result<String, String>, Result<String, String>), String)>,
 }
 
 impl PeerSyncGate {
@@ -432,7 +432,7 @@ impl SpacePersistenceSyncService {
             let (projection, networkFailure) = classifySync(crate::fault_isolation::operation(&format!("Peer {peerNodeId} Space projection"),
                 self.exchangePairedDeviceSpaceProjection(&peerNodeId))).await;
             if let Err(error) = projection {
-                self.recordPeerFailure(&peerNodeId, networkFailure).await;
+                self.recordPeerFailure(&peerNodeId, networkFailure, &error).await;
                 cycleDecisions.insert(peerNodeId.clone(), false);
                 errors.push(format!("CoreNode {peerNodeId} Space projection exchange: {error}"));
                 continue;
@@ -544,7 +544,7 @@ impl SpacePersistenceSyncService {
                 }
             }
             Err(error) => {
-                self.recordPeerFailure(&targetNodeId, networkFailure).await;
+                self.recordPeerFailure(&targetNodeId, networkFailure, error).await;
                 let retryAt = self.state.peerGates.lock().map_err(|error| error.to_string())?
                     .get(&targetNodeId).filter(|gate| gate.consecutiveFailures > 0).map(|gate| gate.nextFullSyncAllowedAt);
                 operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!(
@@ -734,7 +734,7 @@ impl SpacePersistenceSyncService {
             let (probe, networkFailure) = classifySync(self.probeRemoteClockSummary(targetNodeId)).await;
             match probe {
                 Ok(summary) => {
-                    if gate.failedState.as_ref() == Some(&(Ok(localStateSummary.to_owned()), Ok(summary.clone()))) {
+                    if gate.failedState.as_ref().map(|(state, _)| state) == Some(&(Ok(localStateSummary.to_owned()), Ok(summary.clone()))) {
                         cycleDecisions.insert(targetNodeId.to_string(), false);
                         return false;
                     }
@@ -752,8 +752,8 @@ impl SpacePersistenceSyncService {
                 // once the peer answers again, the retry converges and the
                 // gate returns to probing.
                 Err(error) => {
-                    if gate.failedState.as_ref() == Some(&(Ok(localStateSummary.to_owned()), Err(error.clone()))) { return false; }
-                    self.recordPeerFailure(targetNodeId, networkFailure).await;
+                    if gate.failedState.as_ref().map(|(state, _)| state) == Some(&(Ok(localStateSummary.to_owned()), Err(error.clone()))) { return false; }
+                    self.recordPeerFailure(targetNodeId, networkFailure, &error).await;
                     operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService", &format!(
                         "sync_gate.probe_failed target={targetNodeId} networkFailure={networkFailure} retryDelayMs={} error={error}",
                         if networkFailure { peerFullSyncBackoffMs(gate.consecutiveFailures.saturating_add(1)) } else { 0 }));
@@ -806,7 +806,7 @@ impl SpacePersistenceSyncService {
         let gate = gates.get(&target).ok_or_else(||CoreLinkError::internal("Synchronization gate missing"))?;
         if let Err(error) = result { return Err(CoreLinkError::new(if gate.consecutiveFailures > 0 { "PEER_SYNC_NETWORK_FAILED" } else { "PEER_SYNC_CORRECTION_FAILED" }, error)); }
         if gate.consecutiveFailures > 0 { return Err(CoreLinkError::new("PEER_SYNC_NETWORK_FAILED", "Peer synchronization is waiting for connection")); }
-        if gate.failedState.is_some() { return Err(CoreLinkError::new("PEER_SYNC_CORRECTION_FAILED", "Peer synchronization requires changed data or an explicit request")); }
+        if let Some((_, error)) = &gate.failedState { return Err(CoreLinkError::new("PEER_SYNC_CORRECTION_FAILED", error.clone())); }
         Ok(PeerSyncStatus { local: gate.lastLocalStateSummary.clone(), remote: gate.lastRemoteClockSummary.clone(), pending: gate.pendingWork,
             progress: self.peerProgress(&target) })
     }
@@ -822,12 +822,12 @@ impl SpacePersistenceSyncService {
     }
 
     /// Only transport faults arm retries; deterministic failures wait for changed state or an explicit request.
-    async fn recordPeerFailure(&self, target: &str, network: bool) {
+    async fn recordPeerFailure(&self, target: &str, network: bool, error: &str) {
         if network { self.recordPeerPassFailed(target); return; }
         let state = (self.localStateSummary().await, self.probeRemoteClockSummary(target).await);
         if let Ok(mut gates) = self.state.peerGates.lock() {
             let gate = gates.entry(target.to_owned()).or_default();
-            gate.failedState = Some(state);
+            gate.failedState = Some((state, error.to_owned()));
             gate.pendingWork = false;
             gate.consecutiveFailures = 0;
             gate.nextFullSyncAllowedAt = 0;

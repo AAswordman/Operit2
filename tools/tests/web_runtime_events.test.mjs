@@ -2,10 +2,30 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
+import { stripTypeScriptTypes } from 'node:module';
 
 const root = new URL('../../', import.meta.url);
 const source = path => readFileSync(new URL(path, root), 'utf8');
 const worker = source('apps/flutter/app/web/runtime/src/operit_runtime_worker.ts');
+
+/** Runs startup without browser capabilities to ensure failures precede shared-memory allocation. */
+test('runtime startup explains missing shared memory before allocating worker channels', () => {
+  const capabilities = stripTypeScriptTypes(source('apps/flutter/app/web/runtime/src/browser_system_capabilities.ts'))
+    .replace(/^export /gm, '');
+  const startup = stripTypeScriptTypes(worker, { mode: 'transform' }).replace(/^import .*\n/gm, '').replace(/^export \{\s*\};?\n/gm, '');
+  for (const [environment, reason] of [
+    [{ isSecureContext: false, crossOriginIsolated: false }, /requires HTTPS/],
+    [{ isSecureContext: true, crossOriginIsolated: false }, /requires cross-origin isolation/],
+    [{ isSecureContext: true, crossOriginIsolated: true }, /browser does not expose SharedArrayBuffer/],
+  ]) {
+    const context = vm.createContext({ ...environment, SharedArrayBuffer: undefined });
+    vm.runInContext(capabilities, context);
+    assert.throws(() => vm.runInContext(startup, context), reason);
+  }
+  const supported = vm.createContext({ isSecureContext: true, crossOriginIsolated: true, SharedArrayBuffer });
+  vm.runInContext(capabilities, supported);
+  assert.doesNotThrow(() => vm.runInContext('requireBrowserSharedMemory()', supported));
+});
 
 /** Executes the actual worker registrations without starting a browser/OPFS runtime. */
 function registrations() {

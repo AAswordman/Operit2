@@ -72,6 +72,7 @@ impl Operit1SnapshotImportManager {
             cards: buildOperit2CharacterCards(parsed, plan)?,
             groups: buildOperit2CharacterGroups(parsed)?,
             tags: buildOperit2PromptTags(parsed)?,
+            active: Some(buildOperit1ActivePrompt(parsed)?),
             ..CharacterMigrationData::default()
         };
         for card in &mut data.cards {
@@ -157,30 +158,27 @@ impl Operit1SnapshotImportManager {
             parsed.copyEntryTo(&operit1UserMarkdownEntry(profile), &mut document)?;
             data.documents.insert(owner, document);
         }
-        let card_preferences = parsed
-            .archive
-            .datastorePreferences
-            .get(ENTRY_CHARACTER_CARDS)
-            .ok_or("Operit1 character preferences are missing")?;
-        let group_preferences = parsed
-            .archive
-            .datastorePreferences
-            .get(ENTRY_CHARACTER_GROUPS);
-        let group_id = group_preferences
-            .map(|preferences| optionalPreferenceString(preferences, "active_character_group_id"))
-            .transpose()?
-            .flatten()
-            .filter(|id| !id.is_empty());
-        data.active = Some(match group_id {
-            Some(id) => serde_json::json!({"CharacterGroup":{"id":id}}),
-            None => {
-                serde_json::json!({"CharacterCard":{"id":requiredPreferenceString(card_preferences, "active_character_card_id", "Operit1 active character is missing")?}})
-            }
-        });
         writer.import(&source, data)?;
         writer.migrateThemes(&source, &theme_preferences, &theme_targets)?;
         Ok((memory_count, link_count))
     }
+}
+
+/// Decodes the same group, card and implicit default selection as Kotlin's ActivePromptManager.
+fn buildOperit1ActivePrompt(parsed: &ParsedOperit1Snapshot) -> Result<Value, String> {
+    for (entry, key, kind) in [
+        (ENTRY_CHARACTER_GROUPS, "active_character_group_id", "CharacterGroup"),
+        (ENTRY_CHARACTER_CARDS, "active_character_card_id", "CharacterCard"),
+    ] {
+        let id = parsed.archive.datastorePreferences.get(entry)
+            .map(|preferences| optionalPreferenceString(preferences, key))
+            .transpose()?
+            .flatten();
+        if let Some(id) = id.filter(|id| !id.trim().is_empty()) {
+            return Ok(serde_json::json!({(kind): {"id": id}}));
+        }
+    }
+    Ok(serde_json::json!({"CharacterCard": {"id": OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID}}))
 }
 
 /// Prepares plugin bindings and carries only draft references until Core imports each chat.

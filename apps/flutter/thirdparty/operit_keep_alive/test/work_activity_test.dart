@@ -8,7 +8,6 @@ const options = KeepAliveOptions(
   androidServiceClassName: 'test.CoreService',
   openLabel: 'Open',
   exitLabel: 'Quit',
-  quitMessage: 'Stop active work?',
 );
 const labels = WorkPresentationLabels(
   open: 'Open',

@@ -69,6 +69,7 @@ core.SpaceSyncProgress progress({
   int? totalRecords,
   int pendingRecords = 0,
   String? error,
+  bool retryScheduled = true,
   String peer = 'tablet',
 }) {
   final now = DateTime.now().millisecondsSinceEpoch;
@@ -86,7 +87,9 @@ core.SpaceSyncProgress progress({
     transferredBytes: 2097152,
     fileBytes: fileBytes,
     fileSize: fileSize,
-    retryAt: status == core.SpaceSyncStatus.waiting ? now + 2000 : null,
+    retryAt: status == core.SpaceSyncStatus.waiting && retryScheduled
+        ? now + 2000
+        : null,
     error: error,
   );
 }
@@ -289,6 +292,7 @@ void main() {
           completedRecords: 9999,
           totalRecords: 10000,
           pendingRecords: 1,
+          retryScheduled: false,
           error: 'plugin_storage: Invalid or duplicate remote key',
         ),
       );
@@ -299,6 +303,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('同步完成'), findsNothing);
+      expect(find.text('部分数据尚未处理完成'), findsOneWidget);
+      expect(find.textContaining('自动重试'), findsNothing);
       await tester.pump(const Duration(seconds: 3));
       expect(find.text('后台任务'), findsNothing);
     },

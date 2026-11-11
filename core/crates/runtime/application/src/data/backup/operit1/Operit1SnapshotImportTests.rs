@@ -60,6 +60,7 @@ fn diagnose_external_operit1_snapshot() {
     assert_eq!(imported.importedChats, preview.chatCount);
     assert_eq!(imported.importedMessages, preview.messageCount);
     let writer = crate::data::backup::CharacterPluginMigration::CharacterPluginWriter::open(host.clone(), host.clone()).unwrap();
+    assert_eq!(writer.get("meta", "state").unwrap().unwrap()["value"]["active"], buildOperit1ActivePrompt(&expected).unwrap());
     assert!(writer.get("meta", "state").unwrap().unwrap()["value"].get("legacyImportPending").is_none(), "Fresh imports must be ready without a second plugin migration");
     for owner in writer.list("owners").unwrap() {
         assert_eq!(owner["key"], owner["value"]["ownerKey"], "memory owner identity mismatch");
@@ -256,6 +257,36 @@ fn memory_space_validation_uses_metadata_instead_of_raw_database_directories() {
     cards.insert("character_card_card-1_memory_profile_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_PROFILE".to_string()));
     cards.insert("character_card_card-1_memory_profile_id".to_string(), Operit1PreferenceValue::String("profile_1784617683731".to_string()));
     assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 角色卡绑定了不存在的记忆库："));
+}
+
+/// Preserves Kotlin's implicit default, whitespace handling and group precedence without rewriting IDs.
+#[test]
+fn active_prompt_import_matches_kotlin_selection_semantics() {
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    for (group, card, expected) in [
+        (None, None, serde_json::json!({"CharacterCard":{"id":OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID}})),
+        (Some(" \t"), Some("\n"), serde_json::json!({"CharacterCard":{"id":OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID}})),
+        (Some(""), Some("card-1"), serde_json::json!({"CharacterCard":{"id":"card-1"}})),
+        (Some("group-1"), None, serde_json::json!({"CharacterGroup":{"id":"group-1"}})),
+        (Some("group-1"), Some("card-1"), serde_json::json!({"CharacterGroup":{"id":"group-1"}})),
+        (None, Some("deleted-card"), serde_json::json!({"CharacterCard":{"id":"deleted-card"}})),
+    ] {
+        for (entry, key, value) in [
+            (ENTRY_CHARACTER_GROUPS, "active_character_group_id", group),
+            (ENTRY_CHARACTER_CARDS, "active_character_card_id", card),
+        ] {
+            let preferences = parsed.archive.datastorePreferences.get_mut(entry).unwrap();
+            preferences.remove(key);
+            if let Some(id) = value {
+                preferences.insert(key.to_string(), Operit1PreferenceValue::String(id.to_string()));
+            }
+        }
+        assert_eq!(buildOperit1ActivePrompt(&parsed).unwrap(), expected);
+    }
+    parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap().insert(
+        "active_character_card_id".to_string(), Operit1PreferenceValue::Boolean(true),
+    );
+    assert!(buildOperit1ActivePrompt(&parsed).is_err());
 }
 
 /// Persists all API credentials, empty draft providers, model indices and fixed character provider bindings.

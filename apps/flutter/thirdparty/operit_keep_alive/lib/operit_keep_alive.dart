@@ -61,14 +61,12 @@ class KeepAliveOptions {
     required this.androidServiceClassName,
     required this.openLabel,
     required this.exitLabel,
-    required this.quitMessage,
   });
 
   final String applicationName;
   final String androidServiceClassName;
   final String openLabel;
   final String exitLabel;
-  final String quitMessage;
 
   /// Encodes identical arguments for every registered platform implementation.
   Map<String, Object> toMap() => {
@@ -76,7 +74,6 @@ class KeepAliveOptions {
     'androidServiceClassName': androidServiceClassName,
     'openLabel': openLabel,
     'exitLabel': exitLabel,
-    'quitMessage': quitMessage,
   };
 }
 

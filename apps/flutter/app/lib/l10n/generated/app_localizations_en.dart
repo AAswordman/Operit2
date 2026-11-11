@@ -4692,8 +4692,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sync interrupted. Retrying automatically.';
 
   @override
-  String get deviceSpaceSyncPending =>
-      'Some data is still pending. Retrying automatically.';
+  String get deviceSpaceSyncPending => 'Some data is still pending.';
 
   @override
   String deviceSpaceSyncCurrentFile(String done, String total) {

@@ -711,7 +711,7 @@ fn disk_initializers_preserve_bytes_migrate_old_text_and_reject_changed_envelope
         let files = RuntimeFileSyncStore::new(fixture.store.storage.clone().unwrap(),"runtime/sync");
         assert_eq!(files.readSqlInitialization(&wire).unwrap().data,eager.data);
         let mut forged = wire.clone(); forged.entityId = "runtime/other.sqlite".into();
-        assert!(crate::SyncBlobIo::verify_initialization(fixture.store.storage.as_ref().unwrap().as_ref(),"runtime/sync",&forged).is_err());
+        assert!(crate::SyncBlobIo::verify_transaction(fixture.store.storage.as_ref().unwrap().as_ref(),"runtime/sync",&forged).is_err());
         assert!(files.readSqlInitialization(&forged).is_err());
         // An unverified pending envelope must be replaceable after its blob arrives.
         let storage = fixture.store.storage.as_ref().unwrap();

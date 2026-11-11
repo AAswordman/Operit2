@@ -47,6 +47,7 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
+operit-vfs = { path = "../../foundation/vfs" }
 quote = "1"
 syn = { version = "2", features = ["full"] }
 sha2 = "0.10"

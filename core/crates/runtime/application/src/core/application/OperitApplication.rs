@@ -1026,14 +1026,7 @@ impl OperitApplication {
         let operations: Vec<SyncOperation> = serde_json::from_value(operations).map_err(|e|e.to_string())?;
         let files = self.runtimeFileSyncStore()?;
         let mut errors = Vec::new();
-        let mut deferred = BTreeMap::new();
-        let operations = operations.into_iter().filter_map(|op| {
-            let (id, owner) = (op.opId.clone(), op.entityId.clone());
-            match files.hydrateTransaction(op) {
-                Ok(original) => Some(original),
-                Err(error) => { errors.push(format!("transaction {id} owner={owner}: {error}")); deferred.insert(id, owner); None }
-            }
-        }).collect::<Vec<_>>();
+        let operations = operations.into_iter().map(|op| files.hydrateTransaction(op)).collect::<Result<Vec<_>,_>>()?;
         let journal = self.runtimeSyncOperationStore()?;
         let application = journal.lockApplication().map_err(|e|e.to_string())?;
         journal.receiveOperations(&operations).map_err(|e|e.to_string())?;
@@ -1044,8 +1037,7 @@ impl OperitApplication {
         let registry = self.transactionRegistry(&schema,&pending)?;
         let mut report = registry.apply_pending()?;
         errors.append(&mut report.errors);
-        report.pending.extend(deferred.keys().cloned());
-        let pending_owners = deferred.values().map(|path| operit_store::Transaction::Migrations::resolve_path(&registry.routes, path))
+        let pending_owners = pending.iter().filter(|op|report.pending.contains(&op.opId)).map(|op|registry.target(op))
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
         drop(application);
         operit_store::SyncAppliedChanges::publish(&storage,&report.applied);

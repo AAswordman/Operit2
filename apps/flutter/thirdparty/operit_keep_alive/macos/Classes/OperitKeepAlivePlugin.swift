@@ -13,7 +13,6 @@ public final class OperitKeepAlivePlugin: NSObject, FlutterPlugin, NSWindowDeleg
     private var workRevision: Int64 = -1
     private var initialized = false
     private var title = ""
-    private var quitMessage = ""
 
     /// Retains only this engine's channel and view until the main entrypoint claims residency.
     private init(view: NSView?, channel: FlutterMethodChannel) {
@@ -64,7 +63,6 @@ public final class OperitKeepAlivePlugin: NSObject, FlutterPlugin, NSWindowDeleg
                           userInfo: [NSLocalizedDescriptionKey: "Main keep-alive window is unavailable"])
         }
         title = try string(arguments, "applicationName")
-        quitMessage = try string(arguments, "quitMessage")
         let menu = NSMenu()
         let open = NSMenuItem(title: try string(arguments, "openLabel"), action: #selector(openWindow), keyEquivalent: "")
         open.target = self
@@ -115,17 +113,8 @@ public final class OperitKeepAlivePlugin: NSObject, FlutterPlugin, NSWindowDeleg
         ownerWindow?.makeKeyAndOrderFront(nil)
     }
 
-    /// Requires explicit confirmation before quitting a process with active work leases.
+    /// Honors the explicit menu-bar exit action without requesting another confirmation.
     @objc private func exitApplication() {
-        if !leases.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = title
-            alert.informativeText = quitMessage
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Quit")
-            alert.addButton(withTitle: "Cancel")
-            if alert.runModal() != .alertFirstButtonReturn { return }
-        }
         NSApp.terminate(nil)
     }
 

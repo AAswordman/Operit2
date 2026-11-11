@@ -9,7 +9,6 @@ const options = KeepAliveOptions(
   androidServiceClassName: 'test.CoreService',
   openLabel: 'Open',
   exitLabel: 'Quit',
-  quitMessage: 'Stop active work?',
 );
 
 /// Builds an explicit transport response with independently selectable capabilities.

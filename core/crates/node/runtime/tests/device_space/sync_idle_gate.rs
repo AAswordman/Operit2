@@ -843,6 +843,11 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
             let before = synchronizedMethodCount(&peers[1], "syncReadSnapshot");
             observer.synchronizeOnce().await.unwrap();
             assert_eq!(synchronizedMethodCount(&peers[1], "syncReadSnapshot"), before, "storage errors must not arm a retry");
+            for _ in 0..2 {
+                let error = observer.synchronizeRequestedPeer(routers[0].localNodeId(), 512, false).await.err().unwrap();
+                assert!(error.message.contains("database is corrupt"), "the gate must retain the original failure: {error}");
+                assert_eq!(synchronizedMethodCount(&peers[1], "syncReadSnapshot"), before, "unchanged failures must stay gated");
+            }
             continue;
         }
         assert!(result.is_ok(), "{fault}: {result:?}");

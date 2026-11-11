@@ -2235,6 +2235,7 @@ dependencies = [
  "operit-store",
  "operit-tools",
  "operit-util",
+ "operit-vfs",
  "quote",
  "rand_core 0.6.4",
  "ring",
@@ -2498,7 +2499,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.31"
+version = "2.0.0-preview.32"
 dependencies = [
  "aes",
  "async-trait",

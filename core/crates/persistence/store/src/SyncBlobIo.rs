@@ -43,21 +43,22 @@ pub(crate) fn verifyBlob(reference: &RuntimeFileSyncReference, content: &[u8]) -
     Ok(())
 }
 
-pub(crate) fn initialization_reference(operation:&SyncOperation)->Result<Option<RuntimeFileSyncReference>,String> {
-    if operation.operation!="initialize" || operation.entityType!="initialization" { return Ok(None); }
+/// Resolves the transport envelope shared by ordinary operations and initializers.
+pub(crate) fn transaction_reference(operation:&SyncOperation)->Result<Option<RuntimeFileSyncReference>,String> {
     operation.payload.get("transactionBlob").map(|value| {
+        if operation.payload.as_object().is_none_or(|payload|payload.len()!=1) { return Err("Invalid transaction blob envelope".into()); }
         let reference:RuntimeFileSyncReference=serde_json::from_value(value.clone()).map_err(|e|e.to_string())?;
         validateBlobReference(&reference)?;
         Ok(reference)
     }).transpose()
 }
-/// Validate the immutable header before reserving a downloaded initializer's journal identity.
-pub(crate) fn verify_initialization(host:&dyn RuntimeStorageHost,root:&str,operation:&SyncOperation)->Result<(),String> {
-    let Some(reference)=initialization_reference(operation)? else { return Ok(()); };
+/// Validates the immutable header before reserving a downloaded operation's journal identity.
+pub(crate) fn verify_transaction(host:&dyn RuntimeStorageHost,root:&str,operation:&SyncOperation)->Result<(),String> {
+    let Some(reference)=transaction_reference(operation)? else { return Ok(()); };
     let path=format!("{root}/blobs/{}",reference.contentHash);
     if !host.exists(&path).map_err(|e|e.to_string())? { return Ok(()); }
     let header:SyncOperation<serde::de::IgnoredAny>=read_json(host,&path,&reference)?;
-    if header.with_payload(serde_json::Value::Null)!=operation.with_payload(serde_json::Value::Null) { return Err("Initialization blob differs from its envelope".into()); }
+    if header.with_payload(serde_json::Value::Null)!=operation.with_payload(serde_json::Value::Null) { return Err("Transaction blob differs from its envelope".into()); }
     Ok(())
 }
 

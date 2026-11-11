@@ -4506,7 +4506,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceSyncRetrying => '同步暂时中断，稍后自动重试';
 
   @override
-  String get deviceSpaceSyncPending => '部分数据尚未处理完成，稍后自动重试';
+  String get deviceSpaceSyncPending => '部分数据尚未处理完成';
 
   @override
   String deviceSpaceSyncCurrentFile(String done, String total) {

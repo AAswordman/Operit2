@@ -67,16 +67,9 @@ class Residency {
     gtk_window_present(self->window_);
   }
 
-  /// Confirms an explicit process exit while Core execution leases remain active.
+  /// Honors the explicit tray exit action without requesting another confirmation.
   static void Exit(GtkMenuItem*, gpointer data) {
     auto* self = static_cast<Residency*>(data);
-    if (!self->leases_.empty()) {
-      GtkWidget* dialog = gtk_message_dialog_new(self->window_, GTK_DIALOG_MODAL,
-          GTK_MESSAGE_QUESTION, GTK_BUTTONS_OK_CANCEL, "%s", self->quit_message_.c_str());
-      const int response = gtk_dialog_run(GTK_DIALOG(dialog));
-      gtk_widget_destroy(dialog);
-      if (response != GTK_RESPONSE_OK) return;
-    }
     g_application_quit(G_APPLICATION(self->application_));
   }
 
@@ -114,7 +107,6 @@ class Residency {
     const auto title = String(arguments, "applicationName");
     const auto open = String(arguments, "openLabel");
     const auto exit = String(arguments, "exitLabel");
-    quit_message_ = String(arguments, "quitMessage");
     if (view_ == nullptr) throw std::runtime_error("Flutter view is unavailable");
     GtkWidget* root = gtk_widget_get_toplevel(GTK_WIDGET(view_));
     if (!GTK_IS_WINDOW(root)) throw std::runtime_error("Main GTK window is unavailable");
@@ -302,7 +294,6 @@ class Residency {
   GtkWidget* menu_ = nullptr;
   AppIndicator* indicator_ = nullptr;
   bool available_ = false;
-  std::string quit_message_;
   std::set<std::string> leases_;
   GtkWidget* work_section_ = nullptr;
   int64_t work_revision_ = -1;

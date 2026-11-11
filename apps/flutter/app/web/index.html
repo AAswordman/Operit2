@@ -291,6 +291,8 @@
     globalThis.__operitDataRescueReady = import("./runtime/generated/operit_data_rescue.js");
     globalThis.__operitRuntimeReady = globalThis.__operitDataRescueReady.then(async maintenance => {
       if (maintenance.isDataRescuePage()) return;
+      const { requireBrowserSharedMemory } = await import("./runtime/generated/browser_system_capabilities.js");
+      requireBrowserSharedMemory();
       await maintenance.acquireRuntimeAccess();
       await import("./runtime/generated/operit_runtime_bridge.js");
     });

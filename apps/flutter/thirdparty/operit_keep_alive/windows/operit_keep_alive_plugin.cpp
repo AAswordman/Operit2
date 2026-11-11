@@ -127,7 +127,6 @@ class KeepAlivePlugin final : public flutter::Plugin {
     const auto title = Wide(String(arguments, "applicationName"));
     const auto open = Wide(String(arguments, "openLabel"));
     const auto exit = Wide(String(arguments, "exitLabel"));
-    const auto quit_message = Wide(String(arguments, "quitMessage"));
     const auto taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
     if (taskbar_created == 0) throw std::runtime_error("Unable to register shell lifecycle message");
     NOTIFYICONDATAW tray{};
@@ -151,7 +150,6 @@ class KeepAlivePlugin final : public flutter::Plugin {
     title_ = title;
     open_ = open;
     exit_ = exit;
-    quit_message_ = quit_message;
     taskbar_created_ = taskbar_created;
     tray_ = tray;
     if (!initialized_) AddTray();
@@ -171,10 +169,8 @@ class KeepAlivePlugin final : public flutter::Plugin {
     SetForegroundWindow(window_);
   }
 
-  /// Requires an explicit user decision before closing a Core that still owns work leases.
+  /// Honors the explicit tray exit action without requesting another confirmation.
   void Exit() {
-    if (!leases_.empty() && MessageBoxW(window_, quit_message_.c_str(), title_.c_str(),
-        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND) != IDYES) return;
     if (!PostMessageW(window_, WM_CLOSE, 0, 0)) throw std::runtime_error("Unable to request application shutdown");
     closing_ = true;
   }
@@ -339,7 +335,7 @@ class KeepAlivePlugin final : public flutter::Plugin {
   bool tray_added_ = false;
   bool initialized_ = false;
   bool closing_ = false;
-  std::wstring title_, open_, exit_, quit_message_;
+  std::wstring title_, open_, exit_;
   std::set<std::string> leases_;
   int64_t work_revision_ = -1;
   std::vector<WorkItem> work_items_;

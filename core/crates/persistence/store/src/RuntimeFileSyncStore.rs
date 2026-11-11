@@ -313,12 +313,12 @@ impl RuntimeFileSyncStore {
         }
     }
 
-    /// Returns the blob required by one runtime-file upsert operation.
+    /// Returns the content blob required by a transported operation or runtime-file upsert.
     pub fn requiredBlob(
         operation: &SyncOperation,
     ) -> Result<Option<RuntimeFileSyncReference>, String> {
-        if operation.entityType == "initialization" && operation.operation == "initialize" {
-            return crate::SyncBlobIo::initialization_reference(operation);
+        if let Some(reference) = crate::SyncBlobIo::transaction_reference(operation)? {
+            return Ok(Some(reference));
         }
         if operation.domain != RUNTIME_FILE_SYNC_DOMAIN {
             return Ok(None);
@@ -339,9 +339,9 @@ impl RuntimeFileSyncStore {
         }
     }
 
-    /// Initializers use the existing verified blob transport instead of exceeding an operation page.
+    /// Sends large immutable originals through the existing verified blob transport.
     pub fn prepareTransactionForTransport(&self, mut operation: SyncOperation) -> Result<SyncOperation,String> {
-        if operation.operation == "initialize" && operation.entityType == "initialization" && Self::requiredBlob(&operation)?.is_none() {
+        if crate::SyncBlobIo::transaction_reference(&operation)?.is_none() {
             let (hash, size) = crate::Transaction::serialized_digest(&operation)?;
             if size > 32 * 1024 {
                 let reference = self.storeJsonBlobWithDigest(&operation, hash, size)?;
@@ -351,17 +351,18 @@ impl RuntimeFileSyncStore {
         Ok(operation)
     }
 
+    /// Restores the verified original, leaving SQL initializers to their streaming reader.
     pub fn hydrateTransaction(&self, operation: SyncOperation) -> Result<SyncOperation,String> {
-        if operation.operation != "initialize" || operation.entityType != "initialization" { return Ok(operation); }
-        let Some(reference) = Self::requiredBlob(&operation)? else { return Ok(operation); };
-        if matches!(operation.domain.as_str(), "chat"|"plugin_storage") { return Ok(operation); }
+        let Some(reference) = crate::SyncBlobIo::transaction_reference(&operation)? else { return Ok(operation); };
+        let initialization = operation.operation == "initialize" && operation.entityType == "initialization";
+        if initialization && matches!(operation.domain.as_str(), "chat"|"plugin_storage") { return Ok(operation); }
         let mut original: SyncOperation = self.readJsonBlob(&reference)?;
         // Only the tiny transport payload changes. Do not clone the complete transaction to compare headers.
         let payload = std::mem::replace(&mut original.payload, operation.payload.clone());
         let matches = original == operation;
         original.payload = payload;
-        if !matches || !crate::Transaction::compaction::Initialization::validate_identity(&original)? {
-            return Err("Initialization blob differs from its envelope".into());
+        if !matches || (initialization && !crate::Transaction::compaction::Initialization::validate_identity(&original)?) {
+            return Err("Transaction blob differs from its envelope".into());
         }
         Ok(original)
     }
@@ -596,8 +597,9 @@ mod tests {
         let store = RuntimeFileSyncStore::new(host, RUNTIME_SYNC_DIR_PATH);
         assert!(store.writeBytes(RUNTIME_CLIENT_LOG_PATH, b"log").is_err());
     }
+    /// Blob transport preserves ordinary and initialization identities under corrupt or forged delivery.
     #[test]
-    fn large_initialization_uses_verified_blobs_and_preserves_its_immutable_envelope() {
+    fn large_operations_use_verified_blobs_and_preserve_their_immutable_envelope() {
         use crate::Transaction::{Backend,Owner,Data,Snapshot,compaction::Initialization};
         let (_source_directory, source_host) = storage();
         let (_target_directory, target_host) = storage();
@@ -606,24 +608,31 @@ mod tests {
         let mut data = Data::empty(Owner {backend:Backend::DataStore,path:"runtime/config/preferences/blob.preferences.json".into(),format:1,layout:1});
         data.values.insert("large".into(),serde_json::json!("content".repeat(20_000)));
         let original = Initialization::from_snapshot(&Snapshot {damage:None,node:"a".into(),data,covered:Default::default(),generation:0}).operation("preferences",false).unwrap();
-        let wire = source.prepareTransactionForTransport(original.clone()).unwrap();
-        assert!(serde_json::to_vec(&wire).unwrap().len() < 1024);
-        let reference = RuntimeFileSyncStore::requiredBlob(&wire).unwrap().unwrap();
-        assert!(target.hydrateTransaction(wire.clone()).is_err());
-        target.writeBlob(&reference,&source.readBlob(&reference).unwrap()).unwrap();
-        assert_eq!(target.hydrateTransaction(wire.clone()).unwrap(),original);
-        let path = target.blobStoragePath(&reference).unwrap();
-        let bytes = source.readBlob(&reference).unwrap();
-        for corrupt in [bytes[..bytes.len()-1].to_vec(), [bytes.as_slice(), b" "].concat(), [bytes.as_slice(), b"{}"].concat()] {
-            target.storageHost.writeBytes(&path, &corrupt).unwrap();
+        let mut chat = original.clone();
+        chat.domain = "chat".into(); chat.entityType = "message".into(); chat.operation = "upsert".into();
+        let mut plugin = chat.clone(); plugin.domain = "plugin_storage".into();
+        for original in [original, chat, plugin] {
+            let wire = source.prepareTransactionForTransport(original.clone()).unwrap();
+            assert_eq!(source.prepareTransactionForTransport(wire.clone()).unwrap(), wire);
+            assert_eq!(crate::Transaction::operation_digest(&wire).unwrap(), crate::Transaction::operation_digest(&original).unwrap());
+            assert!(serde_json::to_vec(&wire).unwrap().len() < 1024);
+            let reference = RuntimeFileSyncStore::requiredBlob(&wire).unwrap().unwrap();
             assert!(target.hydrateTransaction(wire.clone()).is_err());
+            target.writeBlob(&reference,&source.readBlob(&reference).unwrap()).unwrap();
+            assert_eq!(target.hydrateTransaction(wire.clone()).unwrap(),original);
+            let path = target.blobStoragePath(&reference).unwrap();
+            let bytes = source.readBlob(&reference).unwrap();
+            for corrupt in [bytes[..bytes.len()-1].to_vec(), [bytes.as_slice(), b" "].concat(), [bytes.as_slice(), b"{}"].concat()] {
+                target.storageHost.writeBytes(&path, &corrupt).unwrap();
+                assert!(target.hydrateTransaction(wire.clone()).is_err());
+            }
+            target.writeBlob(&reference,&bytes).unwrap();
+            let mut forged = wire; forged.createdAt += 1;
+            assert!(target.hydrateTransaction(forged).is_err());
+            target.storageHost.writeBytes(&target.blobStoragePath(&reference).unwrap(), &vec![0; reference.size as usize]).unwrap();
+            assert!(target.hasBlob(&reference).unwrap());
+            assert!(target.readBlob(&reference).is_err());
         }
-        target.writeBlob(&reference,&bytes).unwrap();
-        let mut forged = wire; forged.createdAt += 1;
-        assert!(target.hydrateTransaction(forged).is_err());
-        target.storageHost.writeBytes(&target.blobStoragePath(&reference).unwrap(), &vec![0; reference.size as usize]).unwrap();
-        assert!(target.hasBlob(&reference).unwrap());
-        assert!(target.readBlob(&reference).is_err());
     }
 
     #[test]

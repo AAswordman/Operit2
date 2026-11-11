@@ -2,8 +2,10 @@
 
 This directory owns the Web Access frontend boundary.
 
-The deployment server must send these headers for every application asset so
-threaded Sherpa ONNX WebAssembly can run local STT and TTS:
+The runtime's synchronous Host channels and plugin workers require
+`SharedArrayBuffer` in a secure, cross-origin isolated browser context. Startup
+checks these prerequisites before acquiring runtime ownership. The deployment
+server must send these headers for every application asset:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin

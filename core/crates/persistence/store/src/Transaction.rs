@@ -35,8 +35,7 @@ pub fn verify_original<T: PartialEq>(id: &str, existing: &T, incoming: &T) -> Re
 
 /// A blob reference preserves the fingerprint of the complete canonical original.
 pub(crate) fn operation_digest(operation:&crate::SyncOperationStore::SyncOperation)->Result<String> {
-    if let Some(reference)=crate::SyncBlobIo::initialization_reference(operation)? {
-        if operation.payload.as_object().is_none_or(|v|v.len()!=1) { return Err("Invalid initialization reference".into()); }
+    if let Some(reference)=crate::SyncBlobIo::transaction_reference(operation)? {
         return Ok(reference.contentHash);
     }
     digest(operation)

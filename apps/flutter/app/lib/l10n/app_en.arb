@@ -2482,7 +2482,7 @@
   "@deviceSpaceSyncCounting": {"placeholders": {"count": {"type": "int"}}},
   "deviceSpaceSyncFiles": "Transferring and verifying files",
   "deviceSpaceSyncRetrying": "Sync interrupted. Retrying automatically.",
-  "deviceSpaceSyncPending": "Some data is still pending. Retrying automatically.",
+  "deviceSpaceSyncPending": "Some data is still pending.",
   "deviceSpaceSyncCurrentFile": "Current file: {done} / {total}",
   "@deviceSpaceSyncCurrentFile": {
     "placeholders": {

@@ -154,7 +154,6 @@ void main(List<String> arguments) async {
                         androidServiceClassName: 'app.operit.OperitCoreService',
                         openLabel: '打开 Operit2',
                         exitLabel: '退出 Operit2',
-                        quitMessage: '退出将停止后台任务。确定退出 Operit2？',
                       ),
                     );
                   }

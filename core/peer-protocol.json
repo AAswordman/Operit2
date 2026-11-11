@@ -22,6 +22,7 @@
     "core/crates/persistence/store/src/NetworkControlReadModel.rs",
     "core/crates/persistence/store/src/Transaction.rs",
     "core/crates/persistence/store/src/RuntimeFileSyncStore.rs",
+    "core/crates/persistence/store/src/SyncBlobIo.rs",
     "core/crates/persistence/store/src/WorkspaceFileSyncStore.rs",
     "core/crates/persistence/store/src/sync",
     "edge/sdk/contract/src",
@@ -115,6 +116,14 @@
     {
       "version": 19,
       "hash": "39d74dfd26054fb2c749c4b2175735b301e2ed646ebd54aa1285aebb2310c768"
+    },
+    {
+      "version": 20,
+      "hash": "f2f1b08cd1f56f036b53661d388a4b6d5af502e12c2e82a79aac9be0ecaa2bff"
+    },
+    {
+      "version": 21,
+      "hash": "efb80f2d3aab8f20dccbac5bb41084046b7c8103e77c76d53db18126a645447c"
     }
   ],
   "schemaRoots": [

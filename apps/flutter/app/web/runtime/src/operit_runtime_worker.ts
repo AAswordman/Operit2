@@ -1,6 +1,9 @@
 import { MessagePack } from "./operit_messagepack.js";
+import { requireBrowserSharedMemory } from "./browser_system_capabilities.js";
 
 export {};
+
+requireBrowserSharedMemory();
 
 /** Creates a RFC 4122 version 4 identifier with the Web Crypto random byte API. */
 function createRandomUuid(): string {

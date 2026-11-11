@@ -2,9 +2,7 @@
 use super::*;
 
 use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
 
 use crate::db::AppDatabase::DATABASE_VERSION;
 use crate::sqliteParams;
@@ -14,34 +12,15 @@ use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 
 use operit_host_native_storage::NativeRuntimeStorageHost;
 
-static HOSTS: OnceLock<()> = OnceLock::new();
-static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 pub(crate) static DATABASE_MUTEX: Mutex<()> = Mutex::new(());
 
-fn installTestHosts() {
-    HOSTS.get_or_init(|| {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock must be after UNIX_EPOCH")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "operit2-sql-sync-tests-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).expect("test runtime host root must be created");
-        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join(WORKSPACE_DIR_PATH)));
-
-        setDefaultRuntimeStorageHost(host.clone());
-        setDefaultRuntimeSqliteHost(host);
-    });
-}
-
+/// Gives each replica its own Host roots while all production paths remain virtual.
 fn testPaths(name: &str) -> RuntimeStorePaths {
-    installTestHosts();
-    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    let runtimeDir = RuntimeStorePaths::default()
-        .runtime_dir()
-        .join(format!("sync-tests/{name}-{id}"));
+    let root = std::env::temp_dir().join(format!("operit2-sql-sync-{name}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join(WORKSPACE_DIR_PATH)));
+    setDefaultRuntimeStorageHost(host.clone());
+    setDefaultRuntimeSqliteHost(host);
     RuntimeStorePaths::default()
 }
 
@@ -174,6 +153,34 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
         createdAt: sequence,
         schemaVersion: CHAT_SYNC_OPERATION_SCHEMA_VERSION,
     }
+}
+
+/// A chat operation larger than the Link ceiling remains atomic and idempotent through blob transport.
+#[test]
+fn large_chat_operation_round_trips_without_advancing_receipts_on_missing_blobs() {
+    use crate::RuntimeFileSyncStore::RuntimeFileSyncStore;
+    let _guard = DATABASE_MUTEX.lock().unwrap_or_else(|error|error.into_inner());
+    let (_, database, store) = openTestStore("large-chat-transport");
+    let host = crate::RuntimeStorageHost::defaultRuntimeStorageHost();
+    let source = RuntimeFileSyncStore::new(host.clone(), "runtime/sync/large-source");
+    let target = RuntimeFileSyncStore::new(host, "runtime/sync/large-target");
+    let content = "x".repeat(5 * 1024 * 1024);
+    let original = upsertOperation(1, &content);
+    let wire = source.prepareTransactionForTransport(original.clone()).unwrap();
+    assert!(serde_json::to_vec(&wire).unwrap().len() < 1024);
+    let before = store.receipt().unwrap();
+    assert!(target.hydrateTransaction(wire.clone()).is_err());
+    assert_eq!(store.receipt().unwrap(), before);
+    assert!(database.chatDao().getChatById("chat-remote").unwrap().is_none());
+    let reference = RuntimeFileSyncStore::requiredBlob(&wire).unwrap().unwrap();
+    target.writeBlob(&reference, &source.readBlob(&reference).unwrap()).unwrap();
+    let restored = target.hydrateTransaction(wire).unwrap();
+    assert_eq!(restored, original);
+    store.applyOperation(&restored).unwrap();
+    store.applyOperation(&restored).unwrap();
+    assert_eq!(database.messagePartDao().getPartsForMessage("chat-remote", 2_000, 0).unwrap()[0].content, content);
+    assert!(store.receipt().unwrap().containsSequence(&original.originDeviceId, original.sequence));
+    assert_eq!(sqlOperationCount(&database), 1);
 }
 
 /// Rejoining replicas converge on deletion despite old snapshots, in-flight replies and repeated delivery.

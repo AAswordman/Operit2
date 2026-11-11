@@ -1798,7 +1798,7 @@ impl SyncOperationStore {
     }
 
     fn storeOriginals(&self, operations: &[SyncOperation], pending: bool) -> Result<(), SyncOperationStoreError> {
-        for operation in operations { crate::SyncBlobIo::verify_initialization(self.storageHost.as_ref(),&self.rootPath,operation).map_err(SyncOperationStoreError::Message)?; }
+        for operation in operations { crate::SyncBlobIo::verify_transaction(self.storageHost.as_ref(),&self.rootPath,operation).map_err(SyncOperationStoreError::Message)?; }
         let stored = operations.iter().map(|operation| self.encodeOperationPayload(operation)).collect::<Result<Vec<_>, _>>()?;
         self.withJournal(|journal| journal.transaction(|tx| {
             for (operation, stored) in operations.iter().zip(&stored) {

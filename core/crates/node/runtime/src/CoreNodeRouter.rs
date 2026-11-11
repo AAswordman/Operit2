@@ -2760,6 +2760,13 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct TestFileSystemHost;
 
+    /// Wraps the route fixture's nonpersistent backend in the production VFS boundary.
+    fn testFileSystem() -> Arc<operit_vfs::VisualFileSystem::VisualFileSystem> {
+        Arc::new(operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(
+            Arc::new(TestFileSystemHost), "/runtime".into(), "/workspace".into(),
+        ))
+    }
+
     impl TestFileSystemHost {
         /// Creates the standard file host error used by unsupported test operations.
         fn unsupported(operation: &str) -> HostError {
@@ -3143,7 +3150,7 @@ mod tests {
         ));
 
         let chatRuntimeHolder = Arc::new(tokio::sync::Mutex::new(ChatRuntimeHolder::new(
-            Arc::new(TestFileSystemHost),
+            testFileSystem(),
         )));
         let spaceRuntime = Arc::new(SpaceRuntime::new(chatRuntimeHolder.clone()));
         let sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync> =
@@ -4148,9 +4155,7 @@ mod tests {
     impl TestRealChatSpaceEndpoint {
         /// Creates a Space endpoint that dispatches through generated ChatServiceCore routes.
         fn new() -> Arc<Self> {
-            let holder = Arc::new(tokio::sync::Mutex::new(ChatRuntimeHolder::new(Arc::new(
-                TestFileSystemHost,
-            ))));
+            let holder = Arc::new(tokio::sync::Mutex::new(ChatRuntimeHolder::new(testFileSystem())));
             let spaceRuntime = Arc::new(SpaceRuntime::new(holder.clone()));
             Arc::new(Self {
                 holder,
@@ -5771,7 +5776,7 @@ mod tests {
         installTestRuntimeScheduler();
         let router = testCoreNodeRouterWithoutBinding("core-node-local-without-binding");
         let _routeGuard = installTestCoreRouteRuntime(Arc::new(router));
-        let mut clientHolder = ChatRuntimeHolder::new(Arc::new(TestFileSystemHost));
+        let mut clientHolder = ChatRuntimeHolder::new(testFileSystem());
         let flow = clientHolder
             .getCore(ChatRuntimeSlot::MAIN)
             .chatMessagesFlow("chat-without-binding-record".to_string())

@@ -2,7 +2,7 @@ import { createTerminal9p } from "./terminal_9p.js";
 import { createBrowserJavaScriptHost } from "./operit_javascript_runtime.js";
 import { createBrowserHttpStreamHost } from "./browser_http_stream.js";
 import { openBrowserFile } from "./browser_file_open.js";
-import { captureBrowserScreen, readBrowserLocation, recognizeBrowserText,
+import { captureBrowserScreen, readBrowserLocation, recognizeBrowserText, requireBrowserSharedMemory,
   type BrowserOcrEngine } from "./browser_system_capabilities.js";
 
 type JsonValue =
@@ -2646,7 +2646,7 @@ interface ModelInstallWorkerError {
     paths: AsrBundlePaths,
     state: WebLocalInferenceState,
   ): Promise<WebAsrBundle> {
-    requireCrossOriginIsolation("ASR");
+    requireBrowserSharedMemory();
     const urls = {
       recognizerScript: runtimeJavaScriptUrl(
         paths.recognizerScript,
@@ -2699,7 +2699,7 @@ interface ModelInstallWorkerError {
     paths: TtsBundlePaths,
     state: WebLocalInferenceState,
   ): Promise<WebTtsBundle> {
-    requireCrossOriginIsolation("TTS");
+    requireBrowserSharedMemory();
     const urls = {
       ttsScript: runtimeBlobUrl(paths.ttsScript, "text/javascript", state),
       runtimeScript: runtimeBlobUrl(paths.runtimeScript, "text/javascript", state),
@@ -2930,16 +2930,6 @@ self.onmessage = (event) => {
       if (performance.now() >= deadline) {
         throw new Error("Web TTS worker command timed out");
       }
-    }
-  }
-
-  // Requires the response isolation headers needed by threaded Sherpa WASM.
-  function requireCrossOriginIsolation(capability: string): void {
-    if (globalThis.crossOriginIsolated !== true) {
-      throw new Error(
-        `Web local ${capability} requires Cross-Origin-Opener-Policy: same-origin and ` +
-          "Cross-Origin-Embedder-Policy: require-corp",
-      );
     }
   }
 
@@ -3206,7 +3196,7 @@ self.onmessage = (event) => {
 
   /** Creates one worker-backed guest process and schedules its serial deployment frames. */
   function startManagedRuntimeProcess(request: ManagedRuntimeRequest): string {
-    requireCrossOriginIsolation("managed Node/Python runtime");
+    requireBrowserSharedMemory();
     validateManagedRuntimeRequest(request);
     const runtime = guestRuntimeExecutable(request.program);
     const executablePath = request.executablePath?.trim();

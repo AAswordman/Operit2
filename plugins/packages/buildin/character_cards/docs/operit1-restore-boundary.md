@@ -35,6 +35,11 @@ The source `memory_space_list` defines the memory spaces to adopt, as in Operit1
 Kotlin preferences manager. Unlisted ObjectBox directories can remain in a raw
 snapshot; they neither create stores nor invalidate the listed spaces and bindings.
 
+Active selection follows Kotlin's `ActivePromptManager`: a nonblank group ID selects
+that group, a nonblank card ID selects that card, and an unset or blank selection
+means the source `default_character`. The default identity is decoded explicitly
+without creating a replacement role or changing an explicit saved selection.
+
 Importing ordinary appearance clears the target's active saved-theme selection in
 the same preference commit. Existing saved themes retain their own snapshots.
 Imported extraction tasks belong to the importing CoreNode, so the scheduler can

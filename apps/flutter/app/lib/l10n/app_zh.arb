@@ -2390,7 +2390,7 @@
   "@deviceSpaceSyncCounting": {"placeholders": {"count": {"type": "int"}}},
   "deviceSpaceSyncFiles": "正在传输并校验文件",
   "deviceSpaceSyncRetrying": "同步暂时中断，稍后自动重试",
-  "deviceSpaceSyncPending": "部分数据尚未处理完成，稍后自动重试",
+  "deviceSpaceSyncPending": "部分数据尚未处理完成",
   "deviceSpaceSyncCurrentFile": "当前文件：{done} / {total}",
   "@deviceSpaceSyncCurrentFile": {
     "placeholders": {
