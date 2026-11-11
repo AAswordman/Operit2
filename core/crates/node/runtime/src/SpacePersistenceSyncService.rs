@@ -573,6 +573,11 @@ impl SpacePersistenceSyncService {
             protocol.requireCompatible().map_err(|error| error.to_string())?;
         }
         if storageReplicationAllowed && self.state.nodeRouter.localNodeId().as_str() > targetNodeId {
+            // The lower node id coordinates every pair, so both peers never run
+            // a full pass against each other at the same time. Two concurrent
+            // passes made each side answer the other's clock and page calls
+            // while holding its own exchange, and the measured round trip grew
+            // from tens of milliseconds to many seconds.
             let request = callRemote::<PeerSyncStatus>(&self.state.nodeRouter, targetNodeId,
                 PeerSyncMethod::SyncRequest, json!(SyncRequest { limit, force }));
             tokio::pin!(request);
@@ -1102,10 +1107,14 @@ impl SpacePersistenceSyncService {
                 crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotHeader", Value::Null).await?;
             referenceRevision = Some(header.controlRevision.clone());
             let mut collector = SnapshotCollector::new(header)?;
+            let mut pageCount = 0usize;
             loop {
                 let page = callRemoteService(&self.state.nodeRouter, peerNodeId,
                     crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotControlPage",
                     serde_json::to_value(collector.request()).map_err(|error| error.to_string())?).await?;
+                pageCount += 1;
+                if pageCount % 8 == 0 {
+                }
                 if collector.push(page)? { break; }
             }
             let current: SnapshotHeader = callRemoteService(&self.state.nodeRouter, peerNodeId,
@@ -1263,6 +1272,8 @@ impl SpacePersistenceSyncService {
             self.state.localRuntime.openPush(request).map_err(|error| error.to_string())?
         };
         let mut offset = 0;
+        if reference.size > 1_000_000 {
+        }
         let result = async {
             while offset < reference.size {
                 self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
@@ -1629,8 +1640,6 @@ fn syncPageBudget(maxMessageBytes: usize) -> usize {
     (maxMessageBytes.saturating_mul(3) / 4).saturating_sub(SYNC_PAGE_HEADROOM_BYTES)
 }
 
-
-
 /// Splits one ordered, deduplicated page into contiguous slices that each fit
 /// the Link ceiling. Operations stay whole, so a transaction is never divided.
 /// A single operation wider than the page budget still travels alone; one wider
@@ -1776,8 +1785,6 @@ mod page_budget_tests {
         assert!(validateDomainClock(&clock, &SYNC_DOMAINS, "local").is_ok());
     }
 
-
-
     /// Constructs one transport-sized plugin operation for page budget tests.
     fn operation(opId: &str, payloadBytes: usize) -> Value {
         json!({
@@ -1871,8 +1878,6 @@ mod page_budget_tests {
         assert!(error.contains("opId=huge"), "{error}");
         assert!(error.contains("domain=plugin_storage"), "{error}");
     }
-
-
 
     #[test]
     fn an_empty_page_has_no_chunks() {

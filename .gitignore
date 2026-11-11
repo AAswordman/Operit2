@@ -228,3 +228,11 @@ apps/flutter/app/macos/Runner/Configs/Signing.local.xcconfig
 apps/flutter/app/web/fonts/
 tools/theme/preview/web/fonts/
 .playwright-mcp
+
+# Local build/bring-up scripts (machine-specific paths, not shareable)
+tools/android-runtime/.local-*
+.fvm-dart/
+.linux-tools/
+
+# Root-level local operational scripts and probes
+.local-*

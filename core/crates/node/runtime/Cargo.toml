@@ -50,6 +50,7 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 syn = { version = "2", features = ["full"] }
 sha2 = "0.10"
+operit-vfs = { path = "../../foundation/vfs" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 operit-model = { path = "../../foundation/model" }

@@ -42,6 +42,12 @@ const PAIRING_LIFETIME_MS: i64 = 300_000;
 /// caller, so a dial to an unreachable peer becomes an error for every business
 /// call, watch and push instead of holding whoever asked for it.
 const CONNECT_DEADLINE_MS: u64 = 30_000;
+/// A restarting instance can still hold its previous listening socket for a
+/// moment. Retrying the saved port keeps every peer's stored endpoint valid
+/// instead of silently moving the listener to a new port.
+const PEER_LISTEN_PORT_RETRY_ATTEMPTS: u32 = 6;
+/// Delay between those attempts; six tries span roughly three seconds.
+const PEER_LISTEN_PORT_RETRY_DELAY_MS: u64 = 500;
 /// Resolves the pairing carrier when the caller left it open: an explicit URL
 /// scheme implies its carrier, a bare `ip:port` is classified by one throwaway
 /// probe connection (see `operit_peer_link::detectTransport`).
@@ -201,12 +207,18 @@ struct Hello {
     /// Pairing handshake protocol. Version 2 requires SPAKE2 confirmation;
     /// older peers omit it and may not create new pairings.
     #[serde(default, skip_serializing_if = "Option::is_none")] pairingProtocol: Option<u32>,
+    /// This node's current listening socket. A paired peer rewrites its saved
+    /// endpoint from it after authentication, so a DHCP lease change or a
+    /// shifted port heals without multicast, which not every network carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")] listen: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 struct HelloReply {
     transcript: crypto::Transcript, info: LinkDeviceInfo, duplex: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")] pairingProtocol: Option<u32>,
-}
+    /// The responder's own listening socket, signed by the authenticated
+    /// transcript, so the dialer can refresh its saved endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")] listen: Option<String>,}
 #[derive(Serialize, Deserialize)]
 struct Authorization {
     keyProof: Vec<u8>,
@@ -350,7 +362,7 @@ impl HostRuntimePeerService {
         // control lines. Retry the serial handshake after that boot window;
         // network transports keep the original single-attempt behavior.
         let mut retries = 0;
-        let (_, id, info, root, node) = loop {
+        let (_, id, info, root, node, _) = loop {
             let raw = self.pairingConnection(target.clone(), transport).await?;
             let handshake = self.handshake(raw.clone(), "start", "", None, None, invitationId);
             let result = self.timeout(std::time::Duration::from_secs(20), handshake).await
@@ -405,6 +417,49 @@ impl HostRuntimePeerService {
         lock
     }
     fn changed(&self) { let _ = self.state.changes.send(()); }
+
+    /// Rewrites one paired outbound endpoint from the address its owner
+    /// announced in an authenticated handshake. This is the reconnect path on
+    /// networks that carry no multicast discovery, so a moved lease or port
+    /// heals on the next successful connection instead of needing a re-pair.
+    fn adoptPeerListenAddress(&self, node: &str, announced: &str, observed: Option<std::net::SocketAddr>, transport: PeerTransport) {
+        let Ok(socket) = announced.parse::<std::net::SocketAddr>() else { return };
+        if socket.port() == 0 || socket.ip().is_unspecified() || socket.ip().is_loopback() { return; }
+        // Prefer the address the peer actually reached us from: a self-declared
+        // interface can be a tunnel or benchmark range that no peer can route.
+        let socket = match observed.map(|observed| observed.ip()) {
+            Some(ip) if !ip.is_loopback() && !ip.is_unspecified() => std::net::SocketAddr::new(ip, socket.port()),
+            _ => socket,
+        };
+        let Ok(records) = self.state.store.records::<StoredOutbound>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH) else { return };
+        let Some((id, record)) = records.iter().find(|(_, record)|
+            record.peerNodeId == node && record.pairingServiceVersion == PAIRING_SERVICE_VERSION) else { return };
+        let scheme = if transport == PeerTransport::Http { "http" } else if transport == PeerTransport::WebSocket { "ws" } else { return };
+        let address = format!("{scheme}://{socket}/link");
+        if record.endpoint == address { return; }
+        let mut updated = record.clone();
+        updated.endpoint = address.clone();
+        updated.transport = transportName(transport).into();
+        if self.state.store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, id, &updated).is_ok() {
+            operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
+                "Peer endpoint adopted from authenticated handshake peer={node} endpoint={address}"));
+            self.changed();
+        }
+    }
+
+    /// Publishes the socket this node actually listens on, using the first
+    /// routable local address so the dialer never receives `0.0.0.0`.
+    fn localListenAddress(&self) -> Option<String> {
+        let config = self.state.store.hostConfig().ok()??;
+        let port = config.bindAddress.parse::<std::net::SocketAddr>().ok()?.port();
+        if port == 0 { return None; }
+        let host = self.state.host.serviceDiscoveryHost.as_ref()?;
+        let addresses = host.localAddresses().ok()?;
+        let address = addresses.iter().copied()
+            .find(|address| !address.is_loopback() && !address.is_unspecified())
+            .or_else(|| addresses.into_iter().next())?;
+        Some(format!("{}:{}", address, port))
+    }
     fn track(&self, node: &str, raw: &Arc<dyn PeerConnection>) {
         let mut connections = self.state.connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let list = connections.entry(node.into()).or_default();
@@ -469,14 +524,15 @@ impl HostRuntimePeerService {
     /// key; for `start` it remains the X25519 root stored in the pending record.
     async fn handshake(&self, raw: Arc<dyn PeerConnection>, purpose: &str, sessionId: &str,
         saved: Option<&[u8]>, pairingCode: Option<&str>, invitationId: Option<&str>,
-    ) -> Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String), CoreLinkError> {
+    ) -> Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String, Option<String>), CoreLinkError> {
         let (private, public) = crypto::ephemeral()?;
         let hello = Hello { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
             expectedNodeId: raw.target().nodeId.clone(),
             info: self.state.store.announcedDeviceInfo(&self.state.info), public: public.clone(),
             purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
             invitationId: invitationId.map(str::to_owned),
-            pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
+            pairingProtocol: Some(PAIRING_PROTOCOL_VERSION),
+            listen: self.localListenAddress() };
         let reply: HelloReply = rawCall(&self.state.host, &raw, "hello", &hello).await
             .inspect_err(|failure| {
                 operit_util::AppLogger::AppLogger::w("RuntimePeerService", &format!(
@@ -547,7 +603,7 @@ impl HostRuntimePeerService {
             secret
         } else { key };
         let channel = Channel::new(raw, &channelKey, &context, true)?;
-        Ok((channel, id, info, storedSecret, peerNodeId))
+        Ok((channel, id, info, storedSecret, peerNodeId, reply.listen))
     }
     /// Returns the peer's only authenticated connection while it remains usable.
     fn peerChannel(&self, node: &str) -> Option<Arc<MultiplexedChannel>> {
@@ -643,7 +699,7 @@ impl HostRuntimePeerService {
 
     /// Proves the receiver's code and obtains its acknowledgement of the commit marker.
     async fn confirmPairing(&self, raw: &Arc<dyn PeerConnection>, id: &str, code: &str, root: &[u8]) -> Result<Vec<u8>, CoreLinkError> {
-        let (channel, _, _, secret, _) = self.handshake(raw.clone(), "finish", id, Some(root), Some(code), None).await?;
+        let (channel, _, _, secret, _, _) = self.handshake(raw.clone(), "finish", id, Some(root), Some(code), None).await?;
         let requestId = CoreRequestId::new(uuid::Uuid::new_v4().to_string());
         let request = CoreCallRequest::new(requestId.0.clone(), HANDSHAKE, "finish",
             toCoreValue(crypto::proof(&secret, id.as_bytes(), b"finish")).map_err(|e| error(e.to_string()))?);
@@ -744,7 +800,15 @@ impl HostRuntimePeerService {
                         .unwrap_or_else(|_| Err(CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Pairing endpoint authentication timed out")))
                 } else { handshake.await };
                 let channel = match result {
-                    Ok((channel, _, _, _, _)) => channel,
+                    Ok((channel, _, _, _, _, peerListen)) => {
+                        // The authenticated reply carries the peer's own listening
+                        // socket, which is the only address that survives a moved
+                        // lease when multicast discovery is unavailable.
+                        if let Some(peerListen) = peerListen {
+                            self.adoptPeerListenAddress(node, &peerListen, raw.remoteAddress(), transport);
+                        }
+                        channel
+                    }
                     Err(error) => { raw.close().await; failure = error; continue; }
                 };
                 if let Err(error) = self.requirePeerConnectionAllowed(node)
@@ -861,7 +925,7 @@ impl HostRuntimePeerService {
         let dh = crypto::agree(private, &transcript.clientPublic)?;
         let root = crypto::derive(&dh, &context, b"operit-pairing-root-v1")?;
         let key = match &saved { Some(saved) => crypto::derive(&dh, saved, &context)?, None => root };
-        sendValue(&raw, helloRequest.requestId, HelloReply { transcript, duplex: true,
+        sendValue(&raw, helloRequest.requestId, HelloReply { transcript, duplex: true, listen: self.localListenAddress(),
             info: self.state.store.announcedDeviceInfo(&self.state.info),
             pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) }).await?;
         let request = self.readHandshake(&raw, "authorize").await?;
@@ -971,6 +1035,11 @@ impl HostRuntimePeerService {
             return Ok(());
         }
         self.requirePeerConnectionAllowed(&hello.nodeId)?;
+        // The dialer also announces where it listens, so a pair created from
+        // either side keeps a usable endpoint without multicast discovery.
+        if let Some(announced) = hello.listen.as_deref() {
+            self.adoptPeerListenAddress(&hello.nodeId, announced, raw.remoteAddress(), raw.transport());
+        }
         self.track(&hello.nodeId, &raw);
         if let Some(previous) = self.peerChannel(&hello.nodeId) { previous.close().await; }
         let channel = self.startPeerChannel(&hello.nodeId, channel, id, dispatch::Authorization::Inbound).await?;
@@ -1156,13 +1225,33 @@ impl RuntimePeerService for HostRuntimePeerService {
                         && !listeners.keys().chain(opened.keys()).any(|t| isNetworkTransport(*t))
                         && isAddressInUse(&message) => {
                         // Reuse the last assigned port when available, preserving
-                        // reconnects without LAN discovery. A collision delegates
-                        // allocation to the Host once, with no port scanning.
-                        let socket = socket.as_mut().unwrap();
-                        socket.set_port(0);
-                        self.state.link.listen(self.state.host.clone(),
-                            PeerEndpoint { address: socket.to_string(), ..endpoint }, *transport)
-                            .await.map_err(error)?
+                        // reconnects without LAN discovery. A restarting instance
+                        // may still hold the socket for a moment, so retry the
+                        // saved port before delegating allocation to the Host: a
+                        // peer whose saved endpoint no longer answers cannot be
+                        // reached again, and discovery does not cross every
+                        // network in practice.
+                        let mut bound = None;
+                        for attempt in 0..PEER_LISTEN_PORT_RETRY_ATTEMPTS {
+                            if attempt > 0 {
+                                tokio::time::sleep(std::time::Duration::from_millis(PEER_LISTEN_PORT_RETRY_DELAY_MS)).await;
+                            }
+                            match self.state.link.listen(self.state.host.clone(), endpoint.clone(), *transport).await {
+                                Ok(listener) => { bound = Some(listener); break; }
+                                Err(retry) if isAddressInUse(&retry) => continue,
+                                Err(other) => return Err(error(other)),
+                            }
+                        }
+                        match bound {
+                            Some(listener) => listener,
+                            None => {
+                                let socket = socket.as_mut().unwrap();
+                                socket.set_port(0);
+                                self.state.link.listen(self.state.host.clone(),
+                                    PeerEndpoint { address: socket.to_string(), ..endpoint }, *transport)
+                                    .await.map_err(error)?
+                            }
+                        }
                     }
                     Err(message) => return Err(error(message)),
                 };
@@ -1237,6 +1326,10 @@ impl RuntimePeerService for HostRuntimePeerService {
     /// Keeps transport authorization, exchange and reply decoding on the Host async worker.
     async fn call(&self, node: &str, request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
         let id = request.payload.requestId.clone();
+        // Splits one peer call into scheduling delay and transfer time. Both a
+        // queued coordination worker and a slow link look identical from the
+        // caller's side, so every dispatch decision needs these two numbers.
+        let dispatchedAt = currentTimeMillis();
         let result = (|| {
             let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.as_ref()
                 .ok_or_else(|| error("Host scheduler is not installed"))?;
@@ -1244,10 +1337,21 @@ impl RuntimePeerService for HostRuntimePeerService {
             let node = node.to_owned();
             let (mut sender, receiver) = tokio::sync::oneshot::channel();
             scheduler.scheduleHostRuntimeAsyncTask("peer-call", Box::new(move || Box::pin(async move {
-                tokio::select! {
+                let startedAt = currentTimeMillis();
+                let queuedMs = startedAt - dispatchedAt;
+                let result = tokio::select! {
                     biased;
-                    _ = sender.closed() => {},
-                    result = service.callOnHost(&node, request) => { let _ = sender.send(result); }
+                    _ = sender.closed() => None,
+                    result = service.callOnHost(&node, request) => Some(result),
+                };
+                if let Some(result) = result {
+                    let elapsedMs = currentTimeMillis() - startedAt;
+                    if queuedMs >= 100 || elapsedMs >= 250 {
+                        operit_util::AppLogger::AppLogger::i("PeerCallTiming", &format!(
+                            "peer_call node={node} queuedMs={queuedMs} transferMs={elapsedMs} ok={}",
+                            result.result.is_ok()));
+                    }
+                    let _ = sender.send(result);
                 }
             }))).map_err(|e| error(e.to_string()))?;
             Ok::<_, CoreLinkError>(receiver)
@@ -1795,7 +1899,7 @@ mod single_channel_tests {
                     endpoint: PeerEndpoint { nodeId: "peer".into(), address: "memory".into() },
                     tx: send, rx: AsyncMutex::new(receive),
                 });
-                let hello = Hello { protocol, version: PAIRING_SERVICE_VERSION, nodeId: "peer".into(),
+                let hello = Hello { protocol, version: PAIRING_SERVICE_VERSION, nodeId: "peer".into(), listen: None,
                     expectedNodeId: "self".into(), info: LinkDeviceInfo { platform: "edge".into(), model: "sensor".into(), pairingIncarnation: None },
                     public: vec![0;32], purpose: purpose.into(), sessionId: "test".into(), duplex: true,
                     invitationId: None, pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };

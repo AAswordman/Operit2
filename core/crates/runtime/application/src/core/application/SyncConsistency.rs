@@ -128,7 +128,11 @@ impl OperitApplication {
 
     pub(super) fn consistencyManifest(&self) -> Result<Value,String> {
         let journal = self.runtimeSyncOperationStore()?;
-        let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
+        let pending = journal
+            .pendingOperationsWithin(
+                operit_store::SyncOperationStore::SyncOperationStore::MAX_APPLICABLE_OPERATION_BYTES,
+            )
+            .map_err(|e| e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let (manifests,pending,mut errors) = registry.manifests()?;
@@ -141,7 +145,12 @@ impl OperitApplication {
         Ok(json!({"manifests":manifests,"pendingOwners":pending,"skipped":skipped,"errors":errors,"boundary":operit_store::Transaction::digest(&receipt)?}))
     }
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
-        let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
+        let pending = self
+            .runtimeSyncOperationStore()?
+            .pendingOperationsWithin(
+                operit_store::SyncOperationStore::SyncOperationStore::MAX_APPLICABLE_OPERATION_BYTES,
+            )
+            .map_err(|e| e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let snapshot = registry.snapshot(&owner)?;
@@ -155,7 +164,12 @@ impl OperitApplication {
         serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&CorrectionFile { snapshot, content, definition })?).map_err(|e|e.to_string())
     }
     pub(super) fn exportConsistencyCoverage(&self, owner: Owner, token: &str) -> Result<Value,String> {
-        let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
+        let pending = self
+            .runtimeSyncOperationStore()?
+            .pendingOperationsWithin(
+                operit_store::SyncOperationStore::SyncOperationStore::MAX_APPLICABLE_OPERATION_BYTES,
+            )
+            .map_err(|e| e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
@@ -177,7 +191,11 @@ impl OperitApplication {
             if superseded.owner != owner { return Err("Superseded file owner differs".into()); }
             source.snapshot.covered.extend(superseded.covered);
         }
-        let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
+        let pending = journal
+            .pendingOperationsWithin(
+                operit_store::SyncOperationStore::SyncOperationStore::MAX_APPLICABLE_OPERATION_BYTES,
+            )
+            .map_err(|e| e.to_string())?;
         let mut schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let missing = registry.owners.get(&owner.path).is_none_or(|owner|owner.snapshot.is_none());

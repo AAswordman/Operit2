@@ -70,7 +70,7 @@ async fn current_hello_and_reply_preserve_identity_over_binary_link_in_both_dire
             tokio::join!(initiator.handshake(outbound, "start", "", None, None, None), receiver.serve(inbound))
         }).await.expect("current hello/reply must complete without a protocol rejection");
         served.unwrap();
-        let (_, id, info, _, node) = started.unwrap();
+        let (_, id, info, _, node, _) = started.unwrap();
         assert_eq!(node, "receiver");
         assert_eq!(info.platform, to);
         let pending = receiver.pending(true, &id).unwrap();

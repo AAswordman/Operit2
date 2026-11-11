@@ -973,17 +973,37 @@ impl RuntimeRemoteLinkService {
                 "route change target is not reachable in the current device space: {targetNodeId}"
             ));
         }
+        let routeChangeStartedAt = currentTimeMillis();
         let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
         let currentBinding = bindingStore.binding(&chatId)?;
-        self.callChatCoreLifecycle(
-            &currentBinding.nodeId,
-            GeneratedRouteLifecycle::BeforeChangeRoute,
-            chatId.clone(),
-            None,
-        )
-        .await?;
+        // Leaving a device must not depend on that device still holding the chat
+        // execution. A resumed runtime rebuilds its execution table, so the
+        // previous owner answers "Execution does not exist" for the stale id and
+        // the switch used to fail with INTERNAL_ERROR. The hook only flushes the
+        // outgoing side, so a failure is recorded and the switch continues.
+        // It runs concurrently with the pre-commit synchronization below: the two
+        // touch different nodes, and awaiting them in sequence made every switch
+        // pay for both round trips back to back.
+        let flushOutgoing = async {
+            if let Err(error) = self
+                .callChatCoreLifecycle(
+                    &currentBinding.nodeId,
+                    GeneratedRouteLifecycle::BeforeChangeRoute,
+                    chatId.clone(),
+                    None,
+                )
+                .await
+            {
+                operit_util::AppLogger::AppLogger::w(
+                    "CoreRouteTrace",
+                    &format!(
+                        "route_change.before_route_failed chatId={} owner={} error={error}",
+                        chatId, currentBinding.nodeId
+                    ),
+                );
+            }
+        };
 
-        let routeChangeStartedAt = currentTimeMillis();
         operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
             &format!(
@@ -1024,9 +1044,15 @@ impl RuntimeRemoteLinkService {
                 ),
                 operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
-            self.persistenceSyncService()
-                .synchronizeReachablePeerForReason(targetNodeId.clone(), 512, &format!("route_change chatId={chatId}"))
-                .await?;
+            // The two round trips are independent: the outgoing hook releases the
+            // old owner, the synchronization brings the new owner up to date.
+            let service = self.persistenceSyncService();
+            let reason = format!("route_change chatId={chatId}");
+            let (flush, synced) = tokio::join!(
+                flushOutgoing,
+                service.synchronizeReachablePeerForReason(targetNodeId.clone(), 512, &reason),
+            );
+            synced?;
             operit_util::AppLogger::AppLogger::v_with_level(
                 "CoreRouteTrace",
                 &format!(
@@ -1039,6 +1065,8 @@ impl RuntimeRemoteLinkService {
                 ),
                 operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
+        } else {
+            flushOutgoing.await;
         }
 
         let commit = bindingStore.compareAndSet(&chatId, &currentBinding.nodeId, &targetNodeId)?;
@@ -1067,6 +1095,7 @@ impl RuntimeRemoteLinkService {
         let Some(resumeContext) = resumeContext else {
             return Ok(());
         };
+
 
         operit_util::AppLogger::AppLogger::v_with_level(
             "CoreRouteTrace",
