@@ -332,13 +332,15 @@ impl ModelConfigManager {
         modelId: String,
     ) -> Result<String, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
-        let builtinTools = ModelSpecResolver::new(&provider)?
+        let resolver = ModelSpecResolver::new(&provider)?;
+        let builtinTools = resolver
             .catalogSpec(&modelId)
             .map(|spec| spec.builtinTools);
         self.updateProviderInternalResult(providerId, |mut provider| {
             Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
             let mut model = ModelProfile::new(modelId.clone());
             model.builtinToolsOverride = builtinTools.clone();
+            resolver.initializeNewModel(&mut model);
             provider.models.push(model);
             Ok(provider)
         })?;
@@ -405,12 +407,13 @@ impl ModelConfigManager {
     ) -> Result<String, ModelConfigError> {
         let modelId = model.modelId.clone();
         let provider = self.getProviderProfile(providerId)?;
-        ModelSpecResolver::new(&provider)?;
+        let resolver = ModelSpecResolver::new(&provider)?;
         self.updateProviderInternalResult(providerId, |mut provider| {
             Self::assertProviderModelDoesNotExist(&provider, &modelId)?;
             let mut profile = ModelProfile::new(modelId.clone());
             profile.listed = model.listed.clone();
             profile.builtinToolsOverride = Some(model.builtinTools.clone());
+            resolver.initializeNewModel(&mut profile);
             provider.models.push(profile);
             Ok(provider)
         })?;
@@ -2304,6 +2307,109 @@ mod tests {
         ));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// Applies catalog context defaults and enables tools for manually entered unknown models.
+    #[test]
+    fn new_model_defaults_apply_to_manual_models() {
+        let root = unique_test_root("new_model_defaults_manual");
+        setup_test_runtime(root);
+        let manager = ModelConfigManager::default();
+        let providerId = manager
+            .createProvider(
+                "Codex defaults".into(),
+                "OPENAI_CODEX".into(),
+                "https://chatgpt.com/backend-api/codex/responses".into(),
+            )
+            .unwrap();
+        for (modelId, expectedThreshold) in [
+            ("gpt-5.3-codex-spark", 0.85),
+            ("gpt-5.4", 0.28),
+            ("unknown-manual-model", 0.85),
+        ] {
+            manager
+                .createProviderModel(&providerId, modelId.into())
+                .unwrap();
+            let resolved = manager
+                .getResolvedModelConfig(&providerId, modelId)
+                .unwrap();
+            assert!((resolved.summary.summaryTokenThreshold - expectedThreshold).abs() < 1e-6);
+            assert!(resolved.summary.enableSummary);
+            assert!(resolved.capabilities.toolCall);
+            assert!(resolved.request.supportsStructuredTools);
+            let profile = manager.getModelProfile(&providerId, modelId).unwrap();
+            assert_eq!(
+                profile.capabilitiesOverride.toolCall,
+                (modelId == "unknown-manual-model").then_some(true)
+            );
+        }
+    }
+
+    /// Covers context boundaries, whole-percent rounding, and explicit provider tool capabilities.
+    #[test]
+    fn new_model_defaults_apply_to_available_models() {
+        use operit_model::ModelConfigData::{ModelCapabilities, ModelContextSpec, ModelListedSpec};
+        let root = unique_test_root("new_model_defaults_available");
+        setup_test_runtime(root);
+        let manager = ModelConfigManager::default();
+        let providerId = ModelConfigManager::DEFAULT_PROVIDER_ID;
+        for (index, (context, expectedThreshold)) in [
+            (128.0, 0.85),
+            (300.0, 0.85),
+            (301.0, 0.99),
+            (400.0, 0.75),
+            (1000.0, 0.30),
+            (1048.576, 0.28),
+            (2000.0, 0.15),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let modelId = format!("unknown-listed-model-{index}");
+            manager
+                .addProviderModelFromAvailable(
+                    providerId,
+                    available_model(
+                        &modelId,
+                        Some(ModelListedSpec {
+                            context: Some(ModelContextSpec {
+                                maxContextLength: context,
+                            }),
+                            ..ModelListedSpec::default()
+                        }),
+                    ),
+                )
+                .unwrap();
+            let resolved = manager
+                .getResolvedModelConfig(providerId, &modelId)
+                .unwrap();
+            assert!((resolved.summary.summaryTokenThreshold - expectedThreshold).abs() < 1e-6);
+            assert!(resolved.capabilities.toolCall);
+            assert!(resolved.request.supportsStructuredTools);
+        }
+        manager
+            .addProviderModelFromAvailable(
+                providerId,
+                available_model(
+                    "explicitly-no-tools",
+                    Some(ModelListedSpec {
+                        capabilities: Some(ModelCapabilities::default()),
+                        supportsStructuredTools: Some(false),
+                        ..ModelListedSpec::default()
+                    }),
+                ),
+            )
+            .unwrap();
+        let resolved = manager
+            .getResolvedModelConfig(providerId, "explicitly-no-tools")
+            .unwrap();
+        assert!(!resolved.capabilities.toolCall);
+        assert!(!resolved.request.supportsStructuredTools);
+        let profile = manager
+            .getModelProfile(providerId, "explicitly-no-tools")
+            .unwrap();
+        assert!(profile.capabilitiesOverride.isEmpty());
+        assert_eq!(profile.requestOverride.supportsStructuredTools, None);
     }
 
     #[test]

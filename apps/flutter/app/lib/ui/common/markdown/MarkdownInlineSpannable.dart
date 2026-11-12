@@ -22,6 +22,7 @@ TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
   required MarkdownLinkGestureOwner gestures,
   TextStyle? baseStyle,
   void Function(String url)? onLinkClick,
+  PlaceholderAlignment inlineMathAlignment = PlaceholderAlignment.baseline,
 }) {
   final style = (Theme.of(context).textTheme.bodyMedium ?? const TextStyle())
       .copyWith(
@@ -34,17 +35,26 @@ TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
     style: style,
     children: [
       for (final node in children)
-        _inlineSpan(context, node, style, gestures, onLinkClick),
+        _inlineSpan(
+          context,
+          node,
+          style,
+          gestures,
+          onLinkClick,
+          inlineMathAlignment,
+        ),
     ],
   );
 }
 
+/// Builds one semantic span with the caller's math alignment policy.
 InlineSpan _inlineSpan(
   BuildContext context,
   MarkdownNodeStable node,
   TextStyle inherited,
   MarkdownLinkGestureOwner gestures,
-  void Function(String url)? onLinkClick, [
+  void Function(String url)? onLinkClick,
+  PlaceholderAlignment inlineMathAlignment, [
   String? linkUrl,
 ]) {
   if (node.type == MarkdownNodeType.footnoteReference) {
@@ -56,7 +66,7 @@ InlineSpan _inlineSpan(
   }
   if (node.type == MarkdownNodeType.inlineLatex) {
     return WidgetSpan(
-      alignment: PlaceholderAlignment.baseline,
+      alignment: inlineMathAlignment,
       baseline: TextBaseline.alphabetic,
       child: MarkdownInlineLatex(
         content: node.content,
@@ -112,7 +122,15 @@ InlineSpan _inlineSpan(
       style: style,
       children: [
         for (final child in node.children)
-          _inlineSpan(context, child, style, gestures, onLinkClick, linkUrl),
+          _inlineSpan(
+            context,
+            child,
+            style,
+            gestures,
+            onLinkClick,
+            inlineMathAlignment,
+            linkUrl,
+          ),
       ],
     );
   }

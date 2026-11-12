@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../theme/OperitTheme.dart';
@@ -87,7 +89,7 @@ class EnhancedTableBlock extends StatelessWidget {
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
                 child: Table(
-                  defaultColumnWidth: const IntrinsicColumnWidth(),
+                  defaultColumnWidth: const _MarkdownTableColumnWidth(),
                   border: TableBorder(
                     horizontalInside: BorderSide(
                       color: grid,
@@ -113,7 +115,6 @@ class EnhancedTableBlock extends StatelessWidget {
                             ConstrainedBox(
                               constraints: const BoxConstraints(
                                 minWidth: tableMinColumnWidth,
-                                maxWidth: tableMaxColumnWidth,
                               ),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -145,6 +146,25 @@ class EnhancedTableBlock extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Keeps prose compact while allowing indivisible formulas to fit their column.
+class _MarkdownTableColumnWidth extends IntrinsicColumnWidth {
+  const _MarkdownTableColumnWidth();
+
+  /// Reserves the minimum content width even beyond the preferred text width.
+  @override
+  double maxIntrinsicWidth(Iterable<RenderBox> cells, double containerWidth) {
+    return math
+        .max(
+          super.minIntrinsicWidth(cells, containerWidth),
+          math.min(
+            tableMaxColumnWidth,
+            super.maxIntrinsicWidth(cells, containerWidth),
+          ),
+        )
+        .ceilToDouble();
   }
 }
 
@@ -251,6 +271,9 @@ class _MarkdownTableCellTextState extends State<_MarkdownTableCellText> {
                   textColor: widget.textColor,
                   baseStyle: widget.style,
                   gestures: _gestures,
+                  // Table formulas align to the line center and need no dry
+                  // alphabetic baseline during intrinsic column measurement.
+                  inlineMathAlignment: PlaceholderAlignment.middle,
                 ),
           textAlign: widget.textAlign,
           style: widget.style,

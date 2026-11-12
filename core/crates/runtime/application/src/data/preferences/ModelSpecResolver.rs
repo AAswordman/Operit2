@@ -17,7 +17,7 @@ use std::sync::Arc;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
     ApiProviderType, AvailableProviderModel, AvailableProviderModelSource, ModelBuiltinTool,
-    ModelCapabilities, ModelCapabilityOverrides, ModelCatalogEntry,
+    ModelCapabilities, ModelCapabilityOverrides, ModelCatalogEntry, ModelConfigDefaults,
     ModelContextSpec, ModelListedSpec, ModelPricing, ModelProfile, ModelRequestOverrides,
     ModelRequestSpec, ProviderProfile,
 };
@@ -156,6 +156,29 @@ impl ModelSpecResolver {
     pub(crate) fn inherited(&self, model: &ModelProfile) -> InheritedSpec {
         let catalog = self.catalogSpec(&model.id);
         Self::inheritedFrom(catalog, model.listed.as_ref())
+    }
+
+    /// Sets addition-time defaults from the context window and known tool capabilities.
+    pub(crate) fn initializeNewModel(&self, model: &mut ModelProfile) {
+        let inherited = self.inherited(model);
+        let context = inherited.effectiveContext().maxContextLength;
+        model.summary.summaryTokenThreshold = if context > 300.0 {
+            (30_000.0 / context).floor() / 100.0
+        } else {
+            ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD
+        };
+        if self.recognizesModels && inherited.catalog.is_none() {
+            let toolCall = match &inherited.capabilities {
+                Some(capabilities) => capabilities.toolCall,
+                None => {
+                    model.capabilitiesOverride.toolCall = Some(true);
+                    true
+                }
+            };
+            if inherited.supportsStructuredTools.is_none() {
+                model.requestOverride.supportsStructuredTools = Some(toolCall);
+            }
+        }
     }
 
     /// Returns the thinking controls a configured model runs with.

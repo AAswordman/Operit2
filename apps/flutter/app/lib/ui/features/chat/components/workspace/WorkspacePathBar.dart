@@ -38,6 +38,7 @@ class WorkspacePathBar extends StatelessWidget {
   final TextEditingController? controller;
   final Widget? leading;
 
+  /// Lets the path editor grow with scaled text while keeping compact padding.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -77,15 +78,22 @@ class WorkspacePathBar extends StatelessWidget {
         ],
       ),
       child: editing
-          ? SizedBox(
-              height: 36,
+          ? ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 36),
               child: TextField(
                 controller: controller,
                 autofocus: true,
                 maxLines: 1,
+                textAlignVertical: TextAlignVertical.center,
                 textInputAction: TextInputAction.done,
                 onSubmitted: onSubmitted,
-                decoration: const InputDecoration(),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurface,
                 ),

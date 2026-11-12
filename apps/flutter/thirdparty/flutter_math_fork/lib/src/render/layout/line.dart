@@ -227,6 +227,7 @@ class RenderLine extends RenderBox
     }
   }
 
+  /// Measures intrinsic dimensions including the spacing used during layout.
   double _getIntrinsicSize({
     required Axis sizingDirection,
     required double
@@ -241,8 +242,9 @@ class RenderLine extends RenderBox
       var inflexibleSpace = 0.0;
       var child = firstChild;
       while (child != null) {
-        inflexibleSpace += childSize(child, extent);
         final childParentData = child.parentData as LineParentData;
+        inflexibleSpace +=
+            childSize(child, extent) + childParentData.trailingMargin;
         child = childParentData.nextSibling;
       }
       return inflexibleSpace;
