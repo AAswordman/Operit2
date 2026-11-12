@@ -31,8 +31,20 @@ enum _GroupQuickAction {
 extension _NativeWorkspaceGroups on _DrawerContentState {
   List<_NativeWorkspaceGroup> _nativeGroups(_WorkspaceSection section) {
     final groups = <String?, List<core_proxy.ChatHistoryListItem>>{};
-    for (final chat in section.histories) {
-      groups.putIfAbsent(_normalizedGroupName(chat), () => []).add(chat);
+    final tree = ChatHistoryTree(section.histories);
+    // A child follows its parent's group while it belongs to this workspace.
+    void addBranch(
+      core_proxy.ChatHistoryListItem chat,
+      List<core_proxy.ChatHistoryListItem> branch,
+    ) {
+      branch.add(chat);
+      for (final child in tree.children[chat.id]!) {
+        addBranch(child, branch);
+      }
+    }
+
+    for (final root in tree.roots) {
+      addBranch(root, groups.putIfAbsent(_normalizedGroupName(root), () => []));
     }
     final result = [
       for (final entry in groups.entries)
@@ -66,17 +78,6 @@ extension _NativeWorkspaceGroups on _DrawerContentState {
             _normalizedGroupName(chat) == name,
       )
       .toList(growable: false);
-
-  List<core_proxy.ChatHistoryListItem> _groupPreview(
-    List<core_proxy.ChatHistoryListItem> chats,
-  ) => [
-    for (var i = 0; i < chats.length; i++)
-      if (i < _DrawerContentState._previewLimit ||
-          chats[i].pinned ||
-          chats[i].id == widget.currentChatId ||
-          widget.activeStreamingChatIds.contains(chats[i].id))
-        chats[i],
-  ];
 
   Future<void> _runGroupMutation(Future<void> Function() mutation) async {
     if (_groupMutationPending) return;

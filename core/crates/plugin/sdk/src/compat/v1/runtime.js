@@ -1,4 +1,4 @@
-/** Installs the v1 compatibility surface as an SDK-internal adapter. */
+/** Installs the v1 compatibility surface as an SDK-internal adapter. @param {Record<string, any>} runtime */
 function __operitInstallV1Runtime(runtime) {
     var api = runtime.__operitToolPkgApi;
     var canonical = runtime.__operitCanonicalTools;
@@ -13,12 +13,50 @@ function __operitInstallV1Runtime(runtime) {
         'ffmpeg:ffmpeg_info': 'ffmpeg_info',
     });
 
-    /** Calls the internal implementation without publishing a package tool identity. */
+    /** Calls the internal implementation without publishing a package tool identity.
+     * @param {string} method
+     * @param {Record<string, any>} params
+     */
     function invoke(method, params) {
         var implementation = internal[method];
         if (typeof implementation !== 'function') throw new Error('Unknown internal V1 runtime method: ' + method);
         return Promise.resolve().then(function() { return implementation(params || {}); });
     }
+
+    /** @type {typeof import('../../../../../../../plugins/types-v1/ffmpeg').FFmpeg} */
+    var ffmpeg = {
+        /** Executes legacy arguments through the VFS-aware runtime bridge. */
+        execute(command) { return invoke('ffmpeg_execute', { command: command }); },
+        /** Returns the selected runtime's installed FFmpeg version. */
+        info() { return invoke('ffmpeg_info', {}); },
+        /** Quotes file operands and translates the documented conversion options. */
+        convert(inputPath, outputPath, options) {
+            /** Quotes one shell argument without interpreting its contents. @param {string} value */
+            function quote(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; }
+            var command = '-y -i ' + quote(inputPath);
+            var flags = { video_codec: '-c:v', audio_codec: '-c:a', resolution: '-s', bitrate: '-b:v' };
+            if (options) {
+                for (var key of Object.keys(flags)) {
+                    var value = options[/** @type {keyof typeof options} */ (key)];
+                    if (value !== undefined) command += ' ' + flags[/** @type {keyof typeof flags} */ (key)] + ' ' + quote(value);
+                }
+            }
+            return invoke('ffmpeg_execute', { command: command + ' ' + quote(outputPath) });
+        },
+    };
+    /** @type {Record<string, Function>} */
+    var legacyFfmpeg = {};
+    for (var [ffmpegMethod, implementation] of Object.entries(ffmpeg)) {
+        legacyFfmpeg[ffmpegMethod] = api.method().between('1.0.0', '2.0.0', implementation).build('Tools.FFmpeg.' + ffmpegMethod);
+    }
+    Object.defineProperty(runtime.Tools, 'FFmpeg', {
+        configurable: true,
+        /** Exposes the historical namespace only to admitted v1 calls. */
+        get: function() {
+            var version = api.currentVersion();
+            return version === '1.0.0' || version === '1.0.1' ? legacyFfmpeg : undefined;
+        },
+    });
 
     // Both legacy file calls and shell commands use this existing managed filesystem.
     var cacheImports = new Map();

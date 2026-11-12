@@ -606,6 +606,23 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Legacy plugins write with Files and replay the same path through WebView resources.
+    #[test]
+    fn legacy_voice_cache_paths_share_file_and_resource_storage() {
+        use operit_host_contract::FileSource;
+        let (vfs, root) = vfs();
+        let directory = "/sdcard/Download/voice_bar_voices";
+        vfs.makeDirectory(directory, true).unwrap();
+        let name = "测试 & 100%20.wav";
+        let written = format!("{directory}/{name}");
+        vfs.writeFileBytes(&written, b"RIFF voice cache").unwrap();
+        for path in [written, format!("/storage/emulated/0/Download/voice_bar_voices/{name}")] {
+            let resource = vfs.fileResource(None, &path).unwrap();
+            assert_eq!(resource.readBytes().unwrap(), b"RIFF voice cache", "{path}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn both_root_mounts_share_files_and_preserve_result_paths() {
         let (vfs, root) = vfs();

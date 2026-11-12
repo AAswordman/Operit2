@@ -237,10 +237,11 @@ impl PathMapper {
         if let Some(path) = normalizeWindowsHostWorkspacePath(&path)? {
             return Ok(path);
         }
-        let path = normalizeAbsoluteVfsPath(&path)?;
+        // Apply legacy plugin storage aliases before interpreting native host paths.
+        let path = Self::canonicalizeVfsPath(&path)?;
         let root = path.split('/').find(|part| !part.is_empty());
         if root.is_none() || VFS_ROOTS.iter().any(|entry| Some(entry.name) == root) {
-            Self::canonicalizeVfsPath(&path)
+            Ok(path)
         } else {
             normalizeAbsoluteHostWorkspacePath(&path)
         }

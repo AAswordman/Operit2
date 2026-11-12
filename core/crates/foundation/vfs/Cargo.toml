@@ -16,3 +16,4 @@ uuid.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
+operit-host-native-terminal = { path = "../../../../hosts/common/operit-host-native-terminal" }

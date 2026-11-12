@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import { join } from 'node:path';
 import test from 'node:test';
 import { installScopedHostRuntime } from './fixtures/scoped_host_runtime.mjs';
 import { composeContextScript } from '../runtime/compose_scripts.mjs';
@@ -737,4 +738,35 @@ test('V1 environment adapters use the current native installation and reject uno
   delete context.params.__operit_environment_owner;
   assert.throws(() => tools.SoftwareSettings.readEnvironmentVariable('TOKEN'), /Environment access requires an owning package installation/);
   assert.equal(calls.length, 2);
+});
+
+/** Runs the original market UI through the production Compose compiler and retained speech bridge. */
+test('unmodified marketplace VoiceBar click starts system speech', { skip: !process.env.OPERIT_VOICEBAR_FIXTURE }, async () => {
+  const { context, calls } = engine();
+  context.invokeTool = async (name, params) => {
+    assert.equal(name, 'tts_speak');
+    return { providerType: 'SYSTEM_TTS', started: true, interrupt: params.request.interrupt, speed: 1, pitch: 1 };
+  };
+  vm.runInContext(composeContextScript(), context);
+  context.exports = {};
+  const script = readFileSync(join(process.env.OPERIT_VOICEBAR_FIXTURE, 'dist/ui/voicebar.ui.js'), 'utf8');
+  vm.runInContext(context.OperitComposeCompiler.prepare(script, 'marketplace-voicebar'), context);
+  const runtime = context.OperitComposeDslRuntime.createContext({});
+  runtime.stateStore._msg = '原版语音条兼容测试';
+  const tree = context.exports.default(runtime.ctx);
+  runtime.composition.finish(tree);
+  function action(node) {
+    if (!node || typeof node !== 'object') return undefined;
+    if (node.props?.onClick?.__actionId) return node.props.onClick.__actionId;
+    for (const child of Object.values(node)) {
+      const found = action(child);
+      if (found) return found;
+    }
+  }
+  const id = action(tree);
+  assert.equal(typeof id, 'string');
+  runtime.invokeAction(id);
+  await new Promise(setImmediate);
+  assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: '原版语音条兼容测试', interrupt: true } }] }]);
+  assert.equal(context.refs, 0);
 });

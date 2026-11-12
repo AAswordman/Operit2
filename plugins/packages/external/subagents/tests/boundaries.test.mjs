@@ -274,7 +274,7 @@ test("workspace embeds the native child chat and disposes observers without canc
   assert.equal(execution.props.showInput, false);
   ui.state.set("subagents.message", "Follow up");
   tree = ui.render();
-  assert.equal(ui.find(tree, "subagents.send").props.enabled, false);
+  assert.equal(ui.find(tree, "subagents.send"), null);
   assert.equal(ui.find(tree, "subagents.interrupt").props.enabled, true);
   assert.equal(ui.find(tree, "subagents.wait").props.enabled, true);
   await ui.find(tree, "subagents.interrupt").props.onClick();
@@ -284,14 +284,14 @@ test("workspace embeds the native child chat and disposes observers without canc
   ui.state.set("subagents.message", "Next turn"); tree = ui.render();
   assert.equal(ui.find(tree, "subagents.execution").props.chatId, child.chatId);
   assert.equal(ui.find(tree, "subagents.send").props.enabled, true);
-  assert.equal(ui.find(tree, "subagents.interrupt").props.enabled, false);
+  assert.equal(ui.find(tree, "subagents.interrupt"), null);
   await ui.find(tree, "subagents.send").props.onClick();
   assert.deepEqual(requests.at(-1), { action: "send", parentChatId: "parent", agentId: child.id, message: "Next turn", interrupt: false });
   const closed = { ...completed, status: "closed" };
   await repository.save(closed); await flush();
   ui.state.set("subagents.message", "Cannot send"); tree = ui.render();
   assert.equal(ui.find(tree, "subagents.send").props.enabled, false);
-  assert.equal(ui.find(tree, "subagents.interrupt").props.enabled, false);
+  assert.equal(ui.find(tree, "subagents.interrupt"), null);
   const writesBeforeDispose = storage.commits.length;
   ui.dispose(); await flush();
   assert.equal(h.chat.cancellations.length, 0);

@@ -429,6 +429,7 @@ class ConversationDrawerItem extends StatefulWidget {
     required this.onDetach,
     this.onSearchMessages,
     this.onViewFavorites,
+    this.childToggle,
     this.nested = false,
     this.workspaceStyle = false,
   });
@@ -454,6 +455,7 @@ class ConversationDrawerItem extends StatefulWidget {
   final bool Function(core_proxy.ChatHistoryListItem) canAcceptDrop;
   final bool canDetach;
   final VoidCallback onDetach;
+  final Widget? childToggle;
   final bool nested;
   final bool workspaceStyle;
 
@@ -527,6 +529,7 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
             appearance: appearance,
             workspaceStyle: workspaceStyle,
             nested: widget.nested,
+            metadata: widget.childToggle,
             pinned: history.pinned,
             locked: history.locked,
             dragHovering: candidateData.isNotEmpty,

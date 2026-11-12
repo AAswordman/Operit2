@@ -134,3 +134,22 @@ Windows 报 SQLite 文件仍被占用。没有通过吞掉错误或忽略失败�
 聊天附件入口仍在 `ChatServiceCore` 内解析 `file://`，且包含平台分支；随后导入过程
 会先转换为 VFS 地址并通过 VFS 访问文件。该入口解析应移至统一资源入口，避免聊天
 业务承担平台路径处理。以上两项尚未完成，不能将本次迁移描述为所有边界已经收口。
+
+## v1 语音插件
+
+旧插件的 `/storage/emulated/0/...` 与 `/sdcard/...` 在文件工具和资源读取入口都先按同一份插件存储别名解析。文件生成、媒体注册和 WebView 的 `file://` 音频读取因此访问同一文件；显式 `/virtual/android/sdcard/...` 仍表示平台共享存储挂载。
+
+v1 的 `Tools.FFmpeg.execute/info/convert` 与历史 `ffmpeg:ffmpeg_execute` 工具调用共用内部兼容实现。虚拟输入通过所属 VFS 读取，暂存到当前插件选择的运行环境；FFmpeg 成功后才把输出写回 VFS，并在成功和失败时清理暂存目录。插件收到的路径和输出诊断保留原地址。转换参数按独立参数传递，兼容已发布语音插件探测时长所用的 `2>&1 || true` 后缀。
+
+Android、iOS、OHOS 的 Alpine 运行环境首次使用时检查 FFmpeg，缺少时通过现有 APK 包管理器安装；安装失败保留实际错误且允许重试。本机运行环境使用 PATH 中已有的 FFmpeg。
+
+可用未修改的市场插件包进行可选集成验证，`OPERIT_TEST_FFMPEG` 指向本机 FFmpeg 可执行文件，另外两个变量指向解压后的插件目录：
+
+```sh
+OPERIT_TEST_FFMPEG=/absolute/path/to/ffmpeg \
+OPERIT_VOICE_BAR_FIXTURE=/absolute/path/to/com.operit.voice_bar \
+OPERIT_VOICEBAR_FIXTURE=/absolute/path/to/com.gardencottage.voicebar \
+node --test tools/tests/toolpkg_v1_runtime.test.mjs tools/tests/toolpkg_v1_adapters.test.mjs
+```
+
+测试使用合成音频代替服务商返回值，验证真实转码、时长、缓存和系统朗读调用，不使用服务商凭据。

@@ -42,25 +42,80 @@ void main() {
     },
   );
 
+  for (final desktop in [false, true]) {
+    testWidgets(
+      'workspace branches collapse independently and search reveals ancestors / desktop:$desktop',
+      (tester) async {
+        final bridge = _DrawerBridge();
+        final histories = [
+          _history('A', 0),
+          _history('A', 1, parentChatId: 'A-0'),
+          _history('A', 2, parentChatId: 'A-1'),
+        ];
+        await _pumpDrawer(
+          tester,
+          bridge,
+          histories,
+          conversationsOnly: desktop,
+        );
+        expect(_workspaceIds(tester), ['A-0']);
+        await tester.tap(find.byKey(const ValueKey('chat-children:A-0')));
+        await _pumpSidebar(tester);
+        expect(_workspaceIds(tester), ['A-0', 'A-1']);
+        await tester.tap(find.byKey(const ValueKey('chat-children:A-1')));
+        await _pumpSidebar(tester);
+        expect(_workspaceIds(tester), ['A-0', 'A-1', 'A-2']);
+        await tester.tap(find.byKey(const ValueKey('chat-children:A-0')));
+        await _pumpSidebar(tester);
+        expect(_workspaceIds(tester), ['A-0']);
+        await tester.tap(find.byTooltip('搜索对话'));
+        await _pumpSidebar(tester);
+        await tester.enterText(find.byType(TextField), 'A-2');
+        await _pumpSidebar(tester);
+        expect(_workspaceIds(tester), ['A-0', 'A-1', 'A-2']);
+        await tester.enterText(find.byType(TextField), '');
+        await _pumpSidebar(tester);
+        expect(_workspaceIds(tester), ['A-0']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
-    'workspace conversations stay flat and search finds direct titles',
+    'workspace preview retains parents of active descendants and counts roots',
     (tester) async {
       final bridge = _DrawerBridge();
       final histories = [
-        _history('A', 0),
+        for (var i = 0; i < 6; i++) _history('A', i),
+        _history('A', 6, parentChatId: 'A-5'),
+      ];
+      await _pumpDrawer(tester, bridge, histories, streamingIds: {'A-6'});
+      expect(_workspaceIds(tester), ['A-0', 'A-1', 'A-2', 'A-3', 'A-5']);
+      expect(find.text('展开更多 1'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('chat-children:A-5')));
+      await _pumpSidebar(tester);
+      expect(_workspaceIds(tester).last, 'A-6');
+      await _pumpDrawer(tester, bridge, histories, streamingIds: {'A-6'});
+      expect(_workspaceIds(tester).last, 'A-6');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'children follow their parent group and missing parents remain roots',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      final histories = [
+        _history('A', 0, groupName: 'Research'),
         _history('A', 1, parentChatId: 'A-0'),
-        _history('A', 2, parentChatId: 'A-1'),
+        _history('A', 2, parentChatId: 'missing-parent', groupName: 'Research'),
       ];
       await _pumpDrawer(tester, bridge, histories);
-      expect(_visibleIds(tester), ['A-0', 'A-1', 'A-2']);
-      await tester.tap(find.byTooltip('搜索对话'));
+      expect(_workspaceIds(tester), ['A-0', 'A-2']);
+      expect(find.text('未分组'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('chat-children:A-0')));
       await _pumpSidebar(tester);
-      await tester.enterText(find.byType(TextField), 'A-2');
-      await _pumpSidebar(tester);
-      expect(_visibleIds(tester), ['A-2']);
-      await tester.enterText(find.byType(TextField), '');
-      await _pumpSidebar(tester);
-      expect(_visibleIds(tester), ['A-0', 'A-1', 'A-2']);
+      expect(_workspaceIds(tester), ['A-0', 'A-1', 'A-2']);
       expect(tester.takeException(), isNull);
     },
   );

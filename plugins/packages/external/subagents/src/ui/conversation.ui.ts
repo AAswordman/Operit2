@@ -10,6 +10,7 @@ export default function Conversation(ctx: ComposeDslContext): ComposeNode {
   const selectedId = requireText(input.agentId, "agentId");
   const [agent, setAgent] = ctx.useState<Agent | null>("subagents.detail", null);
   const [message, setMessage] = ctx.useState("subagents.message", "");
+  const [expanded, setExpanded] = ctx.useState("subagents.input-expanded", false);
   const [busy, setBusy] = ctx.useState("subagents.busy", false);
   const [waiting, setWaiting] = ctx.useState("subagents.waiting", false);
   const [error, setError] = ctx.useState<string | null>("subagents.error", null);
@@ -76,7 +77,10 @@ export default function Conversation(ctx: ComposeDslContext): ComposeNode {
     } finally { setWaiting(false); }
   }
 
-  const canSend = agent !== null && agent.status !== "closed" && agent.status !== "closing" && !busy && message.trim() !== "";
+  const editable = agent !== null && agent.status !== "closed" && agent.status !== "closing";
+  const active = agent !== null && isActive(agent.status);
+  const canSend = editable && !busy && message.trim() !== "";
+  const sendLabel = busy ? "正在处理…" : !editable ? (agent === null ? "正在读取…" : labels[agent.status]) : active ? "打断并发送" : "发送新指令";
   return ctx.UI.Column({ key: "subagents.conversation", fillMaxWidth: true, fillMaxHeight: true, padding: 12, spacing: 8 }, [
     ctx.UI.Text({ text: agent === null ? "子代理会话" : agent.name, style: "titleMedium", maxLines: 1, overflow: "ellipsis" }),
     ...(agent === null ? [ctx.UI.Text({ text: "正在读取子代理…" })] : [
@@ -86,20 +90,32 @@ export default function Conversation(ctx: ComposeDslContext): ComposeNode {
     ]),
     ...(notice === null ? [] : [ctx.UI.Text({ key: "subagents.notice", text: notice, style: "bodySmall" })]),
     ...(error === null ? [] : [ctx.UI.Text({ text: error, style: "bodySmall", color: ctx.MaterialTheme.colorScheme.error })]),
-    ctx.UI.Row({ fillMaxWidth: true, spacing: 4, verticalAlignment: "center" }, [
-      ctx.UI.TextButton({ key: "subagents.wait", text: waiting ? "等待中…" : "等待 30 秒", enabled: !waiting && agent !== null && isActive(agent.status), onClick: wait }),
-      ctx.UI.TextButton({ text: "关闭子代理", enabled: agent !== null && !busy && agent.status !== "closed" && agent.status !== "closing",
-        /** Closes the selected task while preserving this inspectable detail view. */
-        onClick: () => close(selectedId) }),
-    ]),
-    ctx.UI.TextField({ key: "subagents.followup", label: "给子代理发送新指令", value: message, onValueChange: setMessage, minLines: 1, maxLines: 3, readOnly: busy || agent === null || agent.status === "closed" || agent.status === "closing" }),
-    ctx.UI.Row({ fillMaxWidth: true, spacing: 8, verticalAlignment: "center" }, [
-      ctx.UI.Button({ key: "subagents.send", text: "发送", enabled: canSend && agent !== null && !isActive(agent.status),
-        /** Starts a normal follow-up only when the preceding turn has ended. */
-        onClick: () => send(false) }),
-      ctx.UI.FilledTonalButton({ key: "subagents.interrupt", text: busy ? "正在处理…" : "打断并发送", enabled: canSend && agent !== null && isActive(agent.status),
-        /** Waits for real cancellation before sending the entered replacement instruction. */
-        onClick: () => send(true) }),
-    ]),
+    ctx.UI.Card({ key: "subagents.input-surface", fillMaxWidth: true, containerColor: "surfaceContainer", themeSurface: "card", shape: { cornerRadius: 22 }, elevation: 0 },
+      ctx.UI.Column({ fillMaxWidth: true, padding: { start: 12, top: 14, end: 12, bottom: 8 }, spacing: 8 }, [
+        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "topStart" }, [
+          ctx.UI.TextField({ key: "subagents.followup", weight: 1, placeholder: editable ? "给子代理发送新指令" : sendLabel,
+            value: message, onValueChange: setMessage, minLines: expanded ? 5 : 1, maxLines: expanded ? 12 : 6,
+            readOnly: busy || !editable, style: { fontSize: 14 },
+            decoration: { borderless: true, filled: false, contentPadding: { start: 16, top: 10, end: 8, bottom: 8 }, hintStyle: { color: "onSurfaceVariant" } } }),
+          ctx.UI.IconButton({ key: "subagents.input-expand", width: 32, height: 32,
+            content: ctx.UI.Icon({ name: expanded ? "fullscreenExit" : "fullscreen", size: 18, tint: "onSurfaceVariant" }),
+            tooltip: expanded ? "收起输入框" : "展开输入框",
+            onClick: () => { setExpanded(!expanded); } }),
+        ]),
+        ctx.UI.Row({ key: "subagents.input-actions", fillMaxWidth: true, spacing: 4, verticalAlignment: "center" }, [
+          ctx.UI.IconButton({ key: "subagents.wait", width: 32, height: 32,
+            content: ctx.UI.Icon({ name: "hourglassEmpty", size: 18 }),
+            tooltip: waiting ? "等待中…" : "等待 30 秒", enabled: !waiting && active, onClick: wait }),
+          ctx.UI.IconButton({ key: "subagents.close", width: 32, height: 32,
+            content: ctx.UI.Icon({ name: "close", size: 18 }),
+            tooltip: "关闭子代理", enabled: editable && !busy,
+            onClick: () => close(selectedId) }),
+          ctx.UI.Text({ key: "subagents.send-label", text: sendLabel, style: "labelMedium", color: "onSurfaceVariant", weight: 1, maxLines: 1, overflow: "ellipsis" }),
+          ctx.UI.Tooltip({ message: active ? "打断当前任务并发送新指令" : "发送新指令" },
+            ctx.UI.FilledIconButton({ key: active ? "subagents.interrupt" : "subagents.send", width: 40, height: 40,
+              content: ctx.UI.Icon({ name: "arrowUpward", size: 20 }), shape: { cornerRadius: 20 }, enabled: canSend,
+              onClick: () => send(active) })),
+        ]),
+      ])),
   ]);
 }

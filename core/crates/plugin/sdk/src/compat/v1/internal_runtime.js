@@ -157,11 +157,95 @@ async function v1RunNode(params) {
     v1RequireCompleted(result);
     return result;
 }
-/** Executes the supplied FFmpeg arguments and reports the actual subprocess receipt. */
+/** Parses only FFmpeg arguments; virtual files are staged in the selected managed runtime. */
+const v1FfmpegPlanProgram = String.raw`import json,pathlib,re,shlex,subprocess,sys,tempfile
+command=sys.argv[1]
+# Released voice plugins append this shell suffix while probing duration.
+ignore_failure=bool(re.search(r'\s+2>&1\s*\|\|\s*true\s*$',command))
+command=re.sub(r'\s+2>&1(?:\s*\|\|\s*true)?\s*$','',command)
+args=shlex.split(command)
+files=[]
+for index,value in enumerate(args):
+    if re.match(r'^/(?:sdcard|storage/emulated/0|app|operitapp|mnt|virtual|data)(?:/|$)',value):
+        if '%' in value and re.search(r'%[0-9]*d',value):
+            raise ValueError('V1 FFmpeg virtual file sequences require explicit files')
+        files.append({'index':index,'path':value,'input':index>0 and args[index-1]=='-i'})
+if any(value in (';','&&','||','|','>','<','&','2>&1') for value in args):
+    raise ValueError('V1 FFmpeg accepts arguments, not shell commands')
+directory=tempfile.mkdtemp(prefix='operit-v1-ffmpeg-')
+for entry in files:
+    entry['staged']=str(pathlib.Path(directory)/(str(entry['index'])+pathlib.PurePosixPath(entry['path']).suffix))
+    args[entry['index']]=entry['staged']
+    entry['native']=entry['staged']
+    if sys.argv[2]=='msys':
+        entry['staged']=subprocess.check_output(['cygpath','-u',entry['staged']],text=True).strip()
+if sys.argv[2]=='msys':
+    directory=subprocess.check_output(['cygpath','-u',directory],text=True).strip()
+print(json.dumps({'directory':directory,'args':args,'files':files,'ignoreFailure':ignore_failure}))
+`;
+/** Runs FFmpeg without shell evaluation and returns its real exit status and diagnostics. */
+const v1FfmpegRunProgram = String.raw`import json,subprocess,sys
+result=subprocess.run(['ffmpeg',*json.loads(sys.argv[1])],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+print(json.dumps({'output':result.stdout.decode('utf-8',errors='replace'),'exitCode':result.returncode}))
+`;
+/** Keeps explicit Linux mounts in the v1 managed filesystem, just like the Files adapter. */
+async function v1FfmpegFile(operation, path, contentBase64) {
+    path = __operitV1FileAddress(path, 'android');
+    const linux = path.match(/^\/(?:virtual|mnt)\/linux(?:\/(.*))?$/);
+    if (linux) return v1File({ operation, args: { path: '/' + (linux[1] || ''), contentBase64 } });
+    if (operation === 'writeBinary') return __operitV1CanonicalTools.Files.writeBinary(path, contentBase64);
+    return __operitV1CanonicalTools.Files[operation](path);
+}
+const v1FfmpegReadiness = new Map();
+/** Makes the historical built-in media capability available in existing Alpine runtimes too. */
+async function v1EnsureFfmpeg(state) {
+    if (state.packages !== 'apk') return;
+    const key = getState();
+    let ready = v1FfmpegReadiness.get(key);
+    if (!ready) {
+        ready = v1Program('command -v ffmpeg >/dev/null 2>&1 || apk add --no-cache ffmpeg', 120000);
+        v1FfmpegReadiness.set(key, ready);
+        ready.catch(() => { if (v1FfmpegReadiness.get(key) === ready) v1FfmpegReadiness.delete(key); });
+    }
+    await ready;
+}
+/** Moves VFS files across the host/runtime boundary without exposing or guessing host paths. */
 async function v1FfmpegExecute(params) {
     const startedAt = Date.now();
-    const result = await v1Program("ffmpeg " + v1RequiredText(params.command, "command"), params.timeoutMs);
-    return { ...result, returnCode: result.exitCode, duration: Date.now() - startedAt };
+    const command = v1RequiredText(params.command, "command");
+    const state = v1RuntimeState();
+    await v1EnsureFfmpeg(state);
+    let result;
+    if (!/\/(?:sdcard|storage\/emulated\/0|app|operitapp|mnt|virtual|data)(?:\/|["'\s]|$)/.test(command)) {
+        result = await v1Program("ffmpeg " + command, params.timeoutMs);
+    } else {
+        const planned = await v1Program(state.python + " -c " + v1ShellQuote(v1FfmpegPlanProgram) + " " + v1ShellQuote(command) + " " + v1ShellQuote(state.paths), params.timeoutMs);
+        const plan = JSON.parse(planned.output);
+        try {
+            for (const entry of plan.files) {
+                if (entry.input || (await v1FfmpegFile('exists', entry.path)).exists) {
+                    const bytes = await v1FfmpegFile('readBinary', entry.path);
+                    await v1File({ operation: 'writeBinary', args: { path: entry.staged, contentBase64: bytes.contentBase64 } });
+                }
+            }
+            const executed = await v1Program(state.python + " -c " + v1ShellQuote(v1FfmpegRunProgram) + " " + v1ShellQuote(JSON.stringify(plan.args)), params.timeoutMs);
+            const receipt = JSON.parse(executed.output);
+            // Restore public paths in diagnostics; temporary runtime paths never become plugin file identities.
+            for (const entry of plan.files) receipt.output = receipt.output.split(entry.native).join(entry.path);
+            result = { ...executed, ...receipt, command: "ffmpeg " + command };
+            if (!plan.ignoreFailure) v1RequireCompleted(result);
+            if (receipt.exitCode === 0) {
+                for (const entry of plan.files) {
+                    if (entry.input) continue;
+                    const bytes = await v1File({ operation: 'readBinary', args: { path: entry.staged } });
+                    await v1FfmpegFile('writeBinary', entry.path, bytes.contentBase64);
+                }
+            }
+        } finally {
+            await v1File({ operation: 'deleteFile', args: { path: plan.directory, recursive: true } });
+        }
+    }
+    return { ...result, returnCode: result.exitCode, duration: Date.now() - startedAt, videoStreams: [], audioStreams: [], toString() { return this.output; } };
 }
 /** Reads version information from the installed FFmpeg executable. */
 async function v1FfmpegInfo() {

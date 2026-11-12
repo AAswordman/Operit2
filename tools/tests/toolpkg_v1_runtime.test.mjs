@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, statSync, existsSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -700,4 +700,141 @@ test('unmodified Ferry server starts with SQLite, serves chat APIs, and runs its
     rmSync(runtime.guest, { recursive: true, force: true });
     rmSync(testBin, { recursive: true, force: true });
   }
+});
+
+/** Keeps the documented legacy namespace and package call route on the same implementation. */
+test('v1 FFmpeg namespace exposes execute, info and convert with version-scoped dispatch', async () => {
+  const runtime = adapter();
+  for (const version of ['1.0.0', '1.0.1']) {
+    runtime.context.version = version;
+    for (const expression of ['Tools.FFmpeg.info()', 'Tools.FFmpeg.execute("-version")']) {
+      const result = await vm.runInContext(expression, runtime.context);
+      assert.equal(result.returnCode, 0);
+      assert.equal(result.output, 'managed-output');
+    }
+    assert.equal(typeof runtime.context.Tools.FFmpeg.convert, 'function');
+  }
+  runtime.context.version = '2.0.0';
+  assert.equal(runtime.context.Tools.FFmpeg, undefined);
+});
+
+/** Existing phone runtime images must acquire the codec instead of assuming it was bundled. */
+test('v1 FFmpeg prepares Alpine codecs once and retries failed preparation', async () => {
+  let preparations = 0;
+  const runtime = provider('android', command => {
+    if (command.includes('apk add --no-cache ffmpeg')) {
+      preparations++;
+      if (preparations === 1) return { output: 'temporary package mirror failure', exitCode: 1, timedOut: false };
+    }
+    return { output: 'ffmpeg fixture version', exitCode: 0, timedOut: false };
+  });
+  await assert.rejects(runtime.tools.ffmpeg_info(), /temporary package mirror failure/);
+  await runtime.tools.ffmpeg_info();
+  await runtime.tools.ffmpeg_info();
+  assert.equal(preparations, 2);
+});
+
+/** Runs the real compatibility bridge and runtime subprocesses over an isolated host VFS. */
+function voiceFixture(directory) {
+  const ffmpeg = process.env.OPERIT_TEST_FFMPEG;
+  const native = provider('linux', command => {
+    const result = spawnSync('/bin/sh', ['-c', command], {
+      encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, PATH: dirname(ffmpeg) + ':' + process.env.PATH },
+    });
+    if (result.error) throw result.error;
+    return { output: result.stdout + result.stderr, exitCode: result.status, timedOut: false };
+  });
+  const runtime = adapter('1.0.0', async (name, params) => native.tools[name === 'create' ? 'create_session' : 'execute'](name === 'create' ? { sessionName: params.sessionName } : params));
+  const canonical = runtime.context.__operitCanonicalTools.Files;
+  function local(path) {
+    assert.match(path, /^\/(?:sdcard|operitapp|app)\//);
+    const target = resolve(directory, path.slice(1));
+    assert.ok(target.startsWith(directory + '/'));
+    return target;
+  }
+  canonical.exists = async path => ({ path, exists: existsSync(local(path)) });
+  canonical.readBinary = async path => ({ path, contentBase64: readFileSync(local(path)).toString('base64') });
+  canonical.writeBinary = async (path, base64) => {
+    writeFileSync(local(path), Buffer.from(base64, 'base64'));
+    return { path, successful: true };
+  };
+  canonical.mkdir = async path => { mkdirSync(local(path), { recursive: true }); return { path, successful: true }; };
+  canonical.write = async (path, content) => {
+    mkdirSync(dirname(local(path)), { recursive: true });
+    writeFileSync(local(path), content);
+    return { operation: { path, successful: true } };
+  };
+  canonical.read = async options => ({ path: options.path, content: readFileSync(local(options.path), 'utf8') });
+  canonical.copy = async (from, to) => { writeFileSync(local(to), readFileSync(local(from))); return { path: from, successful: true }; };
+  canonical.move = async (from, to) => { renameSync(local(from), local(to)); return { path: from, successful: true }; };
+  return { ...runtime, native, canonical, local };
+}
+
+/** Verifies actual decoding, VFS publication, duration probing, failure propagation and cleanup. */
+test('v1 FFmpeg converts and probes virtual voice files through real subprocesses', { skip: !process.env.OPERIT_TEST_FFMPEG }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'operit-voice-vfs-'));
+  const before = readdirSync(tmpdir()).filter(name => name.startsWith('operit-v1-ffmpeg-')).sort();
+  try {
+    const runtime = voiceFixture(directory);
+    const input = '/storage/emulated/0/Download/voice_bar_voices/原声.mp3';
+    const output = "/sdcard/Download/voice_bar_voices/测试 & 100%20 ' $(touch injected).wav";
+    await runtime.context.Tools.Files.mkdir('/sdcard/Download/voice_bar_voices', true);
+    execFileSync(process.env.OPERIT_TEST_FFMPEG, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', runtime.local(input.replace('/storage/emulated/0', '/sdcard'))]);
+    const converted = await runtime.context.Tools.FFmpeg.convert(input, output, { audio_codec: 'pcm_s16le' });
+    assert.equal(converted.returnCode, 0);
+    assert.equal(readFileSync(runtime.local(output)).subarray(0, 4).toString(), 'RIFF');
+    assert.equal(existsSync(join(directory, 'injected')), false);
+    const probed = await runtime.context.Tools.FFmpeg.execute(`-hide_banner -i "${output}" -f null - 2>&1 || true`);
+    assert.match(probed.output, /Duration: 00:00:00\.30/);
+    assert.ok(probed.output.includes(output));
+    assert.doesNotMatch(probed.output, /operit-v1-ffmpeg-/);
+    await assert.rejects(runtime.context.Tools.FFmpeg.execute(`-i "${output}" -c:a nonexistent-codec "${output}.failed.wav"`), /V1 runtime command exited/);
+    assert.equal(existsSync(runtime.local(output + '.failed.wav')), false);
+    assert.deepEqual(readdirSync(tmpdir()).filter(name => name.startsWith('operit-v1-ffmpeg-')).sort(), before);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+/** Exercises the untouched marketplace sender with synthetic provider bytes and no network credentials. */
+test('unmodified AI Voice Mouth synthesizes, converts and reuses cached voice audio', { skip: !process.env.OPERIT_TEST_FFMPEG || !process.env.OPERIT_VOICE_BAR_FIXTURE }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'operit-voice-market-'));
+  try {
+    const runtime = voiceFixture(directory);
+    const mp3 = join(directory, 'provider.mp3');
+    execFileSync(process.env.OPERIT_TEST_FFMPEG, ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', mp3]);
+    const payload = readFileSync(mp3).toString('base64');
+    const environment = { VOICE_BAR_PROVIDER: 'elevenlabs', VOICE_BAR_ELEVENLABS_API_KEY: 'synthetic-test-key', VOICE_BAR_ELEVENLABS_VOICE_ID: 'synthetic-voice' };
+    runtime.context.getEnv = key => environment[key] || '';
+    let requests = 0, result;
+    runtime.context.Tools.Net = { http: async () => { requests++; return { statusCode: 200, contentBase64: payload }; } };
+    runtime.context.Buffer = Buffer;
+    runtime.context.ToolPkg = { _m() {} };
+    runtime.context.complete = value => { result = value; };
+    const cache = new Map(), fixture = resolve(process.env.OPERIT_VOICE_BAR_FIXTURE);
+    function load(path) {
+      path = resolve(path);
+      assert.ok(path.startsWith(fixture + '/'));
+      if (cache.has(path)) return cache.get(path).exports;
+      const module = { exports: {} }; cache.set(path, module);
+      vm.runInContext('(function(exports,module,require){' + readFileSync(path, 'utf8') + '\n})', runtime.context, { filename: path })(module.exports, module, name => load(resolve(dirname(path), name)));
+      return module.exports;
+    }
+    await runtime.context.Tools.Files.write('/sdcard/Download/Operit/voice_bar/config.json', '{}');
+    const plugin = load(join(fixture, 'dist/packages/voice_bar.js'));
+    await plugin.say({ text: '兼容性测试' });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.match(result.voice_tag, /^<voice src=/);
+    assert.equal(readFileSync(runtime.local(result.path.replace('/storage/emulated/0', '/sdcard'))).subarray(0, 4).toString(), 'RIFF');
+    assert.equal(result.duration, 0.3);
+    await plugin.say({ text: '兼容性测试' });
+    assert.equal(result.success, true);
+    assert.equal(result.cached, true);
+    assert.equal(requests, 1);
+    await plugin.say_fav({ text: '语音收藏兼容测试', title: '收藏测试' });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal(result.favorite_saved, true, JSON.stringify(result));
+    const favorites = JSON.parse(readFileSync(runtime.local(result.favorite_data_file), 'utf8'));
+    assert.equal(favorites.items.at(-1).audio_path, result.path);
+    assert.equal(favorites.items.at(-1).text, '语音收藏兼容测试');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

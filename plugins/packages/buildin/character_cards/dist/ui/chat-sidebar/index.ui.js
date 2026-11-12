@@ -514,9 +514,10 @@ function sidebarRowBuilders(ctx, current, state, actions, defaultAvatar) {
       const expanded = query !== "" || state.expandedGroups.includes("children:" + chat.id);
       content.push(ctx.UI.IconButton({
         key: "sidebar-children-" + chat.id,
-        icon: expanded ? "ExpandLess" : "ExpandMore",
-        width: 26,
-        height: 28,
+        content: ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }),
+        width: 22,
+        height: 22,
+        shape: { cornerRadius: 6 },
         tooltip: expanded ? "收起子会话" : "展开子会话（" + children.length + "）",
         /** Changes presentation without interrupting any running conversation. */
         onClick: () => actions.toggleGroup("children:" + chat.id)
@@ -692,7 +693,7 @@ function sidebarRowBuilders(ctx, current, state, actions, defaultAvatar) {
           gap(8),
           ctx.UI.Text({ text: String(section.chats.length), style: "labelSmall", fontWeight: "700", color: colors.onSurfaceVariant.copy({ alpha: 0.64 }) }),
           ctx.UI.GradientRule({ weight: 1, paddingHorizontal: 10, height: 2, startColor: colors.outlineVariant.copy({ alpha: 0.62 }), endColor: colors.outlineVariant.copy({ alpha: 0 }) }),
-          ctx.UI.Icon({ name: collapsed ? "KeyboardArrowDown" : "KeyboardArrowUp", size: 23, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) })
+          ctx.UI.Icon({ name: collapsed ? "KeyboardArrowDown" : "KeyboardArrowUp", size: 18, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) })
         ])
       )
     );
@@ -716,7 +717,7 @@ function sidebarRowBuilders(ctx, current, state, actions, defaultAvatar) {
       gap(2),
       ungrouped ? ctx.UI.HoverOnly({ width: 24, height: 24 }, actions.menu("ungrouped", section.id)) : more("group", group.id),
       gap(2),
-      ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 20, tint: colors.onSurfaceVariant.copy({ alpha: 0.62 }) })
+      ctx.UI.Icon({ name: expanded ? "KeyboardArrowUp" : "KeyboardArrowDown", size: 18, tint: colors.onSurfaceVariant.copy({ alpha: 0.62 }) })
     ]);
     return ctx.UI.Column(
       {

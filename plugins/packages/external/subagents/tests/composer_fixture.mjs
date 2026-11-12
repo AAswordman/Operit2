@@ -53,7 +53,19 @@ async function composerFixture() {
   state.set("goal", { objective: "检查目标模式在窄屏和大字体下的对齐与长目标显示", status: "active", startedAt: 1000, pausedDurationMs: 0 });
   const goalNode = goalScreen(ctx);
   state.set("goal.expanded", true);
-  return { agentId: child.id, node, expandedNode, goalNode, goalExpandedNode: goalScreen(ctx) };
+  const conversation = modules().load("./ui/conversation.ui").default;
+  state.set("input", { parentChatId: "parent", agentId: child.id });
+  const detail = h.repository.records.get(child.id);
+  const conversationInputs = {};
+  for (const status of ["running", "completed", "closed"]) {
+    state.set("subagents.detail", { ...detail, status });
+    for (const expanded of [false, true]) {
+      state.set("subagents.input-expanded", expanded);
+      const result = conversation(ctx);
+      conversationInputs[status + (expanded ? "Expanded" : "")] = ctx.UI.Column({ fillMaxWidth: true }, [result.children.find(node => node.props.key === "subagents.input-surface")]);
+    }
+  }
+  return { agentId: child.id, node, expandedNode, goalNode, goalExpandedNode: goalScreen(ctx), conversationInputs };
 }
 
 const fixture = await composerFixture();

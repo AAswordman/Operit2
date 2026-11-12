@@ -2645,6 +2645,7 @@ dependencies = [
  "operit-host-contract",
  "operit-host-native-filesystem",
  "operit-host-native-storage",
+ "operit-host-native-terminal",
  "serde",
  "serde_json",
  "uuid",
