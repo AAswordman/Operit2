@@ -153,7 +153,9 @@ impl Journal {
     pub(crate) fn complete(&mut self, operations: &[SyncOperation]) -> Result<(), Error> {
         self.transaction(|tx| {
             for operation in operations {
-                let fingerprint = crate::Transaction::digest(operation).map_err(Error::Message)?;
+                // Blob-transported operations carry the content hash as their fingerprint,
+                // matching the reception fingerprint instead of the transport envelope bytes.
+                let fingerprint = crate::Transaction::operation_digest(operation).map_err(Error::Message)?;
                 let rows = tx.query("SELECT fingerprint FROM originals WHERE id=?1", vec![text(&operation.opId)])?;
                 if rows.is_empty() && (super::compaction::retired(tx,operation)? || !tx.query("SELECT 1 FROM _operit_initialization_coverage WHERE id=?1",vec![text(&operation.opId)])?.is_empty()) { continue; }
                 let row = rows.first().ok_or_else(|| Error::Message(format!("Unreceived operation {}", operation.opId)))?;
