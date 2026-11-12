@@ -1,5 +1,29 @@
 use super::*;
 
+/// Two overlapping preparations must converge on the same durable outgoing request.
+#[tokio::test]
+async fn concurrent_join_preparation_does_not_create_two_active_requests() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("concurrent-prepare");
+    let (arrived, release) = pair.aPeer.pauseResponse("snapshotHeader");
+    let (first, second) = tokio::join!(
+        pair.applicant.requestDeviceSpaceJoin(pair.b.localNodeId()),
+        async {
+            arrived.await.unwrap();
+            let second = pair.applicant.requestDeviceSpaceJoin(pair.b.localNodeId()).await.unwrap();
+            release.send(()).unwrap();
+            second
+        }
+    );
+    let first = first.unwrap();
+    assert_eq!(first.requestId, second.requestId);
+    assert_eq!(pair.applicant.outgoingDeviceSpaceJoins().unwrap().len(), 1);
+    let incoming = pair.receiver.incomingDeviceSpaceJoins().await.unwrap();
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0].requestId, first.requestId);
+}
+
 /// Exercises independent space join is pending then only explicit approval admits through isolated runtime stores.
 #[tokio::test]
 async fn independent_space_join_is_pending_then_only_explicit_approval_admits() {

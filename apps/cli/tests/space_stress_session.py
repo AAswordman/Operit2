@@ -216,7 +216,8 @@ print(json.dumps(result))
     async def pair(self, source, target):
         # These transport regressions intentionally bind loopback, which QR codes exclude.
         pending = await source.command('call', 'server.runtimeRemoteLinkService', 'startPairing',
-            json.dumps({'nodeId': target.node, 'address': target.address, 'transport': target.transport}))
+            json.dumps({'nodeId': target.node, 'address': target.address,
+                        'transport': 'webSocket' if target.transport == 'ws' else target.transport}))
         prompts = await target.command('prompts')
         prompt = next(p for p in prompts if p['pairingId'] == pending['pairingId'])
         await source.command('call', 'server.runtimeRemoteLinkService', 'finishPairing',

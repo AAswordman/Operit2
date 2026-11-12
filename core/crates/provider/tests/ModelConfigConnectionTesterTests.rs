@@ -1,12 +1,61 @@
 use super::ModelConfigConnectionTester;
-use crate::chat::llmprovider::AIService::{response_stream_from_chunks, AiServiceError};
+use crate::chat::llmprovider::AIService::{response_stream_from_chunks, AiServiceError, AIService, SendMessageRequest};
 use operit_util::stream::RevisableTextStream::{
     empty_revisable_event_channel, with_event_channel_and_failure, TerminalFailureState,
 };
 use operit_util::stream::Stream::FnStream;
-use operit_model::ModelConfigData::ApiProviderType;
+use operit_model::ModelConfigData::{ApiProviderType, ModelCapabilities};
 use operit_model::ModelParameter::{ModelParameter, ParameterValueType};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
+
+/// Records actual probe requests and rejects a response mode the gateway does not support.
+struct ModeCheckingService {
+    expected_stream: bool,
+    requests: Arc<Mutex<Vec<bool>>>,
+}
+
+#[async_trait::async_trait]
+impl AIService for ModeCheckingService {
+    /// Models a gateway that accepts only the selected streaming or buffered response mode.
+    async fn send_message(
+        &mut self,
+        request: SendMessageRequest,
+    ) -> Result<Box<dyn operit_util::stream::RevisableTextStream::RevisableTextStreamLike>, AiServiceError> {
+        self.requests.lock().unwrap().push(request.stream);
+        if request.stream != self.expected_stream {
+            return Err(AiServiceError::RequestFailed("HTTP 503: unsupported response mode".into()));
+        }
+        Ok(response_stream_from_chunks(vec!["OK".into()]))
+    }
+}
+
+/// Every capability probe must use the selected mode, including gateways that require streaming.
+#[tokio::test]
+async fn connection_probe_honors_selected_mode_for_all_capabilities() {
+    let capabilities = ModelCapabilities {
+        directImage: true,
+        directAudio: true,
+        directVideo: true,
+        toolCall: true,
+    };
+    for stream in [true, false] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let service = Box::new(ModeCheckingService {
+            expected_stream: stream,
+            requests: requests.clone(),
+        });
+        let items = ModelConfigConnectionTester::testService(
+            service,
+            &capabilities,
+            ModelConfigConnectionTester::testParameters(&ApiProviderType::OPENAI, Vec::new()),
+            stream,
+        ).await;
+        assert_eq!(items.len(), 5);
+        assert!(items.iter().all(|item| item.success), "probe failures: {items:?}");
+        assert_eq!(*requests.lock().unwrap(), vec![stream; 5]);
+    }
+}
 
 #[test]
 fn connection_probe_sets_one_output_limit_for_each_protocol() {

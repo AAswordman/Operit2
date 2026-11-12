@@ -29,11 +29,12 @@ pub(crate) use chat_runtime::{
     parse_shell_args, ChatSendArgs, ShellArgs,
 };
 
+/// Runs the application with a heap-owned root command state machine.
 #[tokio::main]
 async fn main() -> ExitCode {
     error::install_panic_hook();
     let json_requested = std::env::args().any(|arg| arg == "--json");
-    match std::panic::AssertUnwindSafe(run()).catch_unwind().await {
+    match std::panic::AssertUnwindSafe(Box::pin(run())).catch_unwind().await {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(error)) => {
             if json_requested {
@@ -50,11 +51,12 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Dispatches root commands without embedding their runtime state in this frame.
 async fn run() -> Result<(), CliError> {
     AppLogger::set_enable_console_logging(false);
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
-        return tui::run_tui_command(&[]).await.map_err(map_tui_error);
+        return Box::pin(tui::run_tui_command(&[])).await.map_err(map_tui_error);
     }
 
     match args[0].as_str() {
@@ -63,12 +65,12 @@ async fn run() -> Result<(), CliError> {
             cli::print_root_usage();
             Ok(())
         }
-        "cli" => cli::run_cli_root(&args[1..]).await.map_err(CliError::user),
-        "daemon" => daemon::run(&args[1..]).await.map_err(CliError::user),
-        "tui" => tui::run_tui_command(&args[1..]).await.map_err(map_tui_error),
-        "install" | "uninstall" => cli::run_cli_root(&args).await.map_err(CliError::user),
+        "cli" => Box::pin(cli::run_cli_root(&args[1..])).await.map_err(CliError::user),
+        "daemon" => Box::pin(daemon::run(&args[1..])).await.map_err(CliError::user),
+        "tui" => Box::pin(tui::run_tui_command(&args[1..])).await.map_err(map_tui_error),
+        "install" | "uninstall" => Box::pin(cli::run_cli_root(&args)).await.map_err(CliError::user),
         value if value.starts_with('-') => {
-            tui::run_tui_command(&args).await.map_err(map_tui_error)
+            Box::pin(tui::run_tui_command(&args)).await.map_err(map_tui_error)
         }
         _ => {
             cli::print_root_usage();

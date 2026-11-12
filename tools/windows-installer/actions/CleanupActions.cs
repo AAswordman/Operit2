@@ -6,13 +6,24 @@ namespace Operit.Installer
 {
     public static class CleanupActions
     {
+        /// <summary>Closes the selected installation before MSI checks or replaces files, including unattended runs.</summary>
+        [CustomAction]
+        public static ActionResult CloseApplications(Session session)
+        {
+            try
+            {
+                InstallerApplications.Close(session["INSTALLFOLDER"], message => session.Log(message));
+                return ActionResult.Success;
+            }
+            catch (Exception error) { return ReportFailure(session, error); }
+        }
+
         /// <summary>Validates optional data removal before the MSI transaction changes any app files.</summary>
         [CustomAction]
         public static ActionResult PrepareRemoval(Session session)
         {
             try
             {
-                UserDataCleanup.EnsureOperitStopped();
                 if (session["OPERIT_DELETE_USER_DATA"] == "1")
                 {
                     var cleanup = new UserDataCleanup(session["INSTALLFOLDER"]);

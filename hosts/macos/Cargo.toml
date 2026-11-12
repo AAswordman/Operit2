@@ -11,6 +11,7 @@ arm64-runtime = ["operit-host-apple-native/arm64-runtime"]
 daemon = ["dep:tokio", "operit-host-native-common/daemon"]
 
 [dependencies]
+serde_json = "1"
 operit-host-local-inference = { path = "../common/operit-host-local-inference" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"], optional = true }
 operit-host-apple-native = { path = "../apple" }

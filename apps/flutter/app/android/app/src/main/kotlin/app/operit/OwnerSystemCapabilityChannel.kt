@@ -83,6 +83,7 @@ class OwnerSystemCapabilityChannel(
     }
 
     private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
+    private val uiAutomation = AndroidUiAutomation(activity.applicationContext)
     private var cachedMediaProjection: MediaProjection? = null
     private val ttsPlaybackLock = Any()
     private val ttsPlaybackSynthesisLock = Any()
@@ -176,6 +177,7 @@ class OwnerSystemCapabilityChannel(
 
     /** Releases owner-host resources and invalidates every active TTS generation. */
     fun release() {
+        uiAutomation.release()
         packageOperations.release()
         cachedMediaProjectionCaptureManager?.release()
         cachedMediaProjectionCaptureManager = null
@@ -292,6 +294,7 @@ class OwnerSystemCapabilityChannel(
                         ?: throw IllegalArgumentException("system operation paramsJson is required")
                 val response =
                     when (operation) {
+                        "ui_automation" -> mapOf("resultJson" to uiAutomation.execute(JSONObject(paramsJson)).toString())
                         "send_notification" -> systemSendNotification(JSONObject(paramsJson))
                         "get_device_location" -> mapOf(
                             "resultJson" to JSONObject(locationReader.read(JSONObject(paramsJson))).toString(),

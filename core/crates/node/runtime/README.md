@@ -47,6 +47,18 @@ migration only when an existing source member presents an accepted target
 without creating direct B-D/B-G pairings. Independent pairings alone do not merge
 Spaces. Topology rendering uses one membership snapshot for devices and endpoints.
 
+Departure delivery is owed to the original Space members independently of current
+pairing credentials. Unpairing before leaving does not discard the durable exit.
+A new join carries outstanding self-authored departures in its immutable source
+snapshot; the receiver applies them before reviewing the new membership. Active
+inbound and outbound pairings both exchange departures and Space projections
+before scoped replication. This retires stale membership without replacing the
+remaining members' Space identity or admitting an independently paired Space.
+
+Device preferences finish after business receipt capture on the same authenticated
+carrier. A receipt cannot acknowledge an edit made after the earlier preference
+exchange; later mutations reopen the existing synchronization gate.
+
 Group approval records use `runtime/link_access/space_merge_*.preferences.json`.
 Single-device `space_join_*` records remain untouched and are not interpreted as
 consent to a group merge; pending requests from the previous protocol must be

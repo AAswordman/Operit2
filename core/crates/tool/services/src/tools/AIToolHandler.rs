@@ -2065,6 +2065,8 @@ mod tests {
         &[]
     }
         /// Rejects unexpected application service access in execution pipeline tests.
+    /// Rejects access to built-in skill identities in tests without runtime services.
+    fn builtinSkillNames(&self) -> &'static [&'static str] { panic!("Unexpected runtime service: builtinSkillNames") }
     fn bundledExternalSkillAssets(&self) -> &'static [RuntimeBundledExternalSkillAsset] { panic!("Unexpected runtime service: bundledExternalSkillAssets") }
 
     /// Rejects runtime package asset access in the tool handler's isolated service stub.

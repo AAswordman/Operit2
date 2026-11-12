@@ -41,6 +41,9 @@
       "file": "departure.rs",
       "level": "real-router-isolated-host",
       "cases": [
+        "inbound_only_pairing_delivers_departure_without_business_replication",
+        "inbound_only_projection_retires_stale_membership_before_business_sync",
+        "unpair_then_leave_then_rejoin_preserves_the_host_space_and_retires_old_membership",
         "departure_delivery_does_not_apply_an_approved_space_merge",
         "departure_is_self_authored_and_relayed_without_moving_other_members",
         "departure_survives_reopen_until_the_neighbor_has_the_exact_receipt",
@@ -64,7 +67,9 @@
       "cases": [
         "space_join_preserves_identity_members_and_exact_revision",
         "overview_subscription_stops_worker_after_last_watch_is_dropped",
-        "paired_device_statuses_follow_active_peer_links_only"
+        "paired_device_statuses_follow_active_peer_links_only",
+        "software_releases_and_coreless_edge_do_not_change_protocol_compatibility",
+        "matching_software_does_not_hide_protocol_mismatch_or_missing_advertisement"
       ]
     },
     {
@@ -79,6 +84,7 @@
       "file": "join_lifecycle.rs",
       "level": "real-router-isolated-host",
       "cases": [
+        "concurrent_join_preparation_does_not_create_two_active_requests",
         "independent_space_join_is_pending_then_only_explicit_approval_admits",
         "rejection_cancel_and_stale_assignment_do_not_admit_or_change_applicant_space",
         "leaving_joined_space_initializes_admin_and_rejoining_requires_approval",
@@ -199,13 +205,15 @@
         "a_peer_without_consistency_support_cannot_complete_until_upgraded",
         "a_failed_pass_backs_off_before_retrying_the_full_exchange",
         "a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange",
-        "rejected_digest_probes_back_off_without_reading_full_clocks",
+        "rejected_digest_probes_do_not_retry_full_exchanges",
         "preference_edits_reopen_a_settled_storage_provider_gate",
+        "preference_edit_during_business_receipt_is_delivered_before_the_gate_settles",
         "partial_plugin_failure_keeps_healthy_replication_moving",
         "applied_remote_progress_does_not_reopen_a_settled_gate",
-        "snapshot_changes_retry_without_publishing_an_error_or_opening_the_sync_overlay",
+        "snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retry",
         "metadata_differences_and_new_incremental_writes_never_start_a_full_transfer",
-        "concurrent_peer_wakeups_use_one_coordinator_and_verified_boundaries"
+        "concurrent_peer_wakeups_use_one_coordinator_and_verified_boundaries",
+        "different_software_versions_still_synchronize_with_one_protocol_version"
       ]
     },
     {
@@ -232,7 +240,7 @@
         "core_discovery_returns_only_unpaired_devices_for_all_callers",
         "listener_port_policy_uses_host_allocation_and_preserves_explicit_fixed_ports",
         "automatic_default_listener_advertises_its_actual_shared_port",
-        "qr_pairing_isolates_addresses_and_checks_identity_before_confirmation"
+        "qr_pairing_authenticates_invitation_and_auto_approves_on_admin"
       ]
     }
   ]

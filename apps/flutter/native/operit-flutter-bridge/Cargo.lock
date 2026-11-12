@@ -2389,6 +2389,7 @@ dependencies = [
  "operit-host-local-inference",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
+ "serde_json",
 ]
 
 [[package]]
@@ -2870,7 +2871,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.32"
+version = "2.0.0-preview.33"
 dependencies = [
  "aes",
  "async-trait",

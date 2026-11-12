@@ -29,6 +29,59 @@ void main() {
   }
 
   test(
+    'watch payloads update appearance without reads or unrelated rebuilds',
+    () async {
+      final bridge = _SharedThemeBridge();
+      var changes = 0;
+      final startupModes = <ThemeMode>[];
+      final theme = OperitThemeController(
+        onChanged: () => changes++,
+        preferencesManager: UserPreferencesManager(
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+        saveStartupThemeMode: (mode) async => startupModes.add(mode),
+      );
+      addTearDown(theme.dispose);
+      addTearDown(bridge.close);
+      await theme.start();
+      final watch = bridge._watchRequests['preferencesFlow']!;
+      bridge.calls.clear();
+      changes = 0;
+
+      bridge._events.add(bridge._event(watch, bridge.preferences));
+      await Future<void>.delayed(Duration.zero);
+      bridge.preferences['chat_sidebar_tab'] = 'history';
+      bridge._events.add(bridge._event(watch, Map.of(bridge.preferences)));
+      await Future<void>.delayed(Duration.zero);
+      expect(changes, 0);
+      expect(bridge.calls, isEmpty);
+
+      bridge.preferences['bubble_show_avatar'] = false;
+      bridge._events.add(bridge._event(watch, Map.of(bridge.preferences)));
+      await Future<void>.delayed(Duration.zero);
+      expect(theme.themePreferenceSnapshot.bubbleShowAvatar, isFalse);
+      expect(changes, 1);
+      expect(bridge.calls, isEmpty);
+      expect(startupModes, [ThemeMode.system]);
+
+      await theme.saveThemeSettings(bubbleShowAvatar: true);
+      await Future<void>.delayed(Duration.zero);
+      expect(changes, 2);
+      expect(startupModes, [ThemeMode.system]);
+
+      bridge.preferences['font_scale'] = 'invalid';
+      bridge._events.add(bridge._event(watch, Map.of(bridge.preferences)));
+      await Future<void>.delayed(Duration.zero);
+      expect(theme.themeLoadError, isNotNull);
+      bridge.preferences.remove('font_scale');
+      bridge._events.add(bridge._event(watch, Map.of(bridge.preferences)));
+      await Future<void>.delayed(Duration.zero);
+      expect(theme.themeLoadError, isNull);
+      expect(theme.themePreferenceSnapshot.fontScale, 1.0);
+    },
+  );
+
+  test(
     'selecting a global font releases previous message font overrides atomically',
     () async {
       final bridge = _SharedThemeBridge();

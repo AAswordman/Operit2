@@ -290,6 +290,13 @@ IconData toolDisplayIcon(String? icon) => switch (icon) {
   'notification' => Icons.notifications_outlined,
   'clipboard' => Icons.content_paste,
   'audio' => Icons.volume_up_outlined,
+  'info' => Icons.info_outline,
+  'screen' => Icons.screenshot_outlined,
+  'tap' => Icons.touch_app_outlined,
+  'double_tap' => Icons.ads_click,
+  'long_press' => Icons.pan_tool_outlined,
+  'swipe' => Icons.swipe_outlined,
+  'keyboard' => Icons.keyboard_outlined,
   _ => Icons.build_outlined,
 };
 

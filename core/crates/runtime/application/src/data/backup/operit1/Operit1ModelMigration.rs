@@ -25,9 +25,11 @@ impl Operit1SnapshotImportManager {
         for (function, value) in mappings {
             let mapping = decodeFunctionMapping(value)?;
             let config = parsed.configById(&mapping.configId)?;
-            let modelId = splitModelIds(&config.modelName).get(mapping.modelIndex as usize)
+            let modelIds = splitModelIds(&config.modelName);
+            let modelIndex = operit1EffectiveModelIndex(&modelIds, mapping.modelIndex);
+            let modelId = modelIds.get(modelIndex)
                 .cloned().ok_or_else(|| {
-                    format!("Operit1 功能模型索引越界：{function:?}/{}", mapping.modelIndex)
+                    format!("Operit1 功能绑定的配置没有模型：{function:?}/{}", config.id)
                 })?;
             bindings.insert(
                 function,
@@ -38,14 +40,16 @@ impl Operit1SnapshotImportManager {
             .ok_or("Operit1 function model mappings are missing CHAT")?;
         let provider = providers.iter().find(|provider| provider.id == chat.providerId)
             .ok_or("Operit1 chat provider is missing")?;
+        let content = serde_json::to_string(&providers).map_err(|error| error.to_string())?;
+        let manager = ModelConfigManager::default();
+        manager.importAllProvidersFromBackupContent(&content)?;
+        let importedProvider = manager.getProviderProfile(&provider.id)
+            .map_err(|error| error.to_string())?;
         let result = operit1ModelImportResult(
-            provider,
+            &importedProvider,
             chat.modelId.clone(),
             providers.iter().map(|provider| provider.models.len() as i32).sum(),
         );
-        let content = serde_json::to_string(&providers).map_err(|error| error.to_string())?;
-        ModelConfigManager::default()
-            .importAllProvidersFromBackupContent(&content)?;
         FunctionalConfigManager::default()
             .saveFunctionModelBinding(bindings).map_err(|error| error.to_string())?;
         Ok(result)
@@ -204,6 +208,7 @@ impl ParsedOperit1Snapshot {
         })
     }
 
+    /// Previews the same effective chat selection that Kotlin uses when reading a saved model index.
     #[allow(non_snake_case)]
     fn modelConfigPreview(&self) -> Result<Operit1ModelConfigSnapshotPreview, String> {
         let configs = self
@@ -212,8 +217,8 @@ impl ParsedOperit1Snapshot {
             .map(|config| {
                 let providerBinding = config.providerBinding()?;
                 let modelIds = splitModelIds(&config.modelName);
-                let selectedModelIndex =
-                    (self.chatMapping.configId == config.id).then_some(self.chatMapping.modelIndex);
+                let selectedModelIndex = (self.chatMapping.configId == config.id)
+                    .then(|| operit1EffectiveModelIndex(&modelIds, self.chatMapping.modelIndex) as i32);
                 let selectedModelId =
                     selectedModelIndex.and_then(|index| modelIds.get(index as usize).cloned());
                 Ok(Operit1ModelConfigPreview {
@@ -230,16 +235,11 @@ impl ParsedOperit1Snapshot {
             .collect::<Result<Vec<_>, String>>()?;
 
         let chatConfigId = Some(self.chatMapping.configId.clone());
-        let chatModelIndex = Some(self.chatMapping.modelIndex);
-        let chatModelId = self
-            .configs
+        let chatConfig = configs
             .iter()
-            .find(|config| config.id == self.chatMapping.configId)
-            .and_then(|config| {
-                splitModelIds(&config.modelName)
-                    .get(self.chatMapping.modelIndex as usize)
-                    .cloned()
-            });
+            .find(|config| config.configId == self.chatMapping.configId);
+        let chatModelIndex = chatConfig.and_then(|config| config.selectedModelIndex);
+        let chatModelId = chatConfig.and_then(|config| config.selectedModelId.clone());
 
         Ok(Operit1ModelConfigSnapshotPreview {
             formatVersion: self.archive.manifest.formatVersion,
@@ -687,6 +687,7 @@ fn decodeFunctionMapping(value: Value) -> Result<Operit1FunctionConfigMapping, S
     serde_json::from_value(value).map_err(|error| format!("功能模型映射格式不正确：{error}"))
 }
 
+/// Splits the source model list exactly like Kotlin's getModelList, preserving its index order.
 #[allow(non_snake_case)]
 fn splitModelIds(modelName: &str) -> Vec<String> {
     modelName
@@ -695,6 +696,15 @@ fn splitModelIds(modelName: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .map(ToString::to_string)
         .collect()
+}
+
+/// Reproduces Kotlin's getValidModelIndex/getModelByIndex semantics for persisted Operit1 indices.
+#[allow(non_snake_case)]
+fn operit1EffectiveModelIndex(modelIds: &[String], requestedIndex: i32) -> usize {
+    match usize::try_from(requestedIndex) {
+        Ok(index) if index < modelIds.len() => index,
+        _ => 0,
+    }
 }
 
 impl Operit1PreferenceValue {

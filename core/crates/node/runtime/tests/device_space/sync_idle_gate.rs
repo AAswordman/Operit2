@@ -11,11 +11,11 @@ fn synchronizedMethodCount(peer: &ApprovalMeshPeer, method: &str) -> usize {
 }
 
 /// Every RPC that only a full synchronization pass issues. Cheap clock probes
-/// are excluded: idle cycles keep probing, but must not repeat any exchange.
+/// and bounded pairing headers are excluded: idle cycles keep probing metadata,
+/// but must not repeat any authority export or business exchange.
 fn fullPassMarkers(peer: &ApprovalMeshPeer) -> usize {
     [
         "snapshot",
-        "snapshotHeader",
         "snapshotControlPage",
         "observeSpaceSnapshot",
         "exchange",
@@ -618,6 +618,9 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
         notificationsAfterSync,
         "idempotent preference exchange must not keep rescheduling synchronization"
     );
+    // Applying incoming preferences changes the boundary after the business
+    // receipt; one following pass verifies that boundary before idling.
+    observer.synchronizeOnce().await.unwrap();
     let markersAfterSync = fullPassMarkers(&peers[1]);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterSync);
@@ -631,6 +634,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
         serde_json::json!(7),
         "a local device setting must propagate through the same settled gate"
     );
+    observer.synchronizeOnce().await.unwrap();
     let markersAfterLocalEdit = fullPassMarkers(&peers[1]);
     observer.synchronizeOnce().await.unwrap();
     assert_eq!(fullPassMarkers(&peers[1]), markersAfterLocalEdit);
@@ -647,6 +651,36 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
             before
         );
     }
+}
+
+/// An edit during business replication must reach the peer before that pass can settle.
+#[tokio::test]
+async fn preference_edit_during_business_receipt_is_delivered_before_the_gate_settles() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, access, peers, _) = gateMesh("sync-preference-boundary");
+    let observer = idleObserver(&routers[1]);
+    let target = routers[0].localNodeId();
+    let local = routers[1].localNodeId();
+    let space = access[1].deviceSpace().unwrap().spaceId;
+    let (arrived, release) = peers[1].pauseResponse("syncClock");
+    let (result, ()) = tokio::join!(observer.synchronizeOnce(), async {
+        arrived.await.unwrap();
+        access[1].setDevicePreference(local.clone(), "during-pass".into(), Some(serde_json::json!(42))).unwrap();
+        access[0].setDevicePreference(target.clone(), "during-pass".into(), Some(serde_json::json!(7))).unwrap();
+        release.send(()).unwrap();
+    });
+    result.unwrap();
+    let destination = operit_store::DevicePreferencesStore::DevicePreferencesStore::new(
+        routers[0].localCore.runtimeStorageHost());
+    assert_eq!(destination.read(&space, &local).unwrap().values()["during-pass"], serde_json::json!(42));
+    assert_eq!(access[1].devicePreferences(target.clone()).unwrap()["during-pass"], serde_json::json!(7));
+    observer.synchronizeOnce().await.unwrap();
+    let settled = fullPassMarkers(&peers[1]);
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(fullPassMarkers(&peers[1]), settled);
+    assert_eq!(access[1].deviceSpace().unwrap().members, access[0].deviceSpace().unwrap().members);
+    assert!(access[1].deviceSpace().unwrap().members.contains(&target));
 }
 
 /// Healthy replication continues; deterministic owner failures do not schedule unchanged work again.

@@ -402,44 +402,52 @@ fn generate_bundled_external_skill_assets(
     external_assets: &[BuildinAsset],
 ) {
     let plugins_dir = pluginsSourceRoot(manifest_dir);
-    let source_dir = plugins_dir.join("skills").join("external");
-    println!("cargo:rerun-if-changed={}", source_dir.display());
-
     let mut assets = Vec::<SkillAsset>::new();
-    if source_dir.is_dir() {
-        let mut skill_dirs = fs::read_dir(&source_dir)
-            .expect("read plugins/skills/external")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .filter(|path| has_skill_file(path))
-            .collect::<Vec<_>>();
-        skill_dirs.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
-        for skill_dir in skill_dirs {
-            let skill_name = skill_dir
-                .file_name()
-                .expect("bundled skill directory name")
-                .to_string_lossy()
-                .to_string();
-            let mut files = Vec::new();
-            collect_skill_source_files(&skill_dir, &skill_dir, &mut files);
-            files.sort_by_key(|(_, relative)| relative.clone());
-            for (path, relative) in files {
-                assets.push(SkillAsset {
-                    skill_name: skill_name.clone(),
-                    source: path,
-                    target: relative.replace('\\', "/"),
-                    package: None,
-                });
+    let mut builtin_names = Vec::<String>::new();
+    for kind in ["buildin", "external"] {
+        let source_dir = plugins_dir.join("skills").join(kind);
+        println!("cargo:rerun-if-changed={}", source_dir.display());
+        if source_dir.is_dir() {
+            let mut skill_dirs = fs::read_dir(&source_dir)
+                .expect("read bundled skill sources")
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .filter(|path| has_skill_file(path))
+                .collect::<Vec<_>>();
+            skill_dirs.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+            for skill_dir in skill_dirs {
+                let skill_name = skill_dir
+                    .file_name()
+                    .expect("bundled skill directory name")
+                    .to_string_lossy()
+                    .to_string();
+                if kind == "buildin" {
+                    builtin_names.push(skill_name.clone());
+                }
+                let mut files = Vec::new();
+                collect_skill_source_files(&skill_dir, &skill_dir, &mut files);
+                files.sort_by_key(|(_, relative)| relative.clone());
+                for (path, relative) in files {
+                    assets.push(SkillAsset {
+                        skill_name: skill_name.clone(),
+                        source: path,
+                        target: relative.replace('\\', "/"),
+                        package: None,
+                    });
+                }
+                collect_skill_includes(
+                    &plugins_dir, &skill_dir, &skill_name, builtin_assets, external_assets, &mut assets,
+                );
             }
-            collect_skill_includes(
-                &plugins_dir, &skill_dir, &skill_name, builtin_assets, external_assets, &mut assets,
-            );
         }
     }
 
     let generated = out_dir.join("bundled_external_skill_assets.rs");
     let mut code = String::new();
+    code.push_str(&format!(
+        "pub static BUILTIN_SKILL_NAMES: &[&str] = &{:?};\n", builtin_names,
+    ));
     code.push_str("#[derive(Clone, Copy)]\n");
     code.push_str("pub struct BundledExternalSkillAsset {\n");
     code.push_str("    pub skill_name: &'static str,\n");

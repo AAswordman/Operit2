@@ -66,6 +66,16 @@ public final class KeepAliveServiceHost {
         workPresenter.dismiss(workId);
     }
 
+    /** Consumes an opened result while its foreground notification owner is attached. */
+    static void openWork(String workId) {
+        requireMainThread();
+        if (workPresenter == null) return;
+        try { workPresenter.open(workId); }
+        catch (org.json.JSONException error) {
+            throw new IllegalArgumentException("Invalid retained Core work snapshot", error);
+        }
+    }
+
     /** Reposts current work after authorization changes and publishes actual notification visibility. */
     static void refreshNotifications() {
         requireMainThread();

@@ -139,7 +139,7 @@ android {
     namespace = "app.operit"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
-    buildFeatures { buildConfig = true }
+    buildFeatures { buildConfig = true; aidl = true }
 
     signingConfigs {
         create("release") {

@@ -654,6 +654,7 @@ impl ModelConfigManager {
         providerId: &str,
     ) -> Result<Vec<ModelConnectionTestResult>, ModelConfigError> {
         let provider = self.getProviderProfile(providerId)?;
+        let stream = Self::connectionTestStreamOutput()?;
         let mut results = Vec::new();
         for (_, stored) in self
             .connectionTestDataStore
@@ -669,7 +670,7 @@ impl ModelConfigManager {
             else {
                 continue;
             };
-            if stored.fingerprint == Self::connectionTestFingerprint(&provider, model)? {
+            if stored.fingerprint == Self::connectionTestFingerprint(&provider, model, stream)? {
                 results.push(stored.result);
             }
         }
@@ -681,11 +682,12 @@ impl ModelConfigManager {
         format!("{:x}", Sha256::digest(identity.as_bytes()))
     }
 
-    /// Hash credentials without copying them into the diagnostic record. Key usage
+    /// Hash response mode and credentials without copying secrets into the diagnostic record. Key usage
     /// counters and rotation position are deliberately excluded from configuration identity.
     fn connectionTestFingerprint(
         provider: &ProviderProfile,
         model: &ModelProfile,
+        stream: bool,
     ) -> Result<String, ModelConfigError> {
         let keys = provider
             .apiKeyPool
@@ -707,6 +709,7 @@ impl ModelConfigManager {
             "request": model.requestOverride,
             "parameters": model.parameters,
             "localRuntime": model.localRuntime,
+            "stream": stream,
         });
         Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(&connection)?)))
     }
@@ -715,10 +718,11 @@ impl ModelConfigManager {
         &self,
         provider: &ProviderProfile,
         model: &ModelProfile,
+        stream: bool,
         outcome: &Result<ModelConnectionTestReport, String>,
     ) -> Result<(), ModelConfigError> {
         let stored = StoredModelConnectionTest {
-            fingerprint: Self::connectionTestFingerprint(provider, model)?,
+            fingerprint: Self::connectionTestFingerprint(provider, model, stream)?,
             result: ModelConnectionTestResult {
                 providerId: provider.id.clone(),
                 modelId: model.id.clone(),
@@ -733,7 +737,12 @@ impl ModelConfigManager {
         Ok(())
     }
 
-    /// Tests connectivity and commits the outcome before returning to any client.
+    /// Reads the same persisted streaming preference used by chat generation.
+    fn connectionTestStreamOutput() -> Result<bool, ModelConfigError> {
+        Ok(!ApiPreferences::getInstance().disableStreamOutputFlow().first()?)
+    }
+
+    /// Tests the selected output mode and commits the outcome before returning to any client.
     pub async fn testModelConnection(
         &self,
         providerId: &str,
@@ -741,12 +750,15 @@ impl ModelConfigManager {
         providerRuntimeContext: ProviderRuntimeContext,
     ) -> Result<ModelConnectionTestReport, ModelConfigError> {
         let (provider, model) = self.findModel(providerId, modelId)?;
-        let outcome = ModelConfigConnectionTester::run(providerId,
+        let stream = Self::connectionTestStreamOutput()?;
+        let outcome = ModelConfigConnectionTester::run(
+            providerId,
             modelId,
             providerRuntimeContext,
+            stream,
         )
         .await;
-        self.saveConnectionTestResult(&provider, &model, &outcome)?;
+        self.saveConnectionTestResult(&provider, &model, stream, &outcome)?;
         outcome.map_err(ModelConfigError::ConnectionTest)
     }
 
@@ -760,7 +772,7 @@ impl ModelConfigManager {
         .map_err(|error| error.to_string())
     }
 
-    /// Imports provider profiles from the JSON format emitted by exportAllProviders.
+    /// Imports provider profiles, assigning numeric name suffixes to resolve display-name collisions.
     pub fn importAllProvidersFromBackupContent(
         &self,
         jsonContent: &str,
@@ -789,9 +801,7 @@ impl ModelConfigManager {
             if providerName.is_empty() {
                 return Err(format!("模型配置备份中的配置「{providerId}」缺少名称"));
             }
-            if !importedProviderNames.insert(providerName) {
-                return Err(format!("模型配置备份包含重复名称：{providerName}"));
-            }
+            importedProviderNames.insert(providerName.to_string());
 
             if provider.providerTypeId != provider.providerType.name() {
                 return Err(format!(
@@ -821,28 +831,38 @@ impl ModelConfigManager {
             .try_edit_result(|preferences| {
                 let providerIds = Self::readProviderList(preferences)?;
                 let currentProviderIds = providerIds.iter().cloned().collect::<HashSet<_>>();
+                let mut occupiedNames = HashSet::new();
                 for currentProviderId in &providerIds {
                     if importedProviderIds.contains(currentProviderId.as_str()) {
                         continue;
                     }
                     let currentProvider =
                         self.readProviderFromPreferences(preferences, currentProviderId)?;
-                    if importedProviderNames.contains(currentProvider.name.trim()) {
-                        return Err(ModelConfigError::ProviderNameAlreadyExists(
-                            currentProvider.name.trim().to_string(),
-                        ));
-                    }
+                    occupiedNames.insert(currentProvider.name.trim().to_string());
                 }
 
                 let mut newCount = 0;
                 let mut updatedCount = 0;
                 for provider in &providers {
+                    let mut provider = provider.clone();
+                    let originalName = provider.name.trim().to_string();
+                    if !occupiedNames.insert(originalName.clone()) {
+                        for suffix in 1u64.. {
+                            let candidate = format!("{originalName}{suffix}");
+                            if !importedProviderNames.contains(&candidate)
+                                && occupiedNames.insert(candidate.clone())
+                            {
+                                provider.name = candidate;
+                                break;
+                            }
+                        }
+                    }
                     if currentProviderIds.contains(&provider.id) {
                         updatedCount += 1;
                     } else {
                         newCount += 1;
                     }
-                    Self::writeProvider(preferences, provider)?;
+                    Self::writeProvider(preferences, &provider)?;
                 }
 
                 Ok(ModelConfigImportResult {
@@ -1524,7 +1544,7 @@ mod tests {
             std::thread::scope(|scope| {
                 scope.spawn(|| {
                     manager
-                        .saveConnectionTestResult(&provider, &provider.models[0], &Ok(passed.clone()))
+                        .saveConnectionTestResult(&provider, &provider.models[0], true, &Ok(passed.clone()))
                         .unwrap();
                 });
                 scope.spawn(|| {
@@ -1532,13 +1552,14 @@ mod tests {
                         .saveConnectionTestResult(
                             &provider,
                             &provider.models[1],
+                            true,
                             &Err("Request could not start".into()),
                         )
                         .unwrap();
                 });
                 scope.spawn(|| {
                     manager
-                        .saveConnectionTestResult(&other, &other.models[0], &Ok(failed.clone()))
+                        .saveConnectionTestResult(&other, &other.models[0], true, &Ok(failed.clone()))
                         .unwrap();
                 });
             });
@@ -1565,9 +1586,18 @@ mod tests {
                 Some(failed),
             );
 
+            let preferences = super::ApiPreferences::getInstance();
+            assert!(ModelConfigManager::connectionTestStreamOutput().unwrap());
+            preferences.saveDisableStreamOutput(true).unwrap();
+            assert!(!ModelConfigManager::connectionTestStreamOutput().unwrap());
+            assert!(manager.getModelConnectionTestResults(&provider.id).unwrap().is_empty());
+            preferences.saveDisableStreamOutput(false).unwrap();
+            assert!(ModelConfigManager::connectionTestStreamOutput().unwrap());
+            assert_eq!(manager.getModelConnectionTestResults(&provider.id).unwrap().len(), 2);
+
             let failed = report(&provider, false);
             manager
-                .saveConnectionTestResult(&provider, &provider.models[0], &Ok(failed.clone()))
+                .saveConnectionTestResult(&provider, &provider.models[0], true, &Ok(failed.clone()))
                 .unwrap();
             let results = manager
                 .getModelConnectionTestResults(&provider.id)
@@ -1623,7 +1653,11 @@ mod tests {
         );
         provider.apiKeyPool = vec![ApiKeyInfo::new("key-id".into(), "secret".into())];
         let mut model = ModelProfile::new("model".into());
-        let original = ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap();
+        let original = ModelConfigManager::connectionTestFingerprint(&provider, &model, true).unwrap();
+        assert_ne!(
+            original,
+            ModelConfigManager::connectionTestFingerprint(&provider, &model, false).unwrap(),
+        );
         provider.name = "Renamed".into();
         provider.currentKeyIndex = 1;
         provider.apiKeyPool[0].usageCount = 5;
@@ -1634,18 +1668,18 @@ mod tests {
         model.summary.enableSummary = false;
         assert_eq!(
             original,
-            ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap(),
+            ModelConfigManager::connectionTestFingerprint(&provider, &model, true).unwrap(),
         );
         provider.apiKeyPool[0].key = "changed-secret".into();
         assert_ne!(
             original,
-            ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap(),
+            ModelConfigManager::connectionTestFingerprint(&provider, &model, true).unwrap(),
         );
         provider.apiKeyPool[0].key = "secret".into();
         provider.apiKeyPool[0].isEnabled = false;
         assert_ne!(
             original,
-            ModelConfigManager::connectionTestFingerprint(&provider, &model).unwrap(),
+            ModelConfigManager::connectionTestFingerprint(&provider, &model, true).unwrap(),
         );
         assert_ne!(
             ModelConfigManager::connectionTestKey("a:b", "c"),
@@ -2146,6 +2180,63 @@ mod tests {
         assert_eq!(exported.models[0].summary, restored.models[0].summary);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// Resolves backup and target name collisions without changing provider data or reimport identities.
+    #[test]
+    fn import_all_providers_assigns_numeric_suffixes_to_duplicate_names() {
+        let root = unique_test_root("import_provider_name_collisions");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::default();
+        let template = manager.getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID).unwrap();
+        let retainedId = manager.createProvider(
+            "Shared".to_string(), "OPENAI".to_string(), "https://retained.invalid/v1".to_string(),
+        ).unwrap();
+        manager.createProvider(
+            "Shared1".to_string(), "OPENAI".to_string(), "https://retained.invalid/v1".to_string(),
+        ).unwrap();
+        let retainedBefore = serde_json::to_value(manager.getProviderProfile(&retainedId).unwrap()).unwrap();
+        let mut providers = Vec::new();
+        for (id, name) in [
+            ("import-a", "Shared"),
+            ("import-b", " Shared "),
+            ("import-c", "Shared2"),
+            ("import-d", "Untouched"),
+            ("import-e", "Untouched"),
+        ] {
+            let mut provider = template.clone();
+            provider.id = id.to_string();
+            provider.name = name.to_string();
+            provider.apiKey = format!("secret-{id}");
+            providers.push(provider);
+        }
+        let backup = serde_json::to_string(&providers).unwrap();
+        let result = manager.importAllProvidersFromBackupContent(&backup).unwrap();
+        assert_eq!((result.new, result.updated, result.skipped, result.total), (5, 0, 0, 5));
+        for (source, expectedName) in providers.iter().zip(["Shared3", "Shared4", "Shared2", "Untouched", "Untouched1"]) {
+            let imported = manager.getProviderProfile(&source.id).unwrap();
+            let mut expected = source.clone();
+            expected.name = expectedName.to_string();
+            assert_eq!(serde_json::to_value(&imported).unwrap(), serde_json::to_value(&expected).unwrap());
+        }
+        assert_eq!(serde_json::to_value(manager.getProviderProfile(&retainedId).unwrap()).unwrap(), retainedBefore);
+        let beforeReimport = manager.exportAllProviders().unwrap();
+        let result = manager.importAllProvidersFromBackupContent(&backup).unwrap();
+        assert_eq!((result.new, result.updated, result.skipped, result.total), (0, 5, 0, 5));
+        assert_eq!(manager.exportAllProviders().unwrap(), beforeReimport);
+    }
+
+    /// Keeps identity collisions invalid even when duplicate display names can be renamed.
+    #[test]
+    fn import_all_providers_rejects_duplicate_ids_before_writing() {
+        let root = unique_test_root("import_provider_duplicate_ids");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::default();
+        let provider = manager.getProviderProfile(ModelConfigManager::DEFAULT_PROVIDER_ID).unwrap();
+        let beforeImport = manager.exportAllProviders().unwrap();
+        let backup = serde_json::to_string(&vec![provider.clone(), provider]).unwrap();
+        assert!(manager.importAllProvidersFromBackupContent(&backup).unwrap_err().starts_with("模型配置备份包含重复 ID："));
+        assert_eq!(manager.exportAllProviders().unwrap(), beforeImport);
     }
 
     /// Verifies provider UUID allocation and rejects an occupied display name.

@@ -1,12 +1,12 @@
 # 当前版本插件创作流程
 
-本说明适用于通过 PackageBuilder 开发当前 Operit 的脚本包和 ToolPkg。接口以本 Skill 的 `types/` 为准；教程中的 `<dev_root>`、`<artifact_host_path>`、`<package_id>`、`<runtime_package_name>` 和 `<tool_name>` 是需要用真实值替换的占位符。
+本说明适用于通过 Operit 插件开发套件 开发当前 Operit 的脚本包和 ToolPkg。接口以本 Skill 的 `types/` 为准；教程中的 `<dev_root>`、`<artifact_host_path>`、`<package_id>`、`<runtime_package_name>` 和 `<tool_name>` 是需要用真实值替换的占位符。
 
 ## ToolPkg API 版本与跨平台要求
 
 Operit2 的 ToolPkg API 支持版本为 `2.0.0`；对 `1.0.0` 和 `1.0.1` 的加载支持并不完整。Operit1 完整支持 ToolPkg API `1.0.0` 和 `1.0.1`，这两个版本主要面向 Android，是旧版 API 形式。
 
-为 Operit2 新建 ToolPkg 时，在 manifest 中显式声明 `"api_version": "2.0.0"`，并使用 PackageBuilder 随包携带的当前版本 `types/`。解析器接受旧版本号不等于完整实现旧接口；旧包需要逐项验证所用能力，不能仅凭导入成功宣称兼容。迁移旧包需要同步检查接口、路径和平台语义，不能只修改版本号。
+为 Operit2 新建 ToolPkg 时，在 manifest 中显式声明 `"api_version": "2.0.0"`，并使用 Operit 插件开发套件 随包携带的当前版本 `types/`。解析器接受旧版本号不等于完整实现旧接口；旧包需要逐项验证所用能力，不能仅凭导入成功宣称兼容。迁移旧包需要同步检查接口、路径和平台语义，不能只修改版本号。
 
 ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统一 host 能力提供跨平台兼容。常规功能直接使用当前版本接口即可，不必为每个平台重复实现。作者仍需注重跨平台兼容性：遇到平台特异接口时，明确其适用范围，考虑并验证其他平台的安装、界面与核心功能；不能把某个平台的专用能力当作所有平台都具备的接口。
 
@@ -14,7 +14,7 @@ ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统
 
 ## 1. 创作入口实际做什么
 
-包管理中的“快速创作你的插件”会安装 PackageBuilder、将它设为 AI 可见，并启用 operit_editor。准备完成后，需求会作为聊天草稿填入输入框，用户发送后才开始与 AI 协作开发。这个入口不自动生成源码、不自动配置编译器，也不自动安装或发布成品。
+Operit 插件开发套件是自动安装的内置 Skill，默认对 AI 隐藏；operit_editor 平台编辑工具包默认启用。包管理中的“快速创作你的插件”会准备本套件、将它设为 AI 可见，并确认 operit_editor 已启用。准备完成后，需求会作为聊天草稿填入输入框，用户发送后才开始与 AI 协作开发。这个入口不自动生成源码、不自动配置编译器，也不自动安装或发布成品。
 
 operit_editor 的 `operit_editor` 工具实际调用 `Tools.SoftwareSettings.exec(args)`，与系统工具 `execute_cli_command` 使用同一 core command 执行入口，返回真实命令结果并传播执行错误。传入 `args` CLI 字符串数组（也接受数组的 JSON 字符串），不含 `operit2` 可执行文件名。自然语言 `query` 已移除，不会被转换成编辑动作。Core command 与终端 shell 是不同的执行入口，不要假定终端已安装 `operit2` 命令。
 
@@ -31,7 +31,7 @@ operit_editor 的 `operit_editor` 工具实际调用 `Tools.SoftwareSettings.exe
 
 ### 已安装的 Skill 如何更新资料
 
-当前创作准备流程会复用已经安装的 PackageBuilder，不会自动覆盖它的附件。更新应用资源不会同步改写用户已安装的 Skill。
+当前创作准备流程会复用已经安装的 Operit 插件开发套件，不会自动覆盖它的附件。更新应用资源不会同步改写用户已安装的 Skill。
 
 要使用当前版本的内置资料，先核对 `["skill", "show", "PackageBuilder"]` 返回的目录并备份用户修改；获得用户确认后执行：
 

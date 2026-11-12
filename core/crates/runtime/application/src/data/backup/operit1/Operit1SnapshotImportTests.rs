@@ -49,6 +49,7 @@ fn diagnose_external_operit1_snapshot() {
     themes.apply(saved.id).unwrap();
     let preview = manager.inspectSnapshotSource(fixture.clone()).expect("snapshot inspection");
     let imported = manager.importSnapshotSource(fixture).expect("full snapshot import");
+    assert_eq!(preview.modelConfig.chatModelId.as_deref(), Some(imported.modelConfig.modelId.as_str()));
     themes.watch().first().expect("imported appearance and saved theme selection must be consistent");
     let providers = ModelConfigManager::default().getProviderProfiles().unwrap();
     for config in &expected.configs {
@@ -76,7 +77,7 @@ fn diagnose_external_operit1_snapshot() {
     for candidate in writer.list("candidates").unwrap() {
         assert_eq!(candidate["value"]["record"]["producerNodeId"], node, "Imported memory tasks must belong to the importing CoreNode");
     }
-    eprintln!("Full import chats={} messages={} memories={} links={} usage={} bindings={}", imported.importedChats, imported.importedMessages, imported.importedMemories, imported.importedMemoryLinks, imported.importedTokenUsageRecords, writer.list("chat_bindings").unwrap().len());
+    eprintln!("Full import chats={} messages={} memories={} links={} usage={} bindings={} models={} chatModel={}", imported.importedChats, imported.importedMessages, imported.importedMemories, imported.importedMemoryLinks, imported.importedTokenUsageRecords, writer.list("chat_bindings").unwrap().len(), imported.modelConfig.importedModelCount, imported.modelConfig.modelId);
     eprintln!("Diagnostic storage: {}", root.display());
 }
 
@@ -329,6 +330,128 @@ fn full_model_import_preserves_all_providers_and_function_bindings() {
     let card = &buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap()[0];
     assert_eq!(card.chatProviderId.as_deref(), Some("vision-provider"));
     assert_eq!(card.chatModelId.as_deref(), Some("vision"));
+}
+
+/// Imports repeated source names and a target collision while retaining exact function and card identities.
+#[test]
+fn full_model_import_renames_duplicate_provider_names_without_changing_bindings() {
+    let root = std::env::temp_dir().join(format!("operit1-duplicate-names-{}", Uuid::new_v4()));
+    let (manager, _) = snapshotImportManager(&root);
+    let configs = ModelConfigManager::default();
+    let retainedId = configs.createProvider(
+        "Same name".to_string(), "OPENAI".to_string(), "https://retained.invalid/v1".to_string(),
+    ).unwrap();
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    parsed.configs = serde_json::from_value(serde_json::json!([
+        {"id":"default","name":"Same name","modelName":"chat-model","apiKey":"chat-secret","apiProviderType":"OPENAI"},
+        {"id":"vision","name":"Same name","modelName":"vision-model","apiKey":"vision-secret","apiProviderType":"OPENAI"}
+    ])).unwrap();
+    parsed.archive.datastorePreferences.get_mut(ENTRY_FUNCTIONAL_CONFIGS).unwrap().insert(
+        KEY_FUNCTION_CONFIG_MAPPING.to_string(), Operit1PreferenceValue::String(serde_json::json!({
+            "CHAT":{}, "IMAGE_RECOGNITION":{"configId":"vision"}
+        }).to_string()),
+    );
+    let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+    cards.insert("character_card_card-1_chat_model_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_CONFIG".to_string()));
+    cards.insert("character_card_card-1_chat_model_config_id".to_string(), Operit1PreferenceValue::String("vision".to_string()));
+
+    let result = manager.importAllModelConfigsFromParsed(&parsed).unwrap();
+    assert_eq!(result.providerName, "Same name1");
+    assert_eq!(result.modelId, "chat-model");
+    assert_eq!(result.importedModelCount, 2);
+    assert_eq!(configs.getProviderProfile(&retainedId).unwrap().name, "Same name");
+    for (source, expectedName) in parsed.configs.iter().zip(["Same name1", "Same name2"]) {
+        let provider = configs.getProviderProfile(&operit1ProviderId(&source.id)).unwrap();
+        assert_eq!(provider.name, expectedName);
+        assert_eq!(provider.apiKey, source.apiKey);
+        assert_eq!(provider.models[0].id, source.modelName);
+    }
+    let bindings = FunctionalConfigManager::default().functionModelBindingFlow().unwrap().first().unwrap();
+    assert_eq!(bindings[&FunctionType::CHAT].providerId, ModelConfigDefaults::DEFAULT_PROVIDER_ID);
+    assert_eq!(bindings[&FunctionType::CHAT].modelId, "chat-model");
+    assert_eq!(bindings[&FunctionType::IMAGE_RECOGNITION].providerId, "vision");
+    let card = &buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap()[0];
+    assert_eq!(card.chatProviderId.as_deref(), Some("vision"));
+    assert_eq!(card.chatModelId.as_deref(), Some("vision-model"));
+    assert_eq!(manager.importAllModelConfigsFromParsed(&parsed).unwrap().providerName, "Same name1");
+}
+
+/// Migrates stale source indices with Kotlin's selection semantics across preview, functions and cards.
+#[test]
+fn model_index_migration_matches_kotlin_for_all_binding_paths() {
+    let root = std::env::temp_dir().join(format!("operit1-model-indices-{}", Uuid::new_v4()));
+    let (manager, _) = snapshotImportManager(&root);
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    parsed.configs = serde_json::from_value(serde_json::json!([
+        {"id":"default","name":"Source main","modelName":" gemini-3.8-flash, ,opus5.5, x-deepseek-v4.1-flash, ","apiProviderType":"OPENAI_GENERIC"},
+        {"id":"controller","name":"Source controller","modelName":"controller-model","apiProviderType":"OPENAI_GENERIC"}
+    ])).unwrap();
+    for (requestedIndex, expectedIndex, expectedModel) in [
+        (3, 0, "gemini-3.8-flash"),
+        (-1, 0, "gemini-3.8-flash"),
+        (i32::MIN, 0, "gemini-3.8-flash"),
+        (i32::MAX, 0, "gemini-3.8-flash"),
+        (0, 0, "gemini-3.8-flash"),
+        (1, 1, "opus5.5"),
+        (2, 2, "x-deepseek-v4.1-flash"),
+    ] {
+        let mapping = serde_json::json!({"modelIndex":requestedIndex});
+        parsed.chatMapping = decodeFunctionMapping(mapping.clone()).unwrap();
+        let mut mappings = serde_json::Map::new();
+        for function in ["CHAT", "SUMMARY", "TITLE_GENERATION", "MEMORY", "TRANSLATION", "GREP", "ROLE_RESPONSE_PLANNER", "IMAGE_RECOGNITION", "AUDIO_RECOGNITION", "VIDEO_RECOGNITION"] {
+            mappings.insert(function.to_string(), mapping.clone());
+        }
+        mappings.insert("UI_CONTROLLER".to_string(), serde_json::json!({"configId":"controller"}));
+        parsed.archive.datastorePreferences.get_mut(ENTRY_FUNCTIONAL_CONFIGS).unwrap().insert(
+            KEY_FUNCTION_CONFIG_MAPPING.to_string(), Operit1PreferenceValue::String(Value::Object(mappings).to_string()),
+        );
+        let preview = parsed.modelConfigPreview().unwrap();
+        assert_eq!(preview.chatModelId.as_deref(), Some(expectedModel));
+        assert_eq!(preview.chatModelIndex, Some(expectedIndex));
+        assert_eq!(preview.configs[0].selectedModelId.as_deref(), Some(expectedModel));
+        assert_eq!(preview.configs[0].selectedModelIndex, Some(expectedIndex));
+        assert_eq!(preview.configs[1].selectedModelId, None);
+        assert_eq!(parsed.chatMapping.modelIndex, requestedIndex, "Inspection must not rewrite source metadata");
+
+        let result = manager.importAllModelConfigsFromParsed(&parsed).unwrap();
+        assert_eq!(result.modelId, expectedModel);
+        assert_eq!(result.importedModelCount, 4);
+        let bindings = FunctionalConfigManager::default().functionModelBindingFlow().unwrap().first().unwrap();
+        assert_eq!(bindings.len(), 11);
+        for (function, binding) in &bindings {
+            if *function == FunctionType::UI_CONTROLLER {
+                assert_eq!(binding.providerId, "controller");
+                assert_eq!(binding.modelId, "controller-model");
+            } else {
+                assert_eq!(binding.providerId, ModelConfigDefaults::DEFAULT_PROVIDER_ID);
+                assert_eq!(binding.modelId, expectedModel);
+            }
+        }
+        let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+        cards.insert("character_card_card-1_chat_model_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_CONFIG".to_string()));
+        cards.insert("character_card_card-1_chat_model_config_id".to_string(), Operit1PreferenceValue::String("default".to_string()));
+        cards.insert("character_card_card-1_chat_model_index".to_string(), Operit1PreferenceValue::Int(requestedIndex));
+        let card = &buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap()[0];
+        assert_eq!(card.chatProviderId.as_deref(), Some(ModelConfigDefaults::DEFAULT_PROVIDER_ID));
+        assert_eq!(card.chatModelId.as_deref(), Some(expectedModel));
+    }
+}
+
+/// Rejects absent configurations and empty model bindings instead of inventing an imported model.
+#[test]
+fn model_index_migration_rejects_missing_and_empty_bound_configs() {
+    let root = std::env::temp_dir().join(format!("operit1-invalid-model-binding-{}", Uuid::new_v4()));
+    let (manager, _) = snapshotImportManager(&root);
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+    cards.insert("character_card_card-1_chat_model_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_CONFIG".to_string()));
+    cards.insert("character_card_card-1_chat_model_config_id".to_string(), Operit1PreferenceValue::String("test-model".to_string()));
+    parsed.configs[0].modelName = " , , ".to_string();
+    assert!(manager.importAllModelConfigsFromParsed(&parsed).unwrap_err().starts_with("Operit1 功能绑定的配置没有模型：CHAT/"));
+    assert!(buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap_err().starts_with("Operit1 角色卡绑定的配置没有模型：card-1/"));
+    parsed.configs.clear();
+    assert!(manager.importAllModelConfigsFromParsed(&parsed).unwrap_err().starts_with("快照里没有模型配置：test-model"));
+    assert!(buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap_err().starts_with("快照里没有模型配置：test-model"));
 }
 
 /// Executes the production source bridge and target projection using the same database bytes retained in the ZIP.

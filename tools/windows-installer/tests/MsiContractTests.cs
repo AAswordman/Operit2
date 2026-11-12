@@ -13,12 +13,35 @@ public static class MsiContractTests
             uint database = MsiGetActiveDatabase(session);
             try
             {
+                RequireSuccess(MsiDatabaseOpenView(database,
+                    "SELECT `Value` FROM `Property` WHERE `Property`='MsiLogging'", out var logView));
+                try
+                {
+                    RequireSuccess(MsiViewExecute(logView, 0));
+                    RequireSuccess(MsiViewFetch(logView, out var logRecord));
+                    try
+                    {
+                        var logging = new StringBuilder(128);
+                        uint length = 128;
+                        RequireSuccess(MsiRecordGetString(logRecord, 1, logging, ref length));
+                        Require(logging.ToString() == "voicewarmup");
+                    }
+                    finally { MsiCloseHandle(logRecord); }
+                }
+                finally { MsiCloseHandle(logView); }
                 var prepare = ReadAction(database, "OperitPrepareRemoval");
+                var close = ReadAction(database, "OperitCloseApplications");
+                var validate = ReadAction(database, "InstallValidate");
                 var finish = ReadAction(database, "OperitFinishRemoval");
                 var complete = ReadAction(database, "OperitInstallCompleted");
                 var initialize = ReadAction(database, "InstallInitialize");
                 var finalize = ReadAction(database, "InstallFinalize");
                 Require(prepare.Sequence < initialize.Sequence && finish.Sequence > finalize.Sequence && complete.Sequence > finish.Sequence);
+                Require(close.Sequence < validate.Sequence);
+                Evaluate(session, close.Condition, "1", "", "", true);
+                Evaluate(session, close.Condition, "1", "ALL", "", true);
+                Evaluate(session, close.Condition, "", "", "", true);
+                Evaluate(session, close.Condition, "1", "ALL", "{old-product}", false);
                 foreach (var condition in new[] { prepare.Condition, finish.Condition })
                 {
                     Evaluate(session, condition, "1", "ALL", "", true);
@@ -30,7 +53,7 @@ public static class MsiContractTests
                     RequireSuccess(MsiSetProperty(session, "OPERIT_DELETE_USER_DATA", "1"));
                     Evaluate(session, condition, "1", "ALL", "{old-product}", false);
                 }
-                Console.WriteLine("PASS compiled MSI uninstall, upgrade, repair, and post-commit conditions");
+                Console.WriteLine("PASS compiled MSI verbose logging, uninstall, upgrade, repair, and post-commit conditions");
             }
             finally { MsiCloseHandle(database); }
         }

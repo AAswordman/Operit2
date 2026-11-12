@@ -10,7 +10,7 @@
 
 Operit2 的 ToolPkg API 支持版本为 `2.0.0`；对 `1.0.0` 和 `1.0.1` 的加载支持并不完整。Operit1 完整支持 ToolPkg API `1.0.0` 和 `1.0.1`，这两个版本主要面向 Android，是旧版 API 形式。
 
-在 Operit2 创建 ToolPkg 时显式填写 `"api_version": "2.0.0"`，接口以随 PackageBuilder 携带的当前版本类型为准。不能通过仅改 manifest 版本号把旧 Android 插件视为已完成迁移；需要检查实际接口与平台行为。`api_version` 是 ToolPkg 清单字段，不是单文件脚本的元数据字段。
+在 Operit2 创建 ToolPkg 时显式填写 `"api_version": "2.0.0"`，接口以随 Operit 插件开发套件 携带的当前版本类型为准。不能通过仅改 manifest 版本号把旧 Android 插件视为已完成迁移；需要检查实际接口与平台行为。`api_version` 是 ToolPkg 清单字段，不是单文件脚本的元数据字段。
 
 ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统一 host 能力提供跨平台兼容。常规功能直接使用当前版本接口即可，不必为每个平台重复实现。作者仍需注重跨平台兼容性：遇到平台特异接口时，明确其适用范围，考虑并验证其他平台的安装、界面与核心功能；不能把某个平台的专用能力当作所有平台都具备的接口。
 
@@ -44,7 +44,7 @@ ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统
 
 ### 2.1. 当前版本开发入口
 
-从包管理的“快速创作你的插件”开始时，应用准备 PackageBuilder 与 operit_editor，并把需求填入聊天草稿。用户发送草稿后，由 AI 与用户协作开发；不是按钮自动生成或安装成品。
+从包管理的“快速创作你的插件”开始时，应用准备 Operit 插件开发套件 与 operit_editor，并把需求填入聊天草稿。用户发送草稿后，由 AI 与用户协作开发；不是按钮自动生成或安装成品。
 
 先阅读 [当前版本插件创作流程](./PLUGIN_CREATION_WORKFLOW.md)。通过 `["skill", "show", "PackageBuilder"]` 读取真实 Skill 目录，检查终端 host 与可写文件位置，确定 `<dev_root>`。所有平台都使用现有 host API；不固定到某个平台的下载目录。
 
@@ -540,7 +540,7 @@ exports.hello_world = hello_world;
 
 ## 5. 当前版本示例
 
-示例由当前版本软件随 PackageBuilder 提供，位于 Skill 的 `examples/packages/`。下列文件实际来自当前源码；构建产物并不代表它们已安装到当前 runtime。
+示例由当前版本软件随 Operit 插件开发套件 提供，位于 Skill 的 `examples/packages/`。下列文件实际来自当前源码；构建产物并不代表它们已安装到当前 runtime。
 
 - `examples/packages/buildin/time.ts`：单文件工具包的 `METADATA`、参数与导出函数。
 - `examples/packages/buildin/operit_editor.ts`：实际执行平台编辑命令的包；`operit_editor` 工具将 `args` 字符串数组传给 `Tools.SoftwareSettings.exec(args)`，与 `execute_cli_command` 使用同一执行入口，返回真实结果与错误，不接受自然语言 `query`。

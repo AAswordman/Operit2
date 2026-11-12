@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../shared/UserDataCleanup.cs" Link="UserDataCleanup.cs" />
+    <Compile Include="../shared/InstallerApplications.cs" Link="InstallerApplications.cs" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="Microsoft.CSharp" />
     <PackageReference Include="WixToolset.Dtf.CustomAction" Version="5.0.2" />

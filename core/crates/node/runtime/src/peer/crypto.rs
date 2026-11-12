@@ -17,6 +17,8 @@ use futures_util::{future::LocalBoxFuture, stream::FuturesUnordered, StreamExt};
 
 const CONTROL_TARGET: &str = "$peer.channel";
 const HEARTBEAT_TICK_MS: u64 = 1_000;
+const SESSION_CHUNK_BYTES: usize = 64 * 1024;
+const SESSION_CHUNK_HEADER_BYTES: usize = 16;
 
 /// Creates a protocol security error at the authenticated channel boundary.
 pub(super) fn error(message: impl Into<String>) -> CoreLinkError {
@@ -247,6 +249,8 @@ pub(super) struct Transcript {
     pub version: u32, pub sessionId: String,
     pub clientNodeId: String, pub serverNodeId: String,
     pub clientPublic: Vec<u8>, pub serverPublic: Vec<u8>, pub challenge: Vec<u8>,
+    #[serde(default)] pub clientMaxFrameBytes: usize,
+    #[serde(default)] pub serverMaxFrameBytes: usize,
 }
 pub(super) fn transcript(value: &Transcript) -> Result<Vec<u8>, CoreLinkError> {
     let bytes = encodeLink(value).map_err(|e| error(e.to_string()))?;
@@ -280,45 +284,84 @@ static CHANNEL_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::Ato
 pub(super) struct Channel {
     pub generation: u32,
     pub raw: Arc<dyn PeerConnection>,
-    send: Mutex<Cipher>, receive: Mutex<Cipher>,
+    send: Mutex<SessionWriter>, receive: Mutex<SessionReader>,
+    chunkBytes: usize,
+    activityRevision: std::sync::atomic::AtomicU32,
 }
+
+/// Keeps an interrupted logical write from being reused as a fresh message.
+struct SessionWriter { cipher: Cipher, incomplete: bool }
+
+/// Retains partial messages across cancellation of the shared reader's future.
+struct SessionReader { cipher: Cipher, partial: Option<PartialMessage> }
+
+/// Accumulates only authenticated bytes actually received, without trusting a declared allocation size.
+struct PartialMessage { total: usize, bytes: Vec<u8> }
+
+/// Builds the single existing session envelope for either a complete message or one fragment.
+fn sessionFrame(sequence: u64, bytes: Vec<u8>) -> PeerMessage {
+    PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
+        sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))
+}
+
 impl Channel {
-    pub fn new(raw: Arc<dyn PeerConnection>, key: &[u8], context: &[u8], client: bool) -> Result<Arc<Self>, CoreLinkError> {
+    /// Creates one authenticated channel with a transcript-bound frame budget shared by both endpoints.
+    pub fn new(raw: Arc<dyn PeerConnection>, key: &[u8], context: &[u8], client: bool, maxFrameBytes: usize) -> Result<Arc<Self>, CoreLinkError> {
         let c2s = derive(key, context, b"operit-link-client-to-server-v1")?;
         let s2c = derive(key, context, b"operit-link-server-to-client-v1")?;
-        Ok(Arc::new(Self { generation: CHANNEL_GENERATION.fetch_add(1, Ordering::Relaxed), raw, send: Mutex::new(Cipher::new(if client { c2s } else { s2c }, context)?),
-            receive: Mutex::new(Cipher::new(if client { s2c } else { c2s }, context)?) }))
+        // Reserve the longest sequence ID, the binary length prefix's maximum growth,
+        // the authenticated fragment header and the AEAD tag before choosing a payload.
+        let overhead = encodeLink(sessionFrame(u64::MAX, Vec::new())).map_err(|e| error(e.to_string()))?.len()
+            + 4 + SESSION_CHUNK_HEADER_BYTES + aead::CHACHA20_POLY1305.tag_len();
+        let chunkBytes = maxFrameBytes.checked_sub(overhead).filter(|size| *size > 0)
+            .ok_or_else(|| error("Peer frame limit cannot hold an authenticated fragment"))?
+            .min(SESSION_CHUNK_BYTES);
+        Ok(Arc::new(Self { generation: CHANNEL_GENERATION.fetch_add(1, Ordering::Relaxed), raw,
+            send: Mutex::new(SessionWriter { cipher: Cipher::new(if client { c2s } else { s2c }, context)?, incomplete: false }),
+            receive: Mutex::new(SessionReader { cipher: Cipher::new(if client { s2c } else { c2s }, context)?, partial: None }),
+            chunkBytes, activityRevision: std::sync::atomic::AtomicU32::new(0) }))
     }
-    /// Sends a single frame through the shared ordered writer.
+    /// Sends one complete logical message through the shared ordered writer.
     pub async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> { self.sendBatch(vec![message]).await }
 
     /// Holds the authenticated writer for an entire burst so other operations cannot interleave it.
     pub async fn sendBatch(&self, messages: Vec<PeerMessage>) -> Result<(), CoreLinkError> {
-        let mut cipher = self.send.lock().await;
+        let mut writer = self.send.lock().await;
         for message in messages {
             let bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
-            self.sendEncoded(&mut cipher, bytes).await?;
+            self.sendEncoded(&mut writer, bytes).await?;
         }
         Ok(())
     }
     /// Preserves the same nonce order and indivisible burst for prepared replies.
     pub(super) async fn sendEncodedBatch(&self, messages: Vec<Vec<u8>>) -> Result<(), CoreLinkError> {
-        let mut cipher = self.send.lock().await;
-        for bytes in messages { self.sendEncoded(&mut cipher, bytes).await?; }
+        let mut writer = self.send.lock().await;
+        for bytes in messages { self.sendEncoded(&mut writer, bytes).await?; }
         Ok(())
     }
-    async fn sendEncoded(&self, cipher: &mut Cipher, mut bytes: Vec<u8>) -> Result<(), CoreLinkError> {
-        let sequence = cipher.next;
-        cipher.seal(&mut bytes)?;
-        self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
-            sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes.into()))))).await.map_err(|message| {
-            if message == operit_peer_link::MESSAGE_TOO_LARGE_ERROR {
-                CoreLinkError::new("PEER_MESSAGE_TOO_LARGE", message)
-            } else { error(message) }
-        })
+    /// Splits one logical message under the existing ordered writer; every header is authenticated.
+    async fn sendEncoded(&self, writer: &mut SessionWriter, bytes: Vec<u8>) -> Result<(), CoreLinkError> {
+        if writer.incomplete { return Err(error("Previous session message write was interrupted")); }
+        if bytes.is_empty() { return Err(error("Empty session message")); }
+        writer.incomplete = true;
+        for (index, chunk) in bytes.chunks(self.chunkBytes).enumerate() {
+            let mut frame = Vec::with_capacity(SESSION_CHUNK_HEADER_BYTES + chunk.len() + aead::CHACHA20_POLY1305.tag_len());
+            frame.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+            frame.extend_from_slice(&((index * self.chunkBytes) as u64).to_be_bytes());
+            frame.extend_from_slice(chunk);
+            let sequence = writer.cipher.next;
+            writer.cipher.seal(&mut frame)?;
+            self.raw.send(sessionFrame(sequence, frame)).await.map_err(error)?;
+            self.activityRevision.fetch_add(1, Ordering::Relaxed);
+        }
+        writer.incomplete = false;
+        Ok(())
     }
     /// Closes the authenticated carrier without retaining another session implementation.
-    pub async fn close(&self) { self.raw.close().await; }
+    pub async fn close(&self) {
+        self.raw.close().await;
+        self.receive.lock().await.partial = None;
+    }
 
     /// Receives the next authenticated frame in nonce order.
     pub async fn receive(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
@@ -326,24 +369,64 @@ impl Channel {
             .map(|message| message.decodeWith(PeerMessage::decode)).transpose()
     }
 
-    /// Retains each decrypted frame until its dispatcher or consumer needs the typed payload.
+    /// Retains a complete decrypted logical message until its consumer needs the typed payload.
     pub(super) async fn receiveEncoded(&self) -> Result<Option<EncodedMessage<PeerMessage>>, CoreLinkError> {
-        let mut cipher = self.receive.lock().await;
-        let Some(message) = self.raw.receive().await.map_err(error)? else { return Ok(None); };
-        let PeerMessage::Request(CoreLinkRequest::Call(request)) = message else { return Err(error("Encrypted Call required")); };
-        if request.target != "$peer.session" || request.methodName != "data" || request.requestId.0 != cipher.next.to_string() {
-            return Err(error(format!("Unexpected/replayed session message: expected={}, received={:?}", cipher.next, request.requestId.0.parse::<u64>().ok())));
+        let mut reader = self.receive.lock().await;
+        let result = self.readMessage(&mut reader).await;
+        if result.is_err() { reader.partial = None; }
+        result
+    }
+
+    /// Reassembles verified ordered fragments and exposes exactly one complete logical message.
+    async fn readMessage(&self, reader: &mut SessionReader) -> Result<Option<EncodedMessage<PeerMessage>>, CoreLinkError> {
+        loop {
+            let Some(message) = self.raw.receive().await.map_err(error)? else {
+                return if reader.partial.is_some() { Err(error("Session ended during a fragmented message")) } else { Ok(None) };
+            };
+            let cipher = &mut reader.cipher;
+            let PeerMessage::Request(CoreLinkRequest::Call(request)) = message else { return Err(error("Encrypted Call required")); };
+            if request.target != "$peer.session" || request.methodName != "data" || request.requestId.0 != cipher.next.to_string() {
+                return Err(error(format!("Unexpected/replayed session message: expected={}, received={:?}", cipher.next, request.requestId.0.parse::<u64>().ok())));
+            }
+            let CoreValue::Bytes(bytes) = request.args else { return Err(error("Encrypted bytes required")); };
+            // Reuse uniquely owned ciphertext. Shared buffers from Host adapters
+            // still copy before mutation, preserving every other reader's bytes.
+            let mut bytes = Vec::from(bytes);
+            let nonce = cipher.nonce()?;
+            let plaintext = cipher.key.open_in_place(nonce, aead::Aad::from(&cipher.context), &mut bytes)
+                .map_err(|_| error("Session authentication tag rejected"))?;
+            let length = plaintext.len();
+            bytes.truncate(length);
+            if length <= SESSION_CHUNK_HEADER_BYTES { return Err(error("Truncated session fragment header or empty fragment")); }
+            let total = usize::try_from(u64::from_be_bytes(bytes[..8].try_into().unwrap()))
+                .map_err(|_| error("Session message length exceeds addressable memory"))?;
+            let offset = usize::try_from(u64::from_be_bytes(bytes[8..16].try_into().unwrap()))
+                .map_err(|_| error("Session fragment offset exceeds addressable memory"))?;
+            let payload = &bytes[SESSION_CHUNK_HEADER_BYTES..];
+            if payload.len() > self.chunkBytes || offset.checked_add(payload.len()).is_none_or(|end| end > total) {
+                return Err(error("Session fragment exceeds its declared message boundary"));
+            }
+            let complete = if let Some(partial) = &mut reader.partial {
+                if partial.total != total || partial.bytes.len() != offset { return Err(error("Session fragment order or length mismatch")); }
+                partial.bytes.try_reserve(payload.len()).map_err(|_| error("Insufficient memory for complete peer message"))?;
+                partial.bytes.extend_from_slice(payload);
+                partial.bytes.len() == total
+            } else {
+                if offset != 0 { return Err(error("Session message must start at offset zero")); }
+                // Preserve the single-frame path without allocating another complete payload.
+                bytes.drain(..SESSION_CHUNK_HEADER_BYTES);
+                if bytes.len() == total {
+                    self.activityRevision.fetch_add(1, Ordering::Relaxed);
+                    return Ok(Some(EncodedMessage::fromBytes(bytes)));
+                }
+                reader.partial = Some(PartialMessage { total, bytes });
+                false
+            };
+            self.activityRevision.fetch_add(1, Ordering::Relaxed);
+            if complete {
+                return Ok(Some(EncodedMessage::fromBytes(reader.partial.take().unwrap().bytes)));
+            }
         }
-        let CoreValue::Bytes(bytes) = request.args else { return Err(error("Encrypted bytes required")); };
-        // Reuse uniquely owned ciphertext. Shared buffers from Host adapters
-        // still copy before mutation, preserving every other reader's bytes.
-        let mut bytes = Vec::from(bytes);
-        let nonce = cipher.nonce()?;
-        let plaintext = cipher.key.open_in_place(nonce, aead::Aad::from(&cipher.context), &mut bytes)
-            .map_err(|_| error("Session authentication tag rejected"))?;
-        let length = plaintext.len();
-        bytes.truncate(length);
-        Ok(Some(EncodedMessage::fromBytes(bytes)))
     }
 }
 
@@ -571,7 +654,7 @@ impl MultiplexedChannel {
     /// Releases local state before awaiting transport shutdown.
     async fn fail(&self, failure: CoreLinkError) {
         self.terminate(failure);
-        self.channel.raw.close().await;
+        self.channel.close().await;
     }
 
     /// Sends one authenticated frame and terminates all logical operations on write failure.
@@ -611,6 +694,7 @@ impl MultiplexedChannel {
     /// Handles heartbeats and response correlation in the sole authenticated reader.
     async fn readLoop(self: Arc<Self>, now: u64) {
         let mut heartbeat = Heartbeat::new(now);
+        let mut activityRevision = self.channel.activityRevision.load(Ordering::Relaxed);
         let mut writes =
             FuturesUnordered::<LocalBoxFuture<'static, Result<(), CoreLinkError>>>::new();
         let mut tick = self.scheduler.waitForHostRuntimeDelay(HEARTBEAT_TICK_MS);
@@ -644,6 +728,13 @@ impl MultiplexedChannel {
                         result.map_err(|failure| error(failure.to_string()))?;
                         tick = self.scheduler.waitForHostRuntimeDelay(HEARTBEAT_TICK_MS);
                         let now = self.scheduler.monotonicTimeMillis().map_err(|failure| error(failure.to_string()))?;
+                        // Reassembly can outlive many heartbeat ticks. Verified fragments and
+                        // completed writes are progress even before a logical message is ready.
+                        let revision = self.channel.activityRevision.load(Ordering::Relaxed);
+                        if revision != activityRevision {
+                            activityRevision = revision;
+                            heartbeat.received(now);
+                        }
                         match heartbeat.tick(now) {
                             HeartbeatAction::Ping(id) => {
                                 let channel = self.clone();
@@ -659,7 +750,7 @@ impl MultiplexedChannel {
         }.await;
         match result {
             Err(failure) => self.fail(failure).await,
-            Ok(()) => self.channel.raw.close().await,
+            Ok(()) => self.channel.close().await,
         }
         self.stopped.notify_one();
     }
@@ -826,3 +917,7 @@ mod aead_interop_tests {
 #[cfg(test)]
 #[path = "crypto_scheduler_tests.rs"]
 mod scheduler_tests;
+
+#[cfg(test)]
+#[path = "crypto_fragment_tests.rs"]
+mod fragment_tests;

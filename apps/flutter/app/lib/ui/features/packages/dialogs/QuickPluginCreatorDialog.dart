@@ -89,7 +89,7 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
               const _DialogSectionTitle('插件需求'),
               const SizedBox(height: 8),
               Text(
-                '确认后会准备并开放 PackageBuilder Skill、启用 operit_editor 平台编辑工具包，然后跳转聊天并填入需求草稿。发送草稿后才开始开发；本操作不会自动生成、安装或发布插件。',
+                '确认后会准备并开放 Operit 插件开发套件 Skill、启用 operit_editor 平台编辑工具包，然后跳转聊天并填入需求草稿。发送草稿后才开始开发；本操作不会自动生成、安装或发布插件。',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 10),

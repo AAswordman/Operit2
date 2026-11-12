@@ -100,7 +100,7 @@ fvm dart analyze ../thirdparty/operit_keep_alive/lib ../thirdparty/operit_keep_a
 | OHOS | 已授权的服务信息通知及查看/停止操作；终态通知具有系统删除时间 | Flutter 引擎 |
 | Web | `surface` 为 `none`，不提供系统工作展示 | 页面中的 Flutter 引擎 |
 
-Android 使用 `POST_PROMOTED_NOTIFICATIONS` 和 `android.requestPromotedOngoing` 请求系统展示，实际提升权限通过 `canPostPromotedNotifications()` 查询。系统和厂商决定具体的岛/状态芯片样式。用户关闭某次工作的通知后，该次工作不会反复请求展示。结束后移除停止按钮，结束计时固定，结果展示 60 秒后恢复服务驻留信息。
+Android 使用 `POST_PROMOTED_NOTIFICATIONS` 和 `android.requestPromotedOngoing` 请求系统展示，实际提升权限通过 `canPostPromotedNotifications()` 查询。系统和厂商决定具体的岛/状态芯片样式。用户关闭某次工作的通知后，该次工作不会反复请求展示。结束后移除停止按钮，结束计时固定，结果展示 60 秒后恢复服务驻留信息。点击通知正文或“打开”按钮进入已结束的工作时，立即消费该条结果，刷新通知也不会重新展示；其他未读结果或仍在进行的工作继续按原有规则展示，没有可展示工作时恢复服务驻留信息。打开仍在运行或等待确认的工作不会隐藏其状态通知。
 
 步骤进度的数值范围在展示协议中为 0–100，`scope` 标识它对应的工具步骤。Core 的 0–1 进度在发布时换算；没有明确步骤进度时展示阶段与计时，不构造整项工作的完成百分比。
 

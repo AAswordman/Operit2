@@ -13,6 +13,8 @@ pub mod plugin_sdk_ipc;
 mod process;
 pub mod registry;
 pub mod tools;
+#[path = "../../common/ui_automation.rs"]
+mod ui_automation;
 
 pub use host_runtime_event::WindowsHostRuntimeEventHost;
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as WindowsHostJavaScriptRuntimeHost;
@@ -53,6 +55,10 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()))
+    .withUiAutomationHost(Arc::new(ui_automation::ScriptUiAutomationHost::new(
+        "powershell.exe",
+        &["-NoProfile", "-NonInteractive", "-STA", "-Command", include_str!("ui_automation.ps1")],
+    )))
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(WindowsHttpHost::new()))
     .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))

@@ -1,7 +1,6 @@
-import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'theme_image_decoder.dart';
@@ -77,16 +76,16 @@ class ResolvedThemeImage extends StatefulWidget {
 
 class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
   ui.Image? _image;
-  Object? _loadError;
-  StackTrace? _loadStack;
-  int _loadToken = 0;
+  _ThemeAssetImageProvider? _provider;
 
+  /// Resolves prepared images immediately and shares runtime images through ImageCache.
   @override
   void initState() {
     super.initState();
     _bind();
   }
 
+  /// Rebinds only when the asset or its owning resolver changes.
   @override
   void didUpdateWidget(covariant ResolvedThemeImage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -96,49 +95,39 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
     }
   }
 
+  /// Keeps ownership of prepared clones separate from cached image streams.
   void _bind() {
-    final token = ++_loadToken;
     _image?.dispose();
     _image = null;
-    _loadError = null;
-    _loadStack = null;
+    _provider = null;
     final resolver = widget.resolver;
     if (resolver is ThemeDecodedImageResolver) {
       _image = resolver.tryCloneImage(widget.reference);
     } else {
-      unawaited(_loadBytes(resolver, token));
+      _provider = _ThemeAssetImageProvider(resolver, widget.reference);
     }
   }
 
-  Future<void> _loadBytes(ThemeAssetResolver resolver, int token) async {
-    try {
-      final bytes = await resolver.readBytes(widget.reference);
-      final image = await decodeThemeImageBytes(widget.reference, bytes);
-      if (!mounted || token != _loadToken) {
-        image.dispose();
-        return;
-      }
-      setState(() => _image = image);
-    } catch (error, stack) {
-      if (!mounted || token != _loadToken) return;
-      setState(() {
-        _loadError = error;
-        _loadStack = stack;
-      });
-    }
-  }
-
+  /// Releases only the prepared image clone owned by this widget.
   @override
   void dispose() {
-    _loadToken++;
     _image?.dispose();
     super.dispose();
   }
 
+  /// Lets Flutter synchronously reuse decoded runtime images across page mounts.
   @override
   Widget build(BuildContext context) {
-    if (_loadError != null) {
-      Error.throwWithStackTrace(_loadError!, _loadStack!);
+    final provider = _provider;
+    if (provider != null) {
+      return Image(
+        image: provider,
+        fit: widget.fit,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (context, error, stack) =>
+            Error.throwWithStackTrace(error, stack ?? StackTrace.current),
+      );
     }
     final image = _image;
     if (image == null) return const SizedBox.expand();
@@ -151,4 +140,48 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
       ),
     );
   }
+}
+
+/// Shares in-flight reads and decoded images within Flutter's bounded image cache.
+class _ThemeAssetImageProvider extends ImageProvider<_ThemeAssetImageProvider> {
+  /// Identifies one immutable asset within its resolver's lifetime.
+  const _ThemeAssetImageProvider(this.resolver, this.reference);
+
+  final ThemeAssetResolver resolver;
+  final String reference;
+
+  /// Makes cache hits available during the first build of a newly mounted preview.
+  @override
+  Future<_ThemeAssetImageProvider> obtainKey(
+    ImageConfiguration configuration,
+  ) => SynchronousFuture<_ThemeAssetImageProvider>(this);
+
+  /// Uses the same validated static-image decoder as prepared theme visuals.
+  @override
+  ImageStreamCompleter loadImage(
+    _ThemeAssetImageProvider key,
+    ImageDecoderCallback decode,
+  ) => OneFrameImageStreamCompleter(key._load());
+
+  /// Reads and decodes once for all listeners of this resolver and asset.
+  Future<ImageInfo> _load() async {
+    try {
+      final bytes = await resolver.readBytes(reference);
+      return ImageInfo(image: await decodeThemeImageBytes(reference, bytes));
+    } catch (_) {
+      PaintingBinding.instance.imageCache.evict(this);
+      rethrow;
+    }
+  }
+
+  /// Keeps identical references from different runtime owners isolated.
+  @override
+  bool operator ==(Object other) =>
+      other is _ThemeAssetImageProvider &&
+      identical(resolver, other.resolver) &&
+      reference == other.reference;
+
+  /// Matches the resolver identity and asset reference used by equality.
+  @override
+  int get hashCode => Object.hash(identityHashCode(resolver), reference);
 }

@@ -2,7 +2,7 @@
 
 Notes for Operit2 plugin authors live here.
 
-- `package_builder/`: documentation resources included into the bundled `PackageBuilder` Skill.
+- `package_builder/`: documentation resources included into the bundled `Operit 插件开发套件` Skill.
 - [Plugin creation workflow](package_builder/PLUGIN_CREATION_WORKFLOW.md): current authoring, path validation, installation, same-id updates, testing, and publication.
 
 - [ToolPkg v1 compatibility](V1_COMPATIBILITY.md): contract ownership, runtime adapters, checks, and remaining capability gaps.

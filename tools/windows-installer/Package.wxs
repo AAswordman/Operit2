@@ -21,6 +21,7 @@
     <Property Id="ARPCOMMENTS" Value="Operit2 $(var.ReleaseVersion) · AI 工作空间" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="OPERIT_RELEASE_VERSION" Value="$(var.ReleaseVersion)" />
+    <Property Id="MsiLogging" Value="voicewarmup" />
     <Property Id="OPERIT_DELETE_USER_DATA" Secure="yes" />
     <Property Id="OPERIT_CLEANUP_PLAN" Hidden="yes" />
     <Property Id="INSTALLFOLDER">
@@ -29,10 +30,12 @@
     </Property>
     <CustomAction Id="OperitInstallCompleted" Property="OPERIT_INSTALL_COMPLETE" Value="1" />
     <Binary Id="OperitCleanupActions" SourceFile="$(var.CleanupActions)" />
+    <CustomAction Id="OperitCloseApplications" BinaryRef="OperitCleanupActions" DllEntry="CloseApplications" Return="check" />
     <CustomAction Id="OperitPrepareRemoval" BinaryRef="OperitCleanupActions" DllEntry="PrepareRemoval" Return="check" />
     <CustomAction Id="OperitFinishRemoval" BinaryRef="OperitCleanupActions" DllEntry="FinishRemoval" Return="check" />
     <CustomAction Id="OperitRegisterShellEntries" BinaryRef="OperitCleanupActions" DllEntry="RegisterShellEntries" Return="check" />
     <InstallExecuteSequence>
+      <Custom Action="OperitCloseApplications" Before="InstallValidate" Condition="NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="OperitPrepareRemoval" Before="InstallInitialize"
               Condition="Installed AND REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="OperitFinishRemoval" After="InstallFinalize"

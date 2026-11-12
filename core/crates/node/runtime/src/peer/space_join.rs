@@ -568,7 +568,8 @@ async fn prepareRequest(service: &dyn NodeSpaceContext, deviceId: String) -> Res
         let snapshot: PeerSpaceSnapshot = Box::pin(joinSnapshot(service, &deviceId)).await?;
         if !snapshot.space.members.contains(&deviceId) { return Err("Target is not in its advertised Space".into()); }
         space_departure::observe(service, &deviceId, &snapshot.departures, &snapshot.controlOperations)?;
-        let source = peerSpaceSnapshot(service)?;
+        let mut source = peerSpaceSnapshot(service)?;
+        source.departures = space_departure::pending(service, &deviceId)?;
         let local = source.space.clone();
         let localId = service.localNodeId();
         // One shared space identity is never joinable: either both sides already
@@ -611,6 +612,15 @@ async fn prepareRequest(service: &dyn NodeSpaceContext, deviceId: String) -> Res
 
 /// Persists the immutable consent source and releases both snapshots before the network response phase.
 fn prepareSubmission(service: &dyn NodeSpaceContext, deviceId: String, source: PeerSpaceSnapshot, snapshot: PeerSpaceSnapshot) -> Result<String, String> {
+    let _lock = MUTATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    paired(service, &deviceId, crate::NodeServices::PairingDirection::Either)?;
+    let current = service.spaceStore().space()?;
+    if current.spaceId != source.space.spaceId || current.spaceRevision != source.space.spaceRevision {
+        return Err("Source Space changed while preparing the join request".into());
+    }
+    if let Some(existing) = outgoing(service)?.into_iter().find(|request| request.targetDeviceId == deviceId && active(&request.status)) {
+        return Ok(existing.requestId);
+    }
     let localId = service.localNodeId();
     let local = &source.space;
     let profile = source.deviceProfiles.iter().find(|p| p.nodeId == localId)
@@ -847,7 +857,7 @@ fn receiveSubmission(service: &dyn NodeSpaceContext, peer: &str, current: &CoreS
     if !cancellation && input.sourceSpaceId == current.spaceId {
         return Err("Join request must merge a distinct source Space, not the target itself".into());
     }
-    space_departure::observe(service, peer, &[], &input.source.controlOperations)?;
+    space_departure::observe(service, peer, &input.source.departures, &input.source.controlOperations)?;
     let mut records: Vec<_> = store(service).independentRecords::<ConsentProjection>(INBOUND)?.into_values().collect();
     pruneCompletedRequests(service, &mut records)?;
     if let Some(old) = records.iter().find(|record| record.request.requestId == input.requestId) {

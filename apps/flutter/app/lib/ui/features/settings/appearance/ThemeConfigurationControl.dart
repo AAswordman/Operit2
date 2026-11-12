@@ -196,7 +196,7 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
                       onApply: () => _run(() async {
                         await _manager.apply(id: config.id);
                       }),
-                      onEdit: () => _edit(config),
+                      onEdit: () => _edit(config, active: active),
                       onPreview: () => _preview(config),
                       onRename: () => _rename(config),
                       onDuplicate: () =>
@@ -234,9 +234,15 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
     }
   }
 
+  /// Opens the active configuration directly and applies only a different selection.
   Future<void> _edit(
-    core.CoreDataPreferencesThemeConfigManagerThemeConfig config,
-  ) async {
+    core.CoreDataPreferencesThemeConfigManagerThemeConfig config, {
+    required bool active,
+  }) async {
+    if (active) {
+      await widget.onEdit?.call(config.name);
+      return;
+    }
     var applied = false;
     await _run(() async {
       await _manager.apply(id: config.id);

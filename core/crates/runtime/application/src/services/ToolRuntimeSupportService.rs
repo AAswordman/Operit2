@@ -41,7 +41,7 @@ use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use crate::plugins::BuiltinPluginAssets::{BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS};
 use crate::plugins::BundledExternalSkillAssets::{
-    BundledSkillPackage, BUNDLED_EXTERNAL_SKILL_ASSETS, BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS,
+    BundledSkillPackage, BUILTIN_SKILL_NAMES, BUNDLED_EXTERNAL_SKILL_ASSETS, BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS,
 };
 use crate::services::TtsPlaybackService::TtsPlaybackService;
 
@@ -553,7 +553,13 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         runtimeBundledExternalPluginAssets()
     }
 
-    /// Returns bundled external skill assets owned by the runtime.
+    /// Returns built-in skills that are installed without enabling AI visibility.
+    #[allow(non_snake_case)]
+    fn builtinSkillNames(&self) -> &'static [&'static str] {
+        BUILTIN_SKILL_NAMES
+    }
+
+    /// Returns bundled skill assets owned by the runtime.
     #[allow(non_snake_case)]
     fn bundledExternalSkillAssets(&self) -> &'static [RuntimeBundledExternalSkillAsset] {
         runtimeBundledExternalSkillAssets()

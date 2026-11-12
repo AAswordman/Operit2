@@ -308,6 +308,38 @@ class UserPreferencesManager {
       ..._appearancePreferenceKeys.values,
       'use_system_theme',
     ]);
+    final resolved = _themeSnapshotFromPreferences(preferences);
+    if (preferences['use_system_theme'] == null) return resolved;
+    await _clients.application.themeConfigManager().patchAppearance(
+      initialSnapshot: defaultThemePreferenceSnapshot.toJson(),
+      values: <String, Object?>{'theme_mode': resolved.themeMode.name},
+      removeKeys: const <String>[],
+    );
+    return resolved;
+  }
+
+  /// Projects committed watch payloads without rereading storage for every event.
+  Stream<ThemePreferenceSnapshot> themePreferenceSnapshotFlow() =>
+      preferencesFlow()
+          .map(_appearancePreferences)
+          .distinct(mapEquals)
+          .map(_themeSnapshotFromPreferences);
+
+  /// Filters unrelated settings before appearance validation and change detection.
+  static Map<String, Object?> _appearancePreferences(
+    Map<String, Object?> preferences,
+  ) => <String, Object?>{
+    for (final key in <String>[
+      ..._appearancePreferenceKeys.values,
+      'use_system_theme',
+    ])
+      if (preferences.containsKey(key)) key: preferences[key],
+  };
+
+  /// Decodes only appearance keys, including the released system-theme flag.
+  static ThemePreferenceSnapshot _themeSnapshotFromPreferences(
+    Map<String, Object?> preferences,
+  ) {
     final snapshot = defaultThemePreferenceSnapshot.toJson();
     for (final entry in _appearancePreferenceKeys.entries) {
       final value = preferences[entry.value];
@@ -319,11 +351,6 @@ class UserPreferencesManager {
     if (_decodeBool(legacySystemTheme)) {
       snapshot['themeMode'] = ThemeMode.system.name;
     }
-    await _clients.application.themeConfigManager().patchAppearance(
-      initialSnapshot: defaultThemePreferenceSnapshot.toJson(),
-      values: <String, Object?>{'theme_mode': snapshot['themeMode']},
-      removeKeys: const <String>[],
-    );
     return ThemePreferenceSnapshot.fromJson(snapshot);
   }
 

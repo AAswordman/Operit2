@@ -18,7 +18,7 @@ class FreshPluginCreationIntent extends PluginCreationIntent {
   @override
   String toPrompt() {
     return _buildCreationPrompt(
-      taskLine: '请你使用 PackageBuilder skill 和 operit_editor 包，开发新的沙盒包。',
+      taskLine: '请你使用 Operit 插件开发套件（PackageBuilder）Skill 和 operit_editor 包，开发新的沙盒包。',
       packageRuleLine: '先确定新的沙盒包 id，后续不要改名。',
       requirement: requirement,
     );
@@ -39,7 +39,7 @@ class ContinuePluginCreationIntent extends PluginCreationIntent {
   String toPrompt() {
     return _buildCreationPrompt(
       taskLine:
-          '请你使用 PackageBuilder skill 和 operit_editor 包，查找沙盒包 $runtimePackageId 的原始项目并核验源码与构建配置，在此版本基础上继续开发并测试。缺失源码时明确说明。',
+          '请你使用 Operit 插件开发套件（PackageBuilder）Skill 和 operit_editor 包，查找沙盒包 $runtimePackageId 的原始项目并核验源码与构建配置，在此版本基础上继续开发并测试。缺失源码时明确说明。',
       packageRuleLine:
           '当前沙盒包 id 是 $runtimePackageId。包 id 和插件名字都必须沿用，不要改名，也不要新起包。',
       requirement: requirement,
@@ -61,7 +61,7 @@ class MergePluginCreationIntent extends PluginCreationIntent {
   String toPrompt() {
     return _buildCreationPrompt(
       taskLine:
-          '请你使用 PackageBuilder skill 和 operit_editor 包，查找沙盒包 $runtimePackageId 的原始项目并核验源码与构建配置，在此版本基础上做合并开发并测试。缺失源码时明确说明。',
+          '请你使用 Operit 插件开发套件（PackageBuilder）Skill 和 operit_editor 包，查找沙盒包 $runtimePackageId 的原始项目并核验源码与构建配置，在此版本基础上做合并开发并测试。缺失源码时明确说明。',
       packageRuleLine:
           '当前沙盒包 id 是 $runtimePackageId。包 id 和插件名字都必须沿用，不要改名，也不要新起包。',
       requirement: requirement,
@@ -79,7 +79,7 @@ String _buildCreationPrompt({
     taskLine,
     '先阅读 PackageBuilder/references/PLUGIN_CREATION_WORKFLOW.md，使用随 Skill 携带的当前版本类型和示例。',
     '需要操作包、Skill、MCP、日志或模型时，调用 operit_editor 包的 operit_editor 工具，传入 args 字符串数组实际执行命令；args: [] 获取命令帮助，不使用自然语言 query。',
-    '通过 skill show PackageBuilder 读取真实 Skill 目录，通过终端 host 信息和实际文件访问确定用户同意使用的开发根目录，不写死平台路径。',
+    '通过 ["skill", "show", "PackageBuilder"] 读取真实 Skill 目录，通过终端 host 信息和实际文件访问确定用户同意使用的开发根目录，不写死平台路径。',
     packageRuleLine,
     'Operit2 新建 ToolPkg 显式声明 api_version 为 2.0.0；其对 1.0.0 和 1.0.1 的加载支持并不完整。Operit1 完整支持 1.0.0 和 1.0.1，这两个版本主要面向 Android，是旧版 API 形式。',
     '2.0.0 作者须注重跨平台兼容性。基本所有公共接口都兼容多平台，常规功能使用统一接口即可；遇到平台特异接口时，明确适用范围，并考虑、验证其他平台的安装、界面和核心功能。',

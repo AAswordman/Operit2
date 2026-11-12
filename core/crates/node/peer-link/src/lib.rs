@@ -10,7 +10,7 @@ use std::sync::Arc;
 mod transport;
 pub use transport::HostPeerLink;
 
-/// Default resource ceiling for ordinary application embeddings.
+/// Default encoded physical-frame ceiling; authenticated runtimes may reassemble larger logical messages.
 pub const DEFAULT_MAX_PEER_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Stable transport failure for one encoded message above the connection ceiling.

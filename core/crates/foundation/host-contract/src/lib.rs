@@ -3324,6 +3324,8 @@ impl AppInstallTiming {
     }
 }
 
+pub mod UiAutomation;
+
 pub trait SystemOperationHost: Send + Sync {
     /// Reports the running application's distribution; None disables in-app updates.
     fn applicationUpdateTarget(&self) -> HostResult<Option<ApplicationUpdateTarget>> {

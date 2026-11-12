@@ -3,7 +3,7 @@
 import type { AutomationExecutionResultData, SimplifiedUINode, UIActionResultData, UIPageResultData } from "./results";
 
 /**
- * Inspects the current Android UI and performs element or coordinate interactions.
+ * Inspects the active accessible surface and performs element or coordinate interactions.
  */
 export namespace UI {
   /**
@@ -191,7 +191,7 @@ export interface UINodeSearchOptions {
 }
 
 /**
- * Stores one Android UI element together with its hierarchy and geometry.
+ * Stores one accessible UI element together with its hierarchy and geometry.
  */
 export class UINode {
   /**

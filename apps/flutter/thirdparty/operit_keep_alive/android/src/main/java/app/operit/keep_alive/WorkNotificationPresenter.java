@@ -141,7 +141,7 @@ final class WorkNotificationPresenter {
         dismissed.retainAll(present);
         if (focus == null && active == 0) focus = completed;
         if (focus == null) {
-            if (active == 0 && works.length() == 0) manager.notify(notificationId, idle);
+            manager.notify(notificationId, idle);
             return;
         }
         boolean ongoing = focus.isNull("endedAtMillis");
@@ -201,6 +201,20 @@ final class WorkNotificationPresenter {
 
     /** Honors a user's dismissal for this execution instead of reposting its Live Update. */
     void dismiss(String workId) { dismissed.add(workId); }
+
+    /** Consumes an opened result without hiding work that is still running or waiting. */
+    void open(String workId) throws JSONException {
+        if (latest == null) return;
+        JSONArray works = latest.getJSONArray("works");
+        for (int i = 0; i < works.length(); i++) {
+            JSONObject work = works.getJSONObject(i);
+            if (workId.equals(work.getString("workId")) && !work.isNull("endedAtMillis")) {
+                dismissed.add(workId);
+                render();
+                return;
+            }
+        }
+    }
 
     /** Cancels pending UI expiry when the actual service owner is destroyed. */
     void close() { if (expiry != null) handler.removeCallbacks(expiry); }

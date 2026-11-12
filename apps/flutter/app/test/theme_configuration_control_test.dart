@@ -598,8 +598,22 @@ void main() {
       expect(find.byType(TabBar), findsNothing);
       await tester.tap(find.byKey(const ValueKey('theme-edit:day')));
       await tester.pumpAndSettle();
+      expect(bridge.calls.where((call) => call.methodName == 'apply'), isEmpty);
       expect(find.byType(TabBar), findsOneWidget);
       expect(find.widgetWithText(AppBar, 'Day'), findsOneWidget);
+      final firstPreview = tester.state(
+        find.byType(ChatAppearancePreview).first,
+      );
+      final tabContext = tester.element(find.byType(TabBar));
+      final tabs = DefaultTabController.of(tabContext);
+      tabs.animateTo(1);
+      await tester.pumpAndSettle();
+      tabs.animateTo(0);
+      await tester.pumpAndSettle();
+      expect(
+        tester.state(find.byType(ChatAppearancePreview).first),
+        same(firstPreview),
+      );
       await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();
       expect(find.byType(TabBar), findsNothing);

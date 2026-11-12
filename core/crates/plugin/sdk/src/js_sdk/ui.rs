@@ -61,7 +61,7 @@ pub enum UIHostClickElementType {
     #[serde(rename = "bounds")]
     Bounds,
 }
-/// Inspects the current Android UI and performs element or coordinate interactions.
+/// Inspects the active accessible surface and performs element or coordinate interactions.
 pub trait UIHost: Send + Sync {
     ///
     ///Get current page information
@@ -172,6 +172,10 @@ pub trait UIHost: Send + Sync {
         endY: f64,
         duration: Option<f64>,
     ) -> JsFuture<UIActionResultData>;
+}
+
+/// Declares the separate high-level automation agent API.
+pub trait UIAgentHost: Send + Sync {
     ///
     ///Run the built-in UI automation subagent.
     ///@param intent - High-level task description for the subagent, such as opening an app and sending a message.
@@ -208,7 +212,7 @@ pub struct UINodeSearchOptions {
     /// Enables case-sensitive string comparison.
     pub caseSensitive: Option<bool>,
 }
-/// Stores one Android UI element together with its hierarchy and geometry.
+/// Stores one accessible UI element together with its hierarchy and geometry.
 #[js_declaration(kind = "class")]
 pub struct UINode {
     ///
@@ -260,7 +264,7 @@ pub struct UINode {
     ///
     pub childCount: f64,
 }
-/// Traverses, searches, formats, and interacts with Android UI node trees.
+/// Traverses, searches, formats, and interacts with accessible UI node trees.
 pub trait UINodeMethods: Send + Sync {
     /// Constructs a node wrapper from a simplified node and optional parent.
     fn new(node: SimplifiedUINode, parent: Option<Arc<UINode>>) -> Arc<UINode>;

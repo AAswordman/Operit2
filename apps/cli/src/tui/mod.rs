@@ -178,7 +178,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     // booting a second owner for the same identity.
     owner.refresh_log_path()?;
     let control_server =
-        crate::daemon::ControlServer::bind(&mut owner, core_application.localClient())?;
+        crate::daemon::ControlServer::bind(&mut owner, &core_application)?;
     // Runtime peer/proxy futures are not Send. Keep the monitor and the
     // control server on the local executor, independently of the terminal
     // loop, and drop their in-flight operations before shutting down the Core.

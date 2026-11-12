@@ -125,7 +125,35 @@ MSI packaging requires the .NET 8 SDK or newer. The build restores the pinned Wi
 4.0.6 tool and the DTF custom UI dependency from NuGet. The MSI embeds a WPF
 interface with a custom title bar; Windows 10 1809 x64 or newer includes its .NET
 Framework 4.7.2 runtime. Silent MSI installs continue to use `/qn` without opening
-the interface. Run the normal Windows build to produce both formats:
+the interface.
+
+The MSI enables verbose Windows Installer logging through `MsiLogging` for both
+interactive and unattended runs. The embedded interface shows the exact
+`MsiLogFileLocation` and also writes a unique UTF-8 diagnostic log under
+`%LOCALAPPDATA%\Operit\InstallerLogs`, outside the application and user-data
+cleanup directories. Action names and all original errors are retained in order;
+later transaction errors do not replace earlier failures. Known MSI codes have
+Chinese explanations and actionable steps, including 2502/2503 transaction-state
+errors; these codes alone are not treated as proof of a permission problem.
+The default failure screen shows a short reason and the next useful actions;
+the original errors and full report are under a collapsed technical-details
+section. Clipboard export, log viewers, and a log directory button are available
+directly on that screen. Initialization failures explicitly report the log
+location or the reason it could not be created. If failure happens before the
+embedded UI loads, use `msiexec.exe /i "package.msi" /L*V "log-path.log"` to
+capture the system-side failure; instructions ship in `README-Windows.txt`.
+
+Before `InstallValidate`, the `OperitCloseApplications` action registers the
+selected installation's `operit2.exe` with Windows Restart Manager and shuts down
+processes using that exact executable, including hidden windows. The action runs
+for install, update, repair, and direct uninstall, including unattended sessions;
+the nested removal of an older product during upgrade is excluded. It does not
+match processes by name or close copies running from another directory. A shutdown
+failure stops the operation before files change and presents exit instructions.
+Permanent shared-data deletion still requires all copies using that data to exit;
+the frozen cleanup plan is validated after application shutdown and before removal.
+
+Run the normal Windows build to produce both formats:
 
 ```powershell
 .\.venv\Scripts\python.exe tools/build_scripts/build_flutter_windows.py --enforce-lockfile

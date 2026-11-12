@@ -1715,7 +1715,7 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
             "CatalogHost" => Some(vec!["Catalog".to_string()]),
             "MediaHost" => Some(vec!["Media".to_string()]),
             "SoftwareSettingsHost" => Some(vec!["SoftwareSettings".to_string()]),
-            "UIHost" => Some(vec!["UI".to_string()]),
+            "UIHost" | "UIAgentHost" => Some(vec!["UI".to_string()]),
             "ChatHost" => Some(vec!["Chat".to_string()]),
             "StorageHost" | "StorageFacadeHost" => Some(vec!["Storage".to_string()]),
             "StorageSqliteHost" => Some(vec!["Storage".to_string(), "sqlite".to_string()]),

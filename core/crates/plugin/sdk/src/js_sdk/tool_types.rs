@@ -5,6 +5,13 @@ use super::results::*;
 /// Maps every built-in tool name to its concrete public result type.
 #[operit_plugin_sdk_macros::tool_display]
 pub struct ToolResultMap {
+    pub get_page_info: UIPageResultData,
+    pub tap: UIActionResultData,
+    pub long_press: UIActionResultData,
+    pub click_element: UIActionResultData,
+    pub set_input_text: UIActionResultData,
+    pub press_key: UIActionResultData,
+    pub swipe: UIActionResultData,
     pub edge_execute: EdgePortResultData,
     pub io_execute: EdgePortResultData,
     #[display(action = "list", icon = "folder", target = "path", result = "directory")]

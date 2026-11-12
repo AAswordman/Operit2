@@ -776,7 +776,7 @@ struct Operit1TtsHttpResponsePipelineStep {
 }
 
 #[allow(non_snake_case)]
-/// Resolves a fixed character model to the imported provider and exact source model index.
+/// Resolves a fixed character model using Kotlin's effective saved-index semantics.
 fn resolveOperit1CharacterChatModelBinding(
     parsed: &ParsedOperit1Snapshot,
     preferences: &HashMap<String, Operit1PreferenceValue>,
@@ -798,15 +798,15 @@ fn resolveOperit1CharacterChatModelBinding(
         preferences,
         &format!("character_card_{cardId}_chat_model_index"),
     )?
-    .unwrap_or(0)
-    .max(0);
+    .unwrap_or(0);
     let config = parsed.configById(configId)?;
     let modelIds = splitModelIds(&config.modelName);
+    let modelIndex = operit1EffectiveModelIndex(&modelIds, modelIndex);
     modelIds
         .get(modelIndex as usize)
         .cloned()
         .map(|modelId| Some((operit1ProviderId(&config.id), modelId)))
-        .ok_or_else(|| format!("Operit1 角色卡模型索引越界：{cardId}/{modelIndex}"))
+        .ok_or_else(|| format!("Operit1 角色卡绑定的配置没有模型：{cardId}/{configId}"))
 }
 
 #[allow(non_snake_case)]

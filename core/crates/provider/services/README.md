@@ -77,6 +77,11 @@ the native Host shares pools across streaming and buffered requests with the
 same request policy. Model requests use a shared 60-second connection timeout
 and 1000-second read-idle timeout, without a total generation deadline.
 
+Model connection tests use the application's current streaming-output preference
+for chat, tool-call, image, audio, and video probes. Streaming is enabled by default.
+The runtime captures this setting once per test, and stored results include that
+mode in their configuration fingerprint so changing it invalidates previous results.
+
 Dropping a pending request or response body cancels its Host stream. Claude,
 Gemini and OpenAI readers also race idle reads against explicit cancellation.
 The SSE decoder frames complete events, including multiline data and split

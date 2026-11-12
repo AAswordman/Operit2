@@ -194,6 +194,7 @@ struct PairingInvitation {
 #[derive(Serialize, Deserialize)]
 struct Hello {
     #[serde(default)] protocol: Option<crate::PeerProtocol::PeerProtocol>,
+    #[serde(default)] maxFrameBytes: usize,
     version: u32, nodeId: String, expectedNodeId: String, info: LinkDeviceInfo,
     public: Vec<u8>, purpose: String, sessionId: String,
     duplex: bool,
@@ -231,6 +232,7 @@ pub struct PeerRuntimeLimits {
     pub incomingSessions: usize,
     pub pendingPairings: usize,
     pub concurrentProbes: usize,
+    /// Bounds physical encoded frames; authenticated logical messages are transparently fragmented.
     pub maxMessageBytes: usize,
 }
 impl Default for PeerRuntimeLimits {
@@ -472,6 +474,7 @@ impl HostRuntimePeerService {
     ) -> Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String), CoreLinkError> {
         let (private, public) = crypto::ephemeral()?;
         let hello = Hello { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
+            maxFrameBytes: self.state.limits.maxMessageBytes,
             expectedNodeId: raw.target().nodeId.clone(),
             info: self.state.store.announcedDeviceInfo(&self.state.info), public: public.clone(),
             purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
@@ -493,6 +496,7 @@ impl HostRuntimePeerService {
         let t = &reply.transcript;
         crate::PeerProtocol::PeerProtocol::requireAdvertised(t.protocol.as_ref(), "received hello reply")?;
         if t.version != PAIRING_SERVICE_VERSION || t.clientNodeId != self.state.nodeId || t.clientPublic != public
+            || t.clientMaxFrameBytes != self.state.limits.maxMessageBytes || t.serverMaxFrameBytes == 0
             || (!raw.target().nodeId.is_empty() && t.serverNodeId != raw.target().nodeId)
             || t.serverNodeId == self.state.nodeId || t.serverPublic.len() != 32 || t.challenge.len() != 32
             || (!sessionId.is_empty() && t.sessionId != sessionId) {
@@ -546,7 +550,7 @@ impl HostRuntimePeerService {
             let secret: [u8; 32] = storedSecret.as_slice().try_into().map_err(|_| error("Invalid pairing secret"))?;
             secret
         } else { key };
-        let channel = Channel::new(raw, &channelKey, &context, true)?;
+        let channel = Channel::new(raw, &channelKey, &context, true, t.clientMaxFrameBytes.min(t.serverMaxFrameBytes))?;
         Ok((channel, id, info, storedSecret, peerNodeId))
     }
     /// Returns the peer's only authenticated connection while it remains usable.
@@ -788,6 +792,7 @@ impl HostRuntimePeerService {
         }
         if !hello.duplex { return sendError(&raw, helloRequest.requestId, error("Peer must support one bidirectional Link channel")).await; }
         if hello.version != PAIRING_SERVICE_VERSION
+            || hello.maxFrameBytes == 0
             || hello.nodeId.is_empty()
             || hello.nodeId == self.state.nodeId
             || (!hello.expectedNodeId.is_empty() && hello.expectedNodeId != self.state.nodeId)
@@ -855,6 +860,7 @@ impl HostRuntimePeerService {
         let (private, public) = crypto::ephemeral()?;
         let id = if hello.purpose == "start" { uuid::Uuid::new_v4().to_string() } else { hello.sessionId.clone() };
         let transcript = crypto::Transcript { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, sessionId: id.clone(),
+            clientMaxFrameBytes: hello.maxFrameBytes, serverMaxFrameBytes: self.state.limits.maxMessageBytes,
             clientNodeId: hello.nodeId.clone(), serverNodeId: self.state.nodeId.clone(),
             clientPublic: hello.public, serverPublic: public, challenge: crypto::random()?.to_vec() };
         let context = crypto::transcript(&transcript)?;
@@ -927,7 +933,8 @@ impl HostRuntimePeerService {
         // The confirmation channel is keyed by the PAKE secret bound to the code
         // and transcript, not by the X25519 root an active relay could learn.
         let channelKey = sessionSecret.unwrap_or(key);
-        let channel = Channel::new(raw.clone(), &channelKey, &context, false)?;
+        let channel = Channel::new(raw.clone(), &channelKey, &context, false,
+            hello.maxFrameBytes.min(self.state.limits.maxMessageBytes))?;
         if hello.purpose == "finish" {
             let Some(PeerMessage::Request(CoreLinkRequest::Call(request))) = channel.receive().await? else { return Err(error("Encrypted confirmation Call required")); };
             if request.target != HANDSHAKE || request.methodName != "finish" { return Err(error("Confirmation required before business")); }
@@ -1620,7 +1627,7 @@ mod single_channel_tests {
         let scheduler = Arc::new(QueuedScheduler::default());
         let encrypted = Channel::new(
             Arc::new(SilentPeer(PeerEndpoint { nodeId: "peer".into(), address: "unused".into() })),
-            &[7; 32], b"test", false).unwrap();
+            &[7; 32], b"test", false, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES).unwrap();
         let side = dispatch::InboundSide::new(service(), "peer".into(), "test".into(), dispatch::Authorization::Inbound);
         MultiplexedChannel::start(encrypted, scheduler, side, || {}).unwrap()
     }
@@ -1796,6 +1803,7 @@ mod single_channel_tests {
                     tx: send, rx: AsyncMutex::new(receive),
                 });
                 let hello = Hello { protocol, version: PAIRING_SERVICE_VERSION, nodeId: "peer".into(),
+                    maxFrameBytes: operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES,
                     expectedNodeId: "self".into(), info: LinkDeviceInfo { platform: "edge".into(), model: "sensor".into(), pairingIncarnation: None },
                     public: vec![0;32], purpose: purpose.into(), sessionId: "test".into(), duplex: true,
                     invitationId: None, pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
@@ -1941,7 +1949,7 @@ mod single_channel_tests {
         let (btx, brx) = tokio::sync::mpsc::unbounded_channel();
         let channel = |tx, rx, client| Channel::new(Arc::new(MemoryPeer {
             endpoint: PeerEndpoint { nodeId: "test".into(), address: "memory".into() }, tx, rx: AsyncMutex::new(rx),
-        }), &[7; 32], b"forwarding", client).unwrap();
+        }), &[7; 32], b"forwarding", client, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES).unwrap();
         let (client, server) = (channel(atx, brx, true), channel(btx, arx, false));
         let request = |method: &str| {
             let payload = CoreCallRequest::new(method, "test", method, CoreValue::Null);

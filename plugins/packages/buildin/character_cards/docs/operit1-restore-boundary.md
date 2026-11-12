@@ -26,6 +26,20 @@ Core preferences.
 | Fixed character models | The corresponding imported provider and model together |
 | Speech, general preferences, chats, token statistics and workspaces | Existing general import paths |
 
+Saved model indices follow Operit1 Kotlin's `getModelList`, `getValidModelIndex`
+and `getModelByIndex` semantics. Model names are split on commas, trimmed and
+filtered for empty entries before indexing. An index outside that list selects
+index 0, as it does in Operit1; the preview, function bindings and fixed character
+bindings all use that effective selection. A binding to an absent configuration
+or a configuration with no models remains an error. Unbound empty configurations
+remain importable as draft providers.
+
+Provider display names may repeat in Operit1. The shared provider importer retains
+each provider ID and assigns numeric suffixes (`Name1`, `Name2`, and so on) when a
+name collides with another imported provider or a retained target provider. Names
+already present in the incoming backup are reserved before suffix allocation.
+Model IDs, credentials and function/character bindings are preserved.
+
 Existing snapshot resources are rewritten to public runtime paths by the established
 file plan. Declared ObjectBox and memory-space profile directories are consumed by
 migration and excluded from general resource copying. A workspace/external USER.md

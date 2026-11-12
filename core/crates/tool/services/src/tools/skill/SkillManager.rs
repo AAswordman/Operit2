@@ -228,6 +228,24 @@ impl SkillManager {
         (availableSkills, skillLoadErrors)
     }
 
+    /// Reads the optional display label while preserving the skill's stable identity.
+    #[allow(non_snake_case)]
+    pub fn readSkillDisplayName(&self, skill: &SkillPackage) -> Result<String, String> {
+        let content = self.filesystem.readFile(&hostPath(&skill.skillFile))?;
+        let mut lines = content.lines();
+        if lines.next().map(str::trim) == Some("---") {
+            for line in lines.take_while(|line| line.trim() != "---") {
+                if let Some(("display_name", value)) = line.trim().split_once(':') {
+                    let label = unquote(value);
+                    if !label.is_empty() {
+                        return Ok(label);
+                    }
+                }
+            }
+        }
+        Ok(skill.name.clone())
+    }
+
     /// Returns all valid skill packages currently installed.
     #[allow(non_snake_case)]
     pub fn getAvailableSkills(&self) -> BTreeMap<String, SkillPackage> {
@@ -246,6 +264,24 @@ impl SkillManager {
     #[allow(non_snake_case)]
     pub fn getSkillLoadErrors(&self) -> BTreeMap<String, String> {
         self.refreshAvailableSkills().1
+    }
+
+    /// Installs missing built-in skills as AI-hidden and preserves existing installations and switches.
+    #[allow(non_snake_case)]
+    pub fn ensureBuiltinSkills(
+        &self,
+        runtimeSupport: &dyn ToolRuntimeSupport,
+    ) -> BTreeMap<String, String> {
+        let (installed, mut errors) = self.refreshAvailableSkills();
+        for name in runtimeSupport.builtinSkillNames() {
+            if installed.contains_key(*name) || errors.contains_key(*name) {
+                continue;
+            }
+            if let Err(error) = self.importBundledExternalSkill(name, runtimeSupport) {
+                errors.insert((*name).to_string(), error);
+            }
+        }
+        errors
     }
 
     /// Lists bundled external skills that have not been installed yet.
@@ -270,6 +306,9 @@ impl SkillManager {
         grouped
             .into_iter()
             .filter_map(|(assetName, assets)| {
+                if runtimeSupport.builtinSkillNames().contains(&assetName.as_str()) {
+                    return None;
+                }
                 let mut name = assetName.clone();
                 let mut description = String::new();
                 for asset in assets {
@@ -358,6 +397,13 @@ impl SkillManager {
                 .map_err(|error| format!("Failed to write bundled skill package asset: {}", error))?;
         }
 
+        let builtin = runtimeSupport.builtinSkillNames().contains(&skillName);
+        ExtensionStore::default().registerDevice(
+            "skill",
+            skillName,
+            skillName,
+            serde_json::json!({"visible": !builtin, "builtin": builtin}),
+        )?;
         let skills = self.getAvailableSkills();
         let Some(skill) = skills.get(skillName) else {
             return Err(format!(

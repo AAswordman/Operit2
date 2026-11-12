@@ -113,6 +113,7 @@ fn catalog_entry(
     }
 }
 
+/// Projects loaded package metadata without enumerating exportable source files.
 pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapshot, String> {
     let package_scopes = app.getExtensionScopes("package".into())?;
     let skill_scopes = app.getExtensionScopes("skill".into())?;
@@ -121,7 +122,6 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
 
     let mut bundled_updates = BTreeSet::<String>::new();
     let mut bundled_available = Vec::<ExtensionCatalogCandidate>::new();
-    let mut package_versions = BTreeMap::<String, String>::new();
 
     let packageManager = app.packageManager();
     let mut manager = packageManager
@@ -140,11 +140,6 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
             Ok((issue, can_delete))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    for source in manager.getPublishablePackageSources() {
-        if let Some(version) = source.inferredVersion {
-            package_versions.insert(source.packageName, version);
-        }
-    }
     drop(manager);
 
     let plugin_owned_names = plugin_runtimes
@@ -250,10 +245,8 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
                 display_name
             },
             description: package.description.resolve(false),
-            version: package_versions
-                .get(&package.name)
-                .cloned()
-                .unwrap_or_default(),
+            // Standalone scripts have no declared version; container versions come from runtimes.
+            version: String::new(),
             authors: package.author.clone(),
             category: package.category.clone(),
             activation_state: if enabled { "enabled" } else { "disabled" }.into(),
@@ -270,8 +263,11 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
     let (skills, skill_errors) = skill_repository.getAvailableSkillPackagesSnapshot();
     for skill in skills.values() {
         let market_marker = market_origins.get(&("skill".into(), skill.name.clone()));
+        let builtin = ExtensionStore::ExtensionStore::default()
+            .record("skill", &skill.name)?.settings["builtin"] == true;
         installed.push(ExtensionCatalogEntry {
-            display_name: skill.name.clone(),
+            source: if builtin { "builtin" } else if market_marker.is_some() { "market" } else { "manual" }.into(),
+            display_name: skill_repository.readSkillDisplayName(skill)?,
             description: skill.description.clone(),
             category: "Skill".into(),
             activation_state: if skill_repository.isSkillVisibleToAi(&skill.name) {

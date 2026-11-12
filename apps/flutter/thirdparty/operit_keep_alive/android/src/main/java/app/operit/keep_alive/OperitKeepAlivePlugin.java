@@ -106,6 +106,7 @@ public final class OperitKeepAlivePlugin implements FlutterPlugin, MethodChannel
                 activation.put(key, value);
             }
         } catch (org.json.JSONException error) { throw new IllegalArgumentException("Invalid work activation", error); }
+        KeepAliveServiceHost.openWork(workId);
         action.put("activation", activation);
         action.put("action", "open");
         pendingActions.addLast(action);

@@ -79,15 +79,14 @@ class ThemeBackgroundMedia extends StatelessWidget {
       duration: _backgroundDuration,
       curve: Curves.easeOutCubic,
       opacity: opacity.clamp(0, 1),
-      child: blurEnabled
-          ? ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: blurRadius,
-                sigmaY: blurRadius,
-              ),
-              child: child,
-            )
-          : child,
+      child: ImageFiltered(
+        enabled: blurEnabled && blurRadius > 0,
+        imageFilter: ui.ImageFilter.blur(
+          sigmaX: blurRadius,
+          sigmaY: blurRadius,
+        ),
+        child: child,
+      ),
     );
   }
 }

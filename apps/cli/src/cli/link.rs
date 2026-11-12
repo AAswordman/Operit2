@@ -30,20 +30,128 @@ use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
+/// Borrows a live Core's handles without owning or shutting down its lifecycle.
+#[derive(Clone)]
+pub(crate) struct LinkCommandContext {
+    client: Arc<operit_proxy_local::LocalCoreProxy>,
+    router: operit_node_runtime::CoreNodeRouter::CoreNodeRouter,
+    service: operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+}
+
+impl LinkCommandContext {
+    /// Shares the exact service, router and preferences owned by this application.
+    pub(crate) fn new(application: &operit_core_application::CoreApplication) -> Self {
+        Self { client: application.localClient(), router: application.nodeRouter(), service: application.accessServices() }
+    }
+    /// Returns the shared management service.
+    fn accessServices(&self) -> operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService { self.service.clone() }
+    /// Returns the owner's installed peer service.
+    fn nodeServices(&self) -> Result<operit_node_runtime::NodeServices::NodeServices, String> { self.router.nodeServices().cloned() }
+    /// Returns the owner's local runtime client.
+    fn localClient(&self) -> Arc<operit_proxy_local::LocalCoreProxy> { self.client.clone() }
+    /// Returns the owner's runtime capability handle.
+    fn nodeRuntime(&self) -> operit_node_runtime::CoreNodeRouter::CoreNodeLocalRuntime { self.client.coreNodeLocalRuntime() }
+    /// Returns the owner's router.
+    fn nodeRouter(&self) -> operit_node_runtime::CoreNodeRouter::CoreNodeRouter { self.router.clone() }
+    /// Returns the stable identity of the owner.
+    fn localNodeId(&self) -> String { self.router.localNodeId() }
+}
+
+tokio::task_local! {
+    static LINK_OUTPUT: std::cell::RefCell<(bool, String)>;
+}
+
+/// Keeps concurrent control requests' output and JSON mode isolated from the terminal.
+fn write_link_line(arguments: std::fmt::Arguments<'_>) {
+    use std::fmt::Write;
+    if LINK_OUTPUT.try_with(|output| writeln!(output.borrow_mut().1, "{arguments}").unwrap()).is_err() {
+        ::std::println!("{arguments}");
+    }
+}
+
+macro_rules! println {
+    ($($arg:tt)*) => { write_link_line(format_args!($($arg)*)) };
+}
+
+/// Uses the invocation-local format when executing inside the owner's control server.
+fn cli_json_mode() -> bool { LINK_OUTPUT.try_with(|output| output.borrow().0).unwrap_or_else(|_| super::cli_json_mode()) }
+
+/// Emits structured command output through the same invocation-local channel as text.
+fn emit_cli_json(value: serde_json::Value) { println!("{value}"); }
+
+/// Executes bounded management commands on the already running Core.
+pub(crate) async fn execute_owned_link_command(context: &LinkCommandContext, args: &[String], json: bool) -> Result<String, String> {
+    LINK_OUTPUT.scope(std::cell::RefCell::new((json, String::new())), async {
+        match args.first().map(String::as_str) {
+            Some("space") => Box::pin(execute_link_space_command(context, &args[1..])).await?,
+            Some("control") => Box::pin(execute_link_control_command(context, &args[1..])).await?,
+            Some("doctor") => execute_link_doctor_command(context, &args[1..])?,
+            Some("discover") => Box::pin(execute_link_discover_command(context, &args[1..])).await?,
+            Some("edge-call") => Box::pin(execute_link_edge_call_command(context, &args[1..])).await?,
+            Some("stream-probe") => Box::pin(execute_link_stream_probe_command(context, &args[1..])).await?,
+            Some("unpair" | "peers" | "prompts") => Box::pin(execute_node_pairing_command(context.nodeServices()?.peers().as_ref(), args)).await?,
+            Some("pair-start") if args.len() <= 2 => {
+                let pending = Box::pin(start_link_pair(context, args.get(1).map(String::as_str), false)).await?;
+                emit_cli_json(serde_json::to_value(pending).map_err(|error| error.to_string())?);
+            }
+            Some("pair-discover") if args.len() == 1 => {
+                let peers = context.accessServices().discoverPeers(2000).await?;
+                emit_cli_json(serde_json::to_value(peers).map_err(|error| error.to_string())?);
+            }
+            Some("pair-start") if args.len() == 3 => {
+                let endpoint = operit_node_runtime::NodeServices::PeerEndpoint {
+                    nodeId: args[1].clone(), address: args[2].clone(),
+                };
+                let pending = context.nodeServices()?.peers().startPairing(endpoint, None)
+                    .await.map_err(|error| error.to_string())?;
+                emit_cli_json(serde_json::to_value(pending).map_err(|error| error.to_string())?);
+            }
+            Some("pair-code") if args.len() == 2 => {
+                let peer = Box::pin(context.accessServices().startPairingFromCode(args[1].clone())).await?;
+                emit_cli_json(serde_json::to_value(peer).map_err(|error| error.to_string())?);
+            }
+            Some("pair-finish") if args.len() == 3 => {
+                let peer = Box::pin(context.accessServices().finishPairing(args[1].clone(), args[2].clone())).await?;
+                emit_cli_json(serde_json::to_value(peer).map_err(|error| error.to_string())?);
+            }
+            Some("pair-cancel") if args.len() == 2 => context.accessServices().cancelPairing(args[1].clone()).await?,
+            _ => return Err("This link command cannot run through the owner control channel".into()),
+        }
+        Ok(LINK_OUTPUT.with(|output| std::mem::take(&mut output.borrow_mut().1)))
+    }).await
+}
+
+/// Routes management to the identity owner before opening any local storage.
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
+    if !matches!(args.first().map(String::as_str), Some("unpair" | "peers" | "prompts" | "listen" | "pair" | "qr" | "session" | "discover" | "space" | "doctor" | "control" | "stream-probe" | "edge-call")) {
+        print_link_usage();
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("pair") { return Box::pin(run_link_pair(&args[1..])).await; }
+    if !matches!(args.first().map(String::as_str), Some("listen" | "session" | "qr" | "pair")) {
+        if let Some(result) = crate::daemon::owner_link_command(args, cli_json_mode()).await {
+            let output = result?;
+            ::std::print!("{output}");
+            return Ok(());
+        }
+    }
+    let _owner = if matches!(args.first().map(String::as_str), Some("listen" | "session" | "qr")) {
+        None
+    } else {
+        Some(crate::daemon::OwnerGuard::acquire("cli")?)
+    };
     match args.first().map(String::as_str) {
         Some("unpair" | "peers" | "prompts" | "listen") => {
-            run_node_pairing_command(args).await
+            Box::pin(run_node_pairing_command(args)).await
         }
-        Some("pair") => run_link_pair(&args[1..]).await,
-        Some("qr") => run_link_qr(&args[1..]).await,
-        Some("session") => run_link_session(&args[1..]).await,
-        Some("discover") => run_link_discover_command(&args[1..]).await,
-        Some("space") => run_link_space_command(&args[1..]).await,
-        Some("doctor") => run_link_doctor_command(&args[1..]).await,
-        Some("control") => run_link_control_command(&args[1..]).await,
-        Some("stream-probe") => run_link_stream_probe_command(&args[1..]).await,
-        Some("edge-call") => run_link_edge_call_command(&args[1..]).await,
+        Some("qr") => Box::pin(run_link_qr(&args[1..])).await,
+        Some("session") => Box::pin(run_link_session(&args[1..])).await,
+        Some("discover") => Box::pin(run_link_discover_command(&args[1..])).await,
+        Some("space") => Box::pin(run_link_space_command(&args[1..])).await,
+        Some("doctor") => Box::pin(run_link_doctor_command(&args[1..])).await,
+        Some("control") => Box::pin(run_link_control_command(&args[1..])).await,
+        Some("stream-probe") => Box::pin(run_link_stream_probe_command(&args[1..])).await,
+        Some("edge-call") => Box::pin(run_link_edge_call_command(&args[1..])).await,
         _ => {
             print_link_usage();
             Ok(())
@@ -79,7 +187,7 @@ fn link_choices(choices: &[&str]) -> String {
 }
 
 /// Starts manual pairing from a discovered device in interactive and live sessions.
-async fn start_link_pair(application: &operit_core_application::CoreApplication, selector: Option<&str>, interactive: bool)
+async fn start_link_pair(application: &LinkCommandContext, selector: Option<&str>, interactive: bool)
     -> Result<operit_node_runtime::NodeServices::PendingPairing, String> {
     let peers = application.accessServices().discoverPeers(2000).await?;
     let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
@@ -115,6 +223,47 @@ async fn run_link_pair(args: &[String]) -> Result<(), String> {
     if cli_json_mode() || !io::stdin().is_terminal() {
         return Err("link pair needs an interactive terminal; scripts can use link session with pair and confirm".into());
     }
+    let operation = if args.is_empty() { "pair-discover" }
+        else if args[0].trim().starts_with("operit://") { "pair-code" }
+        else { "pair-start" };
+    let mut command = vec![operation.to_string()];
+    command.extend_from_slice(args);
+    if let Some(result) = crate::daemon::owner_link_command(&command, true).await {
+        let mut output = result?;
+        if operation == "pair-code" {
+            let peer: operit_node_runtime::NodeServices::PairedPeer = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+            println!("Paired with {}. Use link space join to request membership.", peer.displayName);
+            return Ok(());
+        }
+        if operation == "pair-discover" {
+            let peers: Vec<operit_node_runtime::NodeServices::DiscoveredPeer> = serde_json::from_str(&output)
+                .map_err(|error| error.to_string())?;
+            let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
+            if choices.is_empty() { return Err("No devices discovered".into()); }
+            let selection = if choices.len() > 1 {
+                eprintln!("{}", link_choices(&choices));
+                Some(read_link_input("Device number or name: ").await?)
+            } else { None };
+            let index = select_link_choice(&choices, selection.as_deref(), "device")?;
+            let command = vec!["pair-start".into(), peers[index].nodeId.clone(), peers[index].address.clone()];
+            output = crate::daemon::owner_link_command(&command, true).await.ok_or("The pairing owner stopped")??;
+        }
+        let pending: operit_node_runtime::NodeServices::PendingPairing = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+        eprintln!("Pairing with {}. Read the six-digit code on the receiving device.", pending.displayName);
+        let confirmation = async {
+            let code = read_link_input("Pairing code (empty to cancel): ").await?;
+            let command = vec!["pair-finish".into(), pending.pairingId.clone(), code];
+            let output = crate::daemon::owner_link_command(&command, true).await.ok_or("The pairing owner stopped")??;
+            let peer: operit_node_runtime::NodeServices::PairedPeer = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+            println!("Paired with {}. Use link space join to request membership.", peer.displayName);
+            Ok(())
+        }.await;
+        if confirmation.is_err() {
+            let _ = crate::daemon::owner_link_command(&["pair-cancel".into(), pending.pairingId], true).await;
+        }
+        return confirmation;
+    }
+    let _owner = crate::daemon::OwnerGuard::acquire("cli")?;
     let application = create_cli_core_application_without_space_sync("client").await?;
     let result = async {
         let service = application.accessServices();
@@ -123,7 +272,7 @@ async fn run_link_pair(args: &[String]) -> Result<(), String> {
             println!("Paired with {}. Use link space join to request membership.", peer.displayName);
             return Ok(());
         }
-        let pending = start_link_pair(&application, args.first().map(String::as_str), true).await?;
+        let pending = start_link_pair(&LinkCommandContext::new(&application), args.first().map(String::as_str), true).await?;
         eprintln!("Pairing with {}. Read the six-digit code on the receiving device (CLI: link prompts).", pending.displayName);
         let confirmation = async {
             let code = read_link_input("Pairing code (empty to cancel): ").await?;
@@ -153,40 +302,77 @@ async fn run_link_qr(args: &[String]) -> Result<(), String> {
         }
         return print_connection_qr(&code?);
     }
-    let application = create_cli_core_application_configured("server", configure_link_core).await?;
-    let result = async {
-        let mut listenerArgs = args.to_vec();
-        if listenerArgs.first().map_or(true, |arg| arg.starts_with("--")) {
-            listenerArgs.insert(0, "http".into());
-        }
-        let duration = start_node_listener(&application, &listenerArgs).await?;
-        print_connection_qr(&application.accessServices().peerConnectionCode().await?)?;
-        if !cli_json_mode() {
-            eprintln!("Keep this command running while connecting. Press Ctrl-C to stop.");
-            eprintln!("The pairing code will appear here when the other device connects.");
-        }
-        let deadline = async {
-            if let Some(ms) = duration { tokio::time::sleep(Duration::from_millis(ms)).await; }
-            else { std::future::pending::<()>().await; }
-        };
-        tokio::pin!(deadline);
-        let mut tick = tokio::time::interval(Duration::from_millis(500));
-        let mut shown = std::collections::BTreeSet::new();
-        loop {
-            tokio::select! {
-                signal = tokio::signal::ctrl_c() => { signal.map_err(|error| error.to_string())?; break; }
-                _ = &mut deadline => break,
-                _ = tick.tick() => {
-                    for prompt in application.accessServices().pairingPrompts()? {
-                        if shown.insert(prompt.pairingId.clone()) {
-                            if cli_json_mode() { emit_cli_json(serde_json::json!({"pairingPrompt": prompt})); }
-                            else { println!("Pairing: {} ({})   {}", prompt.displayName, prompt.peerNodeId, prompt.confirmationCode); }
-                        }
+    Box::pin(run_link_owner("qr", args)).await
+}
+
+/// Displays pairing prompts while the same listener serves local management commands.
+async fn run_link_qr_inner(application: &LinkCommandContext, args: &[String]) -> Result<(), String> {
+    let mut listenerArgs = args.to_vec();
+    if listenerArgs.first().map_or(true, |arg| arg.starts_with("--")) {
+        listenerArgs.insert(0, "http".into());
+    }
+    let duration = start_node_listener(application, &listenerArgs).await?;
+    print_connection_qr(&application.accessServices().peerConnectionCode().await?)?;
+    if !cli_json_mode() {
+        eprintln!("Keep this command running while connecting. Press Ctrl-C to stop.");
+        eprintln!("The pairing code will appear here when the other device connects.");
+    }
+    let deadline = async {
+        if let Some(ms) = duration { tokio::time::sleep(Duration::from_millis(ms)).await; }
+        else { std::future::pending::<()>().await; }
+    };
+    tokio::pin!(deadline);
+    let mut tick = tokio::time::interval(Duration::from_millis(500));
+    let mut shown = std::collections::BTreeSet::new();
+    loop {
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => { signal.map_err(|error| error.to_string())?; break; }
+            _ = &mut deadline => break,
+            _ = tick.tick() => {
+                for prompt in application.accessServices().pairingPrompts()? {
+                    if shown.insert(prompt.pairingId.clone()) {
+                        if cli_json_mode() { emit_cli_json(serde_json::json!({"pairingPrompt": prompt})); }
+                        else { println!("Pairing: {} ({})   {}", prompt.displayName, prompt.peerNodeId, prompt.confirmationCode); }
                     }
                 }
             }
         }
-        Ok(())
+    }
+    Ok(())
+}
+
+/// Owns one identity for the whole listener lifetime and publishes its management endpoint.
+async fn run_link_owner(mode: &str, args: &[String]) -> Result<(), String> {
+    let mut owner = crate::daemon::OwnerGuard::acquire(mode)?;
+    let deviceName = if mode == "session" { "session" } else { "server" };
+    let application = Box::pin(create_cli_core_application_configured(deviceName, configure_link_core)).await?;
+    let result = async {
+        owner.refresh_log_path()?;
+        let server = crate::daemon::ControlServer::bind(&mut owner, &application)?;
+        let shutdown = server.shutdown_token();
+        let mut stopped = shutdown.subscribe();
+        let context = LinkCommandContext::new(&application);
+        tokio::task::LocalSet::new().run_until(async {
+            let mut serverTask = server.spawn_local();
+            let command = async {
+                match mode {
+                    "listen" => Box::pin(run_node_listen(&context, args)).await,
+                    "session" => Box::pin(run_link_session_inner(&context, args)).await,
+                    "qr" => Box::pin(run_link_qr_inner(&context, args)).await,
+                    _ => Err("Unknown listener owner mode".into()),
+                }
+            };
+            let result = tokio::select! {
+                biased;
+                _ = stopped.wait_for(|value| *value) => Ok(()),
+                result = command => result,
+                result = crate::host::daemon::termination_signal() => result.map_err(|error| error.to_string()),
+                result = &mut serverTask => Err(format!("Link control server stopped: {result:?}")),
+            };
+            shutdown.send_replace(true);
+            if !serverTask.is_finished() { let _ = tokio::time::timeout(Duration::from_secs(5), serverTask).await; }
+            result
+        }).await
     }.await;
     application.shutdown().await;
     result
@@ -235,21 +421,17 @@ fn render_connection_qr(code: &str) -> Result<String, String> {
 
 /// CLI 只解析输入和展示结果；配对直接调用应用注入的 RuntimePeerService。
 async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
-    let application = if args.first().map(String::as_str) == Some("listen") {
-        create_cli_core_application_configured("server", configure_link_core).await?
-    } else {
-        create_cli_core_application_without_space_sync("client").await?
-    };
     if args.first().map(String::as_str) == Some("listen") {
-        return run_node_listen(&application, &args[1..]).await;
+        return Box::pin(run_link_owner("listen", &args[1..])).await;
     }
+    let application = create_cli_core_application_without_space_sync("client").await?;
     let result = execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await;
     application.shutdown().await;
     result
 }
 
 /// 管理配置仍保存原路径；监听由统一 RuntimePeerService 拥有。
-async fn start_node_listener(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<Option<u64>, String> {
+async fn start_node_listener(application: &LinkCommandContext, args: &[String]) -> Result<Option<u64>, String> {
     use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::PeerHostPortMode};
     let mut transports = Vec::new();
     let mut config = application.accessServices().localHostConfig()?.ok_or("Node listener preferences are not initialized")?;
@@ -292,7 +474,8 @@ async fn start_node_listener(application: &operit_core_application::CoreApplicat
     Ok(duration)
 }
 
-async fn run_node_listen(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+/// Keeps the identity's listener active until its explicit stop condition.
+async fn run_node_listen(application: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     let duration = start_node_listener(application, args).await?;
     // 本机验证码通过普通管理命令 `link prompts` 查看，不放入匿名协议响应。
     match duration {
@@ -310,10 +493,7 @@ async fn run_link_session(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--duration-ms") {
         return Err("link session does not accept --duration-ms; use quit or Ctrl-C".into());
     }
-    let application = create_cli_core_application_configured("session", configure_link_core).await?;
-    let result = run_link_session_inner(&application, args).await;
-    application.shutdown().await;
-    result
+    Box::pin(run_link_owner("session", args)).await
 }
 
 fn parse_session_command(line: &str) -> Result<Vec<String>, String> {
@@ -324,7 +504,7 @@ fn parse_session_command(line: &str) -> Result<Vec<String>, String> {
     }
 }
 
-async fn run_link_session_inner(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+async fn run_link_session_inner(application: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     start_node_listener(application, args).await?;
     if !cli_json_mode() {
         println!("Commands: qr/pair/confirm/pair-cancel/prompts/peers/unpair, space ..., control ..., core ..., quit");
@@ -348,7 +528,7 @@ async fn run_link_session_inner(application: &operit_core_application::CoreAppli
         let result = match parse_session_command(&line) {
             Ok(command) if command.is_empty() => continue,
             Ok(command) if command.as_slice() == ["quit"] || command.as_slice() == ["exit"] => break,
-            Ok(command) => execute_link_session_command(application, &command, &mut pendingPairing).await,
+            Ok(command) => Box::pin(execute_link_session_command(application, &command, &mut pendingPairing)).await,
             Err(error) => Err(error),
         };
         if let Err(error) = result {
@@ -365,7 +545,7 @@ async fn run_link_session_inner(application: &operit_core_application::CoreAppli
     Ok(())
 }
 
-async fn execute_link_session_command(application: &operit_core_application::CoreApplication, args: &[String],
+async fn execute_link_session_command(application: &LinkCommandContext, args: &[String],
     pendingPairing: &mut Option<operit_node_runtime::NodeServices::PendingPairing>) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("qr") if args.len() == 1 => {
@@ -445,7 +625,7 @@ async fn execute_link_session_command(application: &operit_core_application::Cor
 
 /// Calls one generated local Core schema through the same routed client used by interactive commands.
 async fn execute_link_local_call_command(
-    application: &operit_core_application::CoreApplication,
+    application: &LinkCommandContext,
     args: &[String],
 ) -> Result<(), String> {
     let target = operit_proxy_local::LocalCoreProxy::generatedTargetForSchema(&args[0])
@@ -497,12 +677,12 @@ async fn execute_node_pairing_command(
 
 async fn run_link_edge_call_command(args: &[String]) -> Result<(), String> {
     let application = create_cli_core_application_without_space_sync("client").await?;
-    let result = execute_link_edge_call_command(&application, args).await;
+    let result = execute_link_edge_call_command(&LinkCommandContext::new(&application), args).await;
     application.shutdown().await;
     result
 }
 
-async fn execute_link_edge_call_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+async fn execute_link_edge_call_command(coreApplication: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: operit2 cli link edge-call <device> <edge-target> <method> [json-args]";
     if !(3..=4).contains(&args.len()) || !args[1].starts_with("edge.") || args[1] == "edge.plugins"
         || args[1].chars().any(char::is_whitespace) || args[2].is_empty() || args[2].chars().any(char::is_whitespace) {
@@ -608,18 +788,20 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
 /// Runs the shared-Space doctor: read-only by default, `--repair` quarantines
 /// damaged journal lines after a backup and a shadow-replay selfcheck.
 async fn run_link_doctor_command(args: &[String]) -> Result<(), String> {
+    let application = create_cli_core_application_without_space_sync("client").await?;
+    let result = execute_link_doctor_command(&LinkCommandContext::new(&application), args);
+    application.shutdown().await;
+    result
+}
+
+/// Runs diagnosis against the owner's current authority and application records.
+fn execute_link_doctor_command(context: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     let repair = args.iter().any(|arg| arg == "--repair");
     if args.iter().any(|arg| arg != "--repair") || args.len() > 1 {
         return Err("usage: operit2 cli link doctor [--repair]".into());
     }
-    let coreApplication = if repair {
-        create_cli_core_application("client").await?
-    } else {
-        create_cli_core_application_without_space_sync("client").await?
-    };
-    let service = coreApplication.accessServices();
+    let service = context.accessServices();
     let diagnosis = operit_node_runtime::SpaceDoctor::diagnose(&service, repair);
-    coreApplication.shutdown().await;
     let report = diagnosis.map_err(|error| format!("space diagnosis failed: {error}"))?;
     if cli_json_mode() {
         emit_cli_json(serde_json::to_value(&report).map_err(|error| error.to_string())?);
@@ -676,7 +858,17 @@ async fn run_link_doctor_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_link_discover_command(args: &[String]) -> Result<(), String> {    let mut timeout_ms = 2000_u64;
+/// Discovers peers using a short-lived owner only when no persistent owner is running.
+async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
+    let application = create_cli_core_application_without_space_sync("client").await?;
+    let result = execute_link_discover_command(&LinkCommandContext::new(&application), args).await;
+    application.shutdown().await;
+    result
+}
+
+/// Discovers peers on the active owner's Host and transport service.
+async fn execute_link_discover_command(context: &LinkCommandContext, args: &[String]) -> Result<(), String> {
+    let mut timeout_ms = 2000_u64;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -696,8 +888,7 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {    l
         }
         index += 1;
     }
-    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
-    let peers = coreApplication.accessServices().discoverPeers(timeout_ms).await
+    let peers = context.accessServices().discoverPeers(timeout_ms).await
         .map_err(|error| error.to_string())?;
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({ "peers": peers }));
@@ -718,12 +909,13 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     } else {
         create_cli_core_application_without_space_sync("client").await?
     };
-    let result = execute_link_space_command(&coreApplication, args).await;
+    let result = execute_link_space_command(&LinkCommandContext::new(&coreApplication), args).await;
     coreApplication.shutdown().await;
     result
 }
 
-async fn execute_link_space_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+/// Executes Space management on the owner's shared services.
+async fn execute_link_space_command(coreApplication: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     let service = coreApplication.accessServices();
     match args.first().map(String::as_str) {
         None | Some("show") if args.len() <= 1 => {
@@ -758,7 +950,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
                 let label = network_device_label_by_id(&topology, &id)?;
                 (id, label)
             };
-            let status = service.pairedDeviceStatus(device_id).await?;
+            let status = Box::pin(service.pairedDeviceStatus(device_id)).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "status": format!("{status:?}") })); }
             else { println!("{device_label}: {status:?}"); }
             Ok(())
@@ -769,7 +961,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             let topology = service.deviceSpaceTopology()?;
             let device_id = network_device_id(&topology, &args[1])?;
             let device_label = network_device_label_by_id(&topology, &device_id)?;
-            service.disconnectDeviceSpaceNode(device_id).await?;
+            Box::pin(service.disconnectDeviceSpaceNode(device_id)).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "disconnected": true, "restricted": true })); }
             else { println!("Disconnected device {device_label}; direct links and route transit stay blocked until `space admit`"); }
             Ok(())
@@ -787,7 +979,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             let topology = service.deviceSpaceTopology()?;
             let device_id = network_device_id(&topology, &args[1])?;
             let device_label = network_device_label_by_id(&topology, &device_id)?;
-            service.removeDeviceSpaceMember(device_id).await?;
+            Box::pin(service.removeDeviceSpaceMember(device_id)).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "removed": true })); }
             else { println!("Removed device {device_label} from the Space and forgot its pairing"); }
             Ok(())
@@ -796,13 +988,13 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             let peers = coreApplication.nodeServices()?.peers().pairedPeers().map_err(|error| error.to_string())?;
             let choices: Vec<_> = peers.iter().map(|peer| peer.displayName.as_str()).collect();
             let index = select_link_choice(&choices, args.get(1).map(String::as_str), "paired device")?;
-            let request = service.requestDeviceSpaceJoin(peers[index].nodeId.clone()).await?;
+            let request = Box::pin(service.requestDeviceSpaceJoin(peers[index].nodeId.clone())).await?;
             print_space_join_request(&request)?;
             Ok(())
         }
         Some("requests") if args.len() == 2 => {
             let requests = match args[1].as_str() {
-                "incoming" => service.incomingDeviceSpaceJoins().await?,
+                "incoming" => Box::pin(service.incomingDeviceSpaceJoins()).await?,
                 "outgoing" => service.outgoingDeviceSpaceJoins()?,
                 _ => return Err("usage: link space requests <incoming|outgoing>".into()),
             };
@@ -821,17 +1013,17 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             let choices: Vec<_> = requests.iter().map(|request| request.spaceName.as_str()).collect();
             let index = select_link_choice(&choices, args.get(1).map(String::as_str), "outgoing join request")?;
             let id = requests[index].requestId.clone();
-            let updated = if args[0] == "refresh" { service.refreshDeviceSpaceJoin(id).await? }
-                else { service.cancelDeviceSpaceJoin(id).await? };
+            let updated = if args[0] == "refresh" { Box::pin(service.refreshDeviceSpaceJoin(id)).await? }
+                else { Box::pin(service.cancelDeviceSpaceJoin(id)).await? };
             print_space_join_request(&updated)
         }
         Some("approve" | "reject") if args.len() <= 2 => {
-            let requests = service.incomingDeviceSpaceJoins().await?;
+            let requests = Box::pin(service.incomingDeviceSpaceJoins()).await?;
             let requests: Vec<_> = requests.iter().filter(|request| request.canApprove).collect();
             let choices: Vec<_> = requests.iter().map(|request| request.applicantName.as_str()).collect();
             let index = select_link_choice(&choices, args.get(1).map(String::as_str), "join request awaiting your decision")?;
             let request = requests[index];
-            print_space_join_request(&service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, args[0] == "approve").await?)
+            print_space_join_request(&Box::pin(service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, args[0] == "approve")).await?)
         }
         Some("preferences") if args.len() == 2 => {
             let preferences = service.devicePreferences(args[1].clone())?;
@@ -896,12 +1088,13 @@ async fn run_link_control_command(args: &[String]) -> Result<(), String> {
     } else {
         create_cli_core_application_without_space_sync("client").await?
     };
-    let result = execute_link_control_command(&coreApplication, args).await;
+    let result = execute_link_control_command(&LinkCommandContext::new(&coreApplication), args).await;
     coreApplication.shutdown().await;
     result
 }
 
-async fn execute_link_control_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+/// Executes policy management on the owner's shared services.
+async fn execute_link_control_command(coreApplication: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: operit2 cli link control <show|bootstrap|audit|identity|device|policy>";
     let service = coreApplication.accessServices();
     match args.first().map(String::as_str) {
@@ -963,7 +1156,7 @@ async fn execute_link_control_command(coreApplication: &operit_core_application:
 /// Runs identity definition, assignment, and revocation commands.
 fn run_link_control_identity_command(
     service: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
-    coreApplication: &operit_core_application::CoreApplication,
+    coreApplication: &LinkCommandContext,
     args: &[String],
 ) -> Result<(), String> {
     const USAGE: &str = "usage: operit2 cli link control identity <list|define <name> <all|audit|relay|storage|execute|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>>";
@@ -1113,11 +1306,18 @@ fn run_link_control_policy_command(
 
 /// 通过节点身份验证实际路由的 StateFlow 和嵌入流，不读取底层 session。
 async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
+    let application = create_cli_core_application_without_space_sync("client").await?;
+    let result = execute_link_stream_probe_command(&LinkCommandContext::new(&application), args).await;
+    application.shutdown().await;
+    result
+}
+
+/// Probes streams on the owner's existing bindings and authenticated channels.
+async fn execute_link_stream_probe_command(coreApplication: &LinkCommandContext, args: &[String]) -> Result<(), String> {
     let json_mode = cli_json_mode();
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link stream-probe <node-id>".to_string())?;
-    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let peerNodeId = name.clone();
     let service = coreApplication.accessServices();
     let space = service.joinPairedDeviceSpace(name.clone()).await?;
@@ -1321,7 +1521,39 @@ pub(crate) fn print_link_usage() {
 
 #[cfg(test)]
 mod session_command_tests {
-    use super::{parse_session_command, select_link_choice};
+    use super::*;
+
+    /// Link routing must not embed every control request's Core state machine on the thread stack.
+    #[test]
+    fn listener_command_future_has_a_bounded_stack_frame() {
+        let args = vec!["listen".to_string(), "tcp".to_string()];
+        let command = run_link_command(&args);
+        let size = std::mem::size_of_val(&command);
+        eprintln!("Link command: {size}; owner: {}; Core startup: {}; root: {}; main: {}", std::mem::size_of_val(&run_link_owner("listen", &args)),
+            std::mem::size_of_val(&create_cli_core_application_configured("server", configure_link_core)),
+            std::mem::size_of_val(&super::super::run_cli_root(&args)), std::mem::size_of_val(&crate::run()));
+        assert!(size < 16 * 1024, "Link command future occupies {size} stack bytes");
+        assert!(std::mem::size_of_val(&crate::run()) < 1024,
+            "Root dispatch must not embed every subcommand state machine");
+    }
+
+    /// Concurrent control commands cannot share their output buffers or JSON mode.
+    #[tokio::test]
+    async fn owner_command_output_is_isolated_per_invocation() {
+        let capture = |json, label: &'static str| LINK_OUTPUT.scope(
+            std::cell::RefCell::new((json, String::new())), async move {
+                assert_eq!(cli_json_mode(), json);
+                println!("{label}:first");
+                tokio::task::yield_now().await;
+                assert_eq!(cli_json_mode(), json);
+                println!("{label}:last");
+                LINK_OUTPUT.with(|output| output.borrow().1.clone())
+            });
+        let (text, json) = tokio::join!(capture(false, "text"), capture(true, "json"));
+        assert_eq!(text, "text:first\ntext:last\n");
+        assert_eq!(json, "json:first\njson:last\n");
+        assert!(LINK_OUTPUT.try_with(|_| ()).is_err());
+    }
 
     #[test]
     fn single_candidate_needs_no_selector_but_multiple_candidates_do() {

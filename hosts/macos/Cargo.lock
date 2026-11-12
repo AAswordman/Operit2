@@ -1385,6 +1385,7 @@ dependencies = [
  "operit-host-apple-native",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
+ "serde_json",
  "tokio",
 ]
 

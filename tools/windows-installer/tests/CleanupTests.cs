@@ -11,11 +11,15 @@ public static class CleanupTests
     private static int passed;
 
     /// <summary>Runs destructive cleanup only inside disposable fixtures, with credentials and process checks injected.</summary>
+    [STAThread]
     public static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--installer-process") return RunInstallerProcess(args[1]);
         try
         {
             Check("MSI versions distinguish fresh install, update, repair, removal, and downgrade", SetupOperations);
+            Check("installer diagnostics retain original errors, code-specific guidance, and persistent logs", InstallerDiagnostics);
+            Check("installer closes only the selected installation, including hidden processes", CloseSelectedInstallation);
             Check("default and configured data deleted; unrelated siblings preserved", DeleteExpectedData);
             Check("configuration changes invalidate consent before deletion", RejectChangedPlan);
             Check("malformed bootstrap prevents any deletion", RejectBrokenConfig);
@@ -32,6 +36,98 @@ public static class CleanupTests
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    /// <summary>Creates an invisible disposable GUI process for real Restart Manager shutdown tests.</summary>
+    private static int RunInstallerProcess(string readyPath)
+    {
+        using (var form = new System.Windows.Forms.Form { ShowInTaskbar = false, Opacity = 0 })
+        {
+            form.Load += (sender, args) => File.WriteAllText(readyPath, "ready");
+            System.Windows.Forms.Application.Run(form);
+        }
+        return 0;
+    }
+
+    /// <summary>Verifies shutdown through the Windows API without targeting any installed Operit instance.</summary>
+    private static void CloseSelectedInstallation()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Operit-ShutdownTests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var processes = new System.Collections.Generic.List<Process>();
+        try
+        {
+            foreach (string name in new[] { "selected", "other" })
+            {
+                string folder = Path.Combine(root, name);
+                Directory.CreateDirectory(folder);
+                string executable = Path.Combine(folder, "operit2.exe");
+                string ready = Path.Combine(folder, "ready");
+                File.Copy(typeof(CleanupTests).Assembly.Location, executable);
+                var process = Process.Start(new ProcessStartInfo(executable, "--installer-process \"" + ready + "\"")
+                    { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
+                processes.Add(process);
+                var clock = Stopwatch.StartNew();
+                while (!File.Exists(ready) && clock.ElapsedMilliseconds < 10000 && !process.HasExited)
+                    System.Threading.Thread.Sleep(50);
+                Require(File.Exists(ready) && !process.HasExited);
+            }
+            InstallerApplications.Close(Path.Combine(root, "selected"), Console.WriteLine);
+            Require(processes[0].WaitForExit(10000));
+            Require(!processes[1].HasExited);
+            // An installation without an executable must not close another installed copy.
+            InstallerApplications.Close(Path.Combine(root, "not-installed"), Console.WriteLine);
+            Require(!processes[1].HasExited);
+        }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                if (!process.HasExited) { process.Kill(); process.WaitForExit(5000); }
+                process.Dispose();
+            }
+            Directory.Delete(root, true);
+        }
+    }
+
+    /// <summary>Exercises chained MSI failures, unknown codes, missing system log paths, and log write errors.</summary>
+    private static void InstallerDiagnostics()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Operit-InstallerTests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var diagnostics = new SetupDiagnostics(root, "2.0.0-preview.32", @"C:\安装包\Operit2.msi", @"C:\日志\MSI123.log");
+            diagnostics.StartAction("InstallFiles", "正在复制文件");
+            diagnostics.AddFailure(2502, "original failure");
+            diagnostics.StartAction("InstallFinalize", "正在回滚");
+            diagnostics.AddFailure(2503, "later failure");
+            diagnostics.AddFailure(1603, "summary failure");
+            diagnostics.AddFailure(9999, "unrecognized failure");
+            string report = diagnostics.Describe();
+            Require(report.IndexOf("original failure", StringComparison.Ordinal) < report.IndexOf("later failure", StringComparison.Ordinal));
+            Require(report.Contains("发生步骤：InstallFiles") && report.Contains("发生步骤：InstallFinalize"));
+            Require(report.Contains("2502、2503") && report.Contains("%TEMP%") && report.Contains("Return value 3"));
+            Require(diagnostics.Problem().Title == "Windows 安装服务出错");
+            Require(diagnostics.Problem().Reason.Contains("2502") && !diagnostics.Problem().Reason.Contains("1603"));
+            Require(report.Contains("当前错误尚无专门的处理说明") && report.Contains(@"C:\日志\MSI123.log"));
+            Require(report.Contains("msiexec.exe /i \"C:\\安装包\\Operit2.msi\" /L*V"));
+            Require(File.ReadAllText(diagnostics.LogPath).Contains("original failure"));
+            var another = new SetupDiagnostics(root, "test", "test.msi", "");
+            Require(another.LogPath != diagnostics.LogPath);
+            Require(another.Describe().Contains("Windows Installer 未提供日志路径"));
+            Require(!another.HasErrors);
+            another.AddFailure(0, "file in use by process 123");
+            Require(another.Describe().Contains("Windows Installer 未提供数字错误码"));
+            using (var locked = new FileStream(another.LogPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                another.Write("Error", "cannot write");
+            Require(another.LoggingError != null && another.Describe().Contains("诊断日志写入失败"));
+            Require(another.Describe().Contains("file in use by process 123"));
+            var blocked = new SetupDiagnostics(root, "test", "test.msi", "");
+            blocked.AddFailure(0, "file locked", filesInUse: true);
+            Require(blocked.Problem().Title == "Operit2 还在运行");
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     /// <summary>Checks version transitions including different ProductCodes and preview revision ordering.</summary>

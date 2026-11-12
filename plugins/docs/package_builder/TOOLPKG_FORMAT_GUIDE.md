@@ -2,7 +2,7 @@
 
 ## 1. 简介
 
-开发、路径核验、安装、同 ID 更新和发布的当前流程见 [插件创作流程](./PLUGIN_CREATION_WORKFLOW.md)。本指南中的包名和目录树是格式示例，具体 API 以 PackageBuilder 的当前版本 `types/` 为准。
+开发、路径核验、安装、同 ID 更新和发布的当前流程见 [插件创作流程](./PLUGIN_CREATION_WORKFLOW.md)。本指南中的包名和目录树是格式示例，具体 API 以 Operit 插件开发套件 的当前版本 `types/` 为准。
 
 **ToolPkg** 是 Operit 项目中用于打包和分发工具包的标准格式。它允许开发者将多个相关的工具脚本、资源文件和 UI 模块打包成一个单一的、易于分发和管理的文件。
 
@@ -1368,7 +1368,7 @@ ToolPkg 涉及 main、子包、UI、hook 与 provider 等上下文，单次执�
 
 ## 11. 当前版本示例
 
-PackageBuilder 的示例路径为 `examples/packages/`，不是旧版根目录 `examples/`：
+Operit 插件开发套件 的示例路径为 `examples/packages/`，不是旧版根目录 `examples/`：
 
 - `examples/packages/external/template_try/`：清单、资源、工作流模板与工作区模板注册。
 - `examples/packages/buildin/workflow/`：工具、UI、依赖公共接口及其构建契约。

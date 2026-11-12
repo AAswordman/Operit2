@@ -25,6 +25,8 @@ pub struct JsonResultData { pub value: serde_json::Value }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "__type")]
 pub enum ToolResultData {
+    UIPageResultData(UIPageResultData),
+    UIActionResultData(UIActionResultData),
     JsonResultData(JsonResultData),
     EdgePortResultData(EdgePortResultData),
     BooleanResultData(BooleanResultData),
@@ -114,6 +116,8 @@ impl ToolResultData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         match self {
+            Self::UIPageResultData(data) => data.toString(),
+            Self::UIActionResultData(data) => data.toString(),
             Self::JsonResultData(data) => serde_json::to_string(&data.value).expect("Structured result serialization must succeed"),
             Self::EdgePortResultData(data) => serde_json::to_string(data).expect("Edge port result serialization failed"),
             Self::BooleanResultData(data) => data.value.to_string(),
@@ -307,7 +311,12 @@ impl SimplifiedUINode {
     #[allow(non_snake_case)]
     pub fn toTreeString(&self, indent: Option<String>) -> String {
         let indent = indent.unwrap_or_default();
-        let mut output = format!("{indent}{}", self.toString());
+        let attributes = serde_json::json!({
+            "className": self.class_name, "text": self.text,
+            "contentDesc": self.content_desc, "resourceId": self.resource_id,
+            "bounds": self.bounds, "isClickable": self.is_clickable,
+        });
+        let mut output = format!("{indent}{attributes}");
         let child_indent = format!("{indent}  ");
         for child in &self.children {
             output.push('\n');
@@ -332,8 +341,12 @@ impl SimplifiedUINode {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// Captures the active Android package, activity, and simplified UI hierarchy.
+/// Captures the active surface and its platform-neutral accessibility hierarchy.
 pub struct UIPageResultData {
+    /// Reports the visibility granted by the owning platform.
+    pub scope: String,
+    /// Reports whether the provider reached its traversal budget.
+    pub truncated: bool,
     #[serde(rename = "packageName")]
     pub package_name: String,
     #[serde(rename = "activityName")]

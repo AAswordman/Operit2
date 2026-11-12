@@ -26,6 +26,7 @@ struct ApprovalMeshPeer {
     local: String,
     endpoints: StdMutex<BTreeMap<String, Arc<dyn TestRouteTarget>>>,
     active: StdMutex<BTreeSet<String>>,
+    inboundOnly: StdMutex<BTreeSet<String>>,
     /// The peer's announced pairing generation per paired node, captured at the
     /// modeled handshake exactly like a real pairing record does.
     incarnations: StdMutex<BTreeMap<String, Option<String>>>,
@@ -41,6 +42,7 @@ impl ApprovalMeshPeer {
             local,
             endpoints: StdMutex::new(BTreeMap::new()),
             active: StdMutex::new(BTreeSet::new()),
+            inboundOnly: StdMutex::new(BTreeSet::new()),
             incarnations: StdMutex::new(BTreeMap::new()),
             changes: tokio::sync::broadcast::channel(16).0,
             faults: StdMutex::new(BTreeMap::new()),
@@ -190,14 +192,15 @@ impl RuntimePeerService for ApprovalMeshPeer {
                 nodeId: node.clone(),
                 displayName: node.clone(),
                 inbound: true,
-                outbound: true,
+                outbound: !self.inboundOnly.lock().unwrap().contains(node),
                 pairingIncarnation: self.incarnations.lock().unwrap().get(node).cloned().flatten(),
             })
             .collect())
     }
     /// Exercises outboundPeerNodeIds through the device-space contract fixture.
     fn outboundPeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> {
-        Ok(self.endpoints.lock().unwrap().keys().cloned().collect())
+        Ok(self.endpoints.lock().unwrap().keys()
+            .filter(|node| !self.inboundOnly.lock().unwrap().contains(*node)).cloned().collect())
     }
     /// Exercises activePeerNodeIds through the device-space contract fixture.
     fn activePeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> {

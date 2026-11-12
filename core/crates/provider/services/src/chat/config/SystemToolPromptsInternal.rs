@@ -978,13 +978,9 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             vec![
                 tool(
                     "get_page_info",
-                    "Get current page/window UI information.",
+                    "Read the device's active system window as a canonical UI tree, including other applications. Requires a whole-device automation provider.",
                     "",
-                    vec![
-                        param("format", "string", "optional, xml/json", false, Some("xml".to_string())),
-                        param("detail", "string", "optional", false, Some("summary".to_string())),
-                        param("display", "string", "optional, display id for multi-display", false, None)
-                    ],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -995,7 +991,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("x", "integer", "x coordinate", true, None),
                         param("y", "integer", "y coordinate", true, None),
-                        param("display", "string", "optional, display id", false, None)
                     ],
                     "",
                     "",
@@ -1007,7 +1002,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("x", "integer", "x coordinate", true, None),
                         param("y", "integer", "y coordinate", true, None),
-                        param("display", "string", "optional, display id", false, None)
                     ],
                     "",
                     "",
@@ -1022,7 +1016,6 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                         param("end_x", "integer", "end x", true, None),
                         param("end_y", "integer", "end y", true, None),
                         param("duration", "integer", "optional, duration in ms", false, Some("300".to_string())),
-                        param("display", "string", "optional, display id", false, None)
                     ],
                     "",
                     "",
@@ -1033,12 +1026,12 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("resourceId", "string", "optional", false, None),
+                        param("text", "string", "optional exact text selector", false, None),
                         param("className", "string", "optional", false, None),
                         param("contentDesc", "string", "optional", false, None),
                         param("bounds", "string", "optional, format: [left,top][right,bottom]", false, None),
                         param("partialMatch", "boolean", "optional, enable partial match for selectors", false, Some("false".to_string())),
                         param("index", "integer", "optional", false, Some("0".to_string())),
-                        param("display", "string", "optional, display id", false, None)
                     ],
                     "",
                     "",
@@ -1049,18 +1042,17 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("text", "string", "text to input (can be empty to clear)", true, None),
-                        param("display", "string", "optional, display id", false, None)
+                        param("resource_id", "string", "optional unique input resource ID", false, None),
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "press_key",
-                    "Press a key via keyevent.",
+                    "Press a named key supported by the owning platform provider.",
                     "",
                     vec![
-                        param("key_code", "string", "key code, e.g. KEYCODE_HOME", true, None),
-                        param("display", "string", "optional, display id", false, None)
+                        param("key_code", "string", "named key supported by the provider, such as ENTER or HOME", true, None),
                     ],
                     "",
                     "",
@@ -2214,13 +2206,9 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             vec![
                 tool(
                     "get_page_info",
-                    "获取当前页面/窗口 UI 信息。",
+                    "读取设备当前系统窗口的统一 UI 树，可访问其他应用；需要整机自动化提供者。",
                     "",
-                    vec![
-                        param("format", "string", "可选，xml/json", false, Some("xml".to_string())),
-                        param("detail", "string", "可选", false, Some("summary".to_string())),
-                        param("display", "string", "可选，多屏 display id", false, None)
-                    ],
+                    Vec::new(),
                     "",
                     "",
                 ),
@@ -2231,7 +2219,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("x", "integer", "x 坐标", true, None),
                         param("y", "integer", "y 坐标", true, None),
-                        param("display", "string", "可选，多屏 display id", false, None)
                     ],
                     "",
                     "",
@@ -2243,7 +2230,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     vec![
                         param("x", "integer", "x 坐标", true, None),
                         param("y", "integer", "y 坐标", true, None),
-                        param("display", "string", "可选，多屏 display id", false, None)
                     ],
                     "",
                     "",
@@ -2258,7 +2244,6 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                         param("end_x", "integer", "结束 x", true, None),
                         param("end_y", "integer", "结束 y", true, None),
                         param("duration", "integer", "可选，持续时间（毫秒）", false, Some("300".to_string())),
-                        param("display", "string", "可选，多屏 display id", false, None)
                     ],
                     "",
                     "",
@@ -2269,12 +2254,12 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("resourceId", "string", "可选", false, None),
+                        param("text", "string", "可选，文本选择条件", false, None),
                         param("className", "string", "可选", false, None),
                         param("contentDesc", "string", "可选", false, None),
                         param("bounds", "string", "可选，格式：[left,top][right,bottom]", false, None),
                         param("partialMatch", "boolean", "可选，是否启用部分匹配", false, Some("false".to_string())),
                         param("index", "integer", "可选", false, Some("0".to_string())),
-                        param("display", "string", "可选，多屏 display id", false, None)
                     ],
                     "",
                     "",
@@ -2285,18 +2270,17 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("text", "string", "要输入的文本", true, None),
-                        param("display", "string", "可选，多屏 display id", false, None)
+                        param("resource_id", "string", "可选，唯一输入框资源标识", false, None),
                     ],
                     "",
                     "",
                 ),
                 tool(
                     "press_key",
-                    "按下按键（keyevent）。",
+                    "按下当前平台提供者支持的命名按键。",
                     "",
                     vec![
-                        param("key_code", "string", "按键码，例如 KEYCODE_HOME", true, None),
-                        param("display", "string", "可选，多屏 display id", false, None)
+                        param("key_code", "string", "平台支持的命名按键，例如 ENTER 或 HOME", true, None),
                     ],
                     "",
                     "",

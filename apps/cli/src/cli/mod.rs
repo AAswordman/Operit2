@@ -99,6 +99,7 @@ pub(crate) fn emit_cli_json(value: serde_json::Value) {
     );
 }
 
+/// Sets output mode and owns the selected command dispatcher on the heap.
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     let json = args.iter().any(|arg| arg == "--json");
     let commandArgs = args
@@ -107,7 +108,8 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         .cloned()
         .collect::<Vec<_>>();
     begin_cli_output(json);
-    let result = run_cli_root_inner(&commandArgs).await;
+    // Keep command dispatch off the caller's stack while it starts the Core tree.
+    let result = Box::pin(run_cli_root_inner(&commandArgs)).await;
     finish_cli_output();
     result
 }
@@ -132,9 +134,14 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     }
 
     if args[0].as_str() == "link" {
-        return run_link_command(&args[1..]).await;
+        return Box::pin(run_link_command(&args[1..])).await;
     }
 
+    Box::pin(run_cli_local_command(args)).await
+}
+
+/// Keeps unrelated local command state out of the persistent Link dispatch stack.
+async fn run_cli_local_command(args: &[String]) -> Result<(), String> {
     if args[0].as_str() == "identity" {
         return run_identity_command(&args[1..]);
     }

@@ -8,6 +8,7 @@ This directory contains the Operit2 plugin workspace.
 - `packages/buildin/`: ToolPkg sources that are packaged as built-in plugins.
 - `packages/external/`: official bundled ToolPkg sources that are packaged with the app and loaded by the user from "more plugins".
 - `packages/examples/`: sample ToolPkg sources for development and manual testing.
+- `skills/buildin/`: built-in Skills that are installed automatically and hidden from AI until enabled.
 - `skills/external/`: official bundled Skill sources that are packaged with the app and imported by runtime features when needed.
 - `docs/`: plugin authoring notes.
 - `tools/`: development and sync tools.
@@ -17,6 +18,8 @@ This directory contains the Operit2 plugin workspace.
 `packages/buildin/`, `packages/external/`, and `packages/examples/` use the same source layout. The difference is packaging: `buildin` is loaded as current built-in plugins, `external` is bundled as optional official plugins, while `examples` is kept for development samples.
 
 Bundled Skill sources may include `skill.include.json`. The runtime build script resolves each declared source into the final bundled Skill tree, so large shared resources such as `types/`, docs, and package examples can stay in their canonical locations.
+
+`skills/buildin/PackageBuilder/` contains the built-in plugin development suite, displayed as “Operit 插件开发套件”. `PackageBuilder` remains its stable skill identity and directory name. It starts hidden from AI; quick plugin creation explicitly enables it. `packages/external/12306.ts` is an optional bundled external plugin, while the built-in `operit_editor` package is enabled by default.
 # Plugin development hot reload
 
 Start a debug Flutter application containing the `ext.operit.reloadPlugins`

@@ -8,6 +8,7 @@ use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, Market
 use operit_store::ExtensionStore::ExtensionStore;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
+use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgSourceType;
 use operit_util::AppLogger::AppLogger;
 use operit_util::RuntimeStorageLayout::EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH;
 use serde::{Deserialize, Serialize};
@@ -77,21 +78,31 @@ fn mcp_config_marker_root(server_id: &str) -> PathBuf {
         ))
 }
 
+/// Enumerates loaded installations without checking whether each source can be exported.
 fn installed_marker_installations(
     app: &OperitApplication,
 ) -> Result<Vec<(&'static str, String, PathBuf)>, String> {
     let fs = app.hostManager.vfs()?;
     let mut installations = Vec::new();
     let packages = app.packageManager();
-    for source in packages
-        .lock()
-        .map_err(|error| error.to_string())?
-        .getPublishablePackageSources()
-    {
+    let package_names = {
+        let manager = packages.lock().map_err(|error| error.to_string())?;
+        let containers = manager.getToolPkgContainerRuntimes().into_iter()
+            .map(|runtime| (runtime.packageName.clone(), runtime.sourceType))
+            .collect::<BTreeMap<_, _>>();
+        manager.getTopLevelAvailablePackages().into_values()
+            .filter(|package| match containers.get(&package.name) {
+                Some(source_type) => *source_type == ToolPkgSourceType::EXTERNAL,
+                None => !package.is_built_in && !operit_tools::tools::a2a::A2ARepository::is_a2a_package(package),
+            })
+            .map(|package| package.name)
+            .collect::<Vec<_>>()
+    };
+    for package_name in package_names {
         installations.push((
             "package",
-            source.packageName.clone(),
-            artifact_marker_root(&source.packageName)?,
+            package_name.clone(),
+            artifact_marker_root(&package_name)?,
         ));
     }
     for skill in app

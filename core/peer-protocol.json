@@ -91,6 +91,10 @@
     {
       "version": 23,
       "hash": "016f6fac4d7fed15115c675787fd907543deebbbdd05945c1a8202d7dcc1ed22"
+    },
+    {
+      "version": 24,
+      "hash": "bb3372520ca577f16c2ba1b2ff265d777eac047fa50f844a1baf928481cd0cf9"
     }
   ]
 }

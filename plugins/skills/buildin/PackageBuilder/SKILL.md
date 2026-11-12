@@ -1,11 +1,16 @@
 ---
 name: "PackageBuilder"
+display_name: "Operit 插件开发套件"
 description: "使用当前 Operit 随软件携带的类型定义和示例开发、打包、安装与测试插件包；通过现有 host API 核对环境与路径。"
 ---
 
-# PackageBuilder
+# Operit 插件开发套件
 
 这是当前 Operit 随软件携带的插件开发 Skill。类型和示例来自当前版本内置资源，不从云端拉取其他版本。
+
+本套件为内置 Skill，自动安装，默认对 AI 隐藏。用户可在插件管理中开启；“快速创作你的插件”入口也会明确开启本套件。
+
+显示名称为“Operit 插件开发套件”；Skill 标识、目录名和命令参数保持为 `PackageBuilder`。
 
 ## API 版本与跨平台要求
 

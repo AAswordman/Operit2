@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
+import '../../../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../common/ChatAvatarImage.dart';
@@ -50,9 +51,15 @@ class BubbleUserMessageComposable extends StatefulWidget {
 
 class _BubbleUserMessageComposableState
     extends State<BubbleUserMessageComposable> {
-  /// Applies the message font to both themed text and inherited text styles.
+  /// Observes profile changes even when the transcript keeps this row cached.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: RuntimeBootstrapManager.instance,
+    builder: (context, _) => _buildMessage(context),
+  );
+
+  /// Applies message fonts and resolves the user name from its actual source.
+  Widget _buildMessage(BuildContext context) {
     final theme = Theme.of(context);
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
     final isHiddenPlaceholder =
@@ -70,12 +77,11 @@ class _BubbleUserMessageComposableState
     final textColor = widget.textColor;
     final shouldShowAvatar = !isHiddenPlaceholder && snapshot.bubbleShowAvatar;
     final resolvedDisplayName = isProxySender
-        ? parseResult.proxySenderName
-        : null;
+        ? parseResult.proxySenderName!
+        : RuntimeBootstrapManager.instance.activeIdentity.name.trim();
     final shouldShowResolvedName =
         !isHiddenPlaceholder &&
         (isProxySender || snapshot.showUserName) &&
-        resolvedDisplayName != null &&
         resolvedDisplayName.isNotEmpty;
     final messageFontFamily = operitMessageFontFamily(snapshot, isUser: true);
     final messageFontFamilyFallback = operitMessageFontFamilyFallback(

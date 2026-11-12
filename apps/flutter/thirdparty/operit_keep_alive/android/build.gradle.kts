@@ -7,6 +7,7 @@ android {
     namespace = "app.operit.keep_alive"
     compileSdk = flutter.compileSdkVersion
     defaultConfig { minSdk = 24 }
+    testOptions { unitTests.isIncludeAndroidResources = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

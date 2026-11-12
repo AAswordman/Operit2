@@ -80,7 +80,7 @@ fn channel(scheduler: Arc<RecordingScheduler>) -> Arc<MultiplexedChannel> {
         nodeId: "test".into(),
         address: "unused".into(),
     }));
-    let encrypted = Channel::new(raw, &[7; 32], b"test", true).unwrap();
+    let encrypted = Channel::new(raw, &[7; 32], b"test", true, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES).unwrap();
     let side = super::super::dispatch::InboundSide::new(
         super::super::single_channel_tests::service(), "test".into(), "test".into(),
         super::super::dispatch::Authorization::Inbound);
@@ -193,8 +193,8 @@ async fn delayed_watch_burst_is_sent_without_interleaving_a_concurrent_call() {
         endpoint: PeerEndpoint { nodeId: "peer".into(), address: "memory".into() },
         sent: StdMutex::default(), entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0),
     });
-    let sender = Channel::new(raw.clone(), &[7; 32], b"burst", true).unwrap();
-    let receiver = Channel::new(raw.clone(), &[7; 32], b"burst", false).unwrap();
+    let sender = Channel::new(raw.clone(), &[7; 32], b"burst", true, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES).unwrap();
+    let receiver = Channel::new(raw.clone(), &[7; 32], b"burst", false, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES).unwrap();
     let event = |id: &str| PeerMessage::Response(CoreLinkResponse::Watch {
         requestId: CoreRequestId::new("watch"), result: Ok(CoreLinkWatchResponse::Event(CoreEvent {
             requestId: None, target: "test".into(), propertyName: "state".into(),
@@ -202,7 +202,7 @@ async fn delayed_watch_burst_is_sent_without_interleaving_a_concurrent_call() {
         })),
     });
     let burst = async {
-        let messages = vec![event("first"), event("second")];
+        let messages = vec![event(&"first".repeat(20_000)), event("second")];
         if prepared {
             sender.sendEncodedBatch(messages.into_iter().map(|message| encodeLink(message).unwrap()).collect()).await
         } else { sender.sendBatch(messages).await }
@@ -217,7 +217,7 @@ async fn delayed_watch_burst_is_sent_without_interleaving_a_concurrent_call() {
     };
     let (result, ()) = tokio::join!(burst, competing);
     result.unwrap();
-    for expected in ["first", "second"] {
+    for expected in ["first".repeat(20_000), "second".into()] {
         let retained = {
             let sent = raw.sent.lock().unwrap();
             match sent.front().unwrap() {
@@ -236,6 +236,25 @@ async fn delayed_watch_burst_is_sent_without_interleaving_a_concurrent_call() {
     }
     assert!(matches!(receiver.receive().await.unwrap(), Some(PeerMessage::Request(CoreLinkRequest::Call(request))) if request.requestId.0 == "call"));
     }
+}
+
+/// Cancellation after the first fragment poisons the writer instead of splicing in a new message.
+#[tokio::test]
+async fn interrupted_fragmented_send_cannot_be_reused() {
+    let raw = Arc::new(PausedPeer {
+        endpoint: PeerEndpoint { nodeId: "peer".into(), address: "memory".into() },
+        sent: StdMutex::default(), entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0),
+    });
+    let sender = Channel::new(raw.clone(), &[7; 32], b"cancelled-send", true, 8192).unwrap();
+    {
+        let send = sender.sendEncodedBatch(vec![vec![42; 24 * 1024]]);
+        tokio::pin!(send);
+        assert!(futures_util::poll!(&mut send).is_pending());
+        assert_eq!(raw.sent.lock().unwrap().len(), 1);
+    }
+    let failure = sender.sendEncodedBatch(vec![vec![7]]).await.unwrap_err();
+    assert!(failure.message.contains("write was interrupted"));
+    assert_eq!(raw.sent.lock().unwrap().len(), 1);
 }
 
 /// Compact responses retain standard wire encoding and transfer their byte allocation.

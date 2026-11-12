@@ -1477,7 +1477,11 @@
   "settingsAppearanceBubbleImageAdjustUser": "调整用户气泡图片",
   "settingsAppearanceBubbleImageAdjustAi": "调整 AI 气泡图片",
   "settingsAppearanceBubbleImagePreview": "预览",
-  "settingsAppearanceBubbleImagePreviewText": "这是一条气泡预览，切线展示九宫格区域",
+  "settingsAppearanceBubbleImagePreviewText": "这是一条气泡预览消息。\n可以查看边角和中间区域的实际效果。",
+  "settingsAppearanceBubbleImageSourceHint": "原图 · 白框为裁切边界，蓝线分出九宫格；可双指缩放、拖动查看",
+  "settingsAppearanceBubbleImageFitSource": "完整显示原图",
+  "settingsAppearanceBubbleImageGrid": "九宫格",
+  "settingsAppearanceBubbleImageGridHint": "两横两竖分出九块：四角保留，上下边横向重复、左右边纵向重复，中间双向重复；拉伸模式则拉伸对应区域。起点和终点相对于裁切后的图片。",
   "settingsAppearanceBubbleImageImportFailed": "气泡图片没有生效：{error}",
   "@settingsAppearanceBubbleImageImportFailed": {
     "placeholders": {

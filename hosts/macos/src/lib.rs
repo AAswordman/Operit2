@@ -1,4 +1,7 @@
 #![allow(non_snake_case)]
+#[cfg(target_os = "macos")]
+#[path = "../../common/ui_automation.rs"]
+mod ui_automation;
 
 #[cfg(target_os = "macos")]
 pub use operit_host_apple_native::AppleServiceDiscoveryHost as MacosServiceDiscoveryHost;
@@ -62,6 +65,9 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()))
+    .withUiAutomationHost(Arc::new(ui_automation::ScriptUiAutomationHost::new(
+        "/usr/bin/osascript", &["-l", "JavaScript", "-e", include_str!("ui_automation.js")],
+    )))
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(MacosHttpHost::new()))
     .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))

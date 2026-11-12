@@ -11,6 +11,8 @@ struct MemoryStorage {
     fail_write: Mutex<Option<String>>,
     modified: Mutex<BTreeMap<String, i64>>,
     journal: crate::transaction_test_host::TransactionJournalHost,
+    reads: Mutex<Vec<String>>,
+    lists: Mutex<Vec<String>>,
 }
 impl RuntimeStorageHost for MemoryStorage {
     fn openTransactionDatabase(&self,path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> { self.journal.open(path) }
@@ -29,6 +31,7 @@ impl RuntimeStorageHost for MemoryStorage {
         None
     }
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+        self.reads.lock().unwrap().push(path.to_string());
         self.files
             .lock()
             .unwrap()
@@ -86,6 +89,7 @@ impl RuntimeStorageHost for MemoryStorage {
             .any(|key| key == path || key.starts_with(&format!("{path}/"))))
     }
     fn list(&self, path: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+        self.lists.lock().unwrap().push(path.to_string());
         let mut entries = BTreeMap::new();
         for (key, bytes) in self.files.lock().unwrap().iter() {
             if let Some(relative) = key.strip_prefix(&format!("{path}/")) {
@@ -652,6 +656,42 @@ fn register_package_owner(store: &ExtensionStore, id: &str, members: &[&str]) {
             }),
         )
         .unwrap();
+}
+
+/// Keeps per-plugin lookups and repeated registrations independent of the installed count.
+#[test]
+fn exact_record_reads_scale_linearly_for_one_hundred_plugins() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    for index in 0..100 {
+        let id = format!("plugin_{index}");
+        register_package_owner(&store, &id, &[&id]);
+    }
+    storage.reads.lock().unwrap().clear();
+    storage.lists.lock().unwrap().clear();
+    for index in 0..100 {
+        let id = format!("plugin_{index}");
+        assert_eq!(store.record("package", &id).unwrap().id, id);
+        register_package_owner(&store, &id, &[&id]);
+    }
+    assert_eq!(storage.reads.lock().unwrap().len(), 200);
+    assert!(storage.lists.lock().unwrap().is_empty());
+}
+
+/// Preserves exact-identity validation and detects both installed owners on direct reads.
+#[test]
+fn exact_record_read_rejects_conflicts_and_mismatched_paths() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    register_package_owner(&store, "demo", &["demo"]);
+    let mut record = store.record("package", "demo").unwrap();
+    record.scope = "space".into();
+    let shared = recordPath("package", "demo", "space").unwrap();
+    storage.writeBytes(&shared, &serde_json::to_vec(&record).unwrap()).unwrap();
+    assert!(store.record("package", "demo").unwrap_err().starts_with("Extension ownership conflict:"));
+    record.id = "other".into();
+    storage.writeBytes(&shared, &serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(store.record("package", "demo").unwrap_err(), "Extension identity does not match its record path");
 }
 
 /// Resolves ownership directly from persisted records without a runtime package manager.

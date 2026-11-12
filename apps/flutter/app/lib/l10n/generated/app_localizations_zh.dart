@@ -3065,7 +3065,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceBubbleImagePreview => '预览';
 
   @override
-  String get settingsAppearanceBubbleImagePreviewText => '这是一条气泡预览，切线展示九宫格区域';
+  String get settingsAppearanceBubbleImagePreviewText =>
+      '这是一条气泡预览消息。\n可以查看边角和中间区域的实际效果。';
+
+  @override
+  String get settingsAppearanceBubbleImageSourceHint =>
+      '原图 · 白框为裁切边界，蓝线分出九宫格；可双指缩放、拖动查看';
+
+  @override
+  String get settingsAppearanceBubbleImageFitSource => '完整显示原图';
+
+  @override
+  String get settingsAppearanceBubbleImageGrid => '九宫格';
+
+  @override
+  String get settingsAppearanceBubbleImageGridHint =>
+      '两横两竖分出九块：四角保留，上下边横向重复、左右边纵向重复，中间双向重复；拉伸模式则拉伸对应区域。起点和终点相对于裁切后的图片。';
 
   @override
   String settingsAppearanceBubbleImageImportFailed(String error) {

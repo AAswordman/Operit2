@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../attachments/ChatMessageImageAttachments.dart';
@@ -24,9 +25,15 @@ class UserMessageComposable extends StatefulWidget {
 }
 
 class _UserMessageComposableState extends State<UserMessageComposable> {
-  /// Builds the user message content without a prompt heading.
+  /// Observes profile changes even when the transcript keeps this row cached.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: RuntimeBootstrapManager.instance,
+    builder: (context, _) => _buildMessage(context),
+  );
+
+  /// Builds user content with the configured name or explicit proxy author.
+  Widget _buildMessage(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textColor = colorScheme.onPrimaryContainer;
@@ -34,6 +41,16 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
+    final isProxySender =
+        parseResult.proxySenderName != null &&
+        parseResult.proxySenderName!.isNotEmpty;
+    final displayName = isProxySender
+        ? parseResult.proxySenderName!
+        : RuntimeBootstrapManager.instance.activeIdentity.name.trim();
+    final shouldShowName =
+        widget.message.displayMode.value != 'HIDDEN_PLACEHOLDER' &&
+        (isProxySender || themePreferenceSnapshot.showUserName) &&
+        displayName.isNotEmpty;
     final bubbleColor =
         _optionalColor(themePreferenceSnapshot.cursorUserBubbleColor) ??
         colorScheme.primaryContainer;
@@ -51,6 +68,20 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          if (shouldShowName)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: isProxySender
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           if (parseResult.replyInfo != null)
             _ReplyInfoView(replyInfo: parseResult.replyInfo!),
           if (parseResult.attachments.any(

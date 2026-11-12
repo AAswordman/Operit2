@@ -3,6 +3,12 @@
 CLI 与 Flutter 共用 `CoreApplication`、`RuntimeRemoteLinkService` 和同一套权限检查。
 配对只授予设备通信授权，加入 Space 必须另行申请并由分配到的审批人明确批准。
 
+同一 CLI 身份的 Core 由独占锁保护，`daemon`、TUI、`link listen`、`link session` 和持续运行的
+`link qr` 都持有该锁并提供本机控制通道。另一个终端执行空间申请、审批、配对或解除配对等
+管理命令时，命令在这个常驻 Core 中执行，共享同一份实时状态；不会另开 Core 读取过期的
+偏好缓存。常驻进程尚未就绪或控制通道不可用时，命令明确报错。没有常驻 Core 的独立管理
+命令也必须在创建 Core 前取得独占锁。监听期间可使用 `operit2 daemon stop` 正常关闭。
+
 ## TUI 启动时的监听
 
 TUI 与 Flutter 一样在启动时应用已保存的监听配置，不需要额外传参：首次运行使用存储迁移写入的默认
@@ -44,7 +50,7 @@ space requests outgoing
 - 空间回连凭证不改变配对方向或设备角色；每次使用重新检查当前空间、成员资格、原配对和撤销状态。离开空间或撤销后旧凭证不可用。
 - `space status <node-id>` 沿用 Core 的空间状态语义：尚未加入同一空间时返回 `RemovedFromSpace`，不表示配对被删除。加入后再检查在线状态。
 - `space join` 输出正常申请状态、审批人、请求编号和 `assignment-version`，等待审批不是命令失败。
-- `space leave` 只重置本机状态，不会通知对方。之后再次 `space join` 同一目标时，接收端会把旧的申请/批准记录退役（源 Space 已不同），按一条全新申请重新走审批；同一源 Space 的重复提交仍会被拒绝。旧记录被退役后不可再被审批。
+- `space leave` 先持久保存发给原空间成员的退出凭据，再切换本机空间。退出凭据通过配对快照传递；先解除配对也不会删除这项待送达义务。重新配对后再次 `space join` 同一目标时，申请携带退出凭据，接收端先退役旧成员关系，再进行新的审批。其他成员保留原空间 ID，配对本身不使任意一方自动迁入另一个空间。入站和出站的已认证连接都参与退出与成员投影交换。
 
 Windows、Linux、macOS 的 CLI 使用非空 `OPERIT_CLI_CONFIG_DIR` 时，插件 IPC 均按当前身份的 runtime 根路径隔离，
 不需要另设 `TMPDIR`。宿主分别使用命名管道、D-Bus 服务名和 Unix socket 目录承载实例。
@@ -170,6 +176,11 @@ python3 apps/cli/tests/network_control_session.py --transport ws
 
 通过 `OPERIT_CLI_CONFIG_DIR` 指定不同配置目录；目录里的 `storage.json` 指向各自的测试运行目录。
 脚本所有数据和终端日志保存在它打印的临时目录中。在 macOS 还为测试 HOME 创建独立测试 Keychain，并检查真实用户的默认 Keychain 没有变化；不清除或修改 Flutter、模拟器、现有 CLI 的运行数据。
+
+`apps/cli/tests/link_owner_session.py --binary <当前 CLI 可执行文件> --transport tcp --rounds 3`
+专门验证常驻 `link listen` 与独立管理进程：一次单向配对后的双向配置同步、取消和重复取消、
+审批、先解除配对再退出及重新申请、并发读取、第二个 owner 被拒绝和正常重启。可将传输改为 `http` 或 `ws`；使用项目 venv
+运行，所有身份和凭据都位于脚本创建的临时目录中。
 
 ## 验证聊天路由，不只验证列表同步
 

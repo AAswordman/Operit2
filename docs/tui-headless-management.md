@@ -65,10 +65,10 @@ operit2 daemon stop [--json]
 ```
 
 - `run` 支持 `--no-listen` 和 `--link-listen <http|ws|tcp|serial|bluetooth>[,<transport>...]`；显式传输会写入本机监听配置，下一次启动继续使用。
-- 同一 identity 只允许一个 Core owner：daemon 和 TUI 互斥，第二个会直接报错并给出现有 pid。短命 `operit2 cli` 命令会先尝试复用正在运行的 daemon/TUI，通过本机控制通道执行（Windows 命名管道，Unix domain socket），不会再启动第二个 Core。
-- 交互式命令不会被路由：`chat shell`、`shell`、`model codex-login`、`tts`、`stt`、`export/import/backup`、`market`、`update`、`web`、`identity`、`link` 等仍在当前进程启动一个短命 Core；`cli help` 也会短暂启动 Core 读取插件命令目录。短命 Core 使用按进程隔离的 plugin SDK IPC 实例，且不再接管持久化同步 worker，因此可以和 daemon 并存；但 `link listen` 会额外占用监听端口，不要和 daemon 同时执行。
+- 同一 identity 只允许一个 Core owner：daemon、TUI、`link listen`、`link session` 与持续运行的 `link qr` 互斥，第二个会直接报错并给出现有 pid。支持路由的短命 `operit2 cli` 命令以及 Link 管理命令在这个 owner 中通过本机控制通道执行（Windows 命名管道，Unix domain socket）。Link 的空间申请、审批、配对和解除配对共享常驻 Core 的实时状态。
+- 其他交互式或本机命令（`chat shell`、`shell`、`model codex-login`、`tts`、`stt`、`export/import/backup`、`market`、`update`、`web`、`identity`）仍在当前进程启动一个短命 Core；`cli help` 也会短暂启动 Core 读取插件命令目录。这些短命 Core 使用按进程隔离的 plugin SDK IPC 实例，且不再接管持久化同步 worker。
 - 状态文件在 `<runtime identity>/daemon/status.json`，分离运行的 stdout/stderr 在 `<runtime identity>/logs/daemon.out`。Windows 控制通道为 `\\.\pipe\operit2-<identity hash>-control`，仅允许当前运行用户访问，并拒绝远程连接。Unix 控制通道为运行时目录下的 `operit2-<hash>/control.sock`，目录和 socket 仅允许当前用户访问。
-- `operit2 daemon stop` 只停止 daemon；如果 owner 是 TUI，需要从 TUI 退出。
+- `operit2 daemon stop` 可停止 daemon 或 Link 常驻监听；如果 owner 是 TUI，需要从 TUI 退出。
 
 Windows PowerShell 示例（`operit2.exe` 所在目录）：
 

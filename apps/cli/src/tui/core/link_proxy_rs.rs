@@ -662,6 +662,7 @@ mod tests {
             currentChatId: "handoff-chat".to_string(),
             currentChatTitle: "stable chat title ".repeat(100),
             currentWorkspacePath: Some("/workspace/b".to_string()),
+            currentFileDirectory: None,
             isLoading: true,
             inputProcessingState: InputProcessingState::Connecting {
                 message: "connecting".to_string(),
@@ -726,6 +727,7 @@ mod tests {
             currentChatId: "handoff-chat".to_string(),
             currentChatTitle: "title".to_string(),
             currentWorkspacePath: None,
+            currentFileDirectory: None,
             isLoading: false,
             inputProcessingState: InputProcessingState::Completed,
             hasOlderDisplayHistory: false,

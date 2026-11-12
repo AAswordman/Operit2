@@ -48,7 +48,7 @@ impl SkillRepository {
     /// Returns all valid installed skill packages.
     #[allow(non_snake_case)]
     pub fn getAvailableSkillPackages(&self) -> BTreeMap<String, SkillPackage> {
-        self.skillManager.getAvailableSkills()
+        self.getAvailableSkillPackagesSnapshot().0
     }
 
     /// Returns valid installed skill packages together with scan errors.
@@ -56,13 +56,22 @@ impl SkillRepository {
     pub fn getAvailableSkillPackagesSnapshot(
         &self,
     ) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
-        self.skillManager.getAvailableSkillsSnapshot()
+        let mut errors = self.skillManager.ensureBuiltinSkills(self.runtimeSupport.as_ref());
+        let (skills, scanErrors) = self.skillManager.getAvailableSkillsSnapshot();
+        errors.extend(scanErrors);
+        (skills, errors)
+    }
+
+    /// Reads a skill's display label without changing its installation or command identity.
+    #[allow(non_snake_case)]
+    pub fn readSkillDisplayName(&self, skill: &SkillPackage) -> Result<String, String> {
+        self.skillManager.readSkillDisplayName(skill)
     }
 
     /// Returns skill directory scan errors keyed by directory name.
     #[allow(non_snake_case)]
     pub fn getSkillLoadErrors(&self) -> BTreeMap<String, String> {
-        self.skillManager.getSkillLoadErrors()
+        self.getAvailableSkillPackagesSnapshot().1
     }
 
     /// Lists bundled external skills that are available for installation.
@@ -82,8 +91,7 @@ impl SkillRepository {
     /// Returns installed skill packages that are visible to AI package activation.
     #[allow(non_snake_case)]
     pub fn getAiVisibleSkillPackages(&self) -> BTreeMap<String, SkillPackage> {
-        self.skillManager
-            .getAvailableSkills()
+        self.getAvailableSkillPackages()
             .into_iter()
             .filter(|(skillName, _)| self.runtimeSupport.isSkillVisibleToAi(skillName))
             .collect()
@@ -92,6 +100,7 @@ impl SkillRepository {
     /// Reads the SKILL.md content for one installed skill.
     #[allow(non_snake_case)]
     pub fn readSkillContent(&self, skillName: &str) -> Option<String> {
+        self.getAvailableSkillPackages().get(skillName)?;
         self.skillManager.readSkillContent(skillName)
     }
 

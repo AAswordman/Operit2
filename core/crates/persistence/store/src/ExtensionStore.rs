@@ -275,43 +275,57 @@ impl ExtensionStore {
                 if entry.isDirectory {
                     return Err("An extension record cannot be a directory".to_string());
                 }
-                let mut record: ExtensionRecord = serde_json::from_slice(
-                    &self
-                        .storage
-                        .readBytes(&entry.path)
-                        .map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-                self.validate(&record)?;
-                if recordPath(&record.kind, &record.id, &record.scope)? != entry.path {
-                    return Err("Extension identity does not match its record path".to_string());
-                }
+                let record = self.readRecord(&entry.path)?;
                 if record.kind == kind {
-                    let legacy = record.schemaVersion == 0;
-                    if legacy {
-                        if let Some(settings) = self.legacySettingsStore(&record)?.data().map_err(|e| e.to_string())?
-                            .get(&stringPreferencesKey("settings")) {
-                            if record.kind == "package" {
-                                // Source ownership belongs to the descriptor, never to the old settings copy.
-                                for key in ["enabledNames", "disabledNames", "subpackageStates", "order"] {
-                                    if let Some(value) = settings.get(key) {
-                                        record.settings[key] = value.clone();
-                                    }
-                                }
-                            } else {
-                                record.settings = settings.clone();
-                            }
-                        }
-                        record.schemaVersion = 1;
-                    }
-                    if !record.files.is_empty() {
-                        self.upgradeLegacyBundle(&mut record)?;
-                    } else if legacy {
-                        self.write(&record)?;
-                    }
-                    self.validate(&record)?;
                     records.push(record);
                 }
+            }
+        }
+        Ok(records)
+    }
+
+    /// Reads and upgrades one descriptor through the same validation used by full scans.
+    fn readRecord(&self, path: &str) -> Result<ExtensionRecord, String> {
+        let mut record: ExtensionRecord = serde_json::from_slice(
+            &self.storage.readBytes(path).map_err(|e| e.to_string())?,
+        ).map_err(|e| e.to_string())?;
+        self.validate(&record)?;
+        if recordPath(&record.kind, &record.id, &record.scope)? != path {
+            return Err("Extension identity does not match its record path".to_string());
+        }
+        let legacy = record.schemaVersion == 0;
+        if legacy {
+            if let Some(settings) = self.legacySettingsStore(&record)?.data().map_err(|e| e.to_string())?
+                .get(&stringPreferencesKey("settings")) {
+                if record.kind == "package" {
+                    // Source ownership belongs to the descriptor, never to the old settings copy.
+                    for key in ["enabledNames", "disabledNames", "subpackageStates", "order"] {
+                        if let Some(value) = settings.get(key) {
+                            record.settings[key] = value.clone();
+                        }
+                    }
+                } else {
+                    record.settings = settings.clone();
+                }
+            }
+            record.schemaVersion = 1;
+        }
+        if !record.files.is_empty() {
+            self.upgradeLegacyBundle(&mut record)?;
+        } else if legacy {
+            self.write(&record)?;
+        }
+        self.validate(&record)?;
+        Ok(record)
+    }
+
+    /// Checks only the two canonical paths for an identity, independent of catalog size.
+    fn recordsForId(&self, kind: &str, id: &str) -> Result<Vec<ExtensionRecord>, String> {
+        let mut records = Vec::new();
+        for scope in ["device", "space"] {
+            let path = recordPath(kind, id, scope)?;
+            if self.storage.exists(&path).map_err(|e| e.to_string())? {
+                records.push(self.readRecord(&path)?);
             }
         }
         Ok(records)
@@ -336,11 +350,7 @@ impl ExtensionStore {
 
     /// Reads an exact identity and rejects multiple installed owners rather than overriding either.
     pub fn record(&self, kind: &str, id: &str) -> Result<ExtensionRecord, String> {
-        let mut records = self
-            .records(kind)?
-            .into_iter()
-            .filter(|record| record.id == id)
-            .collect::<Vec<_>>();
+        let mut records = self.recordsForId(kind, id)?;
         match records.len() {
             1 => Ok(records.remove(0)),
             0 => Err(format!("Extension is not registered: {kind}:{id}")),
@@ -366,11 +376,7 @@ impl ExtensionStore {
         &self, kind: &str, id: &str, sourceName: &str, settings: Value, scope: &str,
     ) -> Result<(), String> {
         validateScope(scope)?;
-        let records = self.records(kind)?;
-        let matching = records
-            .iter()
-            .filter(|record| record.id == id)
-            .collect::<Vec<_>>();
+        let matching = self.recordsForId(kind, id)?;
         if matching.len() > 1 {
             return Err(format!("Extension ownership conflict: {kind}:{id}"));
         }

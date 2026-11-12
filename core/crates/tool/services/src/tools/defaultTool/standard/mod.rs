@@ -51,3 +51,5 @@ pub(crate) mod ToolArguments;
 
 #[path = "StandardTerminalStreaming.rs"]
 pub(crate) mod StandardTerminalStreaming;
+#[path = "StandardUiTools.rs"]
+pub mod StandardUiTools;

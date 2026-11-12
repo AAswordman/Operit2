@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="../shared/UserDataCleanup.cs" Link="UserDataCleanup.cs" />
     <Compile Include="../shared/SetupOperation.cs" Link="SetupOperation.cs" />
+    <Compile Include="../shared/SetupDiagnostics.cs" Link="SetupDiagnostics.cs" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Web" />
     <Reference Include="Microsoft.CSharp" />

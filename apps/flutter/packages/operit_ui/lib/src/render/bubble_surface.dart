@@ -116,7 +116,7 @@ class BubbleImageBackgroundSurface extends StatelessWidget {
   }
 }
 
-/// Shows the source image with the crop box and the repeat cell in red.
+/// Shows the full source image with a crop boundary and a standard nine-slice grid.
 class BubbleSliceSourceGuide extends StatelessWidget {
   /// Creates the source-image guide used while adjusting a bubble image.
   const BubbleSliceSourceGuide({super.key, required this.imageStyle});
@@ -980,7 +980,7 @@ class _BubbleDestinationGuidePainter extends CustomPainter {
 }
 
 class _BubbleSourceGuidePainter extends CustomPainter {
-  /// Creates a painter for the red crop and repeat boundaries on the source image.
+  /// Creates a painter for the crop boundary and nine regions on the source image.
   const _BubbleSourceGuidePainter({required this.image, required this.style});
 
   final ui.Image image;
@@ -1005,28 +1005,63 @@ class _BubbleSourceGuidePainter extends CustomPainter {
       Paint()..filterQuality = FilterQuality.medium,
     );
 
-    final cropLeft = style.cropLeftRatio.clamp(0.0, 0.45);
-    final cropTop = style.cropTopRatio.clamp(0.0, 0.45);
-    final cropRight = style.cropRightRatio.clamp(0.0, 0.45);
-    final cropBottom = style.cropBottomRatio.clamp(0.0, 0.45);
+    // Use the renderer's pixel-rounded slices so the editor matches the bubble.
+    final layout = _BubbleImagePainter(
+      image: image,
+      style: style,
+    )._buildSliceLayout(image, style);
+    final scaleX = destination.width / image.width;
+    final scaleY = destination.height / image.height;
     final crop = Rect.fromLTRB(
-      destination.left + destination.width * cropLeft,
-      destination.top + destination.height * cropTop,
-      destination.right - destination.width * cropRight,
-      destination.bottom - destination.height * cropBottom,
+      destination.left + layout.srcX * scaleX,
+      destination.top + layout.srcY * scaleY,
+      destination.left + (layout.srcX + layout.srcWidth) * scaleX,
+      destination.top + (layout.srcY + layout.srcHeight) * scaleY,
     );
-    final repeatXStart = style.repeatXStartRatio.clamp(0.05, 0.9);
-    final repeatXEnd = style.repeatXEndRatio.clamp(repeatXStart + 0.01, 0.95);
-    final repeatYStart = style.repeatYStartRatio.clamp(0.05, 0.9);
-    final repeatYEnd = style.repeatYEndRatio.clamp(repeatYStart + 0.01, 0.95);
-    final repeat = Rect.fromLTRB(
-      crop.left + crop.width * repeatXStart,
-      crop.top + crop.height * repeatYStart,
-      crop.left + crop.width * repeatXEnd,
-      crop.top + crop.height * repeatYEnd,
+    final left = crop.left + layout.leftCapWidth * scaleX;
+    final right = crop.right - layout.rightCapWidth * scaleX;
+    final top = crop.top + layout.topCapHeight * scaleY;
+    final bottom = crop.bottom - layout.bottomCapHeight * scaleY;
+    canvas.drawPath(
+      Path()
+        ..fillType = PathFillType.evenOdd
+        ..addRect(destination)
+        ..addRect(crop),
+      Paint()..color = const Color(0x88000000),
     );
-    _drawSliceGuideRect(canvas, crop);
-    _drawSliceGuideRect(canvas, repeat);
+    canvas.drawRect(
+      crop,
+      Paint()
+        ..color = const Color(0xFFFFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    // Each cut crosses the entire retained image, producing all nine regions.
+    const gridColor = Color(0xFF29B6F6);
+    _drawSliceGuideLine(
+      canvas,
+      Offset(left, crop.top),
+      Offset(left, crop.bottom),
+      color: gridColor,
+    );
+    _drawSliceGuideLine(
+      canvas,
+      Offset(right, crop.top),
+      Offset(right, crop.bottom),
+      color: gridColor,
+    );
+    _drawSliceGuideLine(
+      canvas,
+      Offset(crop.left, top),
+      Offset(crop.right, top),
+      color: gridColor,
+    );
+    _drawSliceGuideLine(
+      canvas,
+      Offset(crop.left, bottom),
+      Offset(crop.right, bottom),
+      color: gridColor,
+    );
   }
 
   @override
@@ -1036,25 +1071,22 @@ class _BubbleSourceGuidePainter extends CustomPainter {
 }
 
 /// Paints one nine-slice boundary in red with a white edge so it stays visible.
-void _drawSliceGuideLine(Canvas canvas, Offset start, Offset end) {
+void _drawSliceGuideLine(
+  Canvas canvas,
+  Offset start,
+  Offset end, {
+  Color color = const Color(0xFFFF1744),
+}) {
   final halo = Paint()
     ..color = const Color(0xFFFFFFFF)
     ..strokeWidth = 3
     ..style = PaintingStyle.stroke
     ..strokeCap = StrokeCap.square;
   final line = Paint()
-    ..color = const Color(0xFFFF1744)
+    ..color = color
     ..strokeWidth = 1.6
     ..style = PaintingStyle.stroke
     ..strokeCap = StrokeCap.square;
   canvas.drawLine(start, end, halo);
   canvas.drawLine(start, end, line);
-}
-
-/// Paints the four edges of one nine-slice rectangle.
-void _drawSliceGuideRect(Canvas canvas, Rect rect) {
-  _drawSliceGuideLine(canvas, rect.topLeft, rect.topRight);
-  _drawSliceGuideLine(canvas, rect.topRight, rect.bottomRight);
-  _drawSliceGuideLine(canvas, rect.bottomRight, rect.bottomLeft);
-  _drawSliceGuideLine(canvas, rect.bottomLeft, rect.topLeft);
 }

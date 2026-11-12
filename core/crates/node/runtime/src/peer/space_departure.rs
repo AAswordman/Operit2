@@ -20,11 +20,9 @@ struct Departure {
 pub(super) fn prepare(service: &dyn NodeSpaceContext) -> Result<(), String> {
     let space = service.spaceStore().space()?;
     if space.members.len() <= 1 { return Ok(()); }
-    let peers = match service.peers() {
-        Ok(peers) => peers.pairedPeers().map_err(|error| error.to_string())?
-            .into_iter().map(|peer| peer.nodeId).filter(|peer| *peer != service.localNodeId() && space.members.contains(peer)).collect(),
-        Err(_) => space.members.iter().filter(|node| **node != service.localNodeId()).cloned().collect(),
-    };
+    // Membership, not the current transport credentials, owns the outstanding
+    // exit. Unpairing before leaving must not erase the notification obligation.
+    let peers = space.members.iter().filter(|node| **node != service.localNodeId()).cloned().collect();
     let Some(operation) = service.networkControlStore().leaveCurrentSpace()? else { return Ok(()); };
     let store = PeerStateStore::new(service.storage());
     let departure = store.records::<Departure>(PENDING)?.remove(&operation.opId)
@@ -81,7 +79,7 @@ pub(crate) async fn synchronize(service: &dyn NodeSpaceContext) -> Result<(), St
     let peers = service.peers()?;
     let active = peers.activePeerNodeIds().map_err(|error| error.to_string())?;
     let mut errors = Vec::new();
-    for peer in peers.outboundPeerNodeIds().map_err(|error| error.to_string())? {
+    for peer in peers.pairedPeers().map_err(|error| error.to_string())?.into_iter().map(|peer| peer.nodeId) {
         if !active.contains(&peer) || pending(service, &peer)?.is_empty() { continue; }
         let result = exchange(service, &peer).await;
         if let Err(error) = result { errors.push(error); }

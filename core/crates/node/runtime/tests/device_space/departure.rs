@@ -2,6 +2,74 @@ use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_DEPARTURES_PATH, RUNTIME_S
 use super::*;
 use crate::NodeSpaceService::{space_departure, peerSpaceSnapshotForPeer};
 
+/// An inbound-only authenticated carrier delivers an exit and its durable acknowledgement.
+#[tokio::test]
+async fn inbound_only_pairing_delivers_departure_without_business_replication() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, services, peers) = revocationMesh("inbound-exit", 2, &[(0, 1)]);
+    let host = routers[0].localNodeId();
+    let applicant = routers[1].localNodeId();
+    let original = services[0].deviceSpace().unwrap().spaceId;
+    peers[1].inboundOnly.lock().unwrap().insert(host.clone());
+    assert!(peers[1].outboundPeerNodeIds().unwrap().is_empty());
+    let singleton = services[1].leaveDeviceSpace().unwrap();
+    space_departure::synchronize(&services[1]).await.unwrap();
+    assert_eq!(services[1].deviceSpace().unwrap(), singleton);
+    assert_eq!(services[0].deviceSpace().unwrap().spaceId, original);
+    assert!(!services[0].deviceSpace().unwrap().members.contains(&applicant));
+    space_departure::synchronize(&services[1]).await.unwrap();
+    assert!(space_departure::pending(&services[1], &host).unwrap().is_empty());
+}
+
+/// The listener learns a departed peer's signed exit before it routes scoped business sync.
+#[tokio::test]
+async fn inbound_only_projection_retires_stale_membership_before_business_sync() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, services, peers) = revocationMesh("inbound-projection", 2, &[(0, 1)]);
+    let applicant = routers[1].localNodeId();
+    let original = services[0].deviceSpace().unwrap().spaceId;
+    peers[0].inboundOnly.lock().unwrap().insert(applicant.clone());
+    assert!(peers[0].outboundPeerNodeIds().unwrap().is_empty());
+    let singleton = services[1].leaveDeviceSpace().unwrap();
+    let observer = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+        routers[0].localCore.clone(), routers[0].clone(), routers[0].spaceStore.clone());
+    observer.synchronizeOnce().await.unwrap();
+    observer.synchronizeOnce().await.unwrap();
+    assert_eq!(services[0].deviceSpace().unwrap().spaceId, original);
+    assert!(!services[0].deviceSpace().unwrap().members.contains(&applicant));
+    assert_eq!(services[1].deviceSpace().unwrap(), singleton);
+    assert!(!peers[0].calls.lock().unwrap().iter().any(|(_, method)| method == "syncRequest"));
+}
+
+/// An exit remains deliverable after unpairing, and rejoining carries that exit before a new review.
+#[tokio::test]
+async fn unpair_then_leave_then_rejoin_preserves_the_host_space_and_retires_old_membership() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (routers, services, peers) = revocationMesh("unpair-exit-rejoin", 2, &[(0, 1)]);
+    let host = routers[0].localNodeId();
+    let applicant = routers[1].localNodeId();
+    let original = services[0].deviceSpace().unwrap();
+    peers[1].removePairedPeer(&host).await.unwrap();
+    let source = services[1].leaveDeviceSpace().unwrap();
+    assert_ne!(source.spaceId, original.spaceId);
+    assert_eq!(space_departure::pending(&services[1], &host).unwrap().len(), 1);
+    peers[1].link(&routers[0]);
+    peers[0].link(&routers[1]);
+    let request = services[1].requestDeviceSpaceJoin(host.clone()).await.unwrap();
+    assert_eq!(request.status, SpaceJoinStatus::Pending);
+    let pendingHost = services[0].deviceSpace().unwrap();
+    assert_eq!(pendingHost.spaceId, original.spaceId);
+    assert!(!pendingHost.members.contains(&applicant));
+    assert!(!routers[0].networkControlStore.currentState().unwrap().memberNodeIds.contains(&applicant));
+    services[0].decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+    assert_eq!(services[1].refreshDeviceSpaceJoin(request.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+    assert_eq!(services[0].deviceSpace().unwrap().spaceId, original.spaceId);
+    assert_eq!(services[1].deviceSpace().unwrap().spaceId, original.spaceId);
+}
+
 /// Exit delivery must not turn an approved but unfinished join into a migration attempt.
 #[tokio::test]
 async fn departure_delivery_does_not_apply_an_approved_space_merge() {

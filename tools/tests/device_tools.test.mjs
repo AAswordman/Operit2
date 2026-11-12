@@ -46,6 +46,21 @@ function runtime(native) {
 const plain = value => JSON.parse(JSON.stringify(value));
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 
+test('UI methods preserve selectors and dispatch through the selected device', async () => {
+  const {context, requests} = runtime();
+  await vm.runInContext(`Tools.device('desktop').UI.getPageInfo()`, context);
+  await vm.runInContext(`Tools.UI.clickElement({resourceId:'save', text:'Save', partialMatch:false, index:1})`, context);
+  await vm.runInContext(`Tools.UI.clickElement('className', 'Button', 2)`, context);
+  await vm.runInContext(`Tools.UI.setText('', 'editor')`, context);
+  await vm.runInContext(`Tools.UI.swipe(1, 2, 3, 4, 500)`, context);
+  assert.equal(requests[0][2], 'get_page_info');
+  assert.equal(requests[0][4].nodeId, 'desktop');
+  assert.deepEqual(plain(requests[1][3]), {resourceId:'save', text:'Save', partialMatch:false, index:1});
+  assert.deepEqual(plain(requests[2][3]), {param1:'className', param2:'Button', param3:2});
+  assert.deepEqual(plain(requests[3][3]), {text:'', resource_id:'editor'});
+  assert.deepEqual(plain(requests[4][3]), {start_x:1, start_y:2, end_x:3, end_y:4, duration:500});
+});
+
 test('generated Tools.device preserves Files overloads and leaves local Tools independent', async () => {
   const {context, requests, refs} = runtime();
   const values = await vm.runInContext(`Promise.all([

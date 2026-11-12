@@ -560,7 +560,11 @@ pub trait ToolRuntimeSupport: Send + Sync {
     #[allow(non_snake_case)]
     fn bundledExternalPluginAssets(&self) -> &'static [RuntimePluginAsset];
 
-    /// Returns bundled external skill assets owned by the runtime.
+    /// Returns identities of built-in skills installed with AI visibility disabled.
+    #[allow(non_snake_case)]
+    fn builtinSkillNames(&self) -> &'static [&'static str];
+
+    /// Returns bundled skill assets owned by the runtime.
     #[allow(non_snake_case)]
     fn bundledExternalSkillAssets(&self) -> &'static [RuntimeBundledExternalSkillAsset];
 

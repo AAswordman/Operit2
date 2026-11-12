@@ -2010,12 +2010,29 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     /// Lists bundled packages available for installation or an explicit source update.
     pub fn getBundledExternalPackageCandidates(&mut self) -> Vec<BundledExternalPackageCandidate> {
-        let scanned = self.scanBundledExternalPackageCandidates();
         let mut candidates = Vec::new();
-        for candidate in scanned
-            .into_iter()
-            .filter_map(Self::bundledExternalPackageCandidateFromScanResult)
-        {
+        let support = self.toolHandler.runtimeSupport();
+        for asset in support.bundledExternalPluginAssets().iter().chain(support.builtinPluginAssets()) {
+            if !isPackageCandidateAssetName(asset.name) {
+                continue;
+            }
+            // Catalog display must never create an engine or execute an uninstalled plugin.
+            let candidate = if asset.name.to_ascii_lowercase().ends_with(".toolpkg") {
+                match bundledToolPkgCatalogCandidate(asset.name, asset.bytes) {
+                    Ok(candidate) => candidate,
+                    Err(error) => {
+                        self.recordAndReturnPackageError(asset.name, "toolpkg_manifest", &error, "toolpkg");
+                        continue;
+                    }
+                }
+            } else {
+                let result = self.parseBundledExternalPackageAsset(asset);
+                appendUniqueToolPkgLoadIssues(Arc::make_mut(&mut self.manualToolPkgLoadIssues), &result.issues);
+                let Some(candidate) = Self::bundledExternalPackageCandidateFromScanResult(result) else {
+                    continue;
+                };
+                candidate
+            };
             match self.bundledCandidateNeedsInstallation(&candidate) {
                 Ok(true) => candidates.push(candidate),
                 Ok(false) => {}
@@ -5605,6 +5622,37 @@ fn bundledExternalPluginAssetByName(
         .find(|asset| asset.name == assetName)
 }
 
+/// Reads catalog metadata from the manifest without loading resources or running registration.
+#[allow(non_snake_case)]
+fn bundledToolPkgCatalogCandidate(
+    assetName: &str,
+    bytes: &[u8],
+) -> Result<BundledExternalPackageCandidate, String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|error| error.to_string())?;
+    let index = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+    let manifest = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &index)
+        .ok_or("ToolPkg manifest is missing or invalid")?.manifest;
+    if manifest.toolpkgId.trim().is_empty() {
+        return Err("manifest.toolpkg_id is required".into());
+    }
+    Ok(BundledExternalPackageCandidate {
+        packageName: manifest.toolpkgId,
+        displayName: manifest.displayName,
+        description: manifest.description,
+        author: manifest.author,
+        packageKind: "toolpkg".into(),
+        sourceFileName: packageSourceFileName(assetName),
+        sourcePath: assetName.into(),
+        isToolPkg: true,
+        version: manifest.version,
+        category: "ToolPkg".into(),
+        toolCount: 0,
+        subpackageCount: manifest.subpackages.len(),
+        requiredInstallationScope: manifest.installationScope.map(|scope| scope.as_str().into()),
+    })
+}
+
 #[allow(non_snake_case)]
 fn buildBundledPluginAssetSignature(asset: &RuntimePluginAsset) -> String {
     format!("{}|{}|{}", asset.name, asset.bytes.len(), asset.sha256)
@@ -6081,6 +6129,39 @@ mod public_api_selection_tests {
 #[cfg(test)]
 mod package_registration_tests {
     use super::*;
+
+    /// Lists metadata even when main.js cannot execute and a large unused resource is present.
+    #[test]
+    fn bundled_catalog_reads_manifest_without_loading_plugin_code() {
+        use std::io::Write;
+        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file("manifest.json", options).unwrap();
+        archive.write_all(br#"{
+            "schema_version": 1, "toolpkg_id": "catalog.test", "version": "1.2.3",
+            "display_name": {"zh": "Catalog test"}, "description": "Description",
+            "author": ["Tester"], "main": "main.js", "installation_scope": "space",
+            "subpackages": [{"id": "tools", "entry": "tools.js"}]
+        }"#).unwrap();
+        archive.start_file("main.js", options).unwrap();
+        archive.write_all(b"throw new Error('must not run for a catalog read');").unwrap();
+        archive.start_file("unused.bin", options).unwrap();
+        archive.write_all(&vec![0; 1_000_000]).unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        let candidate = bundledToolPkgCatalogCandidate("plugins/catalog.toolpkg", &bytes).unwrap();
+        assert_eq!(candidate.packageName, "catalog.test");
+        assert_eq!(candidate.displayName.resolve(false), "Catalog test");
+        assert_eq!(candidate.version, "1.2.3");
+        assert_eq!(candidate.subpackageCount, 1);
+        assert_eq!(candidate.requiredInstallationScope.as_deref(), Some("space"));
+        assert_eq!(candidate.sourceFileName, "catalog.toolpkg");
+    }
+
+    /// Reports a broken archive instead of attempting a runtime load for catalog metadata.
+    #[test]
+    fn bundled_catalog_rejects_invalid_archives() {
+        assert!(bundledToolPkgCatalogCandidate("broken.toolpkg", b"broken").is_err());
+    }
 
     fn market_package(version: &str) -> ToolPkgLoadResult {
         let origin = ToolPkgMarketOrigin {

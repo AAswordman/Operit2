@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(path.join(root, 'plugins/packages/buildin/workflow/package.json'));
 const ts = require('typescript');
 const guideDirectory = 'plugins/docs/package_builder/';
-const skillDirectory = 'plugins/skills/external/PackageBuilder/';
+const skillDirectory = 'plugins/skills/buildin/PackageBuilder/';
 const promptPath = 'apps/flutter/app/lib/ui/features/packages/market/PluginCreationIntent.dart';
 const editorPath = 'plugins/packages/buildin/operit_editor.ts';
 const documents = [
@@ -45,7 +45,7 @@ function commands(text) {
 }
 
 /** Confirms every include stays in the plugin tree and names an existing resource. */
-test('PackageBuilder bundles the current workflow with types and examples', () => {
+test('Operit 插件开发套件 bundles the current workflow with types and examples', () => {
   const includes = JSON.parse(source(skillDirectory + 'skill.include.json')).includes;
   const workflow = includes.filter(include => include.target === 'references/PLUGIN_CREATION_WORKFLOW.md');
   assert.equal(workflow.length, 1);
@@ -72,7 +72,7 @@ function includedFiles(directory, excluded) {
 }
 
 /** Checks the actual selected examples, including ignored leftovers from previous package builds. */
-test('PackageBuilder examples contain authoring sources without generated packages or Compose artifacts', () => {
+test('Operit 插件开发套件 examples contain authoring sources without generated packages or Compose artifacts', () => {
   const includes = JSON.parse(source(skillDirectory + 'skill.include.json')).includes;
   const examples = includes.filter(include => include.target.startsWith('examples/packages/'));
   assert.equal(examples.length, 2);
