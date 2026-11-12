@@ -124,6 +124,7 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
     );
   }
 
+  /// Executes the tool with required fields and explicitly supplied optional values.
   Future<void> _execute() async {
     final missing = widget.tool.parameters
         .where((parameter) => parameter.requiredValue)
@@ -155,6 +156,11 @@ class _PackageToolRunDialogState extends State<PackageToolRunDialog> {
         tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
           name: '${widget.packageName}:${widget.tool.name}',
           parameters: widget.tool.parameters
+              .where(
+                (parameter) =>
+                    parameter.requiredValue ||
+                    _controllers[parameter.name]!.text.trim().isNotEmpty,
+              )
               .map(
                 (parameter) =>
                     core_proxy.CoreOperitToolsToolExecutionManagerToolParameter(

@@ -771,7 +771,7 @@ impl NetworkControlStore {
         let mut known = if compact {
             // Normally empty after endpoint migration. Preserve compatibility
             // with an endpoint that still has journal authority to reconcile.
-            let mut journal = self.syncOperationStore.archivedControlOperations().map_err(|error| error.to_string())?;
+            let mut journal = self.syncOperationStore.archivedControlOperations(self.nodeLocalOnly).map_err(|error| error.to_string())?;
             journal.reverse();
             journal.sort_by(|left, right| left.opId.cmp(&right.opId));
             journal.dedup_by(|left, right| left.opId == right.opId);
@@ -1055,7 +1055,7 @@ impl NetworkControlStore {
     /// Reads the state maintained by committed control mutations.
     #[allow(non_snake_case)]
     fn stateForSpace(&self, spaceId: &str) -> Result<NetworkControlState, String> {
-        lockControlReadModel(&self.syncOperationStore.networkControlReadModel().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?.state(spaceId)
+        lockControlReadModel(&self.syncOperationStore.networkControlReadModel(self.nodeLocalOnly).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?.state(spaceId)
     }
 
     /// Order borrowed encoded records once, decoding at most one payload at a time.
@@ -1075,7 +1075,7 @@ impl NetworkControlStore {
                 createdAt: operation.createdAt, originDeviceId: operation.originDeviceId.into_owned(), sequence: operation.sequence,
             }, space: record.spaceId, json })
         }
-        let mut journal = self.syncOperationStore.archivedControlOperations().map_err(|error| error.to_string())?;
+        let mut journal = self.syncOperationStore.archivedControlOperations(self.nodeLocalOnly).map_err(|error| error.to_string())?;
         journal.reverse();
         journal.sort_by(|left, right| left.opId.cmp(&right.opId));
         journal.dedup_by(|left, right| left.opId == right.opId);
@@ -1114,7 +1114,7 @@ impl NetworkControlStore {
     /// Reads the exact policy revision in deterministic authorization order.
     fn orderedCommands(&self, spaceId: &str) -> Result<Vec<SyncOperation>, String> {
         validateSpaceId(spaceId)?;
-        lockControlReadModel(&self.syncOperationStore.networkControlReadModel().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?.commands(spaceId)
+        lockControlReadModel(&self.syncOperationStore.networkControlReadModel(self.nodeLocalOnly).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?.commands(spaceId)
     }
 
     /// Replays authorization commands and reads display profiles only for explicit audits.

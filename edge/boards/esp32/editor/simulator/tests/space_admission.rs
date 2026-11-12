@@ -901,6 +901,10 @@ mod core_edge {
     }
     #[async_trait(?Send)]
     impl PeerRouter for RecordingEdgeRouter {
+        /// Preserves the wrapped Edge's node-local connection-policy owner.
+        fn nodeLocalControlProjection(&self) -> bool {
+            self.inner.nodeLocalControlProjection()
+        }
         fn localNodeId(&self) -> String {
             self.inner.localNodeId()
         }

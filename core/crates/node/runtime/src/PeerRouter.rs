@@ -10,6 +10,8 @@ use operit_link::{
 #[async_trait(?Send)]
 pub trait PeerRouter: Send + Sync {
     fn localNodeId(&self) -> String;
+    /// Declares whether connection policy is owned by an endpoint projection rather than a Core journal.
+    fn nodeLocalControlProjection(&self) -> bool { false }
     async fn routedCall(
         &self,
         previousNodeId: String,

@@ -27,6 +27,7 @@ pub(crate) struct NetworkControlReadModel {
     errors: BTreeMap<String, String>,
     recovery_error: Option<String>,
     pub(crate) projection_revision: u64,
+    pub(crate) node_local_only: bool,
 }
 
 impl NetworkControlReadModel {

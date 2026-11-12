@@ -1,0 +1,36 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.operit.edgephone'
+    compileSdk 35
+    ndkVersion '27.3.13750724'
+    defaultConfig {
+        applicationId 'com.operit.edgephone'
+        minSdk 21
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    buildTypes {
+        release { minifyEnabled true; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' }
+    }
+}
+
+// Fail before packaging an APK that cannot start on either supported phone ABI.
+tasks.register('verifyEdgeLibraries') {
+    doLast {
+        ['armeabi-v7a', 'arm64-v8a'].each { abi ->
+            if (!file("src/main/jniLibs/${abi}/liboperit_edge_phone.so").isFile()) {
+                throw new GradleException("Missing Edge library for ${abi}; run the product build.py first")
+            }
+        }
+    }
+}
+tasks.matching { it.name == 'packageDebug' || it.name == 'packageRelease' }.configureEach {
+    dependsOn 'verifyEdgeLibraries'
+}

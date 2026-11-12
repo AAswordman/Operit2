@@ -76,15 +76,21 @@ export function nativeUi(ctx: ComposeDslContext, enabled = true) {
   function tile(key: string, title: string, subtitle: string, badges: string[], controls: ComposeNode[], active = false, onClick?: () => void, avatar?: string | null, name = "PersonOutline"): ComposeNode {
     const portraitImage = ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center", modifier: ctx.Modifier.clip({ type: "circle" }).background(active ? colors.primaryContainer : colors.surfaceContainerHighest) }, avatar ? ctx.UI.Image({ uri: avatar, width: 32, height: 32, contentScale: "crop" }) : ctx.UI.Icon({ name, size: 24 }));
     const portrait = ctx.UI.Box({ width: 32, height: 32 }, [portraitImage, ...(active && onClick ? [ctx.UI.Box({ modifier: ctx.Modifier.align("bottomEnd").clip({ type: "circle" }).background(colors.primary), width: 14, height: 14, contentAlignment: "center" }, ctx.UI.Icon({ name: "Check", size: 9, tint: colors.onPrimary }))] : [])]);
-    const content = ctx.UI.Row({ key: key + "-open", ...(size.width > 440 ? { weight: 1 } : { fillMaxWidth: true }), verticalAlignment: "center", spacing: 10, ...(enabled && onClick ? { onClick } : {}) }, [portrait, ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: title, fontSize: 14, fontWeight: "700", maxLines: 1, overflow: "ellipsis" }), ...(subtitle === "" ? [] : [ctx.UI.Text({ text: subtitle, fontSize: 12, color: colors.onSurfaceVariant, maxLines: 1, overflow: "ellipsis" })]), ctx.UI.FlowRow({ spacing: 6, runSpacing: 5 }, badges.map(label => label === "当前使用" ? activePill() : ctx.UI.Box({ height: 20, contentAlignment: "center", paddingHorizontal: 7, modifier: ctx.Modifier.clip({ cornerRadius: 6 }).background(colors.onSurfaceVariant.copy({ alpha: 0.08 })) }, ctx.UI.Text({ text: label, fontSize: 11, color: colors.onSurfaceVariant }))))])]);
+    const content = ctx.UI.Row({ key: key + "-open", ...(size.width > 440 ? { weight: 1 } : { fillMaxWidth: true }), verticalAlignment: "center", spacing: 10, ...(enabled && onClick ? { onClick } : {}) }, [portrait, ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: title, fontSize: 14, fontWeight: "700", maxLines: 1, overflow: "ellipsis" }), ...(subtitle === "" ? [] : [ctx.UI.Text({ text: subtitle, fontSize: 12, color: colors.onSurfaceVariant, maxLines: 1, overflow: "ellipsis" })]), ctx.UI.FlowRow({ spacing: 6, runSpacing: 5, itemVerticalAlignment: "center" }, badges.map(badge))])]);
     const actionRow = ctx.UI.FlowRow({ ...(size.width > 440 ? {} : { fillMaxWidth: true }), horizontalArrangement: "end", spacing: 4, runSpacing: 4, itemVerticalAlignment: "center" }, controls);
     const body = size.width > 440
       ? ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 10, spacing: 8, verticalAlignment: "center" }, [content, actionRow])
       : ctx.UI.Column({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 10, spacing: 14 }, [content, actionRow]);
     return ctx.UI.Surface({ key, fillMaxWidth: true, color: active ? colors.primaryContainer.copy({ alpha: 0.16 }) : colors.surfaceContainerHighest.copy({ alpha: 0.28 }), shape: { cornerRadius: 12 }, modifier: ctx.Modifier.border(1, active ? colors.primary.copy({ alpha: 0.45 }) : colors.outlineVariant.copy({ alpha: 0.28 }), { cornerRadius: 12 }) }, body);
   }
-  /** Preserves the original current-selection pill without exposing a new action. */
-  function activePill(): ComposeNode { return ctx.UI.Box({ width: 78, height: 28, contentAlignment: "center", modifier: ctx.Modifier.clip({ cornerRadius: 20 }).border(1, colors.primary.copy({ alpha: 0.32 }), { cornerRadius: 20 }).background(colors.primary.copy({ alpha: 0.08 })) }, ctx.UI.Text({ text: "当前使用", fontSize: 11, fontWeight: "700", color: colors.primary })); }
+  /** Gives metadata and current-selection badges matching dimensions and padding. */
+  function badge(label: string): ComposeNode {
+    const active = label === "当前使用", shape = { cornerRadius: 6 };
+    const modifier = ctx.Modifier.clip(shape).background((active ? colors.primary : colors.onSurfaceVariant).copy({ alpha: 0.08 }));
+    return ctx.UI.Box({ height: 20, paddingHorizontal: 7, contentAlignment: "center", modifier: active ? modifier.border(1, colors.primary.copy({ alpha: 0.32 }), shape) : modifier }, ctx.UI.Text({ text: label, fontSize: 11, fontWeight: active ? "600" : "400", color: active ? colors.primary : colors.onSurfaceVariant, maxLines: 1 }));
+  }
+  /** Marks the current selection with the same compact badge used in metadata rows. */
+  function activePill(): ComposeNode { return badge("当前使用"); }
   /** Wraps action controls at narrow phone widths instead of shrinking labels. */
   function actions(children: ComposeNode[]): ComposeNode { return ctx.UI.FlowRow({ fillMaxWidth: true, spacing: 4, runSpacing: 4 }, children); }
   /** Creates a native retained text field with room for its floating label. */

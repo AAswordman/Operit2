@@ -1,0 +1,30 @@
+<resources>
+    <string name="app_name">Operit Edge</string>
+    <string name="channel_name">边缘节点</string>
+    <string name="notification_text">设备节点正在运行，点按查看表情和配对设置</string>
+    <string name="notification_failed">节点启动失败，点按查看详情</string>
+    <string name="settings">设备设置</string>
+    <string name="back_to_face">返回表情</string>
+    <string name="starting">正在启动边缘节点…</string>
+    <string name="address_hint">另一台设备的 TCP IP:端口</string>
+    <string name="pair">开始配对</string>
+    <string name="pair_code">输入对端显示的六位配对码</string>
+    <string name="confirm">确认</string>
+    <string name="cancel">取消</string>
+    <string name="join">申请加入空间</string>
+    <string name="refresh_join">刷新申请</string>
+    <string name="cancel_join">取消申请</string>
+    <string name="unpair">解除配对</string>
+    <string name="leave">退出当前空间</string>
+    <string name="stop">停止节点并退出</string>
+    <string name="refresh">刷新状态</string>
+    <string name="keep_screen">表情界面保持亮屏</string>
+    <string name="error_title">操作失败</string>
+    <string name="local_addresses">本机连接地址</string>
+    <string name="pairing_help">两台设备需网络可达。连接本机时，在 Operit 中手动选择 TCP 地址；由对端发起配对后，本机显示验证码。配对完成后仍需单独申请加入空间。</string>
+    <string name="incoming_code">%1$s 的配对码：%2$s</string>
+    <string name="node_info">节点：%1$s\n空间：%2$s</string>
+    <string name="no_address">未找到可用的网络地址，请检查 Wi-Fi</string>
+    <string name="confirm_leave">确认退出设备空间？</string>
+    <string name="confirm_unpair">确认解除与这台设备的配对？</string>
+</resources>

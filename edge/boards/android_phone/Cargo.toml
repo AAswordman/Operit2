@@ -1,0 +1,28 @@
+[package]
+name = "operit-edge-android-phone"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+name = "operit_edge_phone"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+operit-edge-sdk = { path = "../../sdk", features = ["space"] }
+operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", default-features = false, features = ["tcp"] }
+operit-host-native-scheduler = { path = "../../../hosts/common/operit-host-native-scheduler", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "net", "macros"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "debuginfo"

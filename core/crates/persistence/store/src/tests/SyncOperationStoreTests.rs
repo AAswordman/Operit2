@@ -23,6 +23,7 @@ struct MemoryStorageHost {
     forbidControlHistoryReads: Arc<AtomicBool>,
     forbidWholePolicyReads: Arc<AtomicBool>,
     failAtomic: Arc<AtomicUsize>,
+    journalOpenCount: Arc<AtomicUsize>,
 }
 
 impl MemoryStorageHost {
@@ -34,6 +35,7 @@ impl MemoryStorageHost {
 
 impl RuntimeStorageHost for MemoryStorageHost {
     fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        self.journalOpenCount.fetch_add(1, Ordering::SeqCst);
         self.journalHost.open(path)
     }
 
@@ -176,6 +178,28 @@ impl RuntimeStorageHost for MemoryStorageHost {
             })
             .collect())
     }
+}
+
+/// Endpoint reads and recovery stay projection-only; a later Core explicitly loads its journal.
+#[test]
+fn endpoint_control_reads_do_not_open_sql_and_core_can_load_afterwards() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let endpoint = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+    let expected = endpoint.initializeCurrentSpace().unwrap();
+    assert!(expected.initialized);
+    assert_eq!(endpoint.currentState().unwrap(), expected);
+    endpoint.currentSpaceOperations().unwrap();
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    journal.reloadNetworkControlState().unwrap();
+    assert_eq!(endpoint.currentState().unwrap(), expected);
+    assert_eq!(host.journalOpenCount.load(Ordering::SeqCst), 0);
+    let core = NetworkControlStore::new(host.clone()).unwrap();
+    assert_eq!(core.currentState().unwrap(), expected);
+    assert!(host.journalOpenCount.load(Ordering::SeqCst) > 0);
+    core.admitMember("other-node".into()).unwrap();
+    assert!(core.currentState().unwrap().memberNodeIds.contains("other-node"));
 }
 
 /// Builds one sync operation fixture with explicit compaction semantics.
@@ -2067,11 +2091,11 @@ fn archived_control_replay_is_bounded_and_does_not_publish_preference_outboxes()
     host.forbidWholeJournalReads.store(true, Ordering::SeqCst);
     let reopened = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
     let before = host.readBytes(path).unwrap();
-    assert_eq!(reopened.archivedControlOperations().unwrap(), vec![archived, pending.clone()]);
+    assert_eq!(reopened.archivedControlOperations(false).unwrap(), vec![archived, pending.clone()]);
     assert_eq!(host.readBytes(path).unwrap(), before);
 
     reopened.setExportFloor("device-a", 1).unwrap();
-    assert_eq!(reopened.archivedControlOperations().unwrap(), vec![pending]);
+    assert_eq!(reopened.archivedControlOperations(false).unwrap(), vec![pending]);
     assert_eq!(host.readBytes(path).unwrap(), before);
     // The fixture has a real pending outbox: an explicit export still publishes it.
     assert!(reopened.publishPreferenceOutboxes().unwrap().is_empty());

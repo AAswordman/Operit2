@@ -557,6 +557,7 @@ impl SyncOperationStore {
     /// state, and every control mutation below maintains it before returning.
     pub(crate) fn networkControlReadModel(
         &self,
+        nodeLocalOnly: bool,
     ) -> Result<SharedControlReadModel, SyncOperationStoreError> {
         let mut registry = lockControlReadModels()?;
         if let Some(model) = registry.get(&self.storageHost, &self.rootPath) {
@@ -564,6 +565,11 @@ impl SyncOperationStore {
                 self.storageHost.clone(),
             );
             let mut state = lockControlReadModel(&model)?;
+            // A full Core may open the same storage after its node service.
+            // Load its journal explicitly when that owner requests replica state.
+            if state.node_local_only && !nodeLocalOnly {
+                *state = self.loadNetworkControlReadModel(false)?;
+            }
             if state.projection_revision != projection.revision() {
                 let projected = Self::projectedControlOperations(&projection)
                     .map_err(SyncOperationStoreError::Message)?;
@@ -573,15 +579,18 @@ impl SyncOperationStore {
             drop(state);
             return Ok(model);
         }
-        let model = Arc::new(Mutex::new(self.loadNetworkControlReadModel()?));
+        let model = Arc::new(Mutex::new(self.loadNetworkControlReadModel(nodeLocalOnly)?));
         registry.insert(&self.storageHost, &self.rootPath, model.clone());
         Ok(model)
     }
 
     fn loadNetworkControlReadModel(
         &self,
+        nodeLocalOnly: bool,
     ) -> Result<NetworkControlReadModel, SyncOperationStoreError> {
-        let journal = self.readJournal(
+        // Endpoint authority is already in its durable projection. Loading that
+        // state must not create a Core SQL journal or business-replica machinery.
+        let journal = if nodeLocalOnly { Vec::new() } else { self.readJournal(
             &SyncClock::empty(),
             JournalQuery {
                 domains: &[NETWORK_CONTROL_SYNC_DOMAIN.into()],
@@ -591,9 +600,11 @@ impl SyncOperationStore {
                 max_bytes: usize::MAX,
                 retain: None,
             },
-        )?;
+        )? };
         let mut received = Vec::new();
-        self.visitPendingOperations(&[NETWORK_CONTROL_SYNC_DOMAIN], |operation| received.push(operation.clone()))?;
+        if !nodeLocalOnly {
+            self.visitPendingOperations(&[NETWORK_CONTROL_SYNC_DOMAIN], |operation| received.push(operation.clone()))?;
+        }
         let projected = Self::projectedControlOperations(
             &crate::NetworkControlStore::NetworkControlStore::projectionStore(
                 self.storageHost.clone(),
@@ -601,6 +612,7 @@ impl SyncOperationStore {
         )
         .map_err(SyncOperationStoreError::Message)?;
         let mut model = NetworkControlReadModel::new(journal, received, projected);
+        model.node_local_only = nodeLocalOnly;
         model.projection_revision = crate::NetworkControlStore::NetworkControlStore::projectionStore(
             self.storageHost.clone(),
         ).revision();
@@ -614,8 +626,12 @@ impl SyncOperationStore {
         let Some(model) = registry.get(&self.storageHost, &self.rootPath) else {
             return Ok(());
         };
-        lockControlReadModel(&model)?.unavailable("Control state is being recovered".into());
-        match self.loadNetworkControlReadModel() {
+        let nodeLocalOnly = {
+            let mut state = lockControlReadModel(&model)?;
+            state.unavailable("Control state is being recovered".into());
+            state.node_local_only
+        };
+        match self.loadNetworkControlReadModel(nodeLocalOnly) {
             Ok(rebuilt) => *lockControlReadModel(&model)? = rebuilt,
             Err(error) => {
                 lockControlReadModel(&model)?.unavailable(error.to_string());
@@ -811,7 +827,9 @@ impl SyncOperationStore {
     /// Permission replay reads committed authority only. It must not publish
     /// unrelated preference outboxes while checking a pairing or routing a Call.
     /// Preserve the existing control export floors and compaction semantics.
-    pub(crate) fn archivedControlOperations(&self) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+    pub(crate) fn archivedControlOperations(&self, nodeLocalOnly: bool) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
+        // A retired endpoint has no archive; inspecting it must not recreate one.
+        if nodeLocalOnly && !self.hasTransactionJournal()? { return Ok(Vec::new()); }
         self.readJournal(
             &SyncClock::empty(),
             JournalQuery {

@@ -70,6 +70,8 @@ impl EdgePeerRouter {
 }
 #[async_trait(?Send)]
 impl PeerRouter for EdgePeerRouter {
+    /// Edge permission reads use the node-local authority installed by NodeSpaceService.
+    fn nodeLocalControlProjection(&self) -> bool { true }
     fn localNodeId(&self) -> String {
         self.nodeId.clone()
     }

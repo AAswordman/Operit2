@@ -12,6 +12,7 @@ edge/
     scene/                   可选的有界场景渲染
   docs/                      接入、架构和验收说明
   boards/
+    android_phone/           旧安卓手机 Edge APK：原生表情、配对与空间接入
     esp32/                   ESP32 固件、硬件适配、UI、编辑器与真实 Rust 模拟器
     headless_sensor/         无屏产品：本地 agent、传感器服务、配对与空间加入
     pb_sbc01_h3/             Linux 机器人产品，运行完整 Core
@@ -20,6 +21,9 @@ edge/
 从 [厂商接入指南](docs/manufacturer-guide.md) 开始。需要屏幕、独立聊天和设备调试的产品参考 [ESP32](boards/esp32/README.md)；无屏网关或传感器参考 [headless_sensor](boards/headless_sensor/README.md)。PB_SBC01_H3 选择运行完整 Core，这是该产品的选择，不是 SDK 的要求。
 
 SDK 默认没有第三方依赖。`space`、`http-agent`、`scene` 分别提供设备空间接入、模型工具调用和可选显示能力。SDK 不要求 SQL、JavaScript、工具包执行器或本地模型引擎。
+
+旧手机产品见 [Android phone Edge](boards/android_phone/README.md)。它直接装配 Edge SDK，
+使用独立原生 Android 界面，兼容目标为 Android 5.0 和 32/64 位 ARM，不接入主应用的 Android Host。
 
 按任务查阅文档：
 

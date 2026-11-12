@@ -20,7 +20,12 @@ impl HostRuntimePeerService {
     pub(super) fn requirePeerConnectionAllowed(&self, node: &str) -> Result<(), CoreLinkError> {
         let storage = self.state.host.runtimeStorageHost.clone()
             .ok_or_else(|| error("Runtime storage Host is not installed"))?;
-        if NetworkControlStore::new(storage).map_err(error)?.nodeIsDisconnected(node).map_err(error)? {
+        let control = if self.router()?.nodeLocalControlProjection() {
+            NetworkControlStore::newNodeLocal(storage)
+        } else {
+            NetworkControlStore::new(storage)
+        }.map_err(error)?;
+        if control.nodeIsDisconnected(node).map_err(error)? {
             return Err(CoreLinkError::new("PEER_CONNECTION_REVOKED", "Peer is disconnected by current Space policy"));
         }
         Ok(())
