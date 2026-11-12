@@ -54,6 +54,19 @@ execution owns the canonical lease, input-hook dispatch, persistence receipt,
 completion publication and lease release. An accepted send is not dependent on
 plugin code eventually calling a separate finish method.
 
+## Hidden automatic user messages
+
+The `send_message` tool accepts `hide_user_message: true`. Core records the user
+message with `HIDDEN_PLACEHOLDER` while retaining its original parts in persisted
+history and model context. This changes transcript presentation only.
+
+Both Flutter transcript styles show a compact placeholder instead of the source,
+attachments, quoted reply, avatar or sender name. Tapping it opens the complete
+stored source as plain text; selection and share-image rendering disable this
+dialog. Hidden user rows omit copy, edit-and-resend and plugin context-menu
+actions, and are excluded from multi-message text copying. Their other history
+management actions remain available.
+
 ## Flutter active-turn guidance
 
 The Flutter composer has three explicit busy-turn delivery choices. Enter and the

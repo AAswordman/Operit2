@@ -105,9 +105,7 @@ impl Operit1SnapshotImportManager {
             });
             let (settings, search) = readOperit1MemorySettings(parsed, profile)?;
             data.owners.push(ownerMetadata(&owner, settings, search));
-            let mut document = Vec::new();
-            parsed.copyEntryTo(&operit1UserMarkdownEntry(&profile.id), &mut document)?;
-            data.documents.insert(owner.clone(), document);
+            data.documents.insert(owner.clone(), readOperit1UserMarkdown(parsed, profile)?);
             let entry = operit1ObjectBoxEntryForProfile(&profile.id);
             if let Some(metadata) = parsed.archive.entries.get(&entry) {
                 let target =
@@ -154,9 +152,7 @@ impl Operit1SnapshotImportManager {
                 .ok_or("Operit1 character profile is missing")?;
             let (settings, search) = readOperit1MemorySettings(parsed, profile_metadata)?;
             data.owners.push(ownerMetadata(&owner, settings, search));
-            let mut document = Vec::new();
-            parsed.copyEntryTo(&operit1UserMarkdownEntry(profile), &mut document)?;
-            data.documents.insert(owner, document);
+            data.documents.insert(owner, readOperit1UserMarkdown(parsed, profile_metadata)?);
         }
         writer.import(&source, data)?;
         writer.migrateThemes(&source, &theme_preferences, &theme_targets)?;

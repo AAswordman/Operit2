@@ -6,8 +6,6 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import org.json.JSONObject
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -87,14 +85,14 @@ class DocumentInputChannel(private val activity: MainActivity) {
         pendingPick = PendingPick(result, multiple, requireLength)
         try {
             val intent = if (imagesOnly) {
-                // AndroidX chooses the system/backported photo picker and falls back to
-                // ACTION_OPEN_DOCUMENT only when no photo picker is available.
-                ActivityResultContracts.PickMultipleVisualMedia().createIntent(
-                    activity,
-                    PickVisualMediaRequest.Builder()
-                        .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        .build(),
-                )
+                // Let users select an image provider instead of routing older ROMs
+                // directly into DocumentsUI through the photo picker contract.
+                Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    type = "image/*"
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+                }, null)
             } else {
                 Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)

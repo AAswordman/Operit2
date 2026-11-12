@@ -214,6 +214,7 @@
   },
   "messageSenderOther": "其他",
   "hiddenUserMessage": "隐藏的用户消息",
+  "autoTriggeredUserMessage": "自动触发",
   "workspaceSetupTitle": "设置工作区",
   "workspaceSetupSubtitle": "为您的AI项目提供一个专属的文件环境",
   "workspaceCreateTitle": "创建工作区",

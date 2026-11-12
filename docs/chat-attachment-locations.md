@@ -33,6 +33,7 @@ VFS 的 `/operitapp/data` 映射整个 Runtime 根，因此旧地址
 
 - app 通过统一 `SelectedFileInput` 消费元数据和输入流。实现复用现有 `OperitFolderAccessPlatform` 注册、`file_selector` 和原生选择通道；app/core 不判断 Android、Apple、Windows 或 Web，也不调用平台授权通道或按平台拼来源。
 - Android 适配器返回 token、名称、MIME、可选大小与成功持久授权的来源；元数据和读取在后台线程执行，不预读整文件。Web 保留浏览器 `File/Blob`，读取时仅转换最多 1 MiB 的切片。
+- Android 的“附加图片”使用 `ACTION_GET_CONTENT`（`image/*`、`CATEGORY_OPENABLE`、允许多选），通过系统应用选择面板选择图库或其他图片提供者，不指定厂商包名。它不再使用可能自动转入 DocumentsUI 的 AndroidX 照片选择合约。普通文件和快照仍使用 `ACTION_OPEN_DOCUMENT`；图片提供者返回的临时 URI 按现有有界导入流程读取，不假定具有持久授权。提供者是否支持多选由其实现决定。此路径需在出现问题的 HarmonyOS 4.2 设备上验收：选择图库后能够返回图片并生成附件，取消选择后能够再次打开。
 - OpenHarmony 选择器返回 URI 和元数据，延迟打开原生描述符，每次最多读取 1 MiB，结束、取消、失败或插件解绑时关闭；不先复制选择文件到缓存。原生文件选择通过范围读取，不在 Dart 中预读整文件。
 - 聊天与快照共用有界输入 owner，每块最多 1 MiB，上传方等待当前块写入完成后再读取下一块。快照选择和资源释放复用已有选择器接口。
 - 小附件 reverse stream 通过 `RuntimeStorageWriteSession` 直接写最终目录，不额外复制归档。流长度与声明长度必须匹配，且客户端只有完整成功读取后才发送完成标记；取消、截断和异常关闭不能提交部分文件，空文件同样需要完整完成。

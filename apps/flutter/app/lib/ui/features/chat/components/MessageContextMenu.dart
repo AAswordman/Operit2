@@ -189,11 +189,12 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       Offset.zero & overlay.size,
     );
     final useEnglish = Localizations.localeOf(context).languageCode == 'en';
-    final toolPkgItems = await widget.packageManager
-        .getToolPkgChatMessageMenuItems(
-          sender: widget.message.sender,
-          useEnglish: useEnglish,
-        );
+    final toolPkgItems = widget.message.isHiddenUserPlaceholder
+        ? const <core_proxy.ToolPkgChatMessageMenuItem>[]
+        : await widget.packageManager.getToolPkgChatMessageMenuItems(
+            sender: widget.message.sender,
+            useEnglish: useEnglish,
+          );
     if (!mounted) {
       return;
     }
@@ -222,12 +223,14 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     List<core_proxy.ToolPkgChatMessageMenuItem> toolPkgItems,
   ) {
     final message = widget.message;
+    final isHidden = message.isHiddenUserPlaceholder;
     final items = <PopupMenuEntry<_MessageMenuSelection>>[
-      _menuItem(
-        value: _MessageMenuAction.copy,
-        icon: Icons.content_copy,
-        label: '复制消息',
-      ),
+      if (!isHidden)
+        _menuItem(
+          value: _MessageMenuAction.copy,
+          icon: Icons.content_copy,
+          label: '复制消息',
+        ),
     ];
     final l10n = AppLocalizations.of(context);
     items.add(
@@ -243,11 +246,12 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     );
     if (message.sender == 'user') {
       items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
-        _menuItem(
-          value: _MessageMenuAction.editAndResend,
-          icon: Icons.edit,
-          label: '编辑并重发',
-        ),
+        if (!isHidden)
+          _menuItem(
+            value: _MessageMenuAction.editAndResend,
+            icon: Icons.edit,
+            label: '编辑并重发',
+          ),
         _menuItem(
           value: _MessageMenuAction.rollback,
           icon: Icons.delete_sweep,
@@ -318,7 +322,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         label: '多选',
       ),
     ]);
-    if (toolPkgItems.isNotEmpty) {
+    if (!isHidden && toolPkgItems.isNotEmpty) {
       items.add(const PopupMenuDivider());
       items.addAll(
         toolPkgItems.map(
@@ -757,6 +761,15 @@ Map<String, Object?> _toolPkgJsonObject(Object? value, String fieldName) {
   return object;
 }
 
+/// Joins selected transcript text while excluding hidden automatic user turns.
+String buildMessagesCopyText(Iterable<ChatUiMessage> messages) {
+  return messages
+      .where((message) => !message.isHiddenUserPlaceholder)
+      .map((message) => cleanMessageContent(message.copySourceText))
+      .join('\n\n');
+}
+
+/// Removes internal chat markup from a message copied by the user.
 String cleanMessageContent(String content) {
   return content
       .replaceAll(ChatMarkupRegex.workspaceAttachmentTag, '')

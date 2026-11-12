@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/EnhancedTableBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownLatexBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownInlineSpannable.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
+import 'package:operit2/ui/theme/OperitTheme.dart';
 
 import 'support/semantic_markdown_fixture.dart';
 import 'support/markdown_event_fixture.dart';
@@ -104,8 +106,13 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
+      OperitTheme(
+        initialThemePreferenceSnapshot:
+            UserPreferencesManager.defaultThemePreferenceSnapshot,
+        initialThemeIsReady: false,
+        unconfiguredChildEnabled: true,
+        hostInteractionHostsEnabled: false,
+        child: Scaffold(
           body: EnhancedTableBlock(
             tableText: '| 标题 |\n| --- |\n| 内容 |',
             textColor: Colors.black,
@@ -296,7 +303,7 @@ void main() {
     testWidgets(
       'real Core heading/list events have no extra lines, live=$live',
       (tester) async {
-        final source = semanticMarkdownFixtures[1]['source'] as String;
+        const source = semanticMarkdownBlocksSource;
         final controller = StreamController<Object>.broadcast();
         await tester.pumpWidget(
           MaterialApp(

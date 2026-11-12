@@ -738,6 +738,11 @@ typedef ChatUiMessage = core_proxy.ChatMessage;
 
 /// Exposes chat presentation helpers directly on the generated Core message state.
 extension ChatMessagePresentation on core_proxy.ChatMessage {
+  /// Identifies automatic user turns whose source is only shown on request.
+  bool get isHiddenUserPlaceholder =>
+      sender == 'user' &&
+      displayMode == core_proxy.ChatMessageDisplayMode.hiddenPlaceholder;
+
   /// Returns the legacy variant-preview flag for a normal Core message.
   bool get isVariantPreview => false;
 

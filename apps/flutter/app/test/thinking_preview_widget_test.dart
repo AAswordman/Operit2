@@ -5,6 +5,32 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/part/CustomXmlRenderer.dart';
 
 void main() {
+  testWidgets(
+    'updates an evicted preview while its old paragraph needs layout',
+    (tester) async {
+      final source = 'planning more work ' * 100;
+      await tester.pumpWidget(_surface(source));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      final preview = source.trim();
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.text(preview.substring(preview.length - 1000)),
+      );
+      paragraph.markNeedsLayout();
+
+      await tester.pumpWidget(_surface('$source latest thoughts'));
+      final updateError = tester.takeException();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tap(find.text('Thinking Process').first);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+      expect(updateError, isNull);
+    },
+  );
+
   testWidgets('preserves literal partial fences and replaces closed fences', (
     tester,
   ) async {

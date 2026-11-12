@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,8 +8,65 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/EnhancedTableBlock.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
+import 'support/semantic_markdown_fixture.dart';
+
 /// Verifies table sizing with indivisible math and wrapping prose.
 void main() {
+  testWidgets('does not reuse empty cell results for incoming table content', (
+    tester,
+  ) async {
+    await _pumpTable(tester, '| | | |\n|---|---|---|\n| | | |');
+    final ready = Completer<void>();
+    await _pumpTable(
+      tester,
+      '| 项目 | 计算 | 金额 |\n|---|---|---|\n| 官网 | 5 × 2000 | 10000 |',
+      split: (source) async {
+        await ready.future;
+        return _splitCell(source);
+      },
+    );
+    expect(find.text('项目', findRichText: true), findsOneWidget);
+    expect(find.text('官网', findRichText: true), findsOneWidget);
+    ready.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('项目', findRichText: true), findsOneWidget);
+    expect(find.text('10000', findRichText: true), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('keeps table cell text after real Core events resolve', (
+    tester,
+  ) async {
+    await _pumpTable(
+      tester,
+      '| 名称 | 数量 |\n| --- | ---: |\n| 苹果 | **2** |',
+      split: splitSemanticMarkdownFixture,
+    );
+    for (final text in ['名称', '数量', '苹果', '2']) {
+      expect(find.text(text, findRichText: true), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('late cell parsing cannot replace a newer source', (
+    tester,
+  ) async {
+    final previous = Completer<List<MarkdownStreamEvent>>();
+    final current = Completer<List<MarkdownStreamEvent>>();
+    await _pumpTable(tester, '| 旧标题 |\n|---|', split: (_) => previous.future);
+    await _pumpTable(tester, '| 新标题 |\n|---|', split: (_) => current.future);
+    expect(find.text('新标题', findRichText: true), findsOneWidget);
+    expect(find.text('旧标题', findRichText: true), findsNothing);
+    previous.complete(await _splitCell('旧标题'));
+    await tester.pumpAndSettle();
+    expect(find.text('新标题', findRichText: true), findsOneWidget);
+    current.complete(await _splitCell('新标题'));
+    await tester.pumpAndSettle();
+    expect(find.text('新标题', findRichText: true), findsOneWidget);
+    expect(find.text('旧标题', findRichText: true), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('long formulas fit their columns and remain scrollable', (
     tester,
   ) async {
@@ -61,7 +120,11 @@ void main() {
 }
 
 /// Presents a narrow table using semantic cell events without a Core runtime.
-Future<void> _pumpTable(WidgetTester tester, String table) async {
+Future<void> _pumpTable(
+  WidgetTester tester,
+  String table, {
+  Future<List<MarkdownStreamEvent>> Function(String)? split,
+}) async {
   await tester.pumpWidget(
     OperitTheme(
       initialThemePreferenceSnapshot:
@@ -77,7 +140,7 @@ Future<void> _pumpTable(WidgetTester tester, String table) async {
             child: EnhancedTableBlock(
               tableText: table,
               textColor: Colors.black,
-              splitMarkdownContent: _splitCell,
+              splitMarkdownContent: split ?? _splitCell,
             ),
           ),
         ),

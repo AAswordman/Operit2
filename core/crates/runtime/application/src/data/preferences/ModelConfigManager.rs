@@ -118,7 +118,7 @@ impl ModelConfigManager {
             })
     }
 
-    const PREFERENCES_VERSION: u32 = 8;
+    const PREFERENCES_VERSION: u32 = 9;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -1222,6 +1222,38 @@ impl ModelConfigManager {
                         }
                     }
                     preferences.set(&stringPreferencesKey(&key), record);
+                }
+                Ok(())
+            }
+            8 => {
+                // Reidentify remote models once so existing installations use the same
+                // catalog, context threshold and unknown-model tool defaults as new models.
+                let records = preferences
+                    .iterEntries()
+                    .filter_map(|(key, value)| {
+                        (key != "provider_list" && key.starts_with("provider_"))
+                            .then(|| (key.to_owned(), value.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, record) in records {
+                    let mut provider: ProviderProfile = serde_json::from_value(record)?;
+                    if provider.providerType == ApiProviderType::LOCAL_MODEL
+                        || provider.models.is_empty()
+                    {
+                        continue;
+                    }
+                    let resolver = ModelSpecResolver::new(&provider)
+                        .map_err(|error| PreferencesDataStoreError::Message(error.to_string()))?;
+                    for model in &mut provider.models {
+                        Self::clearSpecOverrides(model);
+                        model.listed = None;
+                        model.builtinToolsOverride = resolver
+                            .catalogSpec(&model.id)
+                            .map(|spec| spec.builtinTools);
+                        model.summary = ModelSummarySettings::default();
+                        resolver.initializeNewModel(model);
+                    }
+                    preferences.set(&stringPreferencesKey(&key), serde_json::to_value(provider)?);
                 }
                 Ok(())
             }
@@ -2555,7 +2587,7 @@ mod tests {
             .unwrap();
         let expectedMigrationStep = std::sync::atomic::AtomicU32::new(5);
         let store = CoreNodeStateStore::newWithStorage(host, path).withSchema(
-            ModelConfigManager::PREFERENCES_VERSION,
+            6,
             move |version, preferences| {
                 assert_eq!(
                     version,
@@ -2574,14 +2606,11 @@ mod tests {
         let model = &provider.models[0];
         assert!(!model.hasSpecOverrides());
         assert_eq!(model.requestOverride.enableClaude1hPromptCache, Some(true));
-        assert_eq!(
-            store.schemaVersion().unwrap(),
-            ModelConfigManager::PREFERENCES_VERSION
-        );
+        assert_eq!(store.schemaVersion().unwrap(), 6);
         let _ = fs::remove_dir_all(root);
     }
 
-    /// Upgrades persisted settings once, keeping user choices and cleaning every provider.
+    /// Tests the historical summary cleanup independently of later model resets.
     #[test]
     fn schema_seven_migration_removes_retired_summary_controls() {
         use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
@@ -2611,7 +2640,10 @@ mod tests {
             "unrelated_preference": "preserved"
         });
         host.writeBytes(path, &serde_json::to_vec(&legacy).unwrap()).unwrap();
-        let store = ModelConfigManager::preferenceStore(host.clone(), path);
+        let store = PreferencesDataStore::newWithStorage(host.clone(), path).withSchema(
+            8,
+            ModelConfigManager::migratePreferences,
+        );
         let migrated = store.data().unwrap();
         let mut expected = provider;
         for summary in expected["models"].as_array_mut().unwrap().iter_mut()
@@ -2630,7 +2662,7 @@ mod tests {
         );
         assert_eq!(store.schemaVersion().unwrap(), 8);
         let reopened = PreferencesDataStore::newEncryptedWithStorage(host, path).withMigration(
-            ModelConfigManager::PREFERENCES_VERSION,
+            8,
             |_, _| panic!("a migrated store must not run migration again"),
         );
         assert_eq!(

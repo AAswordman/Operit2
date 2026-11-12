@@ -9,6 +9,7 @@ import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../attachments/ChatMessageImageAttachments.dart';
 import '../bubble/BubbleSurface.dart';
+import '../common/HiddenUserMessagePlaceholder.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'CursorMessageLayout.dart';
 
@@ -16,9 +17,15 @@ export '../../attachments/ChatMessageImageAttachments.dart'
     show AttachmentData, ChatMessageAttachments, ChatMessageImageAttachments;
 
 class UserMessageComposable extends StatefulWidget {
-  const UserMessageComposable({super.key, required this.message});
+  /// Creates a user row with source inspection disabled during selection.
+  const UserMessageComposable({
+    super.key,
+    required this.message,
+    this.enableDialogs = true,
+  });
 
   final ChatUiMessage message;
+  final bool enableDialogs;
 
   @override
   State<UserMessageComposable> createState() => _UserMessageComposableState();
@@ -37,6 +44,16 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textColor = colorScheme.onPrimaryContainer;
+    if (widget.message.isHiddenUserPlaceholder) {
+      return CursorMessageLayout(
+        verticalPadding: 0,
+        child: HiddenUserMessagePlaceholder(
+          message: widget.message,
+          textColor: textColor,
+          enableDialogs: widget.enableDialogs,
+        ),
+      );
+    }
     final parseResult = parseMessageContent(widget.message.displayText);
     final themePreferenceSnapshot = OperitTheme.of(
       context,
@@ -48,7 +65,6 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
         ? parseResult.proxySenderName!
         : RuntimeBootstrapManager.instance.activeIdentity.name.trim();
     final shouldShowName =
-        widget.message.displayMode.value != 'HIDDEN_PLACEHOLDER' &&
         (isProxySender || themePreferenceSnapshot.showUserName) &&
         displayName.isNotEmpty;
     final bubbleColor =
@@ -91,7 +107,7 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
               padding: const EdgeInsets.only(bottom: 6),
               child: ChatMessageAttachments(
                 attachments: parseResult.attachments,
-                enableDialogs: true,
+                enableDialogs: widget.enableDialogs,
                 isBubbleMode: false,
               ),
             ),
@@ -121,7 +137,7 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
               padding: const EdgeInsets.only(top: 2),
               child: ChatMessageContextMetadata(
                 attachments: parseResult.attachments,
-                enableDialogs: true,
+                enableDialogs: widget.enableDialogs,
               ),
             ),
         ],

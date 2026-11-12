@@ -439,6 +439,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hiddenUserMessage => 'Hidden user message';
 
   @override
+  String get autoTriggeredUserMessage => 'AUTO';
+
+  @override
   String get workspaceSetupTitle => 'Set up workspace';
 
   @override

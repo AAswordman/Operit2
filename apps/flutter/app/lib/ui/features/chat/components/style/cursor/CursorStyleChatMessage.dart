@@ -32,7 +32,10 @@ class CursorStyleChatMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (message.sender) {
       case 'user':
-        return UserMessageComposable(message: message);
+        return UserMessageComposable(
+          message: message,
+          enableDialogs: enableDialogs,
+        );
       case 'ai':
         return AiMessageComposable(
           message: message,

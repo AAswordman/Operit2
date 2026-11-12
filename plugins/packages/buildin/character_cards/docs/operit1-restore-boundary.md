@@ -45,9 +45,15 @@ file plan. Declared ObjectBox and memory-space profile directories are consumed 
 migration and excluded from general resource copying. A workspace/external USER.md
 is still an ordinary resource; its filename does not classify it as legacy memory.
 
-The source `memory_space_list` defines the memory spaces to adopt, as in Operit1's
-Kotlin preferences manager. Unlisted ObjectBox directories can remain in a raw
-snapshot; they neither create stores nor invalidate the listed spaces and bindings.
+The source `memory_space_list` supplies registered memory-space metadata. Operit1
+also opens ObjectBox directly by the active or fixed character profile ID, even
+when that ID has lost its registry entry. Import adopts these referenced databases
+under their original IDs and keeps the character bindings and per-space settings.
+For an unregistered database, its ID is the display name and profile update flags
+use the source schema defaults; an absent user.md represents an empty document.
+Existing documents still undergo UTF-8 and size validation. Unreferenced, unlisted
+databases remain excluded. A reference lacking both metadata and a database is an
+explicit error, as is a registered space missing its required document.
 
 Active selection follows Kotlin's `ActivePromptManager`: a nonblank group ID selects
 that group, a nonblank card ID selects that card, and an unset or blank selection

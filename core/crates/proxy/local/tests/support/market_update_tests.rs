@@ -145,7 +145,7 @@ async fn external_manifest_origin_alone_cannot_authorize_market_replacement() {
         format!("{:x}", Sha256::digest(&incoming)),
     );
     assert!(!result.starts_with("Successfully"), "{result}");
-    assert_eq!(std::fs::read(runtime.sourcePath).unwrap(), original);
+    assert_eq!(vfs.readFileBytes(&runtime.sourcePath).unwrap(), original);
     assert_eq!(
         manager
             .getToolPkgContainerRuntime("dev.test.market-update")
@@ -158,6 +158,7 @@ async fn external_manifest_origin_alone_cannot_authorize_market_replacement() {
 fn verify_market_update(legacy: bool) {
     let filesystem = Arc::new(FaultFileSystem::default());
     let (storage, app) = application(filesystem.clone());
+    let vfs = (&app.hostManager).vfs().unwrap();
     let packages = app.packageManager();
     let mut manager = packages.lock().unwrap();
     manager.loadAvailablePackages();
@@ -213,10 +214,10 @@ fn verify_market_update(legacy: bool) {
     assert!(manager.getEnabledPackageNames().contains(&name.into()));
     // A failed move (after deleting the old destination), or a failed reload
     // after the swap, must restore both the old archive and installation state.
-    let before_archive = std::fs::read(&runtime.sourcePath).unwrap();
+    let before_archive = vfs.readFileBytes(&runtime.sourcePath).unwrap();
     for fail_move in [true, false] {
         *filesystem.failure.lock().unwrap() = UpdateFailure {
-            path: runtime.sourcePath.clone(),
+            path: operit_host_api::FileSource::nativePath(&vfs.file(&runtime.sourcePath).unwrap()).unwrap(),
             fail_move,
             fail_read_after_move: !fail_move,
             moved: false,
@@ -229,7 +230,7 @@ fn verify_market_update(legacy: bool) {
         );
         assert!(result.contains("injected"), "{result}");
         assert!(!result.starts_with("Successfully"), "{result}");
-        assert_eq!(std::fs::read(&runtime.sourcePath).unwrap(), before_archive);
+        assert_eq!(vfs.readFileBytes(&runtime.sourcePath).unwrap(), before_archive);
         assert_eq!(
             manager.getToolPkgContainerRuntime(name).unwrap().version,
             "2.0.0"
@@ -260,6 +261,19 @@ fn verify_market_update(legacy: bool) {
         manager.getToolPkgContainerRuntime(name).unwrap().version,
         "2.0.0"
     );
+    // Disabled catalog metadata must retain authenticated publisher identity for updates.
+    manager.disablePackage(name);
+    manager.loadAvailablePackages();
+    let disabledSettings = store.record("package", name).unwrap().settings;
+    let update = archive("4.0.0", "publisher");
+    let result = manager.addMarketArtifactBytes(
+        update.clone(), "plugin.toolpkg".into(), format!("{:x}", Sha256::digest(&update)),
+    );
+    assert!(result.starts_with("Successfully"), "{result}");
+    assert_eq!(manager.getToolPkgContainerRuntime(name).unwrap().version, "4.0.0");
+    assert!(!manager.isPackageEnabled(name), "updating a disabled installation must preserve disablement");
+    assert_eq!(store.record("package", name).unwrap().settings, disabledSettings);
+    assert_eq!(storage.readBytes(&config).unwrap(), br#"{"value":"keep"}"#);
 }
 
 fn script(version: &str, publisher: &str) -> Vec<u8> {
@@ -289,6 +303,7 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
     for extension in ["js", "ts"] {
         let filesystem = Arc::new(FaultFileSystem::default());
         let (storage, app) = application(filesystem.clone());
+        let vfs = (&app.hostManager).vfs().unwrap();
         let packages = app.packageManager();
         let mut manager = packages.lock().unwrap();
         manager.loadAvailablePackages();
@@ -321,7 +336,7 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
             format!("{:x}", Sha256::digest(&next)),
         );
         assert!(result.starts_with("Successfully"), "{result}");
-        assert_eq!(std::fs::read(&path).unwrap(), next);
+        assert_eq!(vfs.readFileBytes(&path.to_string_lossy()).unwrap(), next);
         assert!(manager.getExecutableAvailablePackages()[name].tools[0]
             .script
             .contains("2.0.0"));
@@ -335,7 +350,7 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
         );
         for fail_move in [true, false] {
             *filesystem.failure.lock().unwrap() = UpdateFailure {
-                path: path.to_string_lossy().into_owned(),
+                path: operit_host_api::FileSource::nativePath(&vfs.file(&path.to_string_lossy()).unwrap()).unwrap(),
                 fail_move,
                 fail_read_after_move: !fail_move,
                 moved: false,
@@ -347,7 +362,7 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
                 format!("{:x}", Sha256::digest(&incoming)),
             );
             assert!(result.contains("injected"), "{result}");
-            assert_eq!(std::fs::read(&path).unwrap(), next);
+            assert_eq!(vfs.readFileBytes(&path.to_string_lossy()).unwrap(), next);
             assert!(manager.getExecutableAvailablePackages()[name].tools[0]
                 .script
                 .contains("2.0.0"));
@@ -366,6 +381,6 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
             format!("{:x}", Sha256::digest(&incoming)),
         );
         assert!(!result.starts_with("Successfully"), "{result}");
-        assert_eq!(std::fs::read(&path).unwrap(), next);
+        assert_eq!(vfs.readFileBytes(&path.to_string_lossy()).unwrap(), next);
     }
 }

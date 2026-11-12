@@ -2160,10 +2160,34 @@ mod tests {
 
         /// Supplies optional real package sources for registry isolation tests.
         fn with_package_assets(package_assets: Option<&'static [RuntimePluginAsset]>) -> Self {
+            Self::configure_package_scheduler();
+            Self::with_package_provider(package_assets, Arc::new(
+                operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider::new(),
+            ))
+        }
+
+        /// Injects an observable JavaScript provider for package activation tests.
+        fn with_package_provider(
+            package_assets: Option<&'static [RuntimePluginAsset]>,
+            provider: Arc<dyn operit_plugin_sdk::javascript::JsExecutionProvider>,
+        ) -> Self {
+            Self::configure_package_scheduler();
+            Self::build_package_fixture(package_assets, provider)
+        }
+
+        /// Installs the real scheduler before constructing providers that prepare engines eagerly.
+        fn configure_package_scheduler() {
             static SCHEDULER: std::sync::Once = std::sync::Once::new();
             SCHEDULER.call_once(|| operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
                 operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
             )));
+        }
+
+        /// Constructs isolated storage and registry state around the selected provider.
+        fn build_package_fixture(
+            package_assets: Option<&'static [RuntimePluginAsset]>,
+            provider: Arc<dyn operit_plugin_sdk::javascript::JsExecutionProvider>,
+        ) -> Self {
             let root = std::env::temp_dir().join(format!("operit-tool-pipeline-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
@@ -2181,7 +2205,7 @@ mod tests {
                         ..Default::default() },
                     runtimeDependencies: ToolRuntimeDependencies::new(
                         Arc::new(UnusedRuntimeSupport { package_assets }),
-                        Arc::new(operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider::new()),
+                        provider,
                     ),
                     hooks: Vec::new(), toolPermissionSystem: permissions, packageManager: None,
                 })),
@@ -2191,6 +2215,162 @@ mod tests {
             };
             Self { handler, root: root.clone(), _cleanup: PipelineCleanup(root) }
         }
+    }
+
+    struct LanguageHost;
+    impl operit_host_api::SystemOperationHost for LanguageHost {
+        fn getSystemLanguageCode(&self) -> operit_host_api::HostResult<String> { Ok("en".into()) }
+        fn sendNotification(&self, request: &operit_host_api::SystemNotificationRequest) -> operit_host_api::HostResult<()> { panic!("Unexpected host call: sendNotification") }
+        fn modifySystemSetting(&self, namespace: &str, setting: &str, value: &str,) -> operit_host_api::HostResult<operit_host_api::SystemSettingData> { panic!("Unexpected host call: modifySystemSetting") }
+        fn getSystemSetting(&self, namespace: &str, setting: &str) -> operit_host_api::HostResult<operit_host_api::SystemSettingData> { panic!("Unexpected host call: getSystemSetting") }
+        fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: installApp") }
+        fn uninstallApp(&self, packageName: &str) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: uninstallApp") }
+        fn listInstalledApps(&self, includeSystemApps: bool) -> operit_host_api::HostResult<operit_host_api::AppListData> { panic!("Unexpected host call: listInstalledApps") }
+        fn startApp(&self, packageName: &str) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: startApp") }
+        fn stopApp(&self, packageName: &str) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: stopApp") }
+        fn getNotifications(&self, limit: i32, includeOngoing: bool) -> operit_host_api::HostResult<operit_host_api::NotificationData> { panic!("Unexpected host call: getNotifications") }
+        fn getAppUsageTime(&self, packageName: &str, sinceHours: i32, limit: i32, includeSystemApps: bool,) -> operit_host_api::HostResult<operit_host_api::AppUsageTimeResultData> { panic!("Unexpected host call: getAppUsageTime") }
+        fn getDeviceLocation(&self, timeout: i32, highAccuracy: bool, includeAddress: bool,) -> operit_host_api::HostResult<operit_host_api::LocationData> { panic!("Unexpected host call: getDeviceLocation") }
+        fn getDeviceInfo(&self) -> operit_host_api::HostResult<operit_host_api::DeviceInfoData> { panic!("Unexpected host call: getDeviceInfo") }
+        fn captureScreenshot(&self) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: captureScreenshot") }
+        fn recognizeText(&self, imagePath: &dyn operit_host_api::FileSource, language: operit_host_api::OCRLanguage, quality: operit_host_api::OCRQuality,) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: recognizeText") }
+    }
+    /// Counts registration engines while retaining the production JavaScript implementation.
+    struct CountingPackageProvider {
+        inner: operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider,
+        registrations: AtomicUsize,
+    }
+
+    impl operit_plugin_sdk::javascript::JsExecutionProvider for CountingPackageProvider {
+        /// Records each creation of a temporary registration engine.
+        fn create_execution_engine(&self, host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>)
+            -> Result<Arc<dyn operit_plugin_sdk::javascript::JsExecutionEngine>, String> {
+            self.registrations.fetch_add(1, Ordering::SeqCst);
+            self.inner.create_execution_engine(host)
+        }
+
+        /// Delegates persistent package engines to the real provider.
+        fn create_toolpkg_execution_engine(&self,
+            host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>,
+            context: operit_plugin_sdk::javascript::ToolPkgExecutionContext,
+        ) -> Result<Arc<dyn operit_plugin_sdk::javascript::JsExecutionEngine>, String> {
+            self.inner.create_toolpkg_execution_engine(host, context)
+        }
+
+        /// Delegates asynchronous package-engine acquisition.
+        fn acquire_toolpkg_execution_engine(&self,
+            host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>,
+            context: operit_plugin_sdk::javascript::ToolPkgExecutionContext,
+        ) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<Arc<dyn operit_plugin_sdk::javascript::JsExecutionEngine>, String>> {
+            self.inner.acquire_toolpkg_execution_engine(host, context)
+        }
+
+        /// Delegates tool executors without counting them as registration engines.
+        fn create_package_executor(&self,
+            runtime: Arc<dyn operit_plugin_sdk::javascript::JsPackageRuntime>,
+            host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>,
+        ) -> Arc<dyn operit_plugin_sdk::javascript::JsPackageExecutor> {
+            self.inner.create_package_executor(runtime, host)
+        }
+    }
+
+    /// Exercises cold-start disablement, activation and unchanged rescans using real registration code.
+    #[test]
+    fn disabled_toolpkg_scan_skips_engines_and_reloads_only_on_activation() {
+        use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+        use crate::tools::PackageLoadingProgress::*;
+        use std::io::Write;
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, source) in [
+            ("manifest.json", r#"{"toolpkg_id":"scan.probe","api_version":"2.0.0","main":"main.js","public_api":"api.ts","enabled_by_default":true}"#),
+            ("api.ts", "export {};"),
+            ("main.js", "exports.read = function() { return 1; }; exports.registerToolPkg = function() { ToolPkg.registerApi({name:'read',function:exports.read}); };"),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(source.as_bytes()).unwrap();
+        }
+        let assets = Box::leak(vec![RuntimePluginAsset {
+            name: "scan_probe.toolpkg", sha256: "scan-probe-v1",
+            bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
+        }].into_boxed_slice());
+        PipelineFixture::configure_package_scheduler();
+        let provider = Arc::new(CountingPackageProvider {
+            inner: operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider::new(),
+            registrations: AtomicUsize::new(0),
+        });
+        let fixture = PipelineFixture::with_package_provider(Some(assets), provider.clone());
+        fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
+        let context = fixture.handler.getContext();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        let packages = fixture.handler.getOrCreatePackageManager();
+        let mut manager = packages.lock().unwrap();
+        manager.loadAvailablePackages();
+        let startupIssues = manager.getToolPkgLoadIssues();
+        let startupReady = manager.packageRegistryReadiness().require_ready();
+        let startupEnabled = manager.isPackageEnabled("scan.probe");
+        drop(manager);
+        assert!(startupEnabled, "registry={startupReady:?}; issues={startupIssues:?}");
+        let mut manager = packages.lock().unwrap();
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 1);
+        manager.loadAvailablePackages();
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 1, "unchanged scans must reuse registrations");
+        manager.disablePackage("scan.probe");
+        assert!(!manager.isPackageEnabled("scan.probe"));
+        assert!(manager.getToolPkgContainerRuntime("scan.probe").unwrap().publicApis.is_empty());
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 1);
+        drop(manager);
+
+        let mut cold = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
+        let session = showPluginLoading();
+        cold.loadAvailablePackages();
+        assert!(!cold.isPackageEnabled("scan.probe"));
+        assert!(cold.getToolPkgContainerRuntime("scan.probe").is_some(), "disabled packages remain manageable");
+        assert!(observePluginLoadingProgress().value().plugins.is_empty(), "disabled packages must not report loading success");
+        completePluginLoadingSession(session);
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 1, "disabled cold starts must never create an engine");
+        assert!(cold.enablePackage("scan.probe").starts_with("Successfully enabled"));
+        assert_eq!(cold.getToolPkgContainerRuntime("scan.probe").unwrap().publicApis.len(), 1);
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 2);
+        cold.loadAvailablePackages();
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 2);
+        cold.disablePackage("scan.probe");
+        cold.enablePackage("scan.probe");
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), 3);
+        cold.disablePackage("scan.probe");
+
+        let mut external = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, source) in [
+            ("manifest.json", r#"{"toolpkg_id":"scan.external","version":"1","api_version":"2.0.0","main":"main.js","enabled_by_default":true}"#),
+            ("main.js", "exports.registerToolPkg = function() {};"),
+        ] {
+            external.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            external.write_all(source.as_bytes()).unwrap();
+        }
+        let vfs = fixture.handler.getContext().vfs().unwrap();
+        vfs.makeDirectory("/operitapp/data/cache/scan", true).unwrap();
+        let source = "/operitapp/data/cache/scan/external.toolpkg";
+        vfs.writeFileBytes(source, &external.finish().unwrap().into_inner()).unwrap();
+        cold.addPackageFileFromExternalStorageResult(source).unwrap();
+        let afterImport = provider.registrations.load(Ordering::SeqCst);
+        cold.loadAvailablePackages();
+        assert!(!cold.isPackageEnabled("scan.external"), "external defaults never override installation activation");
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport);
+        assert!(cold.enablePackage("scan.external").starts_with("Successfully enabled"));
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport + 1);
+        cold.loadAvailablePackages();
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport + 1);
+        cold.disablePackage("scan.external");
+        let mut restarted = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
+        restarted.loadAvailablePackages();
+        assert!(restarted.getToolPkgContainerRuntime("scan.external").is_some());
+        assert!(!restarted.isPackageEnabled("scan.external"));
+        assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport + 1);
+        restarted.executionEngineShutdown()();
+        cold.executionEngineShutdown()();
     }
     impl Drop for PipelineFixture {
         /// Breaks the package-manager ownership cycle before releasing the fixture handler.
@@ -2490,24 +2670,6 @@ mod tests {
         operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
             operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
         ));
-        struct LanguageHost;
-        impl operit_host_api::SystemOperationHost for LanguageHost {
-            fn getSystemLanguageCode(&self) -> operit_host_api::HostResult<String> { Ok("en".into()) }
-            fn sendNotification(&self, request: &operit_host_api::SystemNotificationRequest) -> operit_host_api::HostResult<()> { panic!("Unexpected host call: sendNotification") }
-            fn modifySystemSetting(&self, namespace: &str, setting: &str, value: &str,) -> operit_host_api::HostResult<operit_host_api::SystemSettingData> { panic!("Unexpected host call: modifySystemSetting") }
-            fn getSystemSetting(&self, namespace: &str, setting: &str) -> operit_host_api::HostResult<operit_host_api::SystemSettingData> { panic!("Unexpected host call: getSystemSetting") }
-            fn installApp(&self, source: &dyn operit_host_api::FileSource, timing: operit_host_api::AppInstallTiming) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: installApp") }
-            fn uninstallApp(&self, packageName: &str) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: uninstallApp") }
-            fn listInstalledApps(&self, includeSystemApps: bool) -> operit_host_api::HostResult<operit_host_api::AppListData> { panic!("Unexpected host call: listInstalledApps") }
-            fn startApp(&self, packageName: &str) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: startApp") }
-            fn stopApp(&self, packageName: &str) -> operit_host_api::HostResult<operit_host_api::AppOperationData> { panic!("Unexpected host call: stopApp") }
-            fn getNotifications(&self, limit: i32, includeOngoing: bool) -> operit_host_api::HostResult<operit_host_api::NotificationData> { panic!("Unexpected host call: getNotifications") }
-            fn getAppUsageTime(&self, packageName: &str, sinceHours: i32, limit: i32, includeSystemApps: bool,) -> operit_host_api::HostResult<operit_host_api::AppUsageTimeResultData> { panic!("Unexpected host call: getAppUsageTime") }
-            fn getDeviceLocation(&self, timeout: i32, highAccuracy: bool, includeAddress: bool,) -> operit_host_api::HostResult<operit_host_api::LocationData> { panic!("Unexpected host call: getDeviceLocation") }
-            fn getDeviceInfo(&self) -> operit_host_api::HostResult<operit_host_api::DeviceInfoData> { panic!("Unexpected host call: getDeviceInfo") }
-            fn captureScreenshot(&self) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: captureScreenshot") }
-            fn recognizeText(&self, imagePath: &dyn operit_host_api::FileSource, language: operit_host_api::OCRLanguage, quality: operit_host_api::OCRQuality,) -> operit_host_api::HostResult<String> { panic!("Unexpected host call: recognizeText") }
-        }
         let mut fixture = PipelineFixture::with_package_assets(Some(assets));
         fixture.handler.authenticatedExtensionOwner = None;
         fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));

@@ -8,7 +8,9 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/MessageContextMenu.dart';
+import 'package:operit2/ui/features/chat/components/style/common/HiddenUserMessagePlaceholder.dart';
 import 'package:operit2/ui/common/components/RetainedPage.dart';
 
 /// Verifies message editing, selected-revision deletion and generic plugin menu dispatch.
@@ -101,6 +103,29 @@ void main() {
       expect(cleanMessageContent(text), text);
     },
   );
+
+  testWidgets('hidden user menu omits source actions and plugin lookup', (
+    tester,
+  ) async {
+    final bridge = _MessageMenuBridge(withPluginAction: true);
+    await _openMenu(
+      tester,
+      bridge: bridge,
+      sender: 'user',
+      displayMode: ChatMessageDisplayMode.hiddenPlaceholder,
+      selectedVariantIndex: 0,
+      variantCount: 1,
+    );
+    expect(find.text('复制消息'), findsNothing);
+    expect(find.text('编辑并重发'), findsNothing);
+    expect(find.text('Opaque plugin action'), findsNothing);
+    expect(bridge.menuRequests, 0);
+    expect(find.byType(AlertDialog), findsNothing);
+    for (final action in ['收藏消息', '回滚到此处', '删除', '信息', '多选']) {
+      expect(find.text(action), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
+  });
 
   for (final sender in ['user', 'ai']) {
     testWidgets('native $sender menu preserves its editing action', (
@@ -216,6 +241,7 @@ Future<void> _openMenu(
   required int selectedVariantIndex,
   required int variantCount,
   String sender = 'ai',
+  ChatMessageDisplayMode displayMode = ChatMessageDisplayMode.normal,
   bool isFavorite = false,
   MessageFavoriteAction? onToggleFavorite,
   _MessageMenuBridge? bridge,
@@ -228,8 +254,34 @@ Future<void> _openMenu(
   await tester.binding.setSurfaceSize(const Size(800, 1200));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final clients = GeneratedCoreProxyClients(bridge ?? _MessageMenuBridge());
+  final message = ChatMessage(
+    pluginExtensions: const {
+      'arbitrary.plugin': {'opaque': 'unchanged'},
+    },
+    sender: sender,
+    parts: const <MessagePart>[],
+    timestamp: 123,
+    roleName: 'assistant',
+    selectedVariantIndex: selectedVariantIndex,
+    variantCount: variantCount,
+    provider: 'test',
+    modelName: 'test',
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    sentAt: 0,
+    outputDurationMs: 0,
+    waitDurationMs: 0,
+    completedAt: 1,
+    displayMode: displayMode,
+    isFavorite: isFavorite,
+    contentStream: null,
+  );
   await tester.pumpWidget(
     MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Padding(
           padding: const EdgeInsets.only(left: 80, top: 100),
@@ -237,29 +289,7 @@ Future<void> _openMenu(
             active: true,
             child: Center(
               child: MessageContextMenu(
-                message: ChatMessage(
-                  pluginExtensions: const {
-                    'arbitrary.plugin': {'opaque': 'unchanged'},
-                  },
-                  sender: sender,
-                  parts: const <MessagePart>[],
-                  timestamp: 123,
-                  roleName: 'assistant',
-                  selectedVariantIndex: selectedVariantIndex,
-                  variantCount: variantCount,
-                  provider: 'test',
-                  modelName: 'test',
-                  inputTokens: 0,
-                  outputTokens: 0,
-                  cachedInputTokens: 0,
-                  sentAt: 0,
-                  outputDurationMs: 0,
-                  waitDurationMs: 0,
-                  completedAt: 1,
-                  displayMode: ChatMessageDisplayMode.normal,
-                  isFavorite: isFavorite,
-                  contentStream: null,
-                ),
+                message: message,
                 chatId: 'chat',
                 messageIndex: 0,
                 clients: clients,
@@ -271,10 +301,16 @@ Future<void> _openMenu(
                 onRegenerateMessage: onRegenerateMessage,
                 isChatBusy: isChatBusy,
                 onRefresh: onRefresh,
-                child: const SizedBox(
+                child: SizedBox(
                   width: 200,
                   height: 60,
-                  child: Text('Assistant reply'),
+                  child: displayMode == ChatMessageDisplayMode.hiddenPlaceholder
+                      ? HiddenUserMessagePlaceholder(
+                          message: message,
+                          textColor: Colors.black,
+                          enableDialogs: true,
+                        )
+                      : const Text('Assistant reply'),
                 ),
               ),
             ),
@@ -283,14 +319,32 @@ Future<void> _openMenu(
       ),
     ),
   );
-  final anchor = tester.getCenter(find.text('Assistant reply'));
-  await tester.longPress(find.text('Assistant reply'));
+  final content = find.text(
+    displayMode == ChatMessageDisplayMode.hiddenPlaceholder
+        ? '自动触发'
+        : 'Assistant reply',
+  );
+  final anchor = tester.getCenter(content);
+  await tester.longPress(content);
   await tester.pumpAndSettle();
-  expect(find.text(sender == 'ai' ? '重新生成' : '编辑并重发'), findsOneWidget);
+  expect(
+    find.text(
+      sender == 'ai'
+          ? '重新生成'
+          : displayMode == ChatMessageDisplayMode.hiddenPlaceholder
+          ? '回滚到此处'
+          : '编辑并重发',
+    ),
+    findsOneWidget,
+  );
   final firstItem = tester.getRect(
     find.byWidgetPredicate((widget) => widget is PopupMenuItem).first,
   );
-  expect(firstItem.right, closeTo(anchor.dx + 1, 0.1));
+  if (anchor.dx < 400) {
+    expect(firstItem.left, closeTo(anchor.dx, 0.1));
+  } else {
+    expect(firstItem.right, closeTo(anchor.dx + 1, 0.1));
+  }
   expect(firstItem.top, closeTo(anchor.dy + 8, 0.1));
 }
 
@@ -299,6 +353,7 @@ class _MessageMenuBridge extends OperitRuntimeBridge {
   _MessageMenuBridge({this.withPluginAction = false});
   final bool withPluginAction;
   final invocations = <Map<String, Object?>>[];
+  int menuRequests = 0;
 
   /// Returns only the extension-menu response expected by this fixture.
   @override
@@ -306,6 +361,7 @@ class _MessageMenuBridge extends OperitRuntimeBridge {
     expect(request.target, 'core/application.packageManager');
     switch (request.methodName) {
       case 'getToolPkgChatMessageMenuItems':
+        menuRequests++;
         return encodeCoreLink(<Object?>[
           0,
           [

@@ -114,7 +114,7 @@ impl ToolPkgLoader {
 
     /// Parses one already-unwrapped ToolPkg ZIP using its trusted source classification.
     #[allow(non_snake_case)]
-    fn loadToolPkgFromArchiveBytes<FReportPackageLoadError>(
+    pub fn loadToolPkgFromArchiveBytes<FReportPackageLoadError>(
         archiveBytes: &[u8],
         sourceType: ToolPkgSourceType,
         sourcePath: &str,

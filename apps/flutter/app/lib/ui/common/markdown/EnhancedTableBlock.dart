@@ -255,8 +255,10 @@ class _MarkdownTableCellTextState extends State<_MarkdownTableCellText> {
     super.dispose();
   }
 
+  /// Keeps asynchronous snapshots scoped to the cell source they describe.
   @override
   Widget build(BuildContext context) => FutureBuilder<List<MarkdownNodeStable>>(
+    key: ValueKey(widget.text),
     future: _nodes,
     builder: (context, snapshot) {
       _gestures.beginFrame();

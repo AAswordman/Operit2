@@ -626,9 +626,7 @@ class ChatScreenContent extends StatelessWidget {
 
   /// Copies the selected messages into the system clipboard.
   Future<void> _copySelectedMessages(BuildContext context) async {
-    final text = _selectedVisibleMessages
-        .map((message) => cleanMessageContent(message.copySourceText))
-        .join('\n\n');
+    final text = buildMessagesCopyText(_selectedVisibleMessages);
     try {
       await Clipboard.setData(ClipboardData(text: text));
     } on PlatformException catch (error) {

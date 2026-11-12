@@ -424,6 +424,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get hiddenUserMessage => '隐藏的用户消息';
 
   @override
+  String get autoTriggeredUserMessage => '自动触发';
+
+  @override
   String get workspaceSetupTitle => '设置工作区';
 
   @override

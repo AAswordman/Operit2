@@ -744,6 +744,24 @@ pub fn readScriptMarketOrigin(script: &str, packageId: &str) -> Option<ToolPkgMa
     decodeMarketOriginFromMetadata(encoded, packageId)
 }
 
+/// Decodes the publisher's trailing data envelope without parsing or evaluating the main script.
+pub fn readMainScriptMarketOrigin(source: &str, packageId: &str) -> Result<Option<ToolPkgMarketOrigin>, String> {
+    static ENVELOPE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let pattern = ENVELOPE.get_or_init(|| Regex::new(&format!(
+        r"ToolPkg\.{}\((\[[0-9,\s]*\]),\s*([0-9]+)\);?\s*$",
+        MARKET_ORIGIN_CAPTURE_METHOD,
+    )).expect("Publisher provenance envelope pattern must be valid"));
+    let Some(captured) = pattern.captures(source) else { return Ok(None); };
+    let arguments = format!("[{},{}]", &captured[1], &captured[2]);
+    let (encoded, key): (Vec<u8>, u8) = serde_json::from_str(&arguments)
+        .map_err(|error| format!("Invalid ToolPkg market provenance: {error}"))?;
+    let decoded = encoded.into_iter().map(|byte| byte ^ key).collect::<Vec<_>>();
+    let value = serde_json::from_slice::<ToolPkgMarketOrigin>(&decoded)
+        .map_err(|error| format!("Invalid ToolPkg market provenance: {error}"))?;
+    Ok(Some(validateMarketOrigin(value, packageId)
+        .ok_or("ToolPkg market provenance does not match its package")?))
+}
+
 /// Adds encoded marketplace provenance to a script's required leading metadata block.
 fn injectScriptMarketOriginIntoMetadata(
     source: &str,
@@ -1681,6 +1699,20 @@ fn decryptDetached(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    /// Reads the published provenance encoding while ignoring quoted and commented lookalikes.
+    #[test]
+    fn catalog_market_origin_decodes_without_evaluating_main() {
+        let invocation = buildMarketOriginInvocation("catalog.market", "1.2.3", &["Publisher".into()]).unwrap();
+        let source = format!(
+            "// ToolPkg._m(invalid);\n/* ToolPkg._m(invalid); */\nconst text = 'ToolPkg._m(invalid)';\nconst quotePattern = /['\"`]/;\nthrow new Error('must not execute');\n{invocation}"
+        );
+        let origin = readMainScriptMarketOrigin(&source, "catalog.market").unwrap().unwrap();
+        assert_eq!(origin.version, "1.2.3");
+        assert_eq!(origin.author, ["Publisher"]);
+        assert!(readMainScriptMarketOrigin(&source, "other.package").is_err());
+        assert!(readMainScriptMarketOrigin("exports.registerToolPkg = function() {};", "catalog.market").unwrap().is_none());
+    }
     use std::io::{Read, Write};
 
     #[test]
@@ -1915,6 +1947,7 @@ exports.generate = function generateUuid(value) {
             .read_to_string(&mut unminifiedMain)
             .expect("main entry should be text");
         assert!(unminifiedMain.contains(&expectedInvocation));
+        assert_eq!(readMainScriptMarketOrigin(&unminifiedMain, "tree-publish-test").unwrap(), Some(origin.clone()));
 
         let minified = processArtifactNamedBytesWithMarketOrigin(
             &source,
@@ -1953,6 +1986,7 @@ exports.generate = function generateUuid(value) {
             .read_to_string(&mut minifiedMain)
             .expect("main entry should be text");
         assert!(minifiedMain.contains(&expectedInvocation));
+        assert_eq!(readMainScriptMarketOrigin(&minifiedMain, "tree-publish-test").unwrap(), Some(origin));
     }
 
     /// Preserves every declared template and the package agreement while processing executable capabilities.

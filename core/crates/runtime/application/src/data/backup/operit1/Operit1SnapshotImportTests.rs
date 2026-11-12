@@ -236,7 +236,7 @@ fn completeSnapshotFixture(version: i32) -> Arc<SnapshotFixture> {
     Arc::new(SnapshotFixture { bytes: writer.finish().unwrap().into_inner(), databasePath })
 }
 
-/// Uses Kotlin's memory-space list despite unlisted raw databases and still rejects broken live references.
+/// Ignores unreferenced databases and adopts an active database whose registry entry was lost.
 #[test]
 fn memory_space_validation_uses_metadata_instead_of_raw_database_directories() {
     let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
@@ -250,14 +250,75 @@ fn memory_space_validation_uses_metadata_instead_of_raw_database_directories() {
         KEY_ACTIVE_MEMORY_SPACE_ID.to_string(),
         Operit1PreferenceValue::String("profile_1784617683731".to_string()),
     );
-    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 当前记忆库不在记忆库列表中："));
+    validateOperit1MemorySpaces(&parsed).unwrap();
+    assert_eq!(buildOperit1MemorySpaces(&parsed).unwrap().len(), 2);
     parsed.archive.datastorePreferences.get_mut(ENTRY_USER_PREFERENCES).unwrap().insert(
         KEY_ACTIVE_MEMORY_SPACE_ID.to_string(), Operit1PreferenceValue::String("default".to_string()),
     );
     let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
     cards.insert("character_card_card-1_memory_profile_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_PROFILE".to_string()));
-    cards.insert("character_card_card-1_memory_profile_id".to_string(), Operit1PreferenceValue::String("profile_1784617683731".to_string()));
-    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 角色卡绑定了不存在的记忆库："));
+    cards.insert("character_card_card-1_memory_profile_id".to_string(), Operit1PreferenceValue::String("missing-profile".to_string()));
+    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 引用的记忆库缺少注册信息和数据库：missing-profile"));
+}
+
+/// Preserves three fixed bindings to one surviving database without requiring its deleted user document.
+#[test]
+fn memory_space_import_preserves_fixed_bindings_without_registry_metadata() {
+    let fixture = completeSnapshotFixture(21);
+    let mut parsed = ParsedOperit1Snapshot::fromSource(fixture.clone()).unwrap();
+    let profile = "profile_1784617683731";
+    let preferences = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+    preferences.insert("character_card_list".to_string(), Operit1PreferenceValue::StringSet(
+        vec!["card-1".to_string(), "card-2".to_string(), "card-3".to_string()],
+    ));
+    for id in ["card-1", "card-2", "card-3"] {
+        for (field, value) in [("name", id), ("memory_profile_binding_mode", "FIXED_PROFILE"), ("memory_profile_id", profile)] {
+            preferences.insert(format!("character_card_{id}_{field}"), Operit1PreferenceValue::String(value.to_string()));
+        }
+    }
+    validateOperit1MemorySpaces(&parsed).unwrap();
+    let spaces = buildOperit1MemorySpaces(&parsed).unwrap();
+    assert_eq!(spaces.len(), 2, "unreferenced stale databases must remain excluded");
+    let recovered = &spaces[profile];
+    assert_eq!(recovered.id, profile);
+    assert_eq!(recovered.name, profile);
+    assert!(recovered.profileAutoUpdateEnabled);
+    assert!(!recovered.profileAutoUpdateLocked);
+    assert!(readOperit1UserMarkdown(&parsed, recovered).unwrap().is_empty());
+    for card in buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap() {
+        assert_eq!(card.memoryBindingMode, CharacterCardMemoryBindingMode::SHARED.to_string());
+        assert_eq!(card.sharedMemoryId, Some(operit1SharedMemoryStoreId(profile)));
+    }
+    // A surviving filename is not proof that its contents are readable; adoption must still run the LMDB decoder.
+    let root = std::env::temp_dir().join(format!("operit1-orphan-database-{}", Uuid::new_v4()));
+    let (_manager, host) = snapshotImportManager(&root);
+    let entry = operit1ObjectBoxEntryForProfile(profile);
+    writeArchiveEntryToStorage(host.as_ref(), &parsed, &entry, "runtime/orphan.mdb").unwrap();
+    let mut connection = TestSqliteConnection::open(&fixture.databasePath);
+    let bridge = prepareOperit1RoomImport(&mut connection).unwrap();
+    let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(bridge, &mut connection,
+        &SnapshotFileImportPlan::new(), &mut |_| {}).unwrap();
+    assert!(buildOperit1PluginMemoryRecords(host.as_ref(), "runtime/orphan.mdb",
+        parsed.archive.entries[&entry].uncompressedSize, "shared:orphan", &SnapshotFileImportPlan::new(),
+        &archive, "test-node").is_err());
+}
+
+/// Requires registered documents while retaining and validating documents of unregistered live databases.
+#[test]
+fn memory_space_documents_follow_registration_and_source_presence() {
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    let entry = operit1UserMarkdownEntry("default");
+    let metadata = parsed.archive.entries.remove(&entry).unwrap();
+    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("快照缺少记忆库用户文档："));
+    parsed.archive.datastorePreferences.get_mut(ENTRY_USER_PREFERENCES).unwrap().insert(
+        KEY_MEMORY_SPACE_LIST.to_string(), Operit1PreferenceValue::String("[]".to_string()),
+    );
+    validateOperit1MemorySpaces(&parsed).unwrap();
+    parsed.archive.entries.insert(entry.clone(), metadata);
+    let spaces = buildOperit1MemorySpaces(&parsed).unwrap();
+    assert_eq!(readOperit1UserMarkdown(&parsed, &spaces["default"]).unwrap(), b"Legacy user document");
+    parsed.archive.entries.get_mut(&entry).unwrap().uncompressedSize = 48_001;
+    assert!(validateOperit1MemorySpaces(&parsed).unwrap_err().starts_with("Operit1 记忆库用户文档超过大小限制："));
 }
 
 /// Preserves Kotlin's implicit default, whitespace handling and group precedence without rewriting IDs.

@@ -797,6 +797,143 @@ pub struct ToolPkgParser;
 pub struct ToolPkgArchiveParser;
 
 impl ToolPkgArchiveParser {
+    /// Reads activation metadata before touching executable entries or their resource payloads.
+    #[allow(non_snake_case)]
+    pub fn readToolPkgManifest(archiveBytes: &[u8]) -> Result<ToolPkgManifest, String> {
+        let mut archive = zip::ZipArchive::new(Cursor::new(archiveBytes))
+            .map_err(|error| error.to_string())?;
+        let index = Self::buildZipEntryIndex(&mut archive);
+        let entry = findManifestEntry(&index.entryNames).ok_or("ToolPkg manifest is missing")?;
+        let text = Self::readZipEntryText(&mut archive, &index, &entry)
+            .ok_or("Cannot read ToolPkg manifest")?;
+        let manifest = parseToolPkgManifest(&text, &entry)?;
+        if manifest.toolpkgId.trim().is_empty() {
+            return Err("manifest.toolpkg_id is required".into());
+        }
+        Ok(manifest)
+    }
+
+    /// Reads installed-package metadata without evaluating scripts or inflating unrelated resources.
+    #[allow(non_snake_case)]
+    pub fn readToolPkgCatalog(
+        archiveBytes: &[u8],
+        sourceType: ToolPkgSourceType,
+        sourcePath: &str,
+        isBuiltIn: bool,
+    ) -> Result<ToolPkgLoadResult, String> {
+        let mut archive = zip::ZipArchive::new(Cursor::new(archiveBytes))
+            .map_err(|error| error.to_string())?;
+        let index = Self::buildZipEntryIndex(&mut archive);
+        let entry = findManifestEntry(&index.entryNames).ok_or("ToolPkg manifest is missing")?;
+        let text = Self::readZipEntryText(&mut archive, &index, &entry)
+            .ok_or("Cannot read ToolPkg manifest")?;
+        let manifest = parseToolPkgManifest(&text, &entry)?;
+        if manifest.toolpkgId.trim().is_empty() {
+            return Err("manifest.toolpkg_id is required".into());
+        }
+        let apiVersion = requireSupportedToolPkgApiVersion(&manifest.apiVersion)?;
+        let mut requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
+        applyCompatibilityRequirements(apiVersion, &manifest.toolpkgId, &mut requires)?;
+        let base = entry.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
+        let mut subpackagePackages = Vec::new();
+        let mut subpackages = Vec::new();
+        for child in &manifest.subpackages {
+            if child.id.trim().is_empty() || child.entry.trim().is_empty() {
+                return Err("ToolPkg subpackage id and entry are required".into());
+            }
+            let path = Self::resolveManifestRelativeZipEntryPath(base, &child.entry)
+                .ok_or("Invalid subpackage entry")?;
+            let source = Self::readZipEntryText(&mut archive, &index, &path)
+                .ok_or_else(|| format!("Cannot read subpackage entry: {}", child.entry))?;
+            let metadata = crate::JsPackageLoader::JsPackageLoader::extract_metadata(&source);
+            let package = crate::JsPackageLoader::JsPackageLoader::parse_metadata(&metadata, "")?;
+            let displayName = if hasLocalizedTextContent(&package.display_name) {
+                package.display_name.clone()
+            } else {
+                localizedTextOf(&package.name)
+            };
+            subpackages.push(ToolPkgSubpackageRuntime {
+                packageName: child.id.trim().into(),
+                containerPackageName: manifest.toolpkgId.clone(),
+                subpackageId: child.id.trim().into(),
+                entryPath: path,
+                displayName,
+                description: package.description.clone(),
+                enabledByDefault: package.enabled_by_default,
+                toolCount: package.tools.len(),
+            });
+            subpackagePackages.push(ToolPackage {
+                name: child.id.trim().into(), is_built_in: isBuiltIn, ..package
+            });
+        }
+        let resources = manifest.resources.iter().map(|resource| {
+            Ok(ToolPkgResourceRuntime {
+                key: resource.key.clone(),
+                path: Self::resolveManifestRelativeResourcePath(base, &resource.path)
+                    .ok_or("Invalid resource path")?,
+                mime: resource.mime.clone(),
+            })
+        }).collect::<Result<Vec<_>, String>>()?;
+        let logoResource = resolveLogoResource(manifest.logo.as_deref(), &resources)?;
+        let displayName = if hasLocalizedTextContent(&manifest.displayName) {
+            manifest.displayName.clone()
+        } else {
+            localizedTextOf(&manifest.toolpkgId)
+        };
+        let description = if hasLocalizedTextContent(&manifest.description) {
+            manifest.description.clone()
+        } else {
+            displayName.clone()
+        };
+        let mut manifestExtensions = manifest.extensionFields.clone();
+        if let Some(scope) = manifest.installationScope {
+            manifestExtensions.insert("installation_scope".into(),
+                serde_json::to_value(scope).map_err(|error| error.to_string())?);
+        }
+        let mainEntry = if manifest.main.is_empty() {
+            String::new()
+        } else {
+            Self::resolveManifestRelativeZipEntryPath(base, &manifest.main)
+                .ok_or("Invalid manifest.main path")?
+        };
+        let marketOrigin = if manifest.main.is_empty() {
+            manifest.extensionFields.get("market_origin")
+                .map(|value| serde_json::from_value::<ToolPkgMarketOrigin>(value.clone()))
+                .transpose().map_err(|error| error.to_string())?
+        } else if sourceType == ToolPkgSourceType::MARKET {
+            let source = Self::readZipEntryText(&mut archive, &index, &mainEntry)
+                .ok_or("Cannot read marketplace provenance from main entry")?;
+            crate::toolpkg::ToolPkgProtection::readMainScriptMarketOrigin(&source, &manifest.toolpkgId)?
+        } else {
+            None
+        };
+        if manifest.main.is_empty() {
+            if let Some(origin) = &marketOrigin {
+                if origin.toolpkgId != manifest.toolpkgId || origin.version != manifest.version || origin.author != manifest.author {
+                    return Err("ToolPkg market origin differs from its manifest".into());
+                }
+            }
+        }
+        Ok(ToolPkgLoadResult {
+            containerPackage: ToolPackage {
+                name: manifest.toolpkgId.clone(), display_name: displayName.clone(),
+                description: description.clone(), author: manifest.author.clone(),
+                enabled_by_default: manifest.enabledByDefault, is_built_in: isBuiltIn,
+                category: "ToolPkg".into(), ..Default::default()
+            },
+            subpackagePackages,
+            containerRuntime: ToolPkgContainerRuntime {
+                packageName: manifest.toolpkgId, displayName, description,
+                version: manifest.version, apiVersion: apiVersion.to_string(), requires,
+                author: manifest.author, sourceType, sourcePath: sourcePath.into(),
+                mainEntry, subpackages, resources, logoResource, manifestExtensions,
+                themes: manifest.themes, license: manifest.license,
+                marketOrigin: marketOrigin.clone(), ..Default::default()
+            },
+            marketOrigin,
+        })
+    }
+
     /// Reads installation restrictions before any registration script can create scoped data.
     #[allow(non_snake_case)]
     pub fn readInstallationScope(archiveBytes: &[u8]) -> Result<Option<crate::javascript::ToolPkgConfigScope>, String> {

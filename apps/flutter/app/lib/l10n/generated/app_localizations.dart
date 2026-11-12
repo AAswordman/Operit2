@@ -884,6 +884,12 @@ abstract class AppLocalizations {
   /// **'Hidden user message'**
   String get hiddenUserMessage;
 
+  /// No description provided for @autoTriggeredUserMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'AUTO'**
+  String get autoTriggeredUserMessage;
+
   /// No description provided for @workspaceSetupTitle.
   ///
   /// In en, this message translates to:

@@ -7,21 +7,22 @@ const android = 'apps/flutter/app/android/app/';
 const source = path => readFileSync(new URL(path, root), 'utf8');
 const channel = source(`${android}src/main/kotlin/app/operit/DocumentInputChannel.kt`);
 
-/** Images must use a distinct method, not just a MIME-filtered document picker. */
-test('Android image selection uses the multi-image photo picker contract', () => {
-  const dart = source('apps/flutter/app/lib/core/host/SelectedFileInput.dart');
+/** Image selection must let users choose a provider without a DocumentsUI-only route. */
+test('Android image selection offers image providers through a content chooser', () => {
+  const dart = source('apps/flutter/thirdparty/operit_folder_access/lib/operit_folder_access.dart');
   assert.match(dart, /imagesOnly \? 'pickImages' : 'pickFiles'/);
   assert.match(channel, /"pickImages" -> pickDocuments\(result, true, false, listOf\("image\/\*"\), imagesOnly = true\)/);
   const imageBranch = channel.slice(
     channel.indexOf('val intent = if (imagesOnly)'),
     channel.indexOf('} else {', channel.indexOf('val intent = if (imagesOnly)')),
   );
-  // AndroidX handles system/OEM/backported pickers and document fallback, without
-  // hard-coding an Android version check that would miss backported pickers.
-  assert.match(imageBranch, /ActivityResultContracts\.PickMultipleVisualMedia\(\)\.createIntent\(/);
-  assert.match(imageBranch, /\.setMediaType\(ActivityResultContracts\.PickVisualMedia\.ImageOnly\)/);
-  assert.doesNotMatch(imageBranch, /Intent\(Intent\.ACTION_OPEN_DOCUMENT\)|SDK_INT|CATEGORY_OPENABLE/);
-  assert.match(source(`${android}build.gradle.kts`), /implementation\("androidx\.activity:activity:[^"]+"\)/);
+  assert.match(imageBranch, /Intent\.createChooser\(Intent\(Intent\.ACTION_GET_CONTENT\)\.apply \{/);
+  assert.match(imageBranch, /addCategory\(Intent\.CATEGORY_OPENABLE\)/);
+  assert.match(imageBranch, /addFlags\(Intent\.FLAG_GRANT_READ_URI_PERMISSION\)/);
+  assert.match(imageBranch, /type = "image\/\*"/);
+  assert.match(imageBranch, /putExtra\(Intent\.EXTRA_ALLOW_MULTIPLE, multiple\)/);
+  assert.match(imageBranch, /\}, null\)/);
+  assert.doesNotMatch(imageBranch, /ACTION_OPEN_DOCUMENT|PickMultipleVisualMedia|setPackage|SDK_INT|FLAG_GRANT_PERSISTABLE_URI_PERMISSION/);
 });
 
 /** Ordinary files and snapshot archives must retain their document selection behavior. */

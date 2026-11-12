@@ -214,6 +214,7 @@
   },
   "messageSenderOther": "Other",
   "hiddenUserMessage": "Hidden user message",
+  "autoTriggeredUserMessage": "AUTO",
   "workspaceSetupTitle": "Set up workspace",
   "workspaceSetupSubtitle": "Provide a dedicated file environment for your AI projects",
   "workspaceCreateTitle": "Create workspace",
