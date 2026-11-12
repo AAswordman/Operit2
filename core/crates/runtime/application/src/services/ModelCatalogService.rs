@@ -1,14 +1,12 @@
 #![allow(non_snake_case)]
 //! Keeps this device's copy of the models.dev catalog fresh.
 //!
-//! The catalog is downloaded from models.dev into node-local runtime storage and read from
-//! there on first use. A copy older than a day is downloaded again: when the user fetches a
-//! provider's models, and on an hourly check for as long as the process runs. A failed
-//! download keeps the copy in use and is reported through the catalog status; it is not
-//! retried for half an hour unless the user asks.
-//! Capability resolution requires a complete catalog. First use waits for an in-flight
-//! download or starts one, and reports failure instead of resolving against an empty catalog.
+//! A bundled models.dev snapshot makes capability resolution available offline immediately.
+//! A complete node-local download replaces it, including across restarts. Background checks
+//! refresh downloaded data older than a day; failures keep the active catalog and are logged
+//! for diagnostics without interrupting model configuration.
 
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -34,6 +32,7 @@ const RETRY_AFTER_MS: i64 = 30 * 60 * 1000;
 /// How often a running process looks at the catalog's age.
 const CHECK_EVERY_MS: u64 = 60 * 60 * 1000;
 const LOG_TAG: &str = "ModelCatalog";
+const BUNDLED_CATALOG: &[u8] = include_bytes!("../../assets/models_dev/catalog.json.gz");
 
 /// The catalog in use and what the last download did.
 #[derive(Default)]
@@ -43,7 +42,6 @@ struct CatalogState {
     updatedAt: Option<i64>,
     lastError: Option<String>,
     lastFailureAt: Option<i64>,
-    downloadAttempts: u64,
 }
 
 static STATE: OnceLock<Mutex<CatalogState>> = OnceLock::new();
@@ -56,47 +54,37 @@ fn state() -> &'static Mutex<CatalogState> {
     STATE.get_or_init(|| Mutex::new(CatalogState::default()))
 }
 
-/// Returns the catalog downloaded on this device, read from storage on first use.
+/// Loads the bundled snapshot and any complete device download on first use, without HTTP.
 pub(crate) fn currentCatalog() -> Option<Arc<ModelsDevCatalog>> {
     let mut state = state().lock().expect("model catalog state lock poisoned");
     if !state.loaded {
-        state.loaded = true;
         loadStoredCatalog(&mut state);
+        state
+            .catalog
+            .get_or_insert_with(|| Arc::new(bundledCatalog()));
+        state.loaded = true;
     }
     state.catalog.clone()
 }
 
-/// Waits for the first complete catalog, sharing an in-flight download with other callers.
-/// A new call can retry a failed first download without the background retry delay.
+/// Returns the active catalog immediately, even while a background download is in flight.
 pub(crate) fn requireCatalog() -> Result<Arc<ModelsDevCatalog>, String> {
-    currentCatalog();
-    let attempts = {
-        let state = state().lock().expect("model catalog state lock poisoned");
-        if let Some(catalog) = &state.catalog {
-            return Ok(catalog.clone());
-        }
-        state.downloadAttempts
-    };
-    let _download = DOWNLOAD.lock().expect("model catalog download lock poisoned");
-    {
-        let state = state().lock().expect("model catalog state lock poisoned");
-        if state.catalog.is_some() || state.downloadAttempts != attempts {
-            return requiredCatalogResult(&state);
-        }
-    }
-    downloadCatalog();
-    requiredCatalogResult(&state().lock().expect("model catalog state lock poisoned"))
+    Ok(currentCatalog().expect("the bundled model catalog is always available"))
 }
 
-/// Reports an unavailable catalog instead of interpreting missing facts as disabled capabilities.
-fn requiredCatalogResult(state: &CatalogState) -> Result<Arc<ModelsDevCatalog>, String> {
-    match &state.catalog {
-        Some(catalog) => Ok(catalog.clone()),
-        None => Err(format!(
-            "Model capability catalog is not ready; retry after downloading models.dev: {}",
-            state.lastError.as_deref().unwrap_or("no complete catalog downloaded")
-        )),
-    }
+/// Decodes the validated snapshot shipped with this runtime, never persisting it as a download.
+fn bundledCatalog() -> ModelsDevCatalog {
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(BUNDLED_CATALOG)
+        .read_to_end(&mut bytes)
+        .expect("decode bundled models.dev catalog");
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("parse bundled models.dev catalog");
+    ModelsDevCatalog::parse(
+        &serde_json::to_vec(&bundle["providers"]).expect("encode bundled providers"),
+        &serde_json::to_vec(&bundle["models"]).expect("encode bundled models"),
+    )
+    .expect("index bundled models.dev catalog")
 }
 
 /// Reports when the catalog in use was downloaded and why the last download failed.
@@ -112,7 +100,9 @@ pub(crate) fn catalogStatus() -> ModelCatalogStatus {
 /// Downloads the catalog now and reports the result.
 pub(crate) fn refreshCatalog() -> ModelCatalogStatus {
     {
-        let _download = DOWNLOAD.lock().expect("model catalog download lock poisoned");
+        let _download = DOWNLOAD
+            .lock()
+            .expect("model catalog download lock poisoned");
         downloadCatalog();
     }
     catalogStatus()
@@ -123,7 +113,9 @@ pub(crate) fn refreshCatalogIfStale() {
     if !needsDownload() {
         return;
     }
-    let _download = DOWNLOAD.lock().expect("model catalog download lock poisoned");
+    let _download = DOWNLOAD
+        .lock()
+        .expect("model catalog download lock poisoned");
     // Another caller may have downloaded it while this one waited.
     if needsDownload() {
         downloadCatalog();
@@ -138,7 +130,10 @@ pub(crate) fn startKeepingFresh() {
     let scheduled = defaultHostRuntimeTaskSchedulerHost()
         .scheduleHostRuntimeTask("model-catalog-refresh", Box::new(checkAndReschedule));
     if let Err(error) = scheduled {
-        AppLogger::e(LOG_TAG, &format!("model catalog check not scheduled: {error}"));
+        AppLogger::e(
+            LOG_TAG,
+            &format!("model catalog check not scheduled: {error}"),
+        );
     }
 }
 
@@ -151,7 +146,10 @@ fn checkAndReschedule() {
         Box::new(checkAndReschedule),
     );
     if let Err(error) = scheduled {
-        AppLogger::e(LOG_TAG, &format!("model catalog check not scheduled: {error}"));
+        AppLogger::e(
+            LOG_TAG,
+            &format!("model catalog check not scheduled: {error}"),
+        );
     }
 }
 
@@ -180,7 +178,6 @@ fn downloadCatalog() {
         Ok((catalog, updatedAt))
     });
     let mut state = state().lock().expect("model catalog state lock poisoned");
-    state.downloadAttempts += 1;
     match downloaded {
         Ok((catalog, updatedAt)) => {
             state.catalog = Some(Arc::new(catalog));
@@ -190,7 +187,10 @@ fn downloadCatalog() {
             AppLogger::i(LOG_TAG, "models.dev catalog downloaded");
         }
         Err(error) => {
-            AppLogger::w(LOG_TAG, &format!("models.dev catalog download failed: {error}"));
+            AppLogger::w(
+                LOG_TAG,
+                &format!("models.dev catalog download failed: {error}"),
+            );
             state.lastError = Some(error);
             state.lastFailureAt = Some(currentTimeMillis());
         }
@@ -251,7 +251,7 @@ fn storeCatalog(providerCatalog: &[u8], labCatalog: &[u8], updatedAt: i64) -> Re
         .map_err(|error| error.message)
 }
 
-/// Reads the stored catalog into the state; a catalog never downloaded leaves it empty.
+/// Replaces the bundled snapshot only with a complete, valid device download.
 fn loadStoredCatalog(state: &mut CatalogState) {
     let storage = defaultRuntimeStorageHost();
     let stampPath = cachePath(STAMP_FILE);
@@ -263,7 +263,9 @@ fn loadStoredCatalog(state: &mut CatalogState) {
                 return Ok(None);
             }
             let stamp: serde_json::Value = serde_json::from_slice(
-                &storage.readBytes(&stampPath).map_err(|error| error.message)?,
+                &storage
+                    .readBytes(&stampPath)
+                    .map_err(|error| error.message)?,
             )
             .map_err(|error| format!("{STAMP_FILE}: {error}"))?;
             let updatedAt = stamp
@@ -286,7 +288,10 @@ fn loadStoredCatalog(state: &mut CatalogState) {
         }
         Ok(None) => {}
         Err(error) => {
-            AppLogger::w(LOG_TAG, &format!("stored models.dev catalog unreadable: {error}"));
+            AppLogger::w(
+                LOG_TAG,
+                &format!("stored models.dev catalog unreadable: {error}"),
+            );
             state.lastError = Some(error);
         }
     }

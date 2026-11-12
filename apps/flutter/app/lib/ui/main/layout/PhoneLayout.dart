@@ -63,12 +63,15 @@ class _PhoneLayoutState extends State<PhoneLayout>
   static const double _noBouncyDampingRatio = 1.0;
   static const double _springStiffness = 1000;
   static const double _dragThreshold = 40;
+  static const double _edgeSwipeWidth = 24;
 
   late final AnimationController _drawerProgressController;
   final ValueNotifier<bool> _drawerIsAnimating = ValueNotifier<bool>(false);
   final ValueNotifier<int> _contentActivation = ValueNotifier<int>(0);
   double _currentDrag = 0;
   double _verticalDrag = 0;
+  final Set<int> _touchPointers = <int>{};
+  Offset? _edgeSwipeStart;
 
   /// Connects the drawer state to its spring animation and motion lifecycle.
   @override
@@ -86,6 +89,9 @@ class _PhoneLayoutState extends State<PhoneLayout>
   @override
   void didUpdateWidget(covariant PhoneLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedRouteId != widget.selectedRouteId) {
+      _edgeSwipeStart = null;
+    }
     if (oldWidget.drawerOpenState != widget.drawerOpenState) {
       oldWidget.drawerOpenState.removeListener(_animateDrawerProgress);
       widget.drawerOpenState.addListener(_animateDrawerProgress);
@@ -113,6 +119,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
 
   /// Retargets the drawer spring from its current position and velocity.
   void _animateDrawerProgress() {
+    _edgeSwipeStart = null;
     final target = widget.drawerOpenState.value ? 1.0 : 0.0;
     final dampingRatio = widget.drawerOpenState.value
         ? _lowBouncyDampingRatio
@@ -172,6 +179,44 @@ class _PhoneLayoutState extends State<PhoneLayout>
     _verticalDrag = 0;
   }
 
+  /// Observes edge touches without competing with embedded page recognizers.
+  void _handleEdgePointerDown(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.touch) return;
+    _touchPointers.add(event.pointer);
+    _edgeSwipeStart = null;
+    if (_touchPointers.length != 1 ||
+        widget.drawerOpenState.value ||
+        _drawerProgressController.isAnimating ||
+        event.localPosition.dx < 0 ||
+        event.localPosition.dx > _edgeSwipeWidth ||
+        _startsInDrawerGestureExcludedRegion(event)) {
+      return;
+    }
+    _edgeSwipeStart = event.localPosition;
+  }
+
+  /// Opens once for a rightward edge swipe and abandons vertical or leftward drags.
+  void _handleEdgePointerMove(PointerMoveEvent event) {
+    final start = _edgeSwipeStart;
+    if (start == null || !_touchPointers.contains(event.pointer)) return;
+    final delta = event.localPosition - start;
+    if (delta.dx < -kTouchSlop ||
+        (delta.dy.abs() > kTouchSlop && delta.dy.abs() >= delta.dx.abs())) {
+      _edgeSwipeStart = null;
+      return;
+    }
+    if (delta.dx > _dragThreshold && delta.dx > delta.dy.abs() * 1.5) {
+      _edgeSwipeStart = null;
+      if (!widget.drawerOpenState.value) widget.onOpenDrawer();
+    }
+  }
+
+  /// Ends touch tracking on release or cancellation, including multi-touch sequences.
+  void _handleEdgePointerEnd(PointerEvent event) {
+    _touchPointers.remove(event.pointer);
+    _edgeSwipeStart = null;
+  }
+
   /// Builds retained content layers and animates their drawer presentation.
   @override
   Widget build(BuildContext context) {
@@ -181,7 +226,14 @@ class _PhoneLayoutState extends State<PhoneLayout>
         child: DrawerMotionScope(
           isAnimating: _drawerIsAnimating,
           contentActivation: _contentActivation,
-          child: widget.content,
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _handleEdgePointerDown,
+            onPointerMove: _handleEdgePointerMove,
+            onPointerUp: _handleEdgePointerEnd,
+            onPointerCancel: _handleEdgePointerEnd,
+            child: widget.content,
+          ),
         ),
       ),
       drawerContent: RepaintBoundary(
@@ -392,33 +444,29 @@ class _DrawerHorizontalDragGestureRecognizer
     if (!super.isPointerAllowed(event)) {
       return false;
     }
-    return !_startsInExcludedRegion(event);
+    return !_startsInDrawerGestureExcludedRegion(event);
   }
 
   /// Applies the same exclusion policy to pointer pan and zoom gestures.
   @override
   bool isPointerPanZoomAllowed(PointerPanZoomStartEvent event) {
     return super.isPointerPanZoomAllowed(event) &&
-        !_startsInExcludedRegion(event);
+        !_startsInDrawerGestureExcludedRegion(event);
   }
+}
 
-  /// Resolves gesture exclusions using the transformed hit-test path.
-  bool _startsInExcludedRegion(PointerEvent event) {
-    // Reject before entering the arena, not in onUpdate: winning the arena
-    // would already cancel the text field's cursor/selection recognizers.
-    // Use the actual hit-test path so zoom and animated transforms are honored.
-    final result = HitTestResult();
-    RendererBinding.instance.hitTestInView(
-      result,
-      event.position,
-      event.viewId,
-    );
-    return result.path.any(
-      (entry) =>
-          entry.target is RenderEditable ||
-          DrawerGestureExclusion.containsTarget(entry.target),
-    );
-  }
+/// Resolves gesture exclusions using the transformed hit-test path.
+bool _startsInDrawerGestureExcludedRegion(PointerEvent event) {
+  // Reject before entering the arena, not in onUpdate: winning the arena
+  // would already cancel the text field's cursor/selection recognizers.
+  // Use the actual hit-test path so zoom and animated transforms are honored.
+  final result = HitTestResult();
+  RendererBinding.instance.hitTestInView(result, event.position, event.viewId);
+  return result.path.any(
+    (entry) =>
+        entry.target is RenderEditable ||
+        DrawerGestureExclusion.containsTarget(entry.target),
+  );
 }
 
 class _PhoneLayoutAnimatedChild extends StatelessWidget {

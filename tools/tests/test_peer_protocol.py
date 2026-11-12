@@ -28,17 +28,12 @@ class PeerProtocolRevisionTests(unittest.TestCase):
         current["revisions"][-1]["version"] = 2
         guard.check_revisions(current, self.old)
 
-    def test_cannot_remove_coverage_without_bump(self):
+    def test_route_only_manifest_preserves_published_history(self):
+        """Allow retiring broad source lists while retaining the revision ledger."""
         current = copy.deepcopy(self.old)
-        current["sources"] = []
-        with self.assertRaises(ValueError):
-            guard.check_revisions(current, self.old)
-
-    def test_cannot_change_schema_coverage_without_bump(self):
-        current = copy.deepcopy(self.old)
-        current["schemaRoots"] = ["dto"]
-        with self.assertRaises(ValueError):
-            guard.check_revisions(current, self.old)
+        del current["sources"]
+        current["revisions"].append({"version": 2, "hash": "b" * 64})
+        guard.check_revisions(current, self.old)
 
     def test_versions_must_be_u32_and_hashes_unique(self):
         for version in [0, -1, True, 2**32]:

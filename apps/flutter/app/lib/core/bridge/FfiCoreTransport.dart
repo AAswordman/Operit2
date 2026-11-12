@@ -47,7 +47,7 @@ class FfiCoreTransport implements CoreByteTransport {
   Future<_FfiConnection>? _opening;
   bool _closed = false;
 
-  /// Attaches once to the runtime owned by the registered platform host.
+  /// Shares one live connection and opens a new one after a failed session closes.
   Future<_FfiConnection> _connection() {
     if (_closed) throw StateError('Core FFI transport is closed');
     return _opening ??= _connect().catchError((Object error, StackTrace stack) {
@@ -69,7 +69,10 @@ class FfiCoreTransport implements CoreByteTransport {
       'operit/runtime',
     ).invokeMethod<String>('connectCoreFfi');
     if (encoded == null) throw StateError('Host returned no FFI descriptor');
-    return _FfiConnection(jsonDecode(encoded) as Map<String, dynamic>);
+    return _FfiConnection(
+      jsonDecode(encoded) as Map<String, dynamic>,
+      onClosed: () => _opening = null,
+    );
   }
 
   /// Dispatches directly through the function table after host initialization.
@@ -96,8 +99,11 @@ class FfiCoreTransport implements CoreByteTransport {
 
 class _FfiConnection implements Finalizable {
   /// Binds the versioned ABI and registers a VM-owned port for asynchronous replies.
-  _FfiConnection(Map<String, dynamic> descriptor) {
-    if (descriptor['version'] != 3 || NativeApi.majorVersion != 2) {
+  _FfiConnection(
+    Map<String, dynamic> descriptor, {
+    required void Function() onClosed,
+  }) : _onClosed = onClosed {
+    if (descriptor['version'] != 4 || NativeApi.majorVersion != 2) {
       throw StateError('Unsupported Core FFI or Dart native API version');
     }
     _session = Pointer<Void>.fromAddress(_address(descriptor, 'session'));
@@ -110,6 +116,11 @@ class _FfiConnection implements Finalizable {
     _free = Pointer<NativeFunction<_FreeNative>>.fromAddress(
       _address(descriptor, 'free'),
     ).asFunction<_Free>();
+    _reportFailure =
+        Pointer<
+              NativeFunction<Void Function(Pointer<Uint8>, UintPtr)>
+            >.fromAddress(_address(descriptor, 'reportFailure'))
+            .asFunction<void Function(Pointer<Uint8>, int)>();
     _bufferAllocate =
         Pointer<NativeFunction<Pointer<Void> Function(UintPtr)>>.fromAddress(
           _address(descriptor, 'bufferAllocate'),
@@ -151,7 +162,7 @@ class _FfiConnection implements Finalizable {
       _port.sendPort.nativePort,
     )) {
       close();
-      throw StateError('Core FFI connection was already attached');
+      throw StateError('Unable to attach Core FFI connection');
     }
     _port.listen(_receive);
   }
@@ -166,10 +177,12 @@ class _FfiConnection implements Finalizable {
   }
 
   final ReceivePort _port = ReceivePort('operit-core-ffi');
+  final void Function() _onClosed;
   late final Pointer<Void> _session;
   late final _Submit _submit;
   late final _Allocate _allocate;
   late final _Free _free;
+  late final void Function(Pointer<Uint8>, int) _reportFailure;
   late final Pointer<Void> Function(int) _bufferAllocate;
   late final Pointer<Uint8> Function(Pointer<Void>) _bufferData;
   late final void Function(Pointer<Void>) _bufferSeal;
@@ -331,15 +344,37 @@ class _FfiConnection implements Finalizable {
 
   /// Routes one uniformly batched delivery while retaining each frame's own attachments.
   void _receive(dynamic message) {
+    var index = -1;
     try {
       final frames = message as List<dynamic>;
       if (frames.isEmpty) throw const FormatException('Empty Core FFI batch');
-      for (final frame in frames) {
-        _receiveFrame(frame as List<dynamic>);
+      for (index = 0; index < frames.length; index++) {
+        _receiveFrame(frames[index] as List<dynamic>);
       }
     } catch (error, stack) {
-      close(error, stack);
+      close(error, stack, _failureContext(message, index));
     }
+  }
+
+  /// Describes only the failing envelope header without logging application payloads.
+  String _failureContext(dynamic message, int index) {
+    var context = 'batchType=${message.runtimeType} batchIndex=$index';
+    if (message is! List) return context;
+    context += ' batchLength=${message.length}';
+    if (index < 0 || index >= message.length) return context;
+    final frame = message[index];
+    context += ' frameType=${frame.runtimeType}';
+    if (frame is! List || frame.isEmpty || frame[0] is! Uint8List) {
+      return context;
+    }
+    final bytes = frame[0] as Uint8List;
+    context += ' envelopeLength=${frame.length} bytes=${bytes.length}';
+    if (bytes.length >= 9) {
+      context +=
+          ' kind=${bytes[0]} '
+          'id=${ByteData.sublistView(bytes, 1, 9).getInt64(0, Endian.little)}';
+    }
+    return context;
   }
 
   /// Adopts one frame's receipts and routes its connection-local correlation id.
@@ -405,17 +440,24 @@ class _FfiConnection implements Finalizable {
   }
 
   /// Fails pending work and detaches native resources exactly once.
-  void close([Object? error, StackTrace? stack]) {
+  void close([Object? error, StackTrace? stack, String? context]) {
     if (_closed) return;
     _closed = true;
     if (error != null) {
-      ClientLogger.e(
+      final bytes = utf8.encode(
         'Core FFI connection failed pendingRequests=${_pending.length} '
-        'activeWatches=${_watches.length}',
-        tag: 'CoreFfiTransport',
-        error: error,
-        stackTrace: stack,
+        'activeWatches=${_watches.length} '
+        'at=${DateTime.now().toIso8601String()} session=${_session.address} '
+        'nextRequest=$_nextRequest pendingIds=${_pending.keys.take(8).toList()} '
+        '$context\n$error\nstackTrace=$stack',
       );
+      final pointer = _allocate(bytes.length);
+      try {
+        pointer.asTypedList(bytes.length).setAll(0, bytes);
+        _reportFailure(pointer, bytes.length);
+      } finally {
+        _free(pointer, bytes.length);
+      }
     }
     final failure = error ?? StateError('Core FFI connection is closed');
     _port.close();
@@ -431,6 +473,15 @@ class _FfiConnection implements Finalizable {
     for (final controller in controllers) {
       controller.addError(failure, stack);
       unawaited(controller.close());
+    }
+    _onClosed();
+    if (error != null && ClientLogger.isInitialized) {
+      ClientLogger.e(
+        'Core FFI connection failed $context',
+        tag: 'CoreFfiTransport',
+        error: error,
+        stackTrace: stack,
+      );
     }
   }
 }

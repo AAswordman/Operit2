@@ -34,14 +34,15 @@ class ModuleFixture:
         self.elf = b"\x7fELF\x02\x01" + bytes(12) + (183).to_bytes(2, "little")
 
     def apk_fixture(self, *, compatible=True, valid_checksum=True, missing_library=None, invalid_library=None,
-                    with_main=True, with_jni=True):
+                    with_main=True, with_jni=True, application_id="app.operit.module"):
         """Write a fake application with exact module role, entry-point and library markers."""
         rootfs = b"test rootfs payload"
         checksum = hashlib.sha256(rootfs).hexdigest() if valid_checksum else "0" * 64
         with zipfile.ZipFile(self.apk, "w") as archive:
             archive.writestr("classes.dex", b"Lapp/operit/ModuleMain;" if with_main else b"Lapp/operit/MainActivity;")
             if compatible:
-                archive.writestr("assets/operit-android-module.json", json.dumps(builder.APP_MARKER))
+                marker = {**builder.APP_MARKER, "applicationId": application_id}
+                archive.writestr("assets/operit-android-module.json", json.dumps(marker))
             for name in ["libbash.so", "liboperit_busybox.so", "liboperit_proot.so", "liboperit_loader.so",
                          "liboperit_local_llm.so", "liboperit_flutter_bridge.so", "libapp.so", "libflutter.so"]:
                 if name == missing_library:
@@ -98,6 +99,13 @@ class ModuleApplicationTests(ModuleFixture, unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     builder.assemble(self.apk, self.output)
                 self.assertFalse(self.output.exists())
+
+    def test_old_shared_package_module_is_rejected(self):
+        """Reject an old module APK that would replace the ordinary App instead of coexisting."""
+        self.apk_fixture(application_id="app.operit")
+        with self.assertRaisesRegex(ValueError, "app.operit.module"):
+            builder.assemble(self.apk, self.output)
+        self.assertFalse(self.output.exists())
 
     def test_zip_destination_and_existing_output_are_rejected(self):
         """Keep the module product a directory and preserve already published output files."""
@@ -215,7 +223,7 @@ class ModuleLifecycleTests(ModuleFixture, unittest.TestCase):
         self.environment = {**os.environ, "RUNTIME_ARGS": self.args_file.as_posix(),
                             "PATH": str(Path(MODULE_SHELL).parent) + os.pathsep + os.environ["PATH"],
                             "MOCK_PACKAGE_PATH": "package:" + self.system_apk.as_posix(),
-                            "MOCK_PACKAGE_INFO": "package:app.operit uid:10234"}
+                            "MOCK_PACKAGE_INFO": "package:app.operit.module uid:10234"}
 
     def control(self, command):
         """Run the real controller with strict PackageManager and app_process command doubles."""
@@ -227,15 +235,15 @@ class ModuleLifecycleTests(ModuleFixture, unittest.TestCase):
         script = script.replace('/system/bin/app_process "-Djava.library.path=', 'mock_app_process "-Djava.library.path=')
         commands = '''
 pm() {
-    [ "$*" = 'path --user 0 app.operit' ] || return 90
+    [ "$*" = 'path --user 0 app.operit.module' ] || return 90
     printf '%s\\n' "$MOCK_PACKAGE_PATH"
 }
 cmd() {
-    [ "$*" = 'package list packages --user 0 -s -U app.operit' ] || return 91
+    [ "$*" = 'package list packages --user 0 -s -U app.operit.module' ] || return 91
     printf '%s\\n' "$MOCK_PACKAGE_INFO"
 }
 am() {
-    [ "$*" = 'start --user 0 -n app.operit/.MainActivity' ] || return 92
+    [ "$*" = 'start --user 0 -n app.operit.module/app.operit.MainActivity' ] || return 92
     echo 'Activity launched'
 }
 mock_app_process() {
@@ -303,13 +311,30 @@ unzip() {
 
     def test_data_partition_override_is_rejected_without_starting_runtime(self):
         """Reject an overriding APK without uninstalling, migrating or running another application."""
-        self.environment["MOCK_PACKAGE_PATH"] = "package:/data/app/app.operit/base.apk"
+        self.environment["MOCK_PACKAGE_PATH"] = "package:/data/app/app.operit.module/base.apk"
         result = self.control("supervise")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Expected mounted system client", result.stderr)
         self.assertEqual(json.loads((self.data / "run/status.json").read_text())["state"], "failed")
         self.assertFalse(self.args_file.exists())
         self.assertFalse((self.data / "run/supervisor.pid").exists())
+
+    def test_coinstalled_main_app_uid_is_not_used_by_module(self):
+        """Resolve only the module UID when PackageManager also lists the ordinary App."""
+        self.environment["MOCK_PACKAGE_INFO"] = "package:app.operit uid:10567\npackage:app.operit.module uid:10234"
+        started = self.control("supervise")
+        self.assertEqual(started.returncode, 0, started.stderr)
+        arguments = self.args_file.read_text().splitlines()
+        self.assertEqual(arguments[-3], "10234")
+        self.assertNotIn("10567", arguments)
+
+    def test_main_app_cannot_supply_module_client_uid(self):
+        """Refuse to publish module credentials to the ordinary App when the module is absent."""
+        self.environment["MOCK_PACKAGE_INFO"] = "package:app.operit uid:10567"
+        started = self.control("supervise")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("Cannot resolve system client UID", started.stderr)
+        self.assertFalse(self.args_file.exists())
 
     def test_missing_mount_or_system_uid_is_rejected(self):
         """Reject incomplete system application registration before launching the shared runtime."""

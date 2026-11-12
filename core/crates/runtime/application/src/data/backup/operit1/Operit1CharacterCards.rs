@@ -623,13 +623,23 @@ fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsCon
             updatedAt: now,
         }));
     }
-    let httpConfigRaw = requiredPreferenceString(
-        preferences,
-        "tts_http_config",
-        &format!("Operit1 TTS 服务缺少 HTTP 配置：{serviceType}"),
-    )?;
-    let httpConfig: Operit1TtsHttpConfig = serde_json::from_str(httpConfigRaw)
+    let httpConfigRaw = match optionalPreferenceString(preferences, "tts_http_config")? {
+        Some(raw) => raw,
+        // Kotlin's absent HTTP preset has an empty URL and represents an unconfigured service.
+        None if serviceType == "HTTP_TTS" => return Ok(None),
+        None => return Err(format!("Operit1 TTS 服务缺少 HTTP 配置：{serviceType}")),
+    };
+    let httpConfig: Operit1TtsHttpConfig = serde_json::from_str(&httpConfigRaw)
         .map_err(|error| format!("Operit1 TTS HTTP 配置格式不正确：{error}"))?;
+    // Kotlin permits saving an empty HTTP URL and validates it only when speech initializes.
+    // It is not a usable provider to adopt, so leave the target speech selection untouched.
+    if serviceType == "HTTP_TTS" && httpConfig.urlTemplate.trim().is_empty() {
+        AppLogger::i(
+            "Operit1SnapshotImport",
+            "Source HTTP TTS is unconfigured; no speech configuration to import",
+        );
+        return Ok(None);
+    }
     use Operit1TtsConfigSource::{Preferences, ProviderCatalog};
     use Operit1TtsVoiceFormat::{Literal, ModelQualified};
     // Declare source-field ownership once; the conversion below follows these contracts uniformly.

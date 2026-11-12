@@ -124,14 +124,21 @@ Read-only previews use `src/ui-entity-preview.ts` for a continuous reading layou
 portrait and identity, attached tags, opening statement and populated text sections,
 with named configuration summaries behind one expandable row. Group previews show
 ordered member portraits and descriptions. Edit mode retains the main-style tabs.
-Management's WebView list delegates via `openEntity`; its old entity dialog
-renderers and contracts have been removed. Closing the native surface emits
-`character-entity-closed` so management reloads genuine records, retaining its
-WebView instance. Memory/import dialogs remain independent. Browser tests can run with
+Management lists, shared-library controls, USER.md, memory editors, imports,
+exports, attachment selection and owner settings are ordinary Compose DSL in
+`src/ui-management.ts` and `src/ui-memory-*.ts`. The original sections, separate
+owner graph/profile/settings entries, modal forms and graph inspector are retained.
+The character toolbar combines creation and import in the compact “添加” native
+menu beside “绑定对话”. Management reuses the same native entity editor and refreshes
+canonical records when a local transaction completes.
+
+Only the memory graph canvas uses an offline WebView. Its display-only bridge has
+exactly `load` and `select`; native DSL owns search, folder selection, overflow,
+inspector, camera controls and all mutations. Opening an editor/settings form removes
+the canvas platform view from the composition. Chat identity previews remain scoped
+by `identity.avatarAction`; application/chat title text is display-only.
+Browser tests exercise this canvas with
 `CHARACTER_CARDS_UI_BROWSER=webkit node --test tests/ui.test.mjs`.
-Chat identity previews remain available from avatars through the explicitly
-scoped `identity.avatarAction`. Application/chat title text is display-only and
-never opens that preview. The independent memory page is unchanged.
 
 ## Current Chat integration review
 
@@ -380,7 +387,7 @@ requires running the updated application.
 
 ### 原生实体弹窗
 
-从头像或角色侧栏打开的角色卡/群组预览和编辑由 `src/ui-entity-native.ts` 使用普通 Compose DSL 控件生成，不加载 WebView/HTML，也不复用宿主的角色业务控件。预览、编辑、删除确认和标签草稿在同一个原生 Dialog 中切换；保存使用原有主运行时请求，完成/取消仍使用真实的 PresentationV1 接收方。全屏/还原使用通用 `Dialog.properties.fullscreen`，全屏时移除平台弹窗边距并铺满可用窗口，而非扩大 WebView 内部元素。管理页列表仍保留 WebView，但创建、编辑、预览统一通过 `openEntity` 调用这一套原生实现；旧 WebView 角色卡/群组弹窗及其绑定、标签编辑实现已删除。记忆功能仍保留原有独立入口。
+从头像或角色侧栏打开的角色卡/群组预览和编辑由 `src/ui-entity-native.ts` 使用普通 Compose DSL 控件生成，不加载 WebView/HTML，也不复用宿主的角色业务控件。预览、编辑、删除确认和标签草稿在同一个原生 Dialog 中切换；保存使用原有主运行时请求，完成/取消仍使用真实的 PresentationV1 接收方。全屏/还原使用通用 `Dialog.properties.fullscreen`，全屏时移除平台弹窗边距并铺满可用窗口，而非扩大 WebView 内部元素。管理页列表、批量绑定、导入导出、共享记忆库、USER.md、记忆编辑与设置、记忆附件全部使用 DSL；角色页顶部“添加”菜单保留新建和导入两个入口。记忆页仍按全局设置、共享库、角色库排列，每个库保留图谱、用户资料、设置独立入口。只有图谱画布使用网页，其桥仅提供加载展示数据和节点/关系选择；所有按钮、表单与数据写入由 DSL 和主运行时负责。打开编辑或设置弹窗时移除画布 WebView，避免平台视图与原生表单叠加。
 
 ### 可选角色插件与普通模型聊天
 

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="operit_core_service_name">Operit 核心服务</string>
+    <string name="operit_core_service_status">核心服务正在后台运行</string>
+</resources>

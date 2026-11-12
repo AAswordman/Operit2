@@ -1773,10 +1773,10 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsModelCatalogNotDownloaded => '模型信息还没有下载';
+  String get settingsModelCatalogBundled => '使用内置模型信息，联网更新成功后自动替换';
 
   @override
-  String get settingsModelCatalogRetry => '重试';
+  String get settingsModelCatalogRetry => '更新';
 
   @override
   String get settingsModelCustomModel => '自定义模型';

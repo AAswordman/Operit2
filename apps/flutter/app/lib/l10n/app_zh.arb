@@ -885,8 +885,8 @@
       }
     }
   },
-  "settingsModelCatalogNotDownloaded": "模型信息还没有下载",
-  "settingsModelCatalogRetry": "重试",
+  "settingsModelCatalogBundled": "使用内置模型信息，联网更新成功后自动替换",
+  "settingsModelCatalogRetry": "更新",
   "settingsModelCustomModel": "自定义模型",
   "settingsModelModelId": "模型 ID",
   "settingsModelDuplicateModelId": "该模型已添加到当前供应商。",

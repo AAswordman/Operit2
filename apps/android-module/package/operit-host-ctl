@@ -13,13 +13,13 @@ umask 077
 resolve_client() {
     [ -f "$SYSTEM_APK" ] || { echo "System client is not mounted; check the KernelSU mount provider and reboot" >&2; return 1; }
     # Capture Binder output through pipes; private /data/adb log descriptors are not shareable.
-    PACKAGE_PATH=$(pm path --user 0 app.operit 2>&1)
+    PACKAGE_PATH=$(pm path --user 0 app.operit.module 2>&1)
     [ "$PACKAGE_PATH" = "package:$SYSTEM_APK" ] || {
         printf 'Expected mounted system client at %s; PackageManager reports: %s\n' "$SYSTEM_APK" "$PACKAGE_PATH" >&2
         return 1
     }
-    PACKAGE_INFO=$(cmd package list packages --user 0 -s -U app.operit 2>&1)
-    CLIENT_UID=$(printf '%s\n' "$PACKAGE_INFO" | sed -n 's/^package:app\.operit uid:\([0-9][0-9]*\)$/\1/p')
+    PACKAGE_INFO=$(cmd package list packages --user 0 -s -U app.operit.module 2>&1)
+    CLIENT_UID=$(printf '%s\n' "$PACKAGE_INFO" | sed -n 's/^package:app\.operit\.module uid:\([0-9][0-9]*\)$/\1/p')
     case "$CLIENT_UID" in ''|*[!0-9]*) printf 'Cannot resolve system client UID: %s\n' "$PACKAGE_INFO" >&2; return 1 ;; esac
 }
 
@@ -84,7 +84,7 @@ case "$1" in
         ;;
     open)
         resolve_client || exit 1
-        LAUNCH_OUTPUT=$(am start --user 0 -n app.operit/.MainActivity 2>&1)
+        LAUNCH_OUTPUT=$(am start --user 0 -n app.operit.module/app.operit.MainActivity 2>&1)
         LAUNCH_RESULT=$?
         printf '%s\n' "$LAUNCH_OUTPUT"
         exit "$LAUNCH_RESULT"

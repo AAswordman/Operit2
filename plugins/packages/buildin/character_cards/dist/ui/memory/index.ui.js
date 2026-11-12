@@ -44,50 +44,6 @@ __export(index_ui_exports, {
 });
 module.exports = __toCommonJS(index_ui_exports);
 
-// src/avatar-resources.ts
-function createAvatarResources(origin) {
-  const references = /* @__PURE__ */ new Map();
-  const files = /* @__PURE__ */ new Map();
-  const remote = /* @__PURE__ */ new Set();
-  let defaultPath = null;
-  let next = 0;
-  function source(path) {
-    return __async(this, null, function* () {
-      if (path === null) {
-        if (defaultPath === null) {
-          const pending = ToolPkg.readResource("character_default_avatar", "operit-avatar.png").then((path2) => {
-            if (path2.trim() === "") throw new Error("默认头像资源路径不能为空");
-            return path2;
-          });
-          defaultPath = pending;
-          pending.catch(() => {
-            if (defaultPath === pending) defaultPath = null;
-          });
-        }
-        path = yield defaultPath;
-      }
-      if (path.trim() === "") throw new Error("头像资源路径不能为空");
-      if (/^data:image\//i.test(path)) return path;
-      const existing = references.get(path);
-      if (existing !== void 0) return existing;
-      const reference = "avatars/" + ++next;
-      references.set(path, reference);
-      files.set(origin + reference, path);
-      if (/^https?:\/\//i.test(path)) remote.add(path);
-      return reference;
-    });
-  }
-  function intercept(request2) {
-    if (remote.has(request2.url) && !request2.isMainFrame && (request2.method === "GET" || request2.method === "HEAD")) return { action: "allow" };
-    const path = files.get(request2.url);
-    if (path === void 0) return null;
-    if (request2.isMainFrame || request2.method !== "GET" && request2.method !== "HEAD") return { action: "block" };
-    if (remote.has(path)) return { action: "rewrite", url: path };
-    return { action: "respond", response: { statusCode: 200, reasonPhrase: "OK", filePath: path } };
-  }
-  return { source, intercept };
-}
-
 // src/model-binding.ts
 function characterModelBindingMode(mode) {
   return mode === "FIXED_CONFIG" ? "FIXED_MODEL" : mode;
@@ -119,10 +75,33 @@ function assertObject(value, label) {
 function assertString(value, label) {
   if (typeof value !== "string") throw new Error(`${label} 必须是字符串`);
 }
+function assertBoolean(value, label) {
+  if (typeof value !== "boolean") throw new Error(`${label} 必须是布尔值`);
+}
+function assertNumber(value, label, min, max) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${label} 必须在 ${min} 到 ${max} 之间`);
+}
+function assertInteger(value, label, min) {
+  assertNumber(value, label, min, Number.MAX_SAFE_INTEGER);
+  if (!Number.isSafeInteger(value)) throw new Error(`${label} 必须是安全整数`);
+}
 function requireId(value, label) {
   assertString(value, label);
   if (value.trim() === "" || value !== value.trim()) throw new Error(`${label} 无效`);
   return value;
+}
+function assertMemorySettings(value) {
+  assertObject(value, "记忆设置");
+  assertInteger(value.autoSaveIntervalMinutes, "自动保存间隔", 1);
+  if (value.autoSaveIntervalMinutes > 30) throw new Error("自动保存间隔必须在 1 到 30 分钟之间");
+  assertInteger(value.nextAutoSaveRunAtMs, "下次自动保存时间", 0);
+  for (const field of ["memoryExtractionCustomRules", "cloudEmbeddingEndpoint", "cloudEmbeddingApiKey", "cloudEmbeddingModel"]) assertString(value[field], field);
+  for (const field of ["profileAutoUpdateEnabled", "profileAutoUpdateLocked", "cloudEmbeddingEnabled"]) assertBoolean(value[field], field);
+}
+function assertSearchConfig(value) {
+  assertObject(value, "记忆搜索设置");
+  if (value.scoreMode !== "BALANCED" && value.scoreMode !== "KEYWORD_FIRST" && value.scoreMode !== "SEMANTIC_FIRST") throw new Error("记忆评分模式无效");
+  for (const field of ["keywordWeight", "tagWeight", "vectorWeight", "edgeWeight"]) assertNumber(value[field], field, 0, Number.MAX_VALUE);
 }
 
 // src/chat-bindings.ts
@@ -1547,147 +1526,1031 @@ function initializationRecoveryUi(ctx, onRecovered) {
   return { panel: ctx.UI.Column({ key: "initialization-recovery-panel", fillMaxSize: true, padding: 20, spacing: 16 }, lines), reportFailure };
 }
 
-// src/ui-editor.ts
-function webArguments(value, expected) {
-  if (value.length !== 1 || !Array.isArray(value[0]) || value[0].length !== expected) throw new Error(`CharacterMemoryHost expects ${expected} arguments`);
-  return value[0];
+// src/ui-controls.ts
+function uiRequest(input) {
+  return ToolPkg.ipc.call("character-memory.request", input, { targetRuntime: "main" });
 }
-function renderScreen(ctx, definition2, requiredMode = null, managementView = "characters") {
-  const controller = ctx.createWebViewController("character-memory-web");
-  const [path, setPath] = ctx.useState("character-memory-html", "");
-  const [error, setError] = ctx.useState("character-memory-error", "");
-  const recovery = initializationRecoveryUi(ctx, () => {
-    dispose();
-    setPath("");
+function uiState(ctx, key, initial) {
+  const [state, setState] = ctx.useState(key, initial);
+  const live = ctx.useRef(key + ":live", state);
+  live.current = state;
+  function update(patch) {
+    live.current = { ...live.current, ...patch };
+    setState(live.current);
+  }
+  return { state, live, update };
+}
+function readUiJson(ctx) {
+  return __async(this, null, function* () {
+    const result = yield ctx.openFilePicker({ picker: "document", allowMultiple: false, mimeTypes: ["application/json"] });
+    if (result.cancelled) return null;
+    if (result.files.length !== 1) throw new Error("请选择一个 JSON 文件");
+    const file = yield Tools.Files.read(result.files[0].path);
+    const content = file.content.replace(/^\uFEFF/, "");
+    if (content.trim() === "") throw new Error("所选 JSON 文件为空");
+    return content;
   });
-  const ready = ctx.useRef("character-memory-ready", false);
-  const unsubscribe = ctx.useRef("character-memory-theme-subscription", null);
-  const [presentation] = ctx.useState("presentation", null);
-  const session = ctx.useRef("character-memory-screen-session", null);
-  if (session.current === null) session.current = createUiScreenSession(presentation);
-  const screenSession = session.current;
-  const [managed, setManaged] = ctx.useState("managed-entity", null);
-  const managedLive = ctx.useRef("managed-entity-live", managed);
-  managedLive.current = managed;
-  const nextManaged = ctx.useRef("managed-entity-counter", 0);
-  function finishEntity(result) {
-    managedLive.current = null;
-    setManaged(null);
-    void controller.evaluateJavascript("window.dispatchEvent(new CustomEvent('character-entity-closed', { detail: " + JSON.stringify(result) + " }));").catch((error2) => setError(String(error2)));
+}
+function uiNumber(value, label, min, max = Infinity, integer2 = false) {
+  const number2 = Number(value);
+  if (value.trim() === "" || !Number.isFinite(number2) || number2 < min || number2 > max || integer2 && !Number.isInteger(number2)) throw new Error(label + "的范围或格式无效");
+  return number2;
+}
+function uiDate(value, end) {
+  if (value === "") return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("日期格式应为 YYYY-MM-DD");
+  const [year, month, day] = value.split("-").map(Number), date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getTime() < 0) throw new Error("日期无效");
+  if (end) {
+    date.setDate(date.getDate() + 1);
+    return date.getTime() - 1;
   }
-  if (requiredMode !== null && screenSession.currentScreen().input.mode !== requiredMode) throw new Error("The attachment route requires an explicit attachment presentation");
-  const origin = "https://characters.operit.local/";
-  const avatars = ctx.useRef("character-memory-avatar-resources", createAvatarResources(origin)).current;
-  function applyTheme(theme) {
-    return __async(this, null, function* () {
-      if (ready.current) yield controller.evaluateJavascript(`window.applyCharacterMemoryTheme(${JSON.stringify(theme)});`);
-    });
+  return date.getTime();
+}
+function nativeUi(ctx, enabled = true) {
+  const colors = ctx.MaterialTheme.colorScheme;
+  const [size, setSize] = ctx.useState("character-ui-size", { width: 0, height: 0 });
+  const measure = ctx.Modifier.onSizeChanged((value) => {
+    if (value.width !== size.width || value.height !== size.height) setSize(value);
+  });
+  function text3(value, title = false, key) {
+    return ctx.UI.Text({ key, text: value, style: title ? "titleMedium" : "bodyMedium", color: title ? colors.onSurface : colors.onSurfaceVariant });
   }
+  function button(key, label, action, active = true) {
+    return ctx.UI.TextButton({ key, height: 38, text: label, enabled: enabled && active, onClick: action });
+  }
+  function primary(key, label, action, active = true) {
+    return ctx.UI.Button({ key, height: 38, text: label, enabled: enabled && active, onClick: action });
+  }
+  function iconButton(key, label, name, action, active = true) {
+    return ctx.UI.IconButton({ key, tooltip: label, width: 32, height: 32, enabled: enabled && active, contentPadding: { horizontal: 6, vertical: 6 }, onClick: action }, ctx.UI.Icon({ name, size: 20, tint: colors.onSurfaceVariant }));
+  }
+  function sectionAction(key, label, name, action, active = true) {
+    return ctx.UI.TextButton({ key, height: 32, enabled: enabled && active, contentPadding: { horizontal: 8, vertical: 4 }, onClick: action }, ctx.UI.Row({ spacing: 7, verticalAlignment: "center" }, [...name === "" ? [] : [ctx.UI.Icon({ name, size: 20, tint: colors.primary })], ctx.UI.Text({ text: label, fontSize: 13, fontWeight: "600", color: colors.primary })]));
+  }
+  function section(key, title, name, controls, children) {
+    return ctx.UI.Box({ key, fillMaxWidth: true, paddingBottom: 14 }, ctx.UI.Surface({ fillMaxWidth: true, color: colors.surfaceContainer.copy({ alpha: 0.65 }), shape: { cornerRadius: 16 }, modifier: ctx.Modifier.border(1, colors.outlineVariant.copy({ alpha: 0.36 }), { cornerRadius: 16 }) }, ctx.UI.Column({ fillMaxWidth: true, padding: size.width <= 600 ? 12 : 14, spacing: 0 }, [
+      ctx.UI.Row({ fillMaxWidth: true, height: 32, spacing: 10, verticalAlignment: "center" }, [ctx.UI.Icon({ name, size: 20, tint: colors.primary }), ctx.UI.Text({ text: title, fontSize: 16, fontWeight: "700", weight: 1, maxLines: 1 }), ctx.UI.FlowRow({ spacing: 2, runSpacing: 4, itemVerticalAlignment: "center" }, controls)]),
+      ctx.UI.Spacer({ height: 12 }),
+      ...children.flatMap((child, index) => index === 0 ? [child] : [ctx.UI.Spacer({ height: 8 }), child])
+    ])));
+  }
+  function tile(key, title, subtitle, badges, controls, active = false, onClick, avatar, name = "PersonOutline") {
+    const portraitImage = ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center", modifier: ctx.Modifier.clip({ type: "circle" }).background(active ? colors.primaryContainer : colors.surfaceContainerHighest) }, avatar ? ctx.UI.Image({ uri: avatar, width: 32, height: 32, contentScale: "crop" }) : ctx.UI.Icon({ name, size: 24 }));
+    const portrait = ctx.UI.Box({ width: 32, height: 32 }, [portraitImage, ...active && onClick ? [ctx.UI.Box({ modifier: ctx.Modifier.align("bottomEnd").clip({ type: "circle" }).background(colors.primary), width: 14, height: 14, contentAlignment: "center" }, ctx.UI.Icon({ name: "Check", size: 9, tint: colors.onPrimary }))] : []]);
+    const content = ctx.UI.Row({ key: key + "-open", ...size.width > 440 ? { weight: 1 } : { fillMaxWidth: true }, verticalAlignment: "center", spacing: 10, ...enabled && onClick ? { onClick } : {} }, [portrait, ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: title, fontSize: 14, fontWeight: "700", maxLines: 1, overflow: "ellipsis" }), ...subtitle === "" ? [] : [ctx.UI.Text({ text: subtitle, fontSize: 12, color: colors.onSurfaceVariant, maxLines: 1, overflow: "ellipsis" })], ctx.UI.FlowRow({ spacing: 6, runSpacing: 5 }, badges.map((label) => label === "当前使用" ? activePill() : ctx.UI.Box({ height: 20, contentAlignment: "center", paddingHorizontal: 7, modifier: ctx.Modifier.clip({ cornerRadius: 6 }).background(colors.onSurfaceVariant.copy({ alpha: 0.08 })) }, ctx.UI.Text({ text: label, fontSize: 11, color: colors.onSurfaceVariant }))))])]);
+    const actionRow = ctx.UI.FlowRow({ ...size.width > 440 ? {} : { fillMaxWidth: true }, horizontalArrangement: "end", spacing: 4, runSpacing: 4, itemVerticalAlignment: "center" }, controls);
+    const body = size.width > 440 ? ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 10, spacing: 8, verticalAlignment: "center" }, [content, actionRow]) : ctx.UI.Column({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 10, spacing: 14 }, [content, actionRow]);
+    return ctx.UI.Surface({ key, fillMaxWidth: true, color: active ? colors.primaryContainer.copy({ alpha: 0.16 }) : colors.surfaceContainerHighest.copy({ alpha: 0.28 }), shape: { cornerRadius: 12 }, modifier: ctx.Modifier.border(1, active ? colors.primary.copy({ alpha: 0.45 }) : colors.outlineVariant.copy({ alpha: 0.28 }), { cornerRadius: 12 }) }, body);
+  }
+  function activePill() {
+    return ctx.UI.Box({ width: 78, height: 28, contentAlignment: "center", modifier: ctx.Modifier.clip({ cornerRadius: 20 }).border(1, colors.primary.copy({ alpha: 0.32 }), { cornerRadius: 20 }).background(colors.primary.copy({ alpha: 0.08 })) }, ctx.UI.Text({ text: "当前使用", fontSize: 11, fontWeight: "700", color: colors.primary }));
+  }
+  function actions(children) {
+    return ctx.UI.FlowRow({ fillMaxWidth: true, spacing: 4, runSpacing: 4 }, children);
+  }
+  function field(key, label, value, change, lines = 1) {
+    return ctx.UI.Box({ key: key + "-box", fillMaxWidth: true, paddingTop: 8, paddingBottom: 8 }, ctx.UI.TextField({ key, label, value, readOnly: !enabled, decoration: { filled: false, isDense: true, cornerRadius: 8, borderColor: colors.outline, focusedBorderColor: colors.primary, contentPadding: { horizontal: 12, vertical: 14 } }, style: { fontSize: 14 }, singleLine: lines === 1, minLines: lines, maxLines: lines === 1 ? 1 : Math.max(lines, 12), onValueChange: (value2) => {
+      if (enabled) change(value2);
+    }, fillMaxWidth: true }));
+  }
+  function toggle(key, label, checked, change) {
+    return ctx.UI.Row({ key: key + "-row", fillMaxWidth: true, verticalAlignment: "center", spacing: 12, paddingVertical: 8 }, [ctx.UI.Text({ text: label, weight: 1 }), ctx.UI.Switch({ key, checked, enabled, onCheckedChange: change })]);
+  }
+  function list(key, children) {
+    return ctx.UI.LazyColumn({ key, weight: 1, fillMaxWidth: true }, children.map((child, index) => ctx.UI.Box({ key: key + ":" + String(child.props?.key ?? index), fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 6 }, child)));
+  }
+  function choices(key, label, selected, options, change) {
+    return ctx.UI.Column({ key, fillMaxWidth: true, spacing: 4 }, [...label === "" ? [] : [text3(label)], ctx.UI.FlowRow({ spacing: 6, runSpacing: 6 }, options.map((option) => ctx.UI.FilterChip({ key: key + ":" + option.id, selected: selected === option.id, enabled, label: ctx.UI.Text({ text: option.label, fontSize: 13 }), onClick: () => change(option.id) })))]);
+  }
+  function card(key, title, description, controls, onClick, avatar) {
+    return ctx.UI.Surface({ key, fillMaxWidth: true, color: colors.surfaceContainer, shape: { cornerRadius: 16 } }, ctx.UI.Column({ fillMaxWidth: true, padding: 16, spacing: 8 }, [
+      ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12, ...enabled && onClick ? { onClick } : {} }, [
+        ...avatar ? [ctx.UI.Image({ uri: avatar, width: 44, height: 44, contentScale: "crop", modifier: ctx.Modifier.clip({ cornerRadius: 12 }) })] : [],
+        ctx.UI.Column({ weight: 1, spacing: 4 }, [text3(title, true), ...description === "" ? [] : [text3(description)]])
+      ]),
+      actions(controls)
+    ]));
+  }
+  function menu(key, label, name, entries, iconOnly = false) {
+    return ctx.UI.MenuAnchor({ key, tooltip: label, itemHeight: 40, items: entries.map((entry) => ({ enabled: enabled && entry.enabled !== false })), anchor: ctx.UI.Row({ height: 32, paddingHorizontal: iconOnly ? 6 : 8, spacing: 7, verticalAlignment: "center" }, [ctx.UI.Icon({ name, size: 20, tint: colors.primary }), ...iconOnly ? [] : [ctx.UI.Text({ text: label, fontSize: 13, fontWeight: "600", color: colors.primary }), ctx.UI.Icon({ name: "ArrowDropDown", size: 16, tint: colors.primary })]]), onSelect: (index) => __async(null, null, function* () {
+      const entry = entries[index];
+      if (enabled && entry !== void 0 && entry.enabled !== false) yield entry.action();
+    }) }, entries.map((entry) => ctx.UI.Row({ key: entry.key, spacing: 10, verticalAlignment: "center" }, [ctx.UI.Icon({ name: entry.name, size: 20 }), ctx.UI.Text({ text: entry.label, fontSize: 13 })])));
+  }
+  function choose(key, label, selected, options, change, compact = false) {
+    if (compact) return ctx.UI.MenuAnchor({ key, tooltip: label, items: options.map(() => ({ enabled })), anchor: ctx.UI.Row({ height: 32, paddingHorizontal: 10, spacing: 8, verticalAlignment: "center", modifier: ctx.Modifier.border(1, colors.outlineVariant, { cornerRadius: 8 }) }, [ctx.UI.Icon({ name: "FolderOutlined", size: 16 }), ctx.UI.Text({ text: options.find((option) => option.id === selected).label, fontSize: 13 }), ctx.UI.Icon({ name: "KeyboardArrowDown", size: 16 })]), onSelect: (index) => {
+      if (enabled && options[index] !== void 0) change(options[index].id);
+    } }, options.map((option) => ctx.UI.Text({ text: option.label, fontSize: 13 })));
+    return ctx.UI.Box({ key: key + "-box", fillMaxWidth: true, paddingTop: 8, paddingBottom: 8 }, ctx.UI.DropdownMenu({ key, label, text: options.find((option) => option.id === selected)?.label ?? selected, enabled, fillMaxWidth: true, onClick: (index) => {
+      if (enabled && options[index] !== void 0) change(options[index].id);
+    } }, options.map((option) => ctx.UI.Text({ text: option.label, paddingVertical: 8 }))));
+  }
+  function score2(key, label, value, change) {
+    return ctx.UI.Column({ fillMaxWidth: true, spacing: 4 }, [text3(label + " " + Number(value).toFixed(2)), ctx.UI.Slider({ key, fillMaxWidth: true, enabled, min: 0, max: 1, divisions: 100, value: Number(value), label: Number(value).toFixed(2), onValueChange: (number2) => change(number2.toFixed(2)) })]);
+  }
+  function dialog(key, title, body, footer, close, variant = "normal", onLoad, header, desiredHeight) {
+    const phone = size.width <= 600, margin = phone && variant === "graph" ? 0 : phone ? 24 : 48;
+    const width = Math.max(0, Math.min(variant === "compact" ? 500 : variant === "graph" ? 1400 : 760, size.width - margin));
+    const height = Math.max(0, Math.min(desiredHeight ?? (variant === "compact" ? 240 : variant === "normal" ? 620 : variant === "large" ? 820 : size.height), size.height - margin));
+    return ctx.UI.Dialog({ key, onLoad, closeOnDismissRequest: false, onDismissRequest: () => {
+      if (enabled) close();
+    }, containerColor: colors.surface.copy({ alpha: 0 }), properties: { fullscreen: true, usePlatformDefaultWidth: false, dismissOnClickOutside: false } }, ctx.UI.Surface({ width, height, color: variant === "graph" ? colors.surface : colors.surfaceContainerHigh, shape: { cornerRadius: phone && variant === "graph" ? 0 : phone ? 20 : 24 } }, ctx.UI.Column({ fillMaxSize: true }, [
+      header ?? ctx.UI.Row({ fillMaxWidth: true, paddingStart: phone ? 18 : 22, paddingTop: phone ? 16 : 18, paddingEnd: 12, paddingBottom: 10, verticalAlignment: "center" }, [ctx.UI.Text({ text: title, fontSize: phone ? 18 : 20, fontWeight: "700", weight: 1 }), iconButton(key + "-close", "关闭", "Close", close)]),
+      ...enabled ? [] : [ctx.UI.LinearProgressIndicator({ fillMaxWidth: true })],
+      ctx.UI.Box({ weight: 1, fillMaxWidth: true }, body),
+      ...footer.length === 0 ? [] : [ctx.UI.FlowRow({ fillMaxWidth: true, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 18, horizontalArrangement: "end", spacing: 8, runSpacing: 8 }, footer)]
+    ])));
+  }
+  return { primary, menu, size, measure, choose, score: score2, dialog, text: text3, button, iconButton, sectionAction, section, tile, activePill, actions, field, toggle, list, choices, card };
+}
+
+// src/ui-memory-graph.ts
+function renderMemoryGraph(ctx, key, display, select, fail) {
+  const controller = ctx.createWebViewController(key + ":controller");
+  const [path, setPath] = ctx.useState(key + ":path", "");
+  const current = ctx.useRef(key + ":display", display);
+  current.current = display;
+  const ready = ctx.useRef(key + ":ready", false);
+  const active = ctx.useRef(key + ":active", true);
+  const selectLive = ctx.useRef(key + ":select", select);
+  selectLive.current = select;
+  const origin = "https://memory-graph.operit.local/";
+  ctx.useEffect(key + ":lifetime", () => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      ready.current = false;
+    };
+  }, []);
   function initialize() {
     return __async(this, null, function* () {
+      ready.current = false;
       try {
-        controller.addJavascriptInterface("CharacterMemoryHost", {
-          /** Loads the initial route, palette and domain aggregate in one existing bridge invocation. */
-          loadScreen: (...args) => __async(null, null, function* () {
-            webArguments(args, 0);
-            const current = screenSession.currentScreen();
-            const screen = current.input.mode === "manage" && managementView === "memory" ? { ...current, input: { mode: "manage", view: "memory" } } : current;
-            try {
-              const snapshot = yield ToolPkg.ipc.call("character-memory.request", { action: "snapshot" }, { targetRuntime: "main" });
-              ready.current = true;
-              return { theme: ctx.Theme.getCurrent(), screen, snapshot };
-            } catch (failure) {
-              if (screen.input.mode === "manage" && managementView === "characters") recovery.reportFailure(failure);
-              throw failure;
-            }
-          }),
-          /** Routes all editing operations through this package's main runtime. */
-          request: (...args) => __async(null, null, function* () {
-            const [request2] = webArguments(args, 1);
-            const decoded = record(request2, "character-memory.request");
-            return ToolPkg.ipc.call("character-memory.request", decoded, { targetRuntime: "main" });
-          }),
-          /** Returns an explicit completion action result for this exact presented screen. */
-          completeScreen: (...args) => {
-            const [result] = webArguments(args, 1);
-            const current = screenSession.currentScreen();
-            if (current.input.mode === "manage") throw new Error("Management has no presentation completion channel");
-            return screenSession.completeScreen(parseScreenResult(result, current.input));
+        controller.addJavascriptInterface("MemoryGraphHost", {
+          /** Returns an already-authorized graph projection without exposing service requests. */
+          load: (...args) => {
+            if (!active.current) throw new Error("Graph display is no longer active");
+            if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length !== 0) throw new Error("Graph load expects no arguments");
+            ready.current = true;
+            return current.current;
           },
-          /** Returns an explicit cancellation action result without changing the selected identity. */
-          cancelScreen: (...args) => {
-            webArguments(args, 0);
-            return screenSession.cancelScreen();
-          },
-          /** Returns a document resource reference without transporting image bytes through JS. */
-          avatarImage: (...args) => __async(null, null, function* () {
-            const [uri] = webArguments(args, 1);
-            if (uri !== null && typeof uri !== "string") throw new Error("头像路径必须是字符串或 null");
-            return avatars.source(uri);
-          }),
-          /** Opens the same native entity renderer used by chat avatars and the sidebar. */
-          openEntity: (...args) => {
-            const [mode, entity, id2] = webArguments(args, 3);
-            if (screenSession.currentScreen().input.mode !== "manage") throw new Error("Only management can open a local entity dialog");
-            if (mode !== "create" && mode !== "edit" && mode !== "preview" || entity !== "card" && entity !== "group" || typeof id2 !== "string" || (mode === "create" ? id2 !== "" : id2.trim() === "")) throw new Error("Invalid native entity dialog request");
-            if (managedLive.current !== null) throw new Error("An entity dialog is already open");
-            const request2 = { requestId: "management-" + ++nextManaged.current, input: mode === "create" ? { mode, entity, id: "" } : { mode, entity, id: id2 } };
-            managedLive.current = request2;
-            setManaged(request2);
+          /** Validates canvas selections against the exact graph currently displayed. */
+          select: (...args) => {
+            if (!active.current) throw new Error("Graph display is no longer active");
+            if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length !== 2) throw new Error("Graph select expects kind and id");
+            const [kind, id2] = args[0];
+            if (typeof id2 !== "string" || kind !== "memory" && kind !== "edge") throw new Error("Invalid graph selection");
+            const data = current.current.data;
+            if (kind === "memory" ? !data.graph.nodes.some((node) => node.id === id2) : !data.graph.edges.some((edge) => edge.id === id2)) throw new Error("Graph selection no longer exists");
+            selectLive.current(kind, id2);
             return null;
-          },
-          /** Reads the selected document through its host-provided VFS resource. */
-          readImportFile: (...args) => __async(null, null, function* () {
-            webArguments(args, 0);
-            const selected = yield ctx.openFilePicker({ picker: "document", allowMultiple: false, mimeTypes: ["application/json"] });
-            if (selected.cancelled) return { cancelled: true };
-            if (selected.files.length !== 1) throw new Error("请选择一个 JSON 文件");
-            const file = yield Tools.Files.read(selected.files[0].path);
-            const content = file.content.replace(/^\uFEFF/, "");
-            if (content.trim() === "") throw new Error("所选 JSON 文件为空");
-            return { cancelled: false, content };
-          }),
-          /** Saves an export through the same host boundary used for file selection. */
-          exportFile: (...args) => __async(null, null, function* () {
-            const [name, content] = webArguments(args, 2);
-            if (typeof name !== "string" || name.trim() === "") throw new Error("导出文件名不能为空");
-            if (typeof content !== "string") throw new Error("导出内容必须是字符串");
-            return ctx.saveFile({ suggestedName: name, content, mimeType: "application/json", extensions: ["json"] });
-          })
+          }
         });
-        unsubscribe.current = ctx.Theme.subscribe(applyTheme);
-        setPath(yield ToolPkg.readResource("character_memory_html", "character-memory.html"));
-      } catch (failure) {
-        setError(String(failure));
+        const resource = yield ToolPkg.readResource("character_memory_html", "character-memory.html");
+        if (active.current) setPath(resource);
+      } catch (error) {
+        fail(String(error));
       }
     });
   }
-  function dispose() {
-    ready.current = false;
-    if (unsubscribe.current !== null) {
-      unsubscribe.current();
-      unsubscribe.current = null;
+  ctx.useEffect(key + ":projection", () => {
+    if (ready.current) void controller.evaluateJavascript("window.updateMemoryGraph(" + JSON.stringify(display) + ");").catch((error) => fail(String(error)));
+    return () => {
+    };
+  }, [JSON.stringify(display)]);
+  function camera(command) {
+    return __async(this, null, function* () {
+      if (!ready.current) return;
+      try {
+        yield controller.evaluateJavascript("window.memoryGraphCamera(" + JSON.stringify(command) + ");");
+      } catch (error) {
+        fail(String(error));
+      }
+    });
+  }
+  return ctx.UI.Box({ key: "memory-graph-display", fillMaxSize: true }, [
+    ctx.UI.Box({ key: "memory-graph-loader", fillMaxSize: true, onLoad: initialize }, path === "" ? ctx.UI.Text({ text: "正在加载记忆图谱…" }) : ctx.UI.WebView({
+      key,
+      controller,
+      fillMaxSize: true,
+      url: origin,
+      javaScriptEnabled: true,
+      domStorageEnabled: false,
+      supportZoom: false,
+      /** Allows only the offline graph document to navigate this view. */
+      onShouldOverrideUrlLoading: (request2) => ({ action: request2.url === origin ? "allow" : "cancel" }),
+      /** Serves a single local resource and blocks all other requests. */
+      onInterceptRequest: (request2) => request2.url === origin ? { action: "respond", response: { mimeType: "text/html", encoding: "utf-8", statusCode: 200, reasonPhrase: "OK", filePath: path } } : { action: "block" },
+      /** Stops updates when the display leaves the native composition. */
+      onLifecycleEvent: (event) => {
+        if (event.type === "Disposed") ready.current = false;
+      }
+    })),
+    ctx.UI.Box({ modifier: ctx.Modifier.align("bottomStart"), padding: 12 }, ctx.UI.Surface({ shape: { cornerRadius: 12 }, color: ctx.MaterialTheme.colorScheme.surfaceContainerHigh }, ctx.UI.Row({}, [
+      ...[["in", "放大", "Add"], ["out", "缩小", "Remove"], ["fit", "适应画布", "FitScreen"]].map(([command, label, icon]) => ctx.UI.IconButton({ key: "graph-" + command, tooltip: label, width: 36, height: 36, icon, onClick: () => camera(command) }))
+    ])))
+  ]);
+}
+
+// src/ui-memory-settings.ts
+function renderMemorySettings(ctx, target, close, key) {
+  const { state, live, update } = uiState(ctx, key, { settings: null, config: null, listing: null, queue: null, progress: null, tab: "automatic", busy: false, error: "", statusError: "", notice: "", numbers: {}, query: "", threshold: "0", result: null, selected: [], window: "32", from: "", to: "", clearFailed: false });
+  const ui = nativeUi(ctx, !state.busy), ownerKey = target.ownerKey;
+  const alive = ctx.useRef(key + ":alive", true);
+  function status() {
+    return __async(this, null, function* () {
+      const [queue, progress] = yield Promise.all([uiRequest({ action: "readMemoryAutoSaveStatus", ownerKey }), uiRequest({ action: "readMemoryRebuildProgress", ownerKey })]);
+      if (alive.current) update({ queue, progress, statusError: "" });
+    });
+  }
+  function act(operation) {
+    return __async(this, null, function* () {
+      if (live.current.busy || !alive.current) return;
+      update({ busy: true, error: "", notice: "" });
+      try {
+        yield operation();
+      } catch (error) {
+        if (alive.current) update({ error: String(error) });
+      } finally {
+        if (alive.current) update({ busy: false });
+      }
+    });
+  }
+  function load() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const [settings3, config2, listing, queue, progress] = yield Promise.all([
+          uiRequest({ action: "readMemorySettings", ownerKey }),
+          uiRequest({ action: "readMemorySearchConfig", ownerKey }),
+          uiRequest({ action: "listMemoryChats", ownerKey }),
+          uiRequest({ action: "readMemoryAutoSaveStatus", ownerKey }),
+          uiRequest({ action: "readMemoryRebuildProgress", ownerKey })
+        ]);
+        assertMemorySettings(settings3);
+        assertSearchConfig(config2);
+        if (!alive.current) return;
+        update({ settings: settings3, config: config2, listing, queue, progress, numbers: { interval: String(settings3.autoSaveIntervalMinutes), keywordWeight: String(config2.keywordWeight), tagWeight: String(config2.tagWeight), vectorWeight: String(config2.vectorWeight), edgeWeight: String(config2.edgeWeight) } });
+      }));
+    });
+  }
+  ctx.useEffect(key + ":poll", () => {
+    alive.current = true;
+    let stopped = false, timer;
+    function tick() {
+      return __async(this, null, function* () {
+        try {
+          if (!stopped && !live.current.busy && live.current.settings !== null) yield status();
+        } catch (error) {
+          if (!stopped) update({ statusError: "状态读取失败：" + String(error) });
+        } finally {
+          if (!stopped) timer = setTimeout(tick, 3e3);
+        }
+      });
+    }
+    timer = setTimeout(tick, 3e3);
+    return () => {
+      stopped = true;
+      alive.current = false;
+      clearTimeout(timer);
+    };
+  }, []);
+  function settingsChange(patch) {
+    if (live.current.settings !== null && !live.current.busy) update({ settings: { ...live.current.settings, ...patch } });
+  }
+  function numberChange(name, value) {
+    update({ numbers: { ...live.current.numbers, [name]: value } });
+  }
+  function configDraft() {
+    if (live.current.config === null) throw new Error("检索设置尚未读取成功");
+    const draft = { ...live.current.config };
+    for (const name of ["keywordWeight", "tagWeight", "vectorWeight", "edgeWeight"]) draft[name] = uiNumber(live.current.numbers[name], name, 0);
+    assertSearchConfig(draft);
+    return draft;
+  }
+  function save() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        if (live.current.settings === null) throw new Error("记忆设置尚未读取成功");
+        const settings3 = { ...live.current.settings, autoSaveIntervalMinutes: uiNumber(live.current.numbers.interval, "检查间隔", 1, 30, true) }, config2 = configDraft();
+        assertMemorySettings(settings3);
+        const result = yield uiRequest({ action: "writeMemoryOwnerSettings", ownerKey, settings: settings3, config: config2 });
+        if (alive.current) update({ settings: result.settings, config: result.config, notice: "设置已保存" });
+        yield status();
+      }));
+    });
+  }
+  const children = [ui.text("所属记忆库：" + ownerKey)];
+  if (state.error !== "") children.push(ctx.UI.Text({ key: "memory-settings-error", text: state.error, color: ctx.MaterialTheme.colorScheme.error }));
+  if (state.statusError !== "") children.push(ui.text(state.statusError));
+  if (state.notice !== "") children.push(ui.text(state.notice));
+  const settings2 = state.settings, config = state.config;
+  if (settings2 === null || config === null || state.listing === null) children.push(ui.text(state.busy ? "正在读取记忆设置…" : "记忆设置尚未读取成功"), ui.button("memory-settings-retry", "重试", load));
+  else {
+    if (state.listing.missingChatIds.length > 0) children.push(ui.text(`检测到 ${state.listing.missingChatIds.length} 条已失效的会话绑定，自动提取与历史重建会跳过它们。`), ui.button("memory-prune-bindings", "清理失效绑定", () => act(() => __async(null, null, function* () {
+      const result = yield uiRequest({ action: "pruneMissingChatBindings", ownerKey });
+      const listing = yield uiRequest({ action: "listMemoryChats", ownerKey });
+      if (alive.current) update({ listing, notice: `已清理 ${result.removedChatIds.length} 条会话绑定和 ${result.removedCandidateIds.length} 条提取候选` });
+    }))));
+    if (state.tab === "automatic") {
+      const queue = state.queue;
+      if (queue !== null) {
+        children.push(ui.text(`待处理 ${queue.pendingCandidates} 条 / ${queue.pendingChats} 个聊天 · 处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}`), ui.text(queue.nextRunAtMs === 0 ? "尚未安排下次检查" : `下次检查：约 ${queue.minutesUntilNextRun} 分钟后`));
+        if (queue.lastError !== "") children.push(ui.text("提取失败：" + queue.lastError));
+        if (queue.failedCandidates > 0) children.push(ui.actions([
+          ui.button("memory-retry-failed", "重试失败候选", () => act(() => __async(null, null, function* () {
+            const result = yield uiRequest({ action: "retryFailedCandidates", ownerKey });
+            if (alive.current) update({ notice: `已重新排队 ${result.retried} 条失败候选` });
+            yield status();
+          }))),
+          ui.button("memory-clear-failed", state.clearFailed ? "确认清除失败记录" : "清除失败记录", () => state.clearFailed ? act(() => __async(null, null, function* () {
+            const result = yield uiRequest({ action: "clearFailedCandidates", ownerKey });
+            if (alive.current) update({ clearFailed: false, notice: `已清除 ${result.cleared} 条失败记录` });
+            yield status();
+          })) : update({ clearFailed: true })),
+          ...state.clearFailed ? [ui.button("memory-clear-failed-cancel", "取消清除", () => update({ clearFailed: false }))] : []
+        ]));
+      }
+      children.push(ui.text("至少积累 5 个候选后自动提取；清除失败记录不会删除已有记忆。"), ui.field("memory-interval", "检查间隔（1–30 分钟）", state.numbers.interval, (value) => numberChange("interval", value)), ui.field("memory-extraction-rules", "记忆提取自定义规则", settings2.memoryExtractionCustomRules, (memoryExtractionCustomRules) => settingsChange({ memoryExtractionCustomRules }), 5), ui.toggle("memory-profile-auto", "自动更新 USER.md", settings2.profileAutoUpdateEnabled, (profileAutoUpdateEnabled) => settingsChange({ profileAutoUpdateEnabled })), ui.toggle("memory-profile-locked", "锁定 USER.md，禁止模型覆盖", settings2.profileAutoUpdateLocked, (profileAutoUpdateLocked) => settingsChange({ profileAutoUpdateLocked })));
+    } else if (state.tab === "search") {
+      for (const [name, label] of [["keywordWeight", "关键词权重"], ["tagWeight", "标签权重"], ["vectorWeight", "向量权重"], ["edgeWeight", "关系权重"]]) children.push(ui.field("memory-" + name, label, state.numbers[name], (value) => numberChange(name, value)));
+      children.push(ui.toggle("memory-embedding", "云端 Embedding", settings2.cloudEmbeddingEnabled, (cloudEmbeddingEnabled) => settingsChange({ cloudEmbeddingEnabled })));
+      if (settings2.cloudEmbeddingEnabled) children.push(ui.text("搜索文本与记忆文本会发送至指定服务。修改服务地址、模型或密钥后，请先保存再重建。"), ui.field("memory-embedding-endpoint", "Embedding 完整请求地址", settings2.cloudEmbeddingEndpoint, (cloudEmbeddingEndpoint) => settingsChange({ cloudEmbeddingEndpoint })), ui.field("memory-embedding-model", "Embedding 模型", settings2.cloudEmbeddingModel, (cloudEmbeddingModel) => settingsChange({ cloudEmbeddingModel })), ctx.UI.TextField({ key: "memory-embedding-key", label: "API Key", value: settings2.cloudEmbeddingApiKey, enabled: !state.busy, isPassword: true, fillMaxWidth: true, onValueChange: (cloudEmbeddingApiKey) => settingsChange({ cloudEmbeddingApiKey }) }), ui.button("memory-embedding-rebuild", "使用已保存设置重建 Embedding", () => act(() => __async(null, null, function* () {
+        const count = yield uiRequest({ action: "rebuildMemoryEmbeddings", ownerKey });
+        if (alive.current) update({ notice: `已重建 ${count} 条记忆的 Embedding` });
+      }))));
+      children.push(ui.text("检索调试", true), ui.field("memory-debug-query", "查询", state.query, (query) => update({ query })), ui.field("memory-debug-threshold", "相关性阈值（0–1）", state.threshold, (threshold) => update({ threshold })), ui.text("使用当前权重执行真实检索，不保存权重；向量检索使用已保存的服务配置。"), ui.button("memory-debug-search", "使用当前权重检索", () => act(() => __async(null, null, function* () {
+        const result = yield uiRequest({ action: "searchMemoryDebug", ownerKey, query: live.current.query, config: configDraft(), relevanceThreshold: uiNumber(live.current.threshold, "相关性阈值", 0, 1) });
+        if (alive.current) update({ result });
+      }))));
+      if (state.result !== null) {
+        children.push(ui.text(`范围 ${state.result.memoriesInScopeCount} 条 · 命中 ${state.result.candidates.filter((hit) => hit.passedThreshold).length} 条`));
+        for (const hit of state.result.candidates) children.push(ui.card("memory-hit:" + hit.memory.uuid, hit.memory.title, `总分 ${hit.score.toFixed(4)} · ${hit.passedThreshold ? "命中" : "未过阈值"}
+关键词 ${hit.keywordScore.toFixed(4)} · 标签 ${hit.tagScore.toFixed(4)} · 向量 ${hit.vectorScore.toFixed(4)} · 关系 ${hit.edgeScore.toFixed(4)}`, []));
+      }
+    } else {
+      const progress = state.progress, running = progress !== null && (progress.status === "preparing" || progress.status === "running");
+      children.push(ui.text("从聊天历史重建记忆：追加或更新，保留现有记忆。关闭此页不会终止后台任务。"), ui.field("memory-rebuild-window", "窗口消息数", state.window, (window) => update({ window })), ui.field("memory-rebuild-from", "开始日期（YYYY-MM-DD，可留空）", state.from, (from) => update({ from })), ui.field("memory-rebuild-to", "结束日期（YYYY-MM-DD，可留空）", state.to, (to) => update({ to })));
+      for (const chat of state.listing.chats) children.push(ctx.UI.Row({ key: "memory-rebuild-chat:" + chat.id, fillMaxWidth: true, spacing: 8, verticalAlignment: "center" }, [ctx.UI.Checkbox({ key: "memory-rebuild-check:" + chat.id, checked: state.selected.includes(chat.id), enabled: !state.busy && !running, onCheckedChange: (checked) => update({ selected: checked ? [.../* @__PURE__ */ new Set([...live.current.selected, chat.id])] : live.current.selected.filter((id2) => id2 !== chat.id) }) }), ctx.UI.Column({ weight: 1, spacing: 4 }, [ui.text(chat.title), ui.text(`${chat.messageCount} 条消息`)])]));
+      if (state.listing.chats.length === 0) children.push(ui.text("此记忆库暂无绑定聊天"));
+      children.push(ui.actions([ui.button("memory-rebuild-start", "开始重建", () => act(() => __async(null, null, function* () {
+        const value = live.current, fromInclusive = uiDate(value.from, false), toInclusive = uiDate(value.to, true);
+        if (fromInclusive !== null && toInclusive !== null && fromInclusive > toInclusive) throw new Error("开始日期不能晚于结束日期");
+        const result = yield uiRequest({ action: "startMemoryRebuild", ownerKey, rebuild: { chatIds: [...value.selected], windowMessageCount: uiNumber(value.window, "窗口消息数", 1, Infinity, true), fromInclusive, toInclusive } });
+        if (alive.current) update({ progress: result, notice: "后台重建任务已提交" });
+      })), !running && state.selected.length > 0), ui.button("memory-rebuild-cancel", "取消重建", () => act(() => __async(null, null, function* () {
+        const progress2 = yield uiRequest({ action: "cancelMemoryRebuild", ownerKey });
+        if (alive.current) update({ progress: progress2 });
+      })), running), ui.button("memory-status-refresh", "刷新状态", () => act(status))]));
+      if (progress !== null) {
+        const labels = { idle: "未开始", preparing: "准备中", running: "重建中", completed: "已完成", cancelled: "已取消", failed: "失败" };
+        children.push(ui.text(`${labels[progress.status] ?? progress.status} · 聊天 ${progress.completedChats}/${progress.totalChats} · 窗口 ${progress.completedWindows}/${progress.totalWindows} · 失败 ${progress.failedWindows}`), ui.text(`已处理源消息 ${progress.processedSourceMessages}/${progress.totalSourceMessages} · ${progress.currentChatTitle}`));
+        if (progress.lastError !== "") children.push(ui.text(progress.lastError));
+      }
+    }
+  }
+  const tabs = [{ id: "automatic", label: "自动提取" }, { id: "search", label: "检索" }, { id: "rebuild", label: "历史重建" }];
+  return ui.dialog("memory-settings-root", target.name + " · 记忆设置", ctx.UI.Column({ fillMaxSize: true }, [
+    ctx.UI.PrimaryTabRow({ key: "memory-settings-tabs", fillMaxWidth: true, selectedTabIndex: tabs.findIndex((tab) => tab.id === state.tab), tabs: tabs.map((tab) => ctx.UI.Tab({ key: "memory-settings-tabs:" + tab.id, selected: state.tab === tab.id, enabled: !state.busy, onClick: () => update({ tab: tab.id }) }, ctx.UI.Text({ text: tab.label, style: "titleSmall" }))) }),
+    ui.list("memory-settings-body", children)
+  ]), [ui.button("memory-settings-back", "关闭", close), ...settings2 !== null && config !== null && state.listing !== null ? [ui.primary("memory-settings-save", "保存", save)] : []], close, "large", load);
+}
+
+// src/ui-memory-workspace.ts
+function filteredMemoryGraph(data, folder, searchIds) {
+  const items = data.items.filter((item) => (folder === "*" || (item.folderPath ?? "") === folder) && (searchIds === null || searchIds.includes(item.uuid)));
+  const ids = new Set(items.map((item) => item.uuid));
+  if (searchIds !== null) {
+    const matches = new Set(ids);
+    for (const edge of data.graph.edges) {
+      if (matches.has(edge.sourceId)) ids.add(edge.targetId);
+      if (matches.has(edge.targetId)) ids.add(edge.sourceId);
+    }
+  }
+  return { items, graph: { nodes: data.graph.nodes.filter((node) => ids.has(node.id)), edges: data.graph.edges.filter((edge) => ids.has(edge.sourceId) && ids.has(edge.targetId)) } };
+}
+function renderMemoryWorkspace(ctx, target, close, instance) {
+  const key = instance + ":" + target.ownerKey;
+  const { state, live, update } = uiState(ctx, key, { data: null, panel: target.initial === "settings" ? { type: "settings" } : target.initial === "profile" ? { type: "profile", content: "", loaded: false } : null, busy: false, error: "", notice: "", query: "", appliedQuery: "", searchIds: null, folder: "*", inspectorExpanded: false, selected: null, selectedEdge: null, linkSource: null, linking: false, panelSequence: 0 });
+  const ui = nativeUi(ctx, !state.busy), ownerKey = target.ownerKey;
+  const alive = ctx.useRef(key + ":alive", true);
+  ctx.useEffect(key + ":lifetime", () => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  function act(operation) {
+    return __async(this, null, function* () {
+      if (live.current.busy || !alive.current) return;
+      update({ busy: true, error: "", notice: "" });
+      try {
+        yield operation();
+      } catch (error) {
+        if (alive.current) update({ error: String(error) });
+      } finally {
+        if (alive.current) update({ busy: false });
+      }
+    });
+  }
+  function open(panel) {
+    update({ panel, panelSequence: live.current.panelSequence + 1, error: "" });
+  }
+  function back() {
+    if (live.current.busy) return;
+    if (target.initial !== void 0 && target.initial !== "browse" && live.current.data === null) close();
+    else update({ panel: null, error: "" });
+  }
+  function refresh() {
+    return __async(this, null, function* () {
+      const data = yield uiRequest({ action: "graph", ownerKey });
+      if (alive.current) update({ data, searchIds: null, query: "", appliedQuery: "", selected: null, selectedEdge: null, linkSource: null });
+    });
+  }
+  function profile() {
+    return __async(this, null, function* () {
+      open({ type: "profile", content: "", loaded: false });
+      yield act(() => __async(null, null, function* () {
+        const result = yield uiRequest({ action: "readUser", ownerKey });
+        if (alive.current) update({ panel: { type: "profile", content: result.content, loaded: true } });
+      }));
+    });
+  }
+  function load() {
+    return __async(this, null, function* () {
+      if (target.initial === "profile") {
+        yield profile();
+        return;
+      }
+      if (target.initial === "settings" || live.current.data !== null) return;
+      yield act(refresh);
+    });
+  }
+  function editMemory(item) {
+    open({ type: "memory", draft: item === null ? { originalTitle: null, title: "", content: "", contentType: "text/plain", source: "manual", credibility: "0.5", importance: "0.5", folderPath: live.current.folder === "*" ? "" : live.current.folder, tags: "" } : { originalTitle: item.title, title: item.title, content: item.content, contentType: item.contentType, source: item.source, credibility: String(item.credibility), importance: String(item.importance), folderPath: item.folderPath ?? "", tags: item.tags.map((tag) => tag.name).join(",") } });
+  }
+  function newLink(sourceTitle = "", targetTitle = "") {
+    open({ type: "link", draft: { id: null, sourceTitle, targetTitle, linkType: "related", weight: "1", description: "" } });
+  }
+  function editLink(id2) {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const link = yield uiRequest({ action: "readMemoryLink", ownerKey, linkId: id2 });
+        if (!alive.current) return;
+        const source = live.current.data?.items.find((item) => item.id === link.sourceMemoryId), destination = live.current.data?.items.find((item) => item.id === link.targetMemoryId);
+        if (source === void 0 || destination === void 0) throw new Error("记忆关系端点不存在");
+        open({ type: "link", draft: { id: id2, sourceTitle: source.title, targetTitle: destination.title, linkType: link.type_, weight: String(link.weight), description: link.description } });
+      }));
+    });
+  }
+  function select(kind, id2) {
+    if (live.current.busy || live.current.panel !== null) return;
+    if (kind === "edge") {
+      update({ selected: null, selectedEdge: id2 });
+      return;
+    }
+    if (!live.current.linking) {
+      update({ selected: id2, selectedEdge: null });
+      return;
+    }
+    const first = live.current.linkSource;
+    if (first === null) {
+      update({ linkSource: id2 });
+      return;
+    }
+    if (first === id2) return;
+    const source = live.current.data?.items.find((item) => item.uuid === first), destination = live.current.data?.items.find((item) => item.uuid === id2);
+    if (source === void 0 || destination === void 0) throw new Error("记忆节点不存在");
+    newLink(source.title, destination.title);
+  }
+  function memoryChange(patch) {
+    const panel = live.current.panel;
+    if (!live.current.busy && panel?.type === "memory") update({ panel: { ...panel, draft: { ...panel.draft, ...patch } } });
+  }
+  function linkChange(patch) {
+    const panel = live.current.panel;
+    if (!live.current.busy && panel?.type === "link") update({ panel: { ...panel, draft: { ...panel.draft, ...patch } } });
+  }
+  function saveMemory() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const panel = live.current.panel;
+        if (panel?.type !== "memory") return;
+        const draft = panel.draft;
+        const data = yield uiRequest({ action: "saveMemory", ownerKey, ...draft, credibility: uiNumber(draft.credibility, "可信度", 0, 1), importance: uiNumber(draft.importance, "重要性", 0, 1) });
+        if (alive.current) update({ data, panel: null, searchIds: null, query: "", appliedQuery: "", selected: null, notice: "记忆已保存" });
+      }));
+    });
+  }
+  function saveLink() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const panel = live.current.panel;
+        if (panel?.type !== "link") return;
+        const draft = panel.draft, weight = uiNumber(draft.weight, "关系强度", 0, 1);
+        if (draft.linkType.trim() === "" || draft.sourceTitle === "" || draft.targetTitle === "" || draft.sourceTitle === draft.targetTitle) throw new Error("请选择两条不同记忆并填写关系类型");
+        const data = yield uiRequest(draft.id === null ? { action: "createLink", ownerKey, sourceTitle: draft.sourceTitle, targetTitle: draft.targetTitle, linkType: draft.linkType, weight, description: draft.description } : { action: "updateLink", ownerKey, linkId: draft.id, linkType: draft.linkType, weight, description: draft.description });
+        if (alive.current) update({ data, panel: null, selectedEdge: null, linkSource: null, linking: false, notice: "关系已保存" });
+      }));
+    });
+  }
+  function panelBody(panel) {
+    switch (panel.type) {
+      case "memory": {
+        const draft = panel.draft;
+        return [
+          ui.text(draft.originalTitle === null ? "创建记忆" : "编辑记忆", true),
+          ui.field("memory-title", "标题 *", draft.title, (title) => memoryChange({ title })),
+          ui.field("memory-content", "内容", draft.content, (content) => memoryChange({ content }), 8),
+          ui.field("memory-content-type", "内容类型", draft.contentType, (contentType) => memoryChange({ contentType })),
+          ui.field("memory-source", "来源", draft.source, (source) => memoryChange({ source })),
+          ui.score("memory-credibility", "可信度", draft.credibility, (credibility) => memoryChange({ credibility })),
+          ui.score("memory-importance", "重要性", draft.importance, (importance) => memoryChange({ importance })),
+          ui.field("memory-folder", "文件夹", draft.folderPath, (folderPath) => memoryChange({ folderPath })),
+          ui.field("memory-tags", "标签（逗号分隔）", draft.tags, (tags) => memoryChange({ tags })),
+          ui.primary("memory-save", "保存", saveMemory)
+        ];
+      }
+      case "link": {
+        const draft = panel.draft, options = (state.data?.items ?? []).map((item) => ({ id: item.title, label: item.title }));
+        return [ui.text(draft.id === null ? "创建记忆关系" : "编辑记忆关系", true), ...draft.id === null ? [ui.choose("link-source", "源记忆", draft.sourceTitle, options, (sourceTitle) => linkChange({ sourceTitle })), ui.choose("link-target", "目标记忆", draft.targetTitle, options, (targetTitle) => linkChange({ targetTitle }))] : [ui.text(draft.sourceTitle + " → " + draft.targetTitle)], ui.field("link-type", "关系类型", draft.linkType, (linkType) => linkChange({ linkType })), ui.field("link-weight", "强度（0–1）", draft.weight, (weight) => linkChange({ weight })), ui.field("link-description", "描述", draft.description, (description) => linkChange({ description }), 3), ui.primary("link-save", "保存", saveLink)];
+      }
+      case "profile":
+        return [ui.text("用户资料 · USER.md", true), ...panel.loaded ? [ui.field("memory-profile", "用户资料", panel.content, (content) => update({ panel: { ...panel, content } }), 12), ui.primary("memory-profile-save", "保存", () => act(() => __async(null, null, function* () {
+          const current = live.current.panel;
+          if (current?.type !== "profile" || !current.loaded) throw new Error("用户资料尚未读取成功");
+          yield uiRequest({ action: "writeUser", ownerKey, content: current.content });
+          if (alive.current) {
+            if (live.current.data === null) close();
+            else update({ panel: null, notice: "用户资料已保存" });
+          }
+        })))] : [ui.text(state.busy ? "正在读取用户资料…" : "用户资料读取失败"), ui.button("memory-profile-retry", "重试", profile)]];
+      case "import":
+        return [ui.text("导入记忆 JSON", true), ui.choose("memory-import-strategy", "相同 UUID 记忆处理", panel.strategy, [{ id: "SKIP", label: "跳过" }, { id: "UPDATE", label: "更新" }, { id: "CREATE_NEW", label: "创建新记忆" }], (strategy) => update({ panel: { ...panel, strategy } })), ui.text("选择记忆库导出的 JSON 备份文件，导入完整记忆、关系、文档分块及 USER.md。导入前建议先导出备份；只修改当前记忆库。"), ui.primary("memory-import-submit", "选择 JSON 文件并导入", () => act(() => __async(null, null, function* () {
+          const current = live.current.panel;
+          if (current?.type !== "import") return;
+          const content = yield readUiJson(ctx);
+          if (content === null) return;
+          const result = yield uiRequest({ action: "importMemory", ownerKey, content, strategy: current.strategy });
+          yield refresh();
+          if (alive.current) update({ panel: null, notice: `新增 ${result.result.newMemories} · 更新 ${result.result.updatedMemories} · 跳过 ${result.result.skippedMemories} · 关系 ${result.result.newLinks}` });
+        })))];
+      case "export":
+        return [ui.text("导出 JSON", true), ctx.UI.TextField({ key: "memory-export-content", label: "JSON 内容", value: panel.content, readOnly: true, onValueChange: () => {
+        }, fillMaxWidth: true, minLines: 16, maxLines: 24 }), ui.text("包含当前记忆库的完整记录与 USER.md。点击保存文件选择保存位置。"), ui.primary("memory-export-save", "保存文件", () => act(() => __async(null, null, function* () {
+          const current = live.current.panel;
+          if (current?.type !== "export") return;
+          const result = yield ctx.saveFile({ suggestedName: current.name, content: current.content, mimeType: "application/json", extensions: ["json"] });
+          if (!result.cancelled && alive.current) update({ panel: null, notice: "文件已导出" });
+        })))];
+      case "delete-memory":
+        return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(() => __async(null, null, function* () {
+          const data = yield uiRequest({ action: "deleteMemory", ownerKey, title: panel.title });
+          if (alive.current) update({ data, panel: null, selected: null, selectedEdge: null, searchIds: null, notice: "记忆已删除" });
+        })))];
+      case "delete-link":
+        return [ui.text("确定删除这条记忆关系？"), ui.primary("link-delete-confirm", "确认删除", () => act(() => __async(null, null, function* () {
+          const data = yield uiRequest({ action: "deleteLink", ownerKey, linkId: panel.id });
+          if (alive.current) update({ data, panel: null, selectedEdge: null, notice: "关系已删除" });
+        })))];
+    }
+  }
+  function search() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const query = live.current.query.trim();
+        const hits = query === "" ? null : yield uiRequest({ action: "searchMemory", ownerKey, query });
+        if (alive.current) update({ searchIds: hits?.map((item) => item.uuid) ?? null, appliedQuery: query, selected: null, selectedEdge: null });
+      }));
+    });
+  }
+  const messages = [];
+  if (state.error !== "") messages.push(ctx.UI.Text({ key: "memory-workspace-error", text: state.error, color: ctx.MaterialTheme.colorScheme.error }));
+  if (state.notice !== "") messages.push(ui.text(state.notice));
+  const layers = [];
+  const direct = target.initial !== void 0 && target.initial !== "browse" && state.data === null;
+  if (!direct) {
+    const data = state.data, narrow = ui.size.width <= 840;
+    const projection = data === null ? null : filteredMemoryGraph(data, state.folder, state.searchIds);
+    const selected = data?.items.find((item) => item.uuid === state.selected), edge = data?.graph.edges.find((item) => item.id === state.selectedEdge);
+    const header = ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 8, spacing: 8, verticalAlignment: "center" }, [
+      ui.iconButton("memory-workspace-back", "关闭", "ArrowBack", close),
+      ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: "记忆图谱", fontSize: 18, fontWeight: "600" }), ctx.UI.Text({ text: target.name, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 1, overflow: "ellipsis" })]),
+      ui.menu("memory-more", "更多操作", "MoreVert", [
+        { key: "memory-settings-open", label: "记忆设置", name: "Tune", action: () => open({ type: "settings" }) },
+        { key: "memory-refresh", label: "刷新", name: "Refresh", enabled: data !== null, action: () => act(refresh) },
+        { key: "memory-import", label: "导入记忆 JSON", name: "Upload", enabled: data !== null, action: () => open({ type: "import", strategy: "SKIP", content: "" }) },
+        { key: "memory-export", label: "导出记忆 JSON", name: "Download", enabled: data !== null, action: () => act(() => __async(null, null, function* () {
+          const result = yield uiRequest({ action: "exportMemory", ownerKey });
+          if (alive.current) open({ type: "export", name: "memory-backup.json", content: result.content });
+        })) }
+      ], true)
+    ]);
+    let body;
+    if (data === null || projection === null) body = ui.list("memory-loading", [...messages, ui.text(state.busy ? "正在读取记忆图谱…" : "记忆图谱未加载成功，未开放写入。"), ui.button("memory-load-retry", "重试", () => act(refresh))]);
+    else {
+      const folders = [.../* @__PURE__ */ new Set(["", ...data.items.map((item) => item.folderPath ?? "")])].sort();
+      const filters = ctx.UI.Column({ fillMaxWidth: true, paddingHorizontal: 12, paddingBottom: 10, spacing: 8 }, [
+        ctx.UI.Row({ fillMaxWidth: true, height: 40, verticalAlignment: "center", spacing: 4, modifier: ctx.Modifier.clip({ cornerRadius: 12 }).background(ctx.MaterialTheme.colorScheme.surfaceContainerHigh) }, [ui.iconButton("memory-search", "搜索", "Search", search), ctx.UI.TextField({ key: "memory-search-query", placeholder: "搜索记忆…", decoration: { borderless: true, isDense: true, contentPadding: { horizontal: 4, vertical: 8 } }, style: { fontSize: 14 }, value: state.query, readOnly: state.busy, singleLine: true, weight: 1, onValueChange: (query) => update({ query }) }), ui.iconButton("memory-search-clear", "清除搜索", "Close", () => update({ query: "", appliedQuery: "", searchIds: null }))]),
+        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [ui.choose("memory-folder-filter", "文件夹", state.folder, [{ id: "*", label: "全部文件夹" }, ...folders.map((folder) => ({ id: folder, label: folder === "" ? "根目录" : folder }))], (folder) => update({ folder, selected: null, selectedEdge: null }), true), ctx.UI.FilterChip({ key: "memory-graph-link-mode", selected: state.linking, enabled: !state.busy && data.items.length > 1, label: ctx.UI.Text({ text: "链接" }), onClick: () => update({ linking: !live.current.linking, linkSource: null }) })]),
+        ...state.linking ? [ui.text(state.linkSource === null ? "选择两条记忆以建立链接 · 请选择源记忆" : "请选择目标记忆")] : [],
+        ...state.panel === null ? messages : []
+      ]);
+      const details = [];
+      if (selected !== void 0) {
+        details.push(ui.text("记忆详情"), ui.text(selected.title, true), ui.text(`${selected.contentType === "text/plain" ? "文本" : selected.contentType} · ${selected.source === "manual" ? "手动记录" : selected.source} · 可信度 ${selected.credibility.toFixed(2)} · 重要性 ${selected.importance.toFixed(2)}`), ui.text(selected.content), ui.actions([ui.button("memory-edit-selected", "编辑", () => editMemory(selected)), ui.button("memory-delete-selected", "删除", () => open({ type: "delete-memory", title: selected.title }))]));
+        for (const relation of data.graph.edges.filter((item) => item.sourceId === selected.uuid || item.targetId === selected.uuid)) details.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [ctx.UI.Text({ text: `${relation.label ?? ""} · ${relation.weight.toFixed(2)}`, weight: 1 }), ui.iconButton("link-delete:" + relation.id, "删除关系", "DeleteOutline", () => open({ type: "delete-link", id: relation.id }))]));
+      } else if (edge !== void 0) details.push(ui.text("关系详情"), ui.text("记忆关系", true), ui.text(edge.label ?? ""), ui.text("强度 " + edge.weight.toFixed(2)), ui.text(String(edge.metadata.description ?? "")), ui.actions([ui.button("link-edit-selected", "编辑关系", () => editLink(edge.id)), ui.button("link-delete-selected", "删除关系", () => open({ type: "delete-link", id: edge.id }))]));
+      const items = projection.items.map((item) => ctx.UI.Row({ key: "memory-select:" + item.uuid, fillMaxWidth: true, verticalAlignment: "center", spacing: 10, padding: 10, onClick: () => select("memory", item.uuid) }, [ctx.UI.Icon({ name: selected?.uuid === item.uuid ? "Check" : "PsychologyOutlined", size: 22 }), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: item.title, fontSize: 13, fontWeight: "500" }), ctx.UI.Text({ text: item.content.slice(0, 70), fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 2, overflow: "ellipsis" })])]));
+      const inspector = ctx.UI.Column({ key: "memory-inspector", ...narrow ? { weight: state.inspectorExpanded ? 1 : 2 } : { width: 304, fillMaxHeight: true }, modifier: ctx.Modifier.background(ctx.MaterialTheme.colorScheme.surfaceContainer) }, [ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 8, verticalAlignment: "center" }, [ctx.UI.Icon({ name: "PsychologyOutlined", size: 18 }), ctx.UI.Text({ text: `记忆库 ${projection.items.length}`, fontSize: 14, fontWeight: "600", weight: 1 }), ...narrow ? [ui.button("memory-inspector-toggle", state.inspectorExpanded ? "收起" : "展开", () => update({ inspectorExpanded: !live.current.inspectorExpanded }))] : []]), ui.list("memory-inspector-list", [...details, ...items, ...items.length === 0 ? [ui.text("没有匹配的记忆")] : []])]);
+      const canvas = ctx.UI.Box({ key: "memory-canvas", weight: narrow ? 3 : 1, fillMaxWidth: narrow, fillMaxHeight: !narrow }, [
+        ...state.panel === null ? [renderMemoryGraph(ctx, key + ":canvas", { data: projection, selected: state.linkSource ?? state.selected, selectedEdge: state.selectedEdge, theme: ctx.Theme.getCurrent() }, select, (error) => update({ error }))] : [],
+        ctx.UI.Box({ modifier: ctx.Modifier.align("bottomEnd"), padding: 16 }, ctx.UI.FloatingActionButton({ key: "memory-create", icon: "Add", text: "创建记忆", onClick: () => editMemory(null) }))
+      ]);
+      body = ctx.UI.Column({ fillMaxSize: true }, [filters, ctx.UI.Box({ weight: 1, fillMaxWidth: true }, [
+        (narrow ? ctx.UI.Column : ctx.UI.Row)({ fillMaxSize: true }, [...narrow && state.inspectorExpanded ? [] : [canvas], inspector])
+      ])]);
+    }
+    layers.push(ui.dialog("memory-graph-dialog", "记忆图谱", body, [], close, "graph", void 0, header));
+  }
+  if (state.panel?.type === "settings") layers.push(renderMemorySettings(ctx, target, back, key + ":settings:" + state.panelSequence));
+  else if (state.panel !== null) {
+    const panel = state.panel, fields2 = panelBody(panel), titleNode = fields2.shift();
+    const submit = fields2.pop();
+    const title = panel.type === "memory" ? panel.draft.originalTitle === null ? "创建记忆" : "编辑记忆" : panel.type === "link" ? panel.draft.id === null ? "创建记忆关系" : "编辑记忆关系" : panel.type === "profile" ? "用户资料 · USER.md" : panel.type === "import" ? "导入记忆 JSON" : panel.type === "export" ? "导出 JSON" : panel.type === "delete-memory" ? "删除记忆" : "删除关系";
+    const confirmation = panel.type === "delete-memory" || panel.type === "delete-link";
+    layers.push(ui.dialog("memory-form-dialog", title, ui.list("memory-native-form", [...messages, ...confirmation && titleNode ? [titleNode] : [], ...fields2]), [ui.button("memory-form-cancel", "取消", back), submit], back, panel.type === "memory" || panel.type === "profile" || panel.type === "export" ? "large" : confirmation || panel.type === "import" ? "compact" : "normal", void 0, void 0, panel.type === "import" ? 360 : void 0));
+  }
+  return ctx.UI.Box({ key: "memory-workspace-root", fillMaxSize: true, onLoad: load }, layers);
+}
+
+// src/ui-management.ts
+function cardMemoryTarget(card) {
+  if (card.memoryBindingMode === "SHARED") {
+    if (card.sharedMemoryId === null) throw new Error("请先为角色绑定共享记忆库");
+    return { ownerKey: "shared:" + card.sharedMemoryId, name: card.name };
+  }
+  return { ownerKey: "character:" + card.id, name: card.name };
+}
+function chatBindingLabel(selection2, snapshot) {
+  if (selection2 === null) return "未绑定角色";
+  if (selection2 === "model:chat") return "仅使用模型";
+  for (const card of snapshot.cards) if (selection2 === "card:" + card.id) return card.name;
+  for (const group of snapshot.groups) if (selection2 === "group:" + group.id) return "群组 · " + group.name;
+  return "原角色已失效";
+}
+function renderManagement(ctx, view) {
+  const { state, live, update } = uiState(ctx, "management:" + view, { snapshot: null, busy: false, error: "", notice: "", panel: null, memory: null, navigation: 0, defaultAvatar: null });
+  const [managed, setManaged] = ctx.useState("managed-entity", null);
+  const sequence = ctx.useRef("management-entity-sequence", 0);
+  const recovery = initializationRecoveryUi(ctx, () => {
+    void load();
+  });
+  const ui = nativeUi(ctx, !state.busy);
+  function act(operation) {
+    return __async(this, null, function* () {
+      if (live.current.busy) return;
+      update({ busy: true, error: "", notice: "" });
+      try {
+        yield operation();
+      } catch (error) {
+        update({ error: String(error) });
+      } finally {
+        update({ busy: false });
+      }
+    });
+  }
+  function refresh() {
+    return __async(this, null, function* () {
+      update({ snapshot: yield uiRequest({ action: "snapshot" }) });
+    });
+  }
+  function load() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        try {
+          yield refresh();
+        } catch (error) {
+          recovery.reportFailure(error);
+          throw error;
+        }
+      }));
+      try {
+        update({ defaultAvatar: yield ToolPkg.readResource("character_default_avatar", "operit-avatar.png") });
+      } catch (error) {
+        update({ error: String(error) });
+      }
+    });
+  }
+  function entity(input) {
+    if (live.current.busy) return;
+    setManaged({ requestId: "management-" + ++sequence.current, input });
+  }
+  function finishEntity(result) {
+    setManaged(null);
+    if (result !== null) void act(refresh);
+  }
+  function memory(target, initial = "browse") {
+    update({ memory: { ...target, initial }, navigation: live.current.navigation + 1, error: "" });
+  }
+  function bindings(cardId) {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        update({ panel: { type: "binding", draft: { cardId, query: "", unbound: false, chats: yield uiRequest({ action: "listBindableChats" }), selected: [], failures: {}, completed: 0, total: 0 } } });
+      }));
+    });
+  }
+  function bindingChange(patch) {
+    const panel = live.current.panel;
+    if (panel?.type !== "binding" || live.current.busy) return;
+    update({ panel: { ...panel, draft: { ...panel.draft, ...patch } } });
+  }
+  function submitBindings() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const panel = live.current.panel;
+        if (panel?.type !== "binding") return;
+        const draft = panel.draft, selection2 = "card:" + draft.cardId;
+        if (!live.current.snapshot?.cards.some((card) => card.id === draft.cardId)) throw new Error("请选择角色卡");
+        const ids = draft.selected.filter((id2) => draft.chats.some((chat) => chat.id === id2 && chat.selection !== selection2));
+        if (ids.length === 0) throw new Error("请选择要绑定的对话");
+        const next = { ...draft, chats: draft.chats.map((chat) => ({ ...chat })), failures: {}, completed: 0, total: ids.length, selected: [...ids] };
+        update({ panel: { type: "binding", draft: next } });
+        for (const chatId of ids) {
+          try {
+            const result = yield uiRequest({ action: "writeChatBinding", chatId, selection: selection2 });
+            if (result.chatId !== chatId || result.selection !== selection2) throw new Error("绑定结果与请求不一致");
+            next.chats.find((chat) => chat.id === chatId).selection = selection2;
+            next.selected = next.selected.filter((id2) => id2 !== chatId);
+          } catch (error) {
+            next.failures[chatId] = String(error);
+          }
+          next.completed++;
+          update({ panel: { type: "binding", draft: { ...next } } });
+        }
+        if (next.selected.length === 0) update({ panel: null, notice: "已绑定 " + ids.length + " 条对话" });
+        else update({ error: "部分对话未完成绑定，已保留失败选择，可重试。" });
+      }));
+    });
+  }
+  function panelBody(panel) {
+    switch (panel.type) {
+      case "store":
+        return [ui.field("store-name", "名称", panel.store.name, (name) => update({ panel: { ...panel, store: { ...panel.store, name } } })), ui.primary("store-save", "保存", () => act(() => __async(null, null, function* () {
+          const current = live.current.panel;
+          if (current?.type !== "store") return;
+          update({ snapshot: yield uiRequest({ action: "saveStore", store: current.store, create: current.create }), panel: null });
+        })))];
+      case "delete-store":
+        return [ui.text("删除共享记忆库「" + panel.name + "」？此操作会影响关联角色。"), ui.primary("store-delete-confirm", "确认删除", () => act(() => __async(null, null, function* () {
+          return update({ snapshot: yield uiRequest({ action: "deleteStore", id: panel.id }), panel: null });
+        })))];
+      case "import":
+        return [
+          ...panel.entity === "card" ? [ui.choose("import-format", "角色格式", panel.format, [{ id: "operit", label: "Operit JSON" }, { id: "tavern", label: "Tavern JSON" }], (format2) => update({ panel: { ...panel, format: format2 } }))] : [],
+          ui.field("import-content", panel.entity === "card" && panel.format === "tavern" ? "粘贴 Tavern JSON" : "粘贴 Operit JSON", panel.content, (content) => update({ panel: { ...panel, content } }), 18),
+          ui.text("角色卡支持 Operit 和 Tavern JSON；群组使用 Operit JSON。"),
+          ui.primary("import-submit", "导入", () => act(() => __async(null, null, function* () {
+            const current = live.current.panel;
+            if (current?.type !== "import") return;
+            update({ snapshot: yield uiRequest(current.entity === "card" ? { action: "importCharacter", format: current.format, content: current.content } : { action: "importGroup", content: current.content }), panel: null, notice: "导入完成" });
+          })))
+        ];
+      case "binding": {
+        const draft = panel.draft, snapshot2 = state.snapshot;
+        const query = draft.query.trim().toLocaleLowerCase();
+        const visible = draft.chats.filter((chat) => (!draft.unbound || chat.selection === null) && (query === "" || [chat.title, chatBindingLabel(chat.selection, snapshot2)].some((text3) => text3.toLocaleLowerCase().includes(query))));
+        const selectable = visible.filter((chat) => chat.selection !== "card:" + draft.cardId);
+        const all = selectable.length > 0 && selectable.every((chat) => draft.selected.includes(chat.id));
+        return [
+          ui.text("为已有对话指定角色", true),
+          ui.text("绑定后，对话将使用所选角色的设定继续交流。已有角色绑定会被替换。"),
+          ui.choose("binding-card", "绑定到角色卡", draft.cardId, snapshot2.cards.map((card) => ({ id: card.id, label: card.name })), (cardId) => bindingChange({ cardId, selected: draft.selected.filter((id2) => draft.chats.some((chat) => chat.id === id2 && chat.selection !== "card:" + cardId)), failures: {} })),
+          ui.field("binding-query", "搜索对话或当前角色", draft.query, (query2) => bindingChange({ query: query2 })),
+          ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [
+            ctx.UI.Box({ weight: 1 }, ui.choices("binding-filter", "", draft.unbound ? "unbound" : "all", [{ id: "all", label: "全部对话" }, { id: "unbound", label: "未绑定" }], (value) => bindingChange({ unbound: value === "unbound" }))),
+            ui.button("binding-select-visible", all ? "取消全选结果" : "全选结果", () => {
+              const selected = new Set(draft.selected);
+              for (const chat of selectable) {
+                if (all) selected.delete(chat.id);
+                else selected.add(chat.id);
+              }
+              bindingChange({ selected: [...selected] });
+            }, draft.cardId !== "")
+          ]),
+          ui.text(state.busy ? `正在绑定 ${draft.completed}/${draft.total}` : `已选择 ${draft.selected.length} 条 · 筛选出 ${visible.length} 条`, false, "binding-status"),
+          ...visible.map((chat) => ctx.UI.Row({ key: "binding-chat:" + chat.id, fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Checkbox({ key: "binding-check:" + chat.id, checked: draft.selected.includes(chat.id), enabled: !state.busy && draft.cardId !== "" && chat.selection !== "card:" + draft.cardId, onCheckedChange: (checked) => bindingChange({ selected: checked ? [.../* @__PURE__ */ new Set([...draft.selected, chat.id])] : draft.selected.filter((id2) => id2 !== chat.id) }) }), ctx.UI.Column({ weight: 1, spacing: 4 }, [ui.text(chat.title + (chat.isCurrent ? " · 当前对话" : ""), true), ui.text(chatBindingLabel(chat.selection, snapshot2) + ` · ${chat.messageCount} 条消息`), ...draft.failures[chat.id] ? [ui.text(draft.failures[chat.id])] : []])])),
+          ...visible.length === 0 ? [ui.text("没有符合条件的对话")] : [],
+          ui.primary("binding-submit", state.busy ? "绑定中…" : draft.selected.length > 0 ? `绑定 ${draft.selected.length} 条对话` : "绑定对话", submitBindings, draft.cardId !== "" && draft.selected.length > 0)
+        ];
+      }
     }
   }
   if (recovery.panel !== null) return recovery.panel;
-  return ctx.UI.Box({ key: "character-memory-editor", fillMaxSize: true, onLoad: initialize }, [path === "" ? ctx.UI.Text({ text: error === "" ? `正在加载${managementView === "memory" ? "记忆" : definition2.title}…` : error }) : ctx.UI.WebView({
-    key: "character-memory-web",
-    controller,
-    fillMaxSize: true,
-    url: origin,
-    javaScriptEnabled: true,
-    domStorageEnabled: true,
-    supportZoom: false,
-    useWideViewPort: true,
-    /** Restricts top-level navigation to the package document. */
-    onShouldOverrideUrlLoading: (request2) => request2.url === origin ? { action: "allow" } : { action: "cancel" },
-    /** Serves the offline document and its registered images through the resource host. */
-    onInterceptRequest: (request2) => avatars.intercept(request2) ?? (request2.url === origin ? { action: "respond", response: { mimeType: "text/html", encoding: "utf-8", statusCode: 200, reasonPhrase: "OK", filePath: path } } : { action: "block" }),
-    /** Handles disposal without retaining the screen in the host theme service. */
-    onLifecycleEvent: (event) => {
-      if (event.type === "Disposed") dispose();
+  const snapshot = state.snapshot;
+  const children = [];
+  if (state.error !== "") children.push(ctx.UI.Text({ key: "management-error", text: state.error, color: ctx.MaterialTheme.colorScheme.error }));
+  if (state.notice !== "") children.push(ui.text(state.notice));
+  if (snapshot !== null) {
+    if (view === "characters") {
+      const cards = snapshot.cards.map((card) => {
+        const active = "CharacterCard" in snapshot.active && snapshot.active.CharacterCard.id === card.id;
+        return ui.tile("card:" + card.id, card.name, card.description, [card.chatModelBindingMode === "FIXED_MODEL" ? "固定模型配置" : "跟随全局模型", card.memoryBindingMode === "SHARED" ? "共享记忆" : "角色记忆", ...snapshot.tags.filter((tag) => card.attachedTagIds.includes(tag.id)).map((tag) => tag.name)], [
+          ui.iconButton("card-bind:" + card.id, "绑定对话", "ChatBubbleOutline", () => bindings(card.id)),
+          ui.iconButton("card-memory:" + card.id, "打开记忆图谱", "AccountTreeOutlined", () => act(() => __async(null, null, function* () {
+            return memory(cardMemoryTarget(card));
+          }))),
+          ui.iconButton("card-user:" + card.id, "编辑用户资料", "AccountBoxOutlined", () => act(() => __async(null, null, function* () {
+            return memory(cardMemoryTarget(card), "profile");
+          }))),
+          active ? ui.activePill() : ui.sectionAction("card-activate:" + card.id, "使用", "", () => act(() => __async(null, null, function* () {
+            return update({ snapshot: yield uiRequest({ action: "activate", type: "card", id: card.id }) });
+          })))
+        ], active, () => entity({ mode: "edit", entity: "card", id: card.id }), card.avatarUri ?? state.defaultAvatar);
+      });
+      children.push(ui.section("character-section", "角色卡", "BadgeOutlined", [ui.sectionAction("bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.cards.length > 0), ui.menu("add-card", "添加", "Add", [{ key: "create-card", label: "新建角色卡", name: "Add", action: () => entity({ mode: "create", entity: "card", id: "" }) }, { key: "import-card", label: "导入角色卡", name: "Upload", action: () => update({ panel: { type: "import", entity: "card", format: "operit", content: "" } }) }])], cards.length === 0 ? [ui.text("还没有角色卡，点击创建添加角色。")] : cards));
+      const groups = snapshot.groups.map((group) => {
+        const active = "CharacterGroup" in snapshot.active && snapshot.active.CharacterGroup.id === group.id;
+        return ui.tile("group:" + group.id, group.name, group.members.map((member2) => snapshot.cards.find((card) => card.id === member2.characterCardId)?.name ?? "已删除角色").join("、"), [`${group.members.length} 个角色`], [active ? ui.activePill() : ui.sectionAction("group-activate:" + group.id, "使用", "", () => act(() => __async(null, null, function* () {
+          return update({ snapshot: yield uiRequest({ action: "activate", type: "group", id: group.id }) });
+        })))], active, () => entity({ mode: "edit", entity: "group", id: group.id }), null, "GroupsOutlined");
+      });
+      children.push(ui.section("group-section", "群组", "GroupsOutlined", [ui.sectionAction("import-group", "导入 JSON", "Upload", () => update({ panel: { type: "import", entity: "group", format: "operit", content: "" } })), ui.sectionAction("create-group", "创建", "Add", () => entity({ mode: "create", entity: "group", id: "" }))], groups.length === 0 ? [ui.text("还没有群组，创建后可编排多个角色参与对话。")] : groups));
+    } else {
+      let ownerActions2 = function(target, scope = "") {
+        if (!snapshot.memoryOwnerKeys.includes(target.ownerKey)) return [ui.sectionAction("library-create:" + target.ownerKey + scope, target.ownerKey.startsWith("character:") ? "新建角色卡记忆库" : "新建共享记忆库", "Add", () => act(() => __async(null, null, function* () {
+          return update({ snapshot: yield uiRequest({ action: "createMemoryLibrary", ownerKey: target.ownerKey }) });
+        })))];
+        return [ui.iconButton("library-open:" + target.ownerKey + scope, "记忆图谱", "AccountTreeOutlined", () => memory(target)), ui.iconButton("library-user:" + target.ownerKey + scope, "用户资料 · USER.md", "AccountBoxOutlined", () => memory(target, "profile")), ui.iconButton("library-settings:" + target.ownerKey + scope, "记忆设置", "Tune", () => memory(target, "settings"))];
+      };
+      var ownerActions = ownerActions2;
+      const global = [];
+      for (const [key, label, description] of [["userDescriptionEnabled", "向模型提供用户资料", "聊天执行时提供用户资料；关闭不会删除 USER.md 或改写历史记录。"], ["autoUpdateEnabled", "自动更新记忆库", "允许自动候选入队和定时提取；关闭不会取消手动历史重建。"]]) global.push(ctx.UI.Row({ fillMaxWidth: true, spacing: 16, paddingVertical: 10, verticalAlignment: "center" }, [ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: label, fontSize: 14 }), ctx.UI.Text({ text: description, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })]), ctx.UI.Switch({ key: "memory-preference:" + key, checked: snapshot.memoryPreferences[key], enabled: !state.busy, onCheckedChange: (value) => act(() => __async(null, null, function* () {
+        const memoryPreferences = yield uiRequest({ action: "writeGlobalMemoryPreference", key, value });
+        update({ snapshot: { ...live.current.snapshot, memoryPreferences } });
+      })) })]));
+      children.push(ui.section("global-memory-section", "全局记忆设置", "Tune", [], global));
+      const stores = snapshot.stores.map((store) => ui.tile("store:" + store.id, store.name, "", [`${snapshot.cards.filter((card) => card.memoryBindingMode === "SHARED" && card.sharedMemoryId === store.id).length} 个角色绑定`], [...ownerActions2({ ownerKey: "shared:" + store.id, name: store.name }), ui.iconButton("store-edit:" + store.id, "编辑共享记忆库", "EditOutlined", () => update({ panel: { type: "store", create: false, store: { id: store.id, name: store.name } } })), ui.iconButton("store-delete:" + store.id, "删除共享记忆库", "DeleteOutline", () => update({ panel: { type: "delete-store", id: store.id, name: store.name } }))], false, void 0, null, "HubOutlined"));
+      children.push(ui.section("shared-memory-section", "共享记忆库", "HubOutlined", [ui.sectionAction("create-store", "创建", "Add", () => update({ panel: { type: "store", create: true, store: { id: "", name: "" } } }))], stores.length === 0 ? [ui.text("当前还没有共享记忆库，创建后可被多个角色卡挂载共享。")] : stores));
+      const cards = snapshot.cards.map((card) => {
+        const missing = card.memoryBindingMode === "SHARED" && !snapshot.stores.some((store) => store.id === card.sharedMemoryId);
+        const target = missing ? null : cardMemoryTarget(card);
+        const active = "CharacterCard" in snapshot.active && snapshot.active.CharacterCard.id === card.id;
+        return ui.tile("memory-card:" + card.id, card.name, "", [card.memoryBindingMode === "SHARED" ? "共享记忆" : "角色记忆", ...missing ? ["需要重新绑定记忆库"] : target !== null && !snapshot.memoryOwnerKeys.includes(target.ownerKey) ? ["当前角色无记忆库"] : [], ...active ? ["当前使用"] : []], target === null ? [ui.sectionAction("memory-rebind:" + card.id, "重新绑定记忆库", "EditOutlined", () => entity({ mode: "edit", entity: "card", id: card.id }))] : ownerActions2(target, card.memoryBindingMode === "SHARED" ? ":card:" + card.id : ""), active, void 0, card.avatarUri ?? state.defaultAvatar);
+      });
+      children.push(ui.section("character-memory-section", "角色记忆库", "BadgeOutlined", [], cards));
     }
-  }), ...managed === null ? [] : [renderManagedEntityScreen(ctx, managed, finishEntity)]]);
+  } else children.push(ui.text(state.busy ? "正在读取…" : "尚未读取成功，请重试"));
+  const overlays = [];
+  if (state.panel !== null) {
+    const panel = state.panel, fields2 = panelBody(panel), submit = fields2.pop();
+    const close = () => {
+      if (!live.current.busy) update({ panel: null, error: "" });
+    };
+    const title = panel.type === "binding" ? "批量绑定对话" : panel.type === "import" ? panel.entity === "card" ? "导入角色卡" : "导入群组" : panel.type === "delete-store" ? "删除共享记忆库" : panel.create ? "创建共享记忆库" : "编辑共享记忆库";
+    const messages = state.error === "" ? [] : [ctx.UI.Text({ text: state.error, color: ctx.MaterialTheme.colorScheme.error })];
+    const body = panel.type === "binding" ? ctx.UI.Column({ fillMaxSize: true }, [
+      ctx.UI.Column({ fillMaxWidth: true, paddingHorizontal: 18, spacing: 6 }, fields2.filter((node) => !String(node.props?.key ?? "").startsWith("binding-chat:") && node.props?.key !== "binding-status")),
+      ui.list("binding-chat-list", [...messages, ...fields2.filter((node) => String(node.props?.key ?? "").startsWith("binding-chat:"))])
+    ]) : ui.list("management-form", [...messages, ...fields2]);
+    const cancel = ui.button("management-back", "取消", close);
+    const status = fields2.find((node) => node.props?.key === "binding-status");
+    const footer = panel.type !== "binding" ? [cancel, submit] : [ui.size.width <= 600 ? ctx.UI.Column({ fillMaxWidth: true, spacing: 8 }, [status, ctx.UI.Row({ fillMaxWidth: true, horizontalArrangement: "end", verticalAlignment: "center", spacing: 8 }, [cancel, submit])]) : ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Box({ weight: 1 }, status), cancel, submit])];
+    overlays.push(ui.dialog("management-dialog", title, body, footer, close, panel.type === "binding" || panel.type === "import" ? "large" : "compact"));
+  }
+  if (state.memory !== null) overlays.push(renderMemoryWorkspace(ctx, state.memory, () => update({ memory: null }), "management-memory:" + state.navigation));
+  if (managed !== null) overlays.push(renderManagedEntityScreen(ctx, managed, finishEntity));
+  return ctx.UI.Box({ key: "management-root", fillMaxSize: true, modifier: ui.measure, onLoad: load }, [ctx.UI.Column({ fillMaxSize: true }, [ctx.UI.LazyColumn({ key: "management-list", weight: 1, fillMaxWidth: true, paddingHorizontal: ui.size.width <= 600 ? 12 : 16, paddingTop: 12, paddingBottom: 20 }, children)]), ...overlays]);
+}
+
+// src/ui-memory-attachment.ts
+function memoryAttachmentOwners(snapshot) {
+  return [...snapshot.cards.map((card) => ({ key: "character:" + card.id, name: card.name })), ...snapshot.stores.map((store) => ({ key: "shared:" + store.id, name: store.name }))];
+}
+function memoryAttachmentContent(owner2, folder, items) {
+  if (items.length === 0) return "";
+  return `# ${owner2.name} / ${folder === "" ? "/" : folder}
+
+` + items.map((item) => `## ${item.title}
+
+${item.content}`).join("\n\n");
+}
+function renderMemoryAttachment(ctx) {
+  const [presentation] = ctx.useState("presentation", null);
+  const session = ctx.useRef("attachment-session", null);
+  if (session.current === null) session.current = createUiScreenSession(presentation);
+  const current = session.current.currentScreen(), screenSession = session.current;
+  if (current.input.mode !== "memory-attachment") throw new Error("The attachment route requires an explicit attachment presentation");
+  const input = current.input;
+  const ownerPresentation = ctx.useRef("attachment-presentation", JSON.stringify(presentation));
+  const { state, live, update } = uiState(ctx, "memory-attachment", { snapshot: null, step: "owners", owner: null, folders: null, folder: null, items: null, busy: false, error: "", finished: false });
+  const ui = nativeUi(ctx, !state.busy && !state.finished);
+  function assertOwner() {
+    const [actual] = ctx.useState("presentation", null);
+    if (JSON.stringify(actual) !== ownerPresentation.current) throw new Error("Attachment presentation owner changed");
+  }
+  assertOwner();
+  function act(operation) {
+    return __async(this, null, function* () {
+      assertOwner();
+      if (live.current.busy || live.current.finished) return;
+      update({ busy: true, error: "" });
+      try {
+        yield operation();
+        assertOwner();
+      } catch (error) {
+        assertOwner();
+        update({ error: String(error) });
+      } finally {
+        update({ busy: false });
+      }
+    });
+  }
+  function content(folder) {
+    return __async(this, null, function* () {
+      const value = live.current;
+      if (value.owner === null || value.folders === null || !value.folders.includes(folder)) throw new Error("请选择存在的记忆文件夹");
+      if (input.folderPath !== null && input.folderPath !== folder) throw new Error("不能更改调用方指定的文件夹");
+      update({ step: "content", folder, items: null });
+      const items = yield uiRequest({ action: "listMemories", ownerKey: value.owner.key });
+      assertOwner();
+      update({ items: items.filter((item) => (item.folderPath ?? "") === folder) });
+    });
+  }
+  function folders(owner2) {
+    return __async(this, null, function* () {
+      if (input.ownerKey !== null && input.ownerKey !== owner2.key) throw new Error("不能更改调用方指定的记忆库");
+      update({ step: "folders", owner: owner2, folders: null, folder: null, items: null });
+      const paths = yield uiRequest({ action: "listMemoryFolders", ownerKey: owner2.key });
+      assertOwner();
+      update({ folders: [.../* @__PURE__ */ new Set(["", ...paths])].sort() });
+      if (input.folderPath !== null) yield content(input.folderPath);
+    });
+  }
+  function load() {
+    return __async(this, null, function* () {
+      yield act(() => __async(null, null, function* () {
+        const snapshot = yield uiRequest({ action: "snapshot" });
+        assertOwner();
+        update({ snapshot });
+        if (input.ownerKey !== null) {
+          const owner2 = memoryAttachmentOwners(snapshot).find((owner3) => owner3.key === input.ownerKey);
+          if (owner2 === void 0) throw new Error("调用方指定的记忆库不存在");
+          yield folders(owner2);
+        }
+      }));
+    });
+  }
+  function retry() {
+    return __async(this, null, function* () {
+      if (live.current.snapshot === null || live.current.owner === null) {
+        yield load();
+        return;
+      }
+      yield act(() => __async(null, null, function* () {
+        const value = live.current;
+        if (value.step === "content" && value.folder !== null && value.folders !== null) yield content(value.folder);
+        else yield folders(value.owner);
+      }));
+    });
+  }
+  function confirm() {
+    return __async(this, null, function* () {
+      assertOwner();
+      const value = live.current;
+      if (value.busy || value.finished || value.error !== "" || value.owner === null || value.folder === null || value.items === null) return null;
+      const content2 = memoryAttachmentContent(value.owner, value.folder, value.items);
+      if (content2 === "") return null;
+      const result = yield screenSession.completeScreen({ mode: "memory-attachment", ownerKey: value.owner.key, folderPath: value.folder, content: content2 });
+      update({ finished: true });
+      return JSON.parse(JSON.stringify(result));
+    });
+  }
+  function cancel() {
+    assertOwner();
+    if (live.current.busy || live.current.finished) return null;
+    update({ finished: true });
+    return JSON.parse(JSON.stringify(screenSession.cancelScreen()));
+  }
+  const children = [];
+  if (state.error !== "") children.push(ctx.UI.Text({ key: "attachment-error", text: state.error, color: ctx.MaterialTheme.colorScheme.error }), ui.button("attachment-retry", "重试", retry));
+  else if (state.busy || state.snapshot === null) children.push(ui.text("正在读取记忆库…"));
+  else if (state.step === "owners") {
+    const owners = memoryAttachmentOwners(state.snapshot);
+    children.push(...owners.map((owner2) => ctx.UI.Row({ key: "attachment-owner:" + owner2.key, fillMaxWidth: true, paddingVertical: 12, spacing: 12, verticalAlignment: "center", onClick: () => act(() => folders(owner2)) }, [ctx.UI.Icon({ name: owner2.key.startsWith("shared:") ? "GroupsOutlined" : "PersonOutline", size: 22 }), ui.text(owner2.name)])));
+    if (owners.length === 0) children.push(ui.text("没有可选的记忆库"));
+  } else if (state.step === "folders") children.push(...(state.folders ?? []).map((folder) => ctx.UI.Row({ key: "attachment-folder:" + folder, fillMaxWidth: true, paddingVertical: 12, spacing: 12, verticalAlignment: "center", onClick: () => act(() => content(folder)) }, [ctx.UI.Icon({ name: "FolderOutlined", size: 22 }), ui.text(folder === "" ? "/" : folder)])));
+  else if (state.owner !== null && state.folder !== null && state.items !== null) children.push(ui.text(memoryAttachmentContent(state.owner, state.folder, state.items) || "当前文件夹没有记忆"));
+  const canBack = state.step === "folders" ? input.ownerKey === null : state.step === "content" && input.folderPath === null;
+  return ctx.UI.Column({ key: "memory-attachment-root", fillMaxSize: true, onLoad: load }, [ctx.UI.Row({ fillMaxWidth: true, height: 58, paddingHorizontal: 18, spacing: 12, verticalAlignment: "center" }, [...canBack ? [ui.iconButton("attachment-back", "返回", "ArrowBack", () => {
+    if (state.step === "content") update({ step: "folders", folder: null, items: null, error: "" });
+    else update({ step: "owners", owner: null, folders: null, error: "" });
+  })] : [], ctx.UI.Text({ text: state.owner === null ? "记忆附件" : state.owner.name, fontSize: 20, fontWeight: "500" })]), ui.list("attachment-body", children), ctx.UI.Box({ fillMaxWidth: true, padding: 12 }, ui.actions([ui.button("attachment-cancel", "取消", cancel), ...state.step === "content" && state.items !== null && state.items.length > 0 && state.error === "" ? [ui.button("attachment-confirm", "添加记忆附件", confirm)] : []]))]);
+}
+
+// src/ui-editor.ts
+function renderScreen(ctx, _definition, requiredMode = null, managementView = "characters") {
+  return requiredMode === "memory-attachment" ? renderMemoryAttachment(ctx) : renderManagement(ctx, managementView);
 }
 
 // src/ui/memory/index.ui.ts

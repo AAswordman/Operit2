@@ -88,8 +88,8 @@ test('connection streams share one bounded Host task', () => {
   assert.match(ffi, /BridgeStreams::start/);
 });
 
-/** Requires ABI v3 for native Core transport and preserves lifecycle and browser entry points. */
-test('native Core transport exclusively exposes ABI v3', () => {
+/** Requires ABI v4 for native Core transport and preserves lifecycle and browser entry points. */
+test('native Core transport exclusively exposes ABI v4', () => {
   const exports = source(bridge + 'BridgeExports.rs');
   for (const name of ['create', 'create_with_storage_roots', 'destroy', 'emit_runtime_event', 'free_string']) {
     assert.match(exports, new RegExp(`fn operit_flutter_bridge_${name}\\(`));
@@ -100,8 +100,8 @@ test('native Core transport exclusively exposes ABI v3', () => {
 
   const ffi = source(bridge + 'FfiTransport.rs');
   assert.match(ffi, /fn operit_flutter_bridge_ffi_connect\(/);
-  assert.match(ffi, /"version": 3/);
-  for (const name of ['bufferAllocate', 'bufferData', 'bufferSeal', 'bufferRetain', 'bufferRelease']) {
+  assert.match(ffi, /"version": 4/);
+  for (const name of ['bufferAllocate', 'bufferData', 'bufferSeal', 'bufferRetain', 'bufferRelease', 'reportFailure']) {
     assert.match(ffi, new RegExp(`"${name}":`));
   }
   assert.doesNotMatch(ffi, /defaultHostRuntimeTaskSchedulerHost/);
@@ -109,7 +109,7 @@ test('native Core transport exclusively exposes ABI v3', () => {
   assert.match(ffi, /SharedBuffer::retain\(\*handles\.add\(index\)\)/);
 
   const dart = source('apps/flutter/app/lib/core/bridge/FfiCoreTransport.dart');
-  const versionCheck = dart.indexOf("descriptor['version'] != 3");
+  const versionCheck = dart.indexOf("descriptor['version'] != 4");
   const sessionBinding = dart.indexOf("_address(descriptor, 'session')");
   assert.notEqual(versionCheck, -1);
   assert.ok(sessionBinding > versionCheck);

@@ -347,10 +347,9 @@ impl ModelConfigManager {
 
     /// Lists the provider's live models first, then the other models the catalog lists for it.
     ///
-    /// Each model is described as it would be once added. A catalog over a day old is
-    /// downloaded again first; when that download fails the copy in use describes the models
-    /// and `getModelCatalogStatus` reports the failure. A missing catalog must finish its
-    /// first download successfully before any models are returned.
+    /// Each model is described using the active catalog without waiting for a models.dev
+    /// download. The application refreshes the bundled or previously downloaded data in
+    /// the background, so catalog connectivity never blocks model configuration.
     pub fn getAvailableProviderModels(
         &self,
         providerId: &str,
@@ -364,8 +363,6 @@ impl ModelConfigManager {
                 .map(|model| resolver.configured(model, AvailableProviderModelSource::Local))
                 .collect());
         }
-        ModelCatalogService::requireCatalog().map_err(ModelConfigError::ModelCatalog)?;
-        ModelCatalogService::refreshCatalogIfStale();
         let resolver = ModelSpecResolver::new(&provider)?;
         let mut models: Vec<AvailableProviderModel> = Vec::new();
         let mut seenModelIds = HashSet::new();

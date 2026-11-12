@@ -3368,16 +3368,16 @@ abstract class AppLocalizations {
   /// **'Could not update model details, using those from {time}: {error}'**
   String settingsModelCatalogUpdateFailedUsing(String time, String error);
 
-  /// No description provided for @settingsModelCatalogNotDownloaded.
+  /// No description provided for @settingsModelCatalogBundled.
   ///
   /// In en, this message translates to:
-  /// **'Model details have not been downloaded yet'**
-  String get settingsModelCatalogNotDownloaded;
+  /// **'Using bundled model details; online updates replace them automatically'**
+  String get settingsModelCatalogBundled;
 
   /// No description provided for @settingsModelCatalogRetry.
   ///
   /// In en, this message translates to:
-  /// **'Retry'**
+  /// **'Update'**
   String get settingsModelCatalogRetry;
 
   /// No description provided for @settingsModelCustomModel.

@@ -23,7 +23,8 @@ DEFAULT_OUTPUT = APP_ROOT / "build/module-arm64-v8a"
 SYSTEM_APP = "system/app/Operit"
 APK_ENTRY = "payload/operit-android.apk"
 ROOTFS_ENTRY = "assets/android-runtime/arm64-v8a/rootfs.tar.gz.bin"
-APP_MARKER = {"runtime": "external", "protocol": 1, "app": "android-module", "bootstrap": "app_process"}
+APP_MARKER = {"runtime": "external", "protocol": 1, "app": "android-module", "bootstrap": "app_process",
+              "applicationId": "app.operit.module"}
 APP_JNI = b"Java_app_operit_ModuleMain_runRuntime\0"
 
 
@@ -95,7 +96,7 @@ def assemble(apk: Path, output: Path, *, release_version: str | None = None,
             raise ValueError("APK contains duplicate ZIP entries")
         marker = "assets/operit-android-module.json"
         if marker not in names or json.loads(application.read(marker)) != APP_MARKER:
-            raise ValueError("APK is not the shared Android module build; rebuild with operitRuntime=module")
+            raise ValueError("APK is not the shared Android module build for app.operit.module; rebuild with operitRuntime=module")
         dex_entries = [name for name in names if re.fullmatch(r"classes(?:\d+)?\.dex", name)]
         if not any(b"Lapp/operit/ModuleMain;" in application.read(name) for name in dex_entries):
             raise ValueError("APK is missing the module app_process entry point")

@@ -51,12 +51,17 @@ struct SkillAsset {
     package: Option<SkillPackageReference>,
 }
 
+/// Generates runtime asset indexes and verifies the prepared model catalog snapshot.
 fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         println!("cargo:rustc-link-lib=advapi32");
     }
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let catalog_bundle = manifest_dir.join("assets/models_dev/catalog.json.gz");
+    println!("cargo:rerun-if-changed={}", catalog_bundle.display());
+    assert!(catalog_bundle.is_file(),
+        "Bundled models.dev catalog is missing. Run: python3 tools/build_scripts/models_dev_bundle.py");
     validate_plugin_assets(&manifest_dir, "buildin");
     validate_plugin_assets(&manifest_dir, "external");
     let source_dir = manifest_dir.join("assets").join("plugins").join("buildin");

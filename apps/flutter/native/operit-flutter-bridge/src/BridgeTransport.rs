@@ -387,6 +387,8 @@ async fn forward_watch(
     mut cancelled: oneshot::Receiver<()>,
     events: mpsc::Sender<WatchDelivery>,
 ) {
+    let mut streaming = false;
+    let mut reply = Some(reply);
     let outcome = std::panic::AssertUnwindSafe(async {
         let opened = tokio::select! {
             biased;
@@ -395,9 +397,10 @@ async fn forward_watch(
         };
         let mut source = match opened {
             Ok(source) => source,
-            Err(error) => { let _ = reply.send(Err(error)); return; }
+            Err(error) => { let _ = reply.take().expect("Opening reply").send(Err(error)); return; }
         };
-        if reply.send(Ok(Some(id.clone()))).is_err() { return; }
+        if reply.take().expect("Opening reply").send(Ok(Some(id.clone()))).is_err() { return; }
+        streaming = true;
         loop {
             let event = tokio::select! {
                 biased;
@@ -414,12 +417,18 @@ async fn forward_watch(
             if completed { break; }
         }
     }).catch_unwind().await;
+    // Failed opens are settled by their reply; only opened sources publish completion.
+    if !streaming && outcome.is_ok() { return; }
     let event = outcome.map(|_| None).map_err(|payload| {
         CoreLinkError::new(
             "FATAL_CORE_PANIC",
             crate::BridgeExports::panic_payload_message(payload.as_ref()),
         )
     });
+    if let Some(reply) = reply {
+        let _ = reply.send(event.map(|_| Some(id)));
+        return;
+    }
     let _ = events.send(WatchDelivery { id, tag, event }).await;
 }
 

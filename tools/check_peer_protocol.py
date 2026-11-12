@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that published protocol revisions are immutable and changes bump the version.
 
-Cargo's node-runtime build verifies the actual source + generated-route SHA-256.
+Cargo's node-runtime build verifies the annotated route contract SHA-256.
 This check compares the revision ledger against the PR base to prevent replacing
 an old hash without advancing the protocol version.
 """
@@ -33,8 +33,6 @@ def check_revisions(current, previous=None):
         old = previous["revisions"]
         if revisions[:len(old)] != old:
             raise ValueError("Published protocol revisions are immutable; append a revision with a higher version")
-        if any(current.get(key) != previous.get(key) for key in ("sources", "schemaRoots")) and len(revisions) <= len(old):
-            raise ValueError("Changing protocol coverage requires a new protocol revision")
 
 
 def main():

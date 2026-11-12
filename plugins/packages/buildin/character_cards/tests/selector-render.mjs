@@ -44,18 +44,18 @@ export function mountRegisteredComposeRoute(plugin, presentation, routeId, hostS
   const context = pageRuntime?.context ?? vm.createContext({ console, setTimeout, clearTimeout });
   context.module = module;
   context.exports = module.exports;
+  /** Uses the documented async host ABI for actual file-picker and file-save callbacks. */
+  context.__operitInvokeHostAsync = async (command, args, decode = value => value) => decode(await command(...args));
   if (webViewCommands !== null) {
     context.__operitNativeComposeWebViewControllerCommand = request => ({ success: true, data: webViewCommands(request) ?? null });
     context.__operitNativeComposeWebViewControllerCommandSuspend = async request => ({ success: true, data: await webViewCommands(request) ?? null });
-    /** Uses the documented optional decoder in the host Promise ABI. */
-    context.__operitInvokeHostAsync = async (command, args, decode = value => value) => decode(await command(...args));
   }
   if (!context.OperitComposeDslRuntime) {
     vm.runInContext(sdkScript("ToolPkgComposeDslBridge.rs", "buildComposeDslContextBridgeDefinition"), context);
   }
   vm.runInContext(wrapComposeScript(), context);
   composeStreamFixture(context).adapt();
-  const options = { state: { ...hostState, presentation }, packageName: "com.operit.character_cards", toolPkgId: "com.operit.character_cards", uiModuleId: routeId, routeInstanceId: "native-selector-test", executionContextKey: "selector-test" };
+  const options = { state: { "character-ui-size": { width: 390, height: 844 }, ...hostState, presentation }, packageName: "com.operit.character_cards", toolPkgId: "com.operit.character_cards", uiModuleId: routeId, routeInstanceId: "native-selector-test", executionContextKey: "selector-test" };
   const first = module.exports.__operit_render_compose_dsl(options);
   return {
     first,

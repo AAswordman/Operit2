@@ -81,5 +81,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "../build_support/peer_protocol.rs"]
-mod protocol_guard_tests;
+#[path = "../build.rs"]
+mod route_catalog_tests;

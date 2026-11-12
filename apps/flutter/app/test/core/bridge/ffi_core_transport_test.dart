@@ -57,6 +57,12 @@ late Pointer<Void> Function(Pointer<Void>) _fixtureBufferRetain;
 late Pointer<Uint8> Function(Pointer<Void>) _fixtureBufferView;
 late int Function(Pointer<Void>) _fixtureBufferLength;
 late int Function() _fixtureLiveAllocations;
+final List<String> _nativeFailures = [];
+
+/// Captures the host log call without using a Core request or the client logger.
+void _reportFailure(Pointer<Uint8> bytes, int length) {
+  _nativeFailures.add(utf8.decode(bytes.asTypedList(length)));
+}
 
 /// Loads the production Rust sender in a dependency-free native test library.
 Future<void> _loadPortFixture() async {
@@ -171,7 +177,7 @@ class _HostConnection {
 
   /// Publishes function pointers using the same versioned descriptor as the Rust host.
   String descriptor() => jsonEncode({
-    'version': 3,
+    'version': 4,
     'session': token.address.toString(),
     'attach':
         Pointer.fromFunction<
@@ -225,6 +231,10 @@ class _HostConnection {
       _free,
     ).address.toString(),
     'release': calloc.nativeFree.address.toString(),
+    'reportFailure':
+        Pointer.fromFunction<Void Function(Pointer<Uint8>, UintPtr)>(
+          _reportFailure,
+        ).address.toString(),
   });
 
   /// Transfers an immutable external buffer through the actual Dart VM native API.
@@ -825,23 +835,65 @@ void main() {
   );
 
   test(
-    'invalid transport frames fail pending work and detach the connection',
+    'failed connections preserve the error and reconnect once for new calls',
     () async {
       final pending = proxy.call(_call('one', 'delayed', null));
       final assertion = expectLater(pending, throwsFormatException);
       await pumpEventQueue();
+      _nativeFailures.clear();
       host.send(255, 0, Uint8List(0));
       await assertion;
-      await expectLater(
-        proxy.call(_call('two', 'echo', null)),
-        throwsStateError,
-      );
-      final log = await ClientLogger.readText();
+      // The failure is recorded synchronously before any new FFI session opens.
+      expect(platformMethods, ['connectCoreFfi']);
+      final log = _nativeFailures.single;
       expect(log, contains('Core FFI connection failed pendingRequests=1'));
       expect(log, contains('Unknown Core FFI frame type: 255'));
       expect(log, contains('stackTrace='));
+      expect(log, contains('kind=255 id=0'));
+      expect(log, contains('pendingIds=[1]'));
+      expect(log, contains('at=${DateTime.now().year}-'));
+      final failedHost = host;
+      expect(platformMethods, ['connectCoreFfi']);
+      expect(
+        await Future.wait([
+          proxy.call(_call('two', 'echo', 'retried')),
+          proxy.call(_call('three', 'echo', 'concurrent')),
+        ]),
+        ['retried', 'concurrent'],
+      );
+      expect(platformMethods, ['connectCoreFfi', 'connectCoreFfi']);
+      expect(host, isNot(same(failedHost)));
+      expect(host.delayed, isEmpty);
+      expect(_nativeFailures, [log]);
     },
   );
+
+  test('terminal failure closes old watches and permits a new watch', () async {
+    final errors = <Object>[];
+    final done = Completer<void>();
+    proxy
+        .watchStream(_watch('items'))
+        .listen((_) {}, onError: errors.add, onDone: done.complete);
+    await pumpEventQueue();
+    host.send(
+      4,
+      0,
+      encodeCoreLink([
+        1,
+        'MODULE_DISCONNECTED',
+        'module disconnected',
+        null,
+        null,
+        null,
+      ]),
+    );
+    await done.future;
+    expect(errors.single, isA<CoreLinkError>());
+    expect(platformMethods, ['connectCoreFfi']);
+    final events = await proxy.watchStream(_watch('finite')).toList();
+    expect(events.map((event) => event.value), ['early']);
+    expect(platformMethods, ['connectCoreFfi', 'connectCoreFfi']);
+  });
 }
 
 /// Lets VM isolate teardown exercise finalizers on a received ownership envelope.

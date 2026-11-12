@@ -216,6 +216,34 @@ void main() {
       expect(log, contains('preference-disconnect-origin'));
     },
   );
+
+  test(
+    'retry restores appearance and subscribes after disconnection',
+    () async {
+      final bridge = _SharedThemeBridge();
+      final theme = controller(bridge);
+      addTearDown(theme.dispose);
+      addTearDown(bridge.close);
+      await theme.start();
+      final error = StateError('Core FFI connection is closed');
+      bridge._events.addError(error);
+      await bridge._events.close();
+      bridge._events = StreamController<CoreEvent>.broadcast(sync: true);
+      expect(theme.themeLoadError, same(error));
+
+      await theme.reloadTheme();
+      expect(theme.themeLoadError, isNull);
+      expect(theme.hasLoadedTheme, isTrue);
+      expect(bridge.watches, ['preferencesFlow', 'preferencesFlow']);
+      expect(bridge.updates, isEmpty);
+
+      bridge.preferences['theme_mode'] = 'dark';
+      final watch = bridge._watchRequests['preferencesFlow']!;
+      bridge._events.add(bridge._event(watch, bridge.preferences));
+      await Future<void>.delayed(Duration.zero);
+      expect(theme.themeMode, ThemeMode.dark);
+    },
+  );
 }
 
 /// Exercises ordinary appearance calls and watches through the real Link codecs.
@@ -226,8 +254,9 @@ class _SharedThemeBridge extends OperitRuntimeBridge {
   final Map<String, Object?> preferences = <String, Object?>{};
   final Map<String, CoreWatchRequest> _watchRequests =
       <String, CoreWatchRequest>{};
-  final StreamController<CoreEvent> _events =
-      StreamController<CoreEvent>.broadcast(sync: true);
+  StreamController<CoreEvent> _events = StreamController<CoreEvent>.broadcast(
+    sync: true,
+  );
 
   /// Implements only the ordinary appearance operations under test.
   @override

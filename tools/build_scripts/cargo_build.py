@@ -8,6 +8,8 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 
+from models_dev_bundle import prepare_build_catalog
+
 
 REPO_ROOT = Path(os.path.abspath(__file__)).parents[2]
 
@@ -73,6 +75,7 @@ def main() -> int:
     command = sys.argv[1:]
     if not command:
         raise SystemExit("usage: cargo_build.py <cargo executable> <arguments...>")
+    prepare_build_catalog(command)
     return subprocess.run(command, env=cargo_build_environment(command)).returncode
 
 

@@ -3,6 +3,10 @@
 #[path = "../src/services/ModelCatalogService.rs"]
 mod catalog;
 
+// An independent process state reads the same persisted runtime storage after an update.
+#[path = "../src/services/ModelCatalogService.rs"]
+mod restartedCatalog;
+
 #[path = "../src/data/preferences/ModelSpecResolver.rs"]
 mod resolver;
 
@@ -112,9 +116,9 @@ impl HttpHost for CatalogHttpHost {
     }
 }
 
-/// Exercises a fresh device through download failures, explicit retries and shared readiness.
+/// Exercises offline first use, background replacement, retry delays and persisted precedence.
 #[test]
-fn first_use_requires_a_complete_catalog_and_shares_downloads() {
+fn bundled_catalog_is_immediate_and_downloaded_catalog_replaces_it() {
     let root =
         std::env::temp_dir().join(format!("operit-catalog-first-use-{}", std::process::id()));
     let storage = Arc::new(NativeRuntimeStorageHost::new(
@@ -140,32 +144,43 @@ fn first_use_requires_a_complete_catalog_and_shares_downloads() {
         "https://api.openai.com/v1/chat/completions".into(),
     );
 
-    // An interrupted download is not a usable catalog, even when api.json is present.
+    // An interrupted device download cannot replace the bundled snapshot.
     storage
         .writeBytes(&format!("{cache}/api.json"), PROVIDERS)
         .unwrap();
-    assert!(catalog::currentCatalog().is_none());
+    let bundled = catalog::requireCatalog().unwrap();
+    let facts = bundled.facts(&[], "gpt-5").unwrap();
+    assert!(facts.capabilities.directImage);
+    assert!(facts.capabilities.toolCall);
+    let resolved = resolver::ModelSpecResolver::new(&provider)
+        .unwrap()
+        .resolve(&ModelProfile::new("gpt-5".into()));
+    assert!(resolved.capabilities.directImage);
+    assert!(resolved.request.supportsStructuredTools);
+    assert!(http.requests.lock().unwrap().is_empty());
+
+    // A refused initial update is diagnostic only; resolution remains immediately usable.
     http.respond("api.json", Err("fixture offline".into()));
-    let failure = resolver::ModelSpecResolver::new(&provider).err().unwrap();
-    assert!(
-        matches!(failure, ModelConfigManager::ModelConfigError::ModelCatalog(ref message) if message.contains("fixture offline"))
-    );
-    assert!(catalog::catalogStatus().updatedAt.is_none());
+    let failure = catalog::refreshCatalog();
+    assert!(failure.lastError.unwrap().contains("fixture offline"));
+    assert!(failure.updatedAt.is_none());
+    assert!(resolver::ModelSpecResolver::new(&provider).is_ok());
+    assert!(Arc::ptr_eq(&bundled, &catalog::requireCatalog().unwrap()));
     assert_eq!(http.requests.lock().unwrap().len(), 1);
 
-    // Automatic checks respect their delay; the next user call retries immediately.
+    // Automatic checks respect their delay; an explicit update can retry immediately.
     catalog::refreshCatalogIfStale();
     assert_eq!(http.requests.lock().unwrap().len(), 1);
     http.respond("api.json", Ok(PROVIDERS.to_vec()));
     http.respond("models.json", Ok(b"invalid json".to_vec()));
-    assert!(catalog::requireCatalog()
-        .err()
+    assert!(catalog::refreshCatalog()
+        .lastError
         .unwrap()
         .contains("models.json"));
-    assert!(catalog::currentCatalog().is_none());
+    assert!(Arc::ptr_eq(&bundled, &catalog::requireCatalog().unwrap()));
     assert!(!storage.exists(&format!("{cache}/downloaded.json")).unwrap());
 
-    // Readers must wait while both catalog files are downloaded and committed.
+    // Readers keep using the bundle while a replacement is still being downloaded.
     let (entered, downloadStarted) = mpsc::channel();
     let release = Arc::new(Barrier::new(2));
     http.responses.lock().unwrap().push_back(Response {
@@ -174,7 +189,7 @@ fn first_use_requires_a_complete_catalog_and_shares_downloads() {
         gate: Some((entered, release.clone())),
     });
     http.respond("models.json", Ok(b"{}".to_vec()));
-    let download = std::thread::spawn(catalog::requireCatalog);
+    let download = std::thread::spawn(catalog::refreshCatalog);
     downloadStarted
         .recv_timeout(Duration::from_secs(5))
         .unwrap();
@@ -189,15 +204,19 @@ fn first_use_requires_a_complete_catalog_and_shares_downloads() {
             })
         })
         .collect::<Vec<_>>();
-    assert!(matches!(
-        results.recv_timeout(Duration::from_millis(100)),
-        Err(mpsc::RecvTimeoutError::Timeout)
-    ));
-    release.wait();
-    let ready = download.join().unwrap().unwrap();
-    for reader in readers {
-        assert!(Arc::ptr_eq(&ready, &reader.join().unwrap().unwrap()));
+    for _ in 0..readers.len() {
+        results.recv_timeout(Duration::from_secs(5)).unwrap();
     }
+    for reader in readers {
+        assert!(Arc::ptr_eq(&bundled, &reader.join().unwrap().unwrap()));
+    }
+    release.wait();
+    assert!(download.join().unwrap().lastError.is_none());
+    let ready = catalog::requireCatalog().unwrap();
+    assert!(!Arc::ptr_eq(&bundled, &ready));
+    // Successful downloads replace the whole bundle, rather than merging stale entries.
+    assert!(bundled.facts(&[], "claude-sonnet-4-5").is_some());
+    assert!(ready.facts(&[], "claude-sonnet-4-5").is_none());
     assert_eq!(http.requests.lock().unwrap().len(), 5);
     let facts = ready.facts(&[], "gpt-5").unwrap();
     assert!(facts.capabilities.directImage);
@@ -212,6 +231,15 @@ fn first_use_requires_a_complete_catalog_and_shares_downloads() {
     let status = catalog::catalogStatus();
     assert!(status.updatedAt.is_some());
     assert!(status.lastError.is_none());
+
+    // A new runtime reads the completed download instead of the embedded snapshot.
+    let persisted = restartedCatalog::requireCatalog().unwrap();
+    assert!(persisted.facts(&[], "claude-sonnet-4-5").is_none());
+    assert_eq!(
+        restartedCatalog::catalogStatus().updatedAt,
+        status.updatedAt
+    );
+    assert_eq!(http.requests.lock().unwrap().len(), 5);
 
     // A later update failure preserves the complete catalog and its download time.
     http.respond("api.json", Err("fixture update failed".into()));

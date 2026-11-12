@@ -287,7 +287,7 @@ impl ThemeConfigManager {
     ) -> Result<(), PreferencesDataStoreError> {
         validateThemePreferenceSnapshot(&snapshot)?;
         self.dataStore.try_edit_result(|preferences| {
-            let mut state = readCatalogState(preferences)?;
+            let mut state = readState(preferences)?;
             writeThemePreferenceSnapshot(preferences, &snapshot)?;
             state.activeThemeConfigId = None;
             writeState(preferences, &state)
@@ -324,7 +324,7 @@ fn commitAppearance(
 pub(super) fn migrateUnboundAppearance(
     preferences: &mut Preferences,
 ) -> Result<(), PreferencesDataStoreError> {
-    let mut state = readCatalogState(preferences)?;
+    let mut state = readState(preferences)?;
     if let Some(id) = &state.activeThemeConfigId {
         // The selected theme owns its mode and appearance, including old global overrides.
         writeThemePreferenceSnapshot(preferences, &findConfig(&state, id)?.snapshot)?;
@@ -373,8 +373,8 @@ pub(super) fn migrateUnboundAppearance(
     writeState(preferences, &state)
 }
 
-/// Decodes saved configurations independently of the ordinary appearance being replaced.
-fn readCatalogState(preferences: &Preferences) -> Result<ThemeConfigState, PreferencesDataStoreError> {
+/// Reads and validates the saved catalog independently of the current ordinary appearance.
+fn readState(preferences: &Preferences) -> Result<ThemeConfigState, PreferencesDataStoreError> {
     // Each identity has its own synchronized record; malformed records remain errors.
     let mut configs = Vec::new();
     for (key, value) in preferences.iterEntries() {
@@ -401,15 +401,6 @@ fn readCatalogState(preferences: &Preferences) -> Result<ThemeConfigState, Prefe
         activeThemeConfigId,
     };
     validateState(&state)?;
-    Ok(state)
-}
-
-/// Validates the active ordinary appearance in addition to the saved catalog.
-fn readState(preferences: &Preferences) -> Result<ThemeConfigState, PreferencesDataStoreError> {
-    let state = readCatalogState(preferences)?;
-    if let Some(id) = &state.activeThemeConfigId {
-        assertThemePreferenceSnapshot(preferences, &findConfig(&state, id)?.snapshot)?;
-    }
     Ok(state)
 }
 

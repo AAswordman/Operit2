@@ -51,8 +51,8 @@ App 和全量发布（`tools/release/build_release.py --scope app|full`）以及
 
 安装器校验输入后，从唯一的 APK 中展开 JNI 库与终端资源，将原 APK 移到模块的 `system/app/Operit/Operit.apk`。不执行 `pm install`。需要已有启用的 KernelSU mounting metamodule，并在安装后重启。
 
-KernelSU 默认的“卸载模块”策略会让应用进程看不到挂载的系统 APK。安装后，在 KernelSU 的应用配置中显示系统应用，为 `app.operit` 选择自定义配置并关闭“卸载模块”；桌面和 SystemUI 也需要读取这个 APK 的图标、主题和通知资源，应为它们保留挂载。无需为这些界面进程打开“超级用户”开关，Root Core 由模块服务启动。保留全局默认策略，只调整上述应用，重启使已有系统界面进程使用新配置。
+KernelSU 默认的“卸载模块”策略会让应用进程看不到挂载的系统 APK。安装后，在 KernelSU 的应用配置中显示系统应用，为 `Operit2 (Module)`（`app.operit.module`）选择自定义配置并关闭“卸载模块”；桌面和 SystemUI 也需要读取这个 APK 的图标、主题和通知资源，应为它们保留挂载。无需为这些界面进程打开“超级用户”开关，Root Core 由模块服务启动。保留全局默认策略，只调整上述应用，重启使已有系统界面进程使用新配置。
 
-替换数据分区的同包名 App 前应备份它的私有数据，并卸载旧 App，避免数据分区 APK 覆盖系统模块或签名不一致。模块业务数据位于 `/data/adb/operit2`，更新模块时保留该目录。
+普通 App 为 `Operit2`（`app.operit`），模块客户端为 `Operit2 (Module)`（`app.operit.module`），可以同时安装和运行，无需卸载普通 App。两者的 Android 私有数据与 Core 相互独立，模块业务数据位于 `/data/adb/operit2`，更新模块时保留该目录。旧版同包名模块 APK 必须重新构建；从旧模块升级后，数据分区中的普通 App 可以继续保留，不自动迁移其数据。
 
 后台使用 `app_process` 启动模块入口、加载共享 JNI 库，由 Android Host 以真实 Root UID 装配 Core。Flutter Activity 连接这个 Core。详细进程边界、数据目录与验收限制见 [架构说明](../../docs/android-module-architecture.md)。

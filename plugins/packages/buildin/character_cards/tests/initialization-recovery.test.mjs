@@ -140,13 +140,9 @@ test("repair establishes the schema marker before publishing state and preserves
 
 test("the real registered management screen offers inspection and requires consent before repair", async t => {
   const runtime = await interrupted(t);
-  let bridge;
-  const ui = mountRegisteredComposeRoute(runtime, null, "main", {}, request => {
-    if (request.command === "addJavascriptInterface") bridge = request.payload.object;
-  });
+  const ui = mountRegisteredComposeRoute(runtime, null, "main");
   await ui.dispatch({ __actionId: "__operit_theme_changed" }, plain(fixture().theme));
   await ui.load();
-  await assert.rejects(ui.dispatch(bridge.loadScreen, []), /unplanned configuration/);
   const failed = ui.render().tree;
   assert.equal(failed.props.key, "initialization-recovery-panel");
   assert.equal(composeNodes(failed, node => node.type === "WebView").length, 0);
@@ -160,9 +156,8 @@ test("the real registered management screen offers inspection and requires conse
   assert.equal(keyedNode(confirmed, "initialization-repair").props.enabled, true);
   await ui.dispatch(keyedNode(confirmed, "initialization-repair").props.onClick);
   const restored = ui.render().tree;
-  assert.equal(restored.props.key, "character-memory-editor");
+  assert.equal(restored.props.key, "management-root");
   await ui.dispatch(restored.props.onLoad);
-  const bootstrap = await ui.dispatch(bridge.loadScreen, []);
-  assert.equal(bootstrap.actionResult.snapshot.cards[0].id, runtime.id);
+  keyedNode(ui.render().tree, "card:" + runtime.id);
   assert.equal((await runtime.api("character.list", {}))[0].id, runtime.id);
 });

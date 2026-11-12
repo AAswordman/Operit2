@@ -1,5 +1,6 @@
 import 'support/native_sidebar_bridge.dart';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,120 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 /// Verifies drawer transitions preserve the mounted conversation list and input.
 void main() {
   for (final enableNavigationAnimation in <bool>[true, false]) {
+    testWidgets(
+      'edge swipe opens drawer while eager page keeps pointer events (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        var moves = 0;
+        var releases = 0;
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: _eagerPage(
+            onPointerMove: (_) => moves++,
+            onPointerUp: (_) => releases++,
+          ),
+        );
+        final gesture = await tester.startGesture(const Offset(12, 400));
+        await gesture.moveBy(const Offset(20, 0));
+        expect(drawerOpen.value, isFalse);
+        await gesture.moveBy(const Offset(35, 0));
+        expect(drawerOpen.value, isTrue);
+        await gesture.up();
+        expect(moves, 2);
+        expect(releases, 1);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      'eager page retains interior and vertical drags and edge taps (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        var releases = 0;
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: _eagerPage(onPointerUp: (_) => releases++),
+        );
+        await tester.dragFrom(const Offset(80, 400), const Offset(120, 0));
+        expect(drawerOpen.value, isFalse);
+        final vertical = await tester.startGesture(const Offset(12, 200));
+        await vertical.moveBy(const Offset(0, 35));
+        await vertical.moveBy(const Offset(120, 0));
+        await vertical.up();
+        expect(drawerOpen.value, isFalse);
+        final leftward = await tester.startGesture(const Offset(12, 200));
+        await leftward.moveBy(const Offset(-25, 0));
+        await leftward.moveBy(const Offset(150, 0));
+        await leftward.up();
+        expect(drawerOpen.value, isFalse);
+        await tester.tapAt(const Offset(12, 400));
+        expect(releases, 4);
+        expect(drawerOpen.value, isFalse);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      'multi-touch and cancellation abandon edge swipes (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: _eagerPage(),
+        );
+        final first = await tester.startGesture(const Offset(12, 200));
+        final second = await tester.startGesture(
+          const Offset(120, 400),
+          pointer: 2,
+        );
+        await first.moveBy(const Offset(100, 0));
+        await second.up();
+        await first.moveBy(const Offset(100, 0));
+        await first.up();
+        expect(drawerOpen.value, isFalse);
+        final cancelled = await tester.startGesture(const Offset(12, 200));
+        await cancelled.moveBy(const Offset(20, 0));
+        await cancelled.cancel();
+        await tester.dragFrom(const Offset(80, 400), const Offset(120, 0));
+        expect(drawerOpen.value, isFalse);
+        await tester.dragFrom(const Offset(12, 400), const Offset(100, 0));
+        expect(drawerOpen.value, isTrue);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      'edge observation respects excluded eager content (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        var moves = 0;
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: DrawerGestureExclusion(
+            child: _eagerPage(onPointerMove: (_) => moves++),
+          ),
+        );
+        await tester.dragFrom(const Offset(12, 400), const Offset(100, 0));
+        expect(moves, greaterThan(0));
+        expect(drawerOpen.value, isFalse);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
     testWidgets(
       'input cursor drag does not open drawer (effects: $enableNavigationAnimation)',
       (tester) async {
@@ -458,6 +573,27 @@ void main() {
   }
 }
 
+/// Models a WebView's eager gesture ownership while exposing raw page events.
+Widget _eagerPage({
+  PointerMoveEventListener? onPointerMove,
+  PointerUpEventListener? onPointerUp,
+}) => RawGestureDetector(
+  gestures: <Type, GestureRecognizerFactory>{
+    EagerGestureRecognizer:
+        GestureRecognizerFactoryWithHandlers<EagerGestureRecognizer>(
+          EagerGestureRecognizer.new,
+          (_) {},
+        ),
+  },
+  child: Listener(
+    behavior: HitTestBehavior.opaque,
+    onPointerMove: onPointerMove,
+    onPointerUp: onPointerUp,
+    child: const SizedBox.expand(),
+  ),
+);
+
+/// Mounts the phone layout with isolated preferences and drawer state.
 Future<void> _pumpSwipeTestLayout(
   WidgetTester tester, {
   required ValueNotifier<bool> drawerOpen,

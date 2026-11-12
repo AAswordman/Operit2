@@ -46,6 +46,9 @@ abstract class StageOperitAndroidAssets : DefaultTask() {
     @get:Input
     abstract val externalRuntime: Property<Boolean>
 
+    @get:Input
+    abstract val applicationId: Property<String>
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -68,7 +71,7 @@ abstract class StageOperitAndroidAssets : DefaultTask() {
         }
         if (externalRuntime.get()) {
             outputDirectory.file("operit-android-module.json").get().asFile
-                .writeText("{\"runtime\":\"external\",\"protocol\":1,\"app\":\"android-module\",\"bootstrap\":\"app_process\"}\n")
+                .writeText("{\"runtime\":\"external\",\"protocol\":1,\"app\":\"android-module\",\"bootstrap\":\"app_process\",\"applicationId\":\"${applicationId.get()}\"}\n")
         }
     }
 }
@@ -157,8 +160,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "app.operit"
+        applicationId = if (operitExternalRuntime) "app.operit.module" else "app.operit"
+        manifestPlaceholders["operitAppLabel"] = if (operitExternalRuntime) "Operit2 (Module)" else "Operit2"
+        manifestPlaceholders["operitShortcuts"] = if (operitExternalRuntime) "@xml/module_shortcuts" else "@xml/shortcuts"
         buildConfigField("boolean", "OPERIT_EXTERNAL_RUNTIME", operitExternalRuntime.toString())
         manifestPlaceholders["operitAppCoreEnabled"] = (!operitExternalRuntime).toString()
         // You can update the following values to match your application needs.
@@ -178,6 +182,7 @@ android {
     sourceSets.getByName("main").jniLibs.setSrcDirs(emptyList<String>())
     if (operitExternalRuntime) {
         sourceSets.getByName("main").java.srcDir(operitModuleAndroid.dir("src/main/kotlin"))
+        sourceSets.getByName("main").res.srcDir(operitModuleAndroid.dir("src/main/res"))
     }
 
     buildTypes {
@@ -214,6 +219,7 @@ androidComponents {
             sourceDirectory.set(layout.projectDirectory.dir("src/main/assets"))
             selectedAbis.set(selectedOperitRustTargets.map { it.abi })
             externalRuntime.set(operitExternalRuntime)
+            applicationId.set(variant.applicationId)
         }
         val assets = variant.sources.assets
             ?: throw GradleException("Android variant ${variant.name} has no asset sources")

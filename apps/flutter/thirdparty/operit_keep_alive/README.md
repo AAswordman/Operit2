@@ -11,7 +11,7 @@
 | Windows | 主窗口关闭进入托盘；打开操作恢复原窗口；Explorer 重启后重新注册图标 | 强制结束、注销、关机和睡眠仍由系统控制 |
 | macOS | 主窗口关闭进入菜单栏；保留原 Flutter 引擎；持有 lease 时通过 ProcessInfo activity 防止 App Nap | 系统睡眠、强制退出仍结束或暂停执行 |
 | Linux | GTK 主窗口关闭进入 StatusNotifier 托盘；保留窗口和 application hold | 需要 libayatana-appindicator3 和提供 StatusNotifier host 的桌面会话；不满足条件时初始化明确失败 |
-| Android | 复用应用声明的 Core 前台服务；持久通知和 PARTIAL_WAKE_LOCK 由服务持有 | 通知需要系统授权；Doze、用户停止前台服务、强行停止和厂商进程策略仍由系统控制 |
+| Android | 复用应用声明的 Core 前台服务；服务持有持久通知和 PARTIAL_WAKE_LOCK，AI 工作期间额外挂载 1×1 像素保活悬浮窗 | 通知和悬浮窗需要各自的系统授权；Doze、用户停止前台服务、强行停止和厂商进程策略仍由系统控制 |
 | iOS | 为持有的 lease 请求 UIApplication 有限后台执行预算；到期发送 protectionChanged | 普通应用不能无限运行通用 Core；到期明确报告 unavailable |
 | OHOS | 2-in-1 设备通过 TASK_KEEPING 计算类连续任务和系统通知持有执行保护；接收系统取消事件 | 项目使用 API 18；普通手机/平板的通用计算驻留报告 unavailable，不申请无关任务类型 |
 | Web | 保留统一协议和 lease 计数，明确报告 unavailable | 浏览器可冻结或回收页面；关闭标签页结束本地 Runtime |
@@ -31,6 +31,10 @@
 当前策略是 **Core 整段运行期间保留保护**，包括没有可见聊天窗口的时段。Android 服务自身也持有原生 Core lease，Flutter Activity/引擎销毁不会释放服务的 CPU 锁；服务销毁会释放锁。此策略会增加电量消耗。
 
 Android 已有 `OperitCoreService`，其 `onCreate` 调用本包的 `KeepAliveServiceHost.attach`，`onDestroy` 调用 `detach`。服务保持现有 specialUse 声明和系统事件处理。插件只有在该服务实际完成通知和 CPU 锁接管后才确认 acquire。启动失败、超时、通知权限关闭均会在错误或报告中明确体现。Android 13 及以上在插件初始化并连接 Activity 后请求系统通知权限；每个引擎实例只发起一次请求，Activity 配置重建不会重复弹出。授权回调和应用回到前台后会重新发布当前工作通知，并更新真实保护报告。用户拒绝授权时服务仍按 Android 前台服务规则运行，报告明确说明通知不可见。
+
+Android 的 `WorkKeepAliveOverlay` 直接消费 Core 工作快照，在存在未结束工作（含等待确认）时挂载一个 1×1 像素、极低透明度、不接收触摸和焦点的系统悬浮窗。窗口由服务持有，与 Flutter Activity、通知的划除和结果展示计时独立；最后一项工作结束或服务销毁时立即移除。授权使用应用已有的悬浮窗权限引导，从系统设置返回时重新检查权限并同步当前工作，不在任务执行中弹出授权页。缺少权限会记录日志，窗口操作失败通过现有工作错误通道报告。这项保护受 Android 和厂商策略约束，需要真机验证驻留效果。
+
+主应用的空闲驻留通知和通知渠道名称通过 Android `values` / `values-zh` 资源提供英文与中文，服务启动时按系统语言选择。
 
 OHOS EntryAbility 声明 `backgroundModes: ["taskKeeping"]` 和 `ohos.permission.KEEP_BACKGROUND_RUNNING`。通知返回当前实际 Ability。系统取消后台任务时发送 unavailable 事件，保留真实的工作 lease 计数。
 

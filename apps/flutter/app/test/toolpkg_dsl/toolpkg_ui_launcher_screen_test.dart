@@ -23,11 +23,139 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import 'package:operit2/ui/features/chat/components/MessageContextMenu.dart';
 import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
+import 'package:operit2/ui/main/MainLayoutController.dart';
+import 'package:operit2/ui/main/TopBarController.dart';
+import 'package:operit2/ui/main/components/AppContent.dart';
+import 'package:operit2/ui/main/layout/DrawerMotionScope.dart';
+import 'package:operit2/ui/main/screens/OperitScreens.dart';
 
 /// Verifies plugin rendering and message-menu integration through the Core bridge.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(ClientLogger.initialize);
+
+  testWidgets('retained plugin pages keep sessions through drawer navigation', (
+    tester,
+  ) async {
+    final topBar = TopBarController();
+    final layout = MainLayoutController();
+    final motion = ValueNotifier<bool>(false);
+    final activation = ValueNotifier<int>(0);
+    final router = AppRouterState(RouteEntry(routeId: 'characters'));
+    addTearDown(topBar.dispose);
+    addTearDown(layout.dispose);
+    addTearDown(motion.dispose);
+    addTearDown(activation.dispose);
+    addTearDown(router.dispose);
+    final charactersBridge = _ToolPkgDslTestBridge();
+    final memoryBridge = _ToolPkgDslTestBridge();
+    final screens = <String, OperitScreen>{
+      'characters': _RetainedPluginScreen('main', charactersBridge),
+      'memory': _RetainedPluginScreen('memory', memoryBridge),
+      'settings': const _RetainedSettingsScreen(),
+    };
+
+    /// Uses the production page cache and drawer motion scope for each selection.
+    Future<void> pumpPage() async {
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: MainLayoutScope(
+            controller: layout,
+            child: TopBarScope(
+              controller: topBar,
+              child: Scaffold(
+                body: DrawerMotionScope(
+                  isAnimating: motion,
+                  contentActivation: activation,
+                  child: AppContent(
+                    routerState: router,
+                    currentScreen: screens[router.currentEntry.routeId]!,
+                    currentRouteEntry: router.currentEntry,
+                    currentRouteTitle: router.currentEntry.routeId,
+                    useTabletLayout: false,
+                    isTabletSidebarExpanded: false,
+                    canGoBack: false,
+                    enableNavigationAnimation: true,
+                    isNavigatingBack: false,
+                    topBarController: topBar,
+                    appBarEntries: const [],
+                    onGoBack: () {},
+                    onNavigationButtonPressed: () {},
+                    onAppBarEntrySelected: (_) {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    /// Selects a sidebar destination with a fresh router entry as the shell does.
+    Future<void> select(String route) async {
+      router.resetTo(
+        RouteEntry(routeId: route, source: RouteEntrySource.drawer),
+      );
+      activation.value++;
+      await pumpPage();
+    }
+
+    await pumpPage();
+    final charactersState = tester.state(find.byType(ToolPkgUiLauncherScreen));
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    await select('memory');
+    final memoryState = tester.state(find.byType(ToolPkgUiLauncherScreen));
+
+    for (var cycle = 0; cycle < 3; cycle++) {
+      await select('settings');
+      await select('characters');
+      expect(
+        tester.state(find.byType(ToolPkgUiLauncherScreen)),
+        same(charactersState),
+      );
+      expect(find.text('Counter: 1'), findsOneWidget);
+      motion.value = true;
+      await tester.pump();
+      activation.value++;
+      motion.value = false;
+      await tester.pumpAndSettle();
+      await select('characters');
+      expect(
+        tester.state(find.byType(ToolPkgUiLauncherScreen)),
+        same(charactersState),
+      );
+      await select('memory');
+      expect(
+        tester.state(find.byType(ToolPkgUiLauncherScreen)),
+        same(memoryState),
+      );
+    }
+    for (final bridge in [charactersBridge, memoryBridge]) {
+      for (final method in ['acquireToolPkgExecutionEngine', 'render']) {
+        expect(
+          bridge.calls.where((call) => call.methodName == method),
+          hasLength(1),
+        );
+      }
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+        ),
+        isEmpty,
+      );
+    }
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
 
   testWidgets('DSL resource requests start before the mounting frame ends', (
     tester,
@@ -2555,6 +2683,41 @@ Widget _screen(
       showLauncherChrome: showLauncherChrome,
     ),
   );
+}
+
+class _RetainedPluginScreen extends ToolPkgComposeDslScreenRoute {
+  /// Exercises the production plugin route identity with a protocol-backed session.
+  const _RetainedPluginScreen(String module, this.bridge)
+    : super(
+        containerPackageName: 'demo_toolpkg',
+        uiModuleId: module,
+        keepAlive: true,
+      );
+
+  final _ToolPkgDslTestBridge bridge;
+
+  /// Mounts the real launcher with an isolated bridge for each retained route.
+  @override
+  Widget build(BuildContext context) => ToolPkgUiLauncherScreen(
+    clients: GeneratedCoreProxyClients(bridge),
+    plugin: _pluginRuntime(),
+    initialRouteId: 'main',
+    showLauncherChrome: false,
+  );
+}
+
+class _RetainedSettingsScreen extends OperitScreen {
+  /// Supplies a cached host destination while plugin pages are inactive.
+  const _RetainedSettingsScreen()
+    : super(routeTypeName: 'Settings', keepAlive: true);
+
+  /// Shares one settings page across sidebar selections.
+  @override
+  String stableScreenKey() => 'Settings';
+
+  /// Builds a static host page without plugin lifecycle work.
+  @override
+  Widget build(BuildContext context) => const Text('Settings fixture');
 }
 
 /// Builds the route fixture with all fields required by the current runtime model.

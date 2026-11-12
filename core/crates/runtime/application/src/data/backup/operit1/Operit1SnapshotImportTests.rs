@@ -517,8 +517,8 @@ fn invalid_legacy_workspace_paths_remain_import_errors() {
     }
 }
 
-/// Builds a legacy speech projection with saved credentials and an unrelated generic HTTP preset.
-fn legacyTtsConfig(serviceType: &str, endpoint: &str, voice: &str) -> Result<TtsConfig, String> {
+/// Builds a source snapshot with saved speech fields, including Kotlin's empty HTTP URL state.
+fn legacyTtsSnapshot(serviceType: &str, endpoint: &str, voice: &str) -> ParsedOperit1Snapshot {
     let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(20)).unwrap();
     let httpConfig = serde_json::json!({
         "urlTemplate": endpoint,
@@ -548,7 +548,13 @@ fn legacyTtsConfig(serviceType: &str, endpoint: &str, voice: &str) -> Result<Tts
         "tts_speech_rate".to_string(),
         Operit1PreferenceValue::Float(1.25),
     );
-    buildOperit2TtsConfig(&parsed).map(|config| config.unwrap())
+    parsed
+}
+
+/// Projects a configured legacy speech service into its target provider contract.
+fn legacyTtsConfig(serviceType: &str, endpoint: &str, voice: &str) -> Result<TtsConfig, String> {
+    buildOperit2TtsConfig(&legacyTtsSnapshot(serviceType, endpoint, voice))
+        .map(|config| config.unwrap())
 }
 
 /// Accepts empty legacy URLs for built-in services and restores the complete provider HTTP contract.
@@ -629,7 +635,7 @@ fn tts_import_maps_model_qualified_voice_identifiers() {
     }
 }
 
-/// Preserves actual generic HTTP settings and keeps missing custom endpoints as validation errors.
+/// Preserves actual generic HTTP settings for configured source providers.
 #[test]
 fn custom_http_tts_import_preserves_request_and_validation() {
     let config = legacyTtsConfig(
@@ -648,10 +654,56 @@ fn custom_http_tts_import_preserves_request_and_validation() {
         .headers
         .iter()
         .any(|header| header.name == "authorization" && header.value == "stale-http-auth"));
-    assert_eq!(
-        legacyTtsConfig("HTTP_TTS", "", "saved-voice").unwrap_err(),
-        "导入 Operit1 TTS 配置失败：tts config endpoint is empty"
+}
+
+/// Treats absent and blank Kotlin HTTP presets as unconfigured without changing target profiles.
+#[test]
+fn unconfigured_http_tts_import_preserves_target_speech_configuration() {
+    let root = std::env::temp_dir().join(format!("operit1-empty-tts-{}", Uuid::new_v4()));
+    let (manager, _) = snapshotImportManager(&root);
+    let target = TtsConfigManager::new(RuntimeStorePaths::default());
+    let configured = target
+        .createTtsConfig(
+            legacyTtsConfig("HTTP_TTS", "https://target.invalid/tts?text={text}", "target-voice")
+                .unwrap(),
+        )
+        .unwrap();
+    target.setCurrentTtsConfigId(&configured.id).unwrap();
+    let original = target.getAllTtsConfigs().unwrap();
+
+    for endpoint in [None, Some(""), Some(" \t\n")] {
+        let mut parsed = legacyTtsSnapshot("HTTP_TTS", endpoint.unwrap_or(""), "saved-voice");
+        if endpoint.is_none() {
+            parsed.archive.datastorePreferences
+                .get_mut(ENTRY_SPEECH_SERVICES)
+                .unwrap()
+                .remove("tts_http_config");
+        }
+        assert!(buildOperit2TtsConfig(&parsed).unwrap().is_none());
+        manager.importSpeechPreferences(&parsed)
+            .expect("unconfigured TTS must not interrupt snapshot migration");
+        assert_eq!(target.getAllTtsConfigs().unwrap(), original);
+        assert_eq!(target.getCurrentTtsConfigId().unwrap(), configured.id);
+    }
+}
+
+/// Keeps malformed source data and nonempty invalid endpoints visible as migration errors.
+#[test]
+fn custom_http_tts_import_rejects_malformed_configuration() {
+    assert!(legacyTtsConfig("HTTP_TTS", "not-a-url", "saved-voice").is_err());
+    let mut parsed = legacyTtsSnapshot("HTTP_TTS", "", "saved-voice");
+    let preferences = parsed.archive.datastorePreferences
+        .get_mut(ENTRY_SPEECH_SERVICES).unwrap();
+    preferences.insert(
+        "tts_http_config".to_string(),
+        Operit1PreferenceValue::String("{".to_string()),
     );
+    assert!(buildOperit2TtsConfig(&parsed).unwrap_err()
+        .starts_with("Operit1 TTS HTTP 配置格式不正确："));
+    parsed.archive.datastorePreferences
+        .get_mut(ENTRY_SPEECH_SERVICES).unwrap()
+        .insert("tts_http_config".to_string(), Operit1PreferenceValue::Boolean(false));
+    assert!(buildOperit2TtsConfig(&parsed).is_err());
 }
 
 /// Rejects unsupported source service identities without treating them as generic HTTP providers.

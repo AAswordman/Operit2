@@ -1834,11 +1834,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsModelCatalogNotDownloaded =>
-      'Model details have not been downloaded yet';
+  String get settingsModelCatalogBundled =>
+      'Using bundled model details; online updates replace them automatically';
 
   @override
-  String get settingsModelCatalogRetry => 'Retry';
+  String get settingsModelCatalogRetry => 'Update';
 
   @override
   String get settingsModelCustomModel => 'Custom model';

@@ -27,7 +27,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
-        android:label="Operit2"
+        android:label="${operitAppLabel}"
         android:name=".OperitApplication"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -53,7 +53,7 @@
             <meta-data android:name="flutter_deeplinking_enabled" android:value="false" />
             <meta-data
               android:name="android.app.shortcuts"
-              android:resource="@xml/shortcuts"
+              android:resource="${operitShortcuts}"
               />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -93,7 +93,7 @@
             android:label="Operit2 数据救援"
             android:exported="true"
             android:process=":maintenance"
-            android:taskAffinity="app.operit.maintenance"
+            android:taskAffinity="${applicationId}.maintenance"
             android:theme="@style/NormalTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode">
         </activity>

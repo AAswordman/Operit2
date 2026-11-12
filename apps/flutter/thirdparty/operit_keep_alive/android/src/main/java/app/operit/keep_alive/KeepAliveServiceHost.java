@@ -30,6 +30,7 @@ public final class KeepAliveServiceHost {
     private static Service service;
     private static PowerManager.WakeLock cpuLock;
     private static WorkNotificationPresenter workPresenter;
+    private static WorkKeepAliveOverlay workOverlay;
     private static String workSnapshot;
     public static final String STOP_WORK_ACTION = WorkNotificationPresenter.STOP_ACTION;
     public static final String DISMISS_WORK_ACTION = WorkNotificationPresenter.DISMISS_ACTION;
@@ -43,6 +44,7 @@ public final class KeepAliveServiceHost {
             if (snapshot.getInt("schemaVersion") != 1) throw new IllegalArgumentException("Unsupported work schema");
             if (workSnapshot != null && snapshot.getLong("revision") <= new org.json.JSONObject(workSnapshot).getLong("revision")) return;
             workSnapshot = encoded;
+            if (workOverlay != null) workOverlay.update(snapshot);
             if (workPresenter != null) workPresenter.update(encoded);
         } catch (org.json.JSONException error) {
             throw new IllegalArgumentException("Invalid Core work snapshot", error);
@@ -67,6 +69,7 @@ public final class KeepAliveServiceHost {
     /** Reposts current work after authorization changes and publishes actual notification visibility. */
     static void refreshNotifications() {
         requireMainThread();
+        if (workOverlay != null) workOverlay.refresh();
         if (workPresenter != null) {
             try { workPresenter.refresh(); }
             catch (org.json.JSONException error) {
@@ -126,9 +129,13 @@ public final class KeepAliveServiceHost {
             acquired.acquire();
             cpuLock = acquired;
             service = owner;
+            workOverlay = new WorkKeepAliveOverlay(owner);
             workPresenter = new WorkNotificationPresenter(owner, channelId, notificationId, icon, notification);
             if (workSnapshot != null) {
-                try { workPresenter.update(workSnapshot); }
+                try {
+                    workOverlay.update(new org.json.JSONObject(workSnapshot));
+                    workPresenter.update(workSnapshot);
+                }
                 catch (org.json.JSONException error) { throw new IllegalArgumentException("Invalid retained work snapshot", error); }
             }
             for (MethodChannel.Result result : new ArrayList<>(PENDING.values())) {
@@ -148,6 +155,8 @@ public final class KeepAliveServiceHost {
     public static void detach(Service owner) {
         requireMainThread();
         if (service != owner) return;
+        if (workOverlay != null) workOverlay.close();
+        workOverlay = null;
         if (cpuLock != null) {
             cpuLock.release();
             cpuLock = null;

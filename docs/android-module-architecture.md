@@ -22,7 +22,7 @@
 
 后台进程不创建 Activity 或 Flutter 引擎。界面进程不创建第二个业务 Core，不打开业务数据库，不启动普通 App Core 前台服务。关闭界面只断开客户端，不停止模块 Core。
 
-普通 App 与模块分别构建，不设计同时运行、运行权交接、自动迁移或冲突协调。它们沿用 `app.operit`；数据分区 APK 可能覆盖同名系统应用，模块明确拒绝错误加载来源，不自动卸载或替换。
+普通 App 与模块分别构建：普通 App 使用 `app.operit`、显示名称 `Operit2`，模块客户端使用 `app.operit.module`、显示名称 `Operit2 (Module)`，可同时安装和运行。两者具有独立的 Android UID、私有数据、Provider authority 和 Core，不进行运行权交接或自动数据迁移。共享 Kotlin/JNI 类仍使用 `app.operit` 命名空间；模块启动 Activity 使用完整组件名 `app.operit.module/app.operit.MainActivity`。
 
 ## 源码目录
 
@@ -53,7 +53,7 @@ apps/flutter/app/lib/                   共用 Dart 页面与 CoreProxy
 
 构建器使用 FVM 与 `--android-project-arg=operitRuntime=module`，Gradle 加入模块应用的 Kotlin 源码、保留规则和 Cargo feature。普通 App 使用默认 `operitRuntime=app`，不会引入模块应用入口。Flutter release 构建不得在同一 checkout 并行运行。
 
-也可通过 `--apk <本版APK> --output <新目录>` 显式组装目录。输出不能是 ZIP，也不能覆盖已存在目录。构建器验证本版应用标记、ModuleMain DEX 入口、模块 JNI 导出、ARM64 ELF、所需原生库及 rootfs 校验和；旧 trial.1/trial.2 APK 会被拒绝。
+也可通过 `--apk <本版APK> --output <新目录>` 显式组装目录。输出不能是 ZIP，也不能覆盖已存在目录。构建器验证包含 `applicationId: app.operit.module` 的本版应用标记、ModuleMain DEX 入口、模块 JNI 导出、ARM64 ELF、所需原生库及 rootfs 校验和；旧同包名模块 APK 会被拒绝，必须重新构建。
 
 ```text
 build/module-arm64-v8a/
@@ -90,7 +90,7 @@ KernelSU 接收 ZIP 时，只需将模块产物目录的内容归档，根部直
   deployment-manifest.json
 ```
 
-Android 开机扫描 APK，注册 `app.operit` 与 MainActivity。后台等待启动完成和用户 0 解锁，核对 PackageManager 的精确 APK 路径及系统应用 UID，然后以 APK 为 CLASSPATH 启动 `app.operit.ModuleMain`。入口检查真实 UID 0 并加载同一 Rust JNI 库，进入共享 Core 启动链。模块数据位于 `/data/adb/operit2`，不迁移普通 App 数据。
+Android 开机扫描 APK，注册 `app.operit.module` 与 `app.operit.MainActivity`。后台等待启动完成和用户 0 解锁，核对 PackageManager 的精确 APK 路径及模块客户端的系统应用 UID，然后以 APK 为 CLASSPATH 启动 `app.operit.ModuleMain`。入口检查真实 UID 0 并加载同一 Rust JNI 库，进入共享 Core 启动链。模块数据位于 `/data/adb/operit2`，不迁移普通 App 数据。
 
 ```text
 /data/adb/operit2/
@@ -104,7 +104,7 @@ Android 开机扫描 APK，注册 `app.operit` 与 MainActivity。后台等待�
     logs/
 ```
 
-Core 将凭据发布到应用私有 `files/host-runtime/client.json`，校验 UID 并复制完整 SELinux 标签。传输使用 loopback 随机端口与双向 HMAC 随机挑战，保留 Call/Watch/Push 和二进制附件。通信协议仍为 1，没有 TLS/载荷加密；最多 16 个连接、32 个队列批次、64 MiB 单帧及 256 个附件。
+Core 将凭据发布到模块客户端私有的 `/data/user/0/app.operit.module/files/host-runtime/client.json`，校验 UID 并复制完整 SELinux 标签；停止时也只清理该客户端凭据。模块客户端不提供普通 App 的数据救援快捷方式。传输使用 loopback 随机端口与双向 HMAC 随机挑战，保留 Call/Watch/Push 和二进制附件。通信协议仍为 1，没有 TLS/载荷加密；最多 16 个连接、32 个队列批次、64 MiB 单帧及 256 个附件。
 
 控制命令为 `bin/operit-host-ctl start|stop|status|open`。停止只针对经进程归属检查的本模块进程。禁用或移除后重启，系统挂载消失；持久数据保留，不执行 `pm uninstall`。当前仅支持 Android 用户 0。
 

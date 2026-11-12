@@ -19,6 +19,32 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
   setUp(ClientLogger.initialize);
+  for (final downloadedAt in <int?>[null, 1794000000000]) {
+    testWidgets(
+      'catalog update failure keeps model picker usable at $downloadedAt',
+      (tester) async {
+        final bridge = _ModelSettingsBridge()..catalogUpdatedAt = downloadedAt;
+        final panelKey = GlobalKey<ModelSettingsPanelState>();
+        await _pumpModelSettings(tester, bridge, panelKey);
+        final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+        await tester.tap(find.text('Test Provider'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip(l10n.settingsModelAddModel));
+        await tester.pumpAndSettle();
+        expect(find.text('new-model'), findsOneWidget);
+        expect(find.textContaining('fixture catalog offline'), findsNothing);
+        if (downloadedAt == null) {
+          expect(find.text(l10n.settingsModelCatalogBundled), findsOneWidget);
+        }
+        await tester.tap(find.text(l10n.settingsModelCatalogRetry));
+        await tester.pumpAndSettle();
+        expect(bridge.catalogRefreshCalls, 1);
+        expect(find.text('new-model'), findsOneWidget);
+        expect(find.textContaining('fixture catalog offline'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   for (final success in [true, false]) {
     testWidgets(
       'completed ${success ? 'passed' : 'failed'} connection checks restore after reopening settings',
@@ -375,6 +401,8 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   String modelId = binding.modelId;
   String? resolutionError;
   int resolutionCalls = 0;
+  int? catalogUpdatedAt;
+  int catalogRefreshCalls = 0;
   bool connectionTestSucceeds = true;
   String connectionTestError = 'HTTP 503';
   int connectionTestCalls = 0;
@@ -489,6 +517,29 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final Object? result;
     switch (request.methodName) {
+      case 'getAvailableProviderModels':
+        result = [
+          core.AvailableProviderModel(
+            modelId: 'new-model',
+            source: core.AvailableProviderModelSource.remote,
+            catalogModelId: 'new-model',
+            pricing: null,
+            context: contextSpec,
+            capabilities: capabilities,
+            builtinTools: const [],
+            request: config.request,
+            listed: null,
+          ).toJson(),
+        ];
+      case 'refreshModelCatalog':
+      case 'getModelCatalogStatus':
+        if (request.methodName == 'refreshModelCatalog') {
+          catalogRefreshCalls++;
+        }
+        result = core.ModelCatalogStatus(
+          updatedAt: catalogUpdatedAt,
+          lastError: 'fixture catalog offline',
+        ).toJson();
       case 'getModelBindingForFunction':
         result = chatBinding.toJson();
       case 'getProviderProfiles':

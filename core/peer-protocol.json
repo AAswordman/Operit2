@@ -1,45 +1,4 @@
 {
-  "sources": [
-    "core/crates/foundation/link/src",
-    "core/crates/node/peer-link/src",
-    "core/crates/node/runtime/build.rs",
-    "core/crates/node/runtime/src/PeerProtocol.rs",
-    "core/crates/node/runtime/src/HostRuntimePeerService.rs",
-    "core/crates/node/runtime/src/PeerStateStore.rs",
-    "core/crates/node/runtime/src/PeerRouter.rs",
-    "core/crates/node/runtime/src/RuntimePeerService.rs",
-    "core/crates/node/runtime/src/NodeSpaceService.rs",
-    "core/crates/node/runtime/src/CoreNodeRouter.rs",
-    "core/crates/node/runtime/src/PeerSync.rs",
-    "core/crates/node/runtime/src/route_forwarding.rs",
-    "core/crates/node/runtime/src/space_policy.rs",
-    "core/crates/node/runtime/src/SpacePersistenceSyncService.rs",
-    "core/crates/node/runtime/src/SyncConsistency.rs",
-    "core/crates/node/runtime/src/peer",
-    "core/crates/persistence/store/src/SyncOperationStore.rs",
-    "core/crates/persistence/store/src/CoreSpaceStore.rs",
-    "core/crates/persistence/store/src/NetworkControlStore.rs",
-    "core/crates/persistence/store/src/NetworkControlReadModel.rs",
-    "core/crates/persistence/store/src/Transaction.rs",
-    "core/crates/persistence/store/src/RuntimeFileSyncStore.rs",
-    "core/crates/persistence/store/src/SyncBlobIo.rs",
-    "core/crates/persistence/store/src/WorkspaceFileSyncStore.rs",
-    "core/crates/persistence/store/src/sync",
-    "edge/sdk/contract/src",
-    "edge/sdk/node/src",
-    "edge/sdk/proxy/src",
-    "core/crates/persistence/store/src/transaction",
-    "core/crates/persistence/store/src/FileSyncPolicy.rs",
-    "core/crates/node/runtime/src/RuntimeRemoteLinkService.rs",
-    "core/crates/node/runtime/src/NodeServices.rs",
-    "core/crates/node/runtime/src/SpaceRuntime.rs",
-    "core/crates/node/route-macros/src",
-    "core/crates/rslink/runtime/src",
-    "core/crates/runtime/application/src/services/SyncBlobTransferManager.rs",
-    "core/crates/runtime/application/src/core/application/SyncConsistency.rs",
-    "core/crates/node/runtime/build_support/peer_protocol.rs",
-    "core/crates/node/runtime/src/host_time.rs"
-  ],
   "revisions": [
     {
       "version": 1,
@@ -128,16 +87,10 @@
     {
       "version": 22,
       "hash": "730f35f0431e9350431b07084e6dfcfaaba53475a8674310377058b1c51ba29e"
+    },
+    {
+      "version": 23,
+      "hash": "016f6fac4d7fed15115c675787fd907543deebbbdd05945c1a8202d7dcc1ed22"
     }
-  ],
-  "schemaRoots": [
-    "core/crates/foundation/model/src",
-    "core/crates/foundation/host-contract/src",
-    "core/crates/foundation/vfs/src",
-    "core/crates/runtime/application/src",
-    "core/crates/provider/services/src",
-    "core/crates/tool/services/src",
-    "core/crates/plugin/sdk/src",
-    "core/crates/persistence/store/src"
   ]
 }

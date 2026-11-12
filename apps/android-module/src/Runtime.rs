@@ -20,6 +20,7 @@ use std::{
 };
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
+const CLIENT_DATA_DIRECTORY: &str = "/data/user/0/app.operit.module";
 
 /// Enters the privileged platform lifecycle from the shared APK's app_process entry point.
 #[no_mangle]
@@ -106,7 +107,7 @@ extern "C" fn terminate(_: libc::c_int) {
 
 /// Publishes the client credential only inside the installed package's UID-owned sandbox.
 fn publish_client(bytes: &[u8], uid: u32) -> Result<(), String> {
-    let application = Path::new("/data/user/0/app.operit");
+    let application = Path::new(CLIENT_DATA_DIRECTORY);
     let metadata = fs::metadata(application).map_err(|e| e.to_string())?;
     if !metadata.is_dir() || metadata.uid() != uid || !(10000..100000).contains(&uid) {
         return Err("Module client UID does not own the installed application sandbox".into());
@@ -326,7 +327,7 @@ pub(crate) fn run(
         Err(error) => status(&root, "failed", error)?,
     }
     let _ = fs::remove_file(root.join("run/client.json"));
-    let _ = fs::remove_file("/data/user/0/app.operit/files/host-runtime/client.json");
+    let _ = fs::remove_file(Path::new(CLIENT_DATA_DIRECTORY).join("files/host-runtime/client.json"));
     let _ = fs::remove_file(root.join("run/core.pid"));
     result
 }

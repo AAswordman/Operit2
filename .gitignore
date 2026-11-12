@@ -192,6 +192,7 @@ core/crates/runtime/application/assets/plugins/external/*.toolpkg
 core/crates/runtime/application/assets/plugins/buildin/**/*.js
 core/crates/runtime/application/assets/plugins/buildin/
 core/crates/runtime/application/assets/plugins/external/
+core/crates/runtime/application/assets/models_dev/
 plugins/**/build/
 plugins/**/out/
 plugins/**/.cache/

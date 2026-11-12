@@ -593,6 +593,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         );
   }
 
+  /// Closes the drawer while retaining an already selected page and its session.
   void _navigateToNavigationEntry(NavigationEntrySpec entry) {
     final action = entry.action;
     if (action != null) {
@@ -609,12 +610,12 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       );
       return;
     }
+    _drawerOpenState.value = false;
     final currentRouteEntry = _routerState.currentEntry;
     if (currentRouteEntry.routeId == entry.routeId &&
         mapEquals(currentRouteEntry.args, entry.routeArgs)) {
       return;
     }
-    _drawerOpenState.value = false;
     _isNavigatingBack = false;
     _resetToRoute(entry.routeId, entry.routeArgs, RouteEntrySource.drawer);
   }

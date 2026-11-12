@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use syn::{Expr, ImplItem, Item, Lit, Meta, MetaNameValue, ReturnType, Type};
+use syn::{Expr, ImplItem, Item, Lit, Meta, ReturnType, Type};
+
+type RouteDeclaration = (String, String, String, String, String, String, String, String, String);
 
 #[path = "build_support/peer_protocol.rs"]
 mod peer_protocol;
@@ -20,8 +22,7 @@ fn main() {
     let mut signatures = BTreeSet::new();
     scan_source_tree(&runtime_root, &runtime_root, &mut declarations, &mut signatures);
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR must be available"));
-    peer_protocol::generate(&manifest_dir, &out_dir, &format!("{}\n{}",
-        render_route_catalog(&declarations), signatures.into_iter().collect::<Vec<_>>().join("\n")));
+    peer_protocol::generate(&manifest_dir, &out_dir, &route_contract(&declarations, &signatures));
     fs::write(
         out_dir.join("generated_route_catalog.rs"),
         render_route_catalog(&declarations),
@@ -40,7 +41,7 @@ fn main() {
 fn scan_source_tree(
     runtime_root: &Path,
     path: &Path,
-    declarations: &mut BTreeSet<(String, String, String, String, String, String, String, String, String)>,
+    declarations: &mut BTreeSet<RouteDeclaration>,
     signatures: &mut BTreeSet<String>,
 ) {
     let Ok(entries) = fs::read_dir(path) else {
@@ -60,55 +61,65 @@ fn scan_source_tree(
             .replace("\r\n", "\n");
         let syntax = syn::parse_file(&content)
             .unwrap_or_else(|error| panic!("parse route source {}: {error}", entry_path.display()));
-        for item in syntax.items {
-            let Item::Impl(item_impl) = item else {
+        collect_routes(runtime_root, &entry_path, syntax, declarations, signatures);
+    }
+}
+
+/// Collects only explicitly annotated route contracts, excluding method bodies.
+fn collect_routes(
+    runtime_root: &Path,
+    source_path: &Path,
+    syntax: syn::File,
+    declarations: &mut BTreeSet<RouteDeclaration>,
+    signatures: &mut BTreeSet<String>,
+) {
+    for item in syntax.items {
+        let Item::Impl(item_impl) = item else {
+            continue;
+        };
+        for impl_item in item_impl.items {
+            let ImplItem::Fn(function) = impl_item else {
                 continue;
             };
-            for impl_item in item_impl.items {
-                let ImplItem::Fn(function) = impl_item else {
-                    continue;
-                };
-                // JSON-valued synchronization RPCs have no typed schema to hash;
-                // include their complete implementation, independently of routes.
-                if function.sig.ident.to_string().starts_with("sync") {
-                    let source = entry_path.strip_prefix(runtime_root).unwrap().to_string_lossy().replace('\\', "/");
-                    signatures.insert(format!("sync:{source}:{}", quote::quote!(#function)));
-                }
-                let Some(binding) = route_binding(&function.attrs) else {
-                    continue;
-                };
-                let signature = &function.sig;
-                let source = entry_path.strip_prefix(runtime_root).unwrap().to_string_lossy().replace('\\', "/");
-                signatures.insert(format!("{source}:{}", quote::quote!(#signature)));
-                let targetType =
-                    generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
-                let reverseItem = function.sig.inputs.iter().find_map(|argument| {
-                    let syn::FnArg::Typed(argument) = argument else { return None };
-                    let Type::Path(path) = argument.ty.as_ref() else { return None };
-                    let segment = path.path.segments.last()?;
-                    if segment.ident != "ReverseStream" { return None; }
-                    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else { return None };
-                    let syn::GenericArgument::Type(ty) = args.args.first()? else { return None };
-                    Some(quote::quote!(#ty).to_string())
-                }).unwrap_or_default();
-                let routeKind = if reverseItem.is_empty() { route_kind(&function.sig.output) } else { "push".to_string() };
-                let (permissionScope, permissionCapability) = route_permission(&function.attrs)
-                    .unwrap_or_else(|| ("Caller".to_string(), String::new()));
-                let lifecycle = route_lifecycle(&function.attrs);
-                declarations.insert((
-                    function.sig.ident.to_string(),
-                    binding,
-                    targetType,
-                    routeKind,
-                    lifecycle,
-                    permissionScope,
-                    permissionCapability,
-                    route_creation(&function.attrs),
-                    reverseItem,
-                ));
-            }
+            let Some(binding) = route_binding(&function.attrs) else {
+                continue;
+            };
+            let signature = &function.sig;
+            let targetType =
+                generated_target_type(runtime_root, source_path, &item_impl.self_ty);
+            signatures.insert(format!("{targetType}:{}", quote::quote!(#signature)));
+            let reverseItem = function.sig.inputs.iter().find_map(|argument| {
+                let syn::FnArg::Typed(argument) = argument else { return None };
+                let Type::Path(path) = argument.ty.as_ref() else { return None };
+                let segment = path.path.segments.last()?;
+                if segment.ident != "ReverseStream" { return None; }
+                let syn::PathArguments::AngleBracketed(args) = &segment.arguments else { return None };
+                let syn::GenericArgument::Type(ty) = args.args.first()? else { return None };
+                Some(quote::quote!(#ty).to_string())
+            }).unwrap_or_default();
+            let routeKind = if reverseItem.is_empty() { route_kind(&function.sig.output) } else { "push".to_string() };
+            let (permissionScope, permissionCapability) = route_permission(&function.attrs)
+                .unwrap_or_else(|| ("Caller".to_string(), String::new()));
+            let lifecycle = route_lifecycle(&function.attrs);
+            declarations.insert((
+                function.sig.ident.to_string(),
+                binding,
+                targetType,
+                routeKind,
+                lifecycle,
+                permissionScope,
+                permissionCapability,
+                route_creation(&function.attrs),
+                reverseItem,
+            ));
         }
     }
+}
+
+/// Encodes sorted route data independently of generated dispatch source text.
+fn route_contract(declarations: &BTreeSet<RouteDeclaration>, signatures: &BTreeSet<String>) -> String {
+    assert!(!declarations.is_empty(), "Protocol fingerprint must cover annotated routes");
+    serde_json::to_string(&(declarations, signatures)).expect("encode route contract")
 }
 
 /// Builds the stable fully-qualified runtime type name for one annotated impl.
@@ -139,6 +150,7 @@ fn generated_target_type(runtime_root: &Path, source_path: &Path, self_ty: &syn:
     modules.join("::")
 }
 
+/// Extracts the capability required when a route creates its binding.
 fn route_creation(attributes: &[syn::Attribute]) -> String {
     for attribute in attributes {
         if !attribute.path().segments.last().is_some_and(|part| part.ident == "operit_core_route") { continue; }
@@ -170,10 +182,11 @@ fn route_binding(attributes: &[syn::Attribute]) -> Option<String> {
     };
     let arguments = meta_list
         .parse_args_with(
-            syn::punctuated::Punctuated::<MetaNameValue, syn::Token![,]>::parse_terminated,
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
         )
         .ok()?;
     arguments.into_iter().find_map(|argument| {
+        let Meta::NameValue(argument) = argument else { return None; };
         let argument_name = argument.path.segments.last()?.ident.to_string();
         if argument_name != "binding" {
             return None;
@@ -203,10 +216,11 @@ fn route_permission(attributes: &[syn::Attribute]) -> Option<(String, String)> {
     };
     let arguments = meta_list
         .parse_args_with(
-            syn::punctuated::Punctuated::<MetaNameValue, syn::Token![,]>::parse_terminated,
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
         )
         .ok()?;
     arguments.into_iter().find_map(|argument| {
+        let Meta::NameValue(argument) = argument else { return None; };
         let argument_name = argument.path.segments.last()?.ident.to_string();
         if argument_name != "permission" {
             return None;
@@ -465,4 +479,110 @@ fn render_space_dispatch(
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.methodName)),\n    }\n}\n");
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROUTE: &str = r#"
+        impl Service {
+            #[operit_core_route(binding = key, permission = "target:runtime.execute")]
+            pub async fn execute(&mut self, key: String, value: u32) -> Result<String, String> {
+                old_implementation();
+            }
+        }
+    "#;
+
+    /// Runs the production extractor and hash over a Rust source fixture.
+    fn digest(source: &str) -> String {
+        let mut declarations = BTreeSet::new();
+        let mut signatures = BTreeSet::new();
+        collect_routes(
+            Path::new("runtime"),
+            Path::new("runtime/Service.rs"),
+            syn::parse_file(source).expect("parse route fixture"),
+            &mut declarations,
+            &mut signatures,
+        );
+        peer_protocol::fingerprint(&route_contract(&declarations, &signatures))
+    }
+
+    /// Proves implementation edits, documentation and formatting preserve identity.
+    #[test]
+    fn route_bodies_comments_and_formatting_do_not_change_protocol() {
+        for changed in [
+            ROUTE.replace("old_implementation();", "new_implementation().await;"),
+            ROUTE.replace("pub async fn", "/// New documentation.\n pub async fn"),
+            ROUTE.replace("value: u32", "value /* local comment */ : u32"),
+            ROUTE.replace('\n', "\r\n"),
+            ROUTE.replace("pub async", "async"),
+        ] {
+            assert_eq!(digest(ROUTE), digest(&changed));
+        }
+    }
+
+    /// Proves unrelated DTOs, aliases, codecs and sync helpers cannot enter the hash.
+    #[test]
+    fn unannotated_types_and_methods_do_not_change_protocol() {
+        let unrelated = r#"
+            #[derive(Serialize, Deserialize)] struct Dto { changed: u64 }
+            type Alias = u64;
+            impl Serialize for Dto { fn serialize() { changed_codec(); } }
+            impl Service {
+                fn syncInternal(&self, data: Dto) { changed_sync_logic(); }
+                fn helper(&self, changed: bool) { changed_helper(); }
+            }
+            #[cfg(test)] mod tests { #[test] fn local_test() {} }
+        "#;
+        assert_eq!(digest(ROUTE), digest(&format!("{ROUTE}\n{unrelated}")));
+    }
+
+    /// Proves externally visible signatures and route metadata still require a revision.
+    #[test]
+    fn route_signature_and_metadata_changes_change_protocol() {
+        for changed in [
+            ROUTE.replace("value: u32", "value: u64"),
+            ROUTE.replace("value: u32", "renamed: u32"),
+            ROUTE.replace("Result<String, String>", "Result<bool, String>"),
+            ROUTE.replace("fn execute", "fn renamed"),
+            ROUTE.replace("impl Service", "impl RenamedService"),
+            ROUTE.replace("binding = key", "binding = value"),
+            ROUTE.replace("target:runtime.execute", "caller:runtime.execute"),
+            ROUTE.replace("target:runtime.execute", "target:runtime.read"),
+            ROUTE.replace("binding = key", "binding = key, create_binding = \"runtime.execute\""),
+            ROUTE.replace("pub async fn", "#[before_change_route] pub async fn"),
+            ROUTE.replace("pub async fn", "#[after_change_route] pub async fn"),
+        ] {
+            assert_ne!(digest(ROUTE), digest(&changed), "{changed}");
+        }
+    }
+
+    /// Proves route additions/removals matter while declaration and annotation order do not.
+    #[test]
+    fn route_set_is_order_independent() {
+        let second = ROUTE.replace("fn execute", "fn another");
+        let both = format!("{ROUTE}\n{second}");
+        assert_ne!(digest(ROUTE), digest(&both));
+        assert_eq!(digest(&both), digest(&format!("{second}\n{ROUTE}")));
+        assert_eq!(digest(ROUTE), digest(&ROUTE.replace(
+            "binding = key, permission = \"target:runtime.execute\"",
+            "permission = \"target:runtime.execute\", binding = key",
+        )));
+    }
+
+    /// Proves the local SDK exposure flag neither hides a route nor changes its contract.
+    #[test]
+    fn sdk_flag_preserves_route_coverage() {
+        assert_eq!(digest(ROUTE), digest(&ROUTE.replace("binding = key", "binding = key, sdk")));
+    }
+
+    /// Proves watch and reverse-stream item types remain part of the route contract.
+    #[test]
+    fn stream_item_types_change_protocol() {
+        let watch = ROUTE.replace("Result<String, String>", "StateFlow<String>");
+        assert_ne!(digest(&watch), digest(&watch.replace("StateFlow<String>", "StateFlow<bool>")));
+        let push = ROUTE.replace("value: u32", "value: ReverseStream<String>");
+        assert_ne!(digest(&push), digest(&push.replace("ReverseStream<String>", "ReverseStream<bool>")));
+    }
 }

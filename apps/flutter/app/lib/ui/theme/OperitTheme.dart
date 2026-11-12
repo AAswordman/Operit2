@@ -777,8 +777,8 @@ class OperitThemeController {
     await _reloadThemePreferenceSnapshot();
   }
 
-  /// Re-reads the ordinary committed appearance and its font resources.
-  Future<void> reloadTheme() => _reloadThemePreferenceSnapshot();
+  /// Re-reads committed appearance and renews its subscription for an explicit retry.
+  Future<void> reloadTheme() => start();
 
   /// Saves ordinary appearance through its synchronized preference owner.
   Future<void> saveAppearanceFields(Map<String, Object?> updates) async {

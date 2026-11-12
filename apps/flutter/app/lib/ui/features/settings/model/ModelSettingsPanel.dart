@@ -2053,7 +2053,7 @@ class _AvailableModelItemCard extends StatelessWidget {
   }
 }
 
-/// Says where model details come from and whether the last catalog download failed.
+/// Describes the active catalog without surfacing background download failures.
 class _CatalogStatusLine extends StatelessWidget {
   const _CatalogStatusLine({
     required this.status,
@@ -2072,24 +2072,19 @@ class _CatalogStatusLine extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final error = retryError ?? status.lastError;
+    final error = retryError;
     final updatedAt = status.updatedAt;
     final String message;
-    if (error != null && updatedAt != null) {
-      message = l10n.settingsModelCatalogUpdateFailedUsing(
-        _formatCatalogTime(updatedAt),
-        error,
-      );
-    } else if (error != null) {
+    if (error != null) {
       message = l10n.settingsModelCatalogUpdateFailed(error);
     } else if (updatedAt == null) {
-      message = l10n.settingsModelCatalogNotDownloaded;
+      message = l10n.settingsModelCatalogBundled;
     } else {
       message = l10n.settingsModelCatalogUpdatedAt(
         _formatCatalogTime(updatedAt),
       );
     }
-    final failed = error != null || updatedAt == null;
+    final failed = error != null;
     final color = failed ? colorScheme.error : colorScheme.onSurfaceVariant;
     return Row(
       children: <Widget>[
@@ -2110,12 +2105,12 @@ class _CatalogStatusLine extends StatelessWidget {
             ),
           ),
         ),
-        if (failed && retrying)
+        if (retrying)
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 8),
             child: M3LoadingIndicator(size: 14),
           )
-        else if (failed)
+        else
           TextButton(
             onPressed: onRetry,
             style: TextButton.styleFrom(

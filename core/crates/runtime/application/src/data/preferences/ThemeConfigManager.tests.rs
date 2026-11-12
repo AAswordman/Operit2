@@ -538,28 +538,56 @@ fn invalid_saved_records_and_selections_are_not_repaired() {
     }
 }
 
-/// Rejects an externally divergent active ordinary preference without overwriting either source.
+/// Keeps catalog reads available during appearance divergence and permits an explicit synchronized save.
 #[test]
-fn active_ordinary_divergence_is_reported() {
+fn active_ordinary_divergence_allows_catalog_reads_and_appearance_save() {
     for (key, value) in [
-        ("theme_mode", "dark"),
-        ("custom_primary_color", "null"),
-        ("custom_user_avatar_uri", "null"),
+        ("use_custom_colors", json!(true)),
+        ("theme_mode", json!("dark")),
+        ("custom_primary_color", json!(null)),
+        ("custom_user_avatar_uri", json!(null)),
     ] {
         let fixture = StoreFixture::new();
         let manager = fixture.manager();
         let named = manager.create("Named".to_string(), snapshot()).unwrap();
-        manager.apply(named.id).unwrap();
+        manager.apply(named.id.clone()).unwrap();
         fixture
             .preferences()
             .edit(|preferences| preferences.set(&stringPreferencesKey(key), value.clone()))
             .unwrap();
         let before = fixture.bytes();
-        assert!(manager.getActive().is_err(), "{key}");
-        assert!(manager.watch().first().is_err(), "{key}");
-        assert!(manager.saveAppearance(snapshot()).is_err(), "{key}");
+        assert_eq!(manager.list().unwrap(), vec![named.clone()], "{key}");
+        assert_eq!(manager.get(named.id.clone()).unwrap(), named, "{key}");
+        assert_eq!(manager.getActive().unwrap(), Some(named.clone()), "{key}");
+        let state = manager.watch().first().unwrap();
+        assert_eq!(state.configs, vec![named.clone()], "{key}");
+        assert_eq!(state.activeThemeConfigId, Some(named.id), "{key}");
         assert_eq!(fixture.bytes(), before);
+        let saved = manager.saveAppearance(snapshot()).unwrap().unwrap();
+        assertThemePreferenceSnapshot(&fixture.preferences().data().unwrap(), &saved.snapshot)
+            .unwrap();
     }
+}
+
+/// Allows selecting another saved theme even when the previously active appearance differs.
+#[test]
+fn apply_replaces_divergent_active_appearance() {
+    let fixture = StoreFixture::new();
+    let manager = fixture.manager();
+    let first = manager.create("First".into(), snapshot()).unwrap();
+    let second = manager
+        .create("Second".into(), changedSnapshot("fontScale", json!(1.2)))
+        .unwrap();
+    manager.apply(first.id).unwrap();
+    fixture.preferences().edit(|preferences| {
+        preferences.set(&stringPreferencesKey("use_custom_colors"), json!(true));
+    }).unwrap();
+
+    let writes = fixture.writes();
+    assert_eq!(manager.apply(second.id.clone()).unwrap(), second);
+    assert_eq!(fixture.writes(), writes + 1);
+    assert_eq!(manager.getActive().unwrap(), Some(second.clone()));
+    assertThemePreferenceSnapshot(&fixture.preferences().data().unwrap(), &second.snapshot).unwrap();
 }
 
 /// Propagates the original write error and keeps both real bytes and the observed state unchanged.
@@ -1058,7 +1086,7 @@ fn explicit_custom_appearance_repairs_invalid_preferences_and_preserves_catalog(
     fixture.preferences().edit(|preferences| {
         preferences.set(&stringPreferencesKey("font_scale"), json!("invalid"));
     }).unwrap();
-    assert!(manager.list().is_err());
+    assert_eq!(manager.list().unwrap(), vec![saved.clone()]);
     let writes = fixture.writes();
     manager.useCustomAppearance(snapshot()).unwrap();
     assert_eq!(fixture.writes(), writes + 1);

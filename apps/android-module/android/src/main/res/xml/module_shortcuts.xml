@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The module client does not own an App Core or its data rescue entry point. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android" />

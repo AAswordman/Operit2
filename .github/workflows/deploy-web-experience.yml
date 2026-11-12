@@ -86,6 +86,9 @@ jobs:
       - name: Prepare runtime plugin assets
         run: python3 plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
 
+      - name: Prepare bundled models.dev catalog
+        run: python3 tools/build_scripts/models_dev_bundle.py
+
       - name: Generate Dart proxy artifacts
         run: |
           cargo check --manifest-path core/crates/proxy/local/Cargo.toml --quiet

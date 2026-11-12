@@ -892,8 +892,8 @@
       }
     }
   },
-  "settingsModelCatalogNotDownloaded": "Model details have not been downloaded yet",
-  "settingsModelCatalogRetry": "Retry",
+  "settingsModelCatalogBundled": "Using bundled model details; online updates replace them automatically",
+  "settingsModelCatalogRetry": "Update",
   "settingsModelCustomModel": "Custom model",
   "settingsModelModelId": "Model ID",
   "settingsModelDuplicateModelId": "This model has already been added to this provider.",

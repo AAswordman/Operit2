@@ -47,6 +47,7 @@ impl CoreLinkSharedClient for TestCore {
     }
     /// Waits for the test to provide a source while exposing cancellation ownership.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        if request.propertyName == "panic" { panic!("Watch opening panicked"); }
         self.opening.fetch_add(1, Ordering::SeqCst);
         let _opening = Opening(self.opening.clone());
         let receiver = self
@@ -217,10 +218,39 @@ async fn cancellation_drops_an_inflight_source_open() {
         assert_eq!(opening.await.unwrap().unwrap_err().code, "WATCH_CLOSED");
         assert!(source.is_closed());
         assert_eq!(core.opening.load(Ordering::SeqCst), 0);
-        assert!(events.recv().await.unwrap().event.unwrap().is_none());
+        assert!(events.try_recv().is_err());
         client.close();
     })
     .await;
+}
+
+/// An opening failure has exactly one owner and must not race a normal end frame.
+#[tokio::test]
+async fn failed_watch_open_has_no_completion_delivery() {
+    let core = Arc::new(TestCore::default());
+    let source = core.watch_source("failed");
+    drop(source);
+    let (client, mut events, owner) = BridgeStreams::channel(core);
+    drive(owner, async {
+        let error = client.request(open_watch("watch", "failed", 8)).await.unwrap_err();
+        assert_eq!(error.code, "TEST_CLOSED");
+        assert!(events.try_recv().is_err());
+        client.close();
+    }).await;
+}
+
+/// A source panic during opening must retain its cause in the opening response.
+#[tokio::test]
+async fn panicking_watch_open_preserves_original_failure() {
+    let (client, mut events, owner) = BridgeStreams::channel(Arc::new(TestCore::default()));
+    drive(owner, async {
+        let error = client.request(open_watch("watch", "panic", 8)).await.unwrap_err();
+        assert_eq!(error.code, "FATAL_CORE_PANIC");
+        assert_eq!(error.message, "Watch opening panicked");
+        assert!(events.try_recv().is_err());
+        client.request(StreamAction::CloseWatch { id: "watch".into(), tag: 8 }).await.unwrap();
+        client.close();
+    }).await;
 }
 
 /// Verifies that bounded delivery cannot retain a cancelled Core source.
