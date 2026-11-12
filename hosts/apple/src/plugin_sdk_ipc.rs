@@ -166,6 +166,20 @@ impl UnixPluginSdkIpcHost {
     }
 }
 
+impl Drop for UnixPluginSdkIpcHost {
+    /// Reader tasks retain shared state, so the carrier owner must actively close it.
+    fn drop(&mut self) {
+        let _ = self.stopListener();
+        let sessions = {
+            let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+            std::mem::take(&mut inner.sessions)
+        };
+        for session in sessions.into_values() {
+            closePluginSdkIpcStream(&session);
+        }
+    }
+}
+
 impl Default for UnixPluginSdkIpcHost {
     /// Creates a Unix-domain-socket Plugin SDK IPC carrier.
     fn default() -> Self {

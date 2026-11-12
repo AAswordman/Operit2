@@ -34,7 +34,7 @@ pub struct SqliteStore {
     path: PathBuf,
     pub(crate) storage: Option<Arc<dyn operit_host_api::RuntimeStorageHost>>,
     connection: Arc<Mutex<Box<dyn RuntimeSqliteConnection>>>,
-    observers: Arc<Mutex<Vec<Arc<dyn Fn() -> Result<(), SqliteStoreError> + Send + Sync>>>>,
+    observers: Arc<Mutex<Vec<Arc<dyn Fn(&SqliteStore) -> Result<(), SqliteStoreError> + Send + Sync>>>>,
     pub(crate) executionLeases: Arc<Mutex<crate::ChatExecutionLease::ChatExecutionLeaseState>>,
 }
 
@@ -139,10 +139,10 @@ impl SqliteStore {
     }
 
     #[allow(non_snake_case)]
-    /// Registers a callback invoked by `notifyInvalidated`.
+    /// Supplies the live store to callbacks so they need not retain their owning store.
     pub fn addInvalidationObserver<F>(&self, observer: F) -> Result<(), SqliteStoreError>
     where
-        F: Fn() -> Result<(), SqliteStoreError> + Send + Sync + 'static,
+        F: Fn(&SqliteStore) -> Result<(), SqliteStoreError> + Send + Sync + 'static,
     {
         let mut observers = self
             .observers
@@ -161,7 +161,7 @@ impl SqliteStore {
             .map_err(|_| SqliteStoreError::ObserverMutexPoisoned)?
             .clone();
         for observer in observers {
-            observer()?;
+            observer(self)?;
         }
         Ok(())
     }
@@ -516,6 +516,36 @@ mod transaction_lifecycle_tests {
             )),
         };
         (store, state)
+    }
+
+    /// Chat observers must not keep their own SQLite connection alive after runtime teardown.
+    #[test]
+    fn chat_observers_release_database_connection() {
+        let root = std::env::temp_dir().join(format!(
+            "operit-observer-lifecycle-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let host = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+            root.join("runtime"),
+            root.join("workspaces"),
+        ));
+        let store = SqliteStore::openWithHost(host, "runtime/observers.sqlite").unwrap();
+        store
+            .executeBatch("CREATE TABLE chats (pinned INTEGER, displayOrder INTEGER)")
+            .unwrap();
+        let connection = Arc::downgrade(&store.connection);
+        let flow = crate::dao::ChatDao::ChatDao::new(store.clone())
+            .getAllChats()
+            .unwrap();
+        store.notifyInvalidated().unwrap();
+        assert!(flow.value().is_empty());
+        drop(store);
+        assert!(
+            connection.upgrade().is_none(),
+            "chat observer retains its own database connection"
+        );
+        drop(flow);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// Requires exactly one explicit rollback and preserves the original failed statement error.

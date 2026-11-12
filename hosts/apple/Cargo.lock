@@ -1363,6 +1363,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "libc",
  "operit-host-api",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
@@ -1457,6 +1458,7 @@ name = "operit-host-native-terminal"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "libc",
  "operit-host-api",
  "operit-host-native-scheduler",
  "portable-pty",

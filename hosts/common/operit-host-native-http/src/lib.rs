@@ -29,9 +29,38 @@ use tungstenite::client::IntoClientRequest;
 
 #[derive(Clone, Debug, Default)]
 pub struct NativeHttpHost {
+    state: Arc<NativeHttpHostState>,
+}
+
+/// Only public Host clones own this state; workers retain the registries separately.
+#[derive(Debug, Default)]
+struct NativeHttpHostState {
     byteStreams: Arc<Mutex<BTreeMap<String, tokio::sync::watch::Sender<bool>>>>,
     webSockets: Arc<Mutex<BTreeMap<String, NativeWebSocketRegistration>>>,
     httpClients: Arc<Mutex<BTreeMap<HttpClientPolicy, AsyncClient>>>,
+}
+
+impl Drop for NativeHttpHostState {
+    fn drop(&mut self) {
+        let streams = std::mem::take(
+            &mut *self
+                .byteStreams
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        );
+        for cancel in streams.into_values() {
+            cancel.send_replace(true);
+        }
+        let sockets = std::mem::take(
+            &mut *self
+                .webSockets
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        );
+        for socket in sockets.into_values() {
+            socket.cancel.send_replace(true);
+        }
+    }
 }
 
 /// Identifies the shared connection pool for an exact HTTP request policy.
@@ -74,8 +103,7 @@ impl NativeHttpHost {
         let (cancel, cancelled) = tokio::sync::watch::channel(false);
         let registration = NativeWebSocketRegistration { commands, cancel };
         {
-            let mut sockets = self
-                .webSockets
+            let mut sockets = self.state.webSockets
                 .lock()
                 .map_err(|error| HostError::new(error.to_string()))?;
             if sockets.contains_key(&streamId) {
@@ -85,7 +113,7 @@ impl NativeHttpHost {
             }
             sockets.insert(streamId.clone(), registration.clone());
         }
-        let sockets = self.webSockets.clone();
+        let sockets = self.state.webSockets.clone();
         let task_id = streamId.clone();
         let result = NativeHostRuntimeTaskSchedulerHost::new().scheduleNetworkAsyncTask(
             "native-websocket",
@@ -109,7 +137,7 @@ impl NativeHttpHost {
             }),
         );
         if result.is_err() {
-            self.webSockets
+            self.state.webSockets
                 .lock()
                 .map_err(|error| HostError::new(error.to_string()))?
                 .remove(&streamId);
@@ -135,8 +163,7 @@ impl WebSocketHost for NativeHttpHost {
     /// Sends one binary message through a native WebSocket.
     #[allow(non_snake_case)]
     fn sendWebSocketMessage(&self, streamId: &str, message: Vec<u8>) -> HostResult<()> {
-        let sender = self
-            .webSockets
+        let sender = self.state.webSockets
             .lock()
             .map_err(|error| HostError::new(format!("WebSocket lock poisoned: {error}")))?
             .get(streamId)
@@ -151,7 +178,7 @@ impl WebSocketHost for NativeHttpHost {
     /// Sends one UTF-8 text frame through a native WebSocket.
     #[allow(non_snake_case)]
     fn sendWebSocketText(&self, streamId: &str, text: String) -> HostResult<()> {
-        let sender = self.webSockets.lock().map_err(|error| HostError::new(error.to_string()))?
+        let sender = self.state.webSockets.lock().map_err(|error| HostError::new(error.to_string()))?
             .get(streamId).cloned().ok_or_else(|| HostError::new(format!("WebSocket is not open: {streamId}")))?;
         sender.commands.try_send(tungstenite::Message::Text(text)).map_err(|error| HostError::new(error.to_string()))
     }
@@ -159,8 +186,7 @@ impl WebSocketHost for NativeHttpHost {
     /// Closes one native WebSocket.
     #[allow(non_snake_case)]
     fn closeWebSocket(&self, streamId: &str) -> HostResult<()> {
-        let sender = self
-            .webSockets
+        let sender = self.state.webSockets
             .lock()
             .map_err(|error| HostError::new(format!("WebSocket lock poisoned: {error}")))?
             .remove(streamId)
@@ -215,9 +241,16 @@ async fn executeNativeWebSocket(
     loop {
         tokio::select! {
             biased;
-            _ = cancelled.changed() => { let _ = socket.close(None).await; return Ok(()); }
+            _ = cancelled.changed() => {
+                let _ = tokio::time::timeout(Duration::from_millis(250), socket.close(None)).await;
+                return Ok(());
+            }
             command = commands.recv() => match command {
-                Some(message) => socket.send(message).await.map_err(|error| HostError::new(error.to_string()))?,
+                Some(message) => tokio::select! {
+                    biased;
+                    _ = cancelled.changed() => return Ok(()),
+                    sent = socket.send(message) => sent.map_err(|error| HostError::new(error.to_string()))?,
+                },
                 None => return Ok(()),
             },
             message = socket.next() => match message {
@@ -251,7 +284,7 @@ impl NativeHttpHost {
     ) -> HostResult<()> {
         let (cancelSender, cancelReceiver) = tokio::sync::watch::channel(false);
         {
-            let mut streams = self.byteStreams.lock().map_err(|error| {
+            let mut streams = self.state.byteStreams.lock().map_err(|error| {
                 HostError::new(format!("HTTP byte stream lock poisoned: {error}"))
             })?;
             if streams.contains_key(&streamId) {
@@ -261,8 +294,8 @@ impl NativeHttpHost {
             }
             streams.insert(streamId.clone(), cancelSender.clone());
         }
-        let streams = self.byteStreams.clone();
-        let clients = self.httpClients.clone();
+        let streams = self.state.byteStreams.clone();
+        let clients = self.state.httpClients.clone();
         let taskStreamId = streamId.clone();
         let spawnResult = NativeHostRuntimeTaskSchedulerHost::new().scheduleNetworkAsyncTask(
             "native-http-stream",
@@ -292,7 +325,7 @@ impl NativeHttpHost {
             }),
         );
         if let Err(error) = spawnResult {
-            self.byteStreams
+            self.state.byteStreams
                 .lock()
                 .map_err(|error| HostError::new(error.to_string()))?
                 .remove(&streamId);
@@ -339,8 +372,7 @@ impl HttpStreamHost for NativeHttpHost {
     /// Cancels one native asynchronous HTTP response stream.
     #[allow(non_snake_case)]
     fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()> {
-        let sender = self
-            .byteStreams
+        let sender = self.state.byteStreams
             .lock()
             .map_err(|error| HostError::new(format!("HTTP byte stream lock poisoned: {error}")))?
             .remove(streamId)
@@ -420,7 +452,7 @@ impl HttpHost for NativeHttpHost {
 
     /// Executes buffered HTTP through the shared asynchronous network executor.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
-        let clients = self.httpClients.clone();
+        let clients = self.state.httpClients.clone();
         NativeHostRuntimeTaskSchedulerHost::new().runNetworkTask("native-http-request", move || {
             executeHttpRequestAsync(request, clients)
         })

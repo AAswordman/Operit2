@@ -43,6 +43,11 @@ impl TerminalManagedRuntimeProcess {
             "managed-runtime-{}",
             NEXT_MANAGED_RUNTIME_SESSION.fetch_add(1, Ordering::Relaxed)
         );
+        let readyMarker = format!(
+            "OPERIT_MANAGED_RUNTIME_READY_{}",
+            NEXT_MANAGED_RUNTIME_SESSION.fetch_add(1, Ordering::Relaxed)
+        );
+        let command = buildRuntimeLaunchCommand(&launch, &readyMarker)?;
         let sessionId = terminalHost.startPtySession(
             &sessionName,
             &launch.terminal,
@@ -51,11 +56,6 @@ impl TerminalManagedRuntimeProcess {
             MANAGED_RUNTIME_ROWS,
             MANAGED_RUNTIME_COLUMNS,
         )?;
-        let readyMarker = format!(
-            "OPERIT_MANAGED_RUNTIME_READY_{}",
-            NEXT_MANAGED_RUNTIME_SESSION.fetch_add(1, Ordering::Relaxed)
-        );
-        let command = buildRuntimeLaunchCommand(&launch, &readyMarker)?;
         if let Err(error) = terminalHost.writePtySession(&sessionId, command.as_bytes()) {
             let _ = terminalHost.closePtySession(&sessionId);
             return Err(error);

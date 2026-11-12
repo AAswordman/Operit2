@@ -3,7 +3,7 @@ mod terminal_command;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -186,9 +186,7 @@ struct PtySession {
     sessionName: String,
     terminalType: String,
     workingDir: String,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-    master: Box<dyn MasterPty + Send>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    process: Option<PtyProcess>,
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: PtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
@@ -207,9 +205,49 @@ struct PtyCursor {
 
 type PtyCursorState = Arc<Mutex<PtyCursor>>;
 
-impl Drop for PtySession {
+/// Owns every live PTY resource separately from retained session output and status.
+struct PtyProcess {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    stopReader: Arc<AtomicBool>,
+    readerTask: Option<operit_host_native_scheduler::NativeTaskHandle<()>>,
+}
+
+impl Drop for PtyProcess {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        self.stopReader.store(true, Ordering::Release);
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            if self.child.kill().is_ok() {
+                // portable-pty escalates SIGHUP to SIGKILL; reap the shell as well.
+                let _ = self.child.wait();
+            }
+        }
+        if let Some(readerTask) = self.readerTask.take() {
+            let _ = readerTask.join_timeout(Duration::from_secs(1));
+        }
+    }
+}
+
+impl PtySession {
+    fn process(&self) -> HostResult<&PtyProcess> {
+        self.process
+            .as_ref()
+            .ok_or_else(|| HostError::new("PTY session has exited"))
+    }
+
+    /// Reclaims handles on observed exit while preserving output and the exit receipt.
+    fn pollExitCode(&mut self) -> HostResult<Option<i32>> {
+        if self.exitCode.is_none() {
+            if let Some(process) = self.process.as_mut() {
+                if let Some(status) = process.child.try_wait()? {
+                    self.exitCode = Some(status.exit_code() as i32);
+                    self.commandRunning = false;
+                    self.process.take();
+                }
+            }
+        }
+        Ok(self.exitCode)
     }
 }
 
@@ -377,6 +415,7 @@ impl TerminalHost for NativePtyTerminalHost {
             .get_mut(sessionId)
             .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
         let mut writer = session
+            .process()?
             .writer
             .lock()
             .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
@@ -392,6 +431,7 @@ impl TerminalHost for NativePtyTerminalHost {
             .get(sessionId)
             .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
         session
+            .process()?
             .master
             .resize(ptySize(rows, cols))
             .map_err(toHostError)
@@ -403,17 +443,7 @@ impl TerminalHost for NativePtyTerminalHost {
             .ptySessions
             .get_mut(sessionId)
             .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
-        if session.exitCode.is_some() {
-            return Ok(session.exitCode);
-        }
-        match session.child.try_wait()? {
-            Some(status) => {
-                let code = status.exit_code() as i32;
-                session.exitCode = Some(code);
-                Ok(Some(code))
-            }
-            None => Ok(None),
-        }
+        session.pollExitCode()
     }
 
     fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
@@ -434,12 +464,7 @@ impl TerminalHost for NativePtyTerminalHost {
         let mut state = self.lockState()?;
         let mut entries = Vec::new();
         for (sessionId, session) in state.ptySessions.iter_mut() {
-            if session.exitCode.is_none() {
-                if let Some(status) = session.child.try_wait()? {
-                    session.exitCode = Some(status.exit_code() as i32);
-                }
-            }
-            if session.exitCode.is_some() {
+            if session.pollExitCode()?.is_some() {
                 continue;
             }
             entries.push(TerminalSessionListEntry {
@@ -545,11 +570,13 @@ impl TerminalHost for NativePtyTerminalHost {
             let commandInput = ptyCommandInput(&normalizedCommand, session.commandProtocol);
             let commandEcho = commandInput.trim_end().to_string();
             let mut writer = session
+                .process()?
                 .writer
                 .lock()
                 .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
             writer.write_all(commandInput.as_bytes())?;
             writer.flush()?;
+            drop(writer);
             session.commandRunning = true;
             (
                 session.terminalType.clone(),
@@ -767,7 +794,19 @@ fn createPtySession(
     let pair = ptySystem
         .openpty(ptySize(rows, cols))
         .map_err(|error| HostError::new(format!("PTY open failed: {error}")))?;
-    // Acquire all master handles before spawning, so setup errors cannot leak a shell.
+    // Poll a dedicated owned reader so cancellation does not depend on slave EOF.
+    #[cfg(unix)]
+    let mut reader = {
+        use std::os::fd::BorrowedFd;
+        let fd = pair
+            .master
+            .as_raw_fd()
+            .ok_or_else(|| HostError::new("PTY master has no file descriptor"))?;
+        // SAFETY: pair.master owns fd and remains alive throughout the duplication.
+        let owned = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
+        std::fs::File::from(owned)
+    };
+    #[cfg(not(unix))]
     let mut reader = pair
         .master
         .try_clone_reader()
@@ -776,12 +815,22 @@ fn createPtySession(
         HostError::new(format!("PTY writer setup failed: {error}"))
     })?));
     let command = posixPtyCommand(&workingDir, commandSpec);
-    let mut child = pair.slave.spawn_command(command).map_err(|error| {
+    let child = pair.slave.spawn_command(command).map_err(|error| {
         HostError::new(format!(
             "PTY shell spawn failed (program={}, cwd={}): {error}",
             commandSpec.program, workingDir
         ))
     })?;
+    // The parent must never retain the slave after spawn, including setup failures.
+    drop(pair.slave);
+    let stopReader = Arc::new(AtomicBool::new(false));
+    let mut process = PtyProcess {
+        child,
+        master: pair.master,
+        writer: writer.clone(),
+        stopReader: stopReader.clone(),
+        readerTask: None,
+    };
     let output = Arc::new(Mutex::new(VecDeque::new()));
     let commandOutput: PtyCommandOutput = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
@@ -791,37 +840,60 @@ fn createPtySession(
     let screenOutputForThread = screenOutput.clone();
     let writerForThread = writer.clone();
     let cursorStateForThread = cursorState.clone();
-    let reader_task =
-        operit_host_native_scheduler::scheduleNativeServiceTask("operit-pty-reader", move || {
+    process.readerTask = Some(operit_host_native_scheduler::scheduleNativeServiceTask(
+        "operit-pty-reader",
+        move || {
             let mut buffer = [0u8; 4096];
+            let mut drainDeadline = None;
             loop {
+                let stopping = stopReader.load(Ordering::Acquire);
+                if stopping {
+                    // Drain already-written tail output, but bound descendants that keep writing.
+                    let deadline = drainDeadline
+                        .get_or_insert_with(|| Instant::now() + Duration::from_millis(100));
+                    if Instant::now() >= *deadline {
+                        break;
+                    }
+                }
+                #[cfg(unix)]
+                match pollPtyReader(&reader, if stopping { 0 } else { 100 }) {
+                    Ok(true) => {}
+                    Ok(false) if stopping => break,
+                    Ok(false) => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+                #[cfg(not(unix))]
+                if stopping {
+                    break;
+                }
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(count) => {
                         let chunk = &buffer[..count];
-                        processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk);
+                        if !stopping {
+                            processPtyTerminalQueries(
+                                &writerForThread,
+                                &cursorStateForThread,
+                                chunk,
+                            );
+                        }
                         let commandChunk = stripPtyDeviceStatusReports(chunk);
                         let visibleChunk = stripPtyPromptMarkers(&commandChunk);
                         appendPtyOutput(&outputForThread, &visibleChunk);
                         appendPtyOutput(&screenOutputForThread, &visibleChunk);
                         appendPtyCommandOutput(&commandOutputForThread, &commandChunk);
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(_) => break,
                 }
             }
-        });
-    if let Err(error) = reader_task {
-        let _ = child.kill();
-        return Err(error);
-    }
+        },
+    )?);
     if commandSpec.commandProtocol == PtyCommandProtocol::ExplicitMarker {
         writePtyPromptMarker(&writer)?;
     }
-    if let Err(error) = waitForInitialPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
-    {
-        let _ = child.kill();
-        return Err(error);
-    }
+    waitForInitialPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))?;
     clearPtyCommandOutput(&commandOutput)?;
     if commandSpec.commandProtocol == PtyCommandProtocol::ExplicitMarker {
         clearPtyOutput(&output)?;
@@ -831,9 +903,7 @@ fn createPtySession(
         sessionName,
         terminalType,
         workingDir,
-        child,
-        master: pair.master,
-        writer,
+        process: Some(process),
         output,
         commandOutput,
         screenOutput,
@@ -841,6 +911,23 @@ fn createPtySession(
         exitCode: None,
         commandProtocol: commandSpec.commandProtocol,
     })
+}
+
+/// Waits briefly for output without keeping a service worker blocked after session close.
+#[cfg(unix)]
+fn pollPtyReader(reader: &std::fs::File, timeoutMs: i32) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    let mut descriptor = libc::pollfd {
+        fd: reader.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: descriptor is initialized, and reader owns its fd throughout poll.
+    let result = unsafe { libc::poll(&mut descriptor, 1, timeoutMs) };
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(result > 0)
 }
 
 /// Produces the shell input that emits the command-completion marker for one protocol.
@@ -1115,6 +1202,7 @@ fn executePtyCommandInSession(
 fn cancelTimedOutPtyCommand(session: &mut PtySession) -> HostResult<Option<String>> {
     {
         let mut writer = session
+            .process()?
             .writer
             .lock()
             .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
@@ -1648,6 +1736,7 @@ fn applyPtyTerminalInput(
     let mut acceptedChars = 0;
     if let Some(input) = input {
         let mut writer = session
+            .process()?
             .writer
             .lock()
             .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
@@ -1661,6 +1750,7 @@ fn applyPtyTerminalInput(
             value => controlToSequence(value, input)?,
         };
         let mut writer = session
+            .process()?
             .writer
             .lock()
             .map_err(|_| HostError::new("pty writer mutex poisoned"))?;

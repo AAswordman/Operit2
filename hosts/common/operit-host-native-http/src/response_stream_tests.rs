@@ -227,3 +227,85 @@ fn httpResponseStreamPreservesHttpErrorStatusAndBody() {
     assert_eq!(body, b"denied");
     server.join().unwrap();
 }
+
+/// Host clones keep streams alive; final teardown cancels HTTP, idle WS, and blocked WS sends.
+#[test]
+fn droppingLastHostCancelsOpenConnections() {
+    for mode in 0..3 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, held) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            if mode == 0 {
+                readRequest(&mut socket);
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntest\r\n",
+                    )
+                    .unwrap();
+                assert_eq!(socket.read(&mut [0]).unwrap(), 0);
+            } else {
+                let mut socket = tungstenite::accept(socket).unwrap();
+                if mode == 2 {
+                    let _ = held.recv_timeout(Duration::from_secs(4));
+                } else {
+                    assert!(matches!(socket.read(), Ok(tungstenite::Message::Close(_))));
+                }
+            }
+        });
+        let host = NativeHttpHost::new();
+        let remaining = host.clone();
+        let (opened, started) = mpsc::channel();
+        let (closed, completed) = mpsc::channel();
+        let onClosed: HttpStreamClosedCallback = Arc::new(move |result| {
+            let _ = closed.send(result);
+        });
+        if mode == 0 {
+            host.openHttpResponseStream(
+                "drop-host".into(),
+                request(address),
+                Arc::new(move |_| {
+                    let _ = opened.send(());
+                }),
+                Arc::new(|_| {}),
+                onClosed,
+            )
+            .unwrap();
+        } else {
+            host.openWebSocket(
+                "drop-host".into(),
+                WebSocketRequestData {
+                    url: format!("ws://{address}/socket"),
+                    headers: vec![],
+                    connectTimeoutSeconds: 2,
+                    ignoreSsl: false,
+                },
+                Arc::new(move || {
+                    let _ = opened.send(());
+                }),
+                Arc::new(|_| {}),
+                onClosed,
+            )
+            .unwrap();
+        }
+        started.recv_timeout(Duration::from_secs(3)).unwrap();
+        if mode == 2 {
+            // Exceed TCP send buffers while the peer deliberately holds its socket without reading.
+            for _ in 0..4 {
+                host.sendWebSocketMessage("drop-host", vec![0; 4 * 1024 * 1024])
+                    .unwrap();
+            }
+        }
+        drop(host);
+        assert!(completed.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(remaining);
+        let finished = completed.recv_timeout(Duration::from_secs(2)).is_ok();
+        let _ = release.send(());
+        server.join().unwrap();
+        assert!(finished, "Host teardown retained connection in mode {mode}");
+    }
+}
