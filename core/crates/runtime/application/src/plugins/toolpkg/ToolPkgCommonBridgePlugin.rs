@@ -53,6 +53,7 @@ impl OperitPlugin for ToolPkgCommonBridgePlugin {
         ToolPkgChatInputHookBridge::register(self.runtime.clone());
         ToolPkgChatViewHookBridge::register(self.runtime.clone());
         ToolPkgChatMessageHookBridge::register(self.runtime.clone());
+        super::ToolPkgMessageTransformBridge::ToolPkgMessageTransformBridge::register(self.runtime.clone());
         ToolPkgChatRuntimeHookBridge::register(self.runtime.clone());
         super::ToolPkgChatResponseHookBridge::ToolPkgChatResponseHookBridge::register(self.runtime.clone());
         ToolPkgInputMenuToggleBridge::register(self.runtime.clone());
@@ -79,6 +80,7 @@ fn syncToolPkgRegistrations(
     ToolPkgToolLifecycleBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers);
     ToolPkgChatMessageHookBridge::syncToolPkgRegistrations(activeContainers);
+    super::ToolPkgMessageTransformBridge::ToolPkgMessageTransformBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgChatRuntimeHookBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers);
     ToolPkgChatComposerSlotBridge::syncToolPkgRegistrations(activeContainers);

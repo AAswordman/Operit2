@@ -15,6 +15,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
+import 'package:operit2/ui/common/components/M3LoadingIndicator.dart';
 import 'package:operit2/ui/common/markdown/EnhancedCodeBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'support/semantic_markdown_fixture.dart';
@@ -48,6 +49,73 @@ class _PositionPeakController extends ScrollController {
 
 /// Verifies transcript rendering and scroll ownership across asynchronous updates.
 void main() {
+  testWidgets(
+    'keeps initial history loading centered until all projections finish',
+    (tester) async {
+      final scroll = ScrollController();
+      final autoScroll = ValueNotifier(true);
+      final bridge = _ScriptedGeneratedChatBridge()
+        ..deferMessageProjections = true;
+      addTearDown(scroll.dispose);
+      addTearDown(autoScroll.dispose);
+      addTearDown(bridge.dispose);
+      final messages = [
+        for (var index = 1; index <= 3; index++)
+          _aiMessage(
+            timestamp: index,
+            parts: [
+              MessagePart(
+                partId: 'body-$index',
+                sequence: 0,
+                kind: MessagePartKind.markdown,
+                content: 'history message $index',
+                toolCallId: null,
+                toolName: null,
+                attributes: const {},
+              ),
+            ],
+          ),
+      ];
+      Widget render(String chatId) => _chatArea(
+        currentChatId: chatId,
+        bridge: bridge,
+        messages: messages,
+        isLoading: false,
+        scrollController: scroll,
+        autoScrollToBottom: autoScroll,
+      );
+      await tester.pumpWidget(render('first'));
+      expect(bridge.delayedProjections, hasLength(1));
+      expect(find.byType(M3LoadingIndicator), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      final center = tester.getCenter(find.byType(M3LoadingIndicator));
+      expect(center, tester.getCenter(find.byType(ChatArea)));
+      expect(find.byType(CustomScrollView), findsNothing);
+
+      bridge.completeMessageProjection(0);
+      await tester.pumpAndSettle();
+      expect(find.byType(M3LoadingIndicator), findsNothing);
+      expect(find.byType(CustomScrollView), findsOneWidget);
+      expect(find.text('history message 3'), findsOneWidget);
+
+      await tester.pumpWidget(render('second'));
+      expect(bridge.delayedProjections, hasLength(2));
+      expect(tester.getCenter(find.byType(M3LoadingIndicator)), center);
+      await tester.pumpWidget(render('third'));
+      expect(bridge.delayedProjections, hasLength(3));
+      bridge.completeMessageProjection(1);
+      await tester.pump();
+      expect(find.byType(M3LoadingIndicator), findsOneWidget);
+      expect(find.byType(CustomScrollView), findsNothing);
+      bridge.completeMessageProjection(2);
+      await tester.pumpAndSettle();
+      expect(find.byType(M3LoadingIndicator), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.text('history message 3'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   const imageSource =
       '图在这里：\n\n![](operit_art.jpg)\n\n绝对路径：\n\n'
       '![](/operitapp/outputs/2026-11-05_12-34-10-303/operit_art.jpg)\n\n'
@@ -665,6 +733,10 @@ void main() {
         /// Observes the active viewport even while an old keyed viewport unmounts.
         Widget observePaint(Widget child) => CustomPaint(
           foregroundPainter: _ScrollPositionPaintProbe(() {
+            if (find.byType(M3LoadingIndicator).evaluate().isNotEmpty) {
+              expect(find.byType(Scrollable), findsNothing);
+              return;
+            }
             final position = tester
                 .state<ScrollableState>(find.byType(Scrollable).first)
                 .position;
@@ -729,6 +801,9 @@ void main() {
             bodyBuilder: observePaint,
           ),
         );
+        expect(find.byType(M3LoadingIndicator), findsOneWidget);
+        expect(paints, isEmpty);
+        await tester.pump();
         expect(paints, isNotEmpty);
         for (final (pixels, bottom) in paints) {
           expect(
@@ -1959,6 +2034,8 @@ void main() {
         autoScrollToBottom: autoScrollToBottom,
       ),
     );
+    // Static display projections complete through the generated asynchronous client.
+    await tester.pumpAndSettle();
     final previousMessageWidget = tester.widget<CursorStyleChatMessage>(
       find.byType(CursorStyleChatMessage),
     );
@@ -2322,6 +2399,7 @@ void main() {
       ),
     );
 
+    await tester.pumpAndSettle();
     final scrollableContext = tester.element(find.byType(Scrollable).first);
     final metrics = FixedScrollMetrics(
       minScrollExtent: 0,
@@ -2501,6 +2579,16 @@ class _GeneratedFlowRendererHarnessState
 
 /// Emits generated proxy events in the same order as routed chat streaming.
 class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
+  bool deferMessageProjections = false;
+  final delayedProjections =
+      <({Object? message, Completer<Uint8List> result})>[];
+
+  /// Completes a selected history projection independently of response order.
+  void completeMessageProjection(int index) {
+    final request = delayedProjections[index];
+    request.result.complete(encodeCoreLink([0, request.message]));
+  }
+
   final StreamController<CoreEvent> _chatEvents =
       StreamController<CoreEvent>.broadcast(sync: true);
   final Map<String, StreamController<CoreEvent>> _streamEventsById =
@@ -2523,6 +2611,16 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     switch (request.methodName) {
+      case 'projectMessagesForDisplay':
+        if (deferMessageProjections) {
+          final result = Completer<Uint8List>();
+          delayedProjections.add((
+            message: (request.args as Map)['messages'],
+            result: result,
+          ));
+          return result.future;
+        }
+        return encodeCoreLink([0, (request.args as Map)['messages']]);
       case 'executeTool':
         final tool = (request.args as Map)['tool'] as Map;
         expect(tool['name'], 'read_file_binary');
@@ -2569,6 +2667,8 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
     switch (request.propertyName) {
+      case 'messageTransformRevisionFlow':
+        return Stream.value(_rawGeneratedEvent(request, 'Snapshot', 0));
       case 'imageBytes':
         // An unresolved relative source fails until the chat directory arrives.
         return Stream.value(
@@ -2667,6 +2767,21 @@ Widget _streamingStructuredRendererHarness({
   );
 }
 
+_ScriptedGeneratedChatBridge? _defaultChatBridge;
+
+/// Reuses one runtime transport during each test, matching a mounted application's client ownership.
+_ScriptedGeneratedChatBridge _testChatBridge() {
+  if (_defaultChatBridge == null) {
+    final bridge = _ScriptedGeneratedChatBridge();
+    _defaultChatBridge = bridge;
+    addTearDown(() {
+      bridge.dispose();
+      _defaultChatBridge = null;
+    });
+  }
+  return _defaultChatBridge!;
+}
+
 /// Builds a minimal themed transcript around one active AI message.
 Widget _chatArea({
   String currentChatId = 'chat',
@@ -2686,9 +2801,8 @@ Widget _chatArea({
   RevealMessageForLocator? onRevealMessageForLocator,
   Future<void> Function()? onShowLatestDisplayWindow,
 }) {
-  final owner = bridge ?? _ScriptedGeneratedChatBridge();
+  final owner = bridge ?? _testChatBridge();
   final clients = GeneratedCoreProxyClients(owner);
-  if (bridge == null) addTearDown(owner.dispose);
   final chatArea = ChatArea(
     messages:
         messages ??

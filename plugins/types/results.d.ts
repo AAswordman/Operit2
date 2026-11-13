@@ -96,6 +96,10 @@ export interface SimplifiedUINode {
   resourceId?: string;
   bounds?: string;
   isClickable: boolean;
+  /**
+   * Preserves platform accessibility roles, states and supported actions.
+   */
+  properties: Record<string, unknown>;
   children: SimplifiedUINode[];
   /**
    * Formats the node as a compact JSON value.
@@ -115,6 +119,14 @@ export interface SimplifiedUINode {
  * Captures the active surface and its platform-neutral accessibility hierarchy.
  */
 export interface UIPageResultData {
+  /**
+   * Identifies the native window that owns this snapshot.
+   */
+  windowId: string;
+  /**
+   * Contains a bounded, compact text view for model context; uiElements retains the full tree.
+   */
+  summary: string;
   /**
    * Reports the visibility granted by the owning platform.
    */

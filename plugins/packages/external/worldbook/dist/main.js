@@ -3,11 +3,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.prepareRegexDisplay = exports.onRegexPromptFinalize = exports.onRegexMessageTransform = void 0;
 exports.systemPromptHook = systemPromptHook;
 exports.finalizeHook = finalizeHook;
 exports.onServiceInitialize = onServiceInitialize;
 exports.registerToolPkg = registerToolPkg;
-const index_ui_js_1 = __importDefault(require("./ui/worldbook_manager/index.ui.js"));
+const index_ui_js_1 = __importDefault(require("./ui/regex_manager/index.ui.js"));
+const worldbook_regex_js_1 = require("./shared/worldbook_regex.js");
+Object.defineProperty(exports, "onRegexMessageTransform", { enumerable: true, get: function () { return worldbook_regex_js_1.onRegexMessageTransform; } });
+Object.defineProperty(exports, "onRegexPromptFinalize", { enumerable: true, get: function () { return worldbook_regex_js_1.onRegexPromptFinalize; } });
+Object.defineProperty(exports, "prepareRegexDisplay", { enumerable: true, get: function () { return worldbook_regex_js_1.prepareRegexDisplay; } });
+const index_ui_js_2 = __importDefault(require("./ui/worldbook_manager/index.ui.js"));
 const worldbook_storage_js_1 = require("./shared/worldbook_storage.js");
 const worldbook_variables_js_1 = require("./shared/worldbook_variables.js");
 const WORLDBOOK_ROUTE = "toolpkg:com.operit.worldbook:ui:worldbook_manager";
@@ -156,12 +162,12 @@ async function readPreparation(event, consume) {
             chatId,
             callerCardId,
             data: (async () => {
-                const allEntries = await (0, worldbook_storage_js_1.readWorldBookEntries)();
+                const [allEntries, regexRules] = await Promise.all([(0, worldbook_storage_js_1.readWorldBookEntries)(), (0, worldbook_regex_js_1.readRegexRules)()]);
                 const enabledEntries = allEntries.filter((entry) => entry && entry.enabled !== false);
                 enabledEntries.sort((left, right) => (right.priority || 50) - (left.priority || 50));
                 // Variable patches and initialization still run even if no entry matches.
                 const variableContext = await resolveVariableContext(chatId, callerCardId, allEntries);
-                return { enabledEntries, variableContext };
+                return { enabledEntries, variableContext, regexRules };
             })()
         };
         if (key && !consume) {
@@ -182,13 +188,10 @@ async function readPreparation(event, consume) {
         throw error;
     }
 }
-function renderEntries(entries, variableContext) {
-    if (!variableContext) {
-        return entries;
-    }
-    return entries.map((entry) => ({
-        ...entry,
-        content: (0, worldbook_variables_js_1.renderWorldBookContent)(String(entry.content || ""), variableContext)
+/** Renders variables and world-info regexes before adding injection wrappers. */
+function renderEntries(entries, variableContext, participantId, rules) {
+    return entries.map(entry => ({ ...entry,
+        content: (0, worldbook_regex_js_1.regexWorldInfo)((0, worldbook_variables_js_1.renderWorldBookContent)(entry.content, variableContext), rules, participantId, variableContext),
     }));
 }
 async function resolveVariableContext(chatId, callerCardId, allEntries) {
@@ -206,7 +209,7 @@ async function systemPromptHook(event) {
     if (stage !== "after_compose_system_prompt") {
         return null;
     }
-    const { enabledEntries, callerCardId, variableContext } = await readPreparation(event, false);
+    const { enabledEntries, callerCardId, variableContext, regexRules } = await readPreparation(event, false);
     const hitEntries = enabledEntries.filter((entry) => entry.always_active &&
         entry.inject_target === "system" &&
         normalizeInjectPosition(entry) !== "at_depth" &&
@@ -215,7 +218,7 @@ async function systemPromptHook(event) {
         return null;
     }
     const currentPrompt = event.eventPayload?.systemPrompt || "";
-    const renderedEntries = renderEntries(hitEntries, variableContext);
+    const renderedEntries = renderEntries(hitEntries, variableContext, callerCardId, regexRules);
     const { prependEntries, appendEntries } = splitEntriesByPosition(renderedEntries);
     return { systemPrompt: applyTextInjection(currentPrompt, prependEntries, appendEntries) };
 }
@@ -224,7 +227,7 @@ async function finalizeHook(event) {
     if (stage !== "before_finalize_prompt") {
         return null;
     }
-    const { enabledEntries, callerCardId, variableContext } = await readPreparation(event, true);
+    const { enabledEntries, callerCardId, variableContext, regexRules } = await readPreparation(event, true);
     const promptEntries = enabledEntries.filter((entry) => entry.inject_target === "user" || normalizeInjectPosition(entry) === "at_depth");
     const keywordEntries = enabledEntries.filter((entry) => !entry.always_active);
     const payload = event.eventPayload || {};
@@ -286,7 +289,7 @@ async function finalizeHook(event) {
     let nextHistory = [...history];
     let nextProcessedInput = String(payload.processedInput || payload.rawInput || "");
     if (hitSystemEntries.length > 0) {
-        const renderedSystemEntries = renderEntries(hitSystemEntries, variableContext);
+        const renderedSystemEntries = renderEntries(hitSystemEntries, variableContext, callerCardId, regexRules);
         const { prependEntries, appendEntries } = splitEntriesByPosition(renderedSystemEntries);
         let injected = false;
         const sysNext = [];
@@ -308,12 +311,12 @@ async function finalizeHook(event) {
         nextHistory = sysNext;
     }
     if (hitUserEntries.length > 0) {
-        const renderedUserEntries = renderEntries(hitUserEntries, variableContext);
+        const renderedUserEntries = renderEntries(hitUserEntries, variableContext, callerCardId, regexRules);
         const { prependEntries, appendEntries } = splitEntriesByPosition(renderedUserEntries);
         nextProcessedInput = applyTextInjection(nextProcessedInput, prependEntries, appendEntries);
     }
     if (hitChatEntries.length > 0) {
-        nextHistory = insertAtDepthEntries(nextHistory, renderEntries(hitChatEntries, variableContext));
+        nextHistory = insertAtDepthEntries(nextHistory, renderEntries(hitChatEntries, variableContext, callerCardId, regexRules));
     }
     return {
         preparedHistory: nextHistory,
@@ -323,7 +326,10 @@ async function finalizeHook(event) {
 async function onServiceInitialize(_event) {
     await (0, worldbook_storage_js_1.initializeWorldBookStorage)();
 }
+/** Registers lifecycle, management UI, and matching send and estimate prompt handlers. */
 function registerToolPkg() {
+    ToolPkg.registerMessageTransformHook({ id: "worldbook_regex_message", function: worldbook_regex_js_1.onRegexMessageTransform });
+    ToolPkg.registerMessageStreamTransform({ id: "worldbook_regex_display", function: worldbook_regex_js_1.prepareRegexDisplay });
     ToolPkg.registerAppLifecycleHook({
         id: "service-initialize",
         event: "application_on_create",
@@ -333,12 +339,17 @@ function registerToolPkg() {
         id: "worldbook_manager",
         route: WORLDBOOK_ROUTE,
         runtime: "compose_dsl",
-        screen: index_ui_js_1.default,
+        screen: index_ui_js_2.default,
         params: {},
         title: {
             zh: "世界书管理",
             en: "World Book Manager"
         }
+    });
+    ToolPkg.registerUiRoute({
+        id: "regex_manager", route: "toolpkg:com.operit.worldbook:ui:regex_manager",
+        runtime: "compose_dsl", screen: index_ui_js_1.default, params: {},
+        title: { zh: "世界书正则", en: "World Book Regex" },
     });
     ToolPkg.registerNavigationEntry({
         id: "worldbook_manager_toolbox",
@@ -359,5 +370,11 @@ function registerToolPkg() {
         id: "worldbook_keyword_inject",
         function: finalizeHook
     });
+    ToolPkg.registerPromptEstimateFinalizeHook({
+        id: "worldbook_keyword_estimate",
+        function: finalizeHook
+    });
+    ToolPkg.registerPromptFinalizeHook({ id: "worldbook_regex_prompt", function: worldbook_regex_js_1.onRegexPromptFinalize });
+    ToolPkg.registerPromptEstimateFinalizeHook({ id: "worldbook_regex_estimate", function: worldbook_regex_js_1.onRegexPromptFinalize });
     return true;
 }

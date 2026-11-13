@@ -470,6 +470,12 @@ pub struct ToolPkgMainRegistration {
     pub chatViewHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    /// Declares awaited message text transformations.
+    #[serde(rename = "messageTransformHooks", default)]
+    pub messageTransformHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    /// Declares native display-program preparation handlers.
+    #[serde(default)]
+    pub messageStreamTransforms: Vec<ToolPkgRegisteredFunctionHook>,
     /// Declares one lifecycle initializer for the package-owned conversation namespace.
     #[serde(rename = "chatLifecycleHooks", default)]
     pub chatLifecycleHooks: Vec<ToolPkgRegisteredFunctionHook>,
@@ -584,6 +590,12 @@ pub struct ToolPkgContainerRuntime {
     pub chatViewHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageHooks")]
     pub chatMessageHooks: Vec<ToolPkgFunctionHookRuntime>,
+    /// Contains validated text transformation handlers in registration order.
+    #[serde(rename = "messageTransformHooks")]
+    pub messageTransformHooks: Vec<ToolPkgFunctionHookRuntime>,
+    /// Contains validated native display-program preparation handlers.
+    #[serde(default)]
+    pub messageStreamTransforms: Vec<ToolPkgFunctionHookRuntime>,
     /// Retains the actual exported creation handler validated at package registration.
     #[serde(rename = "chatLifecycleHooks")]
     pub chatLifecycleHooks: Vec<ToolPkgFunctionHookRuntime>,
@@ -1577,6 +1589,14 @@ impl ToolPkgArchiveParser {
             &mainRegistration.chatMessageHooks,
             TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK,
         )?;
+        let messageTransformHooks = validateFunctionHooks(
+            &mainRegistration.messageTransformHooks,
+            TOOLPKG_REGISTRATION_MESSAGE_TRANSFORM_HOOK,
+        )?;
+        let messageStreamTransforms = validateFunctionHooks(
+            &mainRegistration.messageStreamTransforms,
+            TOOLPKG_REGISTRATION_MESSAGE_STREAM_TRANSFORM,
+        )?;
         let chatMessageMenuItems =
             validateChatMessageMenuItems(&mainRegistration.chatMessageMenuItems, entryIndex)?;
         let chatRuntimeHooks = validateFunctionHooks(
@@ -1682,6 +1702,8 @@ impl ToolPkgArchiveParser {
             chatInputHooks,
             chatViewHooks,
             chatMessageHooks,
+            messageTransformHooks,
+            messageStreamTransforms,
             chatLifecycleHooks,
             chatMessageMenuItems,
             chatRuntimeHooks,

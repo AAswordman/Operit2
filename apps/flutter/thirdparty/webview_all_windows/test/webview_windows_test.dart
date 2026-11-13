@@ -108,6 +108,67 @@ void main() {
     expect(captureEnabled, <bool>[false]);
   });
 
+  /// Keeps an initialized native view mounted throughout parent UI updates.
+  testWidgets('retains the browser surface on every parent rebuild', (
+    WidgetTester tester,
+  ) async {
+    final surfaceSizes = <WindowsSizeData>[];
+    final captureEnabled = <bool>[];
+    _mockWindowsWebViewCreation(
+      onSetSize: surfaceSizes.add,
+      onSetCaptureEnabled: captureEnabled.add,
+    );
+    final controller = WindowsWebViewController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    late StateSetter rebuild;
+    var width = 400.0;
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: StatefulBuilder(
+          builder: (context, setState) {
+            rebuild = setState;
+            final platformWidget = WindowsWebViewWidget(
+              WindowsWebViewWidgetCreationParams(controller: controller),
+            );
+            return Center(
+              child: SizedBox(
+                width: width,
+                height: 300,
+                child: Builder(builder: platformWidget.build),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final surface = find.byType(WindowsNativeComposition);
+    final original = tester.renderObject(surface);
+    final initialSizeCount = surfaceSizes.length;
+    expect(captureEnabled, <bool>[true]);
+
+    for (var update = 0; update < 12; update++) {
+      rebuild(() {});
+      await tester.pump();
+      expect(surface, findsOneWidget, reason: 'Parent update $update');
+      expect(tester.renderObject(surface), same(original));
+      await tester.pump();
+      expect(tester.renderObject(surface), same(original));
+    }
+    expect(surfaceSizes, hasLength(initialSizeCount));
+    expect(captureEnabled, <bool>[true]);
+
+    rebuild(() => width = 500);
+    await tester.pump();
+    expect(tester.renderObject(surface), same(original));
+    await tester.pumpAndSettle();
+    expect(surfaceSizes.last.width, 500);
+    expect(surfaceSizes.last.height, 300);
+    expect(captureEnabled, <bool>[true]);
+  });
+
   /// Verifies wheel ownership, cursor positioning, and incremental trackpad zoom.
   testWidgets('forwards wheel and trackpad pinch through the Windows host', (
     WidgetTester tester,

@@ -1,29 +1,46 @@
-"""AT-SPI collection and input for the active Linux desktop session."""
+"""AT-SPI window discovery, complete window trees and desktop input."""
 import json
 import sys
 import time
 import pyatspi
 
-MAX_NODES = 4000
-MAX_DEPTH = 40
-count = 0
-truncated = False
-
-
-def active_surface():
-    """Find the active accessible window in the session's AT-SPI desktop."""
+def windows():
+    """Enumerate native accessibility windows with process-qualified identities."""
     desktop = pyatspi.Registry.getDesktop(0)
     for app in desktop:
         for window in app:
-            if window.getState().contains(pyatspi.STATE_ACTIVE):
-                return app, window
-    raise RuntimeError("No active AT-SPI window; enable desktop accessibility and grant session access")
+            yield f"{app.get_process_id()}:{window.path}", app, window
 
 
-def read_node(node, depth=0):
-    """Convert one accessible subtree while respecting the collection budget."""
-    global count, truncated
-    count += 1
+def window_bounds(window):
+    """Read screen bounds only when the accessible object exposes Component."""
+    if "Component" not in window.get_interfaces():
+        return None
+    rect = window.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+    return f"[{rect.x},{rect.y}][{rect.x + rect.width},{rect.y + rect.height}]"
+
+
+def describe_window(identity, app, window):
+    """Describe one top-level accessible window without traversing its children."""
+    state = window.getState()
+    return {
+        "windowId": identity, "title": window.name, "packageName": app.name,
+        "bounds": window_bounds(window), "isActive": state.contains(pyatspi.STATE_ACTIVE),
+        "isFocused": state.contains(pyatspi.STATE_ACTIVE),
+        "isMinimized": state.contains(pyatspi.STATE_ICONIFIED),
+    }
+
+
+def selected_surface(identity):
+    """Resolve an explicit native identity or the session's active window."""
+    for window_id, app, window in windows():
+        if (identity is not None and window_id == identity) or (identity is None and window.getState().contains(pyatspi.STATE_ACTIVE)):
+            return window_id, app, window
+    raise RuntimeError("The selected AT-SPI window is unavailable; enable accessibility and refresh list_windows")
+
+
+def read_node(node):
+    """Preserve every exposed descendant and its native role and states."""
     interfaces = node.get_interfaces()
     text = None
     if node.getRole() != pyatspi.ROLE_PASSWORD_TEXT:
@@ -38,16 +55,8 @@ def read_node(node, depth=0):
         rect = node.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
         if rect.width > 0 and rect.height > 0:
             bounds = f"[{rect.x},{rect.y}][{rect.x + rect.width},{rect.y + rect.height}]"
-    children = []
-    if depth >= MAX_DEPTH or count >= MAX_NODES:
-        truncated |= node.childCount > 0
-    else:
-        for child in node:
-            if count >= MAX_NODES:
-                truncated = True
-                break
-            if child is not None:
-                children.append(read_node(child, depth + 1))
+    children = [read_node(child) for child in node if child is not None]
+    state = node.getState()
     return {
         "className": node.getRoleName(),
         "text": text,
@@ -55,30 +64,45 @@ def read_node(node, depth=0):
         "resourceId": str(node.path),
         "bounds": bounds,
         "isClickable": "Action" in interfaces and node.queryAction().nActions > 0,
+        "properties": {
+            "role": node.getRoleName(), "isEnabled": state.contains(pyatspi.STATE_ENABLED),
+            "isFocused": state.contains(pyatspi.STATE_FOCUSED),
+            "isFocusable": state.contains(pyatspi.STATE_FOCUSABLE),
+            "isEditable": state.contains(pyatspi.STATE_EDITABLE),
+            "isShowing": state.contains(pyatspi.STATE_SHOWING), "interfaces": list(interfaces),
+        },
         "children": children,
     }
 
 
-def find_inputs(node, resource_id, budget, matches, depth=0):
-    """Collect matching editable nodes and reject an incomplete search."""
-    if budget[0] >= MAX_NODES or depth > MAX_DEPTH:
-        raise RuntimeError("Editable element search exceeded its node budget")
-    budget[0] += 1
+def find_inputs(node, resource_id, matches):
+    """Collect matching editable nodes throughout the selected window."""
     selected = str(node.path) == resource_id if resource_id is not None else node.getState().contains(pyatspi.STATE_FOCUSED)
     if selected and "EditableText" in node.get_interfaces():
         matches.append(node)
     for child in node:
         if child is not None:
-            find_inputs(child, resource_id, budget, matches, depth + 1)
+            find_inputs(child, resource_id, matches)
 
 
 def execute(request):
     """Execute a single structured request without interpreting shell source."""
     operation, params = request["operation"], request["parameters"]
-    app, window = active_surface()
+    if operation == "list_windows":
+        return [describe_window(*entry) for entry in windows()]
+    identity, app, window = selected_surface(params.get("window_id"))
+    if operation == "focus_window":
+        if not window.queryComponent().grabFocus():
+            raise RuntimeError("AT-SPI rejected focus for the selected window")
+        deadline = time.monotonic() + 2
+        while not window.getState().contains(pyatspi.STATE_ACTIVE):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The selected AT-SPI window did not become active")
+            time.sleep(0.02)
+        return {}
     if operation == "get_page_info":
         tree = read_node(window)
-        return {"packageName": app.name, "activityName": window.name, "uiElements": tree, "scope": "desktop", "truncated": truncated}
+        return {"windowId": identity, "packageName": app.name, "activityName": window.name, "uiElements": tree, "scope": "desktop", "truncated": False}
     if operation in ("tap", "long_press"):
         x, y = int(params["x"]), int(params["y"])
         if operation == "tap":
@@ -100,7 +124,7 @@ def execute(request):
             pyatspi.Registry.generateMouseEvent(int(ex), int(ey), "b1r")
     elif operation == "set_input_text":
         matches = []
-        find_inputs(window, params.get("resource_id"), [0], matches)
+        find_inputs(window, params.get("resource_id"), matches)
         if len(matches) != 1:
             raise RuntimeError("Select one unique editable accessible element")
         if not matches[0].queryEditableText().setTextContents(params["text"]):

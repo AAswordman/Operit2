@@ -36,9 +36,14 @@ async function writeFloorLimit(nextLimit) {
 async function writeLimiterEnabled(nextEnabled) {
     await writeEnvValue(constants_1.ENV_KEYS.enabled, nextEnabled ? "true" : "false");
 }
+/** Registers matching send and estimate transformations alongside the settings menu. */
 function registerToolPkg() {
     ToolPkg.registerPromptFinalizeHook({
         id: constants_1.HOOK_IDS.finalize,
+        function: onFinalize,
+    });
+    ToolPkg.registerPromptEstimateFinalizeHook({
+        id: constants_1.HOOK_IDS.estimateFinalize,
         function: onFinalize,
     });
     ToolPkg.registerInputMenuTogglePlugin({

@@ -440,7 +440,8 @@ impl ToolExecutor for HttpToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         let result = match self.operation {
             HttpToolOperation::HttpRequest => self.tools.httpRequest(tool),
             HttpToolOperation::MultipartRequest => self.tools.multipartRequest(tool),

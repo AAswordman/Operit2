@@ -195,6 +195,16 @@ fn parseCapturedRegistration(
             TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK,
             toolPkgId,
         )?,
+        messageTransformHooks: parseRegisteredItems(
+            &captured.messageTransformHooks,
+            TOOLPKG_REGISTRATION_MESSAGE_TRANSFORM_HOOK,
+            toolPkgId,
+        )?,
+        messageStreamTransforms: parseRegisteredItems(
+            &captured.messageStreamTransforms,
+            TOOLPKG_REGISTRATION_MESSAGE_STREAM_TRANSFORM,
+            toolPkgId,
+        )?,
         chatMessageMenuItems: parseRegisteredItems(
             &captured.chatMessageMenuItems,
             TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM,

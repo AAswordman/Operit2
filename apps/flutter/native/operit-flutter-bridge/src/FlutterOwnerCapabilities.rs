@@ -40,6 +40,9 @@ pub(crate) fn ownerSystemOperation<T: serde::de::DeserializeOwned>(
         Duration::from_secs(120),
     )
     .map_err(HostError::new)?;
+    if operation == "ui_automation" {
+        return operit_host_api::UiAutomation::decode_ui_json(response.resultJson.as_bytes());
+    }
     serde_json::from_str(&response.resultJson)
         .map_err(|error| HostError::new(format!("{operation} response decode failed: {error}")))
 }

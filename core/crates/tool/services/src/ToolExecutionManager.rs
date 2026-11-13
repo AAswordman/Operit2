@@ -691,24 +691,28 @@ impl ToolExecutionManager {
     }
 }
 
-pub trait ToolExecutor: Send {
+/// Executes independent requests through immutable, concurrently shareable services.
+pub trait ToolExecutor: Send + Sync {
+    /// Validates one request without storing invocation state in the executor.
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult;
+    /// Declares the request's resource boundary before execution.
     fn accessSpec(&self, tool: &AITool) -> Result<ToolAccessSpec, String>;
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult>;
+    /// Executes one request; resource-specific Host services own any required synchronization.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult>;
 }
 
 /// Represents a tool result produced without blocking its calling executor.
 pub type ToolInvocationFuture<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Vec<ToolResult>> + Send + 'a>>;
 
-/// Executes tools that own asynchronous package calls; synchronous tools retain ToolExecutor.
-pub trait AsyncToolExecutor: Send {
+/// Shares asynchronous services while each call retains its own arguments, context and future.
+pub trait AsyncToolExecutor: Send + Sync {
     /// Validates a request before its execution begins.
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult;
     /// Declares the access boundary of the asynchronous tool.
     fn accessSpec(&self, tool: &AITool) -> Result<ToolAccessSpec, String>;
     /// Executes one invocation on its asynchronous result path.
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a ToolInvocationContext) -> ToolInvocationFuture<'a>;
+    fn invokeAndStreamAsync<'a>(&'a self, tool: &'a AITool, context: &'a ToolInvocationContext) -> ToolInvocationFuture<'a>;
 }
 
 /// Holds one validated invocation and its optional native AI access declaration.
@@ -717,7 +721,7 @@ pub struct PreparedToolInvocation<'a> {
     pub invoke: ToolInvocationFuture<'a>,
 }
 
-/// Prepares concurrent operations without retaining an exclusive registry lease.
+/// Prepares typed concurrent operations without retaining mutable invocation state.
 pub trait SharedToolExecutor: Send + Sync {
     /// Decodes and validates once, declaring access only when native AI admission requires it.
     fn prepare<'a>(&'a self, request: &'a ToolCall, context: &'a ToolInvocationContext, checkAccess: bool)
@@ -749,7 +753,7 @@ impl From<Box<dyn ToolExecutor>> for RegisteredToolExecutor {
 
 impl RegisteredToolExecutor {
     /// Prepares every registered contract once; only legacy adapters convert structured arguments to text.
-    pub fn prepare<'a>(&'a mut self, request: &'a ToolCall, context: &'a ToolInvocationContext, checkAccess: bool)
+    pub fn prepare<'a>(&'a self, request: &'a ToolCall, context: &'a ToolInvocationContext, checkAccess: bool)
         -> Result<PreparedToolInvocation<'a>, String> {
         match self {
             Self::Alias => Err("Invocation aliases must be resolved before acquiring an executor".into()),

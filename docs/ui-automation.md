@@ -1,117 +1,63 @@
-# UI automation Host boundary
+# System window UI automation
 
-`Tools.UI.getPageInfo()` now reaches a registered executor and the owning
-`UiAutomationHost`. The runtime and plugin SDK do not choose an OS backend.
-Platform Host assembly installs that backend. `Tools.device(nodeId).UI` uses
-the ordinary device tool transport and inspects the selected node.
+All automation tools use `UiAutomationHost`, rather than implementing platform
+dispatch in the runtime or Flutter UI. The ordinary tool catalog, JavaScript SDK
+and `Automatic_ui_base` expose the same workflow:
 
-Host input crosses the Rust capability boundary as the `UiAction` enum.
-Every registered provider operates on the device's system accessibility surface,
-including other applications. There is no Flutter semantics provider, application
-input injection, or application-only UI channel. A host without a system provider
-leaves the capability unregistered and tools report an unsupported-operation error.
-
-The snapshot preserves the existing plugin format:
-
-```ts
-const page = await Tools.UI.getPageInfo();
-// {packageName, activityName, uiElements, scope, truncated}
-const root = UINode.fromPageInfo(page);
-const button = root.findByText("Save");
-if (button) await button.click();
+```typescript
+const {windows} = await Tools.UI.listWindows();
+const target = windows.find(window => window.windowId === selectedWindowId);
+if (!target) throw new Error('Refresh the system window list');
+await Tools.UI.focusWindow(target.windowId);
+const page = await Tools.UI.getPageInfo(target.windowId);
 ```
 
-`uiElements` contains `className`, `text`, `contentDesc`, `resourceId`, `bounds`,
-`isClickable`, and recursive `children`. Missing attributes are `null`.
-`bounds` uses `[left,top][right,bottom]`. The same coordinates must be used for
-input on that provider: Windows and Android use desktop/screen pixels, macOS
-uses desktop points, and AT-SPI uses desktop coordinates. `packageName` identifies
-the foreground process/application; `activityName` identifies its active window.
+The tool names are `list_windows`, `focus_window(window_id)` and
+`get_page_info(window_id?)`. The SDK also supports the same methods through
+`Tools.device(nodeId).UI`. An omitted ID explicitly requests the active window;
+a stale or invalid explicit ID fails and never selects a different window.
+Reading a selected window does not activate it. Focus the window before using
+input operations, then read a fresh tree to verify the result.
 
-| Owner | Provider | Reported scope | Requirements |
-| --- | --- | --- | --- |
-| Android Flutter | Legacy external provider over AIDL | `desktop` (active device surface) | Install the existing `com.ai.assistance.operit.provider` APK and enable its accessibility service |
-| Windows | UI Automation Control View | `desktop` | An interactive desktop session and access to the target process |
-| Linux | AT-SPI | `desktop` | `python3`, `python3-pyatspi`, an accessibility-enabled desktop session; input synthesis also depends on session/compositor permissions |
-| macOS | System Events AX attributes and Quartz input | `desktop` | Accessibility and Automation permission for the host process |
-| iOS | No system provider registered | Unsupported | An ordinary app's public APIs do not provide cross-app UI trees and input injection |
-| OpenHarmony | No system provider registered | Unsupported | Needs a separately authorized system accessibility integration; the old application-only implementation has been removed |
-| Web | No system provider registered | Unsupported | A browser page cannot control the device desktop; remote device routing can target another node with a system provider |
+Windows have an opaque `windowId`, title, application identifier, bounds,
+active/focused state and minimized state. IDs belong to the native session and
+must be refreshed when a window closes. Snapshots carry their `windowId`,
+`scope`, `truncated` and a nested `uiElements` tree. Nodes retain text, identifiers,
+bounds, descriptions and native roles/states in `properties`. Programmatic SDK
+results retain this full tree for selectors and targeted inspection. Model-facing
+tool output uses `summary`: compact text bounded to 16,000 characters, with empty
+containers flattened, long text shortened, key selectors/states preserved and
+explicit shown/omitted node counts. `Automatic_ui_base` returns this summary and
+window metadata instead of serializing `uiElements` into model context.
 
-`desktop` is the only accepted scope. It means the provider can inspect the
-system's active surface, including other applications. Permissions still apply:
-protected Windows desktops, inaccessible applications, locked devices, and desktop
-compositor restrictions are not bypassed. Unsupported operations and denied
-permissions produce tool errors. This is not a claim of validated whole-device
-support on every OS.
+Providers traverse the whole exposed window subtree, without the previous
+4000-node or 40-level pruning. Windows uses UIA Raw View and reads ValuePattern
+and TextPattern content. Linux uses AT-SPI; macOS uses AX. The Android companion
+includes non-important views, queries interactive windows across displays on
+Android 11+ and streams full responses through a pipe. Password contents remain
+excluded. Ordinary tool-message output limits still apply. Native provider failures and
+transport resource errors are reported explicitly, never as complete partial
+snapshots. Accessibility can only reveal what each application's provider
+exposes; virtualized or custom-drawn content may not have materialized nodes.
 
-OpenHarmony's former public `getWindowRootElement` APIs are deprecated from API 12
-with their capabilities removed; the newer accessibility extension authorization
-is a system permission. See the [AccessibilityExtensionContext reference](https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-accessibility-kit/js-apis-inner-application-accessibilityExtensionContext.md)
-and [system permission definitions](https://github.com/openharmony/docs/blob/master/en/application-dev/security/AccessToken/permissions-for-system-apps.md).
+## Platform status
 
-Collection is bounded to 4,000 nodes and 40 descendant levels. Providers report
-`truncated` when their traversal limit cuts off descendants. Consumers must not
-interpret a truncated snapshot as proof that an element does not exist.
+| Host | Provider | Availability |
+| --- | --- | --- |
+| Windows | UI Automation + Win32 window/input APIs | Native window discovery, focus and full exposed trees; requires the interactive desktop and appropriate target privileges. |
+| Linux | AT-SPI / pyatspi | Native window discovery, focus and full exposed trees; requires the session accessibility service and pyatspi. |
+| macOS | AX / System Events | Native window discovery, focus and full exposed trees; requires Accessibility and Automation authorization. |
+| Android | `tools/android-accessibility` companion | Native interactive-window discovery, verified input focus and full exposed trees; install the companion and authorize it in system settings. |
+| OpenHarmony | No system accessibility Host registered | Modern window enumeration and element APIs require system API access and `ohos.permission.ACCESSIBILITY_EXTENSION_ABILITY`; a normally signed application cannot call them. The earlier public window/root methods were removed from API 12. A system-authorized extension and transport are still required. |
+| iOS | No system accessibility Host registered | Ordinary application APIs do not expose other applications' native window trees or input control. A separately authorized external test/automation service is required for device-wide operation. |
+| Web | No system accessibility Host registered | Browser sandbox APIs cannot enumerate/control other applications' native windows. Device-wide automation must execute on a connected native host. |
 
-## Interaction contract
+Unsupported hosts report an explicit unsupported-provider error. An app-internal
+widget tree is not registered as a device-wide provider.
 
-The registered tools are `get_page_info`, `tap`, `long_press`, `click_element`,
-`set_input_text`, `press_key`, and `swipe`. Plugin methods use the existing
-`Tools.UI` declarations and return typed `UIPageResultData` or
-`UIActionResultData`. Common selectors implement exact or explicitly requested
-partial matches, stable traversal indexes, and bounds validation. Input values
-and match failures are validated before dispatching input. An empty text string
-clears a field.
+The OpenHarmony restrictions are described in the official
+[public context API](https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-accessibility-kit/js-apis-inner-application-accessibilityExtensionContext.md)
+and [system context API](https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-accessibility-kit/js-apis-inner-application-accessibilityExtensionContext-sys.md).
 
-Desktop providers support the named keys `ENTER`, `TAB`, `ESCAPE`, `BACKSPACE`,
-`DELETE`, `HOME`, `END`, `UP`, `DOWN`, `LEFT`, and `RIGHT`. The legacy Android
-APK exposes global actions `BACK`, `HOME`, `RECENTS`, `NOTIFICATIONS`, and
-`QUICK_SETTINGS`; `KEYCODE_BACK` and `KEYCODE_HOME` remain accepted spellings.
-These backend limits live inside their providers.
-
-Each platform provider serializes its operations so that concurrent gestures
-cannot interleave their pointer presses and releases. The legacy Android APK
-only acknowledges gesture dispatch. Its adapter waits the configured gesture
-duration (50 ms for tap, 600 ms for long press, the requested duration for swipe)
-before allowing another operation. It cannot report the completion/cancellation
-callbacks that the existing APK does not expose.
-
-Text snapshots include accessible control values as well as labels on desktop
-providers. Addressed text input rejects ambiguous resource IDs. Windows input
-uses physical screen coordinates with per-monitor DPI awareness and checks the
-number of events accepted by `SendInput`.
-
-This interface addresses the active surface. Explicit `display` selection is
-rejected, so it cannot accidentally send input to the default screen when a
-caller requested another display. The old SDK's high-level `runSubAgent`
-declaration and the historical virtual-display tool descriptions are separate
-from this implementation. No virtual-display backend or agent is registered by
-this change, and `ui.virtual_display` remains false.
-
-## Android APK isolation
-
-The main APK contains the AIDL **client** and `AndroidUiAutomation` only. It does
-not declare or implement an `AccessibilityService`. It binds the existing
-`RemoteBinderService` by explicit component. The AIDL descriptor and transaction
-order match Operit 1's provider; the external APK is not rebuilt or changed.
-Android package visibility includes the provider package.
-
-Connection establishment runs on the owner worker, times out after five seconds,
-unbinds rejected/timed-out connections, invalidates a disconnected binder, and
-unbinds on owner release. Late callbacks remain attached to their original
-connection. XML-to-tree conversion and the legacy bounds-token translation used
-by `setTextOnNode` live
-inside the Android adapter. Neither is represented as an Android-specific branch
-in common runtime or plugin code. Install/enable failures remain explicit errors.
-
-## Validation
-
-Common executor tests cover unavailable system providers, snapshot conversion,
-indexed and partial selection, negative monitor coordinates, invalid input,
-unsupported display targets and empty text. Generated JavaScript tests exercise
-UI overloads and device routing.
-A read-only Windows probe exercises actual foreground UIA collection.
-Other OS backends require their respective OS/device sessions for integration
-validation; successful Windows checks do not establish those results. Android
-integration requires the external provider APK to be installed and enabled first.
+See [Android companion](../tools/android-accessibility/README.md) for its build,
+authorization, signing and AIDL protocol.

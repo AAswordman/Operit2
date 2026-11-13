@@ -789,7 +789,7 @@ impl AsyncToolExecutor for ChatManagerToolExecutor {
     }
 
     /// Creates local runtime futures on their owning scheduler and awaits only a Send receipt.
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a ToolInvocationContext) -> ToolInvocationFuture<'a> {
+    fn invokeAndStreamAsync<'a>(&'a self, tool: &'a AITool, context: &'a ToolInvocationContext) -> ToolInvocationFuture<'a> {
         let tools = self.tools.clone();
         let operation = self.operation;
         let request = tool.clone();

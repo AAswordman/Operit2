@@ -78,6 +78,8 @@ pub struct JsToolApiVariant {
 /// Contains every active JavaScript Tools method binding.
 #[rustfmt::skip]
 pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
+    JsToolBinding { namespace: "UI", method: "listWindows", target: BuiltinToolName::ListWindows, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "UI", method: "focusWindow", target: BuiltinToolName::FocusWindow, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "UI", method: "getPageInfo", target: BuiltinToolName::GetPageInfo, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "UI", method: "tap", target: BuiltinToolName::Tap, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "UI", method: "longPress", target: BuiltinToolName::LongPress, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },

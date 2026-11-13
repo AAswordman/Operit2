@@ -7,6 +7,7 @@
 #![allow(non_snake_case)]
 
 pub mod FileReference;
+pub mod FileChanges;
 pub mod MountRegistry;
 mod PathMapper;
 pub mod StorageManagement;

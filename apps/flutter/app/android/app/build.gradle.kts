@@ -140,6 +140,7 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
     buildFeatures { buildConfig = true; aidl = true }
+    sourceSets.getByName("main").aidl.srcDir("../../../../../tools/android-accessibility/contract/src/main/aidl")
 
     signingConfigs {
         create("release") {

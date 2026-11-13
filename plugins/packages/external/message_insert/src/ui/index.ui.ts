@@ -176,6 +176,10 @@ function createInjectionItemsCard(
 }
 
 export default function Screen(ctx: ComposeDslContext): ComposeNode {
+  const [width, setWidth] = ctx.useState("layoutWidth", 0);
+  const measure = ctx.Modifier.onSizeChanged(size => {
+    if (size.width !== width) setWidth(size.width);
+  });
   const text = resolveExtraInfoI18n();
   const initial = createDefaultSettings();
 
@@ -349,7 +353,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     text.summaryRulesHint,
   ];
 
-  const rootChildren: ComposeNode[] = [
+  const sections: ComposeNode[] = [
     ctx.UI.Row({ verticalAlignment: "center" }, [
       ctx.UI.Icon({ name: "settings", tint: "primary", size: 24 }),
       ctx.UI.Spacer({ width: 8 }),
@@ -380,6 +384,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
               text: text.toolboxBanner,
               style: "bodySmall",
               color: "onSecondaryContainer",
+              weight: 1,
             }),
           ]
         ),
@@ -519,6 +524,16 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     ),
   ];
 
+  const [title, subtitle, banner, masterTitle, master, persist, timeout, itemsTitle, items, summaryTitle, summary] = sections;
+  const rootChildren: ComposeNode[] = [title, subtitle, banner,
+    width >= 900
+      ? ctx.UI.Row({ key: "injection-panes", fillMaxWidth: true, spacing: 20, verticalAlignment: "start" }, [
+        ctx.UI.Column({ weight: 1, spacing: 16 }, [masterTitle, master, persist, timeout, summaryTitle, summary]),
+        ctx.UI.Column({ weight: 1, spacing: 16 }, [itemsTitle, items]),
+      ])
+      : ctx.UI.Column({ key: "injection-panes", fillMaxWidth: true, spacing: 16 }, [masterTitle, master, persist, timeout, itemsTitle, items, summaryTitle, summary]),
+  ];
+
   if (successMessageState.value.trim()) {
     rootChildren.push(
       ctx.UI.Card({ containerColor: "primaryContainer", fillMaxWidth: true }, [
@@ -529,6 +544,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
             text: successMessageState.value,
             style: "bodyMedium",
             color: "onPrimaryContainer",
+            weight: 1,
           }),
         ]),
       ])
@@ -545,6 +561,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
             text: errorMessageState.value,
             style: "bodyMedium",
             color: "onErrorContainer",
+            weight: 1,
           }),
         ]),
       ])
@@ -554,6 +571,7 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
   return ctx.UI.LazyColumn(
     {
       fillMaxSize: true,
+      modifier: measure,
       padding: 16,
       spacing: 16,
       onLoad: async () => {

@@ -316,7 +316,8 @@ impl ToolExecutor for TerminalToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         match self.operation {
             TerminalToolOperation::GetTerminalInfo => vec![self.tools.getTerminalInfo(tool)],
             TerminalToolOperation::CreateSession => vec![self.tools.createOrGetSession(tool)],

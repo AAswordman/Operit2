@@ -15,8 +15,8 @@
         {
             "name": "usage_advice",
             "description": {
-                "zh": "整机自动化使用建议：先读取系统 UI 树，再根据文本、资源标识、内容描述或边界定位元素；用 index 选择同名元素，partialMatch 显式启用部分匹配。坐标须使用 UI 树所在平台的坐标系。输入可传空字符串清空；按键名称由平台决定。操作后重新取树确认结果。未授权或不支持整机自动化时，应报告错误。",
-                "en": "Read the system UI tree before targeting text, resource IDs, content descriptions or bounds. Use index for repeated elements and explicitly enable partialMatch for substring matching. Use the coordinate space returned by the platform. Empty input clears a field; supported key names depend on the provider. Read a fresh tree to verify the outcome. Report denied permissions or unavailable whole-device automation."
+                "zh": "先用 list_windows 发现系统窗口及其 windowId，再用 focus_window 聚焦目标窗口，用 get_page_info(window_id) 获取基于完整原生树生成的精简文本摘要。窗口 ID 只对当前系统会话有效，窗口关闭后须重新列出。根据文本、资源标识、内容描述或边界定位元素；用 index 选择同名元素，partialMatch 显式启用部分匹配。坐标使用树中的屏幕坐标系。操作后重新取摘要确认结果。未授权或平台不支持时报告实际错误。",
+                "en": "Discover system windows with list_windows, focus the target windowId with focus_window, then read a compact text summary of its complete native tree with get_page_info(window_id). Window IDs belong to the current session; refresh discovery after a window closes. Target elements by text, resource ID, description or bounds; use index for duplicates and partialMatch for explicit substring matching. Use the tree's screen coordinates and read a fresh summary after input. Report permission or platform errors."
             },
             "parameters": [],
             "advice": true,
@@ -55,16 +55,36 @@
             }
         },
         {
-            "name": "get_page_info",
+            "name": "list_windows",
             "description": {
-                "zh": "读取当前设备系统窗口的统一 UI 树，包含其他应用；返回 scope 和 truncated 标记。",
-                "en": "Read the canonical UI tree of the active system window, including other apps, with scope and truncated metadata."
+                "zh": "列出系统原生窗口，包含 windowId、标题、应用、边界、活动、焦点和最小化状态。",
+                "en": "List native system windows with windowId, title, application, bounds, active, focused and minimized state."
             },
             "parameters": [],
+            "display": { "label": { "zh": "列出系统窗口", "en": "List system windows" }, "icon": "screen" }
+        },
+        {
+            "name": "focus_window",
+            "description": {
+                "zh": "按 list_windows 返回的 windowId 聚焦系统窗口；窗口不存在或系统拒绝聚焦时返回错误。",
+                "en": "Focus the exact windowId returned by list_windows; report stale windows or denied activation."
+            },
+            "parameters": [{ "name": "window_id", "type": "string", "required": true,
+                "description": { "zh": "系统窗口 ID。", "en": "Native system window ID." } }],
+            "display": { "label": { "zh": "聚焦系统窗口", "en": "Focus system window" }, "icon": "screen", "targetParameter": "window_id" }
+        },
+        {
+            "name": "get_page_info",
+            "description": {
+                "zh": "底层读取指定窗口的完整无障碍 UI 树，给 AI 返回有长度预算的精简文本摘要，包含可操作元素、定位信息和关键状态；摘要标注省略数量。不传 window_id 时读取当前活动窗口。",
+                "en": "Collect the selected window's full exposed accessibility tree and return a bounded compact text summary with actionable elements, selectors, key states and omission counts. Omit window_id to read the active window."
+            },
+            "parameters": [{ "name": "window_id", "type": "string", "required": false,
+                "description": { "zh": "list_windows 返回的系统窗口 ID；省略则取当前活动窗口。", "en": "System window ID from list_windows; omit for the active window." } }],
             "display": {
                 "label": {
-                    "zh": "读取屏幕 UI 树",
-                    "en": "Read screen UI tree"
+                    "zh": "读取窗口 UI 树",
+                    "en": "Read window UI tree"
                 },
                 "icon": "search"
             }
@@ -418,10 +438,26 @@ const UIAutomationTools = (() => {
         duration?: number;
     };
 
-    /** Returns the canonical system accessibility tree without application-only collection. */
-    async function get_page_info(): Promise<ToolResponse> {
-        const page = await Tools.UI.getPageInfo();
-        return { success: true, message: '成功获取设备 UI 树', data: page };
+    /** Discovers native windows before selecting a target for automation. */
+    async function list_windows(): Promise<ToolResponse> {
+        return { success: true, message: '成功获取系统窗口列表', data: await Tools.UI.listWindows() };
+    }
+
+    /** Activates exactly the native window chosen by the caller. */
+    async function focus_window(params: { window_id: string }): Promise<ToolResponse> {
+        return { success: true, message: '成功聚焦系统窗口', data: await Tools.UI.focusWindow(params.window_id) };
+    }
+
+    /** Returns the complete accessibility tree of the selected native window. */
+    async function get_page_info(params: { window_id?: string }): Promise<ToolResponse> {
+        const page = await Tools.UI.getPageInfo(params.window_id);
+        return {
+            success: true, message: '成功获取窗口 UI 摘要',
+            data: {
+                windowId: page.windowId, packageName: page.packageName, activityName: page.activityName,
+                scope: page.scope, truncated: page.truncated, summary: page.summary,
+            },
+        };
     }
 
     /** Captures and registers a screenshot through platform-neutral Host and VFS APIs. */
@@ -510,6 +546,8 @@ const UIAutomationTools = (() => {
     }
 
     return {
+        list_windows: asTool(list_windows),
+        focus_window: asTool(focus_window),
         get_page_info: asTool(get_page_info),
         app_launch: asTool(app_launch),
         get_page_screenshot_image: asTool(get_page_screenshot_image),
@@ -525,6 +563,8 @@ const UIAutomationTools = (() => {
 })();
 
 exports.get_page_info = UIAutomationTools.get_page_info;
+exports.list_windows = UIAutomationTools.list_windows;
+exports.focus_window = UIAutomationTools.focus_window;
 exports.app_launch = UIAutomationTools.app_launch;
 exports.get_page_screenshot_image = UIAutomationTools.get_page_screenshot_image;
 exports.tap = UIAutomationTools.tap;

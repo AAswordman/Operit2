@@ -7,6 +7,21 @@ use std::time::Duration;
 const CHAT_ID: &str = "chat-variants";
 const MESSAGE_TIMESTAMP: i64 = 123;
 
+/// Depth lookup preserves request order and counts unselected messages, unsaved snapshots and new inserts correctly.
+#[test]
+fn display_depth_lookup_reads_only_ordered_message_identities() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, _) = chatOrderFixture("display-depth-identities");
+    for timestamp in [10, 20, 30] {
+        manager.addMessage("recent".into(), ChatMessage::new_with_markdown_timestamp("ai".into(), "body".into(), timestamp)).unwrap();
+    }
+    manager.addMessage("older".into(), ChatMessage::new_with_markdown_timestamp("ai".into(), "other chat".into(), 100)).unwrap();
+    assert_eq!(manager.loadChatMessageDepths("recent", &[30, 10, 15, 40, 0, 20, 20]).unwrap(), [0, 2, 2, 0, 3, 1, 1]);
+    assert!(manager.loadChatMessageDepths("recent", &[]).unwrap().is_empty());
+    manager.addMessage("recent".into(), ChatMessage::new_with_markdown_timestamp("user".into(), "later".into(), 50)).unwrap();
+    assert_eq!(manager.loadChatMessageDepths("recent", &[30, 50]).unwrap(), [1, 0]);
+}
+
 /// Keeps a completed reply's totals when an older asynchronous summary refreshes the window.
 #[test]
 fn summary_context_window_update_preserves_completed_reply_totals() {

@@ -1,3 +1,4 @@
+use crate::plugins::toolpkg::ToolPkgMessageTransformBridge::ToolPkgMessageTransformBridge;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
@@ -1036,6 +1037,32 @@ impl ChatServiceCore {
         events
     }
 
+    /// Observes enabled transform handlers and their explicitly invalidated settings.
+    pub fn messageTransformRevisionFlow(&self) -> StateFlow<i64> {
+        ToolPkgMessageTransformBridge::revisionFlow()
+    }
+
+    /// Projects a client-owned display snapshot and releases the receiver before invoking presentation plugins.
+    pub fn projectMessageForDisplay(
+        &self, chatId: String, message: ChatMessage,
+    ) -> impl std::future::Future<Output = Result<ChatMessage, String>> + 'static {
+        let pending = self.projectMessagesForDisplay(chatId, vec![message]);
+        async move { pending.await?.into_iter().next().ok_or_else(|| "Display projection returned no message".into()) }
+    }
+
+    /// Projects exact client snapshots with one depth lookup and one preparation per plugin.
+    pub fn projectMessagesForDisplay(
+        &self, chatId: String, mut messages: Vec<ChatMessage>,
+    ) -> impl std::future::Future<Output = Result<Vec<ChatMessage>, String>> + 'static {
+        for message in &mut messages { message.contentStream = None; }
+        let depths = if !messages.is_empty() && ToolPkgMessageTransformBridge::hasDisplayHooks() { self.chatHistoryDelegate.chatHistoryManager
+            .loadChatMessageDepths(&chatId, &messages.iter().map(|message| message.timestamp).collect::<Vec<_>>())
+            .map_err(|error| error.to_string()) } else { Ok(vec![0; messages.len()]) };
+        async move {
+            ToolPkgMessageTransformBridge::transformDisplayBatch(&chatId, messages, depths?).await
+        }
+    }
+
     /// Observes committed XML render hook changes so existing message nodes can re-render.
     #[allow(non_snake_case)]
     pub fn xmlRenderRegistryRevisionFlow(&self) -> StateFlow<i64> {
@@ -1339,6 +1366,16 @@ impl ChatServiceCore {
         let editedMessage = ChatMessage {
             parts: editedParts,
             ..message
+        };
+        let depth = self.chatHistoryDelegate.chatHistoryManager
+            .loadChatMessageLocatorPreviews(chatId.clone(), String::new())
+            .expect("message depth query must succeed").iter()
+            .filter(|item| item.timestamp > messageTimestamp).count() as i32;
+        let editedMessage = match ToolPkgMessageTransformBridge::transform(
+            &chatId, editedMessage, "before_persist", depth, true,
+        ).await {
+            Ok(message) => message,
+            Err(error) => { AppLogger::e("ChatServiceCore", &error); return false; }
         };
         self.chatHistoryDelegate
             .addMessageToChat(editedMessage, Some(chatId.clone()));

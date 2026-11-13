@@ -977,10 +977,20 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
             "",
             vec![
                 tool(
+                    "list_windows",
+                    "Discover native system windows with windowId, title, application, bounds and focus state. Use this before selecting a window for UI automation.",
+                    "", Vec::new(), "", "",
+                ),
+                tool(
+                    "focus_window",
+                    "Focus the exact native windowId returned by list_windows. Reports denied activation or a stale window ID.",
+                    "", vec![param("window_id", "string", "native window ID from list_windows", true, None)], "", "",
+                ),
+                tool(
                     "get_page_info",
-                    "Read the device's active system window as a canonical UI tree, including other applications. Requires a whole-device automation provider.",
+                    "Collect the selected window's complete native accessibility tree and present a bounded compact text summary to the model, with selectors, key states and omission counts. Omit window_id for the active window. Discover windows with list_windows and focus the target before input.",
                     "",
-                    Vec::new(),
+                    vec![param("window_id", "string", "optional native window ID from list_windows", false, None)],
                     "",
                     "",
                 ),
@@ -2205,10 +2215,20 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
             "",
             vec![
                 tool(
+                    "list_windows",
+                    "发现系统原生窗口，返回 windowId、标题、应用、边界和焦点状态。进行 UI 自动化前先列出窗口。",
+                    "", Vec::new(), "", "",
+                ),
+                tool(
+                    "focus_window",
+                    "按 list_windows 返回的原生 windowId 聚焦窗口。系统拒绝或窗口已关闭时返回错误。",
+                    "", vec![param("window_id", "string", "list_windows 返回的系统窗口 ID", true, None)], "", "",
+                ),
+                tool(
                     "get_page_info",
-                    "读取设备当前系统窗口的统一 UI 树，可访问其他应用；需要整机自动化提供者。",
+                    "底层读取指定系统窗口的完整原生无障碍树，向模型返回有长度预算的精简文本摘要，保留定位信息、关键状态并标注省略数量。省略 window_id 则读取活动窗口。先 list_windows，输入前 focus_window。",
                     "",
-                    Vec::new(),
+                    vec![param("window_id", "string", "可选，list_windows 返回的系统窗口 ID", false, None)],
                     "",
                     "",
                 ),

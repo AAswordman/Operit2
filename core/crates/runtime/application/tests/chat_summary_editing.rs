@@ -67,7 +67,7 @@ async fn summary_memory_edits_are_persisted() {
         workspaces.clone(),
     ));
     setDefaultRuntimeStorageHost(host.clone());
-    setDefaultRuntimeSqliteHost(host);
+    setDefaultRuntimeSqliteHost(host.clone());
     setDefaultHostRuntimeTaskSchedulerHost(Arc::new(EditScheduler::default()));
     let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
     database
@@ -76,7 +76,9 @@ async fn summary_memory_edits_are_persisted() {
         .unwrap();
     let mut core = ChatServiceCore::new(
         ChatSelectionMode::FOLLOW_GLOBAL,
-        Arc::new(PosixFileSystemHost::new()),
+        Arc::new(operit_vfs::VisualFileSystem::VisualFileSystem::fromStorage(
+            Arc::new(PosixFileSystemHost::new()), host,
+        ).unwrap()),
     );
     core.chatHistoryDelegate
         .openChatHistory("chat".into(), true)

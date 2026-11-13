@@ -289,6 +289,7 @@ impl MessagePartCodec {
 }
 
 /// Incrementally converts an assistant response stream into canonical message parts.
+#[derive(Clone)]
 pub struct AssistantMarkupStreamState {
     source: String,
     pending: String,
@@ -296,6 +297,15 @@ pub struct AssistantMarkupStreamState {
     activeThinkingOpenTag: Option<String>,
     activeThinkingCloseTag: Option<String>,
     preserveUnsupportedTags: bool,
+    segments: Option<Vec<AssistantMarkupSegment>>,
+    activeOpaqueCloseTag: Option<String>,
+}
+
+/// Carries original markup or semantic text without serializing canonical parts.
+#[derive(Clone, Debug)]
+pub struct AssistantMarkupSegment {
+    pub kind: Option<MessagePartKind>,
+    pub content: String,
 }
 
 impl Default for AssistantMarkupStreamState {
@@ -312,6 +322,8 @@ impl Default for AssistantMarkupStreamState {
             activeThinkingOpenTag: None,
             activeThinkingCloseTag: None,
             preserveUnsupportedTags: false,
+            segments: None,
+            activeOpaqueCloseTag: None,
         }
     }
 }
@@ -322,9 +334,28 @@ impl AssistantMarkupStreamState {
         Self::default()
     }
 
+    /// Emits semantic chunks without retaining the full source or building canonical parts.
+    pub fn forSegments() -> Self {
+        Self { segments: Some(Vec::new()), ..Self::default() }
+    }
+
+    /// Drains newly classified source chunks in their original order.
+    pub fn takeSegments(&mut self) -> Vec<AssistantMarkupSegment> {
+        self.segments.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// Appends an original semantic delimiter or opaque tool payload to the segment output.
+    fn appendOpaque(&mut self, content: &str) {
+        if let Some(segments) = &mut self.segments {
+            if !content.is_empty() {
+                segments.push(AssistantMarkupSegment { kind: None, content: content.into() });
+            }
+        }
+    }
+
     /// Appends a newly received response chunk and updates only its affected message part.
     pub fn push(&mut self, chunk: &str) -> Result<(), String> {
-        self.source.push_str(chunk);
+        if self.segments.is_none() { self.source.push_str(chunk); }
         self.pending.push_str(chunk);
         self.consumePending(false)
     }
@@ -362,10 +393,28 @@ impl AssistantMarkupStreamState {
     /// Consumes source buffered across chunk boundaries into complete semantic parts.
     fn consumePending(&mut self, isFinal: bool) -> Result<(), String> {
         loop {
+            if let Some(closeTag) = self.activeOpaqueCloseTag.clone() {
+                let close = findAsciiCaseInsensitive(&self.pending, &closeTag);
+                let end = match close {
+                    Some(start) => start + closeTag.len(),
+                    None if isFinal => self.pending.len(),
+                    None => self.pending.len() - asciiCaseInsensitiveSuffixPrefixLength(&self.pending, &closeTag),
+                };
+                let content = self.pending[..end].to_string();
+                self.appendOpaque(&content);
+                self.pending.drain(..end);
+                if close.is_some() || isFinal {
+                    self.activeOpaqueCloseTag = None;
+                    continue;
+                }
+                return Ok(());
+            }
             if let Some(closeTag) = self.activeThinkingCloseTag.clone() {
                 if let Some(closeStart) = findAsciiCaseInsensitive(&self.pending, &closeTag) {
                     let content = self.pending[..closeStart].to_string();
                     self.appendThinkingContent(&content);
+                    let delimiter = self.pending[closeStart..closeStart + closeTag.len()].to_string();
+                    self.appendOpaque(&delimiter);
                     self.pending = self.pending[closeStart + closeTag.len()..].to_string();
                     self.activeThinkingOpenTag = None;
                     self.activeThinkingCloseTag = None;
@@ -411,6 +460,7 @@ impl AssistantMarkupStreamState {
                         let isTool = tagName.as_deref()
                             .is_some_and(|name| ChatMarkupRegex::is_tool_tag_name(Some(name)));
                         if !self.preserveUnsupportedTags && isTool {
+                            self.appendOpaque(&content);
                             let sequence = self.parts.len() as i32;
                             self.parts.push(MessagePartCodec::parseUnfinishedToolCall(
                                 MessagePartCodec::partId(sequence), sequence, &content,
@@ -439,6 +489,11 @@ impl AssistantMarkupStreamState {
                 continue;
             }
             if openingTag.trim_end().ends_with("/>") {
+                if self.segments.is_some() {
+                    self.appendOpaque(&openingTag);
+                    self.pending.drain(..openEnd);
+                    continue;
+                }
                 if self.preserveUnsupportedTags {
                     self.appendMarkdownContent(&openingTag);
                     self.pending = self.pending[openEnd..].to_string();
@@ -450,11 +505,12 @@ impl AssistantMarkupStreamState {
             }
             if normalizedTagName == "think" || normalizedTagName == "thinking" {
                 let sequence = self.parts.len() as i32;
-                self.parts.push(MessagePart::thinking(
+                if self.segments.is_none() { self.parts.push(MessagePart::thinking(
                     MessagePartCodec::partId(sequence),
                     sequence,
                     String::new(),
-                ));
+                )); }
+                self.appendOpaque(&openingTag);
                 self.activeThinkingOpenTag = Some(openingTag);
                 self.pending = self.pending[openEnd..].to_string();
                 self.activeThinkingCloseTag = Some(format!("</{tagName}>"));
@@ -462,6 +518,12 @@ impl AssistantMarkupStreamState {
             }
 
             let closeTag = format!("</{tagName}>");
+            if self.segments.is_some() {
+                self.appendOpaque(&openingTag);
+                self.pending.drain(..openEnd);
+                self.activeOpaqueCloseTag = Some(closeTag);
+                continue;
+            }
             let Some(relativeCloseStart) =
                 findAsciiCaseInsensitive(&self.pending[openEnd..], &closeTag)
             else {
@@ -512,6 +574,10 @@ impl AssistantMarkupStreamState {
         if content.is_empty() {
             return;
         }
+        if let Some(segments) = &mut self.segments {
+            segments.push(AssistantMarkupSegment { kind: Some(MessagePartKind::Markdown), content: content.into() });
+            return;
+        }
         let extendsMarkdownPart = self
             .parts
             .last()
@@ -535,6 +601,10 @@ impl AssistantMarkupStreamState {
     /// Appends source to the currently open thinking part.
     fn appendThinkingContent(&mut self, content: &str) {
         if content.is_empty() {
+            return;
+        }
+        if let Some(segments) = &mut self.segments {
+            segments.push(AssistantMarkupSegment { kind: Some(MessagePartKind::Thinking), content: content.into() });
             return;
         }
         let part = self

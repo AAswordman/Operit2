@@ -1,119 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = Screen;
-const i18n_1 = require("../../i18n");
+const index_js_1 = require("../../i18n/index.js");
+const layout_js_1 = require("../layout.js");
 const worldbook_service_js_1 = require("../../shared/worldbook_service.js");
-const CONTENT_SNIPPETS = [
-    {
-        id: "format_message_variable",
-        label: "format_message_variable",
-        description: "格式化输出当前消息/会话局部变量对象",
-        content: "{{format_message_variable::stat_data}}"
-    },
-    {
-        id: "format_chat_variable",
-        label: "format_chat_variable",
-        description: "兼容 chat 命名，效果与 message 作用域一致",
-        content: "{{format_chat_variable::stat_data}}"
-    },
-    {
-        id: "format_character_variable",
-        label: "format_character_variable",
-        description: "格式化输出角色变量对象",
-        content: "{{format_character_variable::stat_data}}"
-    },
-    {
-        id: "format_global_variable",
-        label: "format_global_variable",
-        description: "格式化输出全局变量对象",
-        content: "{{format_global_variable::world_state}}"
-    },
-    {
-        id: "get_message_variable",
-        label: "get_message_variable",
-        description: "读取当前消息/会话局部变量中的单个路径",
-        content: "{{get_message_variable::stat_data.系统.积分}}"
-    },
-    {
-        id: "get_chat_variable",
-        label: "get_chat_variable",
-        description: "兼容 chat 命名，效果与 message 作用域一致",
-        content: "{{get_chat_variable::stat_data.系统.积分}}"
-    },
-    {
-        id: "get_character_variable",
-        label: "get_character_variable",
-        description: "读取角色变量中的单个路径",
-        content: "{{get_character_variable::stat_data.关系.好感}}"
-    },
-    {
-        id: "get_global_variable",
-        label: "get_global_variable",
-        description: "读取全局变量中的单个路径",
-        content: "{{get_global_variable::world_state.rules.version}}"
-    },
-    {
-        id: "getvar_macro",
-        label: "getvar",
-        description: "本地变量路径读取简写",
-        content: "<%= getvar('stat_data.心理.羁绊值') %>"
-    },
-    {
-        id: "getglobalvar_macro",
-        label: "getglobalvar",
-        description: "全局变量路径读取简写",
-        content: "<%= getglobalvar('world_state.rules.version') %>"
-    },
-    {
-        id: "getvar_braces",
-        label: "{{getvar::...}}",
-        description: "本地变量路径读取的花括号版本",
-        content: "{{getvar::stat_data.心理.羁绊值}}"
-    },
-    {
-        id: "getglobalvar_braces",
-        label: "{{getglobalvar::...}}",
-        description: "全局变量路径读取的花括号版本",
-        content: "{{getglobalvar::world_state.rules.version}}"
-    },
-    {
-        id: "dot_shorthand",
-        label: "{{.变量}}",
-        description: "本地变量顶层键简写，仅支持单层变量名",
-        content: "{{.stat_data}}"
-    },
-    {
-        id: "dollar_shorthand",
-        label: "{{$变量}}",
-        description: "全局变量顶层键简写，仅支持单层变量名",
-        content: "{{$world_state}}"
-    },
-    {
-        id: "init_var_block",
-        label: "[InitVar]初始化",
-        description: "在条目中声明变量初始化区块",
-        content: "[InitVar]初始化\n```json\n{\n  \"stat_data\": {\n    \"系统\": {\n      \"积分\": 0\n    }\n  }\n}\n```"
-    },
-    {
-        id: "update_variable_patch",
-        label: "UpdateVariable / JSONPatch",
-        description: "在助手回复后写回变量的 JSONPatch 模板",
-        content: "<UpdateVariable>\n<Analysis>描述本次变量变化原因</Analysis>\n<JSONPatch>\n```json\n[\n  {\n    \"op\": \"replace\",\n    \"path\": \"/stat_data/系统/积分\",\n    \"value\": 1\n  }\n]\n```\n</JSONPatch>\n</UpdateVariable>"
-    },
-    {
-        id: "jsonpatch_only",
-        label: "JSONPatch",
-        description: "仅输出 JSONPatch 块，运行时同样会识别",
-        content: "<JSONPatch>\n```json\n[\n  {\n    \"op\": \"replace\",\n    \"path\": \"/stat_data/系统/积分\",\n    \"value\": 1\n  }\n]\n```\n</JSONPatch>"
-    }
-];
 const CHARACTER_CARD_MENU_WIDTH = 280;
 const CHARACTER_CARD_MENU_MAX_HEIGHT = 320;
+/** Resolves all editor labels and snippets using the current host language. */
 function resolveText() {
-    const rawLocale = getLang();
-    const locale = String(rawLocale || "").trim().toLowerCase();
-    const preferredLocale = locale.startsWith("en") ? "en-US" : "zh-CN";
-    return (0, i18n_1.resolveWorldBookI18n)(preferredLocale);
+    return (0, index_js_1.currentWorldBookI18n)();
 }
 function normalizeFormInjectPosition(target, position) {
     if (target === "assistant") {
@@ -139,6 +34,7 @@ function appendSnippetContent(currentContent, snippetContent) {
     return `${normalizedCurrent}\n\n${normalizedSnippet}`;
 }
 function Screen(ctx) {
+    const layout = (0, layout_js_1.useWorldBookLayout)(ctx);
     const [entries, setEntries] = ctx.useState("entries", []);
     const [groups, setGroups] = ctx.useState("groups", []);
     const [expandedGroupIds, setExpandedGroupIds] = ctx.useState("expandedGroupIds", []);
@@ -926,7 +822,7 @@ function Screen(ctx) {
                 ])
             ]),
             isExpanded
-                ? UI.Column({ fillMaxWidth: true, spacing: 10, paddingTop: 8 }, getEntriesByGroup(group.entry_ids).map((entry) => renderCard(entry)))
+                ? UI.Column({ fillMaxWidth: true, spacing: 10, paddingTop: 8 }, layout.cardRows(`entries-${group.id}`, getEntriesByGroup(group.entry_ids).map((entry) => renderCard(entry))))
                 : null
         ].filter(Boolean));
     }
@@ -967,7 +863,7 @@ function Screen(ctx) {
                 ])
             ]),
             isExpanded
-                ? UI.Column({ fillMaxWidth: true, spacing: 10, paddingTop: 8 }, ungrouped.map((entry) => renderCard(entry)))
+                ? UI.Column({ fillMaxWidth: true, spacing: 10, paddingTop: 8 }, layout.cardRows("entries-ungrouped", ungrouped.map((entry) => renderCard(entry))))
                 : null
         ].filter(Boolean));
     }
@@ -1201,7 +1097,7 @@ function Screen(ctx) {
                 containerColor: colors.surface,
                 shape: { cornerRadius: 20 },
                 elevation: 8,
-                modifier: ctx.Modifier.padding({ horizontal: 20, vertical: 32 })
+                modifier: ctx.Modifier.widthIn({ maxWidth: 840 }).padding({ horizontal: 20, vertical: 32 })
             }, [
                 UI.Column({
                     fillMaxWidth: true,
@@ -1238,7 +1134,7 @@ function Screen(ctx) {
                         fillMaxWidth: true,
                         spacing: 8,
                         height: 360
-                    }, CONTENT_SNIPPETS.flatMap((snippet, index) => {
+                    }, t.contentSnippets.flatMap((snippet, index) => {
                         const nodes = [
                             UI.Box({
                                 modifier: ctx.Modifier
@@ -1265,7 +1161,7 @@ function Screen(ctx) {
                                 ])
                             ])
                         ];
-                        if (index < CONTENT_SNIPPETS.length - 1) {
+                        if (index < t.contentSnippets.length - 1) {
                             nodes.push(UI.HorizontalDivider({
                                 color: colors.outlineVariant.copy({ alpha: 0.6 }),
                                 thickness: 1
@@ -1336,11 +1232,7 @@ function Screen(ctx) {
     }
     function renderForm() {
         const isEdit = view === "edit";
-        return UI.Column({
-            padding: 12,
-            spacing: 12,
-            fillMaxWidth: true
-        }, [
+        const sections = [
             UI.Row({
                 fillMaxWidth: true
             }, [
@@ -1735,6 +1627,12 @@ function Screen(ctx) {
                 fillMaxWidth: true,
                 shape: { cornerRadius: 14 }
             })
+        ];
+        const [back, basic, matching, injection, save] = sections;
+        return UI.Column({ padding: 12, spacing: 12, fillMaxWidth: true }, [
+            back,
+            layout.panes("entry-editor", [basic, UI.Column({ fillMaxWidth: true, spacing: 12 }, [matching, injection])]),
+            save
         ]);
     }
     function renderImportForm() {
@@ -1852,6 +1750,7 @@ function Screen(ctx) {
             }, [
                 renderToolbarAction("search", t.actionSearch, toggleSearchBar, showSearchBar),
                 renderToolbarAction("refresh", t.actionRefresh, () => doRefresh()),
+                renderToolbarAction("rule", t.regex.title, () => ctx.navigate("toolpkg:com.operit.worldbook:ui:regex_manager")),
                 renderToolbarAction("createNewFolder", t.groupNewButton, doOpenGroupCreate),
                 renderToolbarAction("uploadFile", t.buttonImport, doOpenImport),
                 renderToolbarAction("add", t.newEntryButton, doCreate)
@@ -1880,17 +1779,18 @@ function Screen(ctx) {
         ].filter(Boolean))
     ];
     if (view === "group_create" || view === "group_edit") {
-        return UI.LazyColumn({ fillMaxSize: true, spacing: 12, padding: { horizontal: 12, vertical: 8 } }, [renderGroupForm()]);
+        return UI.LazyColumn({ fillMaxSize: true, modifier: layout.measure, spacing: 12, padding: { horizontal: 12, vertical: 8 } }, [renderGroupForm()]);
     }
     if (view === "group_delete") {
-        return UI.LazyColumn({ fillMaxSize: true, spacing: 12, padding: { horizontal: 12, vertical: 8 } }, [renderGroupDeleteView()]);
+        return UI.LazyColumn({ fillMaxSize: true, modifier: layout.measure, spacing: 12, padding: { horizontal: 12, vertical: 8 } }, [renderGroupDeleteView()]);
     }
     if (view === "copy_to_group") {
-        return UI.LazyColumn({ fillMaxSize: true, spacing: 12, padding: { horizontal: 12, vertical: 8 } }, [renderCopyToGroupView()]);
+        return UI.LazyColumn({ fillMaxSize: true, modifier: layout.measure, spacing: 12, padding: { horizontal: 12, vertical: 8 } }, [renderCopyToGroupView()]);
     }
     if (view === "edit" || view === "create") {
         return UI.Box({
-            fillMaxSize: true
+            fillMaxSize: true,
+            modifier: layout.measure
         }, [
             UI.LazyColumn({
                 fillMaxSize: true,
@@ -1903,6 +1803,7 @@ function Screen(ctx) {
     if (view === "import") {
         return UI.LazyColumn({
             fillMaxSize: true,
+            modifier: layout.measure,
             spacing: 12,
             padding: { horizontal: 12, vertical: 8 }
         }, [renderImportForm()]);
@@ -1986,9 +1887,7 @@ function Screen(ctx) {
     }
     else {
         if (hasSearchQuery) {
-            for (const entry of visibleEntries) {
-                items.push(renderCard(entry));
-            }
+            items.push(...layout.cardRows("search-results", visibleEntries.map(renderCard)));
         }
         else {
             // Show grouped view
@@ -2005,6 +1904,7 @@ function Screen(ctx) {
         spacing: 10,
         padding: { horizontal: 12, vertical: 8 },
         fillMaxSize: true,
+        modifier: layout.measure,
         onLoad: async () => {
             if (hasLoadedOnce || initialLoadInFlight) {
                 return;

@@ -76,7 +76,7 @@ impl AsyncToolExecutor for PackageToolExecutor {
 
     /// Uses the same exact SDK request dispatch for streaming and ordinary calls.
     #[allow(non_snake_case)]
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
+    fn invokeAndStreamAsync<'a>(&'a self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
         let host = context.host().clone();
         let runtime = Arc::new(PackageManagerJsRuntime::new(self.packageManager.clone(), host.clone()));
         let executor = host.runtimeDependencies().js_execution_provider()

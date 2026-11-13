@@ -44,49 +44,46 @@ class _PositionReportingRenderBox extends RenderProxyBox {
   }
 }
 
-class _SizeReportingBox extends StatefulWidget {
-  /// Creates the size reporting box instance.
-  const _SizeReportingBox({required this.child, required this.onSizeChanged});
+class _SizeReportingBox extends SingleChildRenderObjectWidget {
+  /// Observes layout changes even when the retained DSL widget is not rebuilt.
+  const _SizeReportingBox({required super.child, required this.onSizeChanged});
 
-  final Widget child;
   final ValueChanged<Size> onSizeChanged;
 
-  /// Creates persistent state for this DSL widget.
+  /// Creates a size observer that preserves its child's incoming constraints.
   @override
-  State<_SizeReportingBox> createState() => _SizeReportingBoxState();
+  RenderObject createRenderObject(BuildContext context) =>
+      _SizeReportingRenderBox(onSizeChanged);
+
+  /// Uses the current action callback after plugin recomposition.
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _SizeReportingRenderBox renderObject,
+  ) {
+    renderObject.onSizeChanged = onSizeChanged;
+  }
 }
 
-class _SizeReportingBoxState extends State<_SizeReportingBox> {
-  Size? _lastSize;
+class _SizeReportingRenderBox extends RenderProxyBox {
+  /// Retains the last delivered size across layout and callback updates.
+  _SizeReportingRenderBox(this.onSizeChanged);
 
-  /// Initializes resources owned by this DSL widget.
+  ValueChanged<Size> onSizeChanged;
+  Size? _lastReportedSize;
+  bool _reportScheduled = false;
+
+  /// Coalesces real geometry changes into one notification after the current frame.
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _reportSize());
+  void performLayout() {
+    super.performLayout();
+    if (size == _lastReportedSize || _reportScheduled) return;
+    _reportScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reportScheduled = false;
+      if (!attached || !hasSize || size == _lastReportedSize) return;
+      _lastReportedSize = size;
+      onSizeChanged(size);
+    });
   }
-
-  /// Synchronizes widget state with the latest DSL node.
-  @override
-  void didUpdateWidget(covariant _SizeReportingBox oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _reportSize());
-  }
-
-  /// Resolves report size for the Compose DSL renderer.
-  void _reportSize() {
-    if (!mounted) {
-      return;
-    }
-    final size = context.size;
-    if (size == null || size == _lastSize) {
-      return;
-    }
-    _lastSize = size;
-    widget.onSizeChanged(size);
-  }
-
-  /// Builds the widget for the current DSL state.
-  @override
-  Widget build(BuildContext context) => widget.child;
 }

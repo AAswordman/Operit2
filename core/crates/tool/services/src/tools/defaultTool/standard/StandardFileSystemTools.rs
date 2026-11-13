@@ -2008,7 +2008,7 @@ impl AsyncToolExecutor for FileSystemToolExecutor {
 
     /// Awaits model work directly while synchronous file APIs stay on Host blocking capacity.
     fn invokeAndStreamAsync<'a>(
-        &'a mut self,
+        &'a self,
         tool: &'a AITool,
         _context: &'a ToolInvocationContext,
     ) -> ToolInvocationFuture<'a> {

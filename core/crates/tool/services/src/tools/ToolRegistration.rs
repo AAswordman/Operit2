@@ -156,7 +156,7 @@ async fn executeSleep(tool: &AITool, context: &HostManager) -> ToolResult {
 /// Registers the public tools with their explicit execution contracts.
 #[allow(non_snake_case)]
 fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
-    for name in [BuiltinToolName::GetPageInfo, BuiltinToolName::Tap, BuiltinToolName::LongPress,
+    for name in [BuiltinToolName::ListWindows, BuiltinToolName::FocusWindow, BuiltinToolName::GetPageInfo, BuiltinToolName::Tap, BuiltinToolName::LongPress,
         BuiltinToolName::ClickElement, BuiltinToolName::SetInputText, BuiltinToolName::PressKey, BuiltinToolName::Swipe] {
         handler.registerBuiltinTool(name, Box::new(
             crate::tools::defaultTool::standard::StandardUiTools::UiToolExecutor { host: context.uiAutomationHost.clone() }

@@ -81,6 +81,12 @@ impl MessageDao {
         )
     }
 
+    /// Reads only the ordered identity index needed to compute display depths.
+    pub fn getMessageTimestampsAfter(&self, chatId: &str, timestamp: i64) -> Result<Vec<i64>, SqliteStoreError> {
+        self.store.queryRows("SELECT timestamp FROM messages WHERE chatId = ?1 AND timestamp > ?2 ORDER BY timestamp ASC",
+            sqliteParams![chatId, timestamp])?.iter().map(|row| row.get(0)).collect()
+    }
+
     /// Processes the exact persisted message record with explicit storage errors.
     pub fn getLocatorPreviewsForChat(
         &self,

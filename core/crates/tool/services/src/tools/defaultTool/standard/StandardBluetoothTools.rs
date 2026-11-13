@@ -462,7 +462,8 @@ impl ToolExecutor for BluetoothToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         let result = match self.operation {
             BluetoothToolOperation::RequestPermission => self.tools.requestPermission(tool),
             BluetoothToolOperation::GetState => self.tools.getState(tool),

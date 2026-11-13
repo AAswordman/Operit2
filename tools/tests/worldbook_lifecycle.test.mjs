@@ -13,13 +13,18 @@ function runtime({ failOpen = false } = {}) {
   const calls = [];
   const messages = new Map();
   const lifecycle = [];
+  const estimateHooks = [];
+  const finalizeHooks = [];
   let root = '/config/worldbook';
   const context = vm.createContext({
+    getLang: () => 'zh-CN',
     console, Icons: { Book: 'book' },
     ToolPkg: {
       getConfigDir: () => root,
       registerUiRoute() {}, registerNavigationEntry() {},
-      registerSystemPromptComposeHook() {}, registerPromptFinalizeHook() {},
+      registerSystemPromptComposeHook() {}, registerMessageTransformHook() {}, registerMessageStreamTransform() {},
+      registerPromptFinalizeHook: hook => finalizeHooks.push(hook),
+      registerPromptEstimateFinalizeHook: hook => estimateHooks.push(hook),
       registerAppLifecycleHook: (hook) => lifecycle.push(hook),
     },
     Tools: {
@@ -56,7 +61,7 @@ function runtime({ failOpen = false } = {}) {
   const storage = load(path.join(dist, 'shared/worldbook_storage.js'));
   const variables = load(path.join(dist, 'shared/worldbook_variables.js'));
   return {
-    main, storage, variables, files, calls, messages, lifecycle,
+    main, storage, variables, files, calls, messages, lifecycle, estimateHooks, finalizeHooks,
     changeRoot(value) { root = value; },
     setEntries(entries) { files.set(`${root}/entries.json`, JSON.stringify(entries)); },
     count(method, file) { return calls.filter(([m, f]) => m === method && (!file || f.endsWith(file))).length; },
@@ -77,6 +82,19 @@ function event(stage, id, chatId = 'chat-a', participantId = 'card-a') {
 }
 const system = (id, chat, card) => event('after_compose_system_prompt', id, chat, card);
 const final = (id, chat, card) => event('before_finalize_prompt', id, chat, card);
+
+/** Counts keyword-injected content through the actual registered independent estimate handler. */
+test('keyword injection is registered for both sends and independent estimates', async () => {
+  const r = runtime();
+  r.main.registerToolPkg();
+  assert.equal(r.estimateHooks.length, 2);
+  assert.equal(r.finalizeHooks.length, 2);
+  r.setEntries([entry('keyword lore', { always_active: false, keywords: ['hello'], inject_target: 'user' })]);
+  const estimate = await r.estimateHooks[0].function(final());
+  const send = await r.finalizeHooks[0].function(final('send'));
+  assert.match(estimate.processedInput, /keyword lore/);
+  assert.equal(estimate.processedInput, send.processedInput);
+});
 
 test('registration performs no storage I/O; lifecycle and concurrent first reads share initialization', async () => {
   const r = runtime();
@@ -134,7 +152,8 @@ test('system and final hooks share one entries/variables/history snapshot; next 
   assert.equal(r.count('read', 'entries.json'), 1);
   assert.equal(r.count('read', 'variables.json'), 1);
   assert.equal(r.count('history'), 1);
-  assert.equal(r.count('mkdir') + r.count('exists'), 0);
+  assert.equal(r.count('mkdir'), 0);
+  assert.equal(r.count('exists', 'regex_scripts.json'), 1);
   assert.match((await r.main.systemPromptHook(system('send-2'))).systemPrompt, /new/);
   assert.match((await r.main.finalizeHook(final('send-2'))).processedInput, /user-new/);
   assert.equal(r.count('read', 'entries.json'), 2);

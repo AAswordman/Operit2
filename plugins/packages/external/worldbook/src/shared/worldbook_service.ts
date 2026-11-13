@@ -1,3 +1,4 @@
+import { currentWorldBookI18n } from "../i18n/index.js";
 import {
   readWorldBookEntries,
   readWorldBookGroups,
@@ -181,7 +182,7 @@ function toKeywordArray(value: unknown): string[] {
 function requireStringField(record: Record<string, unknown>, key: string, fieldLabel: string): string {
   const value = record[key];
   if (typeof value !== "string") {
-    throw worldBookError("INVALID_FIELD_TYPE", `${fieldLabel} 必须是字符串`);
+    throw worldBookError("INVALID_FIELD_TYPE", currentWorldBookI18n().service.fieldString(fieldLabel));
   }
   return value.trim();
 }
@@ -200,7 +201,7 @@ function readOptionalBooleanField(
     return defaultValue;
   }
   if (typeof value !== "boolean") {
-    throw worldBookError("INVALID_FIELD_TYPE", `${fieldLabel} 必须是布尔值`);
+    throw worldBookError("INVALID_FIELD_TYPE", currentWorldBookI18n().service.fieldBoolean(fieldLabel));
   }
   return value;
 }
@@ -219,7 +220,7 @@ function readOptionalNumberField(
     return defaultValue;
   }
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw worldBookError("INVALID_FIELD_TYPE", `${fieldLabel} 必须是数字`);
+    throw worldBookError("INVALID_FIELD_TYPE", currentWorldBookI18n().service.fieldNumber(fieldLabel));
   }
   return value;
 }
@@ -237,11 +238,11 @@ function readOptionalKeywordArrayField(
     return [];
   }
   if (!Array.isArray(value)) {
-    throw worldBookError("INVALID_FIELD_TYPE", `${fieldLabel} 必须是字符串数组`);
+    throw worldBookError("INVALID_FIELD_TYPE", currentWorldBookI18n().service.fieldArray(fieldLabel));
   }
   const keywords = value.map((item) => {
     if (typeof item !== "string") {
-      throw worldBookError("INVALID_FIELD_TYPE", `${fieldLabel} 必须是字符串数组`);
+      throw worldBookError("INVALID_FIELD_TYPE", currentWorldBookI18n().service.fieldArray(fieldLabel));
     }
     return item.trim();
   });
@@ -258,28 +259,28 @@ function addTemplateCompatibilityWarnings(content: string, warnings: string[]) {
   if (/\{\{\s*get_preset_variable::/i.test(content)) {
     addWarning(
       warnings,
-      "导入源包含酒馆助手的 preset 变量读取宏，但当前宿主没有把活动预设上下文暴露给插件，这部分语法仍会保留原文。"
+      currentWorldBookI18n().service.presetRead
     );
   }
 
   if (/\{\{\s*format_preset_variable::/i.test(content)) {
     addWarning(
       warnings,
-      "导入源包含酒馆助手的 preset 变量格式化宏，但当前宿主没有把活动预设上下文暴露给插件，这部分语法仍会保留原文。"
+      currentWorldBookI18n().service.presetFormat
     );
   }
 
   if (/\{\{\s*(?:set|inc|dec)(?:global)?var::/i.test(content)) {
     addWarning(
       warnings,
-      "导入源包含会修改变量的 SillyTavern 宏。当前插件只在回合结束后解析 <UpdateVariable>/<JSONPatch>，不会执行这些内联写变量宏。"
+      currentWorldBookI18n().service.inlineWrite
     );
   }
 
   if (/\{\{\s*[.$][A-Za-z][A-Za-z0-9_-]*\s*(?:\+\+|--|\+=|-=|\|\|=?|\?\?=?|==|!=|>=|<=|>|<|=)[^}]*\}\}/.test(content)) {
     addWarning(
       warnings,
-      "导入源包含带运算或赋值的 SillyTavern 变量简写表达式。当前插件只支持只读取值写法（如 {{.var}} / {{$var}}），不会执行这类内联表达式。"
+      currentWorldBookI18n().service.inlineExpression
     );
   }
 }
@@ -299,7 +300,7 @@ function resolveCharacterBookRoleTarget(rawRole: unknown, warnings: string[]): "
     return "assistant";
   }
 
-  addWarning(warnings, `角色卡世界书包含未识别的 role 值 ${String(rawRole)}，已按 system 注入处理。`);
+  addWarning(warnings, currentWorldBookI18n().service.unknownRole(String(rawRole)));
   return "system";
 }
 
@@ -332,7 +333,7 @@ function resolveCharacterBookPlacement(
         insertion_depth: 0
       };
     case "top_an":
-      addWarning(warnings, "角色卡世界书位置 top_an 已近似映射为系统提示词顶部插入。");
+      addWarning(warnings, currentWorldBookI18n().service.topAuthorNote);
       return {
         inject_target: "system",
         inject_position: "prepend",
@@ -340,7 +341,7 @@ function resolveCharacterBookPlacement(
       };
     case "bottom_an":
     case "after_examples":
-      addWarning(warnings, `角色卡世界书位置 ${position} 已近似映射为系统提示词尾部插入。`);
+      addWarning(warnings, currentWorldBookI18n().service.mappedPosition(String(position)));
       return {
         inject_target: "system",
         inject_position: "append",
@@ -354,7 +355,7 @@ function resolveCharacterBookPlacement(
         insertion_depth: normalizeNumber(depthValue, 0)
       };
     default:
-      addWarning(warnings, `角色卡世界书位置 ${position} 当前未精确支持，已按系统提示词尾部插入。`);
+      addWarning(warnings, currentWorldBookI18n().service.unsupportedPosition(String(position)));
       return {
         inject_target: "system",
         inject_position: "append",
@@ -397,8 +398,8 @@ function parseOperitEntryArray(rawEntries: unknown[]): ParsedImportPayload | nul
       continue;
     }
 
-    const name = requireStringField(rawEntry, "name", "Operit 条目 name");
-    const content = requireStringField(rawEntry, "content", "Operit 条目 content");
+    const name = requireStringField(rawEntry, "name", currentWorldBookI18n().service.field("Operit", "name"));
+    const content = requireStringField(rawEntry, "content", currentWorldBookI18n().service.field("Operit", "content"));
     if (!name || !content) {
       continue;
     }
@@ -406,16 +407,16 @@ function parseOperitEntryArray(rawEntries: unknown[]): ParsedImportPayload | nul
     entries.push({
       name,
       content,
-      keywords: readOptionalKeywordArrayField(rawEntry, "keywords", "Operit 条目 keywords"),
-      is_regex: readOptionalBooleanField(rawEntry, "is_regex", false, "Operit 条目 is_regex"),
-      case_sensitive: readOptionalBooleanField(rawEntry, "case_sensitive", false, "Operit 条目 case_sensitive"),
-      always_active: readOptionalBooleanField(rawEntry, "always_active", false, "Operit 条目 always_active"),
-      enabled: readOptionalBooleanField(rawEntry, "enabled", true, "Operit 条目 enabled"),
-      priority: readOptionalNumberField(rawEntry, "priority", 50, "Operit 条目 priority"),
-      scan_depth: readOptionalNumberField(rawEntry, "scan_depth", 0, "Operit 条目 scan_depth"),
+      keywords: readOptionalKeywordArrayField(rawEntry, "keywords", currentWorldBookI18n().service.field("Operit", "keywords")),
+      is_regex: readOptionalBooleanField(rawEntry, "is_regex", false, currentWorldBookI18n().service.field("Operit", "is_regex")),
+      case_sensitive: readOptionalBooleanField(rawEntry, "case_sensitive", false, currentWorldBookI18n().service.field("Operit", "case_sensitive")),
+      always_active: readOptionalBooleanField(rawEntry, "always_active", false, currentWorldBookI18n().service.field("Operit", "always_active")),
+      enabled: readOptionalBooleanField(rawEntry, "enabled", true, currentWorldBookI18n().service.field("Operit", "enabled")),
+      priority: readOptionalNumberField(rawEntry, "priority", 50, currentWorldBookI18n().service.field("Operit", "priority")),
+      scan_depth: readOptionalNumberField(rawEntry, "scan_depth", 0, currentWorldBookI18n().service.field("Operit", "scan_depth")),
       inject_target: normalizeInjectTarget(rawEntry.inject_target),
       inject_position: normalizeInjectPosition(rawEntry.inject_position),
-      insertion_depth: readOptionalNumberField(rawEntry, "insertion_depth", 0, "Operit 条目 insertion_depth")
+      insertion_depth: readOptionalNumberField(rawEntry, "insertion_depth", 0, currentWorldBookI18n().service.field("Operit", "insertion_depth"))
     });
   }
 
@@ -442,44 +443,44 @@ function parseSillyTavernRecord(
         : typeof rawEntry.id === "string"
           ? rawEntry.id.trim()
           : "";
-  const content = requireStringField(rawEntry, "content", "SillyTavern 条目 content");
+  const content = requireStringField(rawEntry, "content", currentWorldBookI18n().service.field("SillyTavern", "content"));
   if (!name || !content) {
     return null;
   }
   addTemplateCompatibilityWarnings(content, warnings);
 
-  const keywords = readOptionalKeywordArrayField(rawEntry, "key", "SillyTavern 条目 key");
-  const alwaysActive = readOptionalBooleanField(rawEntry, "constant", false, "SillyTavern 条目 constant");
+  const keywords = readOptionalKeywordArrayField(rawEntry, "key", currentWorldBookI18n().service.field("SillyTavern", "key"));
+  const alwaysActive = readOptionalBooleanField(rawEntry, "constant", false, currentWorldBookI18n().service.field("SillyTavern", "constant"));
   if (keywords.length === 0 && !alwaysActive) {
-    addWarning(warnings, "部分条目没有可导入的主关键词，且不是常驻条目，已跳过。");
+    addWarning(warnings, currentWorldBookI18n().service.missingKeywords);
     return null;
   }
 
-  const secondaryKeys = readOptionalKeywordArrayField(rawEntry, "keysecondary", "SillyTavern 条目 keysecondary");
+  const secondaryKeys = readOptionalKeywordArrayField(rawEntry, "keysecondary", currentWorldBookI18n().service.field("SillyTavern", "keysecondary"));
   if (secondaryKeys.length > 0) {
-    addWarning(warnings, "导入源包含次级关键词 keysecondary，当前版本未原样支持，已忽略。");
+    addWarning(warnings, currentWorldBookI18n().service.secondaryKeys);
   }
-  if (readOptionalBooleanField(rawEntry, "selective", false, "SillyTavern 条目 selective")) {
-    addWarning(warnings, "导入源包含 selective 逻辑，当前版本未原样支持，已按主关键词导入。");
+  if (readOptionalBooleanField(rawEntry, "selective", false, currentWorldBookI18n().service.field("SillyTavern", "selective"))) {
+    addWarning(warnings, currentWorldBookI18n().service.selective);
   }
   if (rawEntry.role != null) {
-    addWarning(warnings, "导入源包含额外注入位置字段 role，当前版本未映射，已按系统提示词导入。");
+    addWarning(warnings, currentWorldBookI18n().service.unmappedRole);
   }
 
   return {
     name,
     content,
     keywords,
-    is_regex: readOptionalBooleanField(rawEntry, "use_regex", false, "SillyTavern 条目 use_regex"),
-    case_sensitive: readOptionalBooleanField(rawEntry, "caseSensitive", false, "SillyTavern 条目 caseSensitive"),
+    is_regex: readOptionalBooleanField(rawEntry, "use_regex", false, currentWorldBookI18n().service.field("SillyTavern", "use_regex")),
+    case_sensitive: readOptionalBooleanField(rawEntry, "caseSensitive", false, currentWorldBookI18n().service.field("SillyTavern", "caseSensitive")),
     always_active: alwaysActive,
-    enabled: !readOptionalBooleanField(rawEntry, "disable", false, "SillyTavern 条目 disable"),
+    enabled: !readOptionalBooleanField(rawEntry, "disable", false, currentWorldBookI18n().service.field("SillyTavern", "disable")),
     priority: hasOwn(rawEntry, "display_index")
-      ? readOptionalNumberField(rawEntry, "display_index", 50, "SillyTavern 条目 display_index")
-      : readOptionalNumberField(rawEntry, "order", 50, "SillyTavern 条目 order"),
+      ? readOptionalNumberField(rawEntry, "display_index", 50, currentWorldBookI18n().service.field("SillyTavern", "display_index"))
+      : readOptionalNumberField(rawEntry, "order", 50, currentWorldBookI18n().service.field("SillyTavern", "order")),
     scan_depth: hasOwn(rawEntry, "scanDepth")
-      ? readOptionalNumberField(rawEntry, "scanDepth", 0, "SillyTavern 条目 scanDepth")
-      : readOptionalNumberField(rawEntry, "depth", 0, "SillyTavern 条目 depth"),
+      ? readOptionalNumberField(rawEntry, "scanDepth", 0, currentWorldBookI18n().service.field("SillyTavern", "scanDepth"))
+      : readOptionalNumberField(rawEntry, "depth", 0, currentWorldBookI18n().service.field("SillyTavern", "depth")),
     inject_target: "system",
     inject_position: "append",
     insertion_depth: 0
@@ -528,25 +529,25 @@ function parseCharacterBookEntry(
         : typeof rawEntry.id === "string"
           ? rawEntry.id.trim()
           : "";
-  const content = requireStringField(rawEntry, "content", "character_book 条目 content");
+  const content = requireStringField(rawEntry, "content", currentWorldBookI18n().service.field("character_book", "content"));
   if (!name || !content) {
     return null;
   }
   addTemplateCompatibilityWarnings(content, warnings);
 
-  const keywords = readOptionalKeywordArrayField(rawEntry, "keys", "character_book 条目 keys");
-  const alwaysActive = readOptionalBooleanField(rawEntry, "constant", false, "character_book 条目 constant");
+  const keywords = readOptionalKeywordArrayField(rawEntry, "keys", currentWorldBookI18n().service.field("character_book", "keys"));
+  const alwaysActive = readOptionalBooleanField(rawEntry, "constant", false, currentWorldBookI18n().service.field("character_book", "constant"));
   if (keywords.length === 0 && !alwaysActive) {
-    addWarning(warnings, "部分角色卡世界书条目没有主关键词，且不是常驻条目，已跳过。");
+    addWarning(warnings, currentWorldBookI18n().service.cardMissingKeywords);
     return null;
   }
 
-  const secondaryKeys = readOptionalKeywordArrayField(rawEntry, "secondary_keys", "character_book 条目 secondary_keys");
+  const secondaryKeys = readOptionalKeywordArrayField(rawEntry, "secondary_keys", currentWorldBookI18n().service.field("character_book", "secondary_keys"));
   if (secondaryKeys.length > 0) {
-    addWarning(warnings, "角色卡世界书包含 secondary_keys，当前版本未原样支持，已忽略。");
+    addWarning(warnings, currentWorldBookI18n().service.cardSecondaryKeys);
   }
-  if (readOptionalBooleanField(rawEntry, "selective", false, "character_book 条目 selective")) {
-    addWarning(warnings, "角色卡世界书包含 selective 逻辑，当前版本未原样支持，已按主关键词导入。");
+  if (readOptionalBooleanField(rawEntry, "selective", false, currentWorldBookI18n().service.field("character_book", "selective"))) {
+    addWarning(warnings, currentWorldBookI18n().service.cardSelective);
   }
 
   const extensions = isRecord(rawEntry.extensions) ? rawEntry.extensions : {};
@@ -555,12 +556,12 @@ function parseCharacterBookEntry(
     name,
     content,
     keywords,
-    is_regex: readOptionalBooleanField(rawEntry, "use_regex", false, "character_book 条目 use_regex"),
-    case_sensitive: readOptionalBooleanField(extensions, "case_sensitive", false, "character_book 条目 extensions.case_sensitive"),
+    is_regex: readOptionalBooleanField(rawEntry, "use_regex", false, currentWorldBookI18n().service.field("character_book", "use_regex")),
+    case_sensitive: readOptionalBooleanField(extensions, "case_sensitive", false, currentWorldBookI18n().service.field("character_book", "extensions.case_sensitive")),
     always_active: alwaysActive,
-    enabled: readOptionalBooleanField(rawEntry, "enabled", true, "character_book 条目 enabled"),
-    priority: readOptionalNumberField(rawEntry, "insertion_order", 50, "character_book 条目 insertion_order"),
-    scan_depth: readOptionalNumberField(extensions, "depth", 0, "character_book 条目 extensions.depth"),
+    enabled: readOptionalBooleanField(rawEntry, "enabled", true, currentWorldBookI18n().service.field("character_book", "enabled")),
+    priority: readOptionalNumberField(rawEntry, "insertion_order", 50, currentWorldBookI18n().service.field("character_book", "insertion_order")),
+    scan_depth: readOptionalNumberField(extensions, "depth", 0, currentWorldBookI18n().service.field("character_book", "extensions.depth")),
     inject_target: placement.inject_target,
     inject_position: placement.inject_position,
     insertion_depth: placement.insertion_depth
@@ -606,7 +607,7 @@ function parseImportedWorldBookPayload(raw: unknown): ParsedImportPayload {
   }
 
   if (!isRecord(raw)) {
-    throw worldBookError("INVALID_WORLD_BOOK_JSON", "导入文件不是有效的世界书 JSON 结构");
+    throw worldBookError("INVALID_WORLD_BOOK_JSON", currentWorldBookI18n().service.invalidStructure);
   }
 
   const embeddedCharacterBook = isRecord(raw.character_book)
@@ -648,7 +649,7 @@ function parseImportedWorldBookPayload(raw: unknown): ParsedImportPayload {
 
   throw worldBookError(
     "UNSUPPORTED_WORLD_BOOK_FORMAT",
-    "暂不支持该世界书格式，当前支持 Operit、SillyTavern 独立 lorebook，以及角色卡内嵌 character_book"
+    currentWorldBookI18n().service.unsupportedFormat
   );
 }
 
@@ -663,7 +664,7 @@ async function saveEntries(entries: WorldBookEntry[]): Promise<void> {
 function requireEntryId(id: string | undefined): string {
   const normalizedId = String(id || "").trim();
   if (!normalizedId) {
-    throw worldBookError("INVALID_ENTRY_ID", "条目 ID 不能为空");
+    throw worldBookError("INVALID_ENTRY_ID", currentWorldBookI18n().service.entryIdRequired);
   }
   return normalizedId;
 }
@@ -672,7 +673,7 @@ function findEntryIndex(entries: WorldBookEntry[], id: string | undefined): numb
   const targetId = requireEntryId(id);
   const index = entries.findIndex((entry) => entry.id === targetId);
   if (index === -1) {
-    throw worldBookError("ENTRY_NOT_FOUND", `条目不存在: ${targetId}`);
+    throw worldBookError("ENTRY_NOT_FOUND", currentWorldBookI18n().service.entryNotFound(targetId));
   }
   return index;
 }
@@ -743,12 +744,12 @@ export async function importWorldBookEntries(params: WorldBookImportParams): Pro
   if (!sourceContent) {
     const path = String(params.path || "").trim();
     if (!path) {
-      throw worldBookError("IMPORT_PATH_REQUIRED", "导入路径不能为空");
+      throw worldBookError("IMPORT_PATH_REQUIRED", currentWorldBookI18n().service.importPathRequired);
     }
     const fileResult = await Tools.Files.read(path);
     sourceContent = String(fileResult?.content || "").trim();
     if (!sourceContent) {
-      throw worldBookError("IMPORT_FILE_EMPTY", "导入文件为空");
+      throw worldBookError("IMPORT_FILE_EMPTY", currentWorldBookI18n().service.importEmpty);
     }
   }
 
@@ -758,13 +759,13 @@ export async function importWorldBookEntries(params: WorldBookImportParams): Pro
   } catch (error) {
     throw worldBookError(
       "INVALID_JSON",
-      `导入文件不是有效的 JSON: ${(error as { message: string }).message}`
+      currentWorldBookI18n().service.importJsonInvalid((error as { message: string }).message)
     );
   }
 
   const parsedPayload = parseImportedWorldBookPayload(parsedJson);
   if (parsedPayload.entries.length === 0) {
-    throw worldBookError("NO_IMPORTABLE_ENTRIES", "没有可导入的世界书条目");
+    throw worldBookError("NO_IMPORTABLE_ENTRIES", currentWorldBookI18n().service.noEntries);
   }
 
   const entries = await loadEntries();
@@ -880,7 +881,7 @@ export async function listWorldBookCharacterCards(): Promise<CharacterCardOption
   const cards = await ToolPkg.callDependency<Record<string, never>, CharacterCardSummary[]>(
     "com.operit.character_cards", "character.list", {}
   );
-  if (!Array.isArray(cards)) throw new Error("Character plugin returned an invalid directory");
+  if (!Array.isArray(cards)) throw new Error(currentWorldBookI18n().service.characterDirectoryInvalid);
   return cards
     .map((card) => ({
       id: String(card?.id || "").trim(),
@@ -922,7 +923,7 @@ function generateGroupId(): string {
 function normalizeWorldBookGroupName(name: string): string {
   const normalized = name.trim();
   if (normalized.length === 0) {
-    throw worldBookError("GROUP_NAME_REQUIRED", "分组名称不能为空");
+    throw worldBookError("GROUP_NAME_REQUIRED", currentWorldBookI18n().service.groupNameRequired);
   }
   return normalized;
 }
@@ -951,7 +952,7 @@ export async function createWorldBookGroup(params: WorldBookGroupCreateParams): 
 export async function deleteWorldBookGroup(id: string, deleteEntries: boolean): Promise<{ removedGroup: WorldBookGroup; removedEntries: WorldBookEntry[] }> {
   const groups = await readWorldBookGroups<WorldBookGroup>();
   const index = groups.findIndex((g) => g.id === id);
-  if (index === -1) throw worldBookError("GROUP_NOT_FOUND", "分组不存在");
+  if (index === -1) throw worldBookError("GROUP_NOT_FOUND", currentWorldBookI18n().service.groupNotFound);
   const [removedGroup] = groups.splice(index, 1);
   await writeWorldBookGroups(groups);
 
@@ -979,7 +980,7 @@ export async function copyEntryToGroup(entryId: string, targetGroupId: string): 
   const newEntry: WorldBookEntry = {
     ...originalEntry,
     id: `wb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    name: `${originalEntry.name}(副本)`,
+    name: currentWorldBookI18n().service.copyName(originalEntry.name),
     created_at: now,
     updated_at: now
   };
@@ -1001,7 +1002,7 @@ export async function copyEntryToGroup(entryId: string, targetGroupId: string): 
 export async function updateWorldBookGroup(params: WorldBookGroupMutationParams): Promise<WorldBookGroup> {
   const groups = await readWorldBookGroups<WorldBookGroup>();
   const index = groups.findIndex((g) => g.id === params.id);
-  if (index === -1) throw worldBookError("GROUP_NOT_FOUND", "分组不存在");
+  if (index === -1) throw worldBookError("GROUP_NOT_FOUND", currentWorldBookI18n().service.groupNotFound);
   const now = new Date().toISOString();
   if (params.name != null) {
     groups[index].name = normalizeWorldBookGroupName(params.name);

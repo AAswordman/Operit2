@@ -358,6 +358,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get messageLocatorLoadFailed => '暂时无法加载消息，请重试';
 
   @override
+  String messageTransformFailed(String error) {
+    return '消息显示处理失败：$error';
+  }
+
+  @override
   String get messageLocatorFavoriteFailed => '收藏更新失败，请重试';
 
   @override

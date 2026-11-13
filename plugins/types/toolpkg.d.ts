@@ -590,7 +590,7 @@ export namespace ToolPkg {
   /**
    * Enumerates every hook event that a ToolPkg plugin may register.
    */
-  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | ChatLifecycleEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | ChatResponseEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20;
+  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | MessageTransformEventName | ChatLifecycleEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | ChatResponseEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20;
 
   /**
    * Accepts a JSON result, no result, or asynchronous completion from a generic hook.
@@ -4200,6 +4200,14 @@ export namespace ToolPkg {
      */
     registerChatMessageHook(definition: ChatMessageHookRegistration): void;
     /**
+     * Registers an awaited text transformation before persistence.
+     */
+    registerMessageTransformHook(definition: MessageTransformHookRegistration): void;
+    /**
+     * Prepares an ordered native display program once per message, outside the chunk loop.
+     */
+    registerMessageStreamTransform(definition: MessageStreamTransformRegistration): void;
+    /**
      * Registers the sole awaited before-create hook for this package's own extension namespace.
      */
     registerChatLifecycleHook(definition: ChatLifecycleHookRegistration): void;
@@ -4404,6 +4412,14 @@ export namespace ToolPkg {
    */
   function registerMessageProcessingPlugin(definition: MessageProcessingPluginRegistration): void;
   /**
+   * Prepares an ordered native display program once per message, outside the chunk loop.
+   */
+  function registerMessageStreamTransform(definition: MessageStreamTransformRegistration): void;
+  /**
+   * Registers an awaited text transformation before persistence.
+   */
+  function registerMessageTransformHook(definition: MessageTransformHookRegistration): void;
+  /**
    * Adds a plugin action to a host navigation surface.
    */
   function registerNavigationEntry(definition: NavigationEntryRegistration): void;
@@ -4467,6 +4483,203 @@ export namespace ToolPkg {
      * Zero-based position of the method's Binding key argument.
      */
     binding: number;
+  }
+
+  /**
+   * Names the message persistence boundary; display uses native program preparation.
+   */
+  export type MessageTransformEventName = "before_persist";
+
+  /**
+   * Supplies one semantic text part without granting access to tool-call structure.
+   */
+  export interface MessageTransformPayload {
+    /**
+     * Identifies the actual conversation.
+     */
+    chatId: string;
+    /**
+     * Identifies the message revision being processed.
+     */
+    timestamp: number;
+    /**
+     * Identifies the canonical source (user or ai).
+     */
+    sender: string;
+    /**
+     * Identifies the authenticated execution participant when available.
+     */
+    participantId?: string;
+    /**
+     * Identifies this semantic part within the message.
+     */
+    partId: string;
+    /**
+     * Identifies markdown or thinking content.
+     */
+    kind: string;
+    /**
+     * Contains the complete current text, including explicit empty content.
+     */
+    text: string;
+    /**
+     * Counts conversational messages after this message, with zero for a new message.
+     */
+    depth: number;
+    /**
+     * Reports a user edit rather than initial generation or display.
+     */
+    isEdit: boolean;
+  }
+
+  /**
+   * Combines the transform stage with its typed text payload.
+   */
+  export interface MessageTransformHookEvent extends HookEventBase<MessageTransformEventName, MessageTransformPayload> {
+  }
+
+  /**
+   * Returns replacement text or explicitly declines to transform it.
+   */
+  export type MessageTransformHookOutput = string | null | void;
+
+  /**
+   * Accepts an immediate replacement or an awaited transformation.
+   */
+  export type MessageTransformHookReturn = string | null | void | Promise<MessageTransformHookOutput>;
+
+  /**
+   * Registers one ordered text transformer owned by a package.
+   */
+  export interface MessageTransformHookRegistration {
+    /**
+     * Identifies this handler within its owner.
+     */
+    id: string;
+    /**
+     * Receives complete text and returns a replacement, null, or undefined.
+     */
+    function: (arg0: MessageTransformHookEvent) => MessageTransformHookReturn;
+  }
+
+  /**
+   * Supplies one immutable message context within a display preparation batch.
+   */
+  export interface MessageStreamTransformContext {
+    /**
+     * Identifies the canonical message.
+     */
+    timestamp: number;
+    /**
+     * Identifies the canonical sender.
+     */
+    sender: string;
+    /**
+     * Identifies the selected participant when present.
+     */
+    participantId?: string;
+    /**
+     * Counts later conversational messages.
+     */
+    depth: number;
+    /**
+     * Reports an explicit edit.
+     */
+    isEdit: boolean;
+  }
+
+  /**
+   * Shares one configuration read across an ordered display window or one live message.
+   */
+  export interface MessageStreamTransformPayload {
+    /**
+     * Identifies the conversation shared by the batch.
+     */
+    chatId: string;
+    /**
+     * Preserves input order; each context requires one returned native program.
+     */
+    messages: MessageStreamTransformContext[];
+  }
+
+  /**
+   * Prepares a native program without receiving or retaining generated text.
+   */
+  export interface MessageStreamTransformEvent extends HookEventBase<string, MessageStreamTransformPayload> {
+  }
+
+  /**
+   * Declares one native Rust-regex replacement for selected semantic text kinds.
+   */
+  export interface TextTransformRule {
+    /**
+     * Uses Rust regex syntax; unsupported assertions and empty matches are rejected.
+     */
+    pattern: string;
+    /**
+     * Expands $0, numbered captures and $<name>; literals remain literal.
+     */
+    replacement: string;
+    /**
+     * Selects g, i, m, s or u flags.
+     */
+    flags: string;
+    /**
+     * Selects markdown, thinking, or both.
+     */
+    kinds: string[];
+    /**
+     * Removes literal substrings from each captured value.
+     */
+    trimStrings: string[];
+  }
+
+  /**
+   * Executes ordered replacements entirely in Rust after plugin preparation.
+   */
+  export interface TextTransformProgram {
+    /**
+     * Applies rules in order with independent streaming state for each text part.
+     */
+    rules: TextTransformRule[];
+  }
+
+  /**
+   * Shares each distinct program once and assigns it to ordered message contexts.
+   */
+  export interface TextTransformBatch {
+    /**
+     * Contains the unique ordered replacement pipelines.
+     */
+    programs: TextTransformProgram[];
+    /**
+     * Selects one program index for each input context in order.
+     */
+    messagePrograms: number[];
+  }
+
+  /**
+   * Returns shared native programs or declines the entire batch.
+   */
+  export type MessageStreamTransformOutput = TextTransformBatch | null | void;
+
+  /**
+   * Accepts immediate or asynchronous preparation, never per-chunk callbacks.
+   */
+  export type MessageStreamTransformReturn = TextTransformBatch | null | void | Promise<MessageStreamTransformOutput>;
+
+  /**
+   * Registers one package-owned native display-program preparer.
+   */
+  export interface MessageStreamTransformRegistration {
+    /**
+     * Identifies this preparer within its package.
+     */
+    id: string;
+    /**
+     * Resolves configuration and context once, before native matching begins.
+     */
+    function: (arg0: MessageStreamTransformEvent) => MessageStreamTransformReturn;
   }
 
 }

@@ -92,8 +92,20 @@ async fn editor_executes_against_the_live_runtime_without_reentering_the_applica
             // Import a real target, then let the editor enable it via the real JS-to-host bridge.
             let target = root.join("editor_target.js");
             std::fs::write(&target, r#"/* METADATA
-{"name":"editor_target","description":"Editor integration target","enabledByDefault":false,"tools":[]}
-*/"#).unwrap();
+{"name":"editor_target","description":"Editor integration target","enabledByDefault":false,"tools":[{"name":"parallel","description":"Runs concurrent editor requests","parameters":[]}]}
+*/
+/** Exercises repeated CLI and editor invocations from one script's Promise.all. */
+exports.parallel = async function () {
+    const results = await Promise.all(Array.from({length: 12}, () => Tools.SoftwareSettings.exec([
+        "package", "exec", "operit_editor:operit_editor",
+        JSON.stringify({args: ["package", "show", "editor_target"]})
+    ])));
+    if (results.length !== 12 || results.some(result => !result.includes("editor_target"))) {
+        throw new Error("Concurrent editor calls lost a result");
+    }
+    return `parallel calls completed: ${results.length}`;
+};
+"#).unwrap();
             executor(vec!["package".into(), "import".into(), target.to_string_lossy().into_owned()])
                 .await.unwrap();
             assert!(!manager.lock().unwrap().isPackageEnabled("editor_target"));
@@ -112,6 +124,23 @@ async fn editor_executes_against_the_live_runtime_without_reentering_the_applica
             assert_eq!(result["success"], true, "{output:?}");
             assert!(manager.lock().unwrap().isPackageEnabled("editor_target"),
                 "the original application must observe the editor's mutation, not a second package manager");
+
+            // Re-enter both the editor and execute_cli_command while their parent calls await.
+            let mut nested_args = vec!["package".to_string(), "show".to_string(), "editor_target".to_string()];
+            for _ in 0..6 {
+                nested_args = vec!["package".into(), "exec".into(), "operit_editor:operit_editor".into(),
+                    json!({"args": nested_args}).to_string()];
+            }
+            let nested_output = tokio::time::timeout(Duration::from_secs(20), executor(nested_args))
+                .await.expect("repeated nested editor and CLI calls must not deadlock")
+                .expect("nested editor execution must succeed");
+            assert!(nested_output.contains("editor_target"), "{nested_output}");
+
+            let parallel_output = tokio::time::timeout(Duration::from_secs(20), executor(vec![
+                "package".into(), "exec".into(), "editor_target:parallel".into(), "{}".into(),
+            ])).await.expect("Promise.all must complete every repeated editor call")
+                .expect("parallel editor execution must succeed");
+            assert!(parallel_output.contains("parallel calls completed: 12"), "{parallel_output}");
 
             // Runtime failures must propagate instead of returning the old fixed guide.
             let response = CoreLinkSharedClient::call(&proxy, CoreCallRequest::new(

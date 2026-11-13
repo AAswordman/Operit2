@@ -135,7 +135,10 @@ export function installMockRuntime(options?: {
     registerUiRoute() {},
     registerNavigationEntry() {},
     registerSystemPromptComposeHook() {},
-    registerPromptFinalizeHook() {}
+    registerPromptFinalizeHook() {},
+    registerPromptEstimateFinalizeHook() {},
+    registerMessageTransformHook() {},
+    registerMessageStreamTransform() {}
   };
 
   return {

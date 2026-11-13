@@ -1,5 +1,5 @@
 //! Bounded subprocess transport for platform-owned accessibility providers.
-use operit_host_api::UiAutomation::{UiAction, UiAutomationHost, UiPage};
+use operit_host_api::UiAutomation::{UiAction, UiAutomationHost, UiPage, UiWindow};
 use operit_host_api::{HostError, HostResult};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -101,15 +101,23 @@ impl ScriptUiAutomationHost {
                 String::from_utf8_lossy(&stderr)
             )));
         }
-        serde_json::from_slice(&stdout)
-            .map_err(|e| HostError::new(format!("Invalid UI provider response: {e}")))
+        operit_host_api::UiAutomation::decode_ui_json(&stdout)
     }
 }
 
 impl UiAutomationHost for ScriptUiAutomationHost {
+    /// Lists native windows without changing foreground focus.
+    fn list_windows(&self) -> HostResult<Vec<UiWindow>> {
+        serde_json::from_value(self.invoke("list_windows", &serde_json::json!({}))?)
+            .map_err(|e| HostError::new(e.to_string()))
+    }
     /// Decodes the canonical accessibility snapshot produced by this platform.
-    fn get_page_info(&self) -> HostResult<UiPage> {
-        serde_json::from_value(self.invoke("get_page_info", &serde_json::json!({}))?)
+    fn get_page_info(&self, window_id: Option<&str>) -> HostResult<UiPage> {
+        let parameters = match window_id {
+            Some(id) => serde_json::json!({"window_id": id}),
+            None => serde_json::json!({}),
+        };
+        serde_json::from_value(self.invoke("get_page_info", &parameters)?)
             .map_err(|e| HostError::new(e.to_string()))
     }
     /// Sends one input command to the same platform provider.

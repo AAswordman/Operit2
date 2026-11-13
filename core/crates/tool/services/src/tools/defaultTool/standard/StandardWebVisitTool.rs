@@ -194,7 +194,8 @@ impl ToolExecutor for StandardWebVisitTool {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         vec![self.invoke(tool)]
     }
 }

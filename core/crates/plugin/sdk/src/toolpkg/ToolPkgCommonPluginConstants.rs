@@ -17,6 +17,11 @@ pub const TOOLPKG_EVENT_XML_RENDER: &str = "toolpkg_xml_render";
 pub const TOOLPKG_EVENT_INPUT_MENU_TOGGLE: &str = "toolpkg_input_menu_toggle";
 pub const TOOLPKG_EVENT_CHAT_INPUT: &str = "toolpkg_chat_input";
 pub const TOOLPKG_EVENT_CHAT_VIEW: &str = "toolpkg_chat_view";
+/// Routes awaited text-only transformations without exposing structural message mutation.
+pub const TOOLPKG_EVENT_MESSAGE_TRANSFORM: &str = "toolpkg_message_transform";
+pub const TOOLPKG_EVENT_MESSAGE_STREAM_TRANSFORM: &str = "toolpkg_message_stream_transform";
+pub const TOOLPKG_REGISTRATION_MESSAGE_STREAM_TRANSFORM: &str = "ToolPkg.registerMessageStreamTransform";
+pub const TOOLPKG_REGISTRATION_MESSAGE_TRANSFORM_HOOK: &str = "ToolPkg.registerMessageTransformHook";
 pub const TOOLPKG_EVENT_CHAT_MESSAGE: &str = "toolpkg_chat_message";
 /// Routes the awaited generic conversation creation lifecycle envelope.
 pub const TOOLPKG_EVENT_CHAT_LIFECYCLE: &str = "toolpkg_chat_lifecycle";

@@ -30,6 +30,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             chatInputHooks: [],
             chatViewHooks: [],
             chatMessageHooks: [],
+            messageTransformHooks: [],
+            messageStreamTransforms: [],
             chatLifecycleHooks: [],
             chatMessageMenuItems: [],
             chatRuntimeHooks: [],
@@ -566,6 +568,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerChatInputHook: registerFunction('chatInputHooks', 'registerChatInputHook'),
             registerChatViewHook: registerFunction('chatViewHooks', 'registerChatViewHook'),
             registerChatMessageHook: registerFunction('chatMessageHooks', 'registerChatMessageHook'),
+            registerMessageTransformHook: registerFunction('messageTransformHooks', 'registerMessageTransformHook'),
+            registerMessageStreamTransform: registerFunction('messageStreamTransforms', 'registerMessageStreamTransform'),
             /** Captures exactly one exported creation handler for this authenticated package owner. */
             registerChatLifecycleHook: function(definition) {
                 var owner = resolveCurrentToolPkgTarget();
@@ -634,6 +638,36 @@ mod tests {
     use super::buildToolPkgRegistrationBridgeScript;
     use crate::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
     use operit_host_api::HostJavaScriptRuntime;
+
+    /// Captures durable text handlers without exposing manual display invalidation.
+    #[test]
+    fn captures_message_transform_registration() {
+        let mut context = crate::javascript_test::runtime();
+        context.evaluateHostJavaScriptVoid("test", r#"
+            globalThis.__operitExpose = function(name, value) { globalThis[name] = value; };
+        "#).unwrap();
+        context.evaluateHostJavaScriptVoid("test", &buildToolPkgApiRuntimeScript()).unwrap();
+        context.evaluateHostJavaScriptVoid("test", &buildToolPkgRegistrationBridgeScript(false)).unwrap();
+        context.evaluateHostJavaScriptVoid("test", r#"
+            function transformText(event) { return event.eventPayload.text.replace(/secret/g, ''); }
+            globalThis.__operitGetActiveModuleExports = function() { return { transformText: transformText }; };
+            ToolPkg.registerMessageTransformHook({ id: 'redact', function: transformText });
+            ToolPkg.registerMessageStreamTransform({ id: 'native', function: transformText });
+        "#).unwrap();
+        let capture = context.evaluateHostJavaScriptString("test",
+            "JSON.stringify(globalThis.__operitToolPkgRegistrationCapture.messageTransformHooks.map(JSON.parse))").unwrap();
+        let hooks: serde_json::Value = serde_json::from_str(&capture).unwrap();
+        assert_eq!(hooks[0]["id"], "redact");
+        assert_eq!(hooks[0]["function"], "transformText");
+        let capture = context.evaluateHostJavaScriptString("test",
+            "JSON.stringify(globalThis.__operitToolPkgRegistrationCapture.messageStreamTransforms.map(JSON.parse))").unwrap();
+        let hooks: serde_json::Value = serde_json::from_str(&capture).unwrap();
+        assert_eq!(hooks[0]["id"], "native");
+        assert_eq!(hooks[0]["function"], "transformText");
+        assert_eq!(context.evaluateHostJavaScriptString("test", "typeof ToolPkg.invalidateMessageTransforms").unwrap(), "undefined");
+        assert!(context.evaluateHostJavaScriptVoid("test",
+            "ToolPkg.registerMessageTransformHook({ id: 'invalid', function: 42 })").is_err());
+    }
 
     /// Verifies runtime marketplace markers can be evaluated repeatedly without capture side effects.
     #[test]

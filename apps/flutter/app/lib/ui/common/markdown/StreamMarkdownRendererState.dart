@@ -26,6 +26,9 @@ class StreamMarkdownRendererState {
   /// table cells and plain-text copy. Syntax is owned by Core's state machines.
   String applyEvent(Object raw) {
     final event = MarkdownRenderEvent.from(raw);
+    if (event.type == 'error') {
+      throw StateError(event.value ?? 'Message display transformation failed');
+    }
     final parent = event.parentBlockId;
     if (parent != null) {
       final owner = eventBuilder.xmlMarkdownStreamOwner(parent);

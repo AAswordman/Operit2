@@ -53,12 +53,20 @@ test('UI methods preserve selectors and dispatch through the selected device', a
   await vm.runInContext(`Tools.UI.clickElement('className', 'Button', 2)`, context);
   await vm.runInContext(`Tools.UI.setText('', 'editor')`, context);
   await vm.runInContext(`Tools.UI.swipe(1, 2, 3, 4, 500)`, context);
+  await vm.runInContext(`Tools.device('desktop').UI.listWindows()`, context);
+  await vm.runInContext(`Tools.device('desktop').UI.focusWindow('native:42')`, context);
+  await vm.runInContext(`Tools.device('desktop').UI.getPageInfo('native:42')`, context);
   assert.equal(requests[0][2], 'get_page_info');
   assert.equal(requests[0][4].nodeId, 'desktop');
   assert.deepEqual(plain(requests[1][3]), {resourceId:'save', text:'Save', partialMatch:false, index:1});
   assert.deepEqual(plain(requests[2][3]), {param1:'className', param2:'Button', param3:2});
   assert.deepEqual(plain(requests[3][3]), {text:'', resource_id:'editor'});
   assert.deepEqual(plain(requests[4][3]), {start_x:1, start_y:2, end_x:3, end_y:4, duration:500});
+  assert.equal(requests[5][2], 'list_windows');
+  assert.equal(requests[6][2], 'focus_window');
+  assert.deepEqual(plain(requests[6][3]), {window_id:'native:42'});
+  assert.deepEqual(plain(requests[7][3]), {window_id:'native:42'});
+  assert.equal(requests[7][4].nodeId, 'desktop');
 });
 
 test('generated Tools.device preserves Files overloads and leaves local Tools independent', async () => {

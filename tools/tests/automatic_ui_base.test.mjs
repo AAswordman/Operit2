@@ -28,7 +28,7 @@ function plain(value) {
 test('legacy package stays disabled and every declared tool has a display icon and localized name', () => {
   assert.equal(metadata.name, 'Automatic_ui_base');
   assert.equal(metadata.enabledByDefault, false);
-  assert.equal(metadata.tools.length, 11);
+  assert.equal(metadata.tools.length, 13);
   const { tools } = runtime();
   for (const tool of metadata.tools) {
     assert.ok(tool.display.label.zh.trim(), tool.name);
@@ -36,7 +36,25 @@ test('legacy package stays disabled and every declared tool has a display icon a
     assert.ok(tool.display.icon.trim(), tool.name);
     if (!tool.advice) assert.equal(typeof tools[tool.name], 'function', tool.name);
   }
-  assert.deepEqual(metadata.tools.find(tool => tool.name === 'get_page_info').parameters, []);
+  assert.equal(metadata.tools.find(tool => tool.name === 'get_page_info').parameters[0].name, 'window_id');
+});
+
+test('window discovery and focus preserve identities while model results contain only the compact summary', async () => {
+  const calls = [];
+  const page = {windowId: 'native:42', scope: 'desktop', truncated: false, summary: 'Button "Save" id="save" [0,0][10,10]', uiElements: {children: Array.from({length: 4501}, (_, index) => ({text: `node-${index}`}))}};
+  const {tools, results} = runtime({UI: {
+    async listWindows() { calls.push(['list']); return {windows: [{windowId: 'native:42'}]}; },
+    async focusWindow(id) { calls.push(['focus', id]); return {}; },
+    async getPageInfo(id) { calls.push(['tree', id]); return page; },
+  }});
+  await tools.list_windows({});
+  await tools.focus_window({window_id: 'native:42'});
+  await tools.get_page_info({window_id: 'native:42'});
+  assert.deepEqual(calls, [['list'], ['focus', 'native:42'], ['tree', 'native:42']]);
+  assert.equal(page.uiElements.children.at(-1).text, 'node-4500');
+  assert.equal(results[2].data.uiElements, undefined);
+  assert.equal(results[2].data.summary, page.summary);
+  assert.equal(results[2].data.windowId, 'native:42');
 });
 
 test('swipe duration, input clearing and element criteria reach the v2 UI provider', async () => {

@@ -386,6 +386,10 @@ pub struct SdkToolPkgContainerRuntime {
     pub chatViewHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageHooks")]
     pub chatMessageHooks: Vec<SdkToolPkgFunctionHookRuntime>,
+    #[serde(rename = "messageTransformHooks")]
+    pub messageTransformHooks: Vec<SdkToolPkgFunctionHookRuntime>,
+    #[serde(rename = "messageStreamTransforms")]
+    pub messageStreamTransforms: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatLifecycleHooks")]
     pub chatLifecycleHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageMenuItems")]

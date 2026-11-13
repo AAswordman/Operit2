@@ -5,9 +5,42 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Collections.Generic;
 public static class OperitUiInput {
     /// Gets the system window that currently owns foreground input.
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    private delegate bool EnumWindowCallback(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowCallback callback, IntPtr parameter);
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
+    [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr window);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int left, top, right, bottom; }
+    /// Enumerates native top-level windows without walking their accessibility descendants.
+    public static IntPtr[] Windows() {
+        var windows = new List<IntPtr>();
+        if (!EnumWindows((window, parameter) => { if (IsWindowVisible(window)) windows.Add(window); return true; }, IntPtr.Zero))
+            throw new InvalidOperationException("Windows could not enumerate desktop windows");
+        return windows.ToArray();
+    }
+    /// Reads a native title without requiring the target accessibility provider to respond.
+    public static string Title(IntPtr window) {
+        var text = new StringBuilder(GetWindowTextLength(window) + 1);
+        GetWindowText(window, text, text.Capacity);
+        return text.ToString();
+    }
+    /// Reads bounds in physical desktop coordinates.
+    public static string Bounds(IntPtr window) {
+        RECT rect;
+        if (!GetWindowRect(window, out rect)) throw new InvalidOperationException("Window bounds are unavailable");
+        return String.Format("[{0},{1}][{2},{3}]", rect.left, rect.top, rect.right, rect.bottom);
+    }
     /// Positions the pointer using the calling thread's desktop coordinate space.
     [DllImport("user32.dll", SetLastError = true)] public static extern bool SetCursorPos(int x, int y);
     /// Selects physical per-monitor coordinates for the provider thread.
@@ -48,26 +81,48 @@ if ([OperitUiInput]::SetThreadDpiAwarenessContext([IntPtr](-4)) -eq [IntPtr]::Ze
 }
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $params = $request.parameters
-$root = [System.Windows.Automation.AutomationElement]::FromHandle([OperitUiInput]::GetForegroundWindow())
-if ($null -eq $root) { throw 'There is no accessible foreground window' }
-$script:count = 0
-$script:truncated = $false
+
+# Describes a native window without collecting its accessibility subtree.
+function Read-Window([IntPtr]$handle) {
+    [uint32]$processId = 0
+    $null = [OperitUiInput]::GetWindowThreadProcessId($handle, [ref]$processId)
+    $process = Get-Process -Id $processId
+    return @{
+        windowId = $handle.ToInt64().ToString(); title = [OperitUiInput]::Title($handle)
+        packageName = $process.ProcessName; bounds = [OperitUiInput]::Bounds($handle)
+        isActive = $handle -eq [OperitUiInput]::GetForegroundWindow()
+        isFocused = $handle -eq [OperitUiInput]::GetForegroundWindow()
+        isMinimized = [OperitUiInput]::IsIconic($handle)
+    }
+}
+
+if ($request.operation -eq 'list_windows') {
+    $windows = @([OperitUiInput]::Windows() | ForEach-Object { Read-Window $_ })
+    ConvertTo-Json -InputObject $windows -Depth 5 -Compress
+    exit
+}
+$handle = if ($null -ne $params.window_id) { [IntPtr]([long]::Parse([string]$params.window_id)) } else { [OperitUiInput]::GetForegroundWindow() }
+if ($handle -eq [IntPtr]::Zero -or ![OperitUiInput]::IsWindow($handle)) { throw 'The selected window no longer exists' }
+if ($request.operation -eq 'focus_window') {
+    if ([OperitUiInput]::IsIconic($handle)) { $null = [OperitUiInput]::ShowWindow($handle, 9) }
+    $null = [OperitUiInput]::SetForegroundWindow($handle)
+    if ([OperitUiInput]::GetForegroundWindow() -ne $handle) { throw 'Windows denied foreground activation of the selected window' }
+    '{}'
+    exit
+}
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+if ($null -eq $root) { throw 'The selected window has no accessible root' }
 
 # Converts one UIA element without flattening away its accessibility hierarchy.
-function Read-UiNode($element, [int]$depth) {
-    $script:count++
+function Read-UiNode($element) {
     $current = $element.Current
     $rect = $current.BoundingRectangle
-    $children = [Collections.Generic.List[object]]::new()
-    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $children = [Collections.Generic.List[string]]::new()
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
     $child = $walker.GetFirstChild($element)
-    if ($depth -ge 40 -or $script:count -ge 4000) { $script:truncated = $script:truncated -or $null -ne $child }
-    else {
-        while ($null -ne $child) {
-            if ($script:count -ge 4000) { $script:truncated = $true; break }
-            $children.Add((Read-UiNode $child ($depth + 1)))
-            $child = $walker.GetNextSibling($child)
-        }
+    while ($null -ne $child) {
+        $children.Add((Read-UiNode $child))
+        $child = $walker.GetNextSibling($child)
     }
     $bounds = $null
     if (!$rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
@@ -81,13 +136,27 @@ function Read-UiNode($element, [int]$depth) {
             $value = $valuePattern.Current.Value
             if ($value.Length -gt 0 -and $value -ne $text) { $text = (@($text, $value) | Where-Object { $_.Length -gt 0 }) -join "`n" }
         }
+        $textPattern = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern)) {
+            $documentText = $textPattern.DocumentRange.GetText(-1)
+            if ($documentText.Length -gt 0 -and $documentText -ne $text) {
+                $text = (@($text, $documentText) | Where-Object { $_.Length -gt 0 }) -join "`n"
+            }
+        }
     }
-    return @{
+    $node = @{
         className = $current.ClassName; text = $text; contentDesc = $current.HelpText
         resourceId = $current.AutomationId; bounds = $bounds
         isClickable = $current.IsEnabled -and ($element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsInvokePatternAvailableProperty) -or $element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsSelectionItemPatternAvailableProperty) -or $element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsTogglePatternAvailableProperty) -or $element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty))
-        children = $children.ToArray()
-    }
+        properties = @{
+            role = $current.ControlType.ProgrammaticName; isEnabled = $current.IsEnabled
+            isFocused = $current.HasKeyboardFocus; isFocusable = $current.IsKeyboardFocusable
+            isOffscreen = $current.IsOffscreen; isPassword = $current.IsPassword
+            runtimeId = ($element.GetRuntimeId() -join '.')
+        }
+    } | ConvertTo-Json -Depth 5 -Compress
+    # Serialize each node independently so PowerShell's JSON depth limit cannot prune a deep tree.
+    return $node.Substring(0, $node.Length - 1) + ',"children":[' + ($children -join ',') + ']}'
 }
 
 # Sends an absolute-position mouse button transition in desktop pixel coordinates.
@@ -98,9 +167,10 @@ function Send-Mouse([int]$x, [int]$y, [uint32]$flags) {
 
 switch ($request.operation) {
     'get_page_info' {
-        $node = Read-UiNode $root 0
+        $node = Read-UiNode $root
         $process = Get-Process -Id $root.Current.ProcessId
-        @{ packageName = $process.ProcessName; activityName = $root.Current.Name; uiElements = $node; scope = 'desktop'; truncated = $script:truncated } | ConvertTo-Json -Depth 100 -Compress
+        $page = @{ windowId = $handle.ToInt64().ToString(); packageName = $process.ProcessName; activityName = $root.Current.Name; scope = 'desktop'; truncated = $false } | ConvertTo-Json -Compress
+        $page.Substring(0, $page.Length - 1) + ',"uiElements":' + $node + '}'
         exit
     }
     'tap' { Send-Mouse $params.x $params.y 2; Send-Mouse $params.x $params.y 4 }

@@ -67,6 +67,26 @@ export namespace UI {
   export type HostClickElementType = "resourceId" | "className" | "bounds";
 
   /**
+   * Describes one native window discovered through the owning device's UI provider.
+   */
+  export interface Window {
+    windowId: string;
+    title: string;
+    packageName: string;
+    bounds?: string;
+    isActive: boolean;
+    isFocused: boolean;
+    isMinimized: boolean;
+  }
+
+  /**
+   * Contains the native windows available for subsequent focus and tree requests.
+   */
+  export interface WindowList {
+    windows: Window[];
+  }
+
+  /**
    * Click on an element
    * Multiple call patterns supported:
    * - clickElement(resourceId: string): Click by resource ID
@@ -114,9 +134,17 @@ export namespace UI {
    */
   function clickElement(type: HostClickElementType, value: string, index: number): Promise<UIActionResultData>;
   /**
+   * Focuses exactly the native window returned by listWindows.
+   */
+  function focusWindow(window_id: string): Promise<UIActionResultData>;
+  /**
    * Get current page information
    */
-  function getPageInfo(): Promise<UIPageResultData>;
+  function getPageInfo(window_id?: string): Promise<UIPageResultData>;
+  /**
+   * Lists native windows with stable IDs, titles, bounds and focus state.
+   */
+  function listWindows(): Promise<WindowList>;
   /**
    * Long press at coordinates
    * @param x - X coordinate

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
@@ -12,6 +13,36 @@ import 'package:operit2/ui/theme/OperitGlassSurface.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
+  testWidgets(
+    'keeps timeline visible during repeated desktop wheel scrolling',
+    (tester) async {
+      await _pumpDashboard(
+        tester,
+        bridge: _UsageStatisticsBridge(),
+        size: const Size(1920, 1017),
+      );
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: const Offset(100, 100));
+      addTearDown(mouse.removePointer);
+      final plot = find.byKey(const ValueKey('usage-timeline-plot'));
+      for (var i = 0; i < 30; i++) {
+        final position = tester.getTopRight(plot) + const Offset(-20, 100);
+        await mouse.moveTo(position);
+        await tester.pumpAndSettle();
+        await tester.sendEventToBinding(
+          PointerScrollEvent(
+            position: position,
+            scrollDelta: Offset(0, i < 15 ? -120 : 120),
+          ),
+        );
+        await mouse.moveTo(position + const Offset(-1, 0));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byType(ErrorWidget), findsNothing);
+      }
+    },
+  );
+
   testWidgets('keeps heatmap and one model timeline on phone and desktop', (
     tester,
   ) async {

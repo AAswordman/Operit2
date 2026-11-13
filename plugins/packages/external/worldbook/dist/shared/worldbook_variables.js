@@ -1,7 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.syncWorldBookVariableContext = syncWorldBookVariableContext;
+exports.readWorldBookVariableContext = readWorldBookVariableContext;
+exports.readWorldBookVariableContexts = readWorldBookVariableContexts;
 exports.renderWorldBookContent = renderWorldBookContent;
+const index_js_1 = require("../i18n/index.js");
 const worldbook_storage_js_1 = require("./worldbook_storage.js");
 const DEFAULT_VARIABLE_NAME = "stat_data";
 async function readVariableStore() {
@@ -32,6 +35,7 @@ async function readVariableStore() {
         };
     }
 }
+/** Commits the complete variable store through the observed VFS boundary. */
 async function writeVariableStore(store) {
     const storage = await (0, worldbook_storage_js_1.initializeWorldBookStorage)();
     await Tools.Files.write(storage.variablesFile, JSON.stringify(store, null, 2));
@@ -661,6 +665,30 @@ async function updateWorldBookVariableContext(chatId, entries, callerCardId) {
         characterVariables,
         globalVariables: store.global_variables
     };
+}
+/** Reads variable values for regex substitution without processing messages or writing variable state. */
+async function readWorldBookVariableContext(chatId, participantId) {
+    return (await readWorldBookVariableContexts(chatId, [participantId])).get(participantId);
+}
+/** Reads one variable snapshot shared by every participant in a display window. */
+async function readWorldBookVariableContexts(chatId, participants) {
+    const path = `${ToolPkg.getConfigDir()}/variables.json`;
+    const exists = await Tools.Files.exists(path);
+    if (!exists.exists)
+        return new Map(participants.map(id => [id, { localVariables: {}, characterVariables: {}, globalVariables: {} }]));
+    const file = await Tools.Files.read(path);
+    if (typeof file.content !== "string")
+        throw new Error((0, index_js_1.currentWorldBookI18n)().regex.variablesReadFailed);
+    const store = JSON.parse(file.content);
+    for (const key of ["global_variables", "character_variables", "chats"]) {
+        if (!store || !store[key] || typeof store[key] !== "object" || Array.isArray(store[key]))
+            throw new Error((0, index_js_1.currentWorldBookI18n)().regex.variablesInvalid);
+    }
+    return new Map(participants.map(participantId => [participantId, {
+            localVariables: store.chats[chatId] ? store.chats[chatId].local_variables : {},
+            characterVariables: store.character_variables[participantId] ?? {},
+            globalVariables: store.global_variables,
+        }]));
 }
 function renderWorldBookContent(content, context) {
     if (!context) {

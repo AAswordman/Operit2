@@ -371,6 +371,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Could not load messages. Please try again.';
 
   @override
+  String messageTransformFailed(String error) {
+    return 'Failed to process message display: $error';
+  }
+
+  @override
   String get messageLocatorFavoriteFailed =>
       'Could not update favorite. Please try again.';
 

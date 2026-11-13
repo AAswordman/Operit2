@@ -61,12 +61,40 @@ pub enum UIHostClickElementType {
     #[serde(rename = "bounds")]
     Bounds,
 }
+
+/// Describes one native window discovered through the owning device's UI provider.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UIWindow {
+    #[serde(rename = "windowId")]
+    pub window_id: String,
+    pub title: String,
+    #[serde(rename = "packageName")]
+    pub package_name: String,
+    pub bounds: Option<String>,
+    #[serde(rename = "isActive")]
+    pub is_active: bool,
+    #[serde(rename = "isFocused")]
+    pub is_focused: bool,
+    #[serde(rename = "isMinimized")]
+    pub is_minimized: bool,
+}
+
+/// Contains the native windows available for subsequent focus and tree requests.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UIWindowList {
+    pub windows: Vec<UIWindow>,
+}
 /// Inspects the active accessible surface and performs element or coordinate interactions.
 pub trait UIHost: Send + Sync {
+    /// Lists native windows with stable IDs, titles, bounds and focus state.
+    fn listWindows(&self) -> JsFuture<UIWindowList>;
+    /// Focuses exactly the native window returned by listWindows.
+    fn focusWindow(&self, window_id: String) -> JsFuture<UIActionResultData>;
     ///
     ///Get current page information
     ///
-    fn getPageInfo(&self) -> JsFuture<UIPageResultData>;
+    fn getPageInfo(&self, window_id: Option<String>) -> JsFuture<UIPageResultData>;
     ///
     ///Tap at coordinates
     ///@param x - X coordinate

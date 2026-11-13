@@ -111,6 +111,7 @@ test('settings controls persist and update a live pet immediately, coalescing ed
     } },
   };
   const ctx = {
+    Modifier: { onSizeChanged: onSizeChanged => ({ onSizeChanged }) },
     useState(key, initial) {
       if (!states.has(key)) states.set(key, initial);
       return [states.get(key), value => states.set(key, value)];
@@ -131,6 +132,13 @@ test('settings controls persist and update a live pet immediately, coalescing ed
     const switches = [...nodes(tree)].filter(node => node.type === 'Switch');
     switches[0].props.onCheckedChange(false);
     await settle(); // First persistence is still pending while another control changes.
+    tree = plugin.settingsPage(ctx);
+    tree.props.modifier.onSizeChanged({ width: 1280, height: 800 });
+    tree = plugin.settingsPage(ctx);
+    assert.equal([...nodes(tree)].find(node => node.props.key === 'pet-panes').type, 'Row');
+    tree.props.modifier.onSizeChanged({ width: 360, height: 800 });
+    tree = plugin.settingsPage(ctx);
+    assert.equal([...nodes(tree)].find(node => node.props.key === 'pet-panes').type, 'Column');
     switches[1].props.onCheckedChange(true);
     release();
     await settle(); await settle();

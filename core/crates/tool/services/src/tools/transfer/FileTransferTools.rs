@@ -161,8 +161,9 @@ impl operit_tools::ToolExecutionManager::AsyncToolExecutor for FileTransferExecu
         })
     }
 
+    /// Executes an independent request through the owning resource services.
     fn invokeAndStreamAsync<'a>(
-        &'a mut self,
+        &'a self,
         tool: &'a AITool,
         _context: &'a ToolInvocationContext,
     ) -> ToolInvocationFuture<'a> {

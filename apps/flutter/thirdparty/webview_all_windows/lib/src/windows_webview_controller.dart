@@ -154,7 +154,7 @@ class WindowsWebViewController extends PlatformWebViewController {
   final List<StreamSubscription<dynamic>> _subscriptions =
       <StreamSubscription<dynamic>>[];
 
-  Future<void>? _initializationFuture;
+  late final Future<void> _initializationFuture;
   WindowsNavigationDelegate? _currentNavigationDelegate;
   String? _currentUrl;
   String? _pageStartedUrl;
@@ -319,9 +319,8 @@ class WindowsWebViewController extends PlatformWebViewController {
     ]);
   }
 
-  Future<void> _ensureInitialized() async {
-    await _initializationFuture!;
-  }
+  /// Reuses the controller's initialization future so rebuilds keep the surface mounted.
+  Future<void> _ensureInitialized() => _initializationFuture;
 
   void _handleUrlChanged(String url) {
     _currentUrl = url;

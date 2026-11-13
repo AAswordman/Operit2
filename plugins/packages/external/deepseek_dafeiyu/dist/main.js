@@ -105,6 +105,11 @@ function pet(ctx) {
     ]);
 }
 function settingsPage(ctx) {
+    const [width, setWidth] = ctx.useState("layoutWidth", 0);
+    const measure = ctx.Modifier.onSizeChanged(size => {
+        if (size.width !== width)
+            setWidth(size.width);
+    });
     const [settings, setSettings] = ctx.useState("settings", { ...exports.DEFAULTS });
     const [previewImages, setPreviewImages] = ctx.useState("previewImages", {});
     const [previewAction, setPreviewAction] = ctx.useState("previewAction", "idle");
@@ -190,22 +195,22 @@ function settingsPage(ctx) {
         UI.Switch({ checked: settings[key], enabled: !busy && ready,
             onCheckedChange: value => changeSettings({ ...changes.current.latest, [key]: value }) }),
     ]);
-    return UI.LazyColumn({ padding: 20, spacing: 16, fillMaxSize: true,
-        onLoad: async () => {
-            try {
-                const saved = validateSettings((await config()).settings);
-                changes.current.latest = saved;
-                setSettings(saved);
-                setPreviewImages(await sprites());
-                setPreviewAction(saved.walk ? "walk" : "idle");
-                await describe();
-                setReady(true);
-            }
-            catch (error) {
-                setStatus(String(error));
-            }
-        },
-    }, [
+    /** Initializes persisted settings and preview assets without changing in-progress edits on resize. */
+    async function load() {
+        try {
+            const saved = validateSettings((await config()).settings);
+            changes.current.latest = saved;
+            setSettings(saved);
+            setPreviewImages(await sprites());
+            setPreviewAction(saved.walk ? "walk" : "idle");
+            await describe();
+            setReady(true);
+        }
+        catch (error) {
+            setStatus(String(error));
+        }
+    }
+    const sections = [
         UI.Text({ text: "大肥鱼桌宠", style: "headlineMedium" }),
         UI.Text({ text: "让这只吃白饭的小蓝鲸，住在你的桌面上。", style: "bodyLarge" }),
         UI.Card({ fillMaxWidth: true }, [UI.Column({ padding: 16, spacing: 8, horizontalAlignment: "center" }, [
@@ -249,6 +254,17 @@ function settingsPage(ctx) {
             UI.TextButton({ text: "恢复默认设置", enabled: !busy, onClick: () => changeSettings({ ...exports.DEFAULTS }) }),
         ]),
         UI.Text({ text: "DeepSeek 社区二创，非官方插件。动作素材：github.com/PC2005-cloud/dsh-pet，允许开源使用、禁止商用；形象遵循 CC BY-NC-SA 4.0。完整来源与授权见 THIRD_PARTY_NOTICES.md。", style: "bodySmall" }),
+    ];
+    const [title, subtitle, preview, openActions, appearance, windowActions, attribution] = sections;
+    return UI.LazyColumn({ padding: 20, spacing: 16, fillMaxSize: true, modifier: measure, onLoad: load }, [
+        title, subtitle,
+        width >= 900
+            ? UI.Row({ key: "pet-panes", fillMaxWidth: true, spacing: 20, verticalAlignment: "start" }, [
+                UI.Column({ weight: 1, spacing: 16 }, [preview, openActions]),
+                UI.Column({ weight: 1, spacing: 16 }, [appearance, windowActions]),
+            ])
+            : UI.Column({ key: "pet-panes", fillMaxWidth: true, spacing: 16 }, [preview, openActions, appearance, windowActions]),
+        attribution,
     ]);
 }
 function registerToolPkg() {

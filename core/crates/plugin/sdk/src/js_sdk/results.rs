@@ -298,6 +298,9 @@ pub struct SimplifiedUINode {
     pub bounds: Option<String>,
     #[serde(rename = "isClickable")]
     pub is_clickable: bool,
+    /// Preserves platform accessibility roles, states and supported actions.
+    #[serde(default)]
+    pub properties: BTreeMap<String, serde_json::Value>,
     #[serde(rename = "children")]
     pub children: Vec<SimplifiedUINode>,
 }
@@ -310,18 +313,11 @@ impl SimplifiedUINode {
     /// Formats this node and its descendants as an indented tree.
     #[allow(non_snake_case)]
     pub fn toTreeString(&self, indent: Option<String>) -> String {
-        let indent = indent.unwrap_or_default();
-        let attributes = serde_json::json!({
-            "className": self.class_name, "text": self.text,
-            "contentDesc": self.content_desc, "resourceId": self.resource_id,
-            "bounds": self.bounds, "isClickable": self.is_clickable,
-        });
-        let mut output = format!("{indent}{attributes}");
-        let child_indent = format!("{indent}  ");
-        for child in &self.children {
-            output.push('\n');
-            output.push_str(&child.toTreeString(Some(child_indent.clone())));
-        }
+        let mut output = String::new();
+        let mut counts = [0usize; 4];
+        append_ui_summary(self, &indent.unwrap_or_default(), 0, &mut output, &mut counts);
+        let omitted = counts[1] - counts[2];
+        output.push_str(&format!("\n[UI summary: {} native nodes; {} shown; {} useful nodes omitted; {} empty nodes collapsed]", counts[0], counts[2], omitted, counts[0] - counts[1]));
         output
     }
     /// Reports whether the node contains information relevant to UI automation.
@@ -340,9 +336,124 @@ impl SimplifiedUINode {
             || !self.children.is_empty()
     }
 }
+
+/// Quotes one compact accessibility field without allowing a document to consume the summary budget.
+fn ui_summary_text(text: &str, limit: usize) -> String {
+    let mut value: String = text.split_whitespace()
+        .flat_map(|word| std::iter::once(' ').chain(word.chars())).skip(1).take(limit + 1).collect();
+    if value.chars().count() > limit { value.pop(); value.push('…'); }
+    serde_json::to_string(&value).expect("summary text serializes")
+}
+
+/// Writes useful nodes under a fixed model-context budget while keeping the complete native tree intact.
+fn append_ui_summary(node: &SimplifiedUINode, prefix: &str, depth: usize, output: &mut String, counts: &mut [usize; 4]) {
+    counts[0] += 1;
+    let useful = node.is_clickable
+        || [&node.text, &node.content_desc, &node.resource_id].iter().any(|value| value.as_ref().is_some_and(|text| !text.trim().is_empty()))
+        || ["isEditable", "isFocused"].iter().any(|key| node.properties.get(*key).and_then(serde_json::Value::as_bool) == Some(true));
+    let mut child_depth = depth;
+    if useful {
+        counts[1] += 1;
+        let mut fields = Vec::new();
+        if let Some(class) = &node.class_name {
+            fields.push(class.rsplit('.').next().expect("split has at least one component").to_string());
+        }
+        if let Some(role) = node.properties.get("role").and_then(serde_json::Value::as_str) {
+            let short_role = role.rsplit('.').next().expect("split has at least one component");
+            if !fields.first().is_some_and(|class| class == short_role) {
+                fields.push(format!("role={short_role}"));
+            }
+        }
+        if let Some(text) = node.text.as_deref().filter(|text| !text.trim().is_empty()) {
+            fields.push(ui_summary_text(text, 512));
+        }
+        if let Some(description) = node.content_desc.as_deref().filter(|text| !text.trim().is_empty()) {
+            if node.text.as_deref() != Some(description) { fields.push(format!("desc={}", ui_summary_text(description, 160))); }
+        }
+        if let Some(id) = node.resource_id.as_deref().filter(|text| !text.is_empty()) {
+            fields.push(format!("id={}", serde_json::to_string(id).expect("resource ID serializes")));
+        }
+        if let Some(bounds) = &node.bounds { fields.push(bounds.clone()); }
+        if node.is_clickable { fields.push("clickable".into()); }
+        for key in ["isFocused", "isEditable", "isSelected", "isChecked", "isScrollable", "isOffscreen"] {
+            if node.properties.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
+                fields.push(key.trim_start_matches("is").to_ascii_lowercase());
+            }
+        }
+        if node.properties.get("isEnabled").and_then(serde_json::Value::as_bool) == Some(false) {
+            fields.push("disabled".into());
+        }
+        if node.properties.get("isCheckable").and_then(serde_json::Value::as_bool) == Some(true)
+            && node.properties.get("isChecked").and_then(serde_json::Value::as_bool) == Some(false) {
+            fields.push("unchecked".into());
+        }
+        let line = format!("{prefix}{}{}\n", "  ".repeat(depth.min(12)), fields.join(" "));
+        // Reserve room for counts and the omission marker inside the 16k-character summary budget.
+        let line_chars = line.chars().count();
+        if counts[3] + line_chars <= 15_800 {
+            output.push_str(&line);
+            counts[2] += 1;
+            counts[3] += line_chars;
+        }
+        child_depth += 1;
+    }
+    for child in &node.children { append_ui_summary(child, prefix, child_depth, output, counts); }
+}
+
+#[cfg(test)]
+mod ui_summary_tests {
+    use super::*;
+
+    /// Creates an accessible input with native properties that must stay outside model text.
+    fn button(text: &str) -> SimplifiedUINode {
+        SimplifiedUINode {
+            class_name: Some("android.widget.Button".into()), text: Some(text.into()),
+            content_desc: None, resource_id: Some("save".into()), bounds: Some("[0,0][10,10]".into()),
+            is_clickable: true, properties: BTreeMap::from([
+                ("isFocused".into(), serde_json::json!(true)),
+                ("runtimeId".into(), serde_json::json!("native-private-metadata")),
+            ]), children: vec![],
+        }
+    }
+
+    /// Large native trees stay complete while their model presentation has a strict text budget.
+    #[test]
+    fn large_tree_keeps_raw_nodes_and_bounds_the_text_summary() {
+        let mut root = button("Window");
+        root.children = (0..4501).map(|index| button(&format!("button-{index}"))).collect();
+        let summary = root.toTreeString(None);
+        assert!(summary.chars().count() <= 16_000);
+        assert!(summary.contains("4502 native nodes"));
+        assert!(!summary.contains("; 0 useful nodes omitted;"));
+        assert!(!summary.contains("native-private-metadata"));
+        assert!(summary.contains("id=\"save\" [0,0][10,10] clickable focused"));
+        assert_eq!(root.children[4500].text.as_deref(), Some("button-4500"));
+    }
+
+    /// Empty containers disappear from text and long document values cannot flood model context.
+    #[test]
+    fn summary_flattens_empty_containers_and_shortens_document_text() {
+        let mut root = button("");
+        root.is_clickable = false;
+        root.resource_id = None;
+        root.properties.clear();
+        root.children.push(button(&"very long document ".repeat(2000)));
+        let summary = root.toTreeString(None);
+        assert!(summary.starts_with("Button "));
+        assert_eq!(summary.lines().filter(|line| line.starts_with("Button ")).count(), 1);
+        assert!(summary.contains('…'));
+        assert!(summary.len() < 1500);
+        assert!(root.children[0].text.as_ref().unwrap().len() > 30_000);
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Captures the active surface and its platform-neutral accessibility hierarchy.
 pub struct UIPageResultData {
+    /// Identifies the native window that owns this snapshot.
+    #[serde(rename = "windowId")]
+    pub window_id: String,
+    /// Contains a bounded, compact text view for model context; uiElements retains the full tree.
+    pub summary: String,
     /// Reports the visibility granted by the owning platform.
     pub scope: String,
     /// Reports whether the provider reached its traversal budget.
@@ -359,10 +470,13 @@ impl UIPageResultData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         format!(
-            "Package: {}\nActivity: {}\n{}",
+            "Window: {}\nScope: {}\nTruncated: {}\nPackage: {}\nActivity: {}\n{}",
+            self.window_id,
+            self.scope,
+            self.truncated,
             self.package_name,
             self.activity_name,
-            self.ui_elements.toTreeString(None)
+            self.summary
         )
     }
 }

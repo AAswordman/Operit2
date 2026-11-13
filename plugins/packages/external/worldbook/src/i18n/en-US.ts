@@ -1,6 +1,12 @@
 import type { WorldBookI18n } from "./types";
+import { WORLDBOOK_REGEX_EN_US } from "./regex.js";
+import { WORLDBOOK_SERVICE_EN_US } from "./service.js";
+import { WORLDBOOK_SNIPPETS_EN_US } from "./snippets.js";
 
 export const WORLDBOOK_I18N_EN_US: WorldBookI18n = {
+  regex: WORLDBOOK_REGEX_EN_US,
+  service: WORLDBOOK_SERVICE_EN_US,
+  contentSnippets: WORLDBOOK_SNIPPETS_EN_US,
   unknown: "Unknown error",
   toastLoadFailedPrefix: "Load failed: ",
   toastActionFailedPrefix: "Action failed: ",

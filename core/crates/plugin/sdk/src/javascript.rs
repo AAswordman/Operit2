@@ -580,6 +580,12 @@ pub struct ToolPkgMainRegistrationCapture {
     pub chatViewHooks: Vec<String>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<String>,
+    /// Captures awaited message text transformations.
+    #[serde(rename = "messageTransformHooks", default)]
+    pub messageTransformHooks: Vec<String>,
+    /// Captures native display-program preparation handlers.
+    #[serde(default)]
+    pub messageStreamTransforms: Vec<String>,
     /// Captures real package-owned lifecycle handler definitions for the strict registration parser.
     #[serde(rename = "chatLifecycleHooks", default)]
     pub chatLifecycleHooks: Vec<String>,

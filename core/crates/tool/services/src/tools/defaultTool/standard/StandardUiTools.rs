@@ -1,7 +1,7 @@
 //! Accessibility tools shared by every host, without platform dispatch.
 use operit_host_api::UiAutomation::{UiAction, UiAutomationHost, UiNode, UiScope};
 use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, SimplifiedUINode, ToolResultData, UIActionResultData, UIPageResultData,
+    stringResultData, JsonResultData, SimplifiedUINode, ToolResultData, UIActionResultData, UIPageResultData,
 };
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
@@ -29,17 +29,29 @@ impl UiToolExecutor {
         {
             return Err("This UI interface addresses the active surface; explicit display selection is not supported".into());
         }
-        if tool.name == "get_page_info" {
+        if tool.name == "list_windows" {
             if !tool.parameters.is_empty() {
-                return Err(
-                    "get_page_info returns the canonical tree and accepts no parameters".into(),
-                );
+                return Err("list_windows accepts no parameters".into());
             }
-            let page = host.get_page_info().map_err(|error| error.message)?;
+            let windows = host.list_windows().map_err(|error| error.message)?;
+            return Ok(ToolResultData::JsonResultData(JsonResultData {
+                value: serde_json::json!({"windows": windows}),
+            }));
+        }
+        if tool.name == "get_page_info" {
+            if tool.parameters.len() > 1 || tool.parameters.iter().any(|p| p.name != "window_id" || p.value.trim().is_empty()) {
+                return Err("get_page_info accepts only an optional nonempty window_id".into());
+            }
+            let window_id = tool.parameters.first().map(|p| p.value.as_str());
+            let page = host.get_page_info(window_id).map_err(|error| error.message)?;
+            let ui_elements = plugin_node(page.ui_elements);
+            let summary = ui_elements.toTreeString(None);
             let data = UIPageResultData {
+                window_id: page.window_id,
+                summary,
                 package_name: page.package_name,
                 activity_name: page.activity_name,
-                ui_elements: plugin_node(page.ui_elements),
+                ui_elements,
                 truncated: page.truncated,
                 scope: match page.scope {
                     UiScope::Desktop => "desktop",
@@ -57,6 +69,7 @@ impl UiToolExecutor {
         }
         let mut operation = tool.name.as_str();
         let allowed = match operation {
+            "focus_window" => &["window_id"][..],
             "tap" | "long_press" => &["x", "y"][..],
             "swipe" => &["start_x", "start_y", "end_x", "end_y", "duration"][..],
             "set_input_text" => &["text", "resource_id"][..],
@@ -73,7 +86,7 @@ impl UiToolExecutor {
         }
         if operation == "click_element" {
             let criteria = click_criteria(&parameters)?;
-            let page = host.get_page_info().map_err(|error| error.message)?;
+            let page = host.get_page_info(None).map_err(|error| error.message)?;
             let mut matches = Vec::new();
             collect_matches(&page.ui_elements, &criteria, &mut matches)?;
             let index = criteria
@@ -128,6 +141,9 @@ impl UiToolExecutor {
         if operation == "press_key" && !parameters.contains_key("key_code") {
             return Err("keyCode is required".into());
         }
+        if operation == "focus_window" && !parameters.get("window_id").is_some_and(|value| !text(value).trim().is_empty()) {
+            return Err("window_id is required and must not be empty".into());
+        }
         let coordinates = parameters
             .get("x")
             .and_then(Value::as_f64)
@@ -156,6 +172,7 @@ fn plugin_node(node: UiNode) -> SimplifiedUINode {
         resource_id: node.resource_id,
         bounds: node.bounds,
         is_clickable: node.is_clickable,
+        properties: node.properties,
         children: node.children.into_iter().map(plugin_node).collect(),
     }
 }
@@ -171,7 +188,7 @@ impl ToolExecutor for UiToolExecutor {
     /// Marks inspection as read access and every input action as write access.
     fn accessSpec(&self, tool: &AITool) -> Result<ToolAccessSpec, String> {
         Ok(ToolAccessSpec {
-            effect: if tool.name == "get_page_info" {
+            effect: if matches!(tool.name.as_str(), "get_page_info" | "list_windows") {
                 ToolEffect::READ
             } else {
                 ToolEffect::WRITE
@@ -180,7 +197,7 @@ impl ToolExecutor for UiToolExecutor {
         })
     }
     /// Returns a typed result or an explicit provider error through the ordinary pipeline.
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         vec![match self.execute(tool) {
             Ok(result) => ToolResult {
                 toolName: tool.name.clone(),
@@ -358,8 +375,18 @@ mod tests {
         actions: Mutex<Vec<(String, Value)>>,
     }
     impl UiAutomationHost for FakeHost {
+        /// Supplies a stable native window identity for discovery tests.
+        fn list_windows(&self) -> HostResult<Vec<operit_host_api::UiAutomation::UiWindow>> {
+            Ok(vec![operit_host_api::UiAutomation::UiWindow {
+                window_id: "editor:1".into(), title: "editor".into(), package_name: "test".into(),
+                bounds: Some("[0,0][400,400]".into()), is_active: true, is_focused: true, is_minimized: false,
+            }])
+        }
         /// Supplies a real nested canonical snapshot to the common executor.
-        fn get_page_info(&self) -> HostResult<UiPage> {
+        fn get_page_info(&self, window_id: Option<&str>) -> HostResult<UiPage> {
+            if window_id.is_some_and(|id| id != "editor:1") {
+                return Err(operit_host_api::HostError::new("Window no longer exists"));
+            }
             let node = |text: &str, bounds: &str| UiNode {
                 class_name: Some("Button".into()),
                 text: Some(text.into()),
@@ -367,6 +394,7 @@ mod tests {
                 resource_id: Some("save".into()),
                 bounds: Some(bounds.into()),
                 is_clickable: true,
+                properties: std::collections::BTreeMap::from([("role".into(), Value::String("button".into()))]),
                 children: vec![],
             };
             let mut root = node("Window", "[0,0][400,400]");
@@ -375,6 +403,7 @@ mod tests {
                 node("Save copy", "[-20,40][0,60]"),
             ];
             Ok(UiPage {
+                window_id: "editor:1".into(),
                 package_name: "test".into(),
                 activity_name: "editor".into(),
                 ui_elements: root,
@@ -412,6 +441,8 @@ mod tests {
     fn unavailable_system_provider_is_an_explicit_error() {
         let executor = UiToolExecutor { host: None };
         for name in [
+            "list_windows",
+            "focus_window",
             "get_page_info",
             "tap",
             "long_press",
@@ -443,6 +474,27 @@ mod tests {
         assert!(!page.truncated);
         assert_eq!(page.ui_elements.children.len(), 2);
         assert_eq!(page.ui_elements.children[0].text.as_deref(), Some("Save"));
+        assert_eq!(page.ui_elements.children[0].properties["role"], "button");
+        assert_eq!(page.window_id, "editor:1");
+    }
+
+    /// Keeps discovery read-only, forwards focus and rejects stale explicit targets.
+    #[test]
+    fn windows_are_discoverable_focusable_and_explicitly_addressable() {
+        let host = Arc::new(FakeHost { actions: Mutex::new(vec![]) });
+        let executor = UiToolExecutor { host: Some(host.clone()) };
+        let ToolResultData::JsonResultData(list) = executor.execute(&call("list_windows", &[])).unwrap() else {
+            panic!("window list")
+        };
+        assert_eq!(list.value["windows"][0]["windowId"], "editor:1");
+        assert_eq!(executor.accessSpec(&call("list_windows", &[])).unwrap().effect, ToolEffect::READ);
+        executor.execute(&call("focus_window", &[("window_id", "editor:1")])).unwrap();
+        assert_eq!(host.actions.lock().unwrap()[0], ("focus_window".into(), serde_json::json!({"window_id": "editor:1"})));
+        assert!(executor.execute(&call("get_page_info", &[("window_id", "editor:1")])).is_ok());
+        assert!(executor.execute(&call("get_page_info", &[("window_id", "closed")])).is_err());
+        assert!(executor.execute(&call("focus_window", &[("window_id", "")])).is_err());
+        assert!(executor.execute(&call("get_page_info", &[("window_id", "")])).is_err());
+        assert!(executor.execute(&call("list_windows", &[("window_id", "editor:1")])).is_err());
     }
 
     /// Exercises exact selection, partial matching, indexes and negative monitor coordinates.

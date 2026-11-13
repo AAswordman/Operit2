@@ -1,3 +1,4 @@
+import { currentWorldBookI18n } from "../i18n/index.js";
 const LEGACY_WORLD_BOOK_DIR = "/sdcard/Download/Operit/worldbook";
 const LEGACY_WORLD_BOOK_FILE = `${LEGACY_WORLD_BOOK_DIR}/entries.json`;
 
@@ -99,11 +100,11 @@ export async function readWorldBookGroups<T>(): Promise<T[]> {
   const storage = await initializeWorldBookStorage();
   const fileResult = await Tools.Files.read(storage.groupsFile);
   if (fileResult?.content == null) {
-    throw new Error("世界书分组文件读取失败");
+    throw new Error(currentWorldBookI18n().service.groupsReadFailed);
   }
   const parsed = JSON.parse(fileResult.content);
   if (!Array.isArray(parsed)) {
-    throw new Error("世界书分组文件格式无效");
+    throw new Error(currentWorldBookI18n().service.groupsInvalid);
   }
   return parsed as T[];
 }

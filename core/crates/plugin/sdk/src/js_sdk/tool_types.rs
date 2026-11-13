@@ -5,6 +5,8 @@ use super::results::*;
 /// Maps every built-in tool name to its concrete public result type.
 #[operit_plugin_sdk_macros::tool_display]
 pub struct ToolResultMap {
+    pub list_windows: JsonResultData,
+    pub focus_window: UIActionResultData,
     pub get_page_info: UIPageResultData,
     pub tap: UIActionResultData,
     pub long_press: UIActionResultData,

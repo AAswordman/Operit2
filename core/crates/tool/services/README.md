@@ -68,6 +68,20 @@ the top-level runtime injects an SDK `JsExecutionProvider`.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
 
+## Concurrent Invocations
+
+All registered executors are `Send + Sync` services invoked through `&self`.
+The registry retains an `Arc` for each invocation and releases its own lock
+before validation, admission or execution. Calls with the same tool name can
+overlap, including nested package and CLI calls waiting on other chats.
+Arguments, captured caller context and results belong to each invocation.
+Resource services own synchronization for a specific terminal session, database
+handle or other mutable resource; the registry does not serialize entire tools.
+Replacing or removing a registration affects new calls while existing calls
+retain their original service. Built-in registration initializes once across
+concurrent callers. AI tool batches remain serial and preserve result order;
+scripts may dispatch multiple calls with `Promise.all`.
+
 ## MCP Transport Lifecycle
 
 Remote MCP uses the HTTP Host for both POST responses and server event streams.

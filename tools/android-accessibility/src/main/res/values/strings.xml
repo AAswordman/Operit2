@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Operit2 Accessibility</string>
+    <string name="service_description">Let Operit2 discover system windows, read complete accessibility trees and interact with the selected window.</string>
+    <string name="setup_description">Install this companion alongside Operit2, then enable Operit2 Accessibility in system accessibility settings.</string>
+    <string name="open_settings">Open accessibility settings</string>
+    <string name="status_enabled">Accessibility service connected</string>
+    <string name="status_disabled">Accessibility service is disabled</string>
+</resources>

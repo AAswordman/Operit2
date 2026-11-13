@@ -346,6 +346,7 @@
 }
 */
 
+import { currentWorldBookI18n } from "../i18n/index.js";
 import {
   createWorldBookEntry,
   deleteWorldBookEntry,
@@ -382,24 +383,24 @@ async function getEntry(params: Pick<WorldBookMutationParams, "id">): Promise<un
 
 async function createEntry(params: WorldBookMutationParams): Promise<unknown> {
   const entry = await createWorldBookEntry(params);
-  return { success: true, message: "条目已创建", entry };
+  return { success: true, message: currentWorldBookI18n().service.created, entry };
 }
 
 async function updateEntry(params: WorldBookMutationParams): Promise<unknown> {
   const entry = await updateWorldBookEntry(params);
-  return { success: true, message: "条目已更新", entry };
+  return { success: true, message: currentWorldBookI18n().service.updated, entry };
 }
 
 async function deleteEntry(params: Pick<WorldBookMutationParams, "id">): Promise<unknown> {
   const removed = await deleteWorldBookEntry(String(params.id || ""));
-  return { success: true, message: `条目已删除: ${removed.name}` };
+  return { success: true, message: currentWorldBookI18n().service.deleted(removed.name) };
 }
 
 async function toggleEntry(params: Pick<WorldBookMutationParams, "id">): Promise<unknown> {
   const entry = await toggleWorldBookEntry(String(params.id || ""));
   return {
     success: true,
-    message: `${entry.name} 已${entry.enabled ? "启用" : "禁用"}`,
+    message: currentWorldBookI18n().service.toggled(entry.name, entry.enabled),
     entry
   };
 }
@@ -409,9 +410,7 @@ async function importEntries(params: WorldBookImportParams): Promise<unknown> {
   return {
     success: true,
     message:
-      result.warning_count > 0
-        ? `已导入 ${result.imported_count} 个条目，并产生 ${result.warning_count} 条兼容性提示`
-        : `已导入 ${result.imported_count} 个条目`,
+      currentWorldBookI18n().service.imported(result.imported_count, result.warning_count),
     result
   };
 }

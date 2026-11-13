@@ -652,9 +652,11 @@ class _UsageTimelineState extends State<UsageTimeline> {
         final width = constraints.maxWidth;
         final bucketLabel = _bucketLabel(l10n, data);
         final plot = _plotRect(Size(width, height));
+
+        /// Resolves selection using the window updated by preceding wheel events.
         void select(Offset position) {
           if (!plot.contains(position)) return;
-          final index = data.bucketAt((position.dx - plot.left) / plot.width);
+          final index = _data.bucketAt((position.dx - plot.left) / plot.width);
           if (index != _selected || _selectedPlot != plotKey) {
             setState(() {
               _selected = index;

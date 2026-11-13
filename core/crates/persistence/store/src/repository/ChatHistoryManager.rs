@@ -1750,6 +1750,13 @@ impl ChatHistoryManager {
             sqliteParams![chatId])
     }
 
+    /// Counts later persisted messages without hydrating previews, parts or variants.
+    pub fn loadChatMessageDepths(&self, chatId: &str, timestamps: &[i64]) -> ChatHistoryManagerResult<Vec<i32>> {
+        let Some(first) = timestamps.iter().min() else { return Ok(Vec::new()); };
+        let later = self.messageDao.getMessageTimestampsAfter(chatId, *first)?;
+        Ok(timestamps.iter().map(|timestamp| (later.len() - later.partition_point(|value| value <= timestamp)) as i32).collect())
+    }
+
     /// Loads lightweight message previews for locator search UI.
     pub fn loadChatMessageLocatorPreviews(
         &self,

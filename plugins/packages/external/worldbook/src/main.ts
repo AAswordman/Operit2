@@ -1,3 +1,6 @@
+import regexManagerScreen from "./ui/regex_manager/index.ui.js";
+import { onRegexMessageTransform, onRegexPromptFinalize, prepareRegexDisplay, readRegexRules, regexWorldInfo, type RegexRule } from "./shared/worldbook_regex.js";
+export { onRegexMessageTransform, onRegexPromptFinalize, prepareRegexDisplay };
 import worldbookManagerScreen from "./ui/worldbook_manager/index.ui.js";
 import { initializeWorldBookStorage, readWorldBookEntries } from "./shared/worldbook_storage.js";
 import {
@@ -183,6 +186,7 @@ interface PreparationSnapshot {
   callerCardId: string;
   data: Promise<{
     enabledEntries: WorldBookEntry[];
+    regexRules: RegexRule[];
     variableContext: WorldBookVariableRenderContext | null;
   }>;
 }
@@ -206,12 +210,12 @@ async function readPreparation(event: PromptEvent, consume: boolean) {
       chatId,
       callerCardId,
       data: (async () => {
-        const allEntries = await readWorldBookEntries<WorldBookEntry>();
+        const [allEntries, regexRules] = await Promise.all([readWorldBookEntries<WorldBookEntry>(), readRegexRules()]);
         const enabledEntries = allEntries.filter((entry) => entry && entry.enabled !== false);
         enabledEntries.sort((left, right) => (right.priority || 50) - (left.priority || 50));
         // Variable patches and initialization still run even if no entry matches.
         const variableContext = await resolveVariableContext(chatId, callerCardId, allEntries);
-        return { enabledEntries, variableContext };
+        return { enabledEntries, variableContext, regexRules };
       })()
     };
     if (key && !consume) {
@@ -230,16 +234,15 @@ async function readPreparation(event: PromptEvent, consume: boolean) {
   }
 }
 
+/** Renders variables and world-info regexes before adding injection wrappers. */
 function renderEntries(
   entries: WorldBookEntry[],
-  variableContext: WorldBookVariableRenderContext | null
+  variableContext: WorldBookVariableRenderContext | null,
+  participantId: string,
+  rules: RegexRule[],
 ): WorldBookEntry[] {
-  if (!variableContext) {
-    return entries;
-  }
-  return entries.map((entry) => ({
-    ...entry,
-    content: renderWorldBookContent(String(entry.content || ""), variableContext)
+  return entries.map(entry => ({ ...entry,
+    content: regexWorldInfo(renderWorldBookContent(entry.content, variableContext), rules, participantId, variableContext),
   }));
 }
 
@@ -264,7 +267,7 @@ export async function systemPromptHook(
     return null;
   }
 
-  const { enabledEntries, callerCardId, variableContext } = await readPreparation(event, false);
+  const { enabledEntries, callerCardId, variableContext, regexRules } = await readPreparation(event, false);
   const hitEntries = enabledEntries.filter(
     (entry) =>
       entry.always_active &&
@@ -277,7 +280,7 @@ export async function systemPromptHook(
   }
 
   const currentPrompt = event.eventPayload?.systemPrompt || "";
-  const renderedEntries = renderEntries(hitEntries, variableContext);
+  const renderedEntries = renderEntries(hitEntries, variableContext, callerCardId, regexRules);
   const { prependEntries, appendEntries } = splitEntriesByPosition(renderedEntries);
   return { systemPrompt: applyTextInjection(currentPrompt, prependEntries, appendEntries) };
 }
@@ -290,7 +293,7 @@ export async function finalizeHook(
     return null;
   }
 
-  const { enabledEntries, callerCardId, variableContext } = await readPreparation(event, true);
+  const { enabledEntries, callerCardId, variableContext, regexRules } = await readPreparation(event, true);
   const promptEntries = enabledEntries.filter(
     (entry) => entry.inject_target === "user" || normalizeInjectPosition(entry) === "at_depth"
   );
@@ -360,7 +363,7 @@ export async function finalizeHook(
   let nextProcessedInput = String(payload.processedInput || payload.rawInput || "");
 
   if (hitSystemEntries.length > 0) {
-    const renderedSystemEntries = renderEntries(hitSystemEntries, variableContext);
+    const renderedSystemEntries = renderEntries(hitSystemEntries, variableContext, callerCardId, regexRules);
     const { prependEntries, appendEntries } = splitEntriesByPosition(renderedSystemEntries);
     let injected = false;
     const sysNext: ToolPkg.PromptTurn[] = [];
@@ -385,13 +388,13 @@ export async function finalizeHook(
   }
 
   if (hitUserEntries.length > 0) {
-    const renderedUserEntries = renderEntries(hitUserEntries, variableContext);
+    const renderedUserEntries = renderEntries(hitUserEntries, variableContext, callerCardId, regexRules);
     const { prependEntries, appendEntries } = splitEntriesByPosition(renderedUserEntries);
     nextProcessedInput = applyTextInjection(nextProcessedInput, prependEntries, appendEntries);
   }
 
   if (hitChatEntries.length > 0) {
-    nextHistory = insertAtDepthEntries(nextHistory, renderEntries(hitChatEntries, variableContext));
+    nextHistory = insertAtDepthEntries(nextHistory, renderEntries(hitChatEntries, variableContext, callerCardId, regexRules));
   }
 
   return {
@@ -404,7 +407,10 @@ export async function onServiceInitialize(_event: ToolPkg.AppLifecycleHookEvent)
   await initializeWorldBookStorage();
 }
 
+/** Registers lifecycle, management UI, and matching send and estimate prompt handlers. */
 export function registerToolPkg() {
+  ToolPkg.registerMessageTransformHook({ id: "worldbook_regex_message", function: onRegexMessageTransform });
+  ToolPkg.registerMessageStreamTransform({ id: "worldbook_regex_display", function: prepareRegexDisplay });
   ToolPkg.registerAppLifecycleHook({
     id: "service-initialize",
     event: "application_on_create",
@@ -421,6 +427,12 @@ export function registerToolPkg() {
       zh: "世界书管理",
       en: "World Book Manager"
     }
+  });
+
+  ToolPkg.registerUiRoute({
+    id: "regex_manager", route: "toolpkg:com.operit.worldbook:ui:regex_manager",
+    runtime: "compose_dsl", screen: regexManagerScreen, params: {},
+    title: { zh: "世界书正则", en: "World Book Regex" },
   });
 
   ToolPkg.registerNavigationEntry({
@@ -445,5 +457,12 @@ export function registerToolPkg() {
     function: finalizeHook
   });
 
+  ToolPkg.registerPromptEstimateFinalizeHook({
+    id: "worldbook_keyword_estimate",
+    function: finalizeHook
+  });
+
+  ToolPkg.registerPromptFinalizeHook({ id: "worldbook_regex_prompt", function: onRegexPromptFinalize });
+  ToolPkg.registerPromptEstimateFinalizeHook({ id: "worldbook_regex_estimate", function: onRegexPromptFinalize });
   return true;
 }

@@ -456,8 +456,27 @@ mod payload_tests {
         assert_eq!(payload["promptFunctionType"], "VOICE");
         assert_eq!(payload["useEnglish"], false);
     }
+
+    /// Lets plugins clear complete fields while retaining exact whitespace and omitted fields.
+    #[test]
+    fn explicit_empty_prompt_replacements_are_not_omissions() {
+        let empty = parse_prompt_object_result(&serde_json::json!({
+            "rawInput": "", "processedInput": "", "systemPrompt": "", "toolPrompt": " \n"
+        }).as_object().unwrap());
+        assert_eq!(empty.raw_input.as_deref(), Some(""));
+        assert_eq!(empty.processed_input.as_deref(), Some(""));
+        assert_eq!(empty.system_prompt.as_deref(), Some(""));
+        assert_eq!(empty.tool_prompt.as_deref(), Some(" \n"));
+        let omitted = parse_prompt_object_result(&serde_json::Map::new());
+        assert!(omitted.processed_input.is_none());
+        for event in [TOOLPKG_EVENT_PROMPT_INPUT, TOOLPKG_EVENT_PROMPT_FINALIZE,
+            TOOLPKG_EVENT_PROMPT_ESTIMATE_FINALIZE] {
+            assert_eq!(parse_prompt_string_result(event, "").unwrap().processed_input.as_deref(), Some(""));
+        }
+    }
 }
 
+/// Decodes a mutation while preserving explicit empty text replacements.
 fn parse_prompt_hook_result(
     event: &str,
     decoded: Option<&Value>,
@@ -471,10 +490,8 @@ fn parse_prompt_hook_result(
     }
 }
 
+/// Maps a string result to the text field owned by the current hook family.
 fn parse_prompt_string_result(event: &str, value: &str) -> Option<PromptHookMutation> {
-    if value.trim().is_empty() {
-        return None;
-    }
     let mut mutation = PromptHookMutation::default();
     match event {
         TOOLPKG_EVENT_PROMPT_INPUT
@@ -516,19 +533,18 @@ fn parse_prompt_array_result(
     Some(mutation)
 }
 
+/// Distinguishes omitted fields from explicitly cleared fields.
 fn parse_prompt_object_result(object: &serde_json::Map<String, Value>) -> PromptHookMutation {
     let mut mutation = PromptHookMutation::default();
     if let Some(value) = object
         .get("rawInput")
         .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
     {
         mutation.raw_input = Some(value.to_string());
     }
     if let Some(value) = object
         .get("processedInput")
         .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
     {
         mutation.processed_input = Some(value.to_string());
     }
@@ -541,14 +557,12 @@ fn parse_prompt_object_result(object: &serde_json::Map<String, Value>) -> Prompt
     if let Some(value) = object
         .get("systemPrompt")
         .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
     {
         mutation.system_prompt = Some(value.to_string());
     }
     if let Some(value) = object
         .get("toolPrompt")
         .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
     {
         mutation.tool_prompt = Some(value.to_string());
     }

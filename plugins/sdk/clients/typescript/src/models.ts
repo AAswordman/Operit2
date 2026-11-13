@@ -631,6 +631,8 @@ export interface ToolPkgContainerRuntime {
   readonly chatInputHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly chatViewHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly chatMessageHooks: Array<ToolPkgFunctionHookRuntime>;
+  readonly messageTransformHooks: Array<ToolPkgFunctionHookRuntime>;
+  readonly messageStreamTransforms: Array<ToolPkgFunctionHookRuntime>;
   readonly chatLifecycleHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly chatMessageMenuItems: Array<ToolPkgChatMessageMenuItemRuntime>;
   readonly chatRuntimeHooks: Array<ToolPkgFunctionHookRuntime>;
@@ -688,6 +690,8 @@ export function decodeToolPkgContainerRuntime(value: unknown): ToolPkgContainerR
     chatInputHooks: (input['chatInputHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     chatViewHooks: (input['chatViewHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     chatMessageHooks: (input['chatMessageHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
+    messageTransformHooks: (input['messageTransformHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
+    messageStreamTransforms: (input['messageStreamTransforms'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     chatLifecycleHooks: (input['chatLifecycleHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     chatMessageMenuItems: (input['chatMessageMenuItems'] as unknown[]).map((item) => decodeToolPkgChatMessageMenuItemRuntime(item)) as Array<ToolPkgChatMessageMenuItemRuntime>,
     chatRuntimeHooks: (input['chatRuntimeHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
@@ -746,6 +750,8 @@ export function encodeToolPkgContainerRuntime(value: ToolPkgContainerRuntime): R
     'chatInputHooks': value.chatInputHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'chatViewHooks': value.chatViewHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'chatMessageHooks': value.chatMessageHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
+    'messageTransformHooks': value.messageTransformHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
+    'messageStreamTransforms': value.messageStreamTransforms.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'chatLifecycleHooks': value.chatLifecycleHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'chatMessageMenuItems': value.chatMessageMenuItems.map(item => encodeToolPkgChatMessageMenuItemRuntime(item)),
     'chatRuntimeHooks': value.chatRuntimeHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),

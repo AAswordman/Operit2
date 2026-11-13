@@ -7,6 +7,10 @@ type Section = "status" | "connection" | "reply" | "diagnostics";
 
 /** Guides setup around connecting QQ, choosing a role and starting the bot. */
 export default function settings(ctx: ComposeDslContext): ComposeNode {
+  const [width, setWidth] = ctx.useState("layoutWidth", 0);
+  const measure = ctx.Modifier.onSizeChanged(size => {
+    if (size.width !== width) setWidth(size.width);
+  });
   const initialized = ctx.useRef("initialized", false);
   const working = ctx.useRef("working", false);
   const [busy, setBusy] = ctx.useState("busy", "");
@@ -204,10 +208,7 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
   }
   replyFields.push(...feedback("reply"));
 
-  const children: ComposeNode[] = [
-    ctx.UI.Text({ text: "QQ 机器人", style: "headlineMedium" }),
-    description("接入 QQ，选择一个角色，就能自动回复消息。"),
-    card("statusCard", state, [
+  const statusCard = card("statusCard", state, [
       description(status?.autoReply.running ? `已回复 ${status.autoReply.repliedCount} 条消息` : "先完成接入和回复设置，再启动机器人。"),
       ...(busy ? [description(busy)] : []),
       ...(status?.service.lastError ? [ctx.UI.Text({ text: `连接错误：${status.service.lastError}`, color: colors.error })] : []),
@@ -217,9 +218,18 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
         else await operate("status", "正在刷新状态…", async () => { await refresh(); return ""; });
       } }),
       ...feedback("status"),
-    ], status?.autoReply.running === true),
-    card("connectionCard", "1. 接入 QQ", [...connectionFields, ...feedback("connection")]),
-    card("replyCard", "2. 设置回复", replyFields),
+    ], status?.autoReply.running === true);
+  const connectionCard = card("connectionCard", "1. 接入 QQ", [...connectionFields, ...feedback("connection")]);
+  const replyCard = card("replyCard", "2. 设置回复", replyFields);
+  const children: ComposeNode[] = [
+    ctx.UI.Text({ text: "QQ 机器人", style: "headlineMedium" }),
+    description("接入 QQ，选择一个角色，就能自动回复消息。"),
+    width >= 900
+      ? ctx.UI.Row({ key: "qqbot-panes", fillMaxWidth: true, spacing: 20, verticalAlignment: "start" }, [
+        ctx.UI.Column({ weight: 1, spacing: 16 }, [statusCard, connectionCard]),
+        ctx.UI.Column({ weight: 1 }, [replyCard]),
+      ])
+      : ctx.UI.Column({ key: "qqbot-panes", fillMaxWidth: true, spacing: 16 }, [statusCard, connectionCard, replyCard]),
     button("diagnostics", diagnostics ? "收起诊断信息" : "诊断信息", () => setDiagnostics(!diagnostics)),
   ];
   if (diagnostics) children.push(card("diagnosticsCard", "诊断信息", [
@@ -251,5 +261,5 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     await loadRoles();
   }
 
-  return ctx.UI.LazyColumn({ fillMaxSize: true, padding: 16, spacing: 16, onLoad: load }, children);
+  return ctx.UI.LazyColumn({ fillMaxSize: true, modifier: measure, padding: 16, spacing: 16, onLoad: load }, children);
 }

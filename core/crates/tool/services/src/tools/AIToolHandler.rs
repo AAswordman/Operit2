@@ -90,50 +90,6 @@ pub struct AIToolHandler {
     pub(crate) invocationSnapshot: crate::ToolExecutionManager::ToolInvocationSnapshot,
 }
 
-/// Keeps registration identity stable while an invocation owns or waits for its executor.
-#[derive(Clone)]
-enum ToolExecutorRegistration {
-    Exclusive(Arc<tokio::sync::Mutex<RegisteredToolExecutor>>),
-    Shared(Arc<dyn SharedToolExecutor>),
-}
-
-impl From<RegisteredToolExecutor> for ToolExecutorRegistration {
-    /// Preserves explicitly shared contracts and serializes each exclusive instance.
-    fn from(executor: RegisteredToolExecutor) -> Self {
-        match executor {
-            RegisteredToolExecutor::Shared(executor) => Self::Shared(executor),
-            executor => Self::Exclusive(Arc::new(tokio::sync::Mutex::new(executor))),
-        }
-    }
-}
-
-/// Releases exclusive ownership automatically on completion, cancellation or unwinding.
-enum ToolExecutorLease {
-    Exclusive(tokio::sync::OwnedMutexGuard<RegisteredToolExecutor>),
-    Shared(RegisteredToolExecutor),
-}
-
-impl std::ops::Deref for ToolExecutorLease {
-    type Target = RegisteredToolExecutor;
-    /// Borrows the executor owned by this invocation.
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Exclusive(executor) => executor,
-            Self::Shared(executor) => executor,
-        }
-    }
-}
-
-impl std::ops::DerefMut for ToolExecutorLease {
-    /// Mutably borrows the executor owned by this invocation.
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Exclusive(executor) => executor,
-            Self::Shared(executor) => executor,
-        }
-    }
-}
-
 /// Ends an AI invocation lifecycle even when its future is cancelled or unwinds.
 struct ToolInvocationLifecycle {
     context: ToolInvocationContext,
@@ -141,16 +97,16 @@ struct ToolInvocationLifecycle {
 }
 
 impl Drop for ToolInvocationLifecycle {
-    /// Publishes exactly one finish event after all local executor leases have been released.
+    /// Publishes exactly one finish event when this invocation ends or is dropped.
     fn drop(&mut self) {
         self.context.clone().scopeSync(|| self.context.host().notifyToolExecutionFinished(&self.tool));
     }
 }
 
 pub struct AIToolHandlerState {
-    toolExecutors: BTreeMap<String, ToolExecutorRegistration>,
+    toolExecutors: BTreeMap<String, Arc<RegisteredToolExecutor>>,
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
-    defaultToolsRegistered: bool,
+    defaultToolsRegistration: Arc<std::sync::OnceLock<()>>,
     context: HostManager,
     runtimeDependencies: ToolRuntimeDependencies,
     hooks: Vec<Arc<dyn AIToolHook>>,
@@ -231,7 +187,7 @@ impl AIToolHandler {
             inner: Arc::new(Mutex::new(AIToolHandlerState {
                 toolExecutors: BTreeMap::new(),
                 toolVisibility: BTreeMap::new(),
-                defaultToolsRegistered: false,
+                defaultToolsRegistration: Default::default(),
                 context,
                 runtimeDependencies,
                 hooks: Vec::new(),
@@ -570,7 +526,7 @@ impl AIToolHandler {
             !guard.toolExecutors.contains_key(&toolName),
             "Built-in tool is registered more than once: {toolName}"
         );
-        guard.toolExecutors.insert(toolName.clone(), ToolExecutorRegistration::from(executor.into()));
+        guard.toolExecutors.insert(toolName.clone(), Arc::new(executor.into()));
         guard.toolVisibility.insert(toolName, visibility);
     }
 
@@ -700,22 +656,12 @@ impl AIToolHandler {
     /// Registers built-in public and internal tools once for this handler.
     #[allow(non_snake_case)]
     pub fn registerDefaultTools(&mut self) {
-        {
-            let guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
-            if guard.defaultToolsRegistered {
-                return;
-            }
-        }
-        let context = {
-            self.inner
-                .lock()
-                .expect("AIToolHandler mutex poisoned")
-                .context
-                .clone()
-        };
-        registerAllTools(self, &context);
-        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
-        guard.defaultToolsRegistered = true;
+        let registration = self.inner.lock().expect("AIToolHandler mutex poisoned")
+            .defaultToolsRegistration.clone();
+        registration.get_or_init(|| {
+            let context = self.getContext();
+            registerAllTools(self, &context);
+        });
     }
 
     /// Returns whether a tool executor is already registered.
@@ -725,14 +671,10 @@ impl AIToolHandler {
         guard.toolExecutors.contains_key(toolName)
     }
 
-    /// Acquires the registered instance without holding the registry while waiting or executing.
-    async fn acquireToolExecutor(&self, toolName: &str) -> Option<ToolExecutorLease> {
-        let registration = self.inner.lock().expect("AIToolHandler mutex poisoned")
-            .toolExecutors.get(toolName).cloned()?;
-        Some(match registration {
-            ToolExecutorRegistration::Exclusive(executor) => ToolExecutorLease::Exclusive(executor.lock_owned().await),
-            ToolExecutorRegistration::Shared(executor) => ToolExecutorLease::Shared(RegisteredToolExecutor::Shared(executor)),
-        })
+    /// Retains this registration's identity without serializing concurrent invocations.
+    fn getToolExecutor(&self, toolName: &str) -> Option<Arc<RegisteredToolExecutor>> {
+        self.inner.lock().expect("AIToolHandler mutex poisoned")
+            .toolExecutors.get(toolName).cloned()
     }
 
     /// Ensures default or package tools are registered, then reports whether a tool exists.
@@ -1109,7 +1051,7 @@ impl AIToolHandler {
             if !self.getToolExecutorOrActivate(&request.name).await? {
                 return Ok(vec![Self::failedInvocation(tool(), format!("Tool not found: {}", request.name))]);
             }
-            let mut executor = self.acquireToolExecutor(&request.name).await
+            let executor = self.getToolExecutor(&request.name)
                 .ok_or_else(|| format!("Registered executor disappeared: {}", request.name))?;
             let prepared = match executor.prepare(request, context, isAiInvocation) {
                 Ok(prepared) => prepared,
@@ -1186,7 +1128,7 @@ impl AIToolHandler {
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         guard.toolExecutors.clear();
         guard.toolVisibility.clear();
-        guard.defaultToolsRegistered = false;
+        guard.defaultToolsRegistration = Default::default();
     }
 }
 
@@ -1913,7 +1855,7 @@ impl AsyncToolExecutor for AsyncFnToolExecutor {
         })
     }
     /// Awaits the nested invocation on its registered asynchronous path.
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
+    fn invokeAndStreamAsync<'a>(&'a self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
         let invocation = (self.invoke)(tool.clone(), context.clone());
         Box::pin(async move { vec![invocation.await] })
     }
@@ -1931,7 +1873,8 @@ impl ToolExecutor for FnToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         vec![(self.invoke)(tool)]
     }
 }
@@ -2198,7 +2141,7 @@ mod tests {
             let handler = AIToolHandler {
                 inner: Arc::new(Mutex::new(AIToolHandlerState {
                     toolExecutors: BTreeMap::new(),
-                    toolVisibility: BTreeMap::new(), defaultToolsRegistered: true,
+                    toolVisibility: BTreeMap::new(), defaultToolsRegistration: Arc::new(std::sync::OnceLock::from(())),
                     context: HostManager { runtimeStorageHost: Some(storage.clone()), runtimeSqliteHost: Some(storage),
                         fileSystemHost: Some(Arc::new(operit_host_native_filesystem::PosixFileSystemHost::new())),
                         hostRuntimeTaskSchedulerHost: Some(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()),
@@ -2962,9 +2905,9 @@ mod tests {
         assert!(futures_util::poll!(&mut next).is_ready());
     }
 
-    /// Proves Direct cancellation releases an exclusive executor without dispatching lifecycle hooks.
+    /// Cancelling one direct invocation leaves other calls and the registration intact.
     #[tokio::test]
-    async fn direct_cancellation_releases_exclusive_executor_without_hooks() {
+    async fn direct_cancellation_preserves_concurrent_calls_without_hooks() {
         let mut fixture = PipelineFixture::new();
         let hooks = Arc::new(LifecycleProbe::default());
         fixture.handler.addToolHook(hooks.clone());
@@ -2975,12 +2918,12 @@ mod tests {
         for _ in 0..2 {
             let mut pending = fixture.handler.execute_tool_call(probeRequest(json!({})));
             assert!(futures_util::poll!(&mut pending).is_pending());
-            let ToolExecutorRegistration::Exclusive(registration) = fixture.handler.inner.lock().unwrap()
-                .toolExecutors.get("pipeline_probe").unwrap().clone() else { panic!("Expected exclusive executor") };
-            assert!(registration.try_lock().is_err());
+            let mut sibling = fixture.handler.execute_tool_call(probeRequest(json!({})));
+            assert!(futures_util::poll!(&mut sibling).is_pending());
             drop(pending);
             assert!(fixture.handler.inner.lock().unwrap().toolExecutors.contains_key("pipeline_probe"));
-            assert!(registration.try_lock().is_ok());
+            assert!(futures_util::poll!(&mut sibling).is_pending());
+            drop(sibling);
             assert!(hooks.take().is_empty());
         }
         assert!(ToolExecutionManager::currentToolInvocationContext().is_none());
@@ -3010,15 +2953,12 @@ mod tests {
         let JsToolCallResultData::Value(value) = result.data else { panic!("Expected structured JSON") };
         assert_eq!(value["generation"], 2);
         drop(pending);
-        let ToolExecutorRegistration::Exclusive(old) = old else { panic!("Expected exclusive registration") };
-        assert!(old.try_lock().is_ok());
-        let ToolExecutorRegistration::Exclusive(replacement) = fixture.handler.inner.lock().unwrap()
-            .toolExecutors.get("pipeline_probe").unwrap().clone() else { panic!("Expected exclusive replacement") };
+        let replacement = fixture.handler.getToolExecutor("pipeline_probe").unwrap();
         assert!(!Arc::ptr_eq(&old, &replacement));
         assert!(fixture.handler.execute_tool_call(probeRequest(json!({}))).await.success);
     }
 
-    /// Proves queued leases retain identity and releasing removed instances cannot republish them.
+    /// Removing a registration never republishes it when retained invocations are dropped.
     #[tokio::test]
     async fn unregistering_an_active_executor_does_not_resurrect_it() {
         let mut fixture = PipelineFixture::new();
@@ -3026,16 +2966,229 @@ mod tests {
             validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
             invoke: Arc::new(|_, _| Box::pin(std::future::pending())), effect: ToolEffect::WRITE,
         }));
-        let lease = fixture.handler.acquireToolExecutor("pipeline_probe").await.unwrap();
-        let mut queued = Box::pin(fixture.handler.acquireToolExecutor("pipeline_probe"));
-        assert!(futures_util::poll!(&mut queued).is_pending());
+        let registration = fixture.handler.getToolExecutor("pipeline_probe").unwrap();
+        let mut pending = fixture.handler.execute_tool_call(probeRequest(json!({})));
+        assert!(futures_util::poll!(&mut pending).is_pending());
         fixture.handler.clone().unregisterTool("pipeline_probe".into());
         assert!(!fixture.handler.hasToolExecutor("pipeline_probe"));
-        drop(lease);
-        let queued = queued.await.unwrap();
+        drop(registration);
         assert!(!fixture.handler.hasToolExecutor("pipeline_probe"));
-        drop(queued);
-        assert!(fixture.handler.acquireToolExecutor("pipeline_probe").await.is_none());
+        drop(pending);
+        assert!(fixture.handler.getToolExecutor("pipeline_probe").is_none());
+    }
+
+    /// Requires repeated and distinct tool calls to overlap while preserving every caller's context.
+    #[tokio::test]
+    async fn direct_tools_support_many_concurrent_same_and_different_names() {
+        let mut fixture = PipelineFixture::new();
+        let barrier = Arc::new(tokio::sync::Barrier::new(24));
+        for name in ["pipeline_probe", "pipeline_other"] {
+            let barrier = barrier.clone();
+            fixture.handler.registerAsyncTool(name.into(), Box::new(AsyncFnToolExecutor {
+                validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+                effect: ToolEffect::READ,
+                invoke: Arc::new(move |tool, context| {
+                    let barrier = barrier.clone();
+                    Box::pin(async move {
+                        barrier.wait().await;
+                        ToolResult { toolName: tool.name, success: true,
+                            result: ToolResultData::JsonResultData(operit_plugin_sdk::js_sdk::results::JsonResultData {
+                                value: json!({"index": tool.parameters[0].value, "turn": context.turnSnapshot()}),
+                            }), error: None }
+                    })
+                }),
+            }));
+        }
+        let calls = (0..24).map(|index| {
+            let handler = fixture.handler.clone();
+            async move {
+                let turn = ToolRuntimeContext { callerChatId: Some(format!("chat-{index}")),
+                    callerParticipantId: None, workspacePath: None, workspaceFolders: Vec::new(),
+                    toolExposureMode: ToolExposureMode::FULL, extensionOwner: format!("owner-{index}"),
+                    executionData: Default::default() };
+                let mut request = probeRequest(json!({"index": index}));
+                if index % 3 == 0 { request.tool_name = "pipeline_other".into(); }
+                let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), async {
+                    handler.capture_tool_invocation_host().execute_tool_call(request).await
+                }).await;
+                assert!(result.success, "{:?}", result.error);
+                let JsToolCallResultData::Value(value) = result.data else { panic!("Expected JSON") };
+                assert_eq!(value["index"], index.to_string());
+                assert_eq!(value["turn"], serde_json::to_value(turn).unwrap());
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), futures_util::future::join_all(calls))
+            .await.expect("all 24 requests must enter without waiting for a same-name invocation to finish");
+    }
+
+    /// Blocking Host work may overlap on independent scheduler workers without a tool-wide mutex.
+    #[tokio::test]
+    async fn synchronous_tools_support_repeated_concurrent_calls() {
+        let mut fixture = PipelineFixture::new();
+        let entered = Arc::new((Mutex::new(0), std::sync::Condvar::new()));
+        let concurrent = entered.clone();
+        fixture.handler.registerTool("pipeline_probe".into(), Box::new(FnToolExecutor {
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            effect: ToolEffect::READ,
+            invoke: Arc::new(move |tool| {
+                let mut count = concurrent.0.lock().unwrap();
+                *count += 1;
+                concurrent.1.notify_all();
+                let (count, _) = concurrent.1.wait_timeout_while(count,
+                    std::time::Duration::from_secs(5), |count| *count < 8).unwrap();
+                assert_eq!(*count, 8, "same-name blocking calls must run on different workers");
+                ToolResult { toolName: tool.name.clone(), success: true,
+                    result: stringResultData(tool.parameters[0].value.clone()), error: None }
+            }),
+        }));
+        let runtime = tokio::runtime::Handle::current();
+        std::thread::scope(|scope| {
+            let threads = (0..8).map(|index| {
+                let handler = fixture.handler.clone();
+                let runtime = runtime.clone();
+                scope.spawn(move || {
+                    let result = runtime.block_on(handler.execute_tool_call(probeRequest(json!({"index": index}))));
+                    assert!(result.success, "{:?}", result.error);
+                    let JsToolCallResultData::Value(value) = result.data else { panic!("Expected value") };
+                    assert_eq!(value, index.to_string());
+                })
+            }).collect::<Vec<_>>();
+            for thread in threads { thread.join().unwrap(); }
+        });
+    }
+
+    /// Concurrent first callers must observe one fully initialized catalog, including after reset.
+    #[test]
+    fn concurrent_default_tool_registration_publishes_one_complete_catalog() {
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::with_package_assets(Some(&[]));
+        fixture.handler.inner.lock().unwrap().context.httpHost = Some(Arc::new(TransferTestHttp));
+        fixture.handler.reset();
+        let catalogs = std::thread::scope(|scope| {
+            (0..8).map(|_| {
+                let mut handler = fixture.handler.clone();
+                scope.spawn(move || {
+                    handler.registerDefaultTools();
+                    handler.getAllToolNames()
+                })
+            }).collect::<Vec<_>>().into_iter().map(|thread| thread.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert!(catalogs[0].iter().any(|name| name == "execute_cli_command"));
+        for catalog in &catalogs { assert_eq!(catalog, &catalogs[0]); }
+        fixture.handler.reset();
+        fixture.handler.registerDefaultTools();
+        assert_eq!(fixture.handler.getAllToolNames(), catalogs[0]);
+    }
+
+    /// Reproduces an editor waiting on a chat that recursively invokes the exact same tool.
+    #[tokio::test]
+    async fn direct_tool_can_await_nested_invocations_of_itself() {
+        let mut fixture = PipelineFixture::new();
+        fixture.handler.registerAsyncTool("pipeline_probe".into(), Box::new(AsyncFnToolExecutor {
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            effect: ToolEffect::READ,
+            invoke: Arc::new(|tool, context| Box::pin(async move {
+                let depth = tool.parameters[0].value.parse::<usize>().unwrap();
+                if depth > 0 {
+                    let host = context.host().clone();
+                    let result = tokio::spawn(async move {
+                        host.execute_tool_call(probeRequest(json!({"depth": depth - 1}))).await
+                    }).await.unwrap();
+                    assert!(result.success, "{:?}", result.error);
+                }
+                ToolResult { toolName: tool.name, success: true,
+                    result: stringResultData(depth.to_string()), error: None }
+            })),
+        }));
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5),
+            fixture.handler.execute_tool_call(probeRequest(json!({"depth": 12}))))
+            .await.expect("nested calls must not wait on the parent's executor");
+        assert!(result.success, "{:?}", result.error);
+    }
+
+    /// AI batches retain serial admission and result order even though their executor is concurrent.
+    #[tokio::test]
+    async fn ai_tool_batch_keeps_repeated_calls_serial_and_ordered() {
+        let mut fixture = PipelineFixture::new();
+        let context = fixture.handler.getContext();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        fixture.handler.getToolPermissionSystem().saveAiPermissionMode(AiPermissionMode::Full).unwrap();
+        let entered = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let calls = entered.clone();
+        let permit = release.clone();
+        fixture.handler.registerAsyncTool("pipeline_probe".into(), Box::new(AsyncFnToolExecutor {
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            effect: ToolEffect::READ,
+            invoke: Arc::new(move |tool, _| {
+                let calls = calls.clone();
+                let permit = permit.clone();
+                Box::pin(async move {
+                    let index = tool.parameters[0].value.clone();
+                    calls.lock().unwrap().push(index.clone());
+                    permit.notified().await;
+                    ToolResult { toolName: tool.name, success: true, result: stringResultData(index), error: None }
+                })
+            }),
+        }));
+        let manager = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
+        let invocations = (0..3).map(|index| crate::ToolExecutionManager::ToolInvocation {
+            tool: AITool { name: "pipeline_probe".into(), parameters: vec![ToolParameter {
+                name: "index".into(), value: index.to_string(),
+            }] }, rawText: String::new(), responseLocation: (0, 0),
+        }).collect::<Vec<_>>();
+        let mut batch = Box::pin(ToolExecutionManager::executeInvocations(
+            &invocations, &mut fixture.handler, &manager, None, Some("chat".into()), None,
+            None, Vec::new(), ToolExposureMode::FULL, "configuration-owner".into(), Default::default(),
+        ));
+        for index in 0..3 {
+            assert!(futures_util::poll!(&mut batch).is_pending());
+            assert_eq!(*entered.lock().unwrap(), (0..=index).map(|value| value.to_string()).collect::<Vec<_>>());
+            release.notify_one();
+        }
+        let results = batch.await.unwrap().results;
+        assert_eq!(results.iter().map(|result| result.result.toString()).collect::<Vec<_>>(), ["0", "1", "2"]);
+    }
+
+    /// Runs Promise.all through the real native JS bridge and repeated ordinary tool dispatch.
+    #[tokio::test]
+    async fn javascript_promise_all_executes_repeated_tools_concurrently() {
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::new();
+        fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
+        let barrier = Arc::new(tokio::sync::Barrier::new(40));
+        fixture.handler.registerAsyncTool("pipeline_probe".into(), Box::new(AsyncFnToolExecutor {
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            effect: ToolEffect::READ,
+            invoke: Arc::new(move |tool, _| {
+                let barrier = barrier.clone();
+                Box::pin(async move {
+                    barrier.wait().await;
+                    ToolResult { toolName: tool.name, success: true,
+                        result: stringResultData(tool.parameters[0].value.clone()), error: None }
+                })
+            }),
+        }));
+        let engine = fixture.handler.runtimeDependencies().js_execution_provider()
+            .create_execution_engine(fixture.handler.capture_tool_invocation_host()).unwrap();
+        let params = BTreeMap::from([("__operit_toolpkg_api_version".into(), json!("2.0.0"))]);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10),
+            engine.execute_script_function_owned(r#"
+                exports.run = async function () {
+                    return await Promise.all(Array.from({length: 40}, (_, index) =>
+                        toolCall('pipeline_probe', {index})));
+                };
+            "#.into(), "run".into(), params, BTreeMap::new()))
+            .await.expect("all native JS tool promises must enter execution concurrently")
+            .unwrap().unwrap();
+        let values: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(values, json!((0..40).map(|index| index.to_string()).collect::<Vec<_>>()));
+        engine.destroy();
     }
 
     /// Proves captured hosts retain turn and hook state independently across a scheduler boundary.

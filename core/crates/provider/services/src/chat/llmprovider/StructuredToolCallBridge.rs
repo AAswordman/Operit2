@@ -137,7 +137,7 @@ impl StructuredToolCallBridge {
             | "history_end" => "后续对话历史已到达，但未返回执行结果",
             _ => "调用在未返回执行结果时结束",
         };
-        format!("工具结果缺失：{toolLabel} {detail}。这不是用户取消。")
+        format!("工具结果缺失：{toolLabel} {detail}。历史记录无法确定执行状态或结束原因，请勿视为执行成功。")
     }
 
     pub fn buildToolsJson(toolPrompts: Option<&[ToolPrompt]>) -> Option<String> {

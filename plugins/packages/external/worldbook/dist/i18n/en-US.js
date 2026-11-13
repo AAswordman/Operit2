@@ -1,7 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WORLDBOOK_I18N_EN_US = void 0;
+const regex_js_1 = require("./regex.js");
+const service_js_1 = require("./service.js");
+const snippets_js_1 = require("./snippets.js");
 exports.WORLDBOOK_I18N_EN_US = {
+    regex: regex_js_1.WORLDBOOK_REGEX_EN_US,
+    service: service_js_1.WORLDBOOK_SERVICE_EN_US,
+    contentSnippets: snippets_js_1.WORLDBOOK_SNIPPETS_EN_US,
     unknown: "Unknown error",
     toastLoadFailedPrefix: "Load failed: ",
     toastActionFailedPrefix: "Action failed: ",

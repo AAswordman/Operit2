@@ -42,6 +42,10 @@ pub mod ToolPkgChatViewHookBridge;
 
 #[path = "ToolPkgChatMessageHookBridge.rs"]
 pub mod ToolPkgChatMessageHookBridge;
+#[path = "ToolPkgMessageTransformBridge.rs"]
+pub mod ToolPkgMessageTransformBridge;
+#[path = "NativeTextTransform.rs"]
+pub mod NativeTextTransform;
 
 #[path = "ToolPkgChatRuntimeHookBridge.rs"]
 pub mod ToolPkgChatRuntimeHookBridge;

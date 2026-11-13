@@ -1,3 +1,5 @@
+use crate::plugins::toolpkg::ToolPkgMessageTransformBridge::ToolPkgMessageTransformBridge;
+use crate::plugins::toolpkg::NativeTextTransform::{CompiledTextTransformProgram, NativeDisplayStream};
 use operit_store::ChatExecutionLease::ChatExecutionLease;
 use crate::plugins::toolpkg::ToolPkgChatResponseHookBridge::{ToolPkgChatResponseHookBridge, PRESENTATION_EXTENSION};
 use std::collections::{HashMap, HashSet};
@@ -68,8 +70,18 @@ pub fn coreResponseStreamSource(
     streamKey: String,
     toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
 ) -> Arc<CoreStreamSource> {
+    coreResponseStreamSourceWithProgram(stream, streamKey, toolHandler, Arc::new(CompiledTextTransformProgram::default()))
+}
+
+/// Shares prepared rules while constructing independent incremental state for every observer.
+fn coreResponseStreamSourceWithProgram(
+    stream: SharedAiResponseStream,
+    streamKey: String,
+    toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
+    program: Arc<CompiledTextTransformProgram>,
+) -> Arc<CoreStreamSource> {
     Arc::new(CoreStreamSource::new(move |request| {
-        openCoreResponseStream(stream.clone(), streamKey.clone(), request, toolHandler.clone())
+        openCoreResponseStream(stream.clone(), streamKey.clone(), request, toolHandler.clone(), program.clone())
     }))
 }
 
@@ -79,6 +91,7 @@ fn openCoreResponseStream(
     streamKey: String,
     request: CoreWatchRequest,
     toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
+    program: Arc<CompiledTextTransformProgram>,
 ) -> Result<CoreEventStream, CoreLinkError> {
     let (sender, receiver) = CoreEventStream::channel();
     AppLogger::trace(
@@ -95,21 +108,26 @@ fn openCoreResponseStream(
         .scheduleHostRuntimeAsyncTask(
             "core-runtime-text-markdown",
             Box::new(move || {
-                Box::pin(collectCoreResponseStream(stream, streamKey, request, sender, toolHandler))
+                Box::pin(collectCoreResponseStream(stream, streamKey, request, sender, toolHandler, program))
             }),
         )
         .map_err(|error| CoreLinkError::internal(error.to_string()))?;
     Ok(receiver)
 }
 
-/// Transforms one observer's stream until its receiver closes or generation completes.
+/// Applies prepared native replacements before emitting the original incremental Markdown protocol.
 async fn collectCoreResponseStream(
     mut orderedStream: SharedAiResponseStream,
     streamKey: String,
     request: CoreWatchRequest,
     sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     toolHandler: Option<operit_tools::tools::AIToolHandler::AIToolHandler>,
+    program: Arc<CompiledTextTransformProgram>,
 ) {
+    let hasTransforms = !program.is_empty();
+    let mut display = NativeDisplayStream::new(program);
+    let mut savepoints = HashMap::new();
+    let mut savepointSequence = 0usize;
     let mut markdownStream = MarkdownRenderEventStream::new(streamKey.clone());
     for mut event in markdownStream.beginSnapshot("") {
         if let Some(handler) = &toolHandler { handler.decorateToolDisplayEvent(&mut event); }
@@ -119,6 +137,10 @@ async fn collectCoreResponseStream(
     let mut textRevisions = TextStreamRevisionTracker::new("");
     let mut itemCollector = |item: ResponseStreamItem| match item {
         ResponseStreamItem::Chunk(chunk) => {
+            let chunk = if hasTransforms {
+                display.push(&chunk).expect("segment mode preserves original markup without canonical validation")
+            } else { chunk };
+            if hasTransforms && chunk.is_empty() { return; }
             let _ = textRevisions.append(&chunk);
             let events = markdownStream.pushChunk(&chunk);
             for mut event in events {
@@ -137,6 +159,10 @@ async fn collectCoreResponseStream(
             let markdownEvent = match event.event_type {
                 operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
                     textRevisions.savepoint(&event.id);
+                    if hasTransforms {
+                        savepointSequence += 1;
+                        savepoints.insert(event.id.clone(), (savepointSequence, display.clone()));
+                    }
                     AppLogger::trace_detail(
                         "CoreStreamTrace",
                         &format!(
@@ -148,7 +174,15 @@ async fn collectCoreResponseStream(
                 }
                 operit_util::stream::RevisableTextStream::TextStreamEventType::Rollback => {
                     match textRevisions.rollback(&event.id) {
-                        Some(content) => markdownStream.restoreContent(content),
+                        Some(content) => {
+                            markdownStream.restoreContent(content);
+                            if hasTransforms {
+                                let (sequence, saved) = savepoints.get(&event.id)
+                                    .expect("display state accompanies every text savepoint").clone();
+                                display = saved;
+                                savepoints.retain(|_, (savedSequence, _)| *savedSequence <= sequence);
+                            }
+                        }
                         None => {
                             AppLogger::w(
                                 "CoreStreamTrace",
@@ -192,6 +226,12 @@ async fn collectCoreResponseStream(
             request.requestId.0, streamKey
         ),
     );
+    let tail = display.finish().expect("segment completion preserves original markup without canonical validation");
+    for mut event in if tail.is_empty() { Vec::new() } else { markdownStream.pushChunk(&tail) } {
+        if let Some(handler) = &toolHandler { handler.decorateToolDisplayEvent(&mut event); }
+        sendCoreTextEvent(&sender, &request.requestId, request.target.clone(), &request.propertyName,
+            CoreEventKind::Changed, operit_link::toCoreValue(event).expect("MarkdownStreamEvent must serialize"));
+    }
     for mut event in markdownStream.finish() {
         if let Some(handler) = &toolHandler { handler.decorateToolDisplayEvent(&mut event); }
         let kind = if event.isRootCompletion() {
@@ -1829,7 +1869,7 @@ impl MessageProcessingDelegate {
         });
         let mut workGuard = self.startChatExecution(chatId.clone(), workTitle);
 
-        let finalMessageContent = if request.turnOptions.continuation.is_some() {
+        let mut finalMessageContent = if request.turnOptions.continuation.is_some() {
             String::new()
         } else { match self
             .buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
@@ -1910,6 +1950,10 @@ impl MessageProcessingDelegate {
                 )
             })?;
         AIMessageManager::applyConfigurationIdentity(&mut userMessage, &configuration);
+        userMessage = ToolPkgMessageTransformBridge::transform(
+            &chatId, userMessage, "before_persist", 0, false,
+        ).await.map_err(operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed)?;
+        finalMessageContent = userMessage.displayText();
         }
         let mut workspaceToolHookSession = None;
         let mut workspaceToolHookHandler = request.enhancedAiService.tool_handler.clone();
@@ -1987,13 +2031,22 @@ impl MessageProcessingDelegate {
         let participantName = configuration.profile.name.clone();
         let requestMessageContent = finalMessageContent;
         let assistantMessageTimestamp = ChatMessageTimestampAllocator::next();
+        let mut aiMessage = ChatMessage {
+            sender: "ai".to_string(), timestamp: assistantMessageTimestamp,
+            roleName: participantName.clone(), displayMode: ChatMessageDisplayMode::NORMAL,
+            ..ChatMessage::new("ai".to_string())
+        };
+        AIMessageManager::applyConfigurationIdentity(&mut aiMessage, &configuration);
         let tokenLimitExceeded = Arc::new(AtomicBool::new(false));
         let tokenUsageThreshold = if request.turnOptions.persistTurn {
             request.tokenUsageThreshold
         } else {
             f64::MAX
         };
-        let completionStream = match AIMessageManager::sendMessage(AIMessageSendRequest {
+        let (completionStream, displayProgram) = match async {
+            let displayProgram = ToolPkgMessageTransformBridge::prepareDisplay(&chatId, &aiMessage, 0, false).await
+                .map_err(operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed)?;
+            let stream = AIMessageManager::sendMessage(AIMessageSendRequest {
             chatConfiguration: configuration.clone(),
             enhancedAiService: request.enhancedAiService,
             guidanceInbox: guidanceInbox.clone(),
@@ -2019,16 +2072,18 @@ impl MessageProcessingDelegate {
             onToolInvocation: None,
             resume: request.isResume,
         })
-        .await
+            .await?;
+            Ok::<_, operit_providers::chat::llmprovider::AIService::AiServiceError>((stream, displayProgram))
+        }.await
         {
-            Ok(stream) => {
+            Ok(result) => {
                 ChainLogger::verbose_with_level(
                     RECEIVE_CHAIN,
                     "receive.stream.created",
                     &[("chatId", chatId.clone())],
                     operit_util::AppLogger::VERBOSE_LEVEL_2,
                 );
-                stream
+                result
             }
             Err(error) => {
                 ChainLogger::error(
@@ -2067,18 +2122,8 @@ impl MessageProcessingDelegate {
             .enhancedAiService
             .getLastTurnModelIdentity()
             .expect("accepted response stream must have a resolved model identity");
-        let mut aiMessage = ChatMessage {
-            sender: "ai".to_string(),
-            timestamp: assistantMessageTimestamp,
-            roleName: participantName.clone(),
-            provider: modelIdentity.providerName,
-            modelName: modelIdentity.modelName,
-            inputTokens: 0,
-            outputTokens: 0,
-            cachedInputTokens: 0,
-            displayMode: ChatMessageDisplayMode::NORMAL,
-            ..ChatMessage::new("ai".to_string())
-        };
+        aiMessage.provider = modelIdentity.providerName;
+        aiMessage.modelName = modelIdentity.modelName;
         request
             .executionLease
             .protectRevision(aiMessage.timestamp, 0)
@@ -2087,9 +2132,9 @@ impl MessageProcessingDelegate {
                     error.to_string(),
                 )
             })?;
-        AIMessageManager::applyConfigurationIdentity(&mut aiMessage, &configuration);
         let streamKey = format!("chat-message-stream:{}:{}", chatId, aiMessage.timestamp);
-        let segmentSource = coreResponseStreamSource(sharedResponseStream.clone(), streamKey, Some(request.enhancedAiService.tool_handler.clone()));
+        let segmentSource = coreResponseStreamSourceWithProgram(sharedResponseStream.clone(), streamKey,
+            Some(request.enhancedAiService.tool_handler.clone()), Arc::new(displayProgram));
         aiMessage.contentStream = Some(CoreStream::fromSourceWithId(
             format!("chat-message-stream:{}:{}", chatId, aiMessage.timestamp),
             segmentSource,
@@ -2367,7 +2412,7 @@ impl MessageProcessingDelegate {
                         let mut workerService = workerService;
                         let tokenSnapshot = workerTokenUsage.snapshot();
                         let completedElapsed = messageTimingNow().startedAtMs as i64;
-                        let finalMessage = {
+                        let mut finalMessage = {
                             let parts = {
                                 let mut partStream = completionPartStream
                                     .lock()
@@ -2405,6 +2450,21 @@ impl MessageProcessingDelegate {
                                 completedElapsed,
                             )
                         };
+                        if workerTurnOptions.persistTurn {
+                            finalMessage = match ToolPkgMessageTransformBridge::transform(
+                                &completionChatId, finalMessage, "before_persist", 0, false,
+                            ).await {
+                                Ok(message) => message,
+                                Err(error) => {
+                                    let mut delegate = completionMessageProcessingDelegate.lock()
+                                        .expect("worker message processing delegate mutex poisoned");
+                                    delegate.cleanupRuntimeAfterTurn(completionChatId.clone(), completionTurnId);
+                                    delegate.finishChatExecutionForTurn(completionChatId.clone(), completionTurnId,
+                                        InputProcessingState::Error { message: error });
+                                    return;
+                                }
+                            };
+                        }
                         if let Some(mut error) = completionResponseStream.terminal_failure().or(presentationError) {
                             ChainLogger::error(
                                 RECEIVE_CHAIN,
@@ -3166,6 +3226,121 @@ mod tests {
         assert_eq!(saved["timestamp"], 42);
     }
 
+    /// Emits each physical chunk once without clearing completed blocks between updates.
+    #[tokio::test]
+    async fn response_stream_preserves_incremental_output_without_snapshot_resets() {
+        use operit_link::{CoreEventKind, CoreEventStream, CoreRequestId, CoreValue, CoreWatchRequest};
+        use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+        use operit_util::stream::HotStream::mutable_shared_stream;
+
+        for chunks in [
+            vec!["Stable paragraph.\n\n", "Next", " paragraph", ".\n\n"],
+            vec!["<thi", "nk>思考", "继续", "</th", "ink>\n\n正文"],
+            vec!["<thinking>reason", " continues", "</think", "ing>\n\n正文"],
+            vec!["Stable paragraph.\n\n", "<tool name='search'>", "<param name='q'>raw</param>", "</tool>", "<status type='complete'>done", "</status>"],
+        ] {
+            let producer = SharedAiResponseStream::new_ordered(
+                mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX),
+            );
+            let request = CoreWatchRequest {
+                requestId: CoreRequestId("stable-stream".into()), target: "$core.stream.open".into(),
+                propertyName: "openCoreStream".into(), args: CoreValue::emptyMap(),
+            };
+            let (sender, mut receiver) = CoreEventStream::channel();
+            let task = super::collectCoreResponseStream(
+                producer.clone(), "stable-stream".into(), request, sender, None,
+                Arc::new(Default::default()),
+            );
+            tokio::pin!(task);
+            assert!(task.as_mut().now_or_never().is_none());
+            for chunk in &chunks {
+                producer.emit_chunk(chunk.to_string());
+                assert!(task.as_mut().now_or_never().is_none());
+            }
+            producer.close();
+            task.await;
+            let mut resets = 0;
+            let mut completed = 0;
+            let mut emitted = Vec::new();
+            while let Some(event) = receiver.recv().await {
+                if event.kind == CoreEventKind::Completed { completed += 1; }
+                if let CoreValue::Map(fields) = event.value {
+                    if fields.get("parentBlockId") != Some(&CoreValue::Null) { continue; }
+                    match fields.get("type") {
+                        Some(CoreValue::String(kind)) if kind == "reset" => resets += 1,
+                        Some(CoreValue::String(kind)) if kind == "chunk" => {
+                            if let Some(CoreValue::String(chunk)) = fields.get("value") { emitted.push(chunk.clone()); }
+                        }
+                        _ => {},
+                    }
+                }
+            }
+            assert_eq!(emitted, chunks, "physical chunks must reach the renderer unchanged and exactly once");
+            assert_eq!(resets, 1, "incremental output must never reset the whole message");
+            assert_eq!(completed, 1);
+        }
+    }
+
+    /// Exercises real output events across replacement boundaries, speculative text, and rollback.
+    #[tokio::test]
+    async fn native_response_stream_replaces_incrementally_and_restores_pending_matches() {
+        use super::{CompiledTextTransformProgram, collectCoreResponseStream};
+        use crate::plugins::toolpkg::NativeTextTransform::{TextTransformProgram, TextTransformRule};
+        use operit_link::{CoreEventKind, CoreEventStream, CoreRequestId, CoreValue, CoreWatchRequest};
+        use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+        use operit_util::stream::{HotStream::mutable_shared_stream, RevisableTextStream::{TextStreamEvent, TextStreamEventType}};
+        let program = CompiledTextTransformProgram::compile(&TextTransformProgram { rules: vec![TextTransformRule {
+            pattern: "secret".into(), replacement: "public".into(), flags: "g".into(),
+            kinds: vec!["markdown".into(), "thinking".into()], trimStrings: vec![],
+        }] }).unwrap();
+        let producer = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+        let request = CoreWatchRequest { requestId: CoreRequestId("native".into()), target: "$core.stream.open".into(),
+            propertyName: "openCoreStream".into(), args: CoreValue::emptyMap() };
+        let (sender, mut receiver) = CoreEventStream::channel();
+        let task = collectCoreResponseStream(producer.clone(), "native".into(), request, sender, None, Arc::new(program));
+        tokio::pin!(task);
+        assert!(task.as_mut().now_or_never().is_none());
+        producer.emit_chunk("Stable paragraph.\n\nsec".into());
+        assert!(task.as_mut().now_or_never().is_none());
+        let mut events = Vec::new();
+        while let Ok(event) = receiver.try_recv() { events.push(event); }
+        assert!(events.iter().any(|event| match &event.value {
+            CoreValue::Map(fields) => fields.get("type") == Some(&CoreValue::String("chunk".into()))
+                && fields.get("value") == Some(&CoreValue::String("Stable paragraph.\n\n".into())),
+            _ => false,
+        }), "ordinary text must be visible before generation finishes");
+        producer.emit_revision(TextStreamEvent { event_type: TextStreamEventType::Savepoint, id: "retry".into() });
+        producer.emit_chunk("ret discarded!".into());
+        producer.emit_revision(TextStreamEvent { event_type: TextStreamEventType::Rollback, id: "retry".into() });
+        producer.emit_chunk("ond!<thinking>sec".into());
+        producer.emit_chunk("ret</thinking><tool name='secret'>secret</tool>sec".into());
+        producer.emit_chunk("ret!".into());
+        assert!(task.as_mut().now_or_never().is_none());
+        producer.close();
+        task.await;
+        while let Some(event) = receiver.recv().await { events.push(event); }
+        let mut content = String::new();
+        let mut saved = HashMap::new();
+        let mut resets = 0;
+        let mut completed = 0;
+        for event in events {
+            if event.kind == CoreEventKind::Completed { completed += 1; }
+            let CoreValue::Map(fields) = event.value else { continue; };
+            if fields.get("parentBlockId") != Some(&CoreValue::Null) { continue; }
+            let Some(CoreValue::String(kind)) = fields.get("type") else { continue; };
+            match kind.as_str() {
+                "reset" => resets += 1,
+                "chunk" => if let Some(CoreValue::String(chunk)) = fields.get("value") { content.push_str(chunk); },
+                "savepoint" => if let Some(CoreValue::String(id)) = fields.get("id") { saved.insert(id.clone(), content.len()); },
+                "rollback" => if let Some(CoreValue::String(id)) = fields.get("id") { content.truncate(saved[id]); },
+                _ => {},
+            }
+        }
+        assert_eq!(content, "Stable paragraph.\n\nsecond!<thinking>public</thinking><tool name='secret'>secret</tool>public!");
+        assert_eq!(resets, 1, "native replacements must never reset the message");
+        assert_eq!(completed, 1);
+    }
+
     /// Closing an observer ends its transform while production and a fresh live subscriber continue.
     #[tokio::test]
     async fn disposed_response_observer_stops_without_cancelling_generation() {
@@ -3192,6 +3367,7 @@ mod tests {
             request.clone(),
             sender,
             None,
+            Arc::new(Default::default()),
         );
         tokio::pin!(first);
         assert!(first.as_mut().now_or_never().is_none());
@@ -3208,6 +3384,7 @@ mod tests {
             request,
             sender,
             None,
+            Arc::new(Default::default()),
         );
         tokio::pin!(second);
         assert!(second.as_mut().now_or_never().is_none());
@@ -3252,7 +3429,7 @@ mod tests {
             args: CoreValue::emptyMap(),
         };
         let (sender, mut receiver) = CoreEventStream::channel();
-        super::collectCoreResponseStream(producer, "response".to_string(), request, sender, None).await;
+        super::collectCoreResponseStream(producer, "response".to_string(), request, sender, None, Arc::new(Default::default())).await;
         let mut terminal = 0;
         let mut nested_completed = 0;
         let mut text = String::new();

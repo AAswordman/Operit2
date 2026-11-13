@@ -470,7 +470,8 @@ impl AsyncToolExecutor for MCPToolExecutor {
         })
     }
 
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStreamAsync<'a>(&'a self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
         Box::pin(async move {
             let saveTarget = ImageSaveTarget::resolve(&self.host, context.turnSnapshot());
             vec![self.invoke(tool, saveTarget.as_ref()).await]

@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../common/markdown/MarkdownFileScope.dart';
+import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/interactions/ChainedScrollController.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
@@ -24,6 +25,7 @@ import 'NewChatIntro.dart';
 import 'style/ThemedChatMessage.dart';
 import '../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
 import 'ChatMessageSlotHost.dart';
+import 'TransformedChatMessage.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
 const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
@@ -136,6 +138,7 @@ class _ChatAreaState extends State<ChatArea>
       <int, _CachedMessageRow>{};
   late final ValueNotifier<bool> _chatBusyNotifier;
   late EmbeddedPluginSurfaceCatalog _messageContributions;
+  late MessageTransformCache _messageTransforms;
   Timer? _navigatorHideTimer;
   Timer? _viewportResizeTimer;
   bool _userScrollSessionActive = false;
@@ -169,6 +172,8 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void initState() {
     super.initState();
+    _messageTransforms = MessageTransformCache(widget.clients);
+    _prepareMessageTransforms();
     _messageContributions = EmbeddedPluginSurfaceCatalog(
       clients: widget.clients,
       surfaces: const {'chat_message_after'},
@@ -189,6 +194,18 @@ class _ChatAreaState extends State<ChatArea>
     _messageContributions.setLanguage(
       Localizations.localeOf(context).languageCode,
     );
+  }
+
+  /// Preprojects the displayed history window before individual rows enter the viewport.
+  void _prepareMessageTransforms() {
+    final chatId = widget.currentChatId;
+    if (chatId != null) {
+      _messageTransforms.prepare(
+        chatId,
+        widget.messages,
+        widget.messages.lastOrNull?.timestamp,
+      );
+    }
   }
 
   /// Binds message actions to the mounted chat and exact answer revision, not plugin-supplied ids.
@@ -219,6 +236,20 @@ class _ChatAreaState extends State<ChatArea>
   /// Builds the scrollable message area and its navigation overlay.
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _messageTransforms,
+      builder: (context, _) {
+        if (widget.currentChatId != null &&
+            _messageTransforms.isPreparingHistory) {
+          return const M3LoadingPane(size: 42);
+        }
+        return _buildTranscript(context);
+      },
+    );
+  }
+
+  /// Mounts history only after its initial display projections are ready for layout.
+  Widget _buildTranscript(BuildContext context) {
     final showLoadingIndicator = _shouldShowLoadingIndicator();
     final itemCount =
         widget.messages.length +
@@ -927,6 +958,12 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void didUpdateWidget(ChatArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.clients.bridge != widget.clients.bridge) {
+      _messageTransforms.dispose();
+      _messageTransforms = MessageTransformCache(widget.clients);
+      _messageRowCache.clear();
+    }
+    _prepareMessageTransforms();
     _messageContributions.bindClients(widget.clients);
     _chatBusyNotifier.value = widget.isLoading;
     _layoutScrollController.delegate = widget.scrollController;
@@ -1010,6 +1047,7 @@ class _ChatAreaState extends State<ChatArea>
   /// Releases timers, cached rows, and navigation state.
   @override
   void dispose() {
+    _messageTransforms.dispose();
     _messageContributions.dispose();
     _navigatorHideTimer?.cancel();
     _viewportResizeTimer?.cancel();
@@ -1045,6 +1083,7 @@ class _ChatAreaState extends State<ChatArea>
     final cachedMessageMatches =
         cached != null &&
         cached.index == messageIndex &&
+        cached.depthAnchor == widget.messages.lastOrNull?.timestamp &&
         cached.selected == selected &&
         cached.selectionMode == selectionMode &&
         cached.isStreaming == isStreaming &&
@@ -1058,17 +1097,30 @@ class _ChatAreaState extends State<ChatArea>
       return cached.widget;
     }
 
-    final chatMessage = buildThemedChatMessage(
-      snapshot: themePreferenceSnapshot,
-      colorScheme: colorScheme,
-      key: ValueKey<String>(_messageWidgetKey(message)),
-      message: message,
-      onIdentityTap: widget.onIdentityTap,
-      splitMarkdownContent: widget.splitMarkdownContent,
-      onDeleteMessage: widget.onDeleteMessage,
-      onEditSummary: widget.onSelectMessageToEdit,
-      enableDialogs: !selectionMode,
-    );
+    /// Builds a visual copy while actions retain the original canonical message.
+    Widget renderMessage(ChatUiMessage displayMessage) =>
+        buildThemedChatMessage(
+          snapshot: themePreferenceSnapshot,
+          colorScheme: colorScheme,
+          key: ValueKey<String>(_messageWidgetKey(message)),
+          message: displayMessage,
+          onIdentityTap: widget.onIdentityTap,
+          splitMarkdownContent: widget.splitMarkdownContent,
+          onDeleteMessage: widget.onDeleteMessage,
+          onEditSummary: widget.onSelectMessageToEdit,
+          enableDialogs: !selectionMode,
+        );
+    final currentChatId = widget.currentChatId;
+    final chatMessage = currentChatId == null
+        ? renderMessage(message)
+        : TransformedChatMessage(
+            cache: _messageTransforms,
+            message: message,
+            chatId: currentChatId,
+            clients: widget.clients,
+            depthAnchor: widget.messages.lastOrNull?.timestamp,
+            builder: renderMessage,
+          );
     final messageContent = _SelectableMessageFrame(
       selected: selected,
       selectionMode: selectionMode,
@@ -1138,6 +1190,7 @@ class _ChatAreaState extends State<ChatArea>
           );
     _messageRowCache[message.timestamp] = _CachedMessageRow(
       index: messageIndex,
+      depthAnchor: widget.messages.lastOrNull?.timestamp,
       message: message,
       selected: selected,
       selectionMode: selectionMode,
@@ -1495,6 +1548,7 @@ class _CachedMessageRow {
   /// Records the message and rendering state represented by one retained row.
   const _CachedMessageRow({
     required this.index,
+    required this.depthAnchor,
     required this.message,
     required this.selected,
     required this.selectionMode,
@@ -1508,6 +1562,7 @@ class _CachedMessageRow {
   });
 
   final int index;
+  final int? depthAnchor;
   final ChatUiMessage message;
   final bool selected;
   final bool selectionMode;

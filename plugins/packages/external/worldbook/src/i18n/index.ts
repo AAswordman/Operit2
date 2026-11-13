@@ -1,5 +1,5 @@
-import { WORLDBOOK_I18N_EN_US } from "./en-US";
-import { WORLDBOOK_I18N_ZH_CN } from "./zh-CN";
+import { WORLDBOOK_I18N_EN_US } from "./en-US.js";
+import { WORLDBOOK_I18N_ZH_CN } from "./zh-CN.js";
 import type { WorldBookI18n } from "./types";
 
 const DEFAULT_LOCALE = "zh-CN";
@@ -30,3 +30,8 @@ export function resolveWorldBookI18n(locale?: string): WorldBookI18n {
 }
 
 export type { WorldBookI18n } from "./types";
+
+/** Resolves the current host language at the time an editor or runtime operation runs. */
+export function currentWorldBookI18n(): WorldBookI18n {
+  return resolveWorldBookI18n(getLang());
+}

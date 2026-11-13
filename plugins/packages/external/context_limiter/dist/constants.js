@@ -10,6 +10,7 @@ exports.ENV_KEYS = {
 };
 exports.HOOK_IDS = {
     finalize: "ctx_limiter_finalize",
+    estimateFinalize: "ctx_limiter_estimate_finalize",
     menu: "ctx_limiter_menu",
 };
 exports.TOGGLE_IDS = {

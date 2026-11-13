@@ -764,6 +764,12 @@ abstract class AppLocalizations {
   /// **'Could not load messages. Please try again.'**
   String get messageLocatorLoadFailed;
 
+  /// No description provided for @messageTransformFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to process message display: {error}'**
+  String messageTransformFailed(String error);
+
   /// No description provided for @messageLocatorFavoriteFailed.
   ///
   /// In en, this message translates to:

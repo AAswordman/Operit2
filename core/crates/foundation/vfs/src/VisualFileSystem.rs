@@ -15,6 +15,11 @@ pub struct VisualFileSystem {
 }
 
 impl VisualFileSystem {
+    /// Observes successful VFS writes, removals and replacements under one directory.
+    pub fn watchChanges(&self, root: &str, changed: Arc<dyn Fn() + Send + Sync>) -> Result<crate::FileChanges::FileChangeSubscription, String> {
+        Ok(crate::FileChanges::subscribe(self.resolvePath(root)?.physicalPath, changed))
+    }
+
     /// Validates a virtual address at the backend boundary without exposing its locator.
     pub fn validatePath(&self, path: &str, parameter: &str) -> Result<(), String> {
         let resolved = self.resolvePath(path)?;
@@ -29,9 +34,11 @@ impl VisualFileSystem {
         path: &str,
     ) -> Result<Box<dyn operit_host_contract::FileAppendHandle>, String> {
         let resolved = self.resolvePath(path)?;
-        self.host
+        let handle = self.host
             .openAppendFile(&resolved.physicalPath)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&resolved.physicalPath])?;
+        Ok(Box::new(ObservedAppend { handle, path: resolved.physicalPath }))
     }
 
     /// Describes the filesystem backend without granting direct backend access.
@@ -164,6 +171,7 @@ impl VisualFileSystem {
         let result = http
             .downloadToFile(request, &target)
             .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&self.resolvePath(path)?.physicalPath])?;
         Ok(result.downloadedBytes)
     }
 
@@ -184,7 +192,11 @@ impl VisualFileSystem {
             .iter()
             .map(|target| target as &dyn operit_host_contract::FileTarget)
             .collect::<Vec<_>>();
-        http.downloadFilesTo(request, &references, control, progress)
+        let paths = request.files.iter().map(|file| self.resolvePath(&file.targetPath))
+            .collect::<Result<Vec<_>, _>>().map_err(HostError::new)?;
+        let result = http.downloadFilesTo(request, &references, control, progress)?;
+        crate::FileChanges::publish(&paths.iter().map(|path| path.physicalPath.as_str()).collect::<Vec<_>>()).map_err(HostError::new)?;
+        Ok(result)
     }
     /// Lists child entries for a virtual directory.
     #[allow(non_snake_case)]
@@ -257,7 +269,8 @@ impl VisualFileSystem {
         let resolved = self.resolvePath(path)?;
         self.host
             .writeFile(&resolved.physicalPath, content, append)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&resolved.physicalPath])
     }
 
     /// Writes raw bytes to a mapped host file.
@@ -266,7 +279,8 @@ impl VisualFileSystem {
         let resolved = self.resolvePath(path)?;
         self.host
             .writeFileBytes(&resolved.physicalPath, content)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&resolved.physicalPath])
     }
 
     /// Appends a bounded chunk through the selected filesystem backend.
@@ -274,7 +288,8 @@ impl VisualFileSystem {
         let resolved = self.resolvePath(path)?;
         self.host
             .appendFileBytes(&resolved.physicalPath, content)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&resolved.physicalPath])
     }
 
     /// Deletes a mapped host file or directory.
@@ -283,7 +298,8 @@ impl VisualFileSystem {
         let resolved = self.resolvePath(path)?;
         self.host
             .deleteFile(&resolved.physicalPath, recursive)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&resolved.physicalPath])
     }
 
     /// Reports existence metadata for a virtual or mapped host path.
@@ -309,7 +325,8 @@ impl VisualFileSystem {
         let destination = self.resolvePath(destination)?;
         self.host
             .moveFile(&source.physicalPath, &destination.physicalPath)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&source.physicalPath, &destination.physicalPath])
     }
 
     /// Copies a file or directory between two mapped host paths.
@@ -319,7 +336,8 @@ impl VisualFileSystem {
         let destination = self.resolvePath(destination)?;
         self.host
             .copyFile(&source.physicalPath, &destination.physicalPath, recursive)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&destination.physicalPath])
     }
 
     /// Creates a directory through the mapped host file system.
@@ -396,7 +414,8 @@ impl VisualFileSystem {
         let destination = self.resolvePath(destination)?;
         self.host
             .zipFiles(&source.physicalPath, &destination.physicalPath)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&destination.physicalPath])
     }
 
     /// Extracts a mapped archive into a mapped destination directory.
@@ -406,7 +425,8 @@ impl VisualFileSystem {
         let destination = self.resolvePath(destination)?;
         self.host
             .unzipFiles(&source.physicalPath, &destination.physicalPath)
-            .map_err(hostErrorMessage)
+            .map_err(hostErrorMessage)?;
+        crate::FileChanges::publish(&[&destination.physicalPath])
     }
 
     /// Opens a mapped host file with the platform file opener.
@@ -425,6 +445,23 @@ impl VisualFileSystem {
         self.host
             .shareFile(&resolved.physicalPath, title)
             .map_err(hostErrorMessage)
+    }
+}
+
+/// Publishes committed append chunks through the same mutation boundary as ordinary writes.
+struct ObservedAppend {
+    handle: Box<dyn operit_host_contract::FileAppendHandle>,
+    path: String,
+}
+
+impl operit_host_contract::FileAppendHandle for ObservedAppend {
+    /// Preserves the backend's exact committed length.
+    fn byteLength(&self) -> u64 { self.handle.byteLength() }
+
+    /// Notifies observers only after the backend accepted the complete chunk.
+    fn append(&mut self, content: &[u8]) -> operit_host_contract::HostResult<()> {
+        self.handle.append(content)?;
+        crate::FileChanges::publish(&[&self.path]).map_err(HostError::new)
     }
 }
 
@@ -576,6 +613,44 @@ mod tests {
             PathMapper::new(root.clone(), root.join("workspaces"), storage),
         );
         (vfs, root)
+    }
+
+    /// Observers follow committed alias writes, appends, replacements and parent removal across VFS instances.
+    #[test]
+    fn directory_changes_are_automatic_scoped_and_commit_ordered() {
+        let (files, root) = vfs();
+        let base = "/operitapp/data/extensions/device/plugins/configs/book";
+        files.makeDirectory(base, true).unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let observed = count.clone();
+        let subscription = files.watchChanges(base, Arc::new(move || { observed.fetch_add(1, Ordering::SeqCst); })).unwrap();
+        let independent = VisualFileSystem::builtinOnly(Arc::new(PosixFileSystemHost::new()), root.clone(), root.join("workspaces"));
+        independent.writeFile(&format!("{base}/rules.json"), "first", false).unwrap();
+        files.writeFile("/app/data/extensions/device/plugins/configs/book/rules.json", "second", false).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        let mut append = independent.openAppendFile(&format!("{base}/rules.json")).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+        append.append(b" third").unwrap();
+        drop(append);
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+        let (other, other_root) = vfs();
+        other.makeDirectory(base, true).unwrap();
+        other.writeFile(&format!("{base}/rules.json"), "different runtime", false).unwrap();
+        files.writeFile("/operitapp/data/unrelated", "unrelated", false).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+        files.copyFile("/operitapp/data/unrelated", &format!("{base}/copied"), false).unwrap();
+        files.moveFile(&format!("{base}/copied"), &format!("{base}/moved")).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 6, "A rename notifies once even when both paths are watched");
+        assert!(files.writeFile(base, "failed", false).is_err());
+        assert_eq!(count.load(Ordering::SeqCst), 6);
+        files.deleteFile("/operitapp/data/extensions/device/plugins/configs", true).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 7);
+        drop(subscription);
+        files.makeDirectory(base, true).unwrap();
+        files.writeFile(&format!("{base}/rules.json"), "unobserved", false).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 7);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(other_root).unwrap();
     }
 
     /// Startup logging must reach the active identity's physical storage only.

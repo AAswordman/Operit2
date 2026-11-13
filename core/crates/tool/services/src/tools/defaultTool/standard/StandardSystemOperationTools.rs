@@ -467,7 +467,7 @@ impl AsyncToolExecutor for InstallAppToolExecutor {
 
     /// Preserves the caller's directory while native package APIs use Host blocking capacity.
     fn invokeAndStreamAsync<'a>(
-        &'a mut self,
+        &'a self,
         tool: &'a AITool,
         context: &'a ToolInvocationContext,
     ) -> ToolInvocationFuture<'a> {
@@ -531,7 +531,8 @@ impl ToolExecutor for SystemOperationToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStream(&self, tool: &AITool) -> Vec<ToolResult> {
         let result = match self.operation {
             SystemOperationToolOperation::Toast => self.tools.toast(tool),
             SystemOperationToolOperation::SetClipboardText => self.tools.setClipboardText(tool),

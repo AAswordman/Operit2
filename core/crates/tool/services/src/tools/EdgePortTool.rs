@@ -181,7 +181,8 @@ impl AsyncToolExecutor for EdgePortToolExecutor {
             boundary: ToolBoundary::None,
         })
     }
-    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
+    /// Executes an independent request through the owning resource services.
+    fn invokeAndStreamAsync<'a>(&'a self, tool: &'a AITool, context: &'a crate::ToolExecutionManager::ToolInvocationContext) -> ToolInvocationFuture<'a> {
         Box::pin(async move {
             let result = match prepare(tool, self.io) {
                 Ok((node, _, _)) => {

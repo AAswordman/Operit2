@@ -13,6 +13,7 @@ function runtime() {
   ];
   const context = vm.createContext({ exports, console, require(name) {
     if (name.includes('index.ui.js')) return {};
+    if (name.includes('worldbook_regex')) return { async readRegexRules() { return []; }, regexWorldInfo(text) { return text; } };
     if (name.includes('worldbook_storage')) return { async readWorldBookEntries() { return entries; } };
     if (name.includes('worldbook_variables')) return {
       async syncWorldBookVariableContext() { return {}; },

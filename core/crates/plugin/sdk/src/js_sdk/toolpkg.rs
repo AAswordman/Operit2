@@ -515,6 +515,7 @@ pub enum ToolPkgHookEventName {
     Variant5(ToolPkgChatInputEventName),
     Variant6(ToolPkgChatViewEventName),
     Variant16(ToolPkgChatMessageEventName),
+    Variant23(ToolPkgMessageTransformEventName),
     Variant21(ToolPkgChatLifecycleEventName),
     Variant17(ToolPkgChatMessageMenuItemEventName),
     Variant18(ToolPkgChatRuntimeEventName),
@@ -3188,6 +3189,10 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
     fn registerChatViewHook(&self, definition: ToolPkgChatViewHookRegistration) -> ();
     /// Registers a callback for persisted chat message notifications.
     fn registerChatMessageHook(&self, definition: ToolPkgChatMessageHookRegistration) -> ();
+    /// Registers an awaited text transformation before persistence.
+    fn registerMessageTransformHook(&self, definition: ToolPkgMessageTransformHookRegistration) -> ();
+    /// Prepares an ordered native display program once per message, outside the chunk loop.
+    fn registerMessageStreamTransform(&self, definition: ToolPkgMessageStreamTransformRegistration) -> ();
     /// Registers the sole awaited before-create hook for this package's own extension namespace.
     fn registerChatLifecycleHook(&self, definition: ToolPkgChatLifecycleHookRegistration) -> ();
     /// Registers a context-menu item for chat messages.
@@ -3278,4 +3283,126 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
 pub struct ToolPkgRouteOptions {
     /// Zero-based position of the method's Binding key argument.
     pub binding: usize,
+}
+
+/// Names the message persistence boundary; display uses native program preparation.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgMessageTransformEventName {
+    #[serde(rename = "before_persist")]
+    BeforePersist,
+}
+/// Supplies one semantic text part without granting access to tool-call structure.
+pub struct ToolPkgMessageTransformPayload {
+    /// Identifies the actual conversation.
+    pub chatId: String,
+    /// Identifies the message revision being processed.
+    pub timestamp: f64,
+    /// Identifies the canonical source (user or ai).
+    pub sender: String,
+    /// Identifies the authenticated execution participant when available.
+    pub participantId: Option<String>,
+    /// Identifies this semantic part within the message.
+    pub partId: String,
+    /// Identifies markdown or thinking content.
+    pub kind: String,
+    /// Contains the complete current text, including explicit empty content.
+    pub text: String,
+    /// Counts conversational messages after this message, with zero for a new message.
+    pub depth: i32,
+    /// Reports a user edit rather than initial generation or display.
+    pub isEdit: bool,
+}
+/// Combines the transform stage with its typed text payload.
+pub struct ToolPkgMessageTransformHookEvent {
+    /// Carries the host-selected boundary and current text.
+    pub base_hook_event_base: ToolPkgHookEventBase<ToolPkgMessageTransformEventName, ToolPkgMessageTransformPayload>,
+}
+/// Returns replacement text or explicitly declines to transform it.
+pub enum ToolPkgMessageTransformHookOutput { Variant1(String), Null, Void }
+/// Accepts an immediate replacement or an awaited transformation.
+pub enum ToolPkgMessageTransformHookReturn {
+    Variant1(String), Null, Void,
+    Variant4(JsFuture<ToolPkgMessageTransformHookOutput>),
+}
+/// Registers one ordered text transformer owned by a package.
+pub struct ToolPkgMessageTransformHookRegistration {
+    /// Identifies this handler within its owner.
+    pub id: String,
+    /// Receives complete text and returns a replacement, null, or undefined.
+    pub function: Arc<dyn Fn(ToolPkgMessageTransformHookEvent) -> ToolPkgMessageTransformHookReturn + Send + Sync>,
+}
+
+/// Supplies one immutable message context within a display preparation batch.
+pub struct ToolPkgMessageStreamTransformContext {
+    /// Identifies the canonical message.
+    pub timestamp: f64,
+    /// Identifies the canonical sender.
+    pub sender: String,
+    /// Identifies the selected participant when present.
+    pub participantId: Option<String>,
+    /// Counts later conversational messages.
+    pub depth: i32,
+    /// Reports an explicit edit.
+    pub isEdit: bool,
+}
+/// Shares one configuration read across an ordered display window or one live message.
+pub struct ToolPkgMessageStreamTransformPayload {
+    /// Identifies the conversation shared by the batch.
+    pub chatId: String,
+    /// Preserves input order; each context requires one returned native program.
+    pub messages: Vec<ToolPkgMessageStreamTransformContext>,
+}
+/// Prepares a native program without receiving or retaining generated text.
+pub struct ToolPkgMessageStreamTransformEvent {
+    /// Carries the prepare_display boundary and immutable message context.
+    pub base_hook_event_base: ToolPkgHookEventBase<String, ToolPkgMessageStreamTransformPayload>,
+}
+/// Declares one native Rust-regex replacement for selected semantic text kinds.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPkgTextTransformRule {
+    /// Uses Rust regex syntax; unsupported assertions and empty matches are rejected.
+    pub pattern: String,
+    /// Expands $0, numbered captures and $<name>; literals remain literal.
+    pub replacement: String,
+    /// Selects g, i, m, s or u flags.
+    #[serde(default)]
+    pub flags: String,
+    /// Selects markdown, thinking, or both.
+    pub kinds: Vec<String>,
+    /// Removes literal substrings from each captured value.
+    #[serde(default)]
+    pub trimStrings: Vec<String>,
+}
+/// Executes ordered replacements entirely in Rust after plugin preparation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPkgTextTransformProgram {
+    /// Applies rules in order with independent streaming state for each text part.
+    pub rules: Vec<ToolPkgTextTransformRule>,
+}
+/// Shares each distinct program once and assigns it to ordered message contexts.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPkgTextTransformBatch {
+    /// Contains the unique ordered replacement pipelines.
+    pub programs: Vec<ToolPkgTextTransformProgram>,
+    /// Selects one program index for each input context in order.
+    pub messagePrograms: Vec<u32>,
+}
+/// Returns shared native programs or declines the entire batch.
+pub enum ToolPkgMessageStreamTransformOutput {
+    Variant1(ToolPkgTextTransformBatch), Null, Void,
+}
+/// Accepts immediate or asynchronous preparation, never per-chunk callbacks.
+pub enum ToolPkgMessageStreamTransformReturn {
+    Variant1(ToolPkgTextTransformBatch), Null, Void,
+    Variant4(JsFuture<ToolPkgMessageStreamTransformOutput>),
+}
+/// Registers one package-owned native display-program preparer.
+pub struct ToolPkgMessageStreamTransformRegistration {
+    /// Identifies this preparer within its package.
+    pub id: String,
+    /// Resolves configuration and context once, before native matching begins.
+    pub function: Arc<dyn Fn(ToolPkgMessageStreamTransformEvent) -> ToolPkgMessageStreamTransformReturn + Send + Sync>,
 }

@@ -106,6 +106,11 @@ function createInjectionItemsCard(ctx, items) {
     ]);
 }
 function Screen(ctx) {
+    const [width, setWidth] = ctx.useState("layoutWidth", 0);
+    const measure = ctx.Modifier.onSizeChanged(size => {
+        if (size.width !== width)
+            setWidth(size.width);
+    });
     const text = (0, shared_1.resolveExtraInfoI18n)();
     const initial = (0, shared_1.createDefaultSettings)();
     const masterEnabledState = useStateValue(ctx, "masterEnabled", initial.masterEnabled);
@@ -232,7 +237,7 @@ function Screen(ctx) {
         text.summaryInjectionTimeout.replace("{seconds}", injectionTimeoutSecondsState.value.toString()),
         text.summaryRulesHint,
     ];
-    const rootChildren = [
+    const sections = [
         ctx.UI.Row({ verticalAlignment: "center" }, [
             ctx.UI.Icon({ name: "settings", tint: "primary", size: 24 }),
             ctx.UI.Spacer({ width: 8 }),
@@ -259,6 +264,7 @@ function Screen(ctx) {
                     text: text.toolboxBanner,
                     style: "bodySmall",
                     color: "onSecondaryContainer",
+                    weight: 1,
                 }),
             ]),
         ]),
@@ -363,6 +369,15 @@ function Screen(ctx) {
             }))),
         ]),
     ];
+    const [title, subtitle, banner, masterTitle, master, persist, timeout, itemsTitle, items, summaryTitle, summary] = sections;
+    const rootChildren = [title, subtitle, banner,
+        width >= 900
+            ? ctx.UI.Row({ key: "injection-panes", fillMaxWidth: true, spacing: 20, verticalAlignment: "start" }, [
+                ctx.UI.Column({ weight: 1, spacing: 16 }, [masterTitle, master, persist, timeout, summaryTitle, summary]),
+                ctx.UI.Column({ weight: 1, spacing: 16 }, [itemsTitle, items]),
+            ])
+            : ctx.UI.Column({ key: "injection-panes", fillMaxWidth: true, spacing: 16 }, [masterTitle, master, persist, timeout, itemsTitle, items, summaryTitle, summary]),
+    ];
     if (successMessageState.value.trim()) {
         rootChildren.push(ctx.UI.Card({ containerColor: "primaryContainer", fillMaxWidth: true }, [
             ctx.UI.Row({ padding: { horizontal: 14, vertical: 12 }, verticalAlignment: "center" }, [
@@ -372,6 +387,7 @@ function Screen(ctx) {
                     text: successMessageState.value,
                     style: "bodyMedium",
                     color: "onPrimaryContainer",
+                    weight: 1,
                 }),
             ]),
         ]));
@@ -385,12 +401,14 @@ function Screen(ctx) {
                     text: errorMessageState.value,
                     style: "bodyMedium",
                     color: "onErrorContainer",
+                    weight: 1,
                 }),
             ]),
         ]));
     }
     return ctx.UI.LazyColumn({
         fillMaxSize: true,
+        modifier: measure,
         padding: 16,
         spacing: 16,
         onLoad: async () => {

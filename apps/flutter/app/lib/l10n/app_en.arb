@@ -173,6 +173,8 @@
   "messageLocatorFavorites": "Favorites",
   "messageLocatorNoFavorites": "No favorite messages yet",
   "messageLocatorLoadFailed": "Could not load messages. Please try again.",
+  "messageTransformFailed": "Failed to process message display: {error}",
+  "@messageTransformFailed": { "placeholders": { "error": { "type": "String" } } },
   "messageLocatorFavoriteFailed": "Could not update favorite. Please try again.",
   "messageLocatorAddFavorite": "Favorite message",
   "messageLocatorRemoveFavorite": "Remove favorite",

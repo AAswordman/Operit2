@@ -173,6 +173,8 @@
   "messageLocatorFavorites": "收藏",
   "messageLocatorNoFavorites": "还没有收藏的消息",
   "messageLocatorLoadFailed": "暂时无法加载消息，请重试",
+  "messageTransformFailed": "消息显示处理失败：{error}",
+  "@messageTransformFailed": { "placeholders": { "error": { "type": "String" } } },
   "messageLocatorFavoriteFailed": "收藏更新失败，请重试",
   "messageLocatorAddFavorite": "收藏消息",
   "messageLocatorRemoveFavorite": "取消收藏",

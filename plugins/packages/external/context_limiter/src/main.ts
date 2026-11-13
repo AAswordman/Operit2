@@ -50,9 +50,15 @@ async function writeLimiterEnabled(nextEnabled: boolean): Promise<void> {
   await writeEnvValue(ENV_KEYS.enabled, nextEnabled ? "true" : "false");
 }
 
+/** Registers matching send and estimate transformations alongside the settings menu. */
 export function registerToolPkg() {
   ToolPkg.registerPromptFinalizeHook({
     id: HOOK_IDS.finalize,
+    function: onFinalize,
+  });
+
+  ToolPkg.registerPromptEstimateFinalizeHook({
+    id: HOOK_IDS.estimateFinalize,
     function: onFinalize,
   });
 
