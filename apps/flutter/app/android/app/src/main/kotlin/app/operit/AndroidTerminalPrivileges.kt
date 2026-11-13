@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import app.operit.core.tools.system.AndroidRootShell
 import org.json.JSONArray
 import org.json.JSONObject
@@ -70,7 +71,13 @@ class AndroidTerminalPrivileges(private val context: Context) {
         try {
             return ready.get(10, TimeUnit.SECONDS)
         } catch (error: Exception) {
-            mainHandler.post { Shizuku.unbindUserService(args, connection, false) }
+            mainHandler.post {
+                try {
+                    Shizuku.unbindUserService(args, connection, false)
+                } catch (cleanupError: Exception) {
+                    Log.w("OperitTerminal", "Failed to unbind terminal service after binding failed", cleanupError)
+                }
+            }
             throw error
         }
     }

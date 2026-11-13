@@ -637,6 +637,11 @@ void WebviewBridge::SetCaptureEnabled(bool enabled) {
   webview_->SetVisible(enabled);
 }
 
+/// Keeps hidden or minimized application windows from leaving browser input surfaces visible.
+void WebviewBridge::SetHostVisible(bool visible) {
+  webview_->SetHostVisible(visible);
+}
+
 void WebviewBridge::SetVirtualHostNameMapping(const std::string &host_name,
                                               const std::string &path,
                                               int64_t access_kind) {

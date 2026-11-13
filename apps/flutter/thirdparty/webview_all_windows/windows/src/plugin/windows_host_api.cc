@@ -36,6 +36,21 @@ void WindowsHostApi::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows *registrar, FlutterDesktopViewRef view) {
   auto plugin = std::make_unique<WindowsHostApi>(view,
                                                  registrar->messenger());
+  plugin->registrar_ = registrar;
+  plugin->window_proc_id_ = registrar->RegisterTopLevelWindowProcDelegate(
+      [owner = plugin.get()](HWND window, UINT message, WPARAM wparam,
+                             LPARAM) -> std::optional<LRESULT> {
+        const HWND root = GetAncestor(FlutterDesktopViewGetHWND(owner->view_), GA_ROOT);
+        if (window == root && (message == WM_SIZE || message == WM_SHOWWINDOW)) {
+          const bool visible = message == WM_SHOWWINDOW
+              ? wparam != FALSE && !IsIconic(root)
+              : wparam != SIZE_MINIMIZED && IsWindowVisible(root);
+          for (const auto& [id, instance] : owner->instances_) {
+            instance->SetHostVisible(visible);
+          }
+        }
+        return std::nullopt;
+      });
 
   webview_all_windows::WindowsWebViewHostApi::SetUp(registrar->messenger(),
                                                     plugin.get());
@@ -132,6 +147,9 @@ WindowsHostApi::~WindowsHostApi() {
   // when the registrar destroys this plugin; channel handlers must not be
   // changed here, including the theme channel handler.
   *alive_ = false;
+  if (registrar_ != nullptr) {
+    registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_id_);
+  }
   instances_.clear();
   if (focus_host_window_ != nullptr) {
     RemoveWindowSubclass(focus_host_window_, FlutterViewFocusProc,
@@ -262,6 +280,8 @@ void WindowsHostApi::CreateWebView(
         auto bridge = std::make_unique<WebviewBridge>(
             messenger_, composition, std::move(webview));
         auto view_id = bridge->view_id();
+        const HWND root = GetAncestor(hwnd, GA_ROOT);
+        bridge->SetHostVisible(IsWindowVisible(root) && !IsIconic(root));
         instances_[view_id] = std::move(bridge);
 
         result(webview_all_windows::WindowsCreateWebViewResult(view_id));

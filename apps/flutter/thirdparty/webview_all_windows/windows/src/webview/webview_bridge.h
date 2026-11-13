@@ -42,6 +42,8 @@ public:
   void SetScrollDelta(double dx, double dy, bool control_key_pressed);
   void SetPointerButtonState(int64_t button, bool is_down);
   void SetSize(double width, double height, double scale_factor);
+  /// Applies the owning top-level window visibility to the native browser.
+  void SetHostVisible(bool visible);
   bool DispatchKeyEvent(const std::string &event_json);
   void CaptureSurfaceFrame(SurfaceFrameCaptureCallback result);
 

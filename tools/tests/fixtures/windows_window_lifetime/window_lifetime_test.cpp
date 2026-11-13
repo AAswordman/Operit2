@@ -75,6 +75,15 @@ int main() {
   flutter::FlutterViewController::on_destroy = OnDestroyed;
 
   const auto first = OpenWindow();
+  const auto outside = CreateWindowW(L"STATIC", L"", 0, 0, 0, 1, 1,
+                                     HWND_MESSAGE, nullptr, nullptr, nullptr);
+  Require(outside != nullptr, "Unable to create an external focus target");
+  SetFocus(outside);
+  Require(GetFocus() == outside, "Unable to focus the external target");
+  SendMessage(child_windows.back(), WM_ACTIVATE, WA_INACTIVE,
+              reinterpret_cast<LPARAM>(outside));
+  Require(GetFocus() == outside, "Inactive secondary window stole focus");
+  DestroyWindow(outside);
   DestroyWindow(child_windows.back());
   Require(manager->GetWindow(first) == nullptr, "Closed window remains registered");
   Require(unregistered == 1 && destroyed == 1, "Single-window close did not clean its engine");

@@ -17,3 +17,10 @@ target_include_directories(window_lifetime_test PRIVATE
   "${flutter}" "${flutter}/cpp_client_wrapper/include")
 target_link_libraries(window_lifetime_test PRIVATE
   "${flutter}/flutter_windows.dll.lib" dwmapi shell32)
+
+add_executable(keyboard_message_test keyboard_message_test.cpp)
+target_compile_features(keyboard_message_test PRIVATE cxx_std_17)
+target_compile_definitions(keyboard_message_test PRIVATE UNICODE _UNICODE NOMINMAX)
+target_include_directories(keyboard_message_test PRIVATE
+  "${OPERIT_REPO_ROOT}/apps/flutter/app/windows/runner")
+target_link_libraries(keyboard_message_test PRIVATE user32)

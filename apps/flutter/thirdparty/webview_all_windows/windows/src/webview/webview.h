@@ -214,6 +214,8 @@ public:
   bool AttachVisual(IUnknown* visual);
   /// Updates visibility without enabling any screen capture session.
   void SetVisible(bool visible);
+  /// Hides native browser windows while their owning application window is hidden.
+  void SetHostVisible(bool visible);
   /// Transfers keyboard and IME ownership between Flutter and WebView2.
   bool SetNativeFocus(bool focused);
   /// Captures a PNG on demand and decodes its pixels to the existing BGRA contract.
@@ -364,6 +366,8 @@ private:
   HWND hwnd_;
   bool owns_window_;
   bool is_valid_ = false;
+  bool content_visible_ = true;
+  bool host_visible_ = true;
   float scale_factor_ = 1.0;
   wil::com_ptr<ICoreWebView2CompositionController> composition_controller_;
   wil::com_ptr<ICoreWebView2Controller3> webview_controller_;

@@ -26,6 +26,8 @@ public:
   ~WindowsHostApi() override;
 
 private:
+  flutter::PluginRegistrarWindows* registrar_ = nullptr;
+  int window_proc_id_ = -1;
   std::unique_ptr<WebviewPlatform> platform_;
   std::shared_ptr<WebviewHost> webview_host_;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
