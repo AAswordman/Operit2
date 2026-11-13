@@ -1,6 +1,9 @@
 #[path = "JsComposeCompiler.rs"]
 mod JsComposeCompiler;
 
+#[path = "JsAsyncCompiler.rs"]
+mod JsAsyncCompiler;
+
 #[path = "JsEngine.rs"]
 pub mod JsEngine;
 

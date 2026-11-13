@@ -12,6 +12,14 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 getrandom = { workspace = true, features = ["js"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 md-5 = "0.10"
+oxc_allocator = "=0.146.0"
+oxc_ast = "=0.146.0"
+oxc_ast_visit = "=0.146.0"
+oxc_codegen = { version = "=0.146.0", default-features = false }
+oxc_parser = "=0.146.0"
+oxc_semantic = "=0.146.0"
+oxc_span = "=0.146.0"
+oxc_transformer = "=0.146.0"
 operit-host-api = { path = "../../foundation/host-api" }
 operit-plugin-sdk = { path = "../sdk" }
 operit-store = { path = "../../persistence/store" }
@@ -22,6 +30,7 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 uuid = { workspace = true, features = ["js"] }
 
 [dev-dependencies]
+operit-vfs = { path = "../../foundation/vfs" }
 operit-link = { path = "../../foundation/link" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler" }

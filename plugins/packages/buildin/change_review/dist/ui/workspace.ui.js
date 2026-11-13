@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/workspace.ui.ts
 var workspace_ui_exports = {};
@@ -250,32 +230,22 @@ function diffItems(document, split, fileLines, expandedGaps) {
 }
 
 // src/git.ts
-function runCommand(workspace, program, args) {
-  return __async(this, null, function* () {
-    return JSON.parse(yield Tools.SoftwareSettings.exec(["--json", "workspace", "exec", workspace, program, ...args]));
-  });
+async function runCommand(workspace, program, args) {
+  return JSON.parse(await Tools.SoftwareSettings.exec(["--json", "workspace", "exec", workspace, program, ...args]));
 }
-function resolvePath(path, native = false) {
-  return __async(this, null, function* () {
-    return JSON.parse(yield Tools.SoftwareSettings.exec(["--json", "workspace", "resolve-path", ...native ? ["--native"] : [], path]));
-  });
+async function resolvePath(path, native = false) {
+  return JSON.parse(await Tools.SoftwareSettings.exec(["--json", "workspace", "resolve-path", ...native ? ["--native"] : [], path]));
 }
-function resolveResource(workspace, path) {
-  return __async(this, null, function* () {
-    return JSON.parse(yield Tools.SoftwareSettings.exec(["--json", "workspace", "resolve-path", "--from", workspace, path]));
-  });
+async function resolveResource(workspace, path) {
+  return JSON.parse(await Tools.SoftwareSettings.exec(["--json", "workspace", "resolve-path", "--from", workspace, path]));
 }
-function openPath(_0, _1) {
-  return __async(this, arguments, function* (path, action, programArgs = []) {
-    yield Tools.SoftwareSettings.exec(["--json", "workspace", "open-path", path, action, ...programArgs]);
-  });
+async function openPath(path, action, programArgs = []) {
+  await Tools.SoftwareSettings.exec(["--json", "workspace", "open-path", path, action, ...programArgs]);
 }
-function git(run, workspace, args) {
-  return __async(this, null, function* () {
-    const result = yield run(workspace, "git", ["--no-optional-locks", ...args]);
-    if (result.exitCode !== 0) throw new Error(`git ${args[0]} (${result.exitCode}): ${result.stderr.trim()}`);
-    return result.stdout;
-  });
+async function git(run, workspace, args) {
+  const result = await run(workspace, "git", ["--no-optional-locks", ...args]);
+  if (result.exitCode !== 0) throw new Error(`git ${args[0]} (${result.exitCode}): ${result.stderr.trim()}`);
+  return result.stdout;
 }
 function parseStatus(text) {
   const records = text.split("\0");
@@ -323,103 +293,95 @@ function parseNumstat(text) {
   }
   return result;
 }
-function comparisonBase(workspace, run) {
-  return __async(this, null, function* () {
-    const inventory = yield git(run, workspace, ["for-each-ref", "--format=%(refname)%00%(HEAD)%00%(upstream)"]);
-    const refs = /* @__PURE__ */ new Set();
-    let upstream = null;
-    for (const record of inventory.split("\n")) {
-      if (record === "") continue;
-      const [name, current, tracking] = record.replace(/\r$/, "").split("\0");
-      refs.add(name);
-      if (current === "*" && tracking !== "") upstream = tracking;
-    }
-    if (upstream !== null) {
-      if (!refs.has(upstream)) throw new Error(`The configured upstream does not exist: ${upstream}`);
-      return upstream;
-    }
-    const conventional = ["refs/remotes/origin/main", "refs/heads/main", "refs/remotes/origin/master", "refs/heads/master"].find((ref) => refs.has(ref));
-    if (conventional !== void 0) return conventional;
-    const history = (yield git(run, workspace, ["rev-list", "--max-count=2", "HEAD"])).trim().split("\n");
-    if (history.length < 2) throw new Error("This repository has no branch comparison base");
-    return history[1];
+async function comparisonBase(workspace, run) {
+  const inventory = await git(run, workspace, ["for-each-ref", "--format=%(refname)%00%(HEAD)%00%(upstream)"]);
+  const refs = /* @__PURE__ */ new Set();
+  let upstream = null;
+  for (const record of inventory.split("\n")) {
+    if (record === "") continue;
+    const [name, current, tracking] = record.replace(/\r$/, "").split("\0");
+    refs.add(name);
+    if (current === "*" && tracking !== "") upstream = tracking;
+  }
+  if (upstream !== null) {
+    if (!refs.has(upstream)) throw new Error(`The configured upstream does not exist: ${upstream}`);
+    return upstream;
+  }
+  const conventional = ["refs/remotes/origin/main", "refs/heads/main", "refs/remotes/origin/master", "refs/heads/master"].find((ref) => refs.has(ref));
+  if (conventional !== void 0) return conventional;
+  const history = (await git(run, workspace, ["rev-list", "--max-count=2", "HEAD"])).trim().split("\n");
+  if (history.length < 2) throw new Error("This repository has no branch comparison base");
+  return history[1];
+}
+async function loadChanges(workspace, source, base, run = runCommand) {
+  const root = (await git(run, workspace, ["rev-parse", "--show-toplevel"])).replace(/\r?\n$/, "");
+  const head = await run(workspace, "git", ["--no-optional-locks", "rev-parse", "--verify", "--quiet", "HEAD"]);
+  if (head.exitCode !== 0 && head.exitCode !== 1) throw new Error(`Cannot inspect HEAD: ${head.stderr}`);
+  const unborn = head.exitCode === 1;
+  if (source === "branch" && unborn) return [];
+  const selectedBase = source === "branch" ? base ?? await comparisonBase(workspace, run) : null;
+  const revision = source === "branch" ? `${selectedBase}...HEAD` : "HEAD";
+  const [status, numstat] = await Promise.all([
+    git(run, workspace, ["-C", root, ...source === "branch" ? ["diff", "--name-status", "-z", revision, "--"] : ["status", "--porcelain=v1", "-uall", "-z"]]),
+    unborn ? Promise.resolve("") : git(run, workspace, ["-C", root, "diff", "--numstat", "-z", revision, "--"])
+  ]);
+  const stats = parseNumstat(numstat);
+  const entries = source === "branch" ? parseNameStatus(status) : parseStatus(status);
+  return entries.map((entry) => ({
+    ...entry,
+    root,
+    workspace,
+    base: selectedBase,
+    unborn,
+    diffContent: "",
+    additions: stats.get(entry.path)?.additions ?? 0,
+    deletions: stats.get(entry.path)?.deletions ?? 0
+  }));
+}
+async function loadWorkspaceChanges(workspace, source, base) {
+  const listing = await Tools.Files.list(workspace);
+  const ownRepository = listing.entries.some((entry) => entry.name === ".git");
+  const children = listing.entries.filter((entry) => entry.isDirectory && !entry.name.startsWith("."));
+  const candidates = await Promise.all(children.map(async (entry) => {
+    const path = `${workspace.replace(/\/$/, "")}/${entry.name}`;
+    return (await Tools.Files.list(path)).entries.some((entry2) => entry2.name === ".git") ? path : null;
+  }));
+  const mounted = candidates.filter((path) => path !== null);
+  const paths = ownRepository || mounted.length === 0 ? [workspace, ...mounted] : mounted;
+  const repositories = await Promise.all(paths.map((path) => loadChanges(path, source, base)));
+  const seen = /* @__PURE__ */ new Set();
+  return repositories.flatMap((files) => {
+    if (files.length === 0) return [];
+    const root = files[0].root;
+    if (seen.has(root)) return [];
+    seen.add(root);
+    return files;
   });
 }
-function loadChanges(_0, _1, _2) {
-  return __async(this, arguments, function* (workspace, source, base, run = runCommand) {
-    const root = (yield git(run, workspace, ["rev-parse", "--show-toplevel"])).replace(/\r?\n$/, "");
-    const head = yield run(workspace, "git", ["--no-optional-locks", "rev-parse", "--verify", "--quiet", "HEAD"]);
-    if (head.exitCode !== 0 && head.exitCode !== 1) throw new Error(`Cannot inspect HEAD: ${head.stderr}`);
-    const unborn = head.exitCode === 1;
-    if (source === "branch" && unborn) return [];
-    const selectedBase = source === "branch" ? base ?? (yield comparisonBase(workspace, run)) : null;
-    const revision = source === "branch" ? `${selectedBase}...HEAD` : "HEAD";
-    const [status, numstat] = yield Promise.all([
-      git(run, workspace, ["-C", root, ...source === "branch" ? ["diff", "--name-status", "-z", revision, "--"] : ["status", "--porcelain=v1", "-uall", "-z"]]),
-      unborn ? Promise.resolve("") : git(run, workspace, ["-C", root, "diff", "--numstat", "-z", revision, "--"])
-    ]);
-    const stats = parseNumstat(numstat);
-    const entries = source === "branch" ? parseNameStatus(status) : parseStatus(status);
-    return entries.map((entry) => ({
-      ...entry,
-      root,
-      workspace,
-      base: selectedBase,
-      unborn,
-      diffContent: "",
-      additions: stats.get(entry.path)?.additions ?? 0,
-      deletions: stats.get(entry.path)?.deletions ?? 0
-    }));
-  });
-}
-function loadWorkspaceChanges(workspace, source, base) {
-  return __async(this, null, function* () {
-    const listing = yield Tools.Files.list(workspace);
-    const ownRepository = listing.entries.some((entry) => entry.name === ".git");
-    const children = listing.entries.filter((entry) => entry.isDirectory && !entry.name.startsWith("."));
-    const candidates = yield Promise.all(children.map((entry) => __async(null, null, function* () {
-      const path = `${workspace.replace(/\/$/, "")}/${entry.name}`;
-      return (yield Tools.Files.list(path)).entries.some((entry2) => entry2.name === ".git") ? path : null;
-    })));
-    const mounted = candidates.filter((path) => path !== null);
-    const paths = ownRepository || mounted.length === 0 ? [workspace, ...mounted] : mounted;
-    const repositories = yield Promise.all(paths.map((path) => loadChanges(path, source, base)));
-    const seen = /* @__PURE__ */ new Set();
-    return repositories.flatMap((files) => {
-      if (files.length === 0) return [];
-      const root = files[0].root;
-      if (seen.has(root)) return [];
-      seen.add(root);
-      return files;
-    });
-  });
-}
-function loadFileDiff(_0, _1, _2) {
-  return __async(this, arguments, function* (workspace, file, readUntracked, run = runCommand) {
-    let diffContent;
-    if (file.untracked || file.unborn) {
-      const content = yield readUntracked();
-      const lines = content.length === 0 ? [] : content.replace(/\n$/, "").split("\n");
-      diffContent = lines.length === 0 ? "" : `--- /dev/null
+async function loadFileDiff(workspace, file, readUntracked, run = runCommand) {
+  let diffContent;
+  if (file.untracked || file.unborn) {
+    const content = await readUntracked();
+    const lines = content.length === 0 ? [] : content.replace(/\n$/, "").split("\n");
+    diffContent = lines.length === 0 ? "" : `--- /dev/null
 +++ b/${file.path}
 @@ -0,0 +1,${lines.length} @@
 ${lines.map((line) => `+${line}`).join("\n")}`;
-    } else {
-      diffContent = yield git(run, file.workspace, [
-        "-C",
-        file.root,
-        "diff",
-        "--unified=3",
-        "--no-ext-diff",
-        "--no-textconv",
-        file.base === null ? "HEAD" : `${file.base}...HEAD`,
-        "--",
-        ...file.originalPath === null ? [] : [file.originalPath],
-        file.path
-      ]);
-    }
-    return { ...file, diffContent, ...lineStats(diffContent), loaded: true };
-  });
+  } else {
+    diffContent = await git(run, file.workspace, [
+      "-C",
+      file.root,
+      "diff",
+      "--unified=3",
+      "--no-ext-diff",
+      "--no-textconv",
+      file.base === null ? "HEAD" : `${file.base}...HEAD`,
+      "--",
+      ...file.originalPath === null ? [] : [file.originalPath],
+      file.path
+    ]);
+  }
+  return { ...file, diffContent, ...lineStats(diffContent), loaded: true };
 }
 
 // src/icons.ts
@@ -685,12 +647,10 @@ function Workspace(ctx) {
       active = false;
     };
   }, [source, workspace, base, refresh]);
-  function filePath(file) {
-    return __async(this, null, function* () {
-      if (source === "lastTurn") return (yield resolveResource(workspace ?? "", file.path)).vfsPath;
-      if (workspace === null || workspace === "") throw new Error("当前对话未绑定工作区");
-      return (yield resolvePath(join(file.root, file.path), true)).vfsPath;
-    });
+  async function filePath(file) {
+    if (source === "lastTurn") return (await resolveResource(workspace ?? "", file.path)).vfsPath;
+    if (workspace === null || workspace === "") throw new Error("当前对话未绑定工作区");
+    return (await resolvePath(join(file.root, file.path), true)).vfsPath;
   }
   ctx.useEffect("selected-file", () => {
     let active = true;
@@ -705,9 +665,7 @@ function Workspace(ctx) {
       active = false;
     };
     setLoadingDiff(true);
-    loadFileDiff(workspace, current, () => __async(null, null, function* () {
-      return (yield Tools.Files.read(yield filePath(current))).content;
-    })).then((file) => {
+    loadFileDiff(workspace, current, async () => (await Tools.Files.read(await filePath(current))).content).then((file) => {
       if (active) {
         setCatalog(catalog.map((entry) => fileKey(entry) === fileKey(file) ? file : entry));
         setLoadingDiff(false);
@@ -740,17 +698,15 @@ function Workspace(ctx) {
       active = false;
     };
   }, [full, current === null ? null : fileKey(current), source, workspace]);
-  function loadDirectory(path, depth, generation) {
-    return __async(this, null, function* () {
-      const listing = yield Tools.Files.list(path);
-      const children = listing.entries.filter((entry) => !entry.name.startsWith(".")).sort((a, b) => {
-        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-      }).map((entry) => ({ ...entry, path: join(path, entry.name), depth }));
-      if (treeRequest.current !== generation) return;
-      treeCache.current = { ...treeCache.current, [path]: children };
-      setTree(treeCache.current);
-    });
+  async function loadDirectory(path, depth, generation) {
+    const listing = await Tools.Files.list(path);
+    const children = listing.entries.filter((entry) => !entry.name.startsWith(".")).sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    }).map((entry) => ({ ...entry, path: join(path, entry.name), depth }));
+    if (treeRequest.current !== generation) return;
+    treeCache.current = { ...treeCache.current, [path]: children };
+    setTree(treeCache.current);
   }
   ctx.useEffect("tree-root", () => {
     let active = true;
@@ -845,38 +801,36 @@ function Workspace(ctx) {
     listDrag.current = Math.min(availableListWidth, Math.max(minimumListWidth, listDrag.current + deltaX));
     setListWidth(listDrag.current);
   }
-  function selectTree(entry) {
-    return __async(this, null, function* () {
-      if (entry.isDirectory) {
-        if (expanded.includes(entry.path)) setExpanded(expanded.filter((path) => path !== entry.path));
-        else {
-          const generation = treeRequest.current;
-          try {
-            if (treeCache.current[entry.path] === void 0) yield loadDirectory(entry.path, entry.depth + 1, generation);
-            if (treeRequest.current === generation) setExpanded([...expanded, entry.path]);
-          } catch (failure) {
-            if (treeRequest.current === generation) setTreeError(String(failure));
-          }
-        }
-      } else {
-        const generation = ++previewRequest.current;
-        setPreview({ path: entry.path, content: "" });
-        setPreviewLoading(true);
-        setPreviewError("");
+  async function selectTree(entry) {
+    if (entry.isDirectory) {
+      if (expanded.includes(entry.path)) setExpanded(expanded.filter((path) => path !== entry.path));
+      else {
+        const generation = treeRequest.current;
         try {
-          const result = yield Tools.Files.read(entry.path);
-          if (previewRequest.current === generation) {
-            setPreview({ path: entry.path, content: result.content });
-            setPreviewLoading(false);
-          }
+          if (treeCache.current[entry.path] === void 0) await loadDirectory(entry.path, entry.depth + 1, generation);
+          if (treeRequest.current === generation) setExpanded([...expanded, entry.path]);
         } catch (failure) {
-          if (previewRequest.current === generation) {
-            setPreviewError(String(failure));
-            setPreviewLoading(false);
-          }
+          if (treeRequest.current === generation) setTreeError(String(failure));
         }
       }
-    });
+    } else {
+      const generation = ++previewRequest.current;
+      setPreview({ path: entry.path, content: "" });
+      setPreviewLoading(true);
+      setPreviewError("");
+      try {
+        const result = await Tools.Files.read(entry.path);
+        if (previewRequest.current === generation) {
+          setPreview({ path: entry.path, content: result.content });
+          setPreviewLoading(false);
+        }
+      } catch (failure) {
+        if (previewRequest.current === generation) {
+          setPreviewError(String(failure));
+          setPreviewLoading(false);
+        }
+      }
+    }
   }
   function treeRows(path) {
     return (tree[path] ?? []).flatMap((entry) => {
@@ -890,19 +844,17 @@ function Workspace(ctx) {
       ])), ...opened ? treeRows(entry.path) : []];
     });
   }
-  function openTarget(index) {
-    return __async(this, null, function* () {
-      const path = preview?.path ?? (current === null ? workspace : yield filePath(current));
-      if (!path) return;
-      const resolved = yield resolvePath(path);
-      if (index === 3) {
-        yield Tools.System.setClipboardText(resolved.nativePath);
-        ctx.showToast(`已复制路径: ${resolved.nativePath}`);
-      } else if (index === 0) yield openPath(path, "reveal");
-      else if (index === 1) yield openPath(path, "program", ["code", "-g"]);
-      else if (index === 2) yield openPath(path, "terminal");
-      else throw new Error(`Unknown external opener: ${index}`);
-    });
+  async function openTarget(index) {
+    const path = preview?.path ?? (current === null ? workspace : await filePath(current));
+    if (!path) return;
+    const resolved = await resolvePath(path);
+    if (index === 3) {
+      await Tools.System.setClipboardText(resolved.nativePath);
+      ctx.showToast(`已复制路径: ${resolved.nativePath}`);
+    } else if (index === 0) await openPath(path, "reveal");
+    else if (index === 1) await openPath(path, "program", ["code", "-g"]);
+    else if (index === 2) await openPath(path, "terminal");
+    else throw new Error(`Unknown external opener: ${index}`);
   }
   function toolbar() {
     function navigation(name, tooltip, onClick, enabled = true, tint) {

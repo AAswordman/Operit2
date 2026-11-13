@@ -18,12 +18,12 @@ async function sources(directory) {
   return files.sort();
 }
 
-/** Bundles each executable with runtime-compatible Promise lowering and explicit module ownership. */
+/** Bundles readable executables; async and Compose compilation belong to the engine. */
 export async function bundles() {
   const result = {};
   for (const entry of ['main', 'ui/summary.ui', 'ui/workspace.ui', 'ui/home.ui']) {
     const bundle = await build({ absWorkingDir: root, entryPoints: [`src/${entry}.ts`], bundle: true,
-      format: 'cjs', platform: 'neutral', target: 'es2020', supported: { 'async-await': false },
+      format: 'cjs', platform: 'neutral', target: 'es2020',
       external: entry === 'main' ? ['./ui/*.ui.js'] : [], write: false, charset: 'utf8' });
     if (bundle.outputFiles.length !== 1) throw new Error(`Expected one bundle for ${entry}`);
     result[`dist/${entry}.js`] = bundle.outputFiles[0].contents;

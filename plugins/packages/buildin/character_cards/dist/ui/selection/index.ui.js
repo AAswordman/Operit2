@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/selection/index.ui.ts
 var index_ui_exports = {};
@@ -545,49 +525,47 @@ function createUiScreenSession(presentation) {
     /** Reads only the package screen parameters needed by the reused typed Web view. */
     currentScreen: () => session.currentScreen(),
     /** Persists a selector choice through main IPC before acknowledging its caller-owned request. */
-    completeScreen(value) {
-      return __async(this, null, function* () {
-        if (finished) throw new Error("This presentation has already finished");
-        if (completing) throw new Error("A presentation completion is already running");
-        const current = session.currentScreen();
-        if (current.input.mode === "manage") throw new Error("Management has no presentation completion channel");
-        const result = parseScreenResult(value, current.input);
-        completing = true;
-        try {
-          let completion;
-          switch (result.mode) {
-            case "select": {
-              if (selectorTarget === null) throw new Error("Selector has no explicit global or chat target");
-              const selection2 = encodeSelection(result.selection);
-              if (selectorTarget.chatId === null) {
-                const identity2 = parseChatSelection(selection2);
-                const active = identity2.kind === "model" ? yield callMainDomain("activePrompt.setModel", {}) : identity2.kind === "card" ? yield callMainDomain("activePrompt.setCard", { id: identity2.id }) : yield callMainDomain("activePrompt.setGroup", { id: identity2.id });
-                if (!active.active || active.id !== identity2.id || active.type !== (identity2.kind === "model" ? "model" : identity2.kind === "card" ? "character_card" : "character_group")) throw new Error("Main runtime did not confirm the selected global active prompt");
-              } else {
-                const chatId = selectorTarget.chatId;
-                const binding = yield callMainDomain("chat.configuration.binding.write", { chatId, selection: selection2 });
-                if (binding.chatId !== chatId || binding.selection !== selection2) throw new Error("Main runtime did not confirm the selected chat binding");
-              }
-              const complete = session.completeScreen(result);
-              completion = { ...complete, value: { selection: selection2, contextKey: selection2 } };
-              break;
+    async completeScreen(value) {
+      if (finished) throw new Error("This presentation has already finished");
+      if (completing) throw new Error("A presentation completion is already running");
+      const current = session.currentScreen();
+      if (current.input.mode === "manage") throw new Error("Management has no presentation completion channel");
+      const result = parseScreenResult(value, current.input);
+      completing = true;
+      try {
+        let completion;
+        switch (result.mode) {
+          case "select": {
+            if (selectorTarget === null) throw new Error("Selector has no explicit global or chat target");
+            const selection2 = encodeSelection(result.selection);
+            if (selectorTarget.chatId === null) {
+              const identity2 = parseChatSelection(selection2);
+              const active = identity2.kind === "model" ? await callMainDomain("activePrompt.setModel", {}) : identity2.kind === "card" ? await callMainDomain("activePrompt.setCard", { id: identity2.id }) : await callMainDomain("activePrompt.setGroup", { id: identity2.id });
+              if (!active.active || active.id !== identity2.id || active.type !== (identity2.kind === "model" ? "model" : identity2.kind === "card" ? "character_card" : "character_group")) throw new Error("Main runtime did not confirm the selected global active prompt");
+            } else {
+              const chatId = selectorTarget.chatId;
+              const binding = await callMainDomain("chat.configuration.binding.write", { chatId, selection: selection2 });
+              if (binding.chatId !== chatId || binding.selection !== selection2) throw new Error("Main runtime did not confirm the selected chat binding");
             }
-            case "memory-attachment": {
-              const complete = session.completeScreen(result);
-              completion = { ...complete, value: { type: "text", name: "记忆附件", content: result.content, mediaType: "text/plain" } };
-              break;
-            }
-            case "preview":
-            case "edit":
-              completion = session.completeScreen(result);
-              break;
+            const complete = session.completeScreen(result);
+            completion = { ...complete, value: { selection: selection2, contextKey: selection2 } };
+            break;
           }
-          finished = true;
-          return completion;
-        } finally {
-          completing = false;
+          case "memory-attachment": {
+            const complete = session.completeScreen(result);
+            completion = { ...complete, value: { type: "text", name: "记忆附件", content: result.content, mediaType: "text/plain" } };
+            break;
+          }
+          case "preview":
+          case "edit":
+            completion = session.completeScreen(result);
+            break;
         }
-      });
+        finished = true;
+        return completion;
+      } finally {
+        completing = false;
+      }
     },
     /** Cancels the same caller request without invoking any binding write or returning domain data. */
     cancelScreen() {
@@ -609,60 +587,56 @@ function selectorSession(presentation) {
   if (current.requestId === null || current.input.mode !== "select") throw new Error("The selection route requires a real presentation request");
   return { input: { ...current.input, chatId }, session };
 }
-function readSelectorData(input) {
-  return __async(this, null, function* () {
-    const [cards, groups] = yield Promise.all([callMainDomain("character.list", {}), callMainDomain("group.list", {})]);
-    let selected;
-    if (input.chatId === null) selected = encodeSelection(yield callMainDomain("activePrompt.get", {}));
-    else {
-      const binding = yield callMainDomain("chat.configuration.binding.find", { chatId: input.chatId });
-      selected = binding === null ? "model:chat" : binding.selection;
+async function readSelectorData(input) {
+  const [cards, groups] = await Promise.all([callMainDomain("character.list", {}), callMainDomain("group.list", {})]);
+  let selected;
+  if (input.chatId === null) selected = encodeSelection(await callMainDomain("activePrompt.get", {}));
+  else {
+    const binding = await callMainDomain("chat.configuration.binding.find", { chatId: input.chatId });
+    selected = binding === null ? "model:chat" : binding.selection;
+  }
+  if (selected !== null) requireChatSelection(selected, cards, groups);
+  const options = [];
+  if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "仅使用模型", description: "不使用角色卡提示词和角色记忆", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
+  if (input.kind === "card" || input.kind === "all") {
+    for (const card of cards) {
+      let avatar;
+      if (card.avatarUri !== null) avatar = { type: "uri", uri: card.avatarUri };
+      else avatar = { type: "resource", path: null };
+      options.push({
+        key: "card:" + card.id,
+        token: "card:" + card.id,
+        kind: "card",
+        id: card.id,
+        title: card.name,
+        description: card.description,
+        selection: { CharacterCard: { id: card.id } },
+        avatar
+      });
     }
-    if (selected !== null) requireChatSelection(selected, cards, groups);
-    const options = [];
-    if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "仅使用模型", description: "不使用角色卡提示词和角色记忆", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
-    if (input.kind === "card" || input.kind === "all") {
-      for (const card of cards) {
-        let avatar;
-        if (card.avatarUri !== null) avatar = { type: "uri", uri: card.avatarUri };
-        else avatar = { type: "resource", path: null };
-        options.push({
-          key: "card:" + card.id,
-          token: "card:" + card.id,
-          kind: "card",
-          id: card.id,
-          title: card.name,
-          description: card.description,
-          selection: { CharacterCard: { id: card.id } },
-          avatar
-        });
-      }
-    }
-    if (input.kind === "group" || input.kind === "all") for (const group of groups) options.push({
-      key: "group:" + group.id,
-      token: "group:" + group.id,
-      kind: "group",
-      id: group.id,
-      title: group.name,
-      description: group.description,
-      selection: { CharacterGroup: { id: group.id } },
-      avatar: { type: "group" }
-    });
-    const keys = /* @__PURE__ */ new Set();
-    for (const option of options) {
-      if (keys.has(option.key)) throw new Error("Duplicate selector row identity: " + option.key);
-      keys.add(option.key);
-    }
-    return { options, selected };
+  }
+  if (input.kind === "group" || input.kind === "all") for (const group of groups) options.push({
+    key: "group:" + group.id,
+    token: "group:" + group.id,
+    kind: "group",
+    id: group.id,
+    title: group.name,
+    description: group.description,
+    selection: { CharacterGroup: { id: group.id } },
+    avatar: { type: "group" }
   });
+  const keys = /* @__PURE__ */ new Set();
+  for (const option of options) {
+    if (keys.has(option.key)) throw new Error("Duplicate selector row identity: " + option.key);
+    keys.add(option.key);
+  }
+  return { options, selected };
 }
-function loadSelectorAvatars(data) {
-  return __async(this, null, function* () {
-    if (!data.options.some((option) => option.avatar.type === "resource" && option.avatar.path === null)) return data;
-    const path = yield ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
-    if (path.trim() === "") throw new Error("Declared character default-avatar resource did not resolve");
-    return { ...data, options: data.options.map((option) => option.avatar.type === "resource" && option.avatar.path === null ? { ...option, avatar: { type: "resource", path } } : option) };
-  });
+async function loadSelectorAvatars(data) {
+  if (!data.options.some((option) => option.avatar.type === "resource" && option.avatar.path === null)) return data;
+  const path = await ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
+  if (path.trim() === "") throw new Error("Declared character default-avatar resource did not resolve");
+  return { ...data, options: data.options.map((option) => option.avatar.type === "resource" && option.avatar.path === null ? { ...option, avatar: { type: "resource", path } } : option) };
 }
 function createSelectorController(input, session, publish, assertOwner) {
   let state = { data: null, loading: true, switchingKey: null, error: "", finished: false }, loading = null;
@@ -704,28 +678,26 @@ function createSelectorController(input, session, publish, assertOwner) {
       return loading;
     },
     /** Matches the original popup: one row click awaits the real switch, then returns an explicit completion. */
-    select(key) {
-      return __async(this, null, function* () {
-        idle();
-        if (state.loading || state.data === null) throw new Error("Selector records have not been loaded successfully");
-        const options = state.data.options.filter(
-          /** Resolves exactly one genuine allowed row rather than a caller-supplied role identity. */
-          (option) => option.key === key
-        );
-        if (options.length !== 1) throw new Error("Selector row is not one actual available choice: " + key);
-        update({ switchingKey: key, error: "" });
-        try {
-          const complete = yield session.completeScreen({ mode: "select", selection: options[0].selection });
-          assertOwner();
-          update({ finished: true });
-          return complete;
-        } catch (failure) {
-          update({ error: String(failure) });
-          throw failure;
-        } finally {
-          update({ switchingKey: null });
-        }
-      });
+    async select(key) {
+      idle();
+      if (state.loading || state.data === null) throw new Error("Selector records have not been loaded successfully");
+      const options = state.data.options.filter(
+        /** Resolves exactly one genuine allowed row rather than a caller-supplied role identity. */
+        (option) => option.key === key
+      );
+      if (options.length !== 1) throw new Error("Selector row is not one actual available choice: " + key);
+      update({ switchingKey: key, error: "" });
+      try {
+        const complete = await session.completeScreen({ mode: "select", selection: options[0].selection });
+        assertOwner();
+        update({ finished: true });
+        return complete;
+      } catch (failure) {
+        update({ error: String(failure) });
+        throw failure;
+      } finally {
+        update({ switchingKey: null });
+      }
     },
     /** Closes only this request and never commits a staged choice or modifies another selector. */
     cancel() {
@@ -776,9 +748,7 @@ function selectorRow(ctx, option, state, controller) {
   return ctx.UI.Row({
     ...props,
     /** Returns the real commit result to the existing generic Compose action channel without a synthetic receiver. */
-    onClick: () => __async(null, null, function* () {
-      return selectorResultJson(yield controller.select(option.key));
-    })
+    onClick: async () => selectorResultJson(await controller.select(option.key))
   }, contents);
 }
 function selectorView(ctx, input, state, controller) {

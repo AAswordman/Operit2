@@ -1889,6 +1889,8 @@ impl JsEngineState {
             )
             .map_err(|error| error.to_string())?;
         let syncNames = [
+            "__operitNativePrepareJavaScript",
+            "__operitNativeAsyncMethodKind",
             "__operitNativePrepareComposeModule",
             "__operitNativeReadBootstrapLibrary",
             "__operitNativeHashText",
@@ -2912,6 +2914,16 @@ fn executeHostOperation(name: &str, arguments: Vec<impl Into<operit_host_api::Ho
                 ));
             }
             Ok(Value::String(path))
+        }
+        "__operitNativePrepareJavaScript" => {
+            let [source] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            crate::javascript::JsAsyncCompiler::compile(&hostJavaScriptStringArgument(source)?)
+                .map(Value::String).map_err(HostError::new)
+        }
+        "__operitNativeAsyncMethodKind" => {
+            let [source] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            crate::javascript::JsAsyncCompiler::method_kind(&hostJavaScriptStringArgument(source)?)
+                .map(|kind| Value::String(kind.into())).map_err(HostError::new)
         }
         "__operitNativePrepareComposeModule" => {
             let [source, identity] = exactHostJavaScriptJsonArguments(name, arguments)?;

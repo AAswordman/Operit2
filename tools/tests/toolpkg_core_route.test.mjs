@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
+import { types } from "node:util";
 import { installScopedHostRuntime } from "./fixtures/scoped_host_runtime.mjs";
 
 const routeSource = readFileSync(new URL("../../core/crates/plugin/sdk/src/js_sdk/toolpkg_route_runtime.js", import.meta.url), "utf8");
@@ -16,6 +17,12 @@ function fixture() {
   const calls = [], watches = [], reads = [], closed = [], pushes = [], sent = [], pushClosed = [];
   sandbox.remote = false;
   sandbox.__operitNativeShouldRouteToolPkg = () => sandbox.remote;
+  /** Models the compiler kind binding for this unlowered Node fixture. */
+  sandbox.__operitNativeAsyncMethodKind = source => {
+    const method = Object.values(vm.runInNewContext("({" + source + "})"))[0];
+    if (!types.isAsyncFunction(method)) throw new TypeError("Routes require an async method or async generator");
+    return types.isGeneratorFunction(method) ? "generator" : "function";
+  };
   sandbox.__operitNativeCallCoreRoute = registry.binding((id, ...args) => calls.push({ id, args }));
   sandbox.__operitNativeOpenCoreRouteWatch = registry.binding((id, ...args) => watches.push({ id, args }));
   sandbox.__operitNativeNextCoreRouteWatch = registry.binding((id, subscription) => reads.push({ id, subscription }));

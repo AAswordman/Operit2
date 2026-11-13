@@ -37,9 +37,9 @@ export async function buildGraphModule() {
   return result.outputFiles[0].text;
 }
 
-/** Lowers async/await to scoped Promise continuations so shared services retain each execution owner. */
+/** Bundles the main provider; the engine owns async continuation compilation. */
 export async function buildMainScript() {
-  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "src/main.ts")], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, external: ["./ui/*/index.ui.js"], write: false });
+  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "src/main.ts")], bundle: true, format: "cjs", platform: "neutral", target: "es2020", external: ["./ui/*/index.ui.js"], write: false });
   if (result.outputFiles.length !== 1) throw new Error("The package must have exactly one main provider script");
   return result.outputFiles[0].contents;
 }
@@ -50,7 +50,7 @@ export async function buildUiScreenScripts() {
   if (entries.length !== 9) throw new Error("Character cards must build its nine independently registered Compose screens");
   const scripts = {};
   for (const entry of entries) {
-    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, entry)], bundle: true, format: "cjs", platform: "neutral", target: "es2020", charset: "utf8", supported: { "async-await": false }, write: false });
+    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, entry)], bundle: true, format: "cjs", platform: "neutral", target: "es2020", charset: "utf8", write: false });
     if (result.outputFiles.length !== 1) throw new Error("A Compose screen must produce exactly one module: " + entry);
     const output = entry.replace(/^src\//, "dist/").replace(/\.ts$/, ".js");
     scripts[output] = result.outputFiles[0].contents;

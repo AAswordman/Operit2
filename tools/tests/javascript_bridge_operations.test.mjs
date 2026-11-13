@@ -1,7 +1,7 @@
 import { compileComposeModule } from "../../plugins/tools/compile_compose_module.mjs";
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { productionBootstrap, bootstrapLibrarySource } from './fixtures/production_bootstrap.mjs';
+import { productionBootstrap, bootstrapLibrarySource, prepareTestJavaScript, installTestJavaScriptCompiler } from './fixtures/production_bootstrap.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -35,6 +35,7 @@ function runtime(operations = {}) {
     /** Reads the exact trusted library requested by its production accessor. */
     __operitNativeReadBootstrapLibrary: bootstrapLibrarySource,
     __operitNativePrepareComposeModule: compileComposeModule,
+    __operitNativePrepareJavaScript: prepareTestJavaScript,
     __operitNativeHashText(value) { return createHash("sha256").update(value).digest("hex"); },
     /** Records plugin logs as structured host requests. */
     __operitNativeLog() { return null; },
@@ -79,8 +80,8 @@ function runtime(operations = {}) {
   context.__operitNativeNotifyDetachedCall = registry.syncBinding(builtins.__operitNativeNotifyDetachedCall);
   context.__operitNativeCancelJavaScriptPromises = registry.syncBinding(builtins.__operitNativeCancelJavaScriptPromises);
   context.__operitNativeScheduleJavaScriptTimer = registry.binding((id, delay) => timers.set(id, delay));
-  vm.runInContext(`globalThis.__operitNativeCompileModuleFactory = body =>
-    new Function('module', 'exports', 'require', '__operit_call_runtime', body);`, context);
+  context.__operitNativeLoadToolPkgWasm = registry.syncBinding((...args) => invoke('__operitNativeLoadToolPkgWasm', args));
+  installTestJavaScriptCompiler(context);
   vm.runInContext(productionBootstrap(), context, { filename: 'production-bootstrap.js' });
   /** Opens a real execution session for direct public library calls. */
   function openCall(id = 'owner') {
@@ -96,6 +97,8 @@ function runtime(operations = {}) {
 async function flush() {
   for (let turn = 0; turn < 16; turn++) await Promise.resolve();
   // Native wakes finalize detached sessions after the queued Promise jobs drain.
+  await new Promise(setImmediate);
+  // Deliver finalization wakes raised while the preceding native wake was dispatched.
   await new Promise(setImmediate);
 }
 
@@ -175,18 +178,18 @@ test('ToolPkg resources and WASM pass owned arrays and never treat failures as p
       if (key === 'missing') throw new Error('resource is missing');
       return '/runtime/resources/value.bin';
     },
-    /** Verifies scalar WASM arguments arrive as an array, not serialized text. */
-    __operitNativeCallToolPkgWasm(target, module, name, args) {
-      assert.equal(target, 'fixture'); assert.equal(module, 'math'); assert.equal(name, 'sum');
-      assert.equal(Array.isArray(args), true); assert.equal(args[0].type, 'i32');
-      return 42;
+    /** Supplies real fixture bytes through the engine's current realm-owned WASM binding. */
+    __operitNativeLoadToolPkgWasm(target, module) {
+      assert.equal(target, 'fixture'); assert.equal(module, 'math');
+      context.fixtureBytes = Array.from(readFileSync(new URL('./fixtures/wasm/memory.wasm', import.meta.url)));
+      return vm.runInContext('({bytes: Uint8Array.from(fixtureBytes), metadata: {exports: ["echo_i64"]}})', context);
     },
   });
   openCall();
   vm.runInContext('JSON.parse = JSON.stringify = function() { throw Error("JSON transport used"); };', context);
   assert.equal(await context.ToolPkg.readResource('value'), '/runtime/resources/value.bin');
   await assert.rejects(context.ToolPkg.readResource('missing'), /resource is missing/);
-  assert.equal(await context.ToolPkg.wasm.call('math', 'sum', [{type: 'i32', value: 42}]), 42);
+  assert.equal(await context.ToolPkg.wasm.call('math', 'echo_i64', [{type: 'i64', value: '42'}]), '42');
   await flush();
   assert.equal(context.__operitGetCallState('owner').pendingReferences, 0);
 });
@@ -228,7 +231,7 @@ test('cancelled tool execution releases a waiting chat initializer without reviv
       }
     },
   });
-  vm.runInContext(source(sdk + 'js_sdk/storage_runtime.js'), context);
+  vm.runInContext(prepareTestJavaScript(source(sdk + 'js_sdk/storage_runtime.js')), context);
   vm.runInContext(`globalThis.Tools = { Storage: {
     /** Adapts the fixture tool surface to the production structured tool-call transport. */
     request(request) { return toolCall('storage_request', { request: request }); }
@@ -436,11 +439,12 @@ test('module reads preserve empty source and propagate the original resource-own
   assert.match(failed.failures.get('failed-modules').message, /resource owner read denied/);
 });
 
-/** Ensures compiled artifacts never cross the compiler boundary and page globals contain no parser. */
-test('page bootstrap owns no compiler and precompiled factories bypass shared lowering', () => {
+/** Ensures source and artifacts use the same cached compiler boundary without a page-owned parser. */
+test('page bootstrap owns no compiler and precompiled factories use shared preparation once', () => {
+  let preparations = 0;
   const { context } = runtime({
-    /** Rejects any unintended compiler request from an artifact factory. */
-    __operitNativePrepareComposeModule() { throw Error('Artifact attempted source lowering'); },
+    /** Uses the production preparation entry for both source and compiled artifacts. */
+    __operitNativePrepareComposeModule(source, identity) { preparations++; return compileComposeModule(source, identity); },
   });
   assert.equal(vm.runInContext('typeof __operitAcorn + ":" + typeof OperitComposeCompiler', context), 'undefined:undefined');
   const source = '// @operit-compose-artifact 4\nexports.run = function() { return 7; };';
@@ -448,5 +452,7 @@ test('page bootstrap owns no compiler and precompiled factories bypass shared lo
   const module = { exports: {} };
   factory(module, module.exports, () => { throw Error('Unexpected require'); }, {});
   assert.equal(module.exports.run(), 7);
+  assert.equal(context.__operitGetFactory('main', 'pkg:artifact', source, true), factory);
+  assert.equal(preparations, 1);
   assert.throws(() => context.__operitGetFactory('main', 'pkg:bad', '// @operit-compose-artifact 999\n', true), /Unsupported Compose artifact/);
 });

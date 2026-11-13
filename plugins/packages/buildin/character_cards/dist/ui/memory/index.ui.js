@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/memory/index.ui.ts
 var index_ui_exports = {};
@@ -611,49 +591,47 @@ function createUiScreenSession(presentation) {
     /** Reads only the package screen parameters needed by the reused typed Web view. */
     currentScreen: () => session.currentScreen(),
     /** Persists a selector choice through main IPC before acknowledging its caller-owned request. */
-    completeScreen(value) {
-      return __async(this, null, function* () {
-        if (finished) throw new Error("This presentation has already finished");
-        if (completing) throw new Error("A presentation completion is already running");
-        const current = session.currentScreen();
-        if (current.input.mode === "manage") throw new Error("Management has no presentation completion channel");
-        const result = parseScreenResult(value, current.input);
-        completing = true;
-        try {
-          let completion;
-          switch (result.mode) {
-            case "select": {
-              if (selectorTarget === null) throw new Error("Selector has no explicit global or chat target");
-              const selection2 = encodeSelection(result.selection);
-              if (selectorTarget.chatId === null) {
-                const identity2 = parseChatSelection(selection2);
-                const active = identity2.kind === "model" ? yield callMainDomain("activePrompt.setModel", {}) : identity2.kind === "card" ? yield callMainDomain("activePrompt.setCard", { id: identity2.id }) : yield callMainDomain("activePrompt.setGroup", { id: identity2.id });
-                if (!active.active || active.id !== identity2.id || active.type !== (identity2.kind === "model" ? "model" : identity2.kind === "card" ? "character_card" : "character_group")) throw new Error("Main runtime did not confirm the selected global active prompt");
-              } else {
-                const chatId = selectorTarget.chatId;
-                const binding = yield callMainDomain("chat.configuration.binding.write", { chatId, selection: selection2 });
-                if (binding.chatId !== chatId || binding.selection !== selection2) throw new Error("Main runtime did not confirm the selected chat binding");
-              }
-              const complete = session.completeScreen(result);
-              completion = { ...complete, value: { selection: selection2, contextKey: selection2 } };
-              break;
+    async completeScreen(value) {
+      if (finished) throw new Error("This presentation has already finished");
+      if (completing) throw new Error("A presentation completion is already running");
+      const current = session.currentScreen();
+      if (current.input.mode === "manage") throw new Error("Management has no presentation completion channel");
+      const result = parseScreenResult(value, current.input);
+      completing = true;
+      try {
+        let completion;
+        switch (result.mode) {
+          case "select": {
+            if (selectorTarget === null) throw new Error("Selector has no explicit global or chat target");
+            const selection2 = encodeSelection(result.selection);
+            if (selectorTarget.chatId === null) {
+              const identity2 = parseChatSelection(selection2);
+              const active = identity2.kind === "model" ? await callMainDomain("activePrompt.setModel", {}) : identity2.kind === "card" ? await callMainDomain("activePrompt.setCard", { id: identity2.id }) : await callMainDomain("activePrompt.setGroup", { id: identity2.id });
+              if (!active.active || active.id !== identity2.id || active.type !== (identity2.kind === "model" ? "model" : identity2.kind === "card" ? "character_card" : "character_group")) throw new Error("Main runtime did not confirm the selected global active prompt");
+            } else {
+              const chatId = selectorTarget.chatId;
+              const binding = await callMainDomain("chat.configuration.binding.write", { chatId, selection: selection2 });
+              if (binding.chatId !== chatId || binding.selection !== selection2) throw new Error("Main runtime did not confirm the selected chat binding");
             }
-            case "memory-attachment": {
-              const complete = session.completeScreen(result);
-              completion = { ...complete, value: { type: "text", name: "记忆附件", content: result.content, mediaType: "text/plain" } };
-              break;
-            }
-            case "preview":
-            case "edit":
-              completion = session.completeScreen(result);
-              break;
+            const complete = session.completeScreen(result);
+            completion = { ...complete, value: { selection: selection2, contextKey: selection2 } };
+            break;
           }
-          finished = true;
-          return completion;
-        } finally {
-          completing = false;
+          case "memory-attachment": {
+            const complete = session.completeScreen(result);
+            completion = { ...complete, value: { type: "text", name: "记忆附件", content: result.content, mediaType: "text/plain" } };
+            break;
+          }
+          case "preview":
+          case "edit":
+            completion = session.completeScreen(result);
+            break;
         }
-      });
+        finished = true;
+        return completion;
+      } finally {
+        completing = false;
+      }
     },
     /** Cancels the same caller request without invoking any binding write or returning domain data. */
     cancelScreen() {
@@ -817,12 +795,10 @@ function renderManagedEntityScreen(ctx, pending, finish) {
   };
   return renderNativeEntity(ctx, pending.input, {
     assertOwner,
-    complete(operation, id2) {
-      return __async(this, null, function* () {
-        assertOwner();
-        finish(operation === void 0 ? null : { operation, id: id2 ?? pending.input.id });
-        return null;
-      });
+    async complete(operation, id2) {
+      assertOwner();
+      finish(operation === void 0 ? null : { operation, id: id2 ?? pending.input.id });
+      return null;
     },
     cancel() {
       assertOwner();
@@ -871,23 +847,21 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     live.current = { ...live.current, ...patch };
     setState(live.current);
   }
-  function act(operation) {
-    return __async(this, null, function* () {
+  async function act(operation) {
+    assertOwner();
+    if (live.current.busy || live.current.finished) return null;
+    update({ busy: true, error: "" });
+    try {
+      const value = await operation();
+      if (!live.current.finished) assertOwner();
+      return value ?? null;
+    } catch (error) {
       assertOwner();
-      if (live.current.busy || live.current.finished) return null;
-      update({ busy: true, error: "" });
-      try {
-        const value = yield operation();
-        if (!live.current.finished) assertOwner();
-        return value ?? null;
-      } catch (error) {
-        assertOwner();
-        update({ error: String(error) });
-      } finally {
-        update({ busy: false });
-      }
-      return null;
-    });
+      update({ error: String(error) });
+    } finally {
+      update({ busy: false });
+    }
+    return null;
   }
   function card() {
     if (live.current.card === null) throw new Error("角色卡尚未加载");
@@ -905,107 +879,97 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     assertOwner();
     if (!live.current.busy) update({ group: { ...group(), ...patch } });
   }
-  function loadThemes() {
-    return __async(this, null, function* () {
+  async function loadThemes() {
+    try {
+      const themes = await request({ action: "listThemeChoices" });
+      if (live.current.finished) return;
+      assertOwner();
+      const picker = live.current.picker;
+      update({ themes, themeError: "", ...picker !== null && (picker.key === "theme" || picker.key === "entity-theme-picker") ? { picker: { ...picker, choices: themes } } : {} });
+    } catch (error) {
+      if (live.current.finished) return;
       try {
-        const themes = yield request({ action: "listThemeChoices" });
-        if (live.current.finished) return;
         assertOwner();
-        const picker = live.current.picker;
-        update({ themes, themeError: "", ...picker !== null && (picker.key === "theme" || picker.key === "entity-theme-picker") ? { picker: { ...picker, choices: themes } } : {} });
-      } catch (error) {
-        if (live.current.finished) return;
-        try {
-          assertOwner();
-        } catch {
-          return;
-        }
-        update({ themeError: String(error) });
-      }
-    });
-  }
-  function loadDefaultAvatar() {
-    return __async(this, null, function* () {
-      try {
-        const avatar = yield ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
-        if (avatar.trim() === "" || live.current.finished) return;
-        assertOwner();
-        update({ avatar });
       } catch {
+        return;
       }
-    });
+      update({ themeError: String(error) });
+    }
   }
-  function load() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const snapshot = yield request({ action: "snapshot" });
-        assertOwner();
-        const record2 = input.mode === "create" ? input.entity === "card" ? createCharacterDraft() : createGroupDraft() : input.entity === "card" ? snapshot.cards.find((value) => value.id === input.id) : snapshot.groups.find((value) => value.id === input.id);
-        if (record2 === void 0) throw new Error("预览实体不存在：" + input.id);
-        assertOwner();
-        update({ snapshot, tags: copy(snapshot.tags), card: input.entity === "card" ? copy(record2) : null, group: input.entity === "group" ? copy(record2) : null, loading: false });
-        if (input.entity === "group" || record2.avatarUri === null) void loadDefaultAvatar();
-        if (live.current.editing) void loadThemes();
-      }));
-      if (live.current.loading) update({ loading: false });
-    });
-  }
-  function close() {
-    return __async(this, null, function* () {
+  async function loadDefaultAvatar() {
+    try {
+      const avatar = await ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
+      if (avatar.trim() === "" || live.current.finished) return;
       assertOwner();
-      if (live.current.busy || live.current.finished) return null;
-      if (live.current.expanded !== null) {
-        update({ expanded: null, fullscreen: false });
-        return null;
-      }
-      if (live.current.picker !== null) {
-        update({ picker: null });
-        return null;
-      }
-      if (live.current.toolDraft !== null) {
-        update({ toolDraft: null });
-        return null;
-      }
-      if (live.current.exporting) {
-        update({ exporting: false, exportContent: "" });
-        return null;
-      }
-      if (live.current.tagManaging && live.current.tagDraft === null) {
-        update({ tagManaging: false });
-        return null;
-      }
-      if (live.current.tagDraft !== null) {
-        update({ tagDraft: null, tagDeleting: false });
-        return null;
-      }
-      if (live.current.deleting) {
-        update({ deleting: false });
-        return null;
-      }
-      if (input.mode === "preview" && live.current.editing) {
-        const snapshot = live.current.snapshot;
-        if (snapshot === null) throw new Error("预览数据尚未加载");
-        update({
-          editing: false,
-          tab: 0,
-          error: "",
-          tags: copy(snapshot.tags),
-          tagChanges: { created: [], updated: [], deleted: [] },
-          card: input.entity === "card" ? copy(snapshot.cards.find((value) => value.id === input.id) ?? card()) : null,
-          group: input.entity === "group" ? copy(snapshot.groups.find((value) => value.id === input.id) ?? group()) : null
-        });
-        return null;
-      }
-      update({ finished: true });
-      return input.mode === "preview" ? lifecycle.complete() : lifecycle.cancel();
-    });
+      update({ avatar });
+    } catch {
+    }
   }
-  function edit() {
-    return __async(this, null, function* () {
+  async function load() {
+    await act(async () => {
+      const snapshot = await request({ action: "snapshot" });
       assertOwner();
-      update({ editing: true, tab: 0 });
-      if (live.current.themes === null) void loadThemes();
+      const record2 = input.mode === "create" ? input.entity === "card" ? createCharacterDraft() : createGroupDraft() : input.entity === "card" ? snapshot.cards.find((value) => value.id === input.id) : snapshot.groups.find((value) => value.id === input.id);
+      if (record2 === void 0) throw new Error("预览实体不存在：" + input.id);
+      assertOwner();
+      update({ snapshot, tags: copy(snapshot.tags), card: input.entity === "card" ? copy(record2) : null, group: input.entity === "group" ? copy(record2) : null, loading: false });
+      if (input.entity === "group" || record2.avatarUri === null) void loadDefaultAvatar();
+      if (live.current.editing) void loadThemes();
     });
+    if (live.current.loading) update({ loading: false });
+  }
+  async function close() {
+    assertOwner();
+    if (live.current.busy || live.current.finished) return null;
+    if (live.current.expanded !== null) {
+      update({ expanded: null, fullscreen: false });
+      return null;
+    }
+    if (live.current.picker !== null) {
+      update({ picker: null });
+      return null;
+    }
+    if (live.current.toolDraft !== null) {
+      update({ toolDraft: null });
+      return null;
+    }
+    if (live.current.exporting) {
+      update({ exporting: false, exportContent: "" });
+      return null;
+    }
+    if (live.current.tagManaging && live.current.tagDraft === null) {
+      update({ tagManaging: false });
+      return null;
+    }
+    if (live.current.tagDraft !== null) {
+      update({ tagDraft: null, tagDeleting: false });
+      return null;
+    }
+    if (live.current.deleting) {
+      update({ deleting: false });
+      return null;
+    }
+    if (input.mode === "preview" && live.current.editing) {
+      const snapshot = live.current.snapshot;
+      if (snapshot === null) throw new Error("预览数据尚未加载");
+      update({
+        editing: false,
+        tab: 0,
+        error: "",
+        tags: copy(snapshot.tags),
+        tagChanges: { created: [], updated: [], deleted: [] },
+        card: input.entity === "card" ? copy(snapshot.cards.find((value) => value.id === input.id) ?? card()) : null,
+        group: input.entity === "group" ? copy(snapshot.groups.find((value) => value.id === input.id) ?? group()) : null
+      });
+      return null;
+    }
+    update({ finished: true });
+    return input.mode === "preview" ? lifecycle.complete() : lifecycle.cancel();
+  }
+  async function edit() {
+    assertOwner();
+    update({ editing: true, tab: 0 });
+    if (live.current.themes === null) void loadThemes();
   }
   function togglePreviewConfiguration() {
     assertOwner();
@@ -1013,118 +977,110 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
     update({ previewConfigurationExpanded: expanded });
     if (expanded && (live.current.card ?? live.current.group)?.themeConfigId != null && live.current.themes === null) void loadThemes();
   }
-  function save() {
-    return __async(this, null, function* () {
-      return act(() => __async(null, null, function* () {
-        let snapshot;
-        if (input.entity === "card") {
-          const draft = card();
-          if (draft.name.trim() === "") throw new Error("角色名称不能为空");
-          let bindingChanged = input.mode === "create";
-          let memoryBindingChanged = input.mode === "create";
-          if (input.mode !== "create") {
-            const original = live.current.snapshot.cards.find((value) => value.id === input.id);
-            if (original === void 0) throw new Error("角色卡已不存在");
-            bindingChanged = !sameCharacterModelBinding(original, draft);
-            memoryBindingChanged = original.memoryBindingMode !== draft.memoryBindingMode || original.sharedMemoryId !== draft.sharedMemoryId;
-          }
-          const bindingStatus = characterModelBindingStatus(draft, live.current.snapshot.models);
-          if (bindingChanged && bindingStatus.needsRebind) throw new Error(bindingStatus.label);
-          if (memoryBindingChanged && draft.memoryBindingMode === "SHARED" && !live.current.snapshot?.stores.some((store) => store.id === draft.sharedMemoryId)) throw new Error("请选择有效的共享记忆库");
-          snapshot = yield request({ action: "saveCharacter", card: copy(draft), create: input.mode === "create", tagChanges: copy(live.current.tagChanges) });
-        } else {
-          const draft = group();
-          if (draft.name.trim() === "") throw new Error("群组名称不能为空");
-          snapshot = yield request({ action: "saveGroup", group: copy(draft), create: input.mode === "create" });
+  async function save() {
+    return act(async () => {
+      let snapshot;
+      if (input.entity === "card") {
+        const draft = card();
+        if (draft.name.trim() === "") throw new Error("角色名称不能为空");
+        let bindingChanged = input.mode === "create";
+        let memoryBindingChanged = input.mode === "create";
+        if (input.mode !== "create") {
+          const original = live.current.snapshot.cards.find((value) => value.id === input.id);
+          if (original === void 0) throw new Error("角色卡已不存在");
+          bindingChanged = !sameCharacterModelBinding(original, draft);
+          memoryBindingChanged = original.memoryBindingMode !== draft.memoryBindingMode || original.sharedMemoryId !== draft.sharedMemoryId;
         }
-        const previousSnapshot = live.current.snapshot;
-        assertOwner();
-        update({
-          snapshot,
-          editing: false,
-          tab: 0,
-          tags: copy(snapshot.tags),
-          tagChanges: { created: [], updated: [], deleted: [] },
-          card: input.entity === "card" ? copy(snapshot.cards.find((value) => value.id === input.id) ?? card()) : null,
-          group: input.entity === "group" ? copy(snapshot.groups.find((value) => value.id === input.id) ?? group()) : null
-        });
-        if (input.mode !== "preview") {
-          const before = previousSnapshot;
-          const saved = input.mode === "create" ? input.entity === "card" ? snapshot.cards.find((value) => !before.cards.some((old) => old.id === value.id)) : snapshot.groups.find((value) => !before.groups.some((old) => old.id === value.id)) : input.entity === "card" ? snapshot.cards.find((value) => value.id === input.id) : snapshot.groups.find((value) => value.id === input.id);
-          if (saved === void 0) throw new Error("保存结果缺少实体标识");
-          update({ finished: true });
-          return lifecycle.complete("saved", saved.id);
-        }
-        return null;
-      }));
-    });
-  }
-  function stageTag() {
-    return __async(this, null, function* () {
-      return act(() => __async(null, null, function* () {
-        const draft = live.current.tagDraft;
-        if (draft === null) throw new Error("没有标签草稿");
-        const changes = copy(live.current.tagChanges);
-        let tags = copy(live.current.tags), attachedTagIds = [...card().attachedTagIds];
-        if (live.current.tagDeleting) {
-          tags = tags.filter((tag) => tag.id !== draft.id);
-          attachedTagIds = attachedTagIds.filter((id2) => id2 !== draft.id);
-          if (changes.created.some((tag) => tag.draftId === draft.id)) changes.created = changes.created.filter((tag) => tag.draftId !== draft.id);
-          else {
-            changes.updated = changes.updated.filter((tag) => tag.id !== draft.id);
-            changes.deleted.push(draft.id);
-          }
-        } else {
-          if (draft.name.trim() === "") throw new Error("标签名称不能为空");
-          const id2 = draft.id === "" ? "draft_prompt_tag_" + (live.current.nextTag + 1) : draft.id;
-          const tag = { ...draft, id: id2, name: draft.name.trim(), description: draft.description.trim() };
-          const { id: _id, ...values } = tag;
-          if (draft.id === "") {
-            tags.push(tag);
-            attachedTagIds.push(id2);
-            changes.created.push({ draftId: id2, values });
-          } else {
-            tags = tags.map((value) => value.id === id2 ? tag : value);
-            const created = changes.created.find((value) => value.draftId === id2);
-            if (created !== void 0) created.values = values;
-            else {
-              changes.updated = changes.updated.filter((value) => value.id !== id2);
-              changes.updated.push(tag);
-            }
-          }
-        }
-        update({ tags, tagChanges: changes, card: { ...card(), attachedTagIds }, tagDraft: null, tagDeleting: false, nextTag: live.current.nextTag + 1 });
-      }));
-    });
-  }
-  function remove() {
-    return __async(this, null, function* () {
-      return act(() => __async(null, null, function* () {
-        yield request(input.entity === "card" ? { action: "deleteCharacter", id: input.id } : { action: "deleteGroup", id: input.id });
-        assertOwner();
+        const bindingStatus = characterModelBindingStatus(draft, live.current.snapshot.models);
+        if (bindingChanged && bindingStatus.needsRebind) throw new Error(bindingStatus.label);
+        if (memoryBindingChanged && draft.memoryBindingMode === "SHARED" && !live.current.snapshot?.stores.some((store) => store.id === draft.sharedMemoryId)) throw new Error("请选择有效的共享记忆库");
+        snapshot = await request({ action: "saveCharacter", card: copy(draft), create: input.mode === "create", tagChanges: copy(live.current.tagChanges) });
+      } else {
+        const draft = group();
+        if (draft.name.trim() === "") throw new Error("群组名称不能为空");
+        snapshot = await request({ action: "saveGroup", group: copy(draft), create: input.mode === "create" });
+      }
+      const previousSnapshot = live.current.snapshot;
+      assertOwner();
+      update({
+        snapshot,
+        editing: false,
+        tab: 0,
+        tags: copy(snapshot.tags),
+        tagChanges: { created: [], updated: [], deleted: [] },
+        card: input.entity === "card" ? copy(snapshot.cards.find((value) => value.id === input.id) ?? card()) : null,
+        group: input.entity === "group" ? copy(snapshot.groups.find((value) => value.id === input.id) ?? group()) : null
+      });
+      if (input.mode !== "preview") {
+        const before = previousSnapshot;
+        const saved = input.mode === "create" ? input.entity === "card" ? snapshot.cards.find((value) => !before.cards.some((old) => old.id === value.id)) : snapshot.groups.find((value) => !before.groups.some((old) => old.id === value.id)) : input.entity === "card" ? snapshot.cards.find((value) => value.id === input.id) : snapshot.groups.find((value) => value.id === input.id);
+        if (saved === void 0) throw new Error("保存结果缺少实体标识");
         update({ finished: true });
-        return lifecycle.complete(input.mode === "preview" ? void 0 : "deleted");
-      }));
+        return lifecycle.complete("saved", saved.id);
+      }
+      return null;
     });
   }
-  function chooseAvatar() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const selected = yield ctx.openFilePicker({ picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: MAX_AVATAR_BYTES });
-        assertOwner();
-        if (selected.cancelled) return;
-        if (selected.files.length !== 1) throw new Error("请选择一个头像文件");
-        const contentBase64 = readAvatarImport(selected.files[0]);
-        assertOwner();
-        const directory = ToolPkg.getConfigDir().replace(/\/$/, "") + "/avatars";
-        const created = yield Tools.Files.mkdir(directory, true);
-        if (!created.successful) throw new Error(created.details);
-        const uri = directory + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".image";
-        const written = yield Tools.Files.writeBinary(uri, contentBase64);
-        if (!written.successful) throw new Error(written.details);
-        assertOwner();
-        update({ card: { ...card(), avatarUri: uri } });
-      }));
+  async function stageTag() {
+    return act(async () => {
+      const draft = live.current.tagDraft;
+      if (draft === null) throw new Error("没有标签草稿");
+      const changes = copy(live.current.tagChanges);
+      let tags = copy(live.current.tags), attachedTagIds = [...card().attachedTagIds];
+      if (live.current.tagDeleting) {
+        tags = tags.filter((tag) => tag.id !== draft.id);
+        attachedTagIds = attachedTagIds.filter((id2) => id2 !== draft.id);
+        if (changes.created.some((tag) => tag.draftId === draft.id)) changes.created = changes.created.filter((tag) => tag.draftId !== draft.id);
+        else {
+          changes.updated = changes.updated.filter((tag) => tag.id !== draft.id);
+          changes.deleted.push(draft.id);
+        }
+      } else {
+        if (draft.name.trim() === "") throw new Error("标签名称不能为空");
+        const id2 = draft.id === "" ? "draft_prompt_tag_" + (live.current.nextTag + 1) : draft.id;
+        const tag = { ...draft, id: id2, name: draft.name.trim(), description: draft.description.trim() };
+        const { id: _id, ...values } = tag;
+        if (draft.id === "") {
+          tags.push(tag);
+          attachedTagIds.push(id2);
+          changes.created.push({ draftId: id2, values });
+        } else {
+          tags = tags.map((value) => value.id === id2 ? tag : value);
+          const created = changes.created.find((value) => value.draftId === id2);
+          if (created !== void 0) created.values = values;
+          else {
+            changes.updated = changes.updated.filter((value) => value.id !== id2);
+            changes.updated.push(tag);
+          }
+        }
+      }
+      update({ tags, tagChanges: changes, card: { ...card(), attachedTagIds }, tagDraft: null, tagDeleting: false, nextTag: live.current.nextTag + 1 });
+    });
+  }
+  async function remove() {
+    return act(async () => {
+      await request(input.entity === "card" ? { action: "deleteCharacter", id: input.id } : { action: "deleteGroup", id: input.id });
+      assertOwner();
+      update({ finished: true });
+      return lifecycle.complete(input.mode === "preview" ? void 0 : "deleted");
+    });
+  }
+  async function chooseAvatar() {
+    await act(async () => {
+      const selected = await ctx.openFilePicker({ picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: MAX_AVATAR_BYTES });
+      assertOwner();
+      if (selected.cancelled) return;
+      if (selected.files.length !== 1) throw new Error("请选择一个头像文件");
+      const contentBase64 = readAvatarImport(selected.files[0]);
+      assertOwner();
+      const directory = ToolPkg.getConfigDir().replace(/\/$/, "") + "/avatars";
+      const created = await Tools.Files.mkdir(directory, true);
+      if (!created.successful) throw new Error(created.details);
+      const uri = directory + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".image";
+      const written = await Tools.Files.writeBinary(uri, contentBase64);
+      if (!written.successful) throw new Error(written.details);
+      assertOwner();
+      update({ card: { ...card(), avatarUri: uri } });
     });
   }
   const colors = ctx.MaterialTheme.colorScheme, enabled = !state.busy && !state.finished;
@@ -1266,22 +1222,22 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
       update({ toolDraft: null });
     }, true)], 760, 620, true);
   } else if (state.exporting) {
-    const exportFile = (format2) => __async(null, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const content = input.entity === "card" ? yield request({ action: "exportCharacter", id: input.id, format: format2 }) : yield request({ action: "exportGroup", id: input.id });
+    const exportFile = async (format2) => {
+      await act(async () => {
+        const content = input.entity === "card" ? await request({ action: "exportCharacter", id: input.id, format: format2 }) : await request({ action: "exportGroup", id: input.id });
         assertOwner();
         const name = input.entity === "card" ? card().name : group().name;
         update({ exportContent: content, exportName: name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_") + "-" + format2 + ".json" });
-      }));
-    });
-    const writeExport = () => __async(null, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const result = yield ctx.saveFile({ suggestedName: live.current.exportName, content: live.current.exportContent, mimeType: "application/json", extensions: ["json"] });
+      });
+    };
+    const writeExport = async () => {
+      await act(async () => {
+        const result = await ctx.saveFile({ suggestedName: live.current.exportName, content: live.current.exportContent, mimeType: "application/json", extensions: ["json"] });
         assertOwner();
         if (result.cancelled) return;
         update({ exporting: false, exportContent: "", exportName: "" });
-      }));
-    });
+      });
+    };
     panel = shell("导出", state.exportContent === "" ? ctx.UI.Column({ fillMaxWidth: true, spacing: 8 }, [standardButton("entity-export-json", "导出 JSON", () => exportFile("operit")), ...input.entity === "card" ? [standardButton("entity-export-tavern", "导出酒馆 JSON", () => exportFile("tavern"))] : []]) : body("entity-export-body", [caption("点击保存文件选择保存位置。"), section("JSON", state.exportContent)]), [cancel, ...state.exportContent === "" ? [] : [standardButton("entity-export-save", "保存文件", writeExport, true)]], state.exportContent === "" ? 420 : 760, state.exportContent === "" ? 240 : 620);
   } else if (state.tagDraft !== null) {
     const draft = state.tagDraft;
@@ -1342,13 +1298,13 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
             ctx.UI.Text({ text: draft.avatarUri ?? "未设置", style: "bodyMedium", weight: 1, maxLines: 1, overflow: "ellipsis" }),
             ctx.UI.Spacer({ width: 8 }),
             standardButton("entity-choose-avatar", "选择", chooseAvatar),
-            ...draft.avatarUri === null ? [] : [standardButton("entity-clear-avatar", "清除", () => __async(null, null, function* () {
-              yield act(() => __async(null, null, function* () {
+            ...draft.avatarUri === null ? [] : [standardButton("entity-clear-avatar", "清除", async () => {
+              await act(async () => {
                 assertOwner();
                 update({ card: { ...card(), avatarUri: null } });
                 if (live.current.avatar === null) void loadDefaultAvatar();
-              }));
-            }))]
+              });
+            })]
           ]))),
           field("characterSetting", "角色设定", draft.characterSetting, (characterSetting) => changeCard({ characterSetting }), 6),
           field("openingStatement", "开场白", draft.openingStatement, (openingStatement) => changeCard({ openingStatement }), 3),
@@ -1393,9 +1349,9 @@ function renderNativeEntity(ctx, input, lifecycle, statePrefix = "") {
           })])
         );
         if (draft.sharedMemoryMounts.length !== 0) pages[2].push(section("共享记忆挂载", JSON.stringify(draft.sharedMemoryMounts, null, 2)));
-        if (state.themeError !== "") pages[2].push(ctx.UI.Text({ text: state.themeError, color: colors.error }), standardButton("entity-theme-retry", "重新加载主题", () => __async(null, null, function* () {
-          yield act(loadThemes);
-        })));
+        if (state.themeError !== "") pages[2].push(ctx.UI.Text({ text: state.themeError, color: colors.error }), standardButton("entity-theme-retry", "重新加载主题", async () => {
+          await act(loadThemes);
+        }));
       }
     } else if (state.group !== null && state.snapshot !== null) {
       const draft = state.group, snapshot = state.snapshot;
@@ -1474,31 +1430,29 @@ function initializationRecoveryUi(ctx, onRecovered) {
   function reportFailure(failure) {
     update({ failure: String(failure), inspection: null, confirmed: false });
   }
-  function run(repair) {
-    return __async(this, null, function* () {
-      if (live.current.busy) return;
-      const inspection2 = live.current.inspection;
-      let request2 = { action: "inspect" };
+  async function run(repair) {
+    if (live.current.busy) return;
+    const inspection2 = live.current.inspection;
+    let request2 = { action: "inspect" };
+    if (repair) {
+      if (!live.current.confirmed) throw new Error("请先确认修复说明。");
+      if (inspection2?.status === "repairable") request2 = { action: "repair", source: inspection2.source };
+      else if (inspection2?.status === "planned") request2 = { action: "resume" };
+      else throw new Error("请先检查初始化数据。");
+    }
+    update({ busy: true, confirmed: false });
+    try {
+      const result = await ToolPkg.ipc.call("character-memory.initialization", request2, { targetRuntime: "main" });
       if (repair) {
-        if (!live.current.confirmed) throw new Error("请先确认修复说明。");
-        if (inspection2?.status === "repairable") request2 = { action: "repair", source: inspection2.source };
-        else if (inspection2?.status === "planned") request2 = { action: "resume" };
-        else throw new Error("请先检查初始化数据。");
-      }
-      update({ busy: true, confirmed: false });
-      try {
-        const result = yield ToolPkg.ipc.call("character-memory.initialization", request2, { targetRuntime: "main" });
-        if (repair) {
-          if (result.status !== "ready") throw new Error("初始化修复未完成。");
-          update({ failure: "", inspection: null });
-          onRecovered();
-        } else update({ inspection: result });
-      } catch (failure) {
-        update({ failure: String(failure) });
-      } finally {
-        update({ busy: false });
-      }
-    });
+        if (result.status !== "ready") throw new Error("初始化修复未完成。");
+        update({ failure: "", inspection: null });
+        onRecovered();
+      } else update({ inspection: result });
+    } catch (failure) {
+      update({ failure: String(failure) });
+    } finally {
+      update({ busy: false });
+    }
   }
   if (state.failure === "") return { panel: null, reportFailure };
   const inspection = state.inspection;
@@ -1540,16 +1494,14 @@ function uiState(ctx, key, initial) {
   }
   return { state, live, update };
 }
-function readUiJson(ctx) {
-  return __async(this, null, function* () {
-    const result = yield ctx.openFilePicker({ picker: "document", allowMultiple: false, mimeTypes: ["application/json"] });
-    if (result.cancelled) return null;
-    if (result.files.length !== 1) throw new Error("请选择一个 JSON 文件");
-    const file = yield Tools.Files.read(result.files[0].path);
-    const content = file.content.replace(/^\uFEFF/, "");
-    if (content.trim() === "") throw new Error("所选 JSON 文件为空");
-    return content;
-  });
+async function readUiJson(ctx) {
+  const result = await ctx.openFilePicker({ picker: "document", allowMultiple: false, mimeTypes: ["application/json"] });
+  if (result.cancelled) return null;
+  if (result.files.length !== 1) throw new Error("请选择一个 JSON 文件");
+  const file = await Tools.Files.read(result.files[0].path);
+  const content = file.content.replace(/^\uFEFF/, "");
+  if (content.trim() === "") throw new Error("所选 JSON 文件为空");
+  return content;
 }
 function uiNumber(value, label, min, max = Infinity, integer2 = false) {
   const number2 = Number(value);
@@ -1638,10 +1590,10 @@ function nativeUi(ctx, enabled = true) {
     ]));
   }
   function menu(key, label, name, entries, iconOnly = false) {
-    return ctx.UI.MenuAnchor({ key, tooltip: label, itemHeight: 40, items: entries.map((entry) => ({ enabled: enabled && entry.enabled !== false })), anchor: ctx.UI.Row({ height: 32, paddingHorizontal: iconOnly ? 6 : 8, spacing: 7, verticalAlignment: "center" }, [ctx.UI.Icon({ name, size: 20, tint: colors.primary }), ...iconOnly ? [] : [ctx.UI.Text({ text: label, fontSize: 13, fontWeight: "600", color: colors.primary }), ctx.UI.Icon({ name: "ArrowDropDown", size: 16, tint: colors.primary })]]), onSelect: (index) => __async(null, null, function* () {
+    return ctx.UI.MenuAnchor({ key, tooltip: label, itemHeight: 40, items: entries.map((entry) => ({ enabled: enabled && entry.enabled !== false })), anchor: ctx.UI.Row({ height: 32, paddingHorizontal: iconOnly ? 6 : 8, spacing: 7, verticalAlignment: "center" }, [ctx.UI.Icon({ name, size: 20, tint: colors.primary }), ...iconOnly ? [] : [ctx.UI.Text({ text: label, fontSize: 13, fontWeight: "600", color: colors.primary }), ctx.UI.Icon({ name: "ArrowDropDown", size: 16, tint: colors.primary })]]), onSelect: async (index) => {
       const entry = entries[index];
-      if (enabled && entry !== void 0 && entry.enabled !== false) yield entry.action();
-    }) }, entries.map((entry) => ctx.UI.Row({ key: entry.key, spacing: 10, verticalAlignment: "center" }, [ctx.UI.Icon({ name: entry.name, size: 20 }), ctx.UI.Text({ text: entry.label, fontSize: 13 })])));
+      if (enabled && entry !== void 0 && entry.enabled !== false) await entry.action();
+    } }, entries.map((entry) => ctx.UI.Row({ key: entry.key, spacing: 10, verticalAlignment: "center" }, [ctx.UI.Icon({ name: entry.name, size: 20 }), ctx.UI.Text({ text: entry.label, fontSize: 13 })])));
   }
   function choose(key, label, selected, options, change, compact = false) {
     if (compact) return ctx.UI.MenuAnchor({ key, tooltip: label, items: options.map(() => ({ enabled })), anchor: ctx.UI.Row({ height: 32, paddingHorizontal: 10, spacing: 8, verticalAlignment: "center", modifier: ctx.Modifier.border(1, colors.outlineVariant, { cornerRadius: 8 }) }, [ctx.UI.Icon({ name: "FolderOutlined", size: 16 }), ctx.UI.Text({ text: options.find((option) => option.id === selected).label, fontSize: 13 }), ctx.UI.Icon({ name: "KeyboardArrowDown", size: 16 })]), onSelect: (index) => {
@@ -1688,51 +1640,47 @@ function renderMemoryGraph(ctx, key, display, select, fail) {
       ready.current = false;
     };
   }, []);
-  function initialize() {
-    return __async(this, null, function* () {
-      ready.current = false;
-      try {
-        controller.addJavascriptInterface("MemoryGraphHost", {
-          /** Returns an already-authorized graph projection without exposing service requests. */
-          load: (...args) => {
-            if (!active.current) throw new Error("Graph display is no longer active");
-            if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length !== 0) throw new Error("Graph load expects no arguments");
-            ready.current = true;
-            return current.current;
-          },
-          /** Validates canvas selections against the exact graph currently displayed. */
-          select: (...args) => {
-            if (!active.current) throw new Error("Graph display is no longer active");
-            if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length !== 2) throw new Error("Graph select expects kind and id");
-            const [kind, id2] = args[0];
-            if (typeof id2 !== "string" || kind !== "memory" && kind !== "edge") throw new Error("Invalid graph selection");
-            const data = current.current.data;
-            if (kind === "memory" ? !data.graph.nodes.some((node) => node.id === id2) : !data.graph.edges.some((edge) => edge.id === id2)) throw new Error("Graph selection no longer exists");
-            selectLive.current(kind, id2);
-            return null;
-          }
-        });
-        const resource = yield ToolPkg.readResource("character_memory_html", "character-memory.html");
-        if (active.current) setPath(resource);
-      } catch (error) {
-        fail(String(error));
-      }
-    });
+  async function initialize() {
+    ready.current = false;
+    try {
+      controller.addJavascriptInterface("MemoryGraphHost", {
+        /** Returns an already-authorized graph projection without exposing service requests. */
+        load: (...args) => {
+          if (!active.current) throw new Error("Graph display is no longer active");
+          if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length !== 0) throw new Error("Graph load expects no arguments");
+          ready.current = true;
+          return current.current;
+        },
+        /** Validates canvas selections against the exact graph currently displayed. */
+        select: (...args) => {
+          if (!active.current) throw new Error("Graph display is no longer active");
+          if (args.length !== 1 || !Array.isArray(args[0]) || args[0].length !== 2) throw new Error("Graph select expects kind and id");
+          const [kind, id2] = args[0];
+          if (typeof id2 !== "string" || kind !== "memory" && kind !== "edge") throw new Error("Invalid graph selection");
+          const data = current.current.data;
+          if (kind === "memory" ? !data.graph.nodes.some((node) => node.id === id2) : !data.graph.edges.some((edge) => edge.id === id2)) throw new Error("Graph selection no longer exists");
+          selectLive.current(kind, id2);
+          return null;
+        }
+      });
+      const resource = await ToolPkg.readResource("character_memory_html", "character-memory.html");
+      if (active.current) setPath(resource);
+    } catch (error) {
+      fail(String(error));
+    }
   }
   ctx.useEffect(key + ":projection", () => {
     if (ready.current) void controller.evaluateJavascript("window.updateMemoryGraph(" + JSON.stringify(display) + ");").catch((error) => fail(String(error)));
     return () => {
     };
   }, [JSON.stringify(display)]);
-  function camera(command) {
-    return __async(this, null, function* () {
-      if (!ready.current) return;
-      try {
-        yield controller.evaluateJavascript("window.memoryGraphCamera(" + JSON.stringify(command) + ");");
-      } catch (error) {
-        fail(String(error));
-      }
-    });
+  async function camera(command) {
+    if (!ready.current) return;
+    try {
+      await controller.evaluateJavascript("window.memoryGraphCamera(" + JSON.stringify(command) + ");");
+    } catch (error) {
+      fail(String(error));
+    }
   }
   return ctx.UI.Box({ key: "memory-graph-display", fillMaxSize: true }, [
     ctx.UI.Box({ key: "memory-graph-loader", fillMaxSize: true, onLoad: initialize }, path === "" ? ctx.UI.Text({ text: "正在加载记忆图谱…" }) : ctx.UI.WebView({
@@ -1763,55 +1711,47 @@ function renderMemorySettings(ctx, target, close, key) {
   const { state, live, update } = uiState(ctx, key, { settings: null, config: null, listing: null, queue: null, progress: null, tab: "automatic", busy: false, error: "", statusError: "", notice: "", numbers: {}, query: "", threshold: "0", result: null, selected: [], window: "32", from: "", to: "", clearFailed: false });
   const ui = nativeUi(ctx, !state.busy), ownerKey = target.ownerKey;
   const alive = ctx.useRef(key + ":alive", true);
-  function status() {
-    return __async(this, null, function* () {
-      const [queue, progress] = yield Promise.all([uiRequest({ action: "readMemoryAutoSaveStatus", ownerKey }), uiRequest({ action: "readMemoryRebuildProgress", ownerKey })]);
-      if (alive.current) update({ queue, progress, statusError: "" });
-    });
+  async function status() {
+    const [queue, progress] = await Promise.all([uiRequest({ action: "readMemoryAutoSaveStatus", ownerKey }), uiRequest({ action: "readMemoryRebuildProgress", ownerKey })]);
+    if (alive.current) update({ queue, progress, statusError: "" });
   }
-  function act(operation) {
-    return __async(this, null, function* () {
-      if (live.current.busy || !alive.current) return;
-      update({ busy: true, error: "", notice: "" });
-      try {
-        yield operation();
-      } catch (error) {
-        if (alive.current) update({ error: String(error) });
-      } finally {
-        if (alive.current) update({ busy: false });
-      }
-    });
+  async function act(operation) {
+    if (live.current.busy || !alive.current) return;
+    update({ busy: true, error: "", notice: "" });
+    try {
+      await operation();
+    } catch (error) {
+      if (alive.current) update({ error: String(error) });
+    } finally {
+      if (alive.current) update({ busy: false });
+    }
   }
-  function load() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const [settings3, config2, listing, queue, progress] = yield Promise.all([
-          uiRequest({ action: "readMemorySettings", ownerKey }),
-          uiRequest({ action: "readMemorySearchConfig", ownerKey }),
-          uiRequest({ action: "listMemoryChats", ownerKey }),
-          uiRequest({ action: "readMemoryAutoSaveStatus", ownerKey }),
-          uiRequest({ action: "readMemoryRebuildProgress", ownerKey })
-        ]);
-        assertMemorySettings(settings3);
-        assertSearchConfig(config2);
-        if (!alive.current) return;
-        update({ settings: settings3, config: config2, listing, queue, progress, numbers: { interval: String(settings3.autoSaveIntervalMinutes), keywordWeight: String(config2.keywordWeight), tagWeight: String(config2.tagWeight), vectorWeight: String(config2.vectorWeight), edgeWeight: String(config2.edgeWeight) } });
-      }));
+  async function load() {
+    await act(async () => {
+      const [settings3, config2, listing, queue, progress] = await Promise.all([
+        uiRequest({ action: "readMemorySettings", ownerKey }),
+        uiRequest({ action: "readMemorySearchConfig", ownerKey }),
+        uiRequest({ action: "listMemoryChats", ownerKey }),
+        uiRequest({ action: "readMemoryAutoSaveStatus", ownerKey }),
+        uiRequest({ action: "readMemoryRebuildProgress", ownerKey })
+      ]);
+      assertMemorySettings(settings3);
+      assertSearchConfig(config2);
+      if (!alive.current) return;
+      update({ settings: settings3, config: config2, listing, queue, progress, numbers: { interval: String(settings3.autoSaveIntervalMinutes), keywordWeight: String(config2.keywordWeight), tagWeight: String(config2.tagWeight), vectorWeight: String(config2.vectorWeight), edgeWeight: String(config2.edgeWeight) } });
     });
   }
   ctx.useEffect(key + ":poll", () => {
     alive.current = true;
     let stopped = false, timer;
-    function tick() {
-      return __async(this, null, function* () {
-        try {
-          if (!stopped && !live.current.busy && live.current.settings !== null) yield status();
-        } catch (error) {
-          if (!stopped) update({ statusError: "状态读取失败：" + String(error) });
-        } finally {
-          if (!stopped) timer = setTimeout(tick, 3e3);
-        }
-      });
+    async function tick() {
+      try {
+        if (!stopped && !live.current.busy && live.current.settings !== null) await status();
+      } catch (error) {
+        if (!stopped) update({ statusError: "状态读取失败：" + String(error) });
+      } finally {
+        if (!stopped) timer = setTimeout(tick, 3e3);
+      }
     }
     timer = setTimeout(tick, 3e3);
     return () => {
@@ -1833,16 +1773,14 @@ function renderMemorySettings(ctx, target, close, key) {
     assertSearchConfig(draft);
     return draft;
   }
-  function save() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        if (live.current.settings === null) throw new Error("记忆设置尚未读取成功");
-        const settings3 = { ...live.current.settings, autoSaveIntervalMinutes: uiNumber(live.current.numbers.interval, "检查间隔", 1, 30, true) }, config2 = configDraft();
-        assertMemorySettings(settings3);
-        const result = yield uiRequest({ action: "writeMemoryOwnerSettings", ownerKey, settings: settings3, config: config2 });
-        if (alive.current) update({ settings: result.settings, config: result.config, notice: "设置已保存" });
-        yield status();
-      }));
+  async function save() {
+    await act(async () => {
+      if (live.current.settings === null) throw new Error("记忆设置尚未读取成功");
+      const settings3 = { ...live.current.settings, autoSaveIntervalMinutes: uiNumber(live.current.numbers.interval, "检查间隔", 1, 30, true) }, config2 = configDraft();
+      assertMemorySettings(settings3);
+      const result = await uiRequest({ action: "writeMemoryOwnerSettings", ownerKey, settings: settings3, config: config2 });
+      if (alive.current) update({ settings: result.settings, config: result.config, notice: "设置已保存" });
+      await status();
     });
   }
   const children = [ui.text("所属记忆库：" + ownerKey)];
@@ -1852,27 +1790,27 @@ function renderMemorySettings(ctx, target, close, key) {
   const settings2 = state.settings, config = state.config;
   if (settings2 === null || config === null || state.listing === null) children.push(ui.text(state.busy ? "正在读取记忆设置…" : "记忆设置尚未读取成功"), ui.button("memory-settings-retry", "重试", load));
   else {
-    if (state.listing.missingChatIds.length > 0) children.push(ui.text(`检测到 ${state.listing.missingChatIds.length} 条已失效的会话绑定，自动提取与历史重建会跳过它们。`), ui.button("memory-prune-bindings", "清理失效绑定", () => act(() => __async(null, null, function* () {
-      const result = yield uiRequest({ action: "pruneMissingChatBindings", ownerKey });
-      const listing = yield uiRequest({ action: "listMemoryChats", ownerKey });
+    if (state.listing.missingChatIds.length > 0) children.push(ui.text(`检测到 ${state.listing.missingChatIds.length} 条已失效的会话绑定，自动提取与历史重建会跳过它们。`), ui.button("memory-prune-bindings", "清理失效绑定", () => act(async () => {
+      const result = await uiRequest({ action: "pruneMissingChatBindings", ownerKey });
+      const listing = await uiRequest({ action: "listMemoryChats", ownerKey });
       if (alive.current) update({ listing, notice: `已清理 ${result.removedChatIds.length} 条会话绑定和 ${result.removedCandidateIds.length} 条提取候选` });
-    }))));
+    })));
     if (state.tab === "automatic") {
       const queue = state.queue;
       if (queue !== null) {
         children.push(ui.text(`待处理 ${queue.pendingCandidates} 条 / ${queue.pendingChats} 个聊天 · 处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}`), ui.text(queue.nextRunAtMs === 0 ? "尚未安排下次检查" : `下次检查：约 ${queue.minutesUntilNextRun} 分钟后`));
         if (queue.lastError !== "") children.push(ui.text("提取失败：" + queue.lastError));
         if (queue.failedCandidates > 0) children.push(ui.actions([
-          ui.button("memory-retry-failed", "重试失败候选", () => act(() => __async(null, null, function* () {
-            const result = yield uiRequest({ action: "retryFailedCandidates", ownerKey });
+          ui.button("memory-retry-failed", "重试失败候选", () => act(async () => {
+            const result = await uiRequest({ action: "retryFailedCandidates", ownerKey });
             if (alive.current) update({ notice: `已重新排队 ${result.retried} 条失败候选` });
-            yield status();
-          }))),
-          ui.button("memory-clear-failed", state.clearFailed ? "确认清除失败记录" : "清除失败记录", () => state.clearFailed ? act(() => __async(null, null, function* () {
-            const result = yield uiRequest({ action: "clearFailedCandidates", ownerKey });
+            await status();
+          })),
+          ui.button("memory-clear-failed", state.clearFailed ? "确认清除失败记录" : "清除失败记录", () => state.clearFailed ? act(async () => {
+            const result = await uiRequest({ action: "clearFailedCandidates", ownerKey });
             if (alive.current) update({ clearFailed: false, notice: `已清除 ${result.cleared} 条失败记录` });
-            yield status();
-          })) : update({ clearFailed: true })),
+            await status();
+          }) : update({ clearFailed: true })),
           ...state.clearFailed ? [ui.button("memory-clear-failed-cancel", "取消清除", () => update({ clearFailed: false }))] : []
         ]));
       }
@@ -1880,14 +1818,14 @@ function renderMemorySettings(ctx, target, close, key) {
     } else if (state.tab === "search") {
       for (const [name, label] of [["keywordWeight", "关键词权重"], ["tagWeight", "标签权重"], ["vectorWeight", "向量权重"], ["edgeWeight", "关系权重"]]) children.push(ui.field("memory-" + name, label, state.numbers[name], (value) => numberChange(name, value)));
       children.push(ui.toggle("memory-embedding", "云端 Embedding", settings2.cloudEmbeddingEnabled, (cloudEmbeddingEnabled) => settingsChange({ cloudEmbeddingEnabled })));
-      if (settings2.cloudEmbeddingEnabled) children.push(ui.text("搜索文本与记忆文本会发送至指定服务。修改服务地址、模型或密钥后，请先保存再重建。"), ui.field("memory-embedding-endpoint", "Embedding 完整请求地址", settings2.cloudEmbeddingEndpoint, (cloudEmbeddingEndpoint) => settingsChange({ cloudEmbeddingEndpoint })), ui.field("memory-embedding-model", "Embedding 模型", settings2.cloudEmbeddingModel, (cloudEmbeddingModel) => settingsChange({ cloudEmbeddingModel })), ctx.UI.TextField({ key: "memory-embedding-key", label: "API Key", value: settings2.cloudEmbeddingApiKey, enabled: !state.busy, isPassword: true, fillMaxWidth: true, onValueChange: (cloudEmbeddingApiKey) => settingsChange({ cloudEmbeddingApiKey }) }), ui.button("memory-embedding-rebuild", "使用已保存设置重建 Embedding", () => act(() => __async(null, null, function* () {
-        const count = yield uiRequest({ action: "rebuildMemoryEmbeddings", ownerKey });
+      if (settings2.cloudEmbeddingEnabled) children.push(ui.text("搜索文本与记忆文本会发送至指定服务。修改服务地址、模型或密钥后，请先保存再重建。"), ui.field("memory-embedding-endpoint", "Embedding 完整请求地址", settings2.cloudEmbeddingEndpoint, (cloudEmbeddingEndpoint) => settingsChange({ cloudEmbeddingEndpoint })), ui.field("memory-embedding-model", "Embedding 模型", settings2.cloudEmbeddingModel, (cloudEmbeddingModel) => settingsChange({ cloudEmbeddingModel })), ctx.UI.TextField({ key: "memory-embedding-key", label: "API Key", value: settings2.cloudEmbeddingApiKey, enabled: !state.busy, isPassword: true, fillMaxWidth: true, onValueChange: (cloudEmbeddingApiKey) => settingsChange({ cloudEmbeddingApiKey }) }), ui.button("memory-embedding-rebuild", "使用已保存设置重建 Embedding", () => act(async () => {
+        const count = await uiRequest({ action: "rebuildMemoryEmbeddings", ownerKey });
         if (alive.current) update({ notice: `已重建 ${count} 条记忆的 Embedding` });
-      }))));
-      children.push(ui.text("检索调试", true), ui.field("memory-debug-query", "查询", state.query, (query) => update({ query })), ui.field("memory-debug-threshold", "相关性阈值（0–1）", state.threshold, (threshold) => update({ threshold })), ui.text("使用当前权重执行真实检索，不保存权重；向量检索使用已保存的服务配置。"), ui.button("memory-debug-search", "使用当前权重检索", () => act(() => __async(null, null, function* () {
-        const result = yield uiRequest({ action: "searchMemoryDebug", ownerKey, query: live.current.query, config: configDraft(), relevanceThreshold: uiNumber(live.current.threshold, "相关性阈值", 0, 1) });
+      })));
+      children.push(ui.text("检索调试", true), ui.field("memory-debug-query", "查询", state.query, (query) => update({ query })), ui.field("memory-debug-threshold", "相关性阈值（0–1）", state.threshold, (threshold) => update({ threshold })), ui.text("使用当前权重执行真实检索，不保存权重；向量检索使用已保存的服务配置。"), ui.button("memory-debug-search", "使用当前权重检索", () => act(async () => {
+        const result = await uiRequest({ action: "searchMemoryDebug", ownerKey, query: live.current.query, config: configDraft(), relevanceThreshold: uiNumber(live.current.threshold, "相关性阈值", 0, 1) });
         if (alive.current) update({ result });
-      }))));
+      })));
       if (state.result !== null) {
         children.push(ui.text(`范围 ${state.result.memoriesInScopeCount} 条 · 命中 ${state.result.candidates.filter((hit) => hit.passedThreshold).length} 条`));
         for (const hit of state.result.candidates) children.push(ui.card("memory-hit:" + hit.memory.uuid, hit.memory.title, `总分 ${hit.score.toFixed(4)} · ${hit.passedThreshold ? "命中" : "未过阈值"}
@@ -1898,15 +1836,15 @@ function renderMemorySettings(ctx, target, close, key) {
       children.push(ui.text("从聊天历史重建记忆：追加或更新，保留现有记忆。关闭此页不会终止后台任务。"), ui.field("memory-rebuild-window", "窗口消息数", state.window, (window) => update({ window })), ui.field("memory-rebuild-from", "开始日期（YYYY-MM-DD，可留空）", state.from, (from) => update({ from })), ui.field("memory-rebuild-to", "结束日期（YYYY-MM-DD，可留空）", state.to, (to) => update({ to })));
       for (const chat of state.listing.chats) children.push(ctx.UI.Row({ key: "memory-rebuild-chat:" + chat.id, fillMaxWidth: true, spacing: 8, verticalAlignment: "center" }, [ctx.UI.Checkbox({ key: "memory-rebuild-check:" + chat.id, checked: state.selected.includes(chat.id), enabled: !state.busy && !running, onCheckedChange: (checked) => update({ selected: checked ? [.../* @__PURE__ */ new Set([...live.current.selected, chat.id])] : live.current.selected.filter((id2) => id2 !== chat.id) }) }), ctx.UI.Column({ weight: 1, spacing: 4 }, [ui.text(chat.title), ui.text(`${chat.messageCount} 条消息`)])]));
       if (state.listing.chats.length === 0) children.push(ui.text("此记忆库暂无绑定聊天"));
-      children.push(ui.actions([ui.button("memory-rebuild-start", "开始重建", () => act(() => __async(null, null, function* () {
+      children.push(ui.actions([ui.button("memory-rebuild-start", "开始重建", () => act(async () => {
         const value = live.current, fromInclusive = uiDate(value.from, false), toInclusive = uiDate(value.to, true);
         if (fromInclusive !== null && toInclusive !== null && fromInclusive > toInclusive) throw new Error("开始日期不能晚于结束日期");
-        const result = yield uiRequest({ action: "startMemoryRebuild", ownerKey, rebuild: { chatIds: [...value.selected], windowMessageCount: uiNumber(value.window, "窗口消息数", 1, Infinity, true), fromInclusive, toInclusive } });
+        const result = await uiRequest({ action: "startMemoryRebuild", ownerKey, rebuild: { chatIds: [...value.selected], windowMessageCount: uiNumber(value.window, "窗口消息数", 1, Infinity, true), fromInclusive, toInclusive } });
         if (alive.current) update({ progress: result, notice: "后台重建任务已提交" });
-      })), !running && state.selected.length > 0), ui.button("memory-rebuild-cancel", "取消重建", () => act(() => __async(null, null, function* () {
-        const progress2 = yield uiRequest({ action: "cancelMemoryRebuild", ownerKey });
+      }), !running && state.selected.length > 0), ui.button("memory-rebuild-cancel", "取消重建", () => act(async () => {
+        const progress2 = await uiRequest({ action: "cancelMemoryRebuild", ownerKey });
         if (alive.current) update({ progress: progress2 });
-      })), running), ui.button("memory-status-refresh", "刷新状态", () => act(status))]));
+      }), running), ui.button("memory-status-refresh", "刷新状态", () => act(status))]));
       if (progress !== null) {
         const labels = { idle: "未开始", preparing: "准备中", running: "重建中", completed: "已完成", cancelled: "已取消", failed: "失败" };
         children.push(ui.text(`${labels[progress.status] ?? progress.status} · 聊天 ${progress.completedChats}/${progress.totalChats} · 窗口 ${progress.completedWindows}/${progress.totalWindows} · 失败 ${progress.failedWindows}`), ui.text(`已处理源消息 ${progress.processedSourceMessages}/${progress.totalSourceMessages} · ${progress.currentChatTitle}`));
@@ -1945,18 +1883,16 @@ function renderMemoryWorkspace(ctx, target, close, instance) {
       alive.current = false;
     };
   }, []);
-  function act(operation) {
-    return __async(this, null, function* () {
-      if (live.current.busy || !alive.current) return;
-      update({ busy: true, error: "", notice: "" });
-      try {
-        yield operation();
-      } catch (error) {
-        if (alive.current) update({ error: String(error) });
-      } finally {
-        if (alive.current) update({ busy: false });
-      }
-    });
+  async function act(operation) {
+    if (live.current.busy || !alive.current) return;
+    update({ busy: true, error: "", notice: "" });
+    try {
+      await operation();
+    } catch (error) {
+      if (alive.current) update({ error: String(error) });
+    } finally {
+      if (alive.current) update({ busy: false });
+    }
   }
   function open(panel) {
     update({ panel, panelSequence: live.current.panelSequence + 1, error: "" });
@@ -1966,30 +1902,24 @@ function renderMemoryWorkspace(ctx, target, close, instance) {
     if (target.initial !== void 0 && target.initial !== "browse" && live.current.data === null) close();
     else update({ panel: null, error: "" });
   }
-  function refresh() {
-    return __async(this, null, function* () {
-      const data = yield uiRequest({ action: "graph", ownerKey });
-      if (alive.current) update({ data, searchIds: null, query: "", appliedQuery: "", selected: null, selectedEdge: null, linkSource: null });
+  async function refresh() {
+    const data = await uiRequest({ action: "graph", ownerKey });
+    if (alive.current) update({ data, searchIds: null, query: "", appliedQuery: "", selected: null, selectedEdge: null, linkSource: null });
+  }
+  async function profile() {
+    open({ type: "profile", content: "", loaded: false });
+    await act(async () => {
+      const result = await uiRequest({ action: "readUser", ownerKey });
+      if (alive.current) update({ panel: { type: "profile", content: result.content, loaded: true } });
     });
   }
-  function profile() {
-    return __async(this, null, function* () {
-      open({ type: "profile", content: "", loaded: false });
-      yield act(() => __async(null, null, function* () {
-        const result = yield uiRequest({ action: "readUser", ownerKey });
-        if (alive.current) update({ panel: { type: "profile", content: result.content, loaded: true } });
-      }));
-    });
-  }
-  function load() {
-    return __async(this, null, function* () {
-      if (target.initial === "profile") {
-        yield profile();
-        return;
-      }
-      if (target.initial === "settings" || live.current.data !== null) return;
-      yield act(refresh);
-    });
+  async function load() {
+    if (target.initial === "profile") {
+      await profile();
+      return;
+    }
+    if (target.initial === "settings" || live.current.data !== null) return;
+    await act(refresh);
   }
   function editMemory(item) {
     open({ type: "memory", draft: item === null ? { originalTitle: null, title: "", content: "", contentType: "text/plain", source: "manual", credibility: "0.5", importance: "0.5", folderPath: live.current.folder === "*" ? "" : live.current.folder, tags: "" } : { originalTitle: item.title, title: item.title, content: item.content, contentType: item.contentType, source: item.source, credibility: String(item.credibility), importance: String(item.importance), folderPath: item.folderPath ?? "", tags: item.tags.map((tag) => tag.name).join(",") } });
@@ -1997,15 +1927,13 @@ function renderMemoryWorkspace(ctx, target, close, instance) {
   function newLink(sourceTitle = "", targetTitle = "") {
     open({ type: "link", draft: { id: null, sourceTitle, targetTitle, linkType: "related", weight: "1", description: "" } });
   }
-  function editLink(id2) {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const link = yield uiRequest({ action: "readMemoryLink", ownerKey, linkId: id2 });
-        if (!alive.current) return;
-        const source = live.current.data?.items.find((item) => item.id === link.sourceMemoryId), destination = live.current.data?.items.find((item) => item.id === link.targetMemoryId);
-        if (source === void 0 || destination === void 0) throw new Error("记忆关系端点不存在");
-        open({ type: "link", draft: { id: id2, sourceTitle: source.title, targetTitle: destination.title, linkType: link.type_, weight: String(link.weight), description: link.description } });
-      }));
+  async function editLink(id2) {
+    await act(async () => {
+      const link = await uiRequest({ action: "readMemoryLink", ownerKey, linkId: id2 });
+      if (!alive.current) return;
+      const source = live.current.data?.items.find((item) => item.id === link.sourceMemoryId), destination = live.current.data?.items.find((item) => item.id === link.targetMemoryId);
+      if (source === void 0 || destination === void 0) throw new Error("记忆关系端点不存在");
+      open({ type: "link", draft: { id: id2, sourceTitle: source.title, targetTitle: destination.title, linkType: link.type_, weight: String(link.weight), description: link.description } });
     });
   }
   function select(kind, id2) {
@@ -2036,27 +1964,23 @@ function renderMemoryWorkspace(ctx, target, close, instance) {
     const panel = live.current.panel;
     if (!live.current.busy && panel?.type === "link") update({ panel: { ...panel, draft: { ...panel.draft, ...patch } } });
   }
-  function saveMemory() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const panel = live.current.panel;
-        if (panel?.type !== "memory") return;
-        const draft = panel.draft;
-        const data = yield uiRequest({ action: "saveMemory", ownerKey, ...draft, credibility: uiNumber(draft.credibility, "可信度", 0, 1), importance: uiNumber(draft.importance, "重要性", 0, 1) });
-        if (alive.current) update({ data, panel: null, searchIds: null, query: "", appliedQuery: "", selected: null, notice: "记忆已保存" });
-      }));
+  async function saveMemory() {
+    await act(async () => {
+      const panel = live.current.panel;
+      if (panel?.type !== "memory") return;
+      const draft = panel.draft;
+      const data = await uiRequest({ action: "saveMemory", ownerKey, ...draft, credibility: uiNumber(draft.credibility, "可信度", 0, 1), importance: uiNumber(draft.importance, "重要性", 0, 1) });
+      if (alive.current) update({ data, panel: null, searchIds: null, query: "", appliedQuery: "", selected: null, notice: "记忆已保存" });
     });
   }
-  function saveLink() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const panel = live.current.panel;
-        if (panel?.type !== "link") return;
-        const draft = panel.draft, weight = uiNumber(draft.weight, "关系强度", 0, 1);
-        if (draft.linkType.trim() === "" || draft.sourceTitle === "" || draft.targetTitle === "" || draft.sourceTitle === draft.targetTitle) throw new Error("请选择两条不同记忆并填写关系类型");
-        const data = yield uiRequest(draft.id === null ? { action: "createLink", ownerKey, sourceTitle: draft.sourceTitle, targetTitle: draft.targetTitle, linkType: draft.linkType, weight, description: draft.description } : { action: "updateLink", ownerKey, linkId: draft.id, linkType: draft.linkType, weight, description: draft.description });
-        if (alive.current) update({ data, panel: null, selectedEdge: null, linkSource: null, linking: false, notice: "关系已保存" });
-      }));
+  async function saveLink() {
+    await act(async () => {
+      const panel = live.current.panel;
+      if (panel?.type !== "link") return;
+      const draft = panel.draft, weight = uiNumber(draft.weight, "关系强度", 0, 1);
+      if (draft.linkType.trim() === "" || draft.sourceTitle === "" || draft.targetTitle === "" || draft.sourceTitle === draft.targetTitle) throw new Error("请选择两条不同记忆并填写关系类型");
+      const data = await uiRequest(draft.id === null ? { action: "createLink", ownerKey, sourceTitle: draft.sourceTitle, targetTitle: draft.targetTitle, linkType: draft.linkType, weight, description: draft.description } : { action: "updateLink", ownerKey, linkId: draft.id, linkType: draft.linkType, weight, description: draft.description });
+      if (alive.current) update({ data, panel: null, selectedEdge: null, linkSource: null, linking: false, notice: "关系已保存" });
     });
   }
   function panelBody(panel) {
@@ -2081,52 +2005,50 @@ function renderMemoryWorkspace(ctx, target, close, instance) {
         return [ui.text(draft.id === null ? "创建记忆关系" : "编辑记忆关系", true), ...draft.id === null ? [ui.choose("link-source", "源记忆", draft.sourceTitle, options, (sourceTitle) => linkChange({ sourceTitle })), ui.choose("link-target", "目标记忆", draft.targetTitle, options, (targetTitle) => linkChange({ targetTitle }))] : [ui.text(draft.sourceTitle + " → " + draft.targetTitle)], ui.field("link-type", "关系类型", draft.linkType, (linkType) => linkChange({ linkType })), ui.field("link-weight", "强度（0–1）", draft.weight, (weight) => linkChange({ weight })), ui.field("link-description", "描述", draft.description, (description) => linkChange({ description }), 3), ui.primary("link-save", "保存", saveLink)];
       }
       case "profile":
-        return [ui.text("用户资料 · USER.md", true), ...panel.loaded ? [ui.field("memory-profile", "用户资料", panel.content, (content) => update({ panel: { ...panel, content } }), 12), ui.primary("memory-profile-save", "保存", () => act(() => __async(null, null, function* () {
+        return [ui.text("用户资料 · USER.md", true), ...panel.loaded ? [ui.field("memory-profile", "用户资料", panel.content, (content) => update({ panel: { ...panel, content } }), 12), ui.primary("memory-profile-save", "保存", () => act(async () => {
           const current = live.current.panel;
           if (current?.type !== "profile" || !current.loaded) throw new Error("用户资料尚未读取成功");
-          yield uiRequest({ action: "writeUser", ownerKey, content: current.content });
+          await uiRequest({ action: "writeUser", ownerKey, content: current.content });
           if (alive.current) {
             if (live.current.data === null) close();
             else update({ panel: null, notice: "用户资料已保存" });
           }
-        })))] : [ui.text(state.busy ? "正在读取用户资料…" : "用户资料读取失败"), ui.button("memory-profile-retry", "重试", profile)]];
+        }))] : [ui.text(state.busy ? "正在读取用户资料…" : "用户资料读取失败"), ui.button("memory-profile-retry", "重试", profile)]];
       case "import":
-        return [ui.text("导入记忆 JSON", true), ui.choose("memory-import-strategy", "相同 UUID 记忆处理", panel.strategy, [{ id: "SKIP", label: "跳过" }, { id: "UPDATE", label: "更新" }, { id: "CREATE_NEW", label: "创建新记忆" }], (strategy) => update({ panel: { ...panel, strategy } })), ui.text("选择记忆库导出的 JSON 备份文件，导入完整记忆、关系、文档分块及 USER.md。导入前建议先导出备份；只修改当前记忆库。"), ui.primary("memory-import-submit", "选择 JSON 文件并导入", () => act(() => __async(null, null, function* () {
+        return [ui.text("导入记忆 JSON", true), ui.choose("memory-import-strategy", "相同 UUID 记忆处理", panel.strategy, [{ id: "SKIP", label: "跳过" }, { id: "UPDATE", label: "更新" }, { id: "CREATE_NEW", label: "创建新记忆" }], (strategy) => update({ panel: { ...panel, strategy } })), ui.text("选择记忆库导出的 JSON 备份文件，导入完整记忆、关系、文档分块及 USER.md。导入前建议先导出备份；只修改当前记忆库。"), ui.primary("memory-import-submit", "选择 JSON 文件并导入", () => act(async () => {
           const current = live.current.panel;
           if (current?.type !== "import") return;
-          const content = yield readUiJson(ctx);
+          const content = await readUiJson(ctx);
           if (content === null) return;
-          const result = yield uiRequest({ action: "importMemory", ownerKey, content, strategy: current.strategy });
-          yield refresh();
+          const result = await uiRequest({ action: "importMemory", ownerKey, content, strategy: current.strategy });
+          await refresh();
           if (alive.current) update({ panel: null, notice: `新增 ${result.result.newMemories} · 更新 ${result.result.updatedMemories} · 跳过 ${result.result.skippedMemories} · 关系 ${result.result.newLinks}` });
-        })))];
+        }))];
       case "export":
         return [ui.text("导出 JSON", true), ctx.UI.TextField({ key: "memory-export-content", label: "JSON 内容", value: panel.content, readOnly: true, onValueChange: () => {
-        }, fillMaxWidth: true, minLines: 16, maxLines: 24 }), ui.text("包含当前记忆库的完整记录与 USER.md。点击保存文件选择保存位置。"), ui.primary("memory-export-save", "保存文件", () => act(() => __async(null, null, function* () {
+        }, fillMaxWidth: true, minLines: 16, maxLines: 24 }), ui.text("包含当前记忆库的完整记录与 USER.md。点击保存文件选择保存位置。"), ui.primary("memory-export-save", "保存文件", () => act(async () => {
           const current = live.current.panel;
           if (current?.type !== "export") return;
-          const result = yield ctx.saveFile({ suggestedName: current.name, content: current.content, mimeType: "application/json", extensions: ["json"] });
+          const result = await ctx.saveFile({ suggestedName: current.name, content: current.content, mimeType: "application/json", extensions: ["json"] });
           if (!result.cancelled && alive.current) update({ panel: null, notice: "文件已导出" });
-        })))];
+        }))];
       case "delete-memory":
-        return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(() => __async(null, null, function* () {
-          const data = yield uiRequest({ action: "deleteMemory", ownerKey, title: panel.title });
+        return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(async () => {
+          const data = await uiRequest({ action: "deleteMemory", ownerKey, title: panel.title });
           if (alive.current) update({ data, panel: null, selected: null, selectedEdge: null, searchIds: null, notice: "记忆已删除" });
-        })))];
+        }))];
       case "delete-link":
-        return [ui.text("确定删除这条记忆关系？"), ui.primary("link-delete-confirm", "确认删除", () => act(() => __async(null, null, function* () {
-          const data = yield uiRequest({ action: "deleteLink", ownerKey, linkId: panel.id });
+        return [ui.text("确定删除这条记忆关系？"), ui.primary("link-delete-confirm", "确认删除", () => act(async () => {
+          const data = await uiRequest({ action: "deleteLink", ownerKey, linkId: panel.id });
           if (alive.current) update({ data, panel: null, selectedEdge: null, notice: "关系已删除" });
-        })))];
+        }))];
     }
   }
-  function search() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const query = live.current.query.trim();
-        const hits = query === "" ? null : yield uiRequest({ action: "searchMemory", ownerKey, query });
-        if (alive.current) update({ searchIds: hits?.map((item) => item.uuid) ?? null, appliedQuery: query, selected: null, selectedEdge: null });
-      }));
+  async function search() {
+    await act(async () => {
+      const query = live.current.query.trim();
+      const hits = query === "" ? null : await uiRequest({ action: "searchMemory", ownerKey, query });
+      if (alive.current) update({ searchIds: hits?.map((item) => item.uuid) ?? null, appliedQuery: query, selected: null, selectedEdge: null });
     });
   }
   const messages = [];
@@ -2145,10 +2067,10 @@ function renderMemoryWorkspace(ctx, target, close, instance) {
         { key: "memory-settings-open", label: "记忆设置", name: "Tune", action: () => open({ type: "settings" }) },
         { key: "memory-refresh", label: "刷新", name: "Refresh", enabled: data !== null, action: () => act(refresh) },
         { key: "memory-import", label: "导入记忆 JSON", name: "Upload", enabled: data !== null, action: () => open({ type: "import", strategy: "SKIP", content: "" }) },
-        { key: "memory-export", label: "导出记忆 JSON", name: "Download", enabled: data !== null, action: () => act(() => __async(null, null, function* () {
-          const result = yield uiRequest({ action: "exportMemory", ownerKey });
+        { key: "memory-export", label: "导出记忆 JSON", name: "Download", enabled: data !== null, action: () => act(async () => {
+          const result = await uiRequest({ action: "exportMemory", ownerKey });
           if (alive.current) open({ type: "export", name: "memory-backup.json", content: result.content });
-        })) }
+        }) }
       ], true)
     ]);
     let body;
@@ -2212,40 +2134,34 @@ function renderManagement(ctx, view) {
     void load();
   });
   const ui = nativeUi(ctx, !state.busy);
-  function act(operation) {
-    return __async(this, null, function* () {
-      if (live.current.busy) return;
-      update({ busy: true, error: "", notice: "" });
+  async function act(operation) {
+    if (live.current.busy) return;
+    update({ busy: true, error: "", notice: "" });
+    try {
+      await operation();
+    } catch (error) {
+      update({ error: String(error) });
+    } finally {
+      update({ busy: false });
+    }
+  }
+  async function refresh() {
+    update({ snapshot: await uiRequest({ action: "snapshot" }) });
+  }
+  async function load() {
+    await act(async () => {
       try {
-        yield operation();
+        await refresh();
       } catch (error) {
-        update({ error: String(error) });
-      } finally {
-        update({ busy: false });
+        recovery.reportFailure(error);
+        throw error;
       }
     });
-  }
-  function refresh() {
-    return __async(this, null, function* () {
-      update({ snapshot: yield uiRequest({ action: "snapshot" }) });
-    });
-  }
-  function load() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        try {
-          yield refresh();
-        } catch (error) {
-          recovery.reportFailure(error);
-          throw error;
-        }
-      }));
-      try {
-        update({ defaultAvatar: yield ToolPkg.readResource("character_default_avatar", "operit-avatar.png") });
-      } catch (error) {
-        update({ error: String(error) });
-      }
-    });
+    try {
+      update({ defaultAvatar: await ToolPkg.readResource("character_default_avatar", "operit-avatar.png") });
+    } catch (error) {
+      update({ error: String(error) });
+    }
   }
   function entity(input) {
     if (live.current.busy) return;
@@ -2258,11 +2174,9 @@ function renderManagement(ctx, view) {
   function memory(target, initial = "browse") {
     update({ memory: { ...target, initial }, navigation: live.current.navigation + 1, error: "" });
   }
-  function bindings(cardId) {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        update({ panel: { type: "binding", draft: { cardId, query: "", unbound: false, chats: yield uiRequest({ action: "listBindableChats" }), selected: [], failures: {}, completed: 0, total: 0 } } });
-      }));
+  async function bindings(cardId) {
+    await act(async () => {
+      update({ panel: { type: "binding", draft: { cardId, query: "", unbound: false, chats: await uiRequest({ action: "listBindableChats" }), selected: [], failures: {}, completed: 0, total: 0 } } });
     });
   }
   function bindingChange(patch) {
@@ -2270,56 +2184,52 @@ function renderManagement(ctx, view) {
     if (panel?.type !== "binding" || live.current.busy) return;
     update({ panel: { ...panel, draft: { ...panel.draft, ...patch } } });
   }
-  function submitBindings() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const panel = live.current.panel;
-        if (panel?.type !== "binding") return;
-        const draft = panel.draft, selection2 = "card:" + draft.cardId;
-        if (!live.current.snapshot?.cards.some((card) => card.id === draft.cardId)) throw new Error("请选择角色卡");
-        const ids = draft.selected.filter((id2) => draft.chats.some((chat) => chat.id === id2 && chat.selection !== selection2));
-        if (ids.length === 0) throw new Error("请选择要绑定的对话");
-        const next = { ...draft, chats: draft.chats.map((chat) => ({ ...chat })), failures: {}, completed: 0, total: ids.length, selected: [...ids] };
-        update({ panel: { type: "binding", draft: next } });
-        for (const chatId of ids) {
-          try {
-            const result = yield uiRequest({ action: "writeChatBinding", chatId, selection: selection2 });
-            if (result.chatId !== chatId || result.selection !== selection2) throw new Error("绑定结果与请求不一致");
-            next.chats.find((chat) => chat.id === chatId).selection = selection2;
-            next.selected = next.selected.filter((id2) => id2 !== chatId);
-          } catch (error) {
-            next.failures[chatId] = String(error);
-          }
-          next.completed++;
-          update({ panel: { type: "binding", draft: { ...next } } });
+  async function submitBindings() {
+    await act(async () => {
+      const panel = live.current.panel;
+      if (panel?.type !== "binding") return;
+      const draft = panel.draft, selection2 = "card:" + draft.cardId;
+      if (!live.current.snapshot?.cards.some((card) => card.id === draft.cardId)) throw new Error("请选择角色卡");
+      const ids = draft.selected.filter((id2) => draft.chats.some((chat) => chat.id === id2 && chat.selection !== selection2));
+      if (ids.length === 0) throw new Error("请选择要绑定的对话");
+      const next = { ...draft, chats: draft.chats.map((chat) => ({ ...chat })), failures: {}, completed: 0, total: ids.length, selected: [...ids] };
+      update({ panel: { type: "binding", draft: next } });
+      for (const chatId of ids) {
+        try {
+          const result = await uiRequest({ action: "writeChatBinding", chatId, selection: selection2 });
+          if (result.chatId !== chatId || result.selection !== selection2) throw new Error("绑定结果与请求不一致");
+          next.chats.find((chat) => chat.id === chatId).selection = selection2;
+          next.selected = next.selected.filter((id2) => id2 !== chatId);
+        } catch (error) {
+          next.failures[chatId] = String(error);
         }
-        if (next.selected.length === 0) update({ panel: null, notice: "已绑定 " + ids.length + " 条对话" });
-        else update({ error: "部分对话未完成绑定，已保留失败选择，可重试。" });
-      }));
+        next.completed++;
+        update({ panel: { type: "binding", draft: { ...next } } });
+      }
+      if (next.selected.length === 0) update({ panel: null, notice: "已绑定 " + ids.length + " 条对话" });
+      else update({ error: "部分对话未完成绑定，已保留失败选择，可重试。" });
     });
   }
   function panelBody(panel) {
     switch (panel.type) {
       case "store":
-        return [ui.field("store-name", "名称", panel.store.name, (name) => update({ panel: { ...panel, store: { ...panel.store, name } } })), ui.primary("store-save", "保存", () => act(() => __async(null, null, function* () {
+        return [ui.field("store-name", "名称", panel.store.name, (name) => update({ panel: { ...panel, store: { ...panel.store, name } } })), ui.primary("store-save", "保存", () => act(async () => {
           const current = live.current.panel;
           if (current?.type !== "store") return;
-          update({ snapshot: yield uiRequest({ action: "saveStore", store: current.store, create: current.create }), panel: null });
-        })))];
+          update({ snapshot: await uiRequest({ action: "saveStore", store: current.store, create: current.create }), panel: null });
+        }))];
       case "delete-store":
-        return [ui.text("删除共享记忆库「" + panel.name + "」？此操作会影响关联角色。"), ui.primary("store-delete-confirm", "确认删除", () => act(() => __async(null, null, function* () {
-          return update({ snapshot: yield uiRequest({ action: "deleteStore", id: panel.id }), panel: null });
-        })))];
+        return [ui.text("删除共享记忆库「" + panel.name + "」？此操作会影响关联角色。"), ui.primary("store-delete-confirm", "确认删除", () => act(async () => update({ snapshot: await uiRequest({ action: "deleteStore", id: panel.id }), panel: null })))];
       case "import":
         return [
           ...panel.entity === "card" ? [ui.choose("import-format", "角色格式", panel.format, [{ id: "operit", label: "Operit JSON" }, { id: "tavern", label: "Tavern JSON" }], (format2) => update({ panel: { ...panel, format: format2 } }))] : [],
           ui.field("import-content", panel.entity === "card" && panel.format === "tavern" ? "粘贴 Tavern JSON" : "粘贴 Operit JSON", panel.content, (content) => update({ panel: { ...panel, content } }), 18),
           ui.text("角色卡支持 Operit 和 Tavern JSON；群组使用 Operit JSON。"),
-          ui.primary("import-submit", "导入", () => act(() => __async(null, null, function* () {
+          ui.primary("import-submit", "导入", () => act(async () => {
             const current = live.current.panel;
             if (current?.type !== "import") return;
-            update({ snapshot: yield uiRequest(current.entity === "card" ? { action: "importCharacter", format: current.format, content: current.content } : { action: "importGroup", content: current.content }), panel: null, notice: "导入完成" });
-          })))
+            update({ snapshot: await uiRequest(current.entity === "card" ? { action: "importCharacter", format: current.format, content: current.content } : { action: "importGroup", content: current.content }), panel: null, notice: "导入完成" });
+          }))
         ];
       case "binding": {
         const draft = panel.draft, snapshot2 = state.snapshot;
@@ -2362,38 +2272,28 @@ function renderManagement(ctx, view) {
         const active = "CharacterCard" in snapshot.active && snapshot.active.CharacterCard.id === card.id;
         return ui.tile("card:" + card.id, card.name, card.description, [card.chatModelBindingMode === "FIXED_MODEL" ? "固定模型配置" : "跟随全局模型", card.memoryBindingMode === "SHARED" ? "共享记忆" : "角色记忆", ...snapshot.tags.filter((tag) => card.attachedTagIds.includes(tag.id)).map((tag) => tag.name)], [
           ui.iconButton("card-bind:" + card.id, "绑定对话", "ChatBubbleOutline", () => bindings(card.id)),
-          ui.iconButton("card-memory:" + card.id, "打开记忆图谱", "AccountTreeOutlined", () => act(() => __async(null, null, function* () {
-            return memory(cardMemoryTarget(card));
-          }))),
-          ui.iconButton("card-user:" + card.id, "编辑用户资料", "AccountBoxOutlined", () => act(() => __async(null, null, function* () {
-            return memory(cardMemoryTarget(card), "profile");
-          }))),
-          active ? ui.activePill() : ui.sectionAction("card-activate:" + card.id, "使用", "", () => act(() => __async(null, null, function* () {
-            return update({ snapshot: yield uiRequest({ action: "activate", type: "card", id: card.id }) });
-          })))
+          ui.iconButton("card-memory:" + card.id, "打开记忆图谱", "AccountTreeOutlined", () => act(async () => memory(cardMemoryTarget(card)))),
+          ui.iconButton("card-user:" + card.id, "编辑用户资料", "AccountBoxOutlined", () => act(async () => memory(cardMemoryTarget(card), "profile"))),
+          active ? ui.activePill() : ui.sectionAction("card-activate:" + card.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "card", id: card.id }) })))
         ], active, () => entity({ mode: "edit", entity: "card", id: card.id }), card.avatarUri ?? state.defaultAvatar);
       });
       children.push(ui.section("character-section", "角色卡", "BadgeOutlined", [ui.sectionAction("bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.cards.length > 0), ui.menu("add-card", "添加", "Add", [{ key: "create-card", label: "新建角色卡", name: "Add", action: () => entity({ mode: "create", entity: "card", id: "" }) }, { key: "import-card", label: "导入角色卡", name: "Upload", action: () => update({ panel: { type: "import", entity: "card", format: "operit", content: "" } }) }])], cards.length === 0 ? [ui.text("还没有角色卡，点击创建添加角色。")] : cards));
       const groups = snapshot.groups.map((group) => {
         const active = "CharacterGroup" in snapshot.active && snapshot.active.CharacterGroup.id === group.id;
-        return ui.tile("group:" + group.id, group.name, group.members.map((member2) => snapshot.cards.find((card) => card.id === member2.characterCardId)?.name ?? "已删除角色").join("、"), [`${group.members.length} 个角色`], [active ? ui.activePill() : ui.sectionAction("group-activate:" + group.id, "使用", "", () => act(() => __async(null, null, function* () {
-          return update({ snapshot: yield uiRequest({ action: "activate", type: "group", id: group.id }) });
-        })))], active, () => entity({ mode: "edit", entity: "group", id: group.id }), null, "GroupsOutlined");
+        return ui.tile("group:" + group.id, group.name, group.members.map((member2) => snapshot.cards.find((card) => card.id === member2.characterCardId)?.name ?? "已删除角色").join("、"), [`${group.members.length} 个角色`], [active ? ui.activePill() : ui.sectionAction("group-activate:" + group.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "group", id: group.id }) })))], active, () => entity({ mode: "edit", entity: "group", id: group.id }), null, "GroupsOutlined");
       });
       children.push(ui.section("group-section", "群组", "GroupsOutlined", [ui.sectionAction("import-group", "导入 JSON", "Upload", () => update({ panel: { type: "import", entity: "group", format: "operit", content: "" } })), ui.sectionAction("create-group", "创建", "Add", () => entity({ mode: "create", entity: "group", id: "" }))], groups.length === 0 ? [ui.text("还没有群组，创建后可编排多个角色参与对话。")] : groups));
     } else {
       let ownerActions2 = function(target, scope = "") {
-        if (!snapshot.memoryOwnerKeys.includes(target.ownerKey)) return [ui.sectionAction("library-create:" + target.ownerKey + scope, target.ownerKey.startsWith("character:") ? "新建角色卡记忆库" : "新建共享记忆库", "Add", () => act(() => __async(null, null, function* () {
-          return update({ snapshot: yield uiRequest({ action: "createMemoryLibrary", ownerKey: target.ownerKey }) });
-        })))];
+        if (!snapshot.memoryOwnerKeys.includes(target.ownerKey)) return [ui.sectionAction("library-create:" + target.ownerKey + scope, target.ownerKey.startsWith("character:") ? "新建角色卡记忆库" : "新建共享记忆库", "Add", () => act(async () => update({ snapshot: await uiRequest({ action: "createMemoryLibrary", ownerKey: target.ownerKey }) })))];
         return [ui.iconButton("library-open:" + target.ownerKey + scope, "记忆图谱", "AccountTreeOutlined", () => memory(target)), ui.iconButton("library-user:" + target.ownerKey + scope, "用户资料 · USER.md", "AccountBoxOutlined", () => memory(target, "profile")), ui.iconButton("library-settings:" + target.ownerKey + scope, "记忆设置", "Tune", () => memory(target, "settings"))];
       };
       var ownerActions = ownerActions2;
       const global = [];
-      for (const [key, label, description] of [["userDescriptionEnabled", "向模型提供用户资料", "聊天执行时提供用户资料；关闭不会删除 USER.md 或改写历史记录。"], ["autoUpdateEnabled", "自动更新记忆库", "允许自动候选入队和定时提取；关闭不会取消手动历史重建。"]]) global.push(ctx.UI.Row({ fillMaxWidth: true, spacing: 16, paddingVertical: 10, verticalAlignment: "center" }, [ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: label, fontSize: 14 }), ctx.UI.Text({ text: description, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })]), ctx.UI.Switch({ key: "memory-preference:" + key, checked: snapshot.memoryPreferences[key], enabled: !state.busy, onCheckedChange: (value) => act(() => __async(null, null, function* () {
-        const memoryPreferences = yield uiRequest({ action: "writeGlobalMemoryPreference", key, value });
+      for (const [key, label, description] of [["userDescriptionEnabled", "向模型提供用户资料", "聊天执行时提供用户资料；关闭不会删除 USER.md 或改写历史记录。"], ["autoUpdateEnabled", "自动更新记忆库", "允许自动候选入队和定时提取；关闭不会取消手动历史重建。"]]) global.push(ctx.UI.Row({ fillMaxWidth: true, spacing: 16, paddingVertical: 10, verticalAlignment: "center" }, [ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: label, fontSize: 14 }), ctx.UI.Text({ text: description, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })]), ctx.UI.Switch({ key: "memory-preference:" + key, checked: snapshot.memoryPreferences[key], enabled: !state.busy, onCheckedChange: (value) => act(async () => {
+        const memoryPreferences = await uiRequest({ action: "writeGlobalMemoryPreference", key, value });
         update({ snapshot: { ...live.current.snapshot, memoryPreferences } });
-      })) })]));
+      }) })]));
       children.push(ui.section("global-memory-section", "全局记忆设置", "Tune", [], global));
       const stores = snapshot.stores.map((store) => ui.tile("store:" + store.id, store.name, "", [`${snapshot.cards.filter((card) => card.memoryBindingMode === "SHARED" && card.sharedMemoryId === store.id).length} 个角色绑定`], [...ownerActions2({ ownerKey: "shared:" + store.id, name: store.name }), ui.iconButton("store-edit:" + store.id, "编辑共享记忆库", "EditOutlined", () => update({ panel: { type: "store", create: false, store: { id: store.id, name: store.name } } })), ui.iconButton("store-delete:" + store.id, "删除共享记忆库", "DeleteOutline", () => update({ panel: { type: "delete-store", id: store.id, name: store.name } }))], false, void 0, null, "HubOutlined"));
       children.push(ui.section("shared-memory-section", "共享记忆库", "HubOutlined", [ui.sectionAction("create-store", "创建", "Add", () => update({ panel: { type: "store", create: true, store: { id: "", name: "" } } }))], stores.length === 0 ? [ui.text("当前还没有共享记忆库，创建后可被多个角色卡挂载共享。")] : stores));
@@ -2455,81 +2355,69 @@ function renderMemoryAttachment(ctx) {
     if (JSON.stringify(actual) !== ownerPresentation.current) throw new Error("Attachment presentation owner changed");
   }
   assertOwner();
-  function act(operation) {
-    return __async(this, null, function* () {
+  async function act(operation) {
+    assertOwner();
+    if (live.current.busy || live.current.finished) return;
+    update({ busy: true, error: "" });
+    try {
+      await operation();
       assertOwner();
-      if (live.current.busy || live.current.finished) return;
-      update({ busy: true, error: "" });
-      try {
-        yield operation();
-        assertOwner();
-      } catch (error) {
-        assertOwner();
-        update({ error: String(error) });
-      } finally {
-        update({ busy: false });
+    } catch (error) {
+      assertOwner();
+      update({ error: String(error) });
+    } finally {
+      update({ busy: false });
+    }
+  }
+  async function content(folder) {
+    const value = live.current;
+    if (value.owner === null || value.folders === null || !value.folders.includes(folder)) throw new Error("请选择存在的记忆文件夹");
+    if (input.folderPath !== null && input.folderPath !== folder) throw new Error("不能更改调用方指定的文件夹");
+    update({ step: "content", folder, items: null });
+    const items = await uiRequest({ action: "listMemories", ownerKey: value.owner.key });
+    assertOwner();
+    update({ items: items.filter((item) => (item.folderPath ?? "") === folder) });
+  }
+  async function folders(owner2) {
+    if (input.ownerKey !== null && input.ownerKey !== owner2.key) throw new Error("不能更改调用方指定的记忆库");
+    update({ step: "folders", owner: owner2, folders: null, folder: null, items: null });
+    const paths = await uiRequest({ action: "listMemoryFolders", ownerKey: owner2.key });
+    assertOwner();
+    update({ folders: [.../* @__PURE__ */ new Set(["", ...paths])].sort() });
+    if (input.folderPath !== null) await content(input.folderPath);
+  }
+  async function load() {
+    await act(async () => {
+      const snapshot = await uiRequest({ action: "snapshot" });
+      assertOwner();
+      update({ snapshot });
+      if (input.ownerKey !== null) {
+        const owner2 = memoryAttachmentOwners(snapshot).find((owner3) => owner3.key === input.ownerKey);
+        if (owner2 === void 0) throw new Error("调用方指定的记忆库不存在");
+        await folders(owner2);
       }
     });
   }
-  function content(folder) {
-    return __async(this, null, function* () {
+  async function retry() {
+    if (live.current.snapshot === null || live.current.owner === null) {
+      await load();
+      return;
+    }
+    await act(async () => {
       const value = live.current;
-      if (value.owner === null || value.folders === null || !value.folders.includes(folder)) throw new Error("请选择存在的记忆文件夹");
-      if (input.folderPath !== null && input.folderPath !== folder) throw new Error("不能更改调用方指定的文件夹");
-      update({ step: "content", folder, items: null });
-      const items = yield uiRequest({ action: "listMemories", ownerKey: value.owner.key });
-      assertOwner();
-      update({ items: items.filter((item) => (item.folderPath ?? "") === folder) });
+      if (value.step === "content" && value.folder !== null && value.folders !== null) await content(value.folder);
+      else await folders(value.owner);
     });
   }
-  function folders(owner2) {
-    return __async(this, null, function* () {
-      if (input.ownerKey !== null && input.ownerKey !== owner2.key) throw new Error("不能更改调用方指定的记忆库");
-      update({ step: "folders", owner: owner2, folders: null, folder: null, items: null });
-      const paths = yield uiRequest({ action: "listMemoryFolders", ownerKey: owner2.key });
-      assertOwner();
-      update({ folders: [.../* @__PURE__ */ new Set(["", ...paths])].sort() });
-      if (input.folderPath !== null) yield content(input.folderPath);
-    });
-  }
-  function load() {
-    return __async(this, null, function* () {
-      yield act(() => __async(null, null, function* () {
-        const snapshot = yield uiRequest({ action: "snapshot" });
-        assertOwner();
-        update({ snapshot });
-        if (input.ownerKey !== null) {
-          const owner2 = memoryAttachmentOwners(snapshot).find((owner3) => owner3.key === input.ownerKey);
-          if (owner2 === void 0) throw new Error("调用方指定的记忆库不存在");
-          yield folders(owner2);
-        }
-      }));
-    });
-  }
-  function retry() {
-    return __async(this, null, function* () {
-      if (live.current.snapshot === null || live.current.owner === null) {
-        yield load();
-        return;
-      }
-      yield act(() => __async(null, null, function* () {
-        const value = live.current;
-        if (value.step === "content" && value.folder !== null && value.folders !== null) yield content(value.folder);
-        else yield folders(value.owner);
-      }));
-    });
-  }
-  function confirm() {
-    return __async(this, null, function* () {
-      assertOwner();
-      const value = live.current;
-      if (value.busy || value.finished || value.error !== "" || value.owner === null || value.folder === null || value.items === null) return null;
-      const content2 = memoryAttachmentContent(value.owner, value.folder, value.items);
-      if (content2 === "") return null;
-      const result = yield screenSession.completeScreen({ mode: "memory-attachment", ownerKey: value.owner.key, folderPath: value.folder, content: content2 });
-      update({ finished: true });
-      return JSON.parse(JSON.stringify(result));
-    });
+  async function confirm() {
+    assertOwner();
+    const value = live.current;
+    if (value.busy || value.finished || value.error !== "" || value.owner === null || value.folder === null || value.items === null) return null;
+    const content2 = memoryAttachmentContent(value.owner, value.folder, value.items);
+    if (content2 === "") return null;
+    const result = await screenSession.completeScreen({ mode: "memory-attachment", ownerKey: value.owner.key, folderPath: value.folder, content: content2 });
+    update({ finished: true });
+    return JSON.parse(JSON.stringify(result));
   }
   function cancel() {
     assertOwner();

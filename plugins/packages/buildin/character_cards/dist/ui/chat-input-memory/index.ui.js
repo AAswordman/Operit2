@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/chat-input-memory/index.ui.ts
 var index_ui_exports = {};
@@ -408,84 +388,68 @@ function renderMemoryMenu(ctx) {
     if (current !== owner2.current) throw new Error("Memory menu chat owner changed");
   }
   assertOwner();
-  function refreshQueue() {
-    return __async(this, null, function* () {
-      assertOwner();
-      if (chatId === null) return;
-      const value = yield request({ action: "readChatMemoryAutoSaveStatus", chatId });
-      assertOwner();
-      setQueue(value);
-    });
+  async function refreshQueue() {
+    assertOwner();
+    if (chatId === null) return;
+    const value = await request({ action: "readChatMemoryAutoSaveStatus", chatId });
+    assertOwner();
+    setQueue(value);
   }
-  function load() {
-    return __async(this, null, function* () {
+  async function load() {
+    assertOwner();
+    if (started.current) return;
+    started.current = true;
+    if (chatId !== null) {
+      const binding = await callMainDomain("chat.configuration.binding.find", { chatId });
       assertOwner();
-      if (started.current) return;
-      started.current = true;
-      if (chatId !== null) {
-        const binding = yield callMainDomain("chat.configuration.binding.find", { chatId });
-        assertOwner();
-        const hasCharacter = binding !== null && parseChatSelection(binding.selection).kind === "card";
-        setAvailable(hasCharacter);
-        if (!hasCharacter) return;
-      }
-      const value = yield request({ action: "readGlobalMemoryPreferences" });
-      assertOwner();
-      setPreferences(value);
-      const recallValue = yield request({ action: "readMemoryRecallSettings" });
-      assertOwner();
-      setRecall(recallValue);
-      setLimitInput(String(recallValue.limit));
-      yield refreshQueue();
-    });
+      const hasCharacter = binding !== null && parseChatSelection(binding.selection).kind === "card";
+      setAvailable(hasCharacter);
+      if (!hasCharacter) return;
+    }
+    const value = await request({ action: "readGlobalMemoryPreferences" });
+    assertOwner();
+    setPreferences(value);
+    const recallValue = await request({ action: "readMemoryRecallSettings" });
+    assertOwner();
+    setRecall(recallValue);
+    setLimitInput(String(recallValue.limit));
+    await refreshQueue();
   }
-  function showInfo() {
-    return __async(this, null, function* () {
-      yield refreshQueue();
-      assertOwner();
-      const [current] = ctx.useState("memory-menu-queue", null);
-      return { type: "toolpkg.ui.present", routeId: `toolpkg:${definition.id}:ui:memory-status`, input: { description: memoryQueueDescription(current) } };
-    });
+  async function showInfo() {
+    await refreshQueue();
+    assertOwner();
+    const [current] = ctx.useState("memory-menu-queue", null);
+    return { type: "toolpkg.ui.present", routeId: `toolpkg:${definition.id}:ui:memory-status`, input: { description: memoryQueueDescription(current) } };
   }
-  function toggle(key) {
-    return __async(this, null, function* () {
-      assertOwner();
-      const [current] = ctx.useState("memory-menu-preferences", null);
-      if (current === null) throw new Error("Memory preferences are not loaded");
-      const value = yield request({ action: "writeGlobalMemoryPreference", key, value: !current[key] });
-      assertOwner();
-      setPreferences(value);
-    });
+  async function toggle(key) {
+    assertOwner();
+    const [current] = ctx.useState("memory-menu-preferences", null);
+    if (current === null) throw new Error("Memory preferences are not loaded");
+    const value = await request({ action: "writeGlobalMemoryPreference", key, value: !current[key] });
+    assertOwner();
+    setPreferences(value);
   }
-  function writeRecall(settings2) {
-    return __async(this, null, function* () {
-      assertOwner();
-      const value = yield request({ action: "writeMemoryRecallSettings", settings: settings2 });
-      assertOwner();
-      setRecall(value);
-    });
+  async function writeRecall(settings2) {
+    assertOwner();
+    const value = await request({ action: "writeMemoryRecallSettings", settings: settings2 });
+    assertOwner();
+    setRecall(value);
   }
-  function toggleRecall() {
-    return __async(this, null, function* () {
-      const [current] = ctx.useState("memory-menu-recall", null);
-      if (current === null) throw new Error("Memory recall settings are not loaded");
-      yield writeRecall({ ...current, enabled: !current.enabled });
-    });
+  async function toggleRecall() {
+    const [current] = ctx.useState("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    await writeRecall({ ...current, enabled: !current.enabled });
   }
-  function toggleRecallRepeat() {
-    return __async(this, null, function* () {
-      const [current] = ctx.useState("memory-menu-recall", null);
-      if (current === null) throw new Error("Memory recall settings are not loaded");
-      yield writeRecall({ ...current, allowRepeated: !current.allowRepeated });
-    });
+  async function toggleRecallRepeat() {
+    const [current] = ctx.useState("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    await writeRecall({ ...current, allowRepeated: !current.allowRepeated });
   }
-  function changeRecallLimit(limit) {
-    return __async(this, null, function* () {
-      const [current] = ctx.useState("memory-menu-recall", null);
-      if (current === null) throw new Error("Memory recall settings are not loaded");
-      if (limit === current.limit) return;
-      yield writeRecall({ ...current, limit });
-    });
+  async function changeRecallLimit(limit) {
+    const [current] = ctx.useState("memory-menu-recall", null);
+    if (current === null) throw new Error("Memory recall settings are not loaded");
+    if (limit === current.limit) return;
+    await writeRecall({ ...current, limit });
   }
   function changeRecallLimitInput(value) {
     setLimitInput(value);
@@ -494,68 +458,62 @@ function renderMemoryMenu(ctx) {
     if (recall !== null && limit === recall.limit) return;
     return changeRecallLimit(limit);
   }
-  function manual() {
-    return __async(this, null, function* () {
+  async function manual() {
+    assertOwner();
+    if (liveBusy.current || chatId === null) return null;
+    liveBusy.current = true;
+    setBusy(true);
+    try {
+      await request({ action: "updateCurrentChatMemory", chatId });
       assertOwner();
-      if (liveBusy.current || chatId === null) return null;
-      liveBusy.current = true;
-      setBusy(true);
-      try {
-        yield request({ action: "updateCurrentChatMemory", chatId });
-        assertOwner();
-        yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "记忆提取完成" };
-      } catch (error) {
-        assertOwner();
-        return { type: "toolpkg.ui.message", message: "记忆提取失败：" + String(error) };
-      } finally {
-        liveBusy.current = false;
-        assertOwner();
-        setBusy(false);
-      }
-    });
+      await refreshQueue();
+      return { type: "toolpkg.ui.message", message: "记忆提取完成" };
+    } catch (error) {
+      assertOwner();
+      return { type: "toolpkg.ui.message", message: "记忆提取失败：" + String(error) };
+    } finally {
+      liveBusy.current = false;
+      assertOwner();
+      setBusy(false);
+    }
   }
-  function retryFailed() {
-    return __async(this, null, function* () {
+  async function retryFailed() {
+    assertOwner();
+    if (liveBusy.current || chatId === null) return null;
+    liveBusy.current = true;
+    setBusy(true);
+    try {
+      const result = await request({ action: "retryFailedCandidates", chatId });
       assertOwner();
-      if (liveBusy.current || chatId === null) return null;
-      liveBusy.current = true;
-      setBusy(true);
-      try {
-        const result = yield request({ action: "retryFailedCandidates", chatId });
-        assertOwner();
-        yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "已重新排队 " + result.retried + " 条失败候选" };
-      } catch (error) {
-        assertOwner();
-        return { type: "toolpkg.ui.message", message: "重试失败候选失败：" + String(error) };
-      } finally {
-        liveBusy.current = false;
-        assertOwner();
-        setBusy(false);
-      }
-    });
+      await refreshQueue();
+      return { type: "toolpkg.ui.message", message: "已重新排队 " + result.retried + " 条失败候选" };
+    } catch (error) {
+      assertOwner();
+      return { type: "toolpkg.ui.message", message: "重试失败候选失败：" + String(error) };
+    } finally {
+      liveBusy.current = false;
+      assertOwner();
+      setBusy(false);
+    }
   }
-  function clearFailed() {
-    return __async(this, null, function* () {
+  async function clearFailed() {
+    assertOwner();
+    if (liveBusy.current || chatId === null) return null;
+    liveBusy.current = true;
+    setBusy(true);
+    try {
+      const result = await request({ action: "clearFailedCandidates", chatId });
       assertOwner();
-      if (liveBusy.current || chatId === null) return null;
-      liveBusy.current = true;
-      setBusy(true);
-      try {
-        const result = yield request({ action: "clearFailedCandidates", chatId });
-        assertOwner();
-        yield refreshQueue();
-        return { type: "toolpkg.ui.message", message: "已清除 " + result.cleared + " 条失败记录" };
-      } catch (error) {
-        assertOwner();
-        return { type: "toolpkg.ui.message", message: "清除失败记录失败：" + String(error) };
-      } finally {
-        liveBusy.current = false;
-        assertOwner();
-        setBusy(false);
-      }
-    });
+      await refreshQueue();
+      return { type: "toolpkg.ui.message", message: "已清除 " + result.cleared + " 条失败记录" };
+    } catch (error) {
+      assertOwner();
+      return { type: "toolpkg.ui.message", message: "清除失败记录失败：" + String(error) };
+    } finally {
+      liveBusy.current = false;
+      assertOwner();
+      setBusy(false);
+    }
   }
   function icon(name, color = colors.onSurfaceVariant) {
     return ctx.UI.Icon({ name, size: 16, tint: color });

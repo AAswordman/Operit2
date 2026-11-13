@@ -1230,11 +1230,12 @@ mod tests {
     fn load_downloaded_toolpkg(downloaded_bytes: Vec<u8>) -> ToolPkgLoadResult {
         let source_path = "/marketplace/downloaded/market_flow_toolpkg.toolpkg";
         let host = DownloadedToolPkgFileSystemHost::new(source_path, downloaded_bytes);
+        let filesystem = test_filesystem(Arc::new(host));
         let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost)).expect("registration fixture must initialize");
         let load_errors = Mutex::new(Vec::<String>::new());
         let load_result = ToolPkgLoader::loadToolPkgFromExternalFile(
-            &host,
-            source_path,
+            &filesystem,
+            "/operitapp/data/marketplace/downloaded/market_flow_toolpkg.toolpkg",
             ToolPkgConfigScope::Device,
             &registration_engine,
             |package_name, error| {
@@ -1257,8 +1258,13 @@ mod tests {
     fn load_downloaded_standalone_js(downloaded_bytes: Vec<u8>) -> ToolPackage {
         let source_path = "/marketplace/downloaded/standalone_market_flow.js";
         let host = DownloadedStandaloneJsFileSystemHost::new(source_path, downloaded_bytes);
-        JsPackageLoader::load_from_file(&host, source_path)
+        JsPackageLoader::load_from_file(&test_filesystem(Arc::new(host)), "/operitapp/data/marketplace/downloaded/standalone_market_flow.js")
             .expect("downloaded external standalone JavaScript should load")
+    }
+
+    /// Wraps isolated fixture storage in the same VFS boundary required by package loaders.
+    fn test_filesystem(host: Arc<dyn FileSystemHost>) -> operit_vfs::VisualFileSystem::VisualFileSystem {
+        operit_vfs::VisualFileSystem::VisualFileSystem::builtinOnly(host, "/".into(), "/workspaces".into())
     }
 
     #[derive(Clone, Copy)]
@@ -1282,7 +1288,7 @@ mod tests {
             let mut package_manager = PluginPackageManager::new(
                 Arc::new(TestExecutionEngineFactory),
                 Arc::new(TestToolPkgAssetSource),
-                Arc::new(RejectingFileSystemHost),
+                Arc::new(test_filesystem(Arc::new(RejectingFileSystemHost))),
                 Arc::new(TestPackageStateResolver),
             );
             assert!(package_manager.registerToolPkg(load_result));
@@ -1296,7 +1302,7 @@ mod tests {
             let mut package_manager = PluginPackageManager::new(
                 Arc::new(TestExecutionEngineFactory),
                 Arc::new(TestToolPkgAssetSource),
-                Arc::new(RejectingFileSystemHost),
+                Arc::new(test_filesystem(Arc::new(RejectingFileSystemHost))),
                 Arc::new(TestPackageStateResolver),
             );
             package_manager.registerPackage(package);
@@ -1471,7 +1477,7 @@ mod tests {
         );
         assert_eq!(
             load_result.containerRuntime.sourcePath,
-            "/marketplace/downloaded/market_flow_toolpkg.toolpkg"
+            "/operitapp/data/marketplace/downloaded/market_flow_toolpkg.toolpkg"
         );
         assert_eq!(
             load_result.marketOrigin,

@@ -1,7 +1,7 @@
 import { readComposeBuffer } from "../../../../../tools/tests/support/compose_buffer_fixture.mjs";
 import { compileComposeModule } from "../../../../../plugins/tools/compile_compose_module.mjs";
 import { readSdkScript, wrapComposeScript } from "../../../../../tools/runtime/compose_scripts.mjs";
-import { productionBootstrap, bootstrapLibrarySource } from '../../../../../tools/tests/fixtures/production_bootstrap.mjs';
+import { productionBootstrap, bootstrapLibrarySource, installTestJavaScriptCompiler } from '../../../../../tools/tests/fixtures/production_bootstrap.mjs';
 import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -74,7 +74,7 @@ function nativeTransport(callbackBody) {
   context.__operitNativeLog=()=>{};
   context.__operitNativeHashText=text=>{let hash=0;for(let i=0;i<text.length;i++)hash=(Math.imul(hash,31)+text.charCodeAt(i))>>>0;return hash.toString(16);};
   context.__operitNativePrepareComposeModule = compileComposeModule;
-  vm.runInContext("globalThis.__operitNativeCompileModuleFactory = body => new Function('module','exports','require','__operit_call_runtime',body);", context);
+  installTestJavaScriptCompiler(context);
   vm.runInContext(productionBootstrap(),context);
   const fixture = composeStreamFixture(context, { inspectStorage: false });
   context.__operitNativeSetCallStructuredResult =

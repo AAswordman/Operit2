@@ -5,8 +5,6 @@ function __operitInstallToolPkgRouteApi() {
     if (globalThis.__operitToolPkgRoutes) return;
     var state = { methods: new Map(), streams: new Map(), sequence: 0 };
     globalThis.__operitToolPkgRoutes = state;
-    var generatorPrototype = Object.getPrototypeOf(async function* () {});
-    var asyncPrototype = Object.getPrototypeOf(async function () {});
     /** Uses the existing scoped host Promise bridge. */
     function invoke(binding, args) { return __operitInvokeHostAsync(binding, args); }
     /** Creates a collector whose cancellation interrupts the source's pending storage wait. */
@@ -76,9 +74,7 @@ function __operitInstallToolPkgRouteApi() {
         /** Wraps a standard async method or async generator without an explicit proxy declaration. */
         return function (implementation, context) {
             if (!context || context.kind !== "method" || context.private || typeof context.name !== "string") throw new TypeError("Routes require public methods");
-            var prototype = Object.getPrototypeOf(implementation);
-            var generator = prototype === generatorPrototype;
-            if (!generator && prototype !== asyncPrototype) throw new TypeError("Routes require an async method or async generator");
+            var generator = __operitNativeAsyncMethodKind(Function.prototype.toString.call(implementation)) === "generator";
             var route = { name: null, implementation: implementation, binding: options.binding, generator: generator, receiver: null };
             context.addInitializer(/** Registers the implemented service on its owning runtime. */ function () {
                 var service = context.static ? this : this.constructor;

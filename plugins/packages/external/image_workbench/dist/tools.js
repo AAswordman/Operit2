@@ -346,26 +346,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/tools.ts
 var tools_exports = {};
@@ -439,67 +419,57 @@ function endpoint(key, defaultBase, prefix, resource) {
   if (base.endsWith(suffix)) return base;
   return base.endsWith(prefix) ? `${base}/${resource}` : `${base}${suffix}`;
 }
-function request(_0, _1, _2) {
-  return __async(this, arguments, function* (url, key, body, headers = {}) {
-    const client = OkHttp.newBuilder().connectTimeout(6e5).readTimeout(6e5).writeTimeout(6e5).build();
-    const builder = client.newRequest().url(url).method(body === void 0 ? "GET" : "POST").headers({ accept: "application/json", "content-type": "application/json", Authorization: `Bearer ${key}`, ...headers });
-    if (body !== void 0) builder.body(JSON.stringify(body), "json");
-    const response = yield builder.build().execute();
-    if (!response.isSuccessful()) throw new Error(`生成服务请求失败（HTTP ${response.statusCode}）：${response.content}`);
-    return JSON.parse(response.content);
-  });
+async function request(url, key, body, headers = {}) {
+  const client = OkHttp.newBuilder().connectTimeout(6e5).readTimeout(6e5).writeTimeout(6e5).build();
+  const builder = client.newRequest().url(url).method(body === void 0 ? "GET" : "POST").headers({ accept: "application/json", "content-type": "application/json", Authorization: `Bearer ${key}`, ...headers });
+  if (body !== void 0) builder.body(JSON.stringify(body), "json");
+  const response = await builder.build().execute();
+  if (!response.isSuccessful()) throw new Error(`生成服务请求失败（HTTP ${response.statusCode}）：${response.content}`);
+  return JSON.parse(response.content);
 }
 function requiredString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`服务未返回有效的 ${label}。`);
   return value;
 }
-function poll(query, state, interval) {
-  return __async(this, null, function* () {
-    const deadline = Date.now() + 6e5;
-    while (Date.now() < deadline) {
-      const value = yield query();
-      if (state(value) === "done") return value;
-      yield Tools.System.sleep(interval);
-    }
-    throw new Error("生成任务等待超过 10 分钟，请到服务端查看任务状态。");
-  });
+async function poll(query, state, interval) {
+  const deadline = Date.now() + 6e5;
+  while (Date.now() < deadline) {
+    const value = await query();
+    if (state(value) === "done") return value;
+    await Tools.System.sleep(interval);
+  }
+  throw new Error("生成任务等待超过 10 分钟，请到服务端查看任务状态。");
 }
-function directory(provider) {
-  return __async(this, null, function* () {
-    const root = getPluginConfigDir();
-    for (const path of [root, `${root}/generations`, `${root}/generations/${provider}`]) {
-      const exists = yield Tools.Files.exists(path);
-      if (!exists.exists) {
-        const created = yield Tools.Files.mkdir(path);
-        if (!created.successful) throw new Error(`无法创建生成目录：${created.details}`);
-      }
+async function directory(provider) {
+  const root = getPluginConfigDir();
+  for (const path of [root, `${root}/generations`, `${root}/generations/${provider}`]) {
+    const exists = await Tools.Files.exists(path);
+    if (!exists.exists) {
+      const created = await Tools.Files.mkdir(path);
+      if (!created.successful) throw new Error(`无法创建生成目录：${created.details}`);
     }
-    return `${root}/generations/${provider}`;
-  });
+  }
+  return `${root}/generations/${provider}`;
 }
 function fileName(custom, extension) {
   const prefix = custom === void 0 ? "generation" : custom.trim();
   if (!prefix || /[\\/:*?"<>|]/.test(prefix) || prefix === "." || prefix === "..") throw new Error("保存名称不能为空或包含目录与特殊字符。");
   return `${prefix.slice(0, 64)}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${extension}`;
 }
-function saveBase64(provider, content, extension, custom) {
-  return __async(this, null, function* () {
-    requiredString(content, "图片内容");
-    const path = `${yield directory(provider)}/${fileName(custom, extension)}`;
-    const written = yield Tools.Files.writeBinary(path, content);
-    if (!written.successful) throw new Error(`保存图片失败：${written.details}`);
-    return { file_path: path };
-  });
+async function saveBase64(provider, content, extension, custom) {
+  requiredString(content, "图片内容");
+  const path = `${await directory(provider)}/${fileName(custom, extension)}`;
+  const written = await Tools.Files.writeBinary(path, content);
+  if (!written.successful) throw new Error(`保存图片失败：${written.details}`);
+  return { file_path: path };
 }
-function saveRemote(provider, url, extension, custom) {
-  return __async(this, null, function* () {
-    requiredString(url, "文件 URL");
-    if (!/^https?:\/\//.test(url)) throw new Error("生成服务返回了无效的文件 URL。");
-    const path = `${yield directory(provider)}/${fileName(custom, extension)}`;
-    const downloaded = yield Tools.Files.download(url, path);
-    if (!downloaded.successful) throw new Error(`下载生成文件失败：${downloaded.details}`);
-    return { file_path: path };
-  });
+async function saveRemote(provider, url, extension, custom) {
+  requiredString(url, "文件 URL");
+  if (!/^https?:\/\//.test(url)) throw new Error("生成服务返回了无效的文件 URL。");
+  const path = `${await directory(provider)}/${fileName(custom, extension)}`;
+  const downloaded = await Tools.Files.download(url, path);
+  if (!downloaded.successful) throw new Error(`下载生成文件失败：${downloaded.details}`);
+  return { file_path: path };
 }
 function imageMime(path) {
   const match = /\.([a-z0-9]+)(?:[?#].*)?$/i.exec(path);
@@ -508,176 +478,158 @@ function imageMime(path) {
   if (!type) throw new Error("参考图片需要带有受支持的图片扩展名。");
   return type;
 }
-function referenceUrls() {
-  return __async(this, arguments, function* (images = []) {
-    const urls = [];
-    for (const image of images) {
-      if (/^https?:\/\//.test(image)) {
-        urls.push(image);
-        continue;
-      }
-      const response = yield Tools.Net.uploadFile({ url: "https://beeimg.com/api/upload/file/json/", method: "POST", form_data: { apikey: apiKey("BEEIMG_API_KEY") }, files: [{ field_name: "file", file_path: image, content_type: imageMime(image) }] });
-      if (response.statusCode < 200 || response.statusCode >= 300) throw new Error(`参考图上传失败：HTTP ${response.statusCode}`);
-      const value = JSON.parse(response.content);
-      if (value.files?.status !== "Success") throw new Error("Beeimg 未确认参考图上传成功。");
-      urls.push(requiredString(value.files.url, "参考图 URL"));
+async function referenceUrls(images = []) {
+  const urls = [];
+  for (const image of images) {
+    if (/^https?:\/\//.test(image)) {
+      urls.push(image);
+      continue;
     }
-    return urls;
-  });
+    const response = await Tools.Net.uploadFile({ url: "https://beeimg.com/api/upload/file/json/", method: "POST", form_data: { apikey: apiKey("BEEIMG_API_KEY") }, files: [{ field_name: "file", file_path: image, content_type: imageMime(image) }] });
+    if (response.statusCode < 200 || response.statusCode >= 300) throw new Error(`参考图上传失败：HTTP ${response.statusCode}`);
+    const value = JSON.parse(response.content);
+    if (value.files?.status !== "Success") throw new Error("Beeimg 未确认参考图上传成功。");
+    urls.push(requiredString(value.files.url, "参考图 URL"));
+  }
+  return urls;
 }
 
 // src/providers/openai_draw.ts
-function generateImage(input) {
-  return __async(this, null, function* () {
-    const response = yield request(endpoint("OPENAI_API_BASE_URL", "https://api.openai.com", "/v1", "images/generations"), apiKey("OPENAI_API_KEY"), { model: input.model, prompt: input.prompt, response_format: "b64_json", ...input.size ? { size: input.size } : {} });
-    const item = response.data?.[0];
-    if (!item || !!item.b64_json === !!item.url) throw new Error("OpenAI 响应需要包含一种明确的图片编码：b64_json 或 url。");
-    const file = item.b64_json ? yield saveBase64("openai", item.b64_json, "png", input.file_name) : yield saveRemote("openai", item.url, "png", input.file_name);
-    return { prompt: input.prompt, model: input.model, files: [file] };
-  });
+async function generateImage(input) {
+  const response = await request(endpoint("OPENAI_API_BASE_URL", "https://api.openai.com", "/v1", "images/generations"), apiKey("OPENAI_API_KEY"), { model: input.model, prompt: input.prompt, response_format: "b64_json", ...input.size ? { size: input.size } : {} });
+  const item = response.data?.[0];
+  if (!item || !!item.b64_json === !!item.url) throw new Error("OpenAI 响应需要包含一种明确的图片编码：b64_json 或 url。");
+  const file = item.b64_json ? await saveBase64("openai", item.b64_json, "png", input.file_name) : await saveRemote("openai", item.url, "png", input.file_name);
+  return { prompt: input.prompt, model: input.model, files: [file] };
 }
 
 // src/providers/qwen_draw.ts
-function generateImage2(input) {
-  return __async(this, null, function* () {
-    const url = endpoint("DASHSCOPE_API_BASE_URL", "https://dashscope.aliyuncs.com", "/api/v1", "services/aigc/text2image/image-synthesis");
-    const key = apiKey("DASHSCOPE_API_KEY");
-    const parameters = { n: input.count === void 0 ? 1 : input.count, ...input.size ? { size: input.size.replace("x", "*") } : {}, ...input.negative_prompt ? { negative_prompt: input.negative_prompt } : {}, ...input.optimize_prompt === void 0 ? {} : { prompt_extend: input.optimize_prompt }, ...input.watermark === void 0 ? {} : { watermark: input.watermark } };
-    const created = yield request(url, key, { model: input.model, input: { prompt: input.prompt }, parameters }, { "X-DashScope-Async": "enable" });
-    const id = requiredString(created.output?.task_id, "task_id");
-    const taskUrl = url.slice(0, -"services/aigc/text2image/image-synthesis".length) + `tasks/${encodeURIComponent(id)}`;
-    const completed = yield poll(() => request(taskUrl, key), (value) => {
-      switch (value.output?.task_status) {
-        case "SUCCEEDED":
-          return "done";
-        case "PENDING":
-        case "RUNNING":
-          return "pending";
-        default:
-          throw new Error(`通义千问生成任务失败：${JSON.stringify(value)}`);
-      }
-    }, 2e3);
-    const results = completed.output?.results;
-    if (!Array.isArray(results) || results.length === 0) throw new Error("通义千问未返回生成图片。");
-    const files = [];
-    for (const image of results) files.push(yield saveRemote("qwen", requiredString(image.url, "图片 URL"), "png", input.file_name));
-    return { prompt: input.prompt, model: input.model, files };
-  });
+async function generateImage2(input) {
+  const url = endpoint("DASHSCOPE_API_BASE_URL", "https://dashscope.aliyuncs.com", "/api/v1", "services/aigc/text2image/image-synthesis");
+  const key = apiKey("DASHSCOPE_API_KEY");
+  const parameters = { n: input.count === void 0 ? 1 : input.count, ...input.size ? { size: input.size.replace("x", "*") } : {}, ...input.negative_prompt ? { negative_prompt: input.negative_prompt } : {}, ...input.optimize_prompt === void 0 ? {} : { prompt_extend: input.optimize_prompt }, ...input.watermark === void 0 ? {} : { watermark: input.watermark } };
+  const created = await request(url, key, { model: input.model, input: { prompt: input.prompt }, parameters }, { "X-DashScope-Async": "enable" });
+  const id = requiredString(created.output?.task_id, "task_id");
+  const taskUrl = url.slice(0, -"services/aigc/text2image/image-synthesis".length) + `tasks/${encodeURIComponent(id)}`;
+  const completed = await poll(() => request(taskUrl, key), (value) => {
+    switch (value.output?.task_status) {
+      case "SUCCEEDED":
+        return "done";
+      case "PENDING":
+      case "RUNNING":
+        return "pending";
+      default:
+        throw new Error(`通义千问生成任务失败：${JSON.stringify(value)}`);
+    }
+  }, 2e3);
+  const results = completed.output?.results;
+  if (!Array.isArray(results) || results.length === 0) throw new Error("通义千问未返回生成图片。");
+  const files = [];
+  for (const image of results) files.push(await saveRemote("qwen", requiredString(image.url, "图片 URL"), "png", input.file_name));
+  return { prompt: input.prompt, model: input.model, files };
 }
 
 // src/providers/zhipu_draw.ts
-function generateImage3(input) {
-  return __async(this, null, function* () {
-    const response = yield request("https://open.bigmodel.cn/api/paas/v4/images/generations", apiKey("ZHIPU_API_KEY"), { model: input.model, prompt: input.prompt, size: input.size === void 0 ? "1024x1024" : input.size });
-    const file = yield saveRemote("zhipu", requiredString(response.data?.[0]?.url, "图片 URL"), "png", input.file_name);
-    return { prompt: input.prompt, model: input.model, files: [file] };
-  });
+async function generateImage3(input) {
+  const response = await request("https://open.bigmodel.cn/api/paas/v4/images/generations", apiKey("ZHIPU_API_KEY"), { model: input.model, prompt: input.prompt, size: input.size === void 0 ? "1024x1024" : input.size });
+  const file = await saveRemote("zhipu", requiredString(response.data?.[0]?.url, "图片 URL"), "png", input.file_name);
+  return { prompt: input.prompt, model: input.model, files: [file] };
 }
 
 // src/providers/xai_draw.ts
-function generateImage4(input) {
-  return __async(this, null, function* () {
-    const response = yield request("https://api.x.ai/v1/images/generations", apiKey("XAI_API_KEY"), { model: input.model, prompt: input.prompt, ...input.size ? { size: input.size } : {} });
-    const file = yield saveRemote("xai", requiredString(response.data?.[0]?.url, "图片 URL"), "jpeg", input.file_name);
-    return { prompt: input.prompt, model: input.model, files: [file] };
-  });
+async function generateImage4(input) {
+  const response = await request("https://api.x.ai/v1/images/generations", apiKey("XAI_API_KEY"), { model: input.model, prompt: input.prompt, ...input.size ? { size: input.size } : {} });
+  const file = await saveRemote("xai", requiredString(response.data?.[0]?.url, "图片 URL"), "jpeg", input.file_name);
+  return { prompt: input.prompt, model: input.model, files: [file] };
 }
-function videoImage(uri) {
-  return __async(this, null, function* () {
-    if (/^https?:\/\//.test(uri)) return uri;
-    const content = yield Tools.Files.readBinary(uri);
-    return `data:${imageMime(uri)};base64,${requiredString(content.contentBase64, "参考图片内容")}`;
-  });
+async function videoImage(uri) {
+  if (/^https?:\/\//.test(uri)) return uri;
+  const content = await Tools.Files.readBinary(uri);
+  return `data:${imageMime(uri)};base64,${requiredString(content.contentBase64, "参考图片内容")}`;
 }
-function generateVideo(input) {
-  return __async(this, null, function* () {
-    if (input.reference_video && [input.aspect_ratio, input.resolution, input.duration].some((value) => value !== void 0)) throw new Error("视频编辑模式不支持设置比例、分辨率或时长。");
-    if (input.aspect_ratio && !["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"].includes(input.aspect_ratio)) throw new Error("xAI 不支持此视频比例。");
-    if (input.resolution && !["480p", "720p"].includes(input.resolution)) throw new Error("视频分辨率应为 480p 或 720p。");
-    if (input.duration !== void 0 && (!Number.isInteger(input.duration) || input.duration < 1 || input.duration > 15)) throw new Error("视频时长应为 1–15 秒的整数。");
-    const key = apiKey("XAI_API_KEY");
-    const body = { model: input.model, prompt: input.prompt, ...input.reference_image ? { image: { url: yield videoImage(input.reference_image) } } : {}, ...input.reference_video ? { video_url: input.reference_video } : { aspect_ratio: input.aspect_ratio === void 0 ? "16:9" : input.aspect_ratio, resolution: input.resolution === void 0 ? "480p" : input.resolution, duration: input.duration === void 0 ? 5 : input.duration } };
-    const created = yield request("https://api.x.ai/v1/videos/generations", key, body);
-    const id = requiredString(created.request_id, "request_id");
-    const completed = yield poll(() => request(`https://api.x.ai/v1/videos/${encodeURIComponent(id)}`, key), (value) => {
-      switch (value.status) {
-        case "done":
-          return "done";
-        case "pending":
-        case "processing":
-          return "pending";
-        default:
-          throw new Error(`xAI 视频任务失败：${JSON.stringify(value)}`);
-      }
-    }, 5e3);
-    const file = yield saveRemote("xai", requiredString(completed.video?.url, "视频 URL"), "mp4", input.file_name);
-    return { prompt: input.prompt, model: input.model, files: [file] };
-  });
+async function generateVideo(input) {
+  if (input.reference_video && [input.aspect_ratio, input.resolution, input.duration].some((value) => value !== void 0)) throw new Error("视频编辑模式不支持设置比例、分辨率或时长。");
+  if (input.aspect_ratio && !["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"].includes(input.aspect_ratio)) throw new Error("xAI 不支持此视频比例。");
+  if (input.resolution && !["480p", "720p"].includes(input.resolution)) throw new Error("视频分辨率应为 480p 或 720p。");
+  if (input.duration !== void 0 && (!Number.isInteger(input.duration) || input.duration < 1 || input.duration > 15)) throw new Error("视频时长应为 1–15 秒的整数。");
+  const key = apiKey("XAI_API_KEY");
+  const body = { model: input.model, prompt: input.prompt, ...input.reference_image ? { image: { url: await videoImage(input.reference_image) } } : {}, ...input.reference_video ? { video_url: input.reference_video } : { aspect_ratio: input.aspect_ratio === void 0 ? "16:9" : input.aspect_ratio, resolution: input.resolution === void 0 ? "480p" : input.resolution, duration: input.duration === void 0 ? 5 : input.duration } };
+  const created = await request("https://api.x.ai/v1/videos/generations", key, body);
+  const id = requiredString(created.request_id, "request_id");
+  const completed = await poll(() => request(`https://api.x.ai/v1/videos/${encodeURIComponent(id)}`, key), (value) => {
+    switch (value.status) {
+      case "done":
+        return "done";
+      case "pending":
+      case "processing":
+        return "pending";
+      default:
+        throw new Error(`xAI 视频任务失败：${JSON.stringify(value)}`);
+    }
+  }, 5e3);
+  const file = await saveRemote("xai", requiredString(completed.video?.url, "视频 URL"), "mp4", input.file_name);
+  return { prompt: input.prompt, model: input.model, files: [file] };
 }
 
 // src/providers/minimax_draw.ts
-function generateImage5(input) {
-  return __async(this, null, function* () {
-    if (input.size && input.aspect_ratio) throw new Error("MiniMax 的像素尺寸与画面比例只能填写一种。");
-    const dimensions = {};
-    if (input.size) {
-      const [width, height] = input.size.split("x").map(Number);
-      if (input.model !== "image-01" || [width, height].some((value) => value < 512 || value > 2048 || value % 8 !== 0)) throw new Error("MiniMax 像素尺寸仅支持 image-01，宽高需为 512–2048 之间的 8 的倍数。");
-      Object.assign(dimensions, { width, height });
-    }
-    if (input.aspect_ratio && !["1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", ...input.model === "image-01" ? ["21:9"] : []].includes(input.aspect_ratio)) throw new Error("MiniMax 不支持此画面比例。");
-    const urls = yield referenceUrls(input.reference_images);
-    const response = yield request(endpoint("MINIMAX_API_BASE_URL", "https://api.minimaxi.com", "/v1", "image_generation"), apiKey("MINIMAX_API_KEY"), {
-      model: input.model,
-      prompt: input.prompt,
-      n: input.count === void 0 ? 1 : input.count,
-      response_format: "base64",
-      ...dimensions,
-      ...input.aspect_ratio ? { aspect_ratio: input.aspect_ratio } : {},
-      ...input.seed === void 0 ? {} : { seed: input.seed },
-      ...input.optimize_prompt === void 0 ? {} : { prompt_optimizer: input.optimize_prompt },
-      ...input.watermark === void 0 ? {} : { aigc_watermark: input.watermark },
-      ...urls.length ? { subject_reference: urls.map((url) => ({ type: "character", image_file: url })) } : {}
-    });
-    if (response.base_resp && response.base_resp.status_code !== 0) throw new Error(`MiniMax：${response.base_resp.status_msg}`);
-    const images = response.data?.image_base64;
-    if (!Array.isArray(images) || images.length === 0) throw new Error("MiniMax 未返回 image_base64。");
-    const files = [];
-    for (const image of images) files.push(yield saveBase64("minimax", image, "jpeg", input.file_name));
-    return { prompt: input.prompt, model: input.model, files };
+async function generateImage5(input) {
+  if (input.size && input.aspect_ratio) throw new Error("MiniMax 的像素尺寸与画面比例只能填写一种。");
+  const dimensions = {};
+  if (input.size) {
+    const [width, height] = input.size.split("x").map(Number);
+    if (input.model !== "image-01" || [width, height].some((value) => value < 512 || value > 2048 || value % 8 !== 0)) throw new Error("MiniMax 像素尺寸仅支持 image-01，宽高需为 512–2048 之间的 8 的倍数。");
+    Object.assign(dimensions, { width, height });
+  }
+  if (input.aspect_ratio && !["1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", ...input.model === "image-01" ? ["21:9"] : []].includes(input.aspect_ratio)) throw new Error("MiniMax 不支持此画面比例。");
+  const urls = await referenceUrls(input.reference_images);
+  const response = await request(endpoint("MINIMAX_API_BASE_URL", "https://api.minimaxi.com", "/v1", "image_generation"), apiKey("MINIMAX_API_KEY"), {
+    model: input.model,
+    prompt: input.prompt,
+    n: input.count === void 0 ? 1 : input.count,
+    response_format: "base64",
+    ...dimensions,
+    ...input.aspect_ratio ? { aspect_ratio: input.aspect_ratio } : {},
+    ...input.seed === void 0 ? {} : { seed: input.seed },
+    ...input.optimize_prompt === void 0 ? {} : { prompt_optimizer: input.optimize_prompt },
+    ...input.watermark === void 0 ? {} : { aigc_watermark: input.watermark },
+    ...urls.length ? { subject_reference: urls.map((url) => ({ type: "character", image_file: url })) } : {}
   });
+  if (response.base_resp && response.base_resp.status_code !== 0) throw new Error(`MiniMax：${response.base_resp.status_msg}`);
+  const images = response.data?.image_base64;
+  if (!Array.isArray(images) || images.length === 0) throw new Error("MiniMax 未返回 image_base64。");
+  const files = [];
+  for (const image of images) files.push(await saveBase64("minimax", image, "jpeg", input.file_name));
+  return { prompt: input.prompt, model: input.model, files };
 }
 
 // src/providers/nanobanana_draw.ts
-function generateImage6(input) {
-  return __async(this, null, function* () {
-    if (input.resolution && (input.model !== "nano-banana-pro" || !["1K", "2K", "4K"].includes(input.resolution))) throw new Error("1K、2K、4K 分辨率仅适用于 nano-banana-pro。");
-    const urls = yield referenceUrls(input.reference_images);
-    const key = apiKey("NANOBANANA_API_KEY");
-    const url = endpoint("NANOBANANA_API_BASE_URL", "https://grsai.dakka.com.cn", "/v1", "draw/nano-banana");
-    const created = yield request(url, key, { model: input.model, prompt: input.prompt, webHook: "-1", shutProgress: false, ...input.aspect_ratio ? { aspectRatio: input.aspect_ratio } : {}, ...input.resolution ? { imageSize: input.resolution } : {}, ...urls.length ? { urls } : {} });
-    if (created.code !== 0) throw new Error(`Nano Banana：${created.msg}`);
-    const id = requiredString(created.data?.id, "任务 ID");
-    const resultUrl = url.slice(0, -"nano-banana".length) + "result";
-    const completed = yield poll(() => request(resultUrl, key, { id }), (value) => {
-      if (value.code === -22) return "pending";
-      if (value.code !== 0) throw new Error(`Nano Banana：${value.msg}`);
-      switch (value.data?.status) {
-        case "succeeded":
-          return "done";
-        case "running":
-        case "queued":
-          return "pending";
-        default:
-          throw new Error(`Nano Banana 任务失败：${JSON.stringify(value.data)}`);
-      }
-    }, 5e3);
-    const results = completed.data?.results;
-    if (!Array.isArray(results) || results.length === 0) throw new Error("Nano Banana 未返回生成图片。");
-    const files = [];
-    for (const image of results) files.push(yield saveRemote("nanobanana", requiredString(image.url, "图片 URL"), "png", input.file_name));
-    return { prompt: input.prompt, model: input.model, files };
-  });
+async function generateImage6(input) {
+  if (input.resolution && (input.model !== "nano-banana-pro" || !["1K", "2K", "4K"].includes(input.resolution))) throw new Error("1K、2K、4K 分辨率仅适用于 nano-banana-pro。");
+  const urls = await referenceUrls(input.reference_images);
+  const key = apiKey("NANOBANANA_API_KEY");
+  const url = endpoint("NANOBANANA_API_BASE_URL", "https://grsai.dakka.com.cn", "/v1", "draw/nano-banana");
+  const created = await request(url, key, { model: input.model, prompt: input.prompt, webHook: "-1", shutProgress: false, ...input.aspect_ratio ? { aspectRatio: input.aspect_ratio } : {}, ...input.resolution ? { imageSize: input.resolution } : {}, ...urls.length ? { urls } : {} });
+  if (created.code !== 0) throw new Error(`Nano Banana：${created.msg}`);
+  const id = requiredString(created.data?.id, "任务 ID");
+  const resultUrl = url.slice(0, -"nano-banana".length) + "result";
+  const completed = await poll(() => request(resultUrl, key, { id }), (value) => {
+    if (value.code === -22) return "pending";
+    if (value.code !== 0) throw new Error(`Nano Banana：${value.msg}`);
+    switch (value.data?.status) {
+      case "succeeded":
+        return "done";
+      case "running":
+      case "queued":
+        return "pending";
+      default:
+        throw new Error(`Nano Banana 任务失败：${JSON.stringify(value.data)}`);
+    }
+  }, 5e3);
+  const results = completed.data?.results;
+  if (!Array.isArray(results) || results.length === 0) throw new Error("Nano Banana 未返回生成图片。");
+  const files = [];
+  for (const image of results) files.push(await saveRemote("nanobanana", requiredString(image.url, "图片 URL"), "png", input.file_name));
+  return { prompt: input.prompt, model: input.model, files };
 }
 
 // src/service.ts
@@ -695,33 +647,25 @@ function result(provider, kind, raw) {
   const assets = paths.map((uri) => ({ uri, markdown: kind === "image" ? `![生成的图片](${uri})` : `<video controls src="${uri}"></video>` }));
   return { provider: provider.id, kind, prompt: raw.prompt, model: raw.model, assets, markdown: assets.map((asset) => asset.markdown).join("\n\n"), created_at: Date.now() };
 }
-function generateImage7(input) {
-  return __async(this, null, function* () {
-    const provider = validateImageRequest(input);
-    requireCredentials(provider, input.reference_images);
-    const request2 = { ...input, prompt: input.prompt.trim(), model: input.model === void 0 ? provider.model : input.model.trim() };
-    return result(provider, "image", yield ADAPTERS[provider.id](request2));
-  });
+async function generateImage7(input) {
+  const provider = validateImageRequest(input);
+  requireCredentials(provider, input.reference_images);
+  const request2 = { ...input, prompt: input.prompt.trim(), model: input.model === void 0 ? provider.model : input.model.trim() };
+  return result(provider, "image", await ADAPTERS[provider.id](request2));
 }
-function generateVideo2(input) {
-  return __async(this, null, function* () {
-    const provider = validateVideoRequest(input);
-    requireCredentials(provider);
-    return result(provider, "video", yield generateVideo({ ...input, prompt: input.prompt.trim(), model: input.model === void 0 ? "grok-imagine-video" : input.model.trim() }));
-  });
+async function generateVideo2(input) {
+  const provider = validateVideoRequest(input);
+  requireCredentials(provider);
+  return result(provider, "video", await generateVideo({ ...input, prompt: input.prompt.trim(), model: input.model === void 0 ? "grok-imagine-video" : input.model.trim() }));
 }
 
 // src/tools.ts
 function list_methods() {
   return { success: true, message: "可用生图方式", data: listMethods() };
 }
-function generate_image(params) {
-  return __async(this, null, function* () {
-    return { success: true, message: "图片已生成并保存。", data: yield generateImage7(params) };
-  });
+async function generate_image(params) {
+  return { success: true, message: "图片已生成并保存。", data: await generateImage7(params) };
 }
-function generate_video(params) {
-  return __async(this, null, function* () {
-    return { success: true, message: "视频已生成并保存。", data: yield generateVideo2(params) };
-  });
+async function generate_video(params) {
+  return { success: true, message: "视频已生成并保存。", data: await generateVideo2(params) };
 }

@@ -32,9 +32,9 @@ export async function buildUpstreamReference() {
   }
 }
 
-/** Compiles the readable ToolPkg entry and independent Compose screen using the host's Promise contract. */
+/** Bundles the readable ToolPkg entry and independent Compose screen for engine compilation. */
 export async function buildPluginScripts(prompt) {
-  const shared = { absWorkingDir: root, bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, write: false, charset: "utf8" };
+  const shared = { absWorkingDir: root, bundle: true, format: "cjs", platform: "neutral", target: "es2020", write: false, charset: "utf8" };
   const main = await build({
     ...shared, entryPoints: ["src/main.ts"], external: ["./ui/index.ui.js"],
     plugins: [{

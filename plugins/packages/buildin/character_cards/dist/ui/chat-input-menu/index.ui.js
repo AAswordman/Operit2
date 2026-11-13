@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/chat-input-menu/index.ui.ts
 var index_ui_exports = {};
@@ -391,60 +371,56 @@ function encodeSelection(selection) {
 }
 
 // src/ui-selector.ts
-function readSelectorData(input) {
-  return __async(this, null, function* () {
-    const [cards, groups] = yield Promise.all([callMainDomain("character.list", {}), callMainDomain("group.list", {})]);
-    let selected;
-    if (input.chatId === null) selected = encodeSelection(yield callMainDomain("activePrompt.get", {}));
-    else {
-      const binding = yield callMainDomain("chat.configuration.binding.find", { chatId: input.chatId });
-      selected = binding === null ? "model:chat" : binding.selection;
+async function readSelectorData(input) {
+  const [cards, groups] = await Promise.all([callMainDomain("character.list", {}), callMainDomain("group.list", {})]);
+  let selected;
+  if (input.chatId === null) selected = encodeSelection(await callMainDomain("activePrompt.get", {}));
+  else {
+    const binding = await callMainDomain("chat.configuration.binding.find", { chatId: input.chatId });
+    selected = binding === null ? "model:chat" : binding.selection;
+  }
+  if (selected !== null) requireChatSelection(selected, cards, groups);
+  const options = [];
+  if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "仅使用模型", description: "不使用角色卡提示词和角色记忆", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
+  if (input.kind === "card" || input.kind === "all") {
+    for (const card of cards) {
+      let avatar;
+      if (card.avatarUri !== null) avatar = { type: "uri", uri: card.avatarUri };
+      else avatar = { type: "resource", path: null };
+      options.push({
+        key: "card:" + card.id,
+        token: "card:" + card.id,
+        kind: "card",
+        id: card.id,
+        title: card.name,
+        description: card.description,
+        selection: { CharacterCard: { id: card.id } },
+        avatar
+      });
     }
-    if (selected !== null) requireChatSelection(selected, cards, groups);
-    const options = [];
-    if (input.kind === "card" || input.kind === "all") options.push({ key: "model:chat", token: "model:chat", kind: "model", id: "chat", title: "仅使用模型", description: "不使用角色卡提示词和角色记忆", selection: { Model: { id: "chat" } }, avatar: { type: "model" } });
-    if (input.kind === "card" || input.kind === "all") {
-      for (const card of cards) {
-        let avatar;
-        if (card.avatarUri !== null) avatar = { type: "uri", uri: card.avatarUri };
-        else avatar = { type: "resource", path: null };
-        options.push({
-          key: "card:" + card.id,
-          token: "card:" + card.id,
-          kind: "card",
-          id: card.id,
-          title: card.name,
-          description: card.description,
-          selection: { CharacterCard: { id: card.id } },
-          avatar
-        });
-      }
-    }
-    if (input.kind === "group" || input.kind === "all") for (const group of groups) options.push({
-      key: "group:" + group.id,
-      token: "group:" + group.id,
-      kind: "group",
-      id: group.id,
-      title: group.name,
-      description: group.description,
-      selection: { CharacterGroup: { id: group.id } },
-      avatar: { type: "group" }
-    });
-    const keys = /* @__PURE__ */ new Set();
-    for (const option of options) {
-      if (keys.has(option.key)) throw new Error("Duplicate selector row identity: " + option.key);
-      keys.add(option.key);
-    }
-    return { options, selected };
+  }
+  if (input.kind === "group" || input.kind === "all") for (const group of groups) options.push({
+    key: "group:" + group.id,
+    token: "group:" + group.id,
+    kind: "group",
+    id: group.id,
+    title: group.name,
+    description: group.description,
+    selection: { CharacterGroup: { id: group.id } },
+    avatar: { type: "group" }
   });
+  const keys = /* @__PURE__ */ new Set();
+  for (const option of options) {
+    if (keys.has(option.key)) throw new Error("Duplicate selector row identity: " + option.key);
+    keys.add(option.key);
+  }
+  return { options, selected };
 }
-function loadSelectorAvatars(data) {
-  return __async(this, null, function* () {
-    if (!data.options.some((option) => option.avatar.type === "resource" && option.avatar.path === null)) return data;
-    const path = yield ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
-    if (path.trim() === "") throw new Error("Declared character default-avatar resource did not resolve");
-    return { ...data, options: data.options.map((option) => option.avatar.type === "resource" && option.avatar.path === null ? { ...option, avatar: { type: "resource", path } } : option) };
-  });
+async function loadSelectorAvatars(data) {
+  if (!data.options.some((option) => option.avatar.type === "resource" && option.avatar.path === null)) return data;
+  const path = await ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
+  if (path.trim() === "") throw new Error("Declared character default-avatar resource did not resolve");
+  return { ...data, options: data.options.map((option) => option.avatar.type === "resource" && option.avatar.path === null ? { ...option, avatar: { type: "resource", path } } : option) };
 }
 
 // src/ui-input-menu.ts
@@ -484,28 +460,26 @@ function renderChatInputMenu(ctx) {
     if (currentChatId !== owner2.current) throw new Error("Input menu chat owner changed");
   }
   assertOwner();
-  function load() {
-    return __async(this, null, function* () {
+  async function load() {
+    assertOwner();
+    try {
+      const data = await readSelectorData({ mode: "select", chatId, kind: "all", selected: null });
+      const option2 = selectedOption(data);
       assertOwner();
-      try {
-        const data = yield readSelectorData({ mode: "select", chatId, kind: "all", selected: null });
-        const option2 = selectedOption(data);
+      setState({ data, unboundAvatar: null, error: "" });
+      void (async () => {
+        const resolved = await loadSelectorAvatars(data);
+        const defaultOption = resolved.options.find((candidate) => candidate.avatar.type === "resource");
+        const unboundAvatar = option2 === null ? defaultOption?.avatar.type === "resource" && defaultOption.avatar.path !== null ? defaultOption.avatar.path : await ToolPkg.readResource("character_default_avatar", "operit-avatar.png") : null;
+        if (unboundAvatar !== null && unboundAvatar.trim() === "") return;
         assertOwner();
-        setState({ data, unboundAvatar: null, error: "" });
-        void (() => __async(null, null, function* () {
-          const resolved = yield loadSelectorAvatars(data);
-          const defaultOption = resolved.options.find((candidate) => candidate.avatar.type === "resource");
-          const unboundAvatar = option2 === null ? defaultOption?.avatar.type === "resource" && defaultOption.avatar.path !== null ? defaultOption.avatar.path : yield ToolPkg.readResource("character_default_avatar", "operit-avatar.png") : null;
-          if (unboundAvatar !== null && unboundAvatar.trim() === "") return;
-          assertOwner();
-          setState({ data: resolved, unboundAvatar, error: "" });
-        }))().catch(() => {
-        });
-      } catch (error) {
-        assertOwner();
-        setState({ data: null, unboundAvatar: null, error: String(error) });
-      }
-    });
+        setState({ data: resolved, unboundAvatar, error: "" });
+      })().catch(() => {
+      });
+    } catch (error) {
+      assertOwner();
+      setState({ data: null, unboundAvatar: null, error: String(error) });
+    }
   }
   const colors = ctx.MaterialTheme.colorScheme;
   if (state.error !== "") return ctx.UI.Text({ text: state.error, color: colors.error, paddingHorizontal: 12, paddingVertical: 6 });

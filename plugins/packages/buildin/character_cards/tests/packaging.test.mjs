@@ -190,21 +190,3 @@ test("all declared resources are packaged and the obsolete sidebar browser chain
   assert.equal(Object.keys(entries).some(path => path === "web/sidebar.ts" || path.startsWith("web/features/sidebar/")), false);
   assert.equal(manifest.resources.some(resource => resource.key === "character_sidebar_html"), false);
 });
-
-/** Main and standalone screens must lower native awaits to retain call-scoped Promise continuations. */
-test("main and Compose screen providers lower every async function for scoped Promise continuations", async () => {
-  const ts = require("typescript");
-  const scripts = { "dist/main.js": await buildMainScript(), ...await buildUiScreenScripts() };
-  for (const [file, bytes] of Object.entries(scripts)) {
-    const text = Buffer.from(bytes).toString("utf8");
-    const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-    let nativeAsyncFunctions = 0;
-    /** Inspects syntax nodes, not comments or strings containing the word async. */
-    function visit(node) {
-      if (ts.isFunctionLike(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) nativeAsyncFunctions++;
-      ts.forEachChild(node, visit);
-    }
-    visit(tree);
-    assert.equal(nativeAsyncFunctions, 0, "Native await bypasses call-scoped Promise.then: " + file);
-  }
-});

@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/chat-sidebar/index.ui.ts
 var index_ui_exports = {};
@@ -777,21 +757,19 @@ function nativeSidebarRows(ctx, current, state, actions, defaultAvatar) {
 }
 
 // src/sidebar-group-delete.ts
-function deleteConversationGroupMembers(chatIds, deleteChat) {
-  return __async(this, null, function* () {
-    if (new Set(chatIds).size !== chatIds.length) throw new Error("Duplicate confirmed folder members");
-    const progress = { deletedChatIds: [], failedChatIds: [] };
-    for (const chatId of chatIds) {
-      try {
-        const result = yield deleteChat(chatId);
-        if (result.chatId !== chatId || !Number.isFinite(result.deletedAt)) throw new Error("Native deletion did not confirm requested chat: " + chatId);
-        progress.deletedChatIds.push(chatId);
-      } catch (error) {
-        progress.failedChatIds.push({ chatId, error: String(error) });
-      }
+async function deleteConversationGroupMembers(chatIds, deleteChat) {
+  if (new Set(chatIds).size !== chatIds.length) throw new Error("Duplicate confirmed folder members");
+  const progress = { deletedChatIds: [], failedChatIds: [] };
+  for (const chatId of chatIds) {
+    try {
+      const result = await deleteChat(chatId);
+      if (result.chatId !== chatId || !Number.isFinite(result.deletedAt)) throw new Error("Native deletion did not confirm requested chat: " + chatId);
+      progress.deletedChatIds.push(chatId);
+    } catch (error) {
+      progress.failedChatIds.push({ chatId, error: String(error) });
     }
-    return progress;
-  });
+  }
+  return progress;
 }
 
 // src/ui-sidebar-native.ts
@@ -834,64 +812,56 @@ function renderSidebarScreen(ctx) {
   function assertCurrent() {
     if (catalogKey(current.current) !== identity2) throw new Error("The sidebar context changed; refresh before using this action");
   }
-  function refresh() {
-    return __async(this, null, function* () {
-      const request = current.current, key = catalogKey(request);
-      const active = pending.current;
-      if (active?.key === key && typeof active.promise?.then === "function") return active.promise;
-      const promise = load();
-      pending.current = { key, promise };
+  async function refresh() {
+    const request = current.current, key = catalogKey(request);
+    const active = pending.current;
+    if (active?.key === key && typeof active.promise?.then === "function") return active.promise;
+    const promise = load();
+    pending.current = { key, promise };
+    try {
+      await promise;
+    } finally {
+      if (pending.current?.promise === promise) pending.current = null;
+    }
+    async function load() {
+      update({ loading: latest.current.data === null || latest.current.data.view !== request.input.view, error: "" });
       try {
-        yield promise;
-      } finally {
-        if (pending.current?.promise === promise) pending.current = null;
-      }
-      function load() {
-        return __async(this, null, function* () {
-          update({ loading: latest.current.data === null || latest.current.data.view !== request.input.view, error: "" });
-          try {
-            const data2 = yield ToolPkg.ipc.call("character-sidebar.catalog", request, { targetRuntime: "main" });
-            if (catalogKey(current.current) === key) {
-              if (data2.view !== request.input.view) throw new Error("The sidebar catalog belongs to another view");
-              update({ data: data2, context: key, loading: false });
-              if ((data2.view === "characters" ? data2.sections : data2.scopes).some((section) => section.kind === "card" && section.avatarUri === null) && latest.current.defaultAvatar === null) {
-                const resource = avatarResource.current ?? ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
-                avatarResource.current = resource;
-                void resource.then((path) => {
-                  if (path.trim() === "") throw new Error("Declared default avatar resource is missing");
-                  if (catalogKey(current.current) === key) update({ defaultAvatar: path });
-                }).catch(() => {
-                  if (avatarResource.current === resource) avatarResource.current = null;
-                });
-              }
-            }
-          } catch (failure) {
-            if (catalogKey(current.current) === key) update({ loading: false, context: key, error: String(failure) });
+        const data2 = await ToolPkg.ipc.call("character-sidebar.catalog", request, { targetRuntime: "main" });
+        if (catalogKey(current.current) === key) {
+          if (data2.view !== request.input.view) throw new Error("The sidebar catalog belongs to another view");
+          update({ data: data2, context: key, loading: false });
+          if ((data2.view === "characters" ? data2.sections : data2.scopes).some((section) => section.kind === "card" && section.avatarUri === null) && latest.current.defaultAvatar === null) {
+            const resource = avatarResource.current ?? ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
+            avatarResource.current = resource;
+            void resource.then((path) => {
+              if (path.trim() === "") throw new Error("Declared default avatar resource is missing");
+              if (catalogKey(current.current) === key) update({ defaultAvatar: path });
+            }).catch(() => {
+              if (avatarResource.current === resource) avatarResource.current = null;
+            });
           }
-        });
-      }
-    });
-  }
-  function refreshInputs() {
-    return __async(this, null, function* () {
-      if (latest.current.data !== null && latest.current.error === "" && latest.current.context === catalogKey(current.current)) return;
-      yield refresh();
-    });
-  }
-  function run(action) {
-    return __async(this, null, function* () {
-      assertCurrent();
-      if (latest.current.busy) throw new Error("A sidebar operation is already running");
-      update({ busy: true, error: "" });
-      try {
-        return yield action();
+        }
       } catch (failure) {
-        update({ error: String(failure) });
-        return null;
-      } finally {
-        update({ busy: false });
+        if (catalogKey(current.current) === key) update({ loading: false, context: key, error: String(failure) });
       }
-    });
+    }
+  }
+  async function refreshInputs() {
+    if (latest.current.data !== null && latest.current.error === "" && latest.current.context === catalogKey(current.current)) return;
+    await refresh();
+  }
+  async function run(action) {
+    assertCurrent();
+    if (latest.current.busy) throw new Error("A sidebar operation is already running");
+    update({ busy: true, error: "" });
+    try {
+      return await action();
+    } catch (failure) {
+      update({ error: String(failure) });
+      return null;
+    } finally {
+      update({ busy: false });
+    }
   }
   function activate(chatId) {
     assertCurrent();
@@ -917,84 +887,80 @@ function renderSidebarScreen(ctx) {
     if (group === void 0) throw new Error("The native folder no longer exists");
     return group;
   }
-  function createChat(selection, groupId) {
-    return __async(this, null, function* () {
-      assertCurrent();
-      if (latest.current.busy) return null;
-      update({ busy: true, error: "" });
-      try {
-        const created = yield Tools.Chat.createNew({ setAsCurrentChat: false, input: selection === "" ? null : createChatInput(selection) });
-        yield Tools.Chat.updateGroup([created.chatId], groupId === null ? null : readGroup(groupId).name);
-        return { type: "toolpkg.chat.activate", chatId: created.chatId };
-      } catch (failure) {
-        update({ error: String(failure) });
-        return null;
-      } finally {
-        update({ busy: false });
-      }
-    });
+  async function createChat(selection, groupId) {
+    assertCurrent();
+    if (latest.current.busy) return null;
+    update({ busy: true, error: "" });
+    try {
+      const created = await Tools.Chat.createNew({ setAsCurrentChat: false, input: selection === "" ? null : createChatInput(selection) });
+      await Tools.Chat.updateGroup([created.chatId], groupId === null ? null : readGroup(groupId).name);
+      return { type: "toolpkg.chat.activate", chatId: created.chatId };
+    } catch (failure) {
+      update({ error: String(failure) });
+      return null;
+    } finally {
+      update({ busy: false });
+    }
   }
   function dialog(kind, id2, name = "") {
     assertCurrent();
     update({ dialog: { kind, id: id2, name, progress: null } });
   }
-  function submit() {
-    return __async(this, null, function* () {
-      const staged = latest.current.dialog;
-      if (staged === null) throw new Error("No sidebar dialog is open");
-      switch (staged.kind) {
-        case "chatActions":
-          throw new Error("Choose a conversation action");
-        case "renameChat":
-          yield Tools.Chat.updateTitle(staged.id, staged.name);
-          break;
-        case "deleteChat":
-          yield Tools.Chat.deleteChat(staged.id);
-          break;
-        case "create": {
-          const name = staged.name.trim();
-          if (name === "") throw new Error("分组名称不能为空");
-          const selection = scopeFor(staged.id).ownerSelection;
-          const created = yield Tools.Chat.createNew({ setAsCurrentChat: false, input: selection === null ? null : createChatInput(selection) });
-          yield Tools.Chat.updateGroup([created.chatId], name);
-          update({ dialog: null });
-          yield refresh();
-          return { type: "toolpkg.chat.activate", chatId: created.chatId };
-        }
-        case "renameUngrouped": {
-          yield Tools.Chat.updateGroup(scopeFor(staged.id).ungrouped.map((chat) => chat.id), staged.name.trim());
-          break;
-        }
-        case "deleteUngrouped": {
-          const progress = { deletedChatIds: [], failedChatIds: [] };
-          for (const chat of scopeFor(staged.id).ungrouped) {
-            try {
-              yield Tools.Chat.deleteChat(chat.id);
-              progress.deletedChatIds.push(chat.id);
-            } catch (error) {
-              progress.failedChatIds.push({ chatId: chat.id, error: String(error) });
-            }
-          }
-          update({ dialog: { ...staged, progress } });
-          yield refresh();
-          return null;
-        }
-        case "rename":
-          yield Tools.Chat.updateGroup(readGroup(staged.id).chats.map((chat) => chat.id), staged.name.trim());
-          break;
-        case "delete": {
-          if (staged.progress !== null) throw new Error("This confirmed deletion has already been attempted");
-          const group = readGroup(staged.id);
-          const progress = yield deleteConversationGroupMembers(group.chats.map((chat) => chat.id), (id2) => Tools.Chat.deleteChat(id2));
-          update({ dialog: { ...staged, progress } });
-          yield refresh();
-          return null;
-        }
+  async function submit() {
+    const staged = latest.current.dialog;
+    if (staged === null) throw new Error("No sidebar dialog is open");
+    switch (staged.kind) {
+      case "chatActions":
+        throw new Error("Choose a conversation action");
+      case "renameChat":
+        await Tools.Chat.updateTitle(staged.id, staged.name);
+        break;
+      case "deleteChat":
+        await Tools.Chat.deleteChat(staged.id);
+        break;
+      case "create": {
+        const name = staged.name.trim();
+        if (name === "") throw new Error("分组名称不能为空");
+        const selection = scopeFor(staged.id).ownerSelection;
+        const created = await Tools.Chat.createNew({ setAsCurrentChat: false, input: selection === null ? null : createChatInput(selection) });
+        await Tools.Chat.updateGroup([created.chatId], name);
+        update({ dialog: null });
+        await refresh();
+        return { type: "toolpkg.chat.activate", chatId: created.chatId };
       }
-      update({ dialog: null });
-      yield refresh();
-      return null;
-    });
+      case "renameUngrouped": {
+        await Tools.Chat.updateGroup(scopeFor(staged.id).ungrouped.map((chat) => chat.id), staged.name.trim());
+        break;
+      }
+      case "deleteUngrouped": {
+        const progress = { deletedChatIds: [], failedChatIds: [] };
+        for (const chat of scopeFor(staged.id).ungrouped) {
+          try {
+            await Tools.Chat.deleteChat(chat.id);
+            progress.deletedChatIds.push(chat.id);
+          } catch (error) {
+            progress.failedChatIds.push({ chatId: chat.id, error: String(error) });
+          }
+        }
+        update({ dialog: { ...staged, progress } });
+        await refresh();
+        return null;
+      }
+      case "rename":
+        await Tools.Chat.updateGroup(readGroup(staged.id).chats.map((chat) => chat.id), staged.name.trim());
+        break;
+      case "delete": {
+        if (staged.progress !== null) throw new Error("This confirmed deletion has already been attempted");
+        const group = readGroup(staged.id);
+        const progress = await deleteConversationGroupMembers(group.chats.map((chat) => chat.id), (id2) => Tools.Chat.deleteChat(id2));
+        update({ dialog: { ...staged, progress } });
+        await refresh();
+        return null;
+      }
+    }
+    update({ dialog: null });
+    await refresh();
+    return null;
   }
   function chatFor(id2) {
     const chat = current.current.chatSidebar.chats.find((value) => value.id === id2);
@@ -1007,14 +973,12 @@ function renderSidebarScreen(ctx) {
   function confirmSwipeDelete(id2) {
     dialog("deleteChat", id2, chatFor(id2).title);
   }
-  function deleteChat(id2) {
-    return __async(this, null, function* () {
-      yield run(() => __async(null, null, function* () {
-        chatFor(id2);
-        yield Tools.Chat.deleteChat(id2);
-        update({ dialog: null });
-        yield refresh();
-      }));
+  async function deleteChat(id2) {
+    await run(async () => {
+      chatFor(id2);
+      await Tools.Chat.deleteChat(id2);
+      update({ dialog: null });
+      await refresh();
     });
   }
   function longPress(id2) {
@@ -1033,36 +997,30 @@ function renderSidebarScreen(ctx) {
     update({ dialog: null });
     return { type: favoritesOnly ? "toolpkg.chat.viewFavorites" : "toolpkg.chat.searchMessages", chatId: id2 };
   }
-  function changeFlag(id2, pinned) {
-    return __async(this, null, function* () {
-      yield run(() => __async(null, null, function* () {
-        const chat = chatFor(id2);
-        if (pinned) yield Tools.Chat.updatePinned(id2, !chat.pinned);
-        else yield Tools.Chat.updateLocked(id2, !chat.locked);
-        update({ dialog: null });
-        yield refresh();
-      }));
+  async function changeFlag(id2, pinned) {
+    await run(async () => {
+      const chat = chatFor(id2);
+      if (pinned) await Tools.Chat.updatePinned(id2, !chat.pinned);
+      else await Tools.Chat.updateLocked(id2, !chat.locked);
+      update({ dialog: null });
+      await refresh();
     });
   }
-  function promoteToRoot(id2) {
-    return __async(this, null, function* () {
-      yield run(() => __async(null, null, function* () {
-        chatFor(id2);
-        yield Tools.Chat.promoteToRoot(id2);
-        update({ dialog: null });
-        yield refresh();
-      }));
+  async function promoteToRoot(id2) {
+    await run(async () => {
+      chatFor(id2);
+      await Tools.Chat.promoteToRoot(id2);
+      update({ dialog: null });
+      await refresh();
     });
   }
-  function reorder(chatId, targetId) {
-    return __async(this, null, function* () {
-      const ids = current.current.chatSidebar.chats.map((chat) => chat.id);
-      const from = ids.indexOf(chatId), to = ids.indexOf(targetId);
-      if (from < 0 || to < 0) throw new Error("The reordered conversation no longer exists");
-      if (from === to) return;
-      ids.splice(to, 0, ids.splice(from, 1)[0]);
-      yield Tools.Chat.reorder(ids);
-    });
+  async function reorder(chatId, targetId) {
+    const ids = current.current.chatSidebar.chats.map((chat) => chat.id);
+    const from = ids.indexOf(chatId), to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) throw new Error("The reordered conversation no longer exists");
+    if (from === to) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    await Tools.Chat.reorder(ids);
   }
   function orderNeighbours(id2) {
     const data2 = visibleCatalog();
@@ -1074,15 +1032,13 @@ function renderSidebarScreen(ctx) {
     }
     return [];
   }
-  function moveRelative(id2, delta) {
-    return __async(this, null, function* () {
-      const ids = orderNeighbours(id2), index = ids.indexOf(id2), target = ids[index + delta];
-      if (index < 0 || target === void 0) return;
-      yield run(() => __async(null, null, function* () {
-        yield reorder(id2, target);
-        update({ dialog: null });
-        yield refresh();
-      }));
+  async function moveRelative(id2, delta) {
+    const ids = orderNeighbours(id2), index = ids.indexOf(id2), target = ids[index + delta];
+    if (index < 0 || target === void 0) return;
+    await run(async () => {
+      await reorder(id2, target);
+      update({ dialog: null });
+      await refresh();
     });
   }
   function menu(kind, id2) {
@@ -1103,16 +1059,16 @@ function renderSidebarScreen(ctx) {
           ...chat.parentChatId !== null ? [{ label: "提升为主对话", icon: "VerticalAlignTop" }] : [],
           { label: "删除", icon: "DeleteOutline", danger: true }
         ],
-        onSelected: (index) => __async(null, null, function* () {
+        onSelected: async (index) => {
           if (index === 0) return lookupMessages(id2, false);
           else if (index === 1) return lookupMessages(id2, true);
           else if (index === 2) renameChat(id2);
-          else if (index === 3) yield changeFlag(id2, true);
-          else if (index === 4) yield changeFlag(id2, false);
-          else if (index === 5 && chat.parentChatId !== null) yield promoteToRoot(id2);
-          else if (index === (chat.parentChatId !== null ? 6 : 5)) yield deleteChat(id2);
+          else if (index === 3) await changeFlag(id2, true);
+          else if (index === 4) await changeFlag(id2, false);
+          else if (index === 5 && chat.parentChatId !== null) await promoteToRoot(id2);
+          else if (index === (chat.parentChatId !== null ? 6 : 5)) await deleteChat(id2);
           return null;
-        })
+        }
       }, ctx.UI.Icon({ name: "MoreHoriz", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
     }
     if (kind === "ungrouped") {
@@ -1131,16 +1087,16 @@ function renderSidebarScreen(ctx) {
           { label: pinned ? "取消置顶" : "置顶", icon: pinned ? "PushPinOutlined" : "PushPinRounded" },
           { label: "删除", icon: "DeleteOutlineRounded", danger: true, dividerBefore: true }
         ],
-        onSelected: (index) => __async(null, null, function* () {
+        onSelected: async (index) => {
           if (index === 0) return createChat(scope.ownerSelection ?? "", null);
           if (index === 1) dialog("renameUngrouped", id2, "未分组");
-          if (index === 2) yield run(() => __async(null, null, function* () {
-            for (const chat of scope.ungrouped) yield Tools.Chat.updatePinned(chat.id, !pinned);
-            yield refresh();
-          }));
+          if (index === 2) await run(async () => {
+            for (const chat of scope.ungrouped) await Tools.Chat.updatePinned(chat.id, !pinned);
+            await refresh();
+          });
           if (index === 3) dialog("deleteUngrouped", id2, "未分组");
           return null;
-        })
+        }
       }, ctx.UI.Icon({ name: "MoreHorizRounded", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
     }
     const group = scopeFor(id2).groups.find((value) => value.id === id2);
@@ -1158,43 +1114,41 @@ function renderSidebarScreen(ctx) {
       tooltip: "分组操作",
       items,
       enabled: !state.busy,
-      onSelected: (index) => __async(null, null, function* () {
+      onSelected: async (index) => {
         if (index === 0) {
           const owner2 = scopeFor(id2).ownerSelection;
           return createChat(owner2 ?? "", id2);
         } else if (index === 1) dialog("rename", id2, group.name);
-        else if (index === 2) yield run(() => __async(null, null, function* () {
-          for (const chat of group.chats) yield Tools.Chat.updatePinned(chat.id, !group.pinned);
-          yield refresh();
-        }));
+        else if (index === 2) await run(async () => {
+          for (const chat of group.chats) await Tools.Chat.updatePinned(chat.id, !group.pinned);
+          await refresh();
+        });
         else if (index === 3) dialog("delete", id2, group.name);
         return null;
-      })
+      }
     }, ctx.UI.Icon({ name: "MoreHorizRounded", size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }));
   }
-  function drop(chatId, scopeId, groupId, targetId) {
-    return __async(this, null, function* () {
-      assertCurrent();
-      if (latest.current.busy) throw new Error("A sidebar operation is already running");
-      const scope = scopeFor(scopeId);
-      if (!scope.ungrouped.some((chat) => chat.id === chatId) && !scope.groups.some((group) => group.chats.some((chat) => chat.id === chatId)))
-        throw new Error("The conversation no longer belongs to the target scope");
-      if (groupId !== null && !scope.groups.some((group) => group.id === groupId))
-        throw new Error("The target conversation group no longer exists");
-      const existing = scope.groups.find((group) => group.chats.some((chat) => chat.id === chatId))?.id ?? null;
-      if (existing === groupId && targetId === void 0) return;
-      update({ busy: true, error: "" });
-      try {
-        if (existing !== groupId) yield Tools.Chat.updateGroup([chatId], groupId === null ? null : readGroup(groupId).name);
-        if (targetId !== void 0) yield reorder(chatId, targetId);
-        yield refresh();
-      } catch (failure) {
-        update({ error: String(failure) });
-        throw failure;
-      } finally {
-        update({ busy: false });
-      }
-    });
+  async function drop(chatId, scopeId, groupId, targetId) {
+    assertCurrent();
+    if (latest.current.busy) throw new Error("A sidebar operation is already running");
+    const scope = scopeFor(scopeId);
+    if (!scope.ungrouped.some((chat) => chat.id === chatId) && !scope.groups.some((group) => group.chats.some((chat) => chat.id === chatId)))
+      throw new Error("The conversation no longer belongs to the target scope");
+    if (groupId !== null && !scope.groups.some((group) => group.id === groupId))
+      throw new Error("The target conversation group no longer exists");
+    const existing = scope.groups.find((group) => group.chats.some((chat) => chat.id === chatId))?.id ?? null;
+    if (existing === groupId && targetId === void 0) return;
+    update({ busy: true, error: "" });
+    try {
+      if (existing !== groupId) await Tools.Chat.updateGroup([chatId], groupId === null ? null : readGroup(groupId).name);
+      if (targetId !== void 0) await reorder(chatId, targetId);
+      await refresh();
+    } catch (failure) {
+      update({ error: String(failure) });
+      throw failure;
+    } finally {
+      update({ busy: false });
+    }
   }
   function visibleCatalog() {
     const data2 = latest.current.data;
@@ -1229,10 +1183,10 @@ function renderSidebarScreen(ctx) {
           height: 34,
           verticalAlignment: "center",
           horizontalArrangement: "center",
-          onClick: () => __async(null, null, function* () {
-            const active = yield callMainDomain("activePrompt.get", {});
+          onClick: async () => {
+            const active = await callMainDomain("activePrompt.get", {});
             return createChat(encodeSelection(active), null);
-          }),
+          },
           spacing: 6
         }, [
           ctx.UI.Icon({ name: "AddRounded", size: 17, tint: colors.onPrimaryContainer }),
@@ -1245,15 +1199,15 @@ function renderSidebarScreen(ctx) {
           height: 34,
           verticalAlignment: "center",
           horizontalArrangement: "center",
-          onClick: () => __async(null, null, function* () {
-            const active = yield callMainDomain("activePrompt.get", {});
+          onClick: async () => {
+            const active = await callMainDomain("activePrompt.get", {});
             const selection = encodeSelection(active);
             const catalog = visibleCatalog();
             if (catalog === null) throw new Error("Sidebar has not loaded");
             const scope = catalog.view === "characters" ? catalog.sections.find((section) => section.selection === selection) : catalog.scopes.find((scope2) => scope2.ownerSelection === selection);
             if (scope === void 0) throw new Error("The active owner is absent from the actual sidebar catalog");
             dialog("create", scope.id);
-          })
+          }
         }, ctx.UI.Icon({ name: "CreateNewFolderOutlined", size: 16, tint: colors.onPrimaryContainer, contentDescription: "新建分组" }))
       ])
     ),

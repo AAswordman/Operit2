@@ -1603,6 +1603,7 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     );
 }
 
+/// Serialized native async runners compile in the destination with registered context bindings.
 #[test]
 fn runtime_context_with_context_runs_local_main_runner() {
     let mut state = newTestJsEngineState(None);
@@ -1612,7 +1613,13 @@ fn runtime_context_with_context_runs_local_main_runner() {
                 return value + 1;
             }
             RuntimeContext.register({ addOne: addOne });
-            return await withContext('main', { value: 41 }, function() {
+            async function namedRunner() {
+                await Promise.resolve();
+                return { value: addOne(value) };
+            }
+            const named = await withContext('main', { value: 40 }, namedRunner);
+            return await withContext('main', { value: named.value }, async () => {
+                await Promise.resolve();
                 return { value: addOne(value) };
             });
         };
@@ -4451,20 +4458,73 @@ fn chat_extension_owner_requires_real_execution_context() {
     assert!(context.validate().is_err());
 }
 
-/// Lowered async functions subscribing to one retained service Promise keep distinct call owners.
+/// Native async functions awaiting one retained service Promise keep distinct call owners.
 #[tokio::test(flavor = "current_thread")]
 async fn shared_initialization_promise_preserves_each_waiting_call_context() {
+    assert_shared_initialization_context(r#"exports.useService = async function() {
+        const owner = globalThis.__operitCurrentCallId;
+        sendIntermediateResult('awaiting-initialization');
+        async function* serviceOwners() {
+            await globalThis.sharedInitialization;
+            yield getEnv('CALL_OWNER');
+        }
+        for await (const value of serviceOwners()) {
+            if (value !== 'consumer') throw new Error('Async iterator resumed under a different execution call');
+        }
+        await Promise.resolve();
+        if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
+        return getEnv('CALL_OWNER');
+    };"#).await;
+}
+
+/// Embedded TypeScript and esbuild helpers remain compatible alongside native async callers.
+#[tokio::test(flavor = "current_thread")]
+async fn legacy_async_helpers_preserve_context_with_native_await() {
+    for (helper, invocation) in [
+        (r#"function __awaiter(thisArg, _arguments, P, generator) {
+            function adopt(value) { return value instanceof P ? value : new P(function(resolve) { resolve(value); }); }
+            return new (P || (P = Promise))(function(resolve, reject) {
+                function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+                function rejected(value) { try { step(generator.throw(value)); } catch (e) { reject(e); } }
+                function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+                step((generator = generator.apply(thisArg, _arguments || [])).next());
+            });
+        }"#, "__awaiter(this, arguments, void 0, consume)"),
+        (r#"var __async = (__this, __arguments, generator) => new Promise((resolve, reject) => {
+            var fulfilled = value => { try { step(generator.next(value)); } catch (e) { reject(e); } };
+            var rejected = value => { try { step(generator.throw(value)); } catch (e) { reject(e); } };
+            var step = value => value.done ? resolve(value.value) : Promise.resolve(value.value).then(fulfilled, rejected);
+            step((generator = generator.apply(__this, __arguments)).next());
+        });"#, "__async(this, arguments, consume)"),
+    ] {
+        let script = format!(r#"{helper}
+            var babelHelpers = {{ tag: 'legacy' }};
+            function* consume() {{
+                const owner = globalThis.__operitCurrentCallId;
+                sendIntermediateResult('awaiting-initialization');
+                yield globalThis.sharedInitialization;
+                yield Promise.resolve();
+                if (globalThis.__operitCurrentCallId !== owner || babelHelpers.tag !== 'legacy') throw new Error('Legacy helper lost its owner or authored binding');
+                return getEnv('CALL_OWNER');
+            }}
+            exports.useService = function() {{ return {invocation}; }};
+        "#);
+        assert_shared_initialization_context(&script).await;
+    }
+}
+
+/// Interleaves a native initializer and another compiler output on the same retained Promise.
+async fn assert_shared_initialization_context(consumer_source: &str) {
     let host = Arc::new(TestPluginConfigExecutionHost::default());
     let engine = newTestJsEngine(host.clone());
     let first_engine = engine.clone();
     let first = tokio::spawn(first_engine.execute_script_function(
-        r#"exports.initialize = function() {
+        r#"exports.initialize = async function() {
             const owner = globalThis.__operitCurrentCallId;
             globalThis.sharedInitialization = toolCall('gate', {});
-            return globalThis.sharedInitialization.then(function() {
-                if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
-                return getEnv('CALL_OWNER');
-            });
+            await globalThis.sharedInitialization;
+            if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
+            return getEnv('CALL_OWNER');
         };"#,
         "initialize", &testParams(),
         &BTreeMap::from([("CALL_OWNER".to_string(), "initializer".to_string())]),
@@ -4474,14 +4534,7 @@ async fn shared_initialization_promise_preserves_each_waiting_call_context() {
     let (sender, mut started) = tokio::sync::mpsc::unbounded_channel();
     let second_engine = engine.clone();
     let second = tokio::spawn(second_engine.execute_script_function(
-        r#"exports.useService = function() {
-            const owner = globalThis.__operitCurrentCallId;
-            sendIntermediateResult('awaiting-initialization');
-            return globalThis.sharedInitialization.then(function() { return Promise.resolve().then(function() {
-                if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
-                return getEnv('CALL_OWNER');
-            }); });
-        };"#,
+        consumer_source,
         "useService", &testParams(),
         &BTreeMap::from([("CALL_OWNER".to_string(), "consumer".to_string())]),
         Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, None,
@@ -4492,6 +4545,97 @@ async fn shared_initialization_promise_preserves_each_waiting_call_context() {
     assert_eq!(expect_js_output(second.await.unwrap(), "shared initialization consumer"), "\"consumer\"");
     assert_eq!(executionSessionCounts(&engine).await, (0, 0));
     engine.destroy();
+}
+
+/// Loads the shipped Waifu merge queue with one controllable mode lookup dependency.
+fn waifu_merge_fixture() -> (super::JsEngine, Arc<TestPluginConfigExecutionHost>, String, BTreeMap<String, Value>) {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let resources = BTreeMap::from([("dist/mode.js".into(), r#"
+        globalThis.waifuOwners = [];
+        exports.modeForChat = function() {
+            globalThis.waifuOwners.push(getEnv('CALL_OWNER'));
+            return globalThis.waifuOwners.length === 1
+                ? toolCall('gate', {}).then(function() { return null; })
+                : Promise.resolve(null);
+        };
+    "#.into())]);
+    let engine = super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+        context_key: "toolpkg_main:test.waifu".into(), container_package_name: "test.waifu".into(),
+        api_version: "2.0.0".into(), text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources }),
+    }).unwrap();
+    let source = std::fs::read_to_string(testRepositoryRoot().join("plugins/packages/external/waifu/dist/merge.js")).unwrap();
+    let script = format!("{source}\nexports.submit = function(event) {{ sendIntermediateResult('submitted'); return exports.mergeInput(event); }}; exports.inspect = function() {{ return globalThis.waifuOwners; }};");
+    let mut params = testParams();
+    params.insert("__operit_ui_package_name".into(), serde_json::json!("test.waifu"));
+    params.insert("__operit_script_screen".into(), serde_json::json!("dist/merge.js"));
+    params.insert("event".into(), serde_json::json!("submit_requested"));
+    params.insert("eventPayload".into(), serde_json::json!({"chatId":"same-chat","source":"User"}));
+    (engine, host, script, params)
+}
+
+/// The shipped Waifu merge queue must resume each submitted input under its own call identity.
+#[tokio::test(flavor = "current_thread")]
+async fn waifu_merge_queue_preserves_each_waiting_call_context() {
+    let (engine, host, script, params) = waifu_merge_fixture();
+    let mut first = tokio::spawn(engine.execute_script_function(
+        &script, "submit", &params, &BTreeMap::from([("CALL_OWNER".into(), "first".into())]),
+        None, true, None,
+    ));
+    tokio::select! {
+        _ = host.gatedToolStarted.notified() => {},
+        result = &mut first => panic!("First submission finished before the dependency gate: {result:?}"),
+        _ = tokio::time::sleep(Duration::from_secs(3)) => panic!("First submission did not reach the dependency gate"),
+    }
+    let (sender, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let second = tokio::spawn(engine.execute_script_function(
+        &script, "submit", &params, &BTreeMap::from([("CALL_OWNER".into(), "second".into())]),
+        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, None,
+    ));
+    tokio::time::timeout(Duration::from_secs(3), started.recv()).await.unwrap().unwrap();
+    finishGatedTool(&host);
+    let (first, second) = tokio::time::timeout(Duration::from_secs(3), async { tokio::join!(first, second) }).await
+        .expect("The queued input must finish after its predecessor");
+    let inspected = engine.execute_script_function(&script, "inspect", &params, &BTreeMap::new(), None, true, None).await;
+    engine.destroy();
+    expect_js_output(first.unwrap(), "first Waifu submission");
+    expect_js_output(second.unwrap(), "second Waifu submission");
+    assert_eq!(expect_js_output(inspected, "Waifu submission owners"), "[\"first\",\"second\"]");
+}
+
+/// Cancelling a blocked before hook must clear its queue before a later input is submitted.
+#[tokio::test(flavor = "current_thread")]
+async fn waifu_merge_queue_releases_after_before_hook_timeout() {
+    let (engine, host, script, params) = waifu_merge_fixture();
+    let mut first = tokio::spawn(engine.execute_script_function_with_timeout_millis(
+        &script, "submit", &params, &BTreeMap::from([("CALL_OWNER".into(), "timed-out".into())]),
+        None, true, 200, None,
+    ));
+    tokio::select! {
+        _ = host.gatedToolStarted.notified() => {},
+        result = &mut first => panic!("First submission did not wait for its dependency: {result:?}"),
+        _ = tokio::time::sleep(Duration::from_secs(3)) => panic!("First submission did not reach its dependency"),
+    }
+    let (sender, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let second = tokio::spawn(engine.execute_script_function_with_timeout_millis(
+        &script, "submit", &params, &BTreeMap::from([("CALL_OWNER".into(), "queued".into())]),
+        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, 2_000, None,
+    ));
+    tokio::time::timeout(Duration::from_secs(3), started.recv()).await.unwrap().unwrap();
+    let (first, second) = tokio::time::timeout(Duration::from_secs(3), async { tokio::join!(first, second) }).await
+        .expect("Cancellation must settle both the original and the queued submission");
+    assert_eq!(first.unwrap().unwrap_err().kind, JsExecutionErrorKind::Timeout);
+    assert!(second.unwrap().is_err(), "The queued submission must receive the predecessor's cancellation");
+    let third = tokio::time::timeout(Duration::from_secs(2), engine.execute_script_function(
+        &script, "submit", &params, &BTreeMap::from([("CALL_OWNER".into(), "after-timeout".into())]),
+        None, true, None,
+    )).await.expect("A later input must not remain behind the cancelled queue");
+    let inspected = engine.execute_script_function(&script, "inspect", &params, &BTreeMap::new(), None, true, None).await;
+    finishGatedTool(&host);
+    engine.destroy();
+    expect_js_output(third, "Waifu submission after timeout");
+    assert_eq!(expect_js_output(inspected, "Waifu owners after timeout"), "[\"timed-out\",\"after-timeout\"]");
 }
 
 /// A completed asynchronous call must not resurrect its cleaned id for a suspended caller.

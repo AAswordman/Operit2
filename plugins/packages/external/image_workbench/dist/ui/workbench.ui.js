@@ -16,26 +16,6 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/ui/workbench.ui.ts
 var workbench_ui_exports = {};
@@ -124,21 +104,19 @@ function Workbench(ctx) {
     let active = true;
     setSettingsReady(false);
     setError("");
-    function load() {
-      return __async(this, null, function* () {
-        try {
-          const entries = yield Promise.all(credentialKeys.map((key) => __async(null, null, function* () {
-            const value = yield Tools.SoftwareSettings.readEnvironmentVariable(PACKAGE_NAME, key);
-            return [key, value.value ?? ""];
-          })));
-          if (active) {
-            setEnvValues(Object.fromEntries(entries));
-            setSettingsReady(true);
-          }
-        } catch (cause) {
-          if (active) setError(String(cause));
+    async function load() {
+      try {
+        const entries = await Promise.all(credentialKeys.map(async (key) => {
+          const value = await Tools.SoftwareSettings.readEnvironmentVariable(PACKAGE_NAME, key);
+          return [key, value.value ?? ""];
+        }));
+        if (active) {
+          setEnvValues(Object.fromEntries(entries));
+          setSettingsReady(true);
         }
-      });
+      } catch (cause) {
+        if (active) setError(String(cause));
+      }
     }
     void load();
     return () => {
@@ -148,61 +126,53 @@ function Workbench(ctx) {
   function edit(key, value) {
     setForms({ ...forms, [formKey]: { ...fields, [key]: value } });
   }
-  function run(label, action) {
-    return __async(this, null, function* () {
-      if (lock.current) return;
-      lock.current = true;
-      setBusy(label);
-      setError("");
-      setNotice("");
-      try {
-        yield action();
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        lock.current = false;
-        setBusy("");
-      }
+  async function run(label, action) {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(label);
+    setError("");
+    setNotice("");
+    try {
+      await action();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      lock.current = false;
+      setBusy("");
+    }
+  }
+  async function saveSettings() {
+    await run("正在保存配置…", async () => {
+      for (const key of credentialKeys) await Tools.SoftwareSettings.writeEnvironmentVariable(PACKAGE_NAME, key, envValues[key].trim());
+      setNotice(`${provider.title} 配置已保存。`);
     });
   }
-  function saveSettings() {
-    return __async(this, null, function* () {
-      yield run("正在保存配置…", () => __async(null, null, function* () {
-        for (const key of credentialKeys) yield Tools.SoftwareSettings.writeEnvironmentVariable(PACKAGE_NAME, key, envValues[key].trim());
-        setNotice(`${provider.title} 配置已保存。`);
-      }));
+  async function pickReference() {
+    await run("正在选择参考图片…", async () => {
+      const picked = await ctx.openFilePicker({ picker: "image", allowMultiple: mode === "image" });
+      if (picked.cancelled) return;
+      edit(mode === "image" ? "reference_images" : "reference_image", picked.files.map((file) => file.path).join("\n"));
     });
   }
-  function pickReference() {
-    return __async(this, null, function* () {
-      yield run("正在选择参考图片…", () => __async(null, null, function* () {
-        const picked = yield ctx.openFilePicker({ picker: "image", allowMultiple: mode === "image" });
-        if (picked.cancelled) return;
-        edit(mode === "image" ? "reference_images" : "reference_image", picked.files.map((file) => file.path).join("\n"));
-      }));
-    });
-  }
-  function generate() {
-    return __async(this, null, function* () {
-      yield run(mode === "image" ? "正在生成图片，请稍候…" : "正在生成视频，请稍候…", () => __async(null, null, function* () {
-        let request;
-        if (mode === "image") request = { ...imageRequestFromFields(provider.id, prompt, fields) };
-        else {
-          const video = { provider: "xai", prompt };
-          for (const [key, value] of Object.entries(fields)) {
-            if (!value.trim()) continue;
-            video[key] = key === "duration" ? Number(value) : value.trim();
-          }
-          if (video.duration !== void 0 && (!Number.isInteger(video.duration) || video.duration < 1 || video.duration > 15)) throw new Error("视频时长应为 1 到 15 秒的整数。");
-          request = { ...video };
+  async function generate() {
+    await run(mode === "image" ? "正在生成图片，请稍候…" : "正在生成视频，请稍候…", async () => {
+      let request;
+      if (mode === "image") request = { ...imageRequestFromFields(provider.id, prompt, fields) };
+      else {
+        const video = { provider: "xai", prompt };
+        for (const [key, value] of Object.entries(fields)) {
+          if (!value.trim()) continue;
+          video[key] = key === "duration" ? Number(value) : value.trim();
         }
-        const response = yield ctx.callTool(`${PACKAGE_NAME}:generate_${mode}`, request);
-        if (!response.success || !response.data) throw new Error(response.message);
-        const next = [response.data, ...historyRef.current].slice(0, 20);
-        historyRef.current = next;
-        setHistory(next);
-        setNotice("生成完成，文件已保存。");
-      }));
+        if (video.duration !== void 0 && (!Number.isInteger(video.duration) || video.duration < 1 || video.duration > 15)) throw new Error("视频时长应为 1 到 15 秒的整数。");
+        request = { ...video };
+      }
+      const response = await ctx.callTool(`${PACKAGE_NAME}:generate_${mode}`, request);
+      if (!response.success || !response.data) throw new Error(response.message);
+      const next = [response.data, ...historyRef.current].slice(0, 20);
+      historyRef.current = next;
+      setHistory(next);
+      setNotice("生成完成，文件已保存。");
     });
   }
   function field(key) {
@@ -266,12 +236,12 @@ function Workbench(ctx) {
   for (const item of history) content.push(card(`${providerById(item.provider).title} · ${item.model}`, [
     UI.Text({ text: item.prompt, maxLines: 3, color: colors.onSurfaceVariant }),
     ...item.assets.map((asset) => UI.Column({ spacing: 8, fillMaxWidth: true }, [item.kind === "image" ? UI.Image({ uri: asset.uri, height: 320, fillMaxWidth: true, contentScale: "fit", contentDescription: item.prompt }) : UI.Markdown({ text: asset.markdown }), UI.SelectionContainer({}, UI.Text({ text: asset.uri, style: "bodySmall", color: colors.onSurfaceVariant }))])),
-    UI.FlowRow({ spacing: 8, runSpacing: 8 }, [UI.TextButton({ text: "复用描述", enabled: !busy, onClick: () => setPrompt(item.prompt) }), UI.TextButton({ text: "复制结果引用", enabled: !busy, onClick: () => __async(null, null, function* () {
-      yield run("正在复制…", () => __async(null, null, function* () {
-        yield Tools.System.setClipboardText(item.markdown);
+    UI.FlowRow({ spacing: 8, runSpacing: 8 }, [UI.TextButton({ text: "复用描述", enabled: !busy, onClick: () => setPrompt(item.prompt) }), UI.TextButton({ text: "复制结果引用", enabled: !busy, onClick: async () => {
+      await run("正在复制…", async () => {
+        await Tools.System.setClipboardText(item.markdown);
         setNotice("结果引用已复制。");
-      }));
-    }) })])
+      });
+    } })])
   ]));
   return UI.ScrollArea({ fillMaxSize: true }, UI.Box({ fillMaxWidth: true, contentAlignment: "topCenter", padding: 16 }, UI.Column({ modifier: M.widthIn(0, 1e3), fillMaxWidth: true, spacing: 16, horizontalAlignment: "start" }, content)));
 }

@@ -85,7 +85,7 @@ var RuntimeContext = (function() {
                 Object.keys(envs),
                 Object.keys(contextFunctions)
             );
-            var createRunner = eval(factorySource);
+            var createRunner = rootObject().__operitCompileJavaScript('return ' + factorySource + ';')();
             var runner = createRunner(envs, contextFunctions);
             if (typeof runner !== 'function') {
                 throw new Error('withContext runner source did not evaluate to a function');

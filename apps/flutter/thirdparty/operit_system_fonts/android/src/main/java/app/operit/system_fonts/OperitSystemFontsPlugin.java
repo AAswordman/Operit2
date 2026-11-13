@@ -54,6 +54,8 @@ public final class OperitSystemFontsPlugin implements FlutterPlugin, MethodChann
               File[] files = directory.listFiles();
               if (files == null) continue; // Only readable system resources belong to the catalog.
               for (File file : files) {
+                // Cyclic or broken symbolic links do not resolve to readable regular files.
+                if (!file.isFile() || !file.canRead()) continue;
                 String name = file.getName().toLowerCase(java.util.Locale.ROOT);
                 if (name.endsWith(".ttf") || name.endsWith(".otf") || name.endsWith(".ttc") || name.endsWith(".otc")) catalog(file);
               }

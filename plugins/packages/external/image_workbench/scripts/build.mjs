@@ -25,7 +25,7 @@ export async function bundles() {
     const source = await readFile(path.join(root, `src/${entry}.ts`), 'utf8');
     const metadata = entry === 'tools' ? source.match(/^\/\* METADATA[\s\S]*?\*\//)?.[0] : undefined;
     if (entry === 'tools' && !metadata) throw new Error('Missing unified tool metadata');
-    const result = await build({ absWorkingDir: root, entryPoints: [`src/${entry}.ts`], bundle: true, write: false, format: 'cjs', platform: 'neutral', target: 'es2020', supported: { 'async-await': false }, charset: 'utf8',
+    const result = await build({ absWorkingDir: root, entryPoints: [`src/${entry}.ts`], bundle: true, write: false, format: 'cjs', platform: 'neutral', target: 'es2020', charset: 'utf8',
       external: entry === 'main' ? ['./ui/*.ui.js'] : [], ...(metadata ? { banner: { js: metadata } } : {}) });
     files[`dist/${entry}.js`] = result.outputFiles[0].contents;
   }
