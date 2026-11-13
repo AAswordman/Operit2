@@ -51,8 +51,6 @@ pub struct RuntimePluginAsset {
     pub name: &'static str,
     pub bytes: &'static [u8],
     pub sha256: &'static str,
-    /// Source modification time in Unix microseconds, shared by every packaged copy.
-    pub modified_at: i64,
 }
 
 /// Bundled external skill asset exposed by the runtime crate.

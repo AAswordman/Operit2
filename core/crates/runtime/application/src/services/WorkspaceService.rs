@@ -203,6 +203,48 @@ impl WorkspaceService {
         self.workspaceStore.getAll().map_err(|error| error.to_string())
     }
 
+    /// Deletes, copies or moves an entry within the chat's workspace roots.
+    #[allow(non_snake_case)]
+    pub fn mutateWorkspaceFile(
+        &self,
+        chatId: String,
+        operation: String,
+        relativePath: String,
+        destinationPath: Option<String>,
+    ) -> Result<(), String> {
+        if !matches!(operation.as_str(), "delete" | "copy" | "move") {
+            return Err("Unsupported workspace file operation".to_string());
+        }
+        let relativePath = VfsPath::normalizeRelativePath(&relativePath)?;
+        let workspace = self.boundWorkspace(&chatId)?;
+        validateMutableEntryPath(&relativePath, workspace.is_some(), operation != "copy")?;
+        let source = self.filePathForChat(&chatId, &relativePath)?;
+        let vfs = self.vfs();
+        let info = vfs.fileExists(&source)?;
+        if !info.exists {
+            return Err("File or folder no longer exists".to_string());
+        }
+        if operation == "delete" {
+            return self.trackWorkspaceChange(&source, || vfs.deleteFile(&source, info.isDirectory));
+        }
+        let destinationRelative = VfsPath::normalizeRelativePath(
+            destinationPath.as_deref().ok_or("Destination path is required")?,
+        )?;
+        validateMutableEntryPath(&destinationRelative, workspace.is_some(), true)?;
+        let destination = self.filePathForChat(&chatId, &destinationRelative)?;
+        vfs.validateTransfer(&source, &destination, info.isDirectory)?;
+        if vfs.fileExists(&destination)?.exists {
+            return Err("A file or folder with this name already exists".to_string());
+        }
+        self.trackWorkspaceChanges(&[&source, &destination], || {
+            if operation == "copy" {
+                vfs.copyFile(&source, &destination, info.isDirectory)
+            } else {
+                vfs.moveFile(&source, &destination)
+            }
+        })
+    }
+
     /// Reads a text file from a chat-bound workspace.
     #[allow(non_snake_case)]
     pub fn readWorkspaceTextFile(
@@ -382,21 +424,26 @@ impl WorkspaceService {
     }
 
     fn trackWorkspaceChange<T>(&self, path: &str, change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        let relative = VfsPath::relativePath(VfsPath::workspaceCollectionPath(), path)?;
-        let workspacePath = relative
-            .filter(|relative| !relative.is_empty())
-            .map(|relative| format!("workspaces/{relative}"))
-            .or_else(|| path.strip_prefix("/operitapp/outputs/")
-                .or_else(|| path.strip_prefix("/app/outputs/"))
-                .map(|relative| format!("{}/{relative}", operit_util::RuntimeStorageLayout::RUNTIME_CHAT_OUTPUTS_DIR_PATH)));
-        match workspacePath {
-            // Observe UI edits immediately instead of waiting for the next scan.
-            Some(workspacePath) => {
-                operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
-                    self.runtimeStorageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
-                ).trackPaths(&[workspacePath.as_str()], change)
+        self.trackWorkspaceChanges(&[path], change)
+    }
+
+    fn trackWorkspaceChanges<T>(&self, paths: &[&str], change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let mut tracked = Vec::new();
+        for path in paths {
+            let relative = VfsPath::relativePath(VfsPath::workspaceCollectionPath(), path)?;
+            if let Some(relative) = relative.filter(|relative| !relative.is_empty()) {
+                tracked.push(format!("workspaces/{relative}"));
+            } else if let Some(relative) = path.strip_prefix("/operitapp/outputs/")
+                .or_else(|| path.strip_prefix("/app/outputs/")) {
+                tracked.push(format!("{}/{relative}", operit_util::RuntimeStorageLayout::RUNTIME_CHAT_OUTPUTS_DIR_PATH));
             }
-            None => change(),
+        }
+        if tracked.is_empty() {
+            change()
+        } else {
+            operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
+                self.runtimeStorageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            ).trackPaths(&tracked, change)
         }
     }
 
@@ -665,4 +712,27 @@ fn validateWorkspaceName(workspaceName: &str) -> Result<(), String> {
         return Err(format!("invalid workspace name: {workspaceName}"));
     }
     Ok(())
+}
+
+/// Mounted folder roots are managed through workspace binding, not file actions.
+fn validateMutableEntryPath(path: &str, bound: bool, modifying: bool) -> Result<(), String> {
+    if path.is_empty() || (bound && modifying && !path.contains('/')) {
+        return Err("Workspace roots cannot be renamed, deleted or replaced".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod file_mutation_tests {
+    use super::*;
+
+    #[test]
+    fn protects_roots_but_allows_files_and_root_copies() {
+        assert!(validateMutableEntryPath("", false, true).is_err());
+        assert!(validateMutableEntryPath("project", true, true).is_err());
+        assert!(validateMutableEntryPath("project", true, false).is_ok());
+        assert!(validateMutableEntryPath("project/file.txt", true, true).is_ok());
+        assert!(validateMutableEntryPath("file.txt", false, true).is_ok());
+    }
+
 }

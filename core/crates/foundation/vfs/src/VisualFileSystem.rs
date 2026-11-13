@@ -318,6 +318,18 @@ impl VisualFileSystem {
             .map_err(hostErrorMessage)
     }
 
+    /// Rejects self/descendant transfers, including aliases of overlapping mounts.
+    pub fn validateTransfer(&self, source: &str, destination: &str, directory: bool) -> Result<(), String> {
+        let source = self.resolvePath(source)?.physicalPath;
+        let destination = self.resolvePath(destination)?.physicalPath;
+        let source = source.trim_end_matches('/');
+        let destination = destination.trim_end_matches('/');
+        if source == destination || (directory && destination.starts_with(&format!("{source}/"))) {
+            return Err("Cannot paste an entry onto itself or into its own subfolder".to_string());
+        }
+        Ok(())
+    }
+
     /// Moves a file between two mapped host paths.
     #[allow(non_snake_case)]
     pub fn moveFile(&self, source: &str, destination: &str) -> Result<(), String> {
@@ -599,6 +611,16 @@ mod tests {
         vfs.deleteFile(&directory, true).unwrap();
         assert!(!vfs.fileExists(&path).unwrap().exists);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transfer_validation_rejects_aliases_and_descendants() {
+        let (vfs, root) = vfs();
+        assert!(vfs.validateTransfer("/operitapp/workspaces/a", "/app/workspaces/a", true).is_err());
+        assert!(vfs.validateTransfer("/app/workspaces/a", "/operitapp/workspaces/a/child", true).is_err());
+        assert!(vfs.validateTransfer("/operitapp/workspaces/a", "/operitapp/workspaces/a-copy", true).is_ok());
+        assert!(vfs.validateTransfer("/operitapp/workspaces/a", "/operitapp/workspaces/b/a", true).is_ok());
+        if root.exists() { std::fs::remove_dir_all(root).unwrap(); }
     }
 
     fn vfs() -> (VisualFileSystem, PathBuf) {

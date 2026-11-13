@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceFileIcon.dart';
+import 'WorkspaceFileRenameDialog.dart';
+import '../../../../main/components/SidebarMoreMenu.dart';
 
 /// A lazily loaded explorer. Only visible rows are built and collapsed folders
 /// keep their cached children until the user refreshes the listing.
@@ -20,8 +22,16 @@ class WorkspaceFileTree extends StatefulWidget {
     required this.rootEntries,
     required this.onListDirectory,
     required this.onOpenFile,
+    this.protectWorkspaceRoots = false,
+    this.onMutate,
+    this.clipboard,
+    this.onFilesChanged,
   });
 
+  final WorkspaceFileMutation? onMutate;
+  final WorkspaceFileClipboard? clipboard;
+  final VoidCallback? onFilesChanged;
+  final bool protectWorkspaceRoots;
   final String rootPath;
   final String rootLabel;
   final Future<List<WorkspaceFileEntry>> rootEntries;
@@ -39,6 +49,9 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
   final _errors = <String, Object>{};
   final _scroll = ScrollController();
   final _focus = FocusNode();
+  final _localClipboard = WorkspaceFileClipboard();
+  bool _mutating = false;
+  bool _menuOpen = false;
   String? _selected;
   bool _rootExpanded = true;
   int _generation = 0;
@@ -46,12 +59,19 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
   @override
   void initState() {
     super.initState();
+    _clipboard.addListener(_clipboardChanged);
     _reload();
   }
 
   @override
   void didUpdateWidget(covariant WorkspaceFileTree oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.clipboard != widget.clipboard) {
+      (oldWidget.clipboard ?? _localClipboard).removeListener(
+        _clipboardChanged,
+      );
+      _clipboard.addListener(_clipboardChanged);
+    }
     final rootChanged =
         oldWidget.rootPath != widget.rootPath ||
         oldWidget.rootLabel != widget.rootLabel;
@@ -65,6 +85,8 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
 
   @override
   void dispose() {
+    _clipboard.removeListener(_clipboardChanged);
+    _localClipboard.dispose();
     _scroll.dispose();
     _focus.dispose();
     super.dispose();
@@ -212,6 +234,239 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
     return KeyEventResult.handled;
   }
 
+  WorkspaceFileClipboard get _clipboard => widget.clipboard ?? _localClipboard;
+
+  void _clipboardChanged() {
+    if (mounted) setState(() {});
+  }
+
+  String _parentPath(String path) {
+    final slash = path.lastIndexOf('/');
+    return slash < 0 ? '' : path.substring(0, slash);
+  }
+
+  String _joinPath(String parent, String name) =>
+      parent.isEmpty ? name : '$parent/$name';
+
+  bool _canPaste(String directory) {
+    final value = _clipboard.value;
+    if (value == null ||
+        _mutating ||
+        (widget.protectWorkspaceRoots && directory.isEmpty)) {
+      return false;
+    }
+    final source = value.entry.relativePath;
+    if (value.cut && _parentPath(source) == directory) return false;
+    return !value.entry.isDirectory ||
+        (directory != source && !directory.startsWith('$source/'));
+  }
+
+  Future<void> _showActions(
+    Offset position, {
+    WorkspaceFileEntry? entry,
+    required String directory,
+  }) async {
+    if (widget.onMutate == null || _mutating || _menuOpen) return;
+    _menuOpen = true;
+    if (entry != null) setState(() => _selected = entry.relativePath);
+    final l10n = AppLocalizations.of(context)!;
+    final generation = _generation;
+    final mutable =
+        entry != null &&
+        !(widget.protectWorkspaceRoots && !entry.relativePath.contains('/'));
+    final actions = <SidebarMenuAction<_FileAction>>[
+      if (entry != null) ...[
+        SidebarMenuAction(
+          value: _FileAction.rename,
+          icon: Icons.edit_outlined,
+          label: l10n.workspaceFileRename,
+          enabled: mutable,
+        ),
+        SidebarMenuAction(
+          value: _FileAction.copy,
+          icon: Icons.copy_outlined,
+          label: l10n.workspaceFileCopy,
+        ),
+        SidebarMenuAction(
+          value: _FileAction.cut,
+          icon: Icons.content_cut,
+          label: l10n.workspaceFileCut,
+          enabled: mutable,
+        ),
+      ],
+      SidebarMenuAction(
+        value: _FileAction.paste,
+        icon: Icons.content_paste,
+        label: l10n.workspaceFilePaste,
+        enabled: _canPaste(directory),
+      ),
+      if (entry != null)
+        SidebarMenuAction(
+          value: _FileAction.delete,
+          icon: Icons.delete_outline,
+          label: l10n.delete,
+          enabled: mutable,
+          danger: true,
+          dividerBefore: true,
+        ),
+    ];
+    final action = await showSidebarContextMenu(
+      context,
+      position: position,
+      actions: actions,
+    );
+    _menuOpen = false;
+    if (!mounted || generation != _generation || action == null) return;
+    switch (action) {
+      case _FileAction.copy:
+      case _FileAction.cut:
+        _clipboard.value = WorkspaceFileClipboardEntry(
+          entry!,
+          cut: action == _FileAction.cut,
+        );
+      case _FileAction.rename:
+        await _rename(entry!);
+      case _FileAction.paste:
+        await _paste(directory);
+      case _FileAction.delete:
+        await _delete(entry!);
+    }
+  }
+
+  Future<void> _rename(WorkspaceFileEntry entry) async {
+    final generation = _generation;
+    final name = await showDialog<String>(
+      context: context,
+      useRootNavigator: false,
+      builder: (_) => WorkspaceFileRenameDialog(entry: entry),
+    );
+    if (!mounted ||
+        generation != _generation ||
+        name == null ||
+        name == entry.name) {
+      return;
+    }
+    await _mutate(
+      WorkspaceFileOperation.move,
+      entry.relativePath,
+      _joinPath(_parentPath(entry.relativePath), name),
+    );
+  }
+
+  Future<void> _delete(WorkspaceFileEntry entry) async {
+    final generation = _generation;
+    if (entry.isDirectory) {
+      final l10n = AppLocalizations.of(context)!;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        useRootNavigator: false,
+        builder: (context) => AlertDialog(
+          title: Text(l10n.workspaceDeleteFolderTitle),
+          content: Text(l10n.workspaceDeleteFolderMessage(entry.name)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(l10n.delete),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    if (!mounted || generation != _generation) return;
+    await _mutate(WorkspaceFileOperation.delete, entry.relativePath, null);
+  }
+
+  Future<void> _paste(String directory) async {
+    if (!_canPaste(directory)) return;
+    final clipboard = _clipboard.value!;
+    final entry = clipboard.entry;
+    final generation = _generation;
+    setState(() => _mutating = true);
+    try {
+      var destination = _joinPath(directory, entry.name);
+      if (!clipboard.cut && destination == entry.relativePath) {
+        final entries = await widget.onListDirectory(directory);
+        if (!mounted || generation != _generation) return;
+        final names = entries.map((entry) => entry.name).toSet();
+        final dot = entry.isDirectory ? -1 : entry.name.lastIndexOf('.');
+        final stem = dot > 0 ? entry.name.substring(0, dot) : entry.name;
+        final suffix = dot > 0 ? entry.name.substring(dot) : '';
+        var index = 1;
+        String name;
+        do {
+          name =
+              '${AppLocalizations.of(context)!.workspaceFileCopyName(stem, index++)}$suffix';
+        } while (names.contains(name));
+        destination = _joinPath(directory, name);
+      }
+      if (!mounted || generation != _generation) return;
+      await _mutate(
+        clipboard.cut
+            ? WorkspaceFileOperation.move
+            : WorkspaceFileOperation.copy,
+        entry.relativePath,
+        destination,
+      );
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _mutating = false);
+    }
+  }
+
+  Future<void> _mutate(
+    WorkspaceFileOperation operation,
+    String path,
+    String? destination,
+  ) async {
+    final mutate = widget.onMutate;
+    if (mutate == null) return;
+    setState(() => _mutating = true);
+    try {
+      await mutate(operation, path, destination);
+      if (!mounted) return;
+      final clipboard = _clipboard.value;
+      if (operation != WorkspaceFileOperation.copy &&
+          clipboard != null &&
+          (clipboard.entry.relativePath == path ||
+              clipboard.entry.relativePath.startsWith('$path/'))) {
+        _clipboard.value = null;
+      }
+      // Forget stale expanded branches below a moved/deleted entry.
+      if (operation != WorkspaceFileOperation.copy) {
+        _expanded.removeWhere(
+          (value) => value == path || value.startsWith('$path/'),
+        );
+        _selected = destination;
+      }
+      widget.onFilesChanged?.call();
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _mutating = false);
+    }
+  }
+
+  void _showError(Object error) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          AppLocalizations.of(
+            context,
+          )!.workspaceFileOperationFailed(error.toString()),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -235,6 +490,20 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
         Semantics(
           expanded: _rootExpanded,
           child: InkWell(
+            onLongPress: widget.onMutate == null
+                ? null
+                : () => _showActions(
+                    (context.findRenderObject()! as RenderBox).localToGlobal(
+                      const Offset(20, 20),
+                    ),
+                    directory: widget.rootPath,
+                  ),
+            onSecondaryTapUp: widget.onMutate == null
+                ? null
+                : (details) => _showActions(
+                    details.globalPosition,
+                    directory: widget.rootPath,
+                  ),
             onTap: () => setState(() => _rootExpanded = !_rootExpanded),
             child: SizedBox(
               height: rowHeight + 4,
@@ -277,16 +546,31 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
                   PointerDeviceKind.stylus,
                 },
               ),
-              child: Scrollbar(
-                controller: _scroll,
-                child: ListView.builder(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPressStart: widget.onMutate == null
+                    ? null
+                    : (details) => _showActions(
+                        details.globalPosition,
+                        directory: widget.rootPath,
+                      ),
+                onSecondaryTapUp: widget.onMutate == null
+                    ? null
+                    : (details) => _showActions(
+                        details.globalPosition,
+                        directory: widget.rootPath,
+                      ),
+                child: Scrollbar(
                   controller: _scroll,
-                  primary: false,
-                  padding: const EdgeInsets.only(bottom: 8),
-                  itemExtent: rowHeight,
-                  itemCount: rows.length,
-                  itemBuilder: (context, index) =>
-                      _buildRow(context, rows[index]),
+                  child: ListView.builder(
+                    controller: _scroll,
+                    primary: false,
+                    padding: const EdgeInsets.only(bottom: 8),
+                    itemExtent: rowHeight,
+                    itemCount: rows.length,
+                    itemBuilder: (context, index) =>
+                        _buildRow(context, rows[index]),
+                  ),
                 ),
               ),
             ),
@@ -319,98 +603,140 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
             color: selected
                 ? colors.primary.withValues(alpha: 0.12)
                 : Colors.transparent,
-            child: InkWell(
-              canRequestFocus: false,
-              onTap: entry != null
-                  ? () => _activate(entry)
-                  : error != null
-                  ? () => setState(() {
-                      _load(row.path);
-                    })
-                  : null,
-              child: Tooltip(
-                message: entry?.relativePath ?? error?.toString() ?? label,
-                child: Stack(
-                  alignment: Alignment.centerLeft,
-                  children: [
-                    for (
-                      var level = 0;
-                      level < row.depth && level * 16 < indent;
-                      level++
-                    )
-                      Positioned(
-                        left: 14 + level * 16,
-                        top: 0,
-                        bottom: 0,
-                        child: VerticalDivider(
-                          width: 1,
-                          thickness: 1,
-                          color: colors.outlineVariant.withValues(alpha: 0.45),
-                        ),
-                      ),
-                    Padding(
-                      padding: EdgeInsets.only(left: 6 + indent, right: 10),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 18,
-                            child: entry?.isDirectory == true
-                                ? Icon(
-                                    opened
-                                        ? Icons.expand_more
-                                        : Icons.chevron_right,
-                                    size: 16,
-                                    color: colors.onSurfaceVariant,
-                                  )
-                                : null,
-                          ),
-                          const SizedBox(width: 4),
-                          if (entry != null)
-                            entry.isDirectory
-                                ? Icon(
-                                    opened ? Icons.folder_open : Icons.folder,
-                                    size: 16,
-                                    color: const Color(0xFFD4AD6A),
-                                  )
-                                : buildWorkspaceFileIcon(entry.name, size: 16)
-                          else if (loading)
-                            const SizedBox.square(
-                              dimension: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                              ),
-                            )
-                          else
-                            Icon(
-                              error != null
-                                  ? Icons.error_outline
-                                  : Icons.folder_off_outlined,
-                              size: 14,
-                              color: error != null
-                                  ? colors.error
-                                  : colors.onSurfaceVariant,
-                            ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              loading && entry == null ? '' : label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    fontSize: 13,
-                                    color: error != null && entry == null
-                                        ? colors.error
-                                        : entry == null
-                                        ? colors.onSurfaceVariant
-                                        : colors.onSurface,
-                                  ),
-                            ),
-                          ),
-                        ],
-                      ),
+            child: GestureDetector(
+              onLongPressStart: widget.onMutate == null
+                  ? null
+                  : (details) => _showActions(
+                      details.globalPosition,
+                      entry: entry,
+                      directory: entry?.isDirectory == true
+                          ? row.path
+                          : entry != null
+                          ? _parentPath(row.path)
+                          : row.path,
                     ),
-                  ],
+              child: InkWell(
+                onSecondaryTapUp: widget.onMutate == null
+                    ? null
+                    : (details) => _showActions(
+                        details.globalPosition,
+                        entry: entry,
+                        directory: entry?.isDirectory == true
+                            ? row.path
+                            : entry != null
+                            ? _parentPath(row.path)
+                            : row.path,
+                      ),
+                canRequestFocus: false,
+                onTap: entry != null
+                    ? () => _activate(entry)
+                    : error != null
+                    ? () => setState(() {
+                        _load(row.path);
+                      })
+                    : null,
+                child: Opacity(
+                  opacity:
+                      entry != null &&
+                          _clipboard.value?.cut == true &&
+                          _clipboard.value?.entry.relativePath == row.path
+                      ? 0.45
+                      : 1,
+                  child: Tooltip(
+                    triggerMode: widget.onMutate == null
+                        ? null
+                        : TooltipTriggerMode.manual,
+                    message: entry?.relativePath ?? error?.toString() ?? label,
+                    child: Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        for (
+                          var level = 0;
+                          level < row.depth && level * 16 < indent;
+                          level++
+                        )
+                          Positioned(
+                            left: 14 + level * 16,
+                            top: 0,
+                            bottom: 0,
+                            child: VerticalDivider(
+                              width: 1,
+                              thickness: 1,
+                              color: colors.outlineVariant.withValues(
+                                alpha: 0.45,
+                              ),
+                            ),
+                          ),
+                        Padding(
+                          padding: EdgeInsets.only(left: 6 + indent, right: 10),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 18,
+                                child: entry?.isDirectory == true
+                                    ? Icon(
+                                        opened
+                                            ? Icons.expand_more
+                                            : Icons.chevron_right,
+                                        size: 16,
+                                        color: colors.onSurfaceVariant,
+                                      )
+                                    : null,
+                              ),
+                              const SizedBox(width: 4),
+                              if (entry != null)
+                                entry.isDirectory
+                                    ? Icon(
+                                        opened
+                                            ? Icons.folder_open
+                                            : Icons.folder,
+                                        size: 16,
+                                        color: const Color(0xFFD4AD6A),
+                                      )
+                                    : buildWorkspaceFileIcon(
+                                        entry.name,
+                                        size: 16,
+                                      )
+                              else if (loading)
+                                const SizedBox.square(
+                                  dimension: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                  ),
+                                )
+                              else
+                                Icon(
+                                  error != null
+                                      ? Icons.error_outline
+                                      : Icons.folder_off_outlined,
+                                  size: 14,
+                                  color: error != null
+                                      ? colors.error
+                                      : colors.onSurfaceVariant,
+                                ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  loading && entry == null ? '' : label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        fontSize: 13,
+                                        color: error != null && entry == null
+                                            ? colors.error
+                                            : entry == null
+                                            ? colors.onSurfaceVariant
+                                            : colors.onSurface,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -420,6 +746,8 @@ class _WorkspaceFileTreeState extends State<WorkspaceFileTree> {
     );
   }
 }
+
+enum _FileAction { rename, copy, cut, paste, delete }
 
 class _TreeRow {
   const _TreeRow.entry(WorkspaceFileEntry this.entry, this.depth)

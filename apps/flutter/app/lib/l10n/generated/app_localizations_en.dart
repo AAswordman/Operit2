@@ -5027,4 +5027,45 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsAppearanceDeviceFontPreview =>
       'The quick brown fox · 0123456789\n字体预览：你好，世界';
+
+  @override
+  String get workspaceFileRename => 'Rename';
+
+  @override
+  String get workspaceFileCopy => 'Copy';
+
+  @override
+  String get workspaceFileCut => 'Cut';
+
+  @override
+  String get workspaceFilePaste => 'Paste';
+
+  @override
+  String get workspaceFileName => 'Name';
+
+  @override
+  String get workspaceFileInvalidName =>
+      'Enter a valid name without path separators.';
+
+  @override
+  String get workspaceDeleteFolderTitle => 'Delete folder?';
+
+  @override
+  String workspaceDeleteFolderMessage(String name) {
+    return 'Delete “$name” and all its contents? This cannot be undone.';
+  }
+
+  @override
+  String workspaceFileOperationFailed(String error) {
+    return 'File operation failed: $error';
+  }
+
+  @override
+  String workspaceFileCopyName(String name, int index) {
+    return '$name (copy $index)';
+  }
+
+  @override
+  String get workspaceFileSaving =>
+      'This file is being saved. Please try again when saving finishes.';
 }

@@ -78,50 +78,94 @@ class SidebarMoreMenuButton<T> extends StatelessWidget {
           side: side,
           compact: compact,
         ),
-        itemBuilder: (context) => [
-          for (final action in actions) ...<PopupMenuEntry<T>>[
-            if (action.dividerBefore) const PopupMenuDivider(height: 8),
-            PopupMenuItem<T>(
-              value: action.value,
-              enabled: action.enabled,
-              height: 32,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(
-                    action.icon,
-                    size: 14.5,
-                    color: !action.enabled
-                        ? colorScheme.onSurface.withValues(alpha: 0.38)
-                        : action.danger
-                        ? colorScheme.error.withValues(alpha: 0.90)
-                        : colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
-                  ),
-                  const SizedBox(width: 9),
-                  Flexible(
-                    child: Text(
-                      action.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w500,
-                        color: !action.enabled
-                            ? colorScheme.onSurface.withValues(alpha: 0.38)
-                            : action.danger
-                            ? colorScheme.error.withValues(alpha: 0.90)
-                            : colorScheme.onSurface.withValues(alpha: 0.92),
-                        letterSpacing: -0.1,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
+        itemBuilder: (context) => buildSidebarMenuItems(context, actions),
       ),
     );
   }
+}
+
+/// Opens the same compact menu at a long-press or secondary-click position.
+Future<T?> showSidebarContextMenu<T>(
+  BuildContext context, {
+  required Offset position,
+  required List<SidebarMenuAction<T>> actions,
+}) {
+  final colors = Theme.of(context).colorScheme;
+  final overlay =
+      Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+  return showMenu<T>(
+    context: context,
+    position: RelativeRect.fromRect(
+      Rect.fromLTWH(
+        overlay.globalToLocal(position).dx,
+        overlay.globalToLocal(position).dy,
+        0,
+        0,
+      ),
+      Offset.zero & overlay.size,
+    ),
+    color: Color.alphaBlend(
+      colors.surfaceContainerHighest.withValues(alpha: 0.75),
+      colors.surface,
+    ),
+    elevation: 6,
+    shadowColor: Colors.black.withValues(alpha: 0.45),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(10),
+      side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.4)),
+    ),
+    constraints: const BoxConstraints(minWidth: 118, maxWidth: 156),
+    menuPadding: const EdgeInsets.all(4),
+    items: buildSidebarMenuItems(context, actions),
+  );
+}
+
+List<PopupMenuEntry<T>> buildSidebarMenuItems<T>(
+  BuildContext context,
+  List<SidebarMenuAction<T>> actions,
+) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return [
+    for (final action in actions) ...<PopupMenuEntry<T>>[
+      if (action.dividerBefore) const PopupMenuDivider(height: 8),
+      PopupMenuItem<T>(
+        value: action.value,
+        enabled: action.enabled,
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              action.icon,
+              size: 14.5,
+              color: !action.enabled
+                  ? colorScheme.onSurface.withValues(alpha: 0.38)
+                  : action.danger
+                  ? colorScheme.error.withValues(alpha: 0.90)
+                  : colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+            ),
+            const SizedBox(width: 9),
+            Flexible(
+              child: Text(
+                action.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: !action.enabled
+                      ? colorScheme.onSurface.withValues(alpha: 0.38)
+                      : action.danger
+                      ? colorScheme.error.withValues(alpha: 0.90)
+                      : colorScheme.onSurface.withValues(alpha: 0.92),
+                  letterSpacing: -0.1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  ];
 }

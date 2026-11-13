@@ -8843,6 +8843,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The quick brown fox · 0123456789\n字体预览：你好，世界'**
   String get settingsAppearanceDeviceFontPreview;
+
+  /// No description provided for @workspaceFileRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get workspaceFileRename;
+
+  /// No description provided for @workspaceFileCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get workspaceFileCopy;
+
+  /// No description provided for @workspaceFileCut.
+  ///
+  /// In en, this message translates to:
+  /// **'Cut'**
+  String get workspaceFileCut;
+
+  /// No description provided for @workspaceFilePaste.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste'**
+  String get workspaceFilePaste;
+
+  /// No description provided for @workspaceFileName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get workspaceFileName;
+
+  /// No description provided for @workspaceFileInvalidName.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid name without path separators.'**
+  String get workspaceFileInvalidName;
+
+  /// No description provided for @workspaceDeleteFolderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete folder?'**
+  String get workspaceDeleteFolderTitle;
+
+  /// No description provided for @workspaceDeleteFolderMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete “{name}” and all its contents? This cannot be undone.'**
+  String workspaceDeleteFolderMessage(String name);
+
+  /// No description provided for @workspaceFileOperationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'File operation failed: {error}'**
+  String workspaceFileOperationFailed(String error);
+
+  /// No description provided for @workspaceFileCopyName.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} (copy {index})'**
+  String workspaceFileCopyName(String name, int index);
+
+  /// No description provided for @workspaceFileSaving.
+  ///
+  /// In en, this message translates to:
+  /// **'This file is being saved. Please try again when saving finishes.'**
+  String get workspaceFileSaving;
 }
 
 class _AppLocalizationsDelegate

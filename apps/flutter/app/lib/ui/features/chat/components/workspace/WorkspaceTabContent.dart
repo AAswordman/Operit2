@@ -34,6 +34,8 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.browserSessionCountListenable,
     this.terminalSessionsListenable,
     required this.onListWorkspaceFiles,
+    this.onMutateWorkspaceFile,
+    this.fileClipboard,
     required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
@@ -71,6 +73,8 @@ class WorkspaceTabContent extends StatelessWidget {
   terminalSessionsListenable;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
+  final WorkspaceFileMutation? onMutateWorkspaceFile;
+  final WorkspaceFileClipboard? fileClipboard;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceBindingDirectories;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
@@ -162,6 +166,9 @@ class WorkspaceTabContent extends StatelessWidget {
           rootLabel: rootPath,
           rootRelativePath: initialRelativePath,
           onListWorkspaceFiles: onListWorkspaceFiles,
+          onMutateWorkspaceFile: onMutateWorkspaceFile,
+          fileClipboard: fileClipboard,
+          protectWorkspaceRoots: workspacePath?.trim().isNotEmpty == true,
           onOpenFile: onOpenFile,
         );
       case WorkspaceTabKind.terminal:

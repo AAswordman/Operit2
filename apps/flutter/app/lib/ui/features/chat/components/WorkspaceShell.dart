@@ -30,6 +30,7 @@ class WorkspaceShell extends StatelessWidget {
     this.fileDirectory,
     required this.chatCore,
     required this.onListWorkspaceFiles,
+    this.onMutateWorkspaceFile,
     required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
@@ -50,6 +51,7 @@ class WorkspaceShell extends StatelessWidget {
   final GeneratedChatRuntimeHolderMainCoreProxy chatCore;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
+  final WorkspaceFileMutation? onMutateWorkspaceFile;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceBindingDirectories;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
@@ -104,6 +106,7 @@ class WorkspaceShell extends StatelessWidget {
           fileDirectory: fileDirectory,
           chatCore: chatCore,
           onListWorkspaceFiles: onListWorkspaceFiles,
+          onMutateWorkspaceFile: onMutateWorkspaceFile,
           onListWorkspaceBindingDirectories: onListWorkspaceBindingDirectories,
           onReadWorkspaceTextFile: onReadWorkspaceTextFile,
           onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,

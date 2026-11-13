@@ -665,6 +665,20 @@ class ChatViewModel {
     return entries;
   }
 
+  Future<void> mutateWorkspaceFile(
+    WorkspaceFileOperation operation,
+    String path,
+    String? destinationPath,
+  ) async {
+    final chatId = await _requiredCurrentChatId();
+    await clients.servicesWorkspaceService.mutateWorkspaceFile(
+      chatId: chatId,
+      operation: operation.name,
+      relativePath: path,
+      destinationPath: destinationPath,
+    );
+  }
+
   /// Lists workspace entries ranked for the active @ mention query.
   Future<List<WorkspaceFileEntry>> listMentionWorkspaceSuggestions(
     String searchQuery,

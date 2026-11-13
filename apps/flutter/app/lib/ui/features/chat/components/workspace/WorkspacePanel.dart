@@ -51,6 +51,7 @@ class WorkspacePanel extends StatefulWidget {
     this.fileDirectory,
     required this.chatCore,
     required this.onListWorkspaceFiles,
+    this.onMutateWorkspaceFile,
     required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
     required this.onReadWorkspaceFileBytes,
@@ -70,6 +71,7 @@ class WorkspacePanel extends StatefulWidget {
   final GeneratedChatRuntimeHolderMainCoreProxy chatCore;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
+  final WorkspaceFileMutation? onMutateWorkspaceFile;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceBindingDirectories;
   final Future<String> Function(String path) onReadWorkspaceTextFile;
@@ -107,6 +109,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   int? _dropHoverPaneIndex;
   _WorkspaceDropZone? _dropHoverZone;
   int _filesListingRevision = 0;
+  final _fileClipboard = WorkspaceFileClipboard();
   bool _workspaceUnbindDialogOpen = false;
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
@@ -198,6 +201,12 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didUpdateWidget(covariant WorkspacePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.workspacePath != widget.workspacePath ||
+        oldWidget.fileDirectory != widget.fileDirectory) {
+      _fileClipboard.value = null;
+      _filesListingRevision++;
+    }
     if (oldWidget.sidebarDockController != widget.sidebarDockController) {
       oldWidget.sidebarDockController?.removeListener(
         _handleSidebarDockChanged,
@@ -225,6 +234,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   /// Releases subscriptions and invalidates every asynchronous overview request.
   @override
   void dispose() {
+    _fileClipboard.dispose();
     _embeddedContributions.dispose();
     _session.removeListener(_handleSessionChanged);
     widget.sidebarDockController?.removeListener(_handleSidebarDockChanged);
@@ -1142,6 +1152,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       terminalSessionCountListenable: _terminalSessionCount,
       browserSessionCountListenable: _browserSessionCount,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,
+      onMutateWorkspaceFile: widget.onMutateWorkspaceFile == null
+          ? null
+          : _mutateWorkspaceFile,
+      fileClipboard: _fileClipboard,
       onListWorkspaceBindingDirectories:
           widget.onListWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
@@ -1737,6 +1751,72 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     } finally {
       _workspaceUnbindDialogOpen = false;
     }
+  }
+
+  /// Keeps open documents on their new path and removes previews of deleted files.
+  Future<void> _mutateWorkspaceFile(
+    WorkspaceFileOperation operation,
+    String path,
+    String? destination,
+  ) async {
+    final chatId = widget.currentChatId;
+    bool affected(WorkspaceTab tab) =>
+        (tab.kind == WorkspaceTabKind.filePreview ||
+            tab.kind == WorkspaceTabKind.files) &&
+        (tab.filePath == path || tab.filePath?.startsWith('$path/') == true);
+    if (operation != WorkspaceFileOperation.copy &&
+        [
+          ..._session.tabs,
+          ..._session.secondaryTabs,
+        ].any((tab) => affected(tab) && tab.textDocument?.isSaving == true)) {
+      throw StateError(AppLocalizations.of(context)!.workspaceFileSaving);
+    }
+    await widget.onMutateWorkspaceFile!(operation, path, destination);
+    if (!mounted ||
+        widget.currentChatId != chatId ||
+        operation == WorkspaceFileOperation.copy) {
+      return;
+    }
+    WorkspaceFileEntry? destinationEntry;
+    if (destination != null) {
+      final slash = destination.lastIndexOf('/');
+      try {
+        final siblings = await widget.onListWorkspaceFiles(
+          slash < 0 ? '' : destination.substring(0, slash),
+        );
+        destinationEntry = siblings
+            .where((entry) => entry.relativePath == destination)
+            .firstOrNull;
+      } catch (_) {
+        // The mutation already succeeded. Relative paths still allow reading and
+        // saving if the destination's listing is temporarily unavailable.
+      }
+    }
+    if (!mounted || widget.currentChatId != chatId) return;
+    setState(() {
+      for (var pane = 0; pane < 2; pane++) {
+        final tabs = _tabsForPane(pane);
+        for (var index = tabs.length - 1; index >= 0; index--) {
+          final tab = tabs[index];
+          if (!affected(tab)) continue;
+          if (operation == WorkspaceFileOperation.delete) {
+            final selected = _selectedIndexForPane(pane);
+            tabs.removeAt(index);
+            if (selected >= index) _setSelectedIndexForPane(pane, selected - 1);
+          } else {
+            final suffix = tab.filePath!.substring(path.length);
+            final newPath = '$destination$suffix';
+            tabs[index] = tab.withFileLocation(
+              newPath,
+              destinationEntry == null
+                  ? null
+                  : '${destinationEntry.path}$suffix',
+            );
+          }
+        }
+      }
+      _collapseEmptyPane();
+    });
   }
 
   /// Opens the file tree for one mounted workspace folder.

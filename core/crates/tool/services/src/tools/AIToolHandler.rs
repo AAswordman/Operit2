@@ -2233,7 +2233,7 @@ mod tests {
             zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
             zip.write_all(source.as_bytes()).unwrap();
         }
-        let assets = Box::leak(vec![RuntimePluginAsset { modified_at: 0,
+        let assets = Box::leak(vec![RuntimePluginAsset {
             name: "scan_probe.toolpkg", sha256: "scan-probe-v1",
             bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
         }].into_boxed_slice());
@@ -2313,6 +2313,78 @@ mod tests {
         restarted.executionEngineShutdown()();
         cold.executionEngineShutdown()();
     }
+    /// An older application's bundled archive must not replace a newer shared installation.
+    #[test]
+    fn bundled_updates_only_offer_newer_versions_after_peer_sync() {
+        use std::io::Write;
+        use operit_host_api::RuntimeStorageHost;
+        use operit_store::{ExtensionStore::ExtensionStore, RuntimeFileSyncStore::RuntimeFileSyncStore,
+            SyncOperationStore::{SyncClock, SyncOperationStore}};
+        const ID: &str = "update.probe";
+        const ARCHIVE: &str = "runtime/extensions/space/packages/update_probe.toolpkg";
+        const SYNC: &str = "runtime/sync";
+        fn archive(version: &str, content: &str) -> Vec<u8> {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            zip.start_file("manifest.json", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(&serde_json::to_vec(&serde_json::json!({
+                "toolpkg_id": ID, "version": version, "api_version": "2.0.0",
+                "enabled_by_default": false,
+                "resources": [{"key": "data", "path": "data.txt", "mime": "text/plain"}]
+            })).unwrap()).unwrap();
+            zip.start_file("data.txt", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+            zip.finish().unwrap().into_inner()
+        }
+        let assets = Box::leak(vec![RuntimePluginAsset {
+            name: "update_probe.toolpkg", sha256: "",
+            bytes: Box::leak(archive("2.0.0", "bundled copy").into_boxed_slice()),
+        }].into_boxed_slice());
+        let fixture = PipelineFixture::with_package_assets(Some(assets));
+        fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
+        let context = fixture.handler.getContext();
+        let target = context.runtimeStorageHost.unwrap();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(target.clone());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        let source = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+            fixture.root.join("peer/runtime"), fixture.root.join("peer/workspaces")));
+        let store = ExtensionStore::new(source.clone());
+        store.registerInScope("package", ID, "update_probe.toolpkg", serde_json::json!({
+            "members": [ID], "enabledNames": [], "disabledNames": [ID],
+            "subpackageStates": {}, "order": 0, "builtin": false,
+            "installationId": "00000000000000000000000000000000"
+        }), "space").unwrap();
+        let manager = fixture.handler.getOrCreatePackageManager();
+        let mut received = SyncClock::empty();
+        for (version, available) in [("1.0.0", true), ("2.0.0", false), ("3.0.0", false), ("unknown", false)] {
+            source.writeBytes(ARCHIVE, &archive(version, "synced copy")).unwrap();
+            let modified = source.modifiedAt(ARCHIVE).unwrap();
+            store.installBundledPackageSource(ID, "update_probe.toolpkg", vec![ID.into()], "space").unwrap();
+            assert_eq!(source.modifiedAt(ARCHIVE).unwrap(), modified, "publishing must not rewrite the source");
+            let log = SyncOperationStore::new(source.clone(), SYNC);
+            let operations = log.operationsSince(&received, &["runtime_file".into()], 100).unwrap();
+            let target_log = SyncOperationStore::new(target.clone(), SYNC);
+            for operation in &operations {
+                if let Some(reference) = RuntimeFileSyncStore::requiredBlob(operation).unwrap() {
+                    let bytes = RuntimeFileSyncStore::new(source.clone(), SYNC).readBlob(&reference).unwrap();
+                    RuntimeFileSyncStore::new(target.clone(), SYNC).writeBlob(&reference, &bytes).unwrap();
+                }
+                if target_log.shouldApplyOperation(operation).unwrap() {
+                    RuntimeFileSyncStore::applySyncedOperation(target.clone(), SYNC,
+                        &operation.entityId, &operation.operation, operation.payload.clone()).unwrap();
+                    target_log.recordAppliedOperation(operation).unwrap();
+                }
+                target_log.appendOperation(operation).unwrap();
+            }
+            received = log.localClock().unwrap();
+            assert_eq!(target.modifiedAt(ARCHIVE).unwrap(), modified);
+            let mut manager = manager.lock().unwrap();
+            manager.loadAvailablePackages();
+            assert_eq!(manager.getToolPkgContainerRuntime(ID).unwrap().version, version);
+            assert_eq!(manager.getBundledExternalPackageCandidates().iter()
+                .any(|candidate| candidate.packageName == ID), available, "installed {version}");
+        }
+    }
+
     impl Drop for PipelineFixture {
         /// Breaks the package-manager ownership cycle before releasing the fixture handler.
         fn drop(&mut self) {
@@ -2532,7 +2604,7 @@ mod tests {
     /// Package discovery must work without interactive approval in both restricted AI modes.
     #[tokio::test(flavor = "current_thread")]
     async fn package_activation_does_not_require_write_approval() {
-        static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset { modified_at: 0,
+        static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
             name: "clock_probe.js", sha256: "", bytes: br#"/* METADATA
             {"name":"clock_probe","description":"Clock query tools","enabledByDefault":true,
              "tools":[{"name":"get_current_date","description":"Get the current date and time","parameters":[],"display":{"label":{"en":"Clock","fr":"Horloge"},"icon":"time"}}]}
@@ -2604,7 +2676,7 @@ mod tests {
             zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
             zip.write_all(content.as_bytes()).unwrap();
         }
-        let assets = Box::leak(vec![RuntimePluginAsset { modified_at: 0,
+        let assets = Box::leak(vec![RuntimePluginAsset {
             name: "configuration_probe.toolpkg", sha256: "",
             bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
         }].into_boxed_slice());
@@ -2684,10 +2756,10 @@ mod tests {
             Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice())
         }
         let assets = Box::leak(vec![
-            RuntimePluginAsset { modified_at: 0, name: "healthy.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+            RuntimePluginAsset { name: "healthy.toolpkg", sha256: "", bytes: archive(serde_json::json!({
                 "toolpkg_id":"healthy_plugin", "resources":[{"key":"text","path":"data.txt","mime":"text/plain"}]
             })) },
-            RuntimePluginAsset { modified_at: 0, name: "broken_theme.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+            RuntimePluginAsset { name: "broken_theme.toolpkg", sha256: "", bytes: archive(serde_json::json!({
                 "toolpkg_id":"broken_theme", "themes":[{"id":"default","path":"theme.json","preview":"preview.png","files":[
                     {"path":"theme.json","mediaType":"application/json"}, {"path":"preview.png","mediaType":"image/png"}
                 ]}]

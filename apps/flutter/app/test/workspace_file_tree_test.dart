@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:operit2/ui/features/chat/components/workspace/WorkspaceTabModels.dart';
+import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceTextDocument.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -60,6 +63,9 @@ void main() {
     Future<List<WorkspaceFileEntry>> Function(String)? list,
     Future<void> Function(WorkspaceFileEntry)? open,
     double textScale = 1,
+    WorkspaceFileMutation? mutate,
+    WorkspaceFileClipboard? clipboard,
+    bool protectWorkspaceRoots = false,
   }) async {
     await tester.pumpWidget(
       _app(
@@ -68,12 +74,261 @@ void main() {
           rootRelativePath: '',
           onListWorkspaceFiles: list ?? (path) async => fixtures[path] ?? [],
           onOpenFile: open ?? (_) async {},
+          onMutateWorkspaceFile: mutate,
+          fileClipboard: clipboard,
+          protectWorkspaceRoots: protectWorkspaceRoots,
         ),
         textScale: textScale,
       ),
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('long press opens compact actions without opening the file', (
+    tester,
+  ) async {
+    var opened = false;
+    await mount(
+      tester,
+      open: (_) async => opened = true,
+      mutate: (_, _, _) async {},
+    );
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    for (final label in ['重命名', '复制', '剪切', '粘贴', '删除']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    expect(opened, isFalse);
+    final material = find
+        .ancestor(of: find.text('复制'), matching: find.byType(Material))
+        .first;
+    expect(tester.getSize(material).width, lessThanOrEqualTo(156));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'secondary click deletes files immediately and refreshes the tree',
+    (tester) async {
+      final entries = [_entry('README.md')];
+      final calls = <String>[];
+      await mount(
+        tester,
+        list: (_) async => List.of(entries),
+        mutate: (operation, path, destination) async {
+          calls.add('${operation.name}:$path');
+          entries.clear();
+        },
+      );
+      await tester.tap(find.text('README.md'), buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(calls, ['delete:README.md']);
+      expect(find.text('README.md'), findsNothing);
+    },
+  );
+
+  testWidgets('folder deletion requires confirmation and cancel preserves it', (
+    tester,
+  ) async {
+    var deleted = false;
+    await mount(tester, mutate: (_, _, _) async => deleted = true);
+    Future<void> requestDelete() async {
+      await tester.longPress(find.text('src'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除'));
+      await tester.pumpAndSettle();
+    }
+
+    await requestDelete();
+    expect(find.text('删除文件夹？'), findsOneWidget);
+    expect(deleted, isFalse);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(deleted, isFalse);
+    await requestDelete();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+    expect(deleted, isTrue);
+  });
+
+  testWidgets('rename validates leaf names and submits the new sibling path', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    await mount(
+      tester,
+      mutate: (operation, path, destination) async {
+        calls.add('${operation.name}:$path:$destination');
+      },
+    );
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '../oops');
+    await tester.tap(find.widgetWithText(FilledButton, '重命名'));
+    await tester.pumpAndSettle();
+    expect(calls, isEmpty);
+    expect(find.text('请输入有效名称，不能包含路径分隔符。'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'guide.md');
+    await tester.tap(find.widgetWithText(FilledButton, '重命名'));
+    await tester.pumpAndSettle();
+    expect(calls, ['move:README.md:guide.md']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('copy beside original chooses a free name and preserves suffix', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    await mount(
+      tester,
+      list: (_) async => [_entry('README.md'), _entry('README（副本 1）.md')],
+      mutate: (operation, path, destination) async =>
+          calls.add('${operation.name}:$path:$destination'),
+    );
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('复制'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('demo'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('粘贴'));
+    await tester.pumpAndSettle();
+    expect(calls, ['copy:README.md:README（副本 2）.md']);
+  });
+
+  testWidgets('cut pastes into folder and clears shared clipboard', (
+    tester,
+  ) async {
+    final clipboard = WorkspaceFileClipboard();
+    addTearDown(clipboard.dispose);
+    final calls = <String>[];
+    await mount(
+      tester,
+      clipboard: clipboard,
+      mutate: (operation, path, destination) async {
+        calls.add('${operation.name}:$path:$destination');
+      },
+    );
+    await tester.longPress(find.text('README.md'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('剪切'));
+    await tester.pumpAndSettle();
+    expect(clipboard.value?.cut, isTrue);
+    await tester.tap(find.text('src'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('粘贴'));
+    await tester.pumpAndSettle();
+    expect(calls, ['move:README.md:src/README.md']);
+    expect(clipboard.value, isNull);
+  });
+
+  testWidgets('failed paste keeps cut data and displays failure', (
+    tester,
+  ) async {
+    final clipboard = WorkspaceFileClipboard()
+      ..value = WorkspaceFileClipboardEntry(_entry('README.md'), cut: true);
+    addTearDown(clipboard.dispose);
+    await mount(
+      tester,
+      clipboard: clipboard,
+      mutate: (_, _, _) async {
+        throw StateError('Name already exists');
+      },
+    );
+    await tester.longPress(find.text('src'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('粘贴'));
+    await tester.pumpAndSettle();
+    expect(clipboard.value, isNotNull);
+    expect(find.textContaining('Name already exists'), findsOneWidget);
+  });
+
+  testWidgets('folders cannot be pasted into their own descendants', (
+    tester,
+  ) async {
+    final clipboard = WorkspaceFileClipboard()
+      ..value = WorkspaceFileClipboardEntry(
+        _entry('src', folder: true),
+        cut: true,
+      );
+    addTearDown(clipboard.dispose);
+    await mount(tester, clipboard: clipboard, mutate: (_, _, _) async {});
+    await tester.tap(find.text('src'));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('lib'));
+    await tester.pumpAndSettle();
+    final paste = tester.widget<PopupMenuItem<dynamic>>(
+      find.ancestor(
+        of: find.text('粘贴'),
+        matching: find.byWidgetPredicate((widget) => widget is PopupMenuItem),
+      ),
+    );
+    expect(paste.enabled, isFalse);
+  });
+
+  test(
+    'moving an open preview preserves unsaved text and zoom on the new path',
+    () {
+      final document = WorkspaceTextDocument('original')
+        ..updateText('unsaved edit')
+        ..updateScale(1.5);
+      addTearDown(document.dispose);
+      final original = WorkspaceTab(
+        kind: WorkspaceTabKind.filePreview,
+        title: 'old.md',
+        icon: Icons.description,
+        filePath: 'src/old.md',
+        absolutePath: '/workspace/src/old.md',
+        textDocument: document,
+        previewKind: WorkspaceFilePreviewKind.markdown,
+      );
+      final moved = original.withFileLocation(
+        'docs/new.md',
+        '/workspace/docs/new.md',
+      );
+      expect(moved.filePath, 'docs/new.md');
+      expect(moved.absolutePath, '/workspace/docs/new.md');
+      expect(moved.title, 'new.md');
+      expect(moved.textDocument, same(document));
+      expect(moved.textDocument!.text, 'unsaved edit');
+      expect(moved.textDocument!.isDirty, isTrue);
+      expect(moved.textDocument!.scale, 1.5);
+      expect(moved.previewKind, WorkspaceFilePreviewKind.markdown);
+    },
+  );
+
+  testWidgets('mounted roots allow copying but disable destructive actions', (
+    tester,
+  ) async {
+    await mount(
+      tester,
+      protectWorkspaceRoots: true,
+      list: (_) async => [_entry('project', folder: true)],
+      mutate: (_, _, _) async {},
+    );
+    await tester.longPress(find.text('project'));
+    await tester.pumpAndSettle();
+    for (final label in ['重命名', '剪切', '删除', '粘贴']) {
+      final item = tester.widget<PopupMenuItem<dynamic>>(
+        find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate((widget) => widget is PopupMenuItem),
+        ),
+      );
+      expect(item.enabled, isFalse);
+    }
+    final copy = tester.widget<PopupMenuItem<dynamic>>(
+      find.ancestor(
+        of: find.text('复制'),
+        matching: find.byWidgetPredicate((widget) => widget is PopupMenuItem),
+      ),
+    );
+    expect(copy.enabled, isTrue);
+  });
 
   for (final scale in [1.0, 2.0]) {
     testWidgets('selected row centers its text and icons at scale $scale', (

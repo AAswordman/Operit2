@@ -2548,5 +2548,40 @@
   "settingsAppearanceDeviceFonts": "设备字体",
   "settingsAppearanceChooseDeviceFont": "选择设备字体",
   "settingsAppearanceNoDeviceFonts": "没有匹配的设备字体",
-  "settingsAppearanceDeviceFontPreview": "字体预览：你好，世界\nThe quick brown fox · 0123456789"
+  "settingsAppearanceDeviceFontPreview": "字体预览：你好，世界\nThe quick brown fox · 0123456789",
+  "workspaceFileRename": "重命名",
+  "workspaceFileCopy": "复制",
+  "workspaceFileCut": "剪切",
+  "workspaceFilePaste": "粘贴",
+  "workspaceFileName": "名称",
+  "workspaceFileInvalidName": "请输入有效名称，不能包含路径分隔符。",
+  "workspaceDeleteFolderTitle": "删除文件夹？",
+  "workspaceDeleteFolderMessage": "确定删除“{name}”及其全部内容？此操作无法撤销。",
+  "@workspaceDeleteFolderMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceFileOperationFailed": "文件操作失败：{error}",
+  "@workspaceFileOperationFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceFileCopyName": "{name}（副本 {index}）",
+  "@workspaceFileCopyName": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "workspaceFileSaving": "文件正在保存，请保存完成后重试。"
 }

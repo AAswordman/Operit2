@@ -1388,6 +1388,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   Future<void> _handleIncomingFiles(List<SelectedFileInput> files) async {
     final chatId = _currentChatId;
     final generation = _chatSelectionGeneration;
+
     /// Cancels the captured batch when its owning surface or selection expires.
     bool cancelled() => !mounted || generation != _chatSelectionGeneration;
     for (final file in files) {
@@ -2740,6 +2741,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         fileDirectory: _currentFileDirectory,
         chatCore: _viewModel.chatCore,
         onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
+        onMutateWorkspaceFile: _viewModel.mutateWorkspaceFile,
         onListWorkspaceBindingDirectories:
             _viewModel.listWorkspaceBindingDirectories,
         onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
@@ -2968,6 +2970,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       fileDirectory: _currentFileDirectory,
       chatCore: _viewModel.chatCore,
       onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
+      onMutateWorkspaceFile: _viewModel.mutateWorkspaceFile,
       onListWorkspaceBindingDirectories:
           _viewModel.listWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,

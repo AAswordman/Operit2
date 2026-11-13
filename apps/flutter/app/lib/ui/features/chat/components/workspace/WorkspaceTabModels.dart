@@ -79,6 +79,27 @@ class WorkspaceTab {
   final String? pluginUiModuleId;
   final PluginWorkspacePresentation? pluginPresentation;
   final String identityToken;
+
+  /// Preserves an open file's draft and zoom when its path changes.
+  WorkspaceTab withFileLocation(String path, String? absolute) {
+    assert(
+      kind == WorkspaceTabKind.filePreview || kind == WorkspaceTabKind.files,
+    );
+    final preview = kind == WorkspaceTabKind.filePreview
+        ? workspacePreviewKindForPath(path)
+        : null;
+    return WorkspaceTab(
+      kind: kind,
+      title: path.split('/').last,
+      icon: preview == null ? icon : workspacePreviewIconForKind(preview),
+      closable: closable,
+      filePath: path,
+      absolutePath: absolute,
+      textDocument: textDocument,
+      previewKind: preview,
+      identityToken: identityToken,
+    );
+  }
 }
 
 /// Carries a regular workspace tab through an internal pane drag operation.

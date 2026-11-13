@@ -2109,7 +2109,7 @@ impl RuntimePackageManager {
         candidates
     }
 
-    /// Compares the installed source with its bundled asset without replacing custom implementations.
+    /// Offers only a strictly newer bundled release, including after another device updates it.
     fn bundledCandidateNeedsInstallation(
         &self,
         candidate: &BundledExternalPackageCandidate,
@@ -2118,39 +2118,15 @@ impl RuntimePackageManager {
         let Some(record) = records.get(&candidate.packageName) else {
             return Ok(true);
         };
-        if record.settings["builtin"] == true || record.settings["customized"] == true {
+        if record.settings["builtin"] == true || record.settings["customized"] == true
+            || record.sourceName != candidate.sourceFileName {
             return Ok(false);
         }
-        if record.sourceName != candidate.sourceFileName {
-            return Ok(false);
-        }
-        let root = ExtensionStore::root("package", &record.scope)?;
-        let path = self
-            .storePaths
-            .runtime_storage_path(&root)
-            .join(&record.sourceName);
-        let installed = self
-            .filesystem
-            .readFileBytes(&vfsPathString(&path))
-            .map_err(|error| {
-                format!(
-                    "Cannot read installed package {}: {error}",
-                    candidate.packageName
-                )
-            })?;
-        let asset = bundledExternalPluginAssetByName(
-            self.toolHandler.runtimeSupport().as_ref(),
-            &candidate.sourcePath,
-        )
-        .ok_or_else(|| format!("Bundled package asset not found: {}", candidate.sourcePath))?;
-        if installed.as_slice() == asset.bytes { return Ok(false); }
-        // Legacy installations have no source timestamp; retain their one-time update path.
-        // New installations keep their release mtime through scope moves and peer transfers.
-        if asset.modified_at > 0 && record.settings["bundledModifiedAt"].as_i64().unwrap_or(0) > 0 {
-            return Ok(asset.modified_at > ExtensionStore::default()
-                .sourceModifiedAt("package", &candidate.packageName)?);
-        }
-        Ok(true)
+        Ok(self.getToolPkgContainerRuntime(&candidate.packageName).is_some_and(|installed| {
+            operit_util::GithubReleaseUtil::GithubReleaseUtil::compareVersions(
+                &candidate.version, &installed.version,
+            ).is_ok_and(|order| order > 0)
+        }))
     }
 
     #[allow(non_snake_case)]
@@ -2315,7 +2291,6 @@ impl RuntimePackageManager {
                 &sourceFileName,
                 members,
                 scope.as_str(),
-                sourceAsset.modified_at,
             )
         })();
         if let Err(error) = registration {

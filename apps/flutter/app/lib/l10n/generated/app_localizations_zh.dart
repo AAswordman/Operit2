@@ -4811,4 +4811,43 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsAppearanceDeviceFontPreview =>
       '字体预览：你好，世界\nThe quick brown fox · 0123456789';
+
+  @override
+  String get workspaceFileRename => '重命名';
+
+  @override
+  String get workspaceFileCopy => '复制';
+
+  @override
+  String get workspaceFileCut => '剪切';
+
+  @override
+  String get workspaceFilePaste => '粘贴';
+
+  @override
+  String get workspaceFileName => '名称';
+
+  @override
+  String get workspaceFileInvalidName => '请输入有效名称，不能包含路径分隔符。';
+
+  @override
+  String get workspaceDeleteFolderTitle => '删除文件夹？';
+
+  @override
+  String workspaceDeleteFolderMessage(String name) {
+    return '确定删除“$name”及其全部内容？此操作无法撤销。';
+  }
+
+  @override
+  String workspaceFileOperationFailed(String error) {
+    return '文件操作失败：$error';
+  }
+
+  @override
+  String workspaceFileCopyName(String name, int index) {
+    return '$name（副本 $index）';
+  }
+
+  @override
+  String get workspaceFileSaving => '文件正在保存，请保存完成后重试。';
 }
